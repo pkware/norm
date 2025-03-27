@@ -9,11 +9,11 @@ dependencies {
   implementation(projects.runtime)
 }
 
-//norm {
+// norm {
 //  databases {
 //    create("Example") {
 //      packageName = "example"
 //      sqlcConfigurationFile = ""
 //    }
 //  }
-//}
+// }
