@@ -1,0 +1,92 @@
+package com.pkware.norm.generator
+
+import com.squareup.kotlinpoet.CodeBlock
+import com.squareup.kotlinpoet.TypeName
+import com.squareup.kotlinpoet.asTypeName
+import java.math.BigDecimal
+import java.sql.Blob
+import java.sql.ResultSet
+import java.sql.Statement
+import kotlin.reflect.KClass
+
+/**
+ * Data type that can be mapped between Java and SQL using JDBC.
+ */
+interface SqlMappable {
+
+  /**
+   * Kotlin [KClass] for the data.
+   */
+  val klass: KClass<*>
+
+  /**
+   * KotlinPoet [TypeName] for the data.
+   */
+  val typeName: TypeName
+    get() = klass.asTypeName()
+
+  /**
+   * Receiver action to call on a [Statement] when mapping the data from Java to SQL.
+   */
+  val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
+
+  /**
+   * Receiver action to call on a [ResultSet] when mapping the data from SQL to Java.
+   */
+  val resultSetAction: (index: Int) -> CodeBlock
+}
+
+/**
+ * Types with first-class support in JDBC.
+ */
+enum class JdbcTypes(override val klass: KClass<*>) : SqlMappable {
+  BOOLEAN(Boolean::class),
+  SHORT(Short::class),
+  INT(Int::class),
+  LONG(Long::class),
+  FLOAT(Float::class),
+  DOUBLE(Double::class),
+  BIG_DECIMAL(BigDecimal::class),
+  STRING(String::class),
+  BLOB(Blob::class),
+  ;
+
+  override val statementAction: (Int, CodeBlock) -> CodeBlock =
+    { index, parameterName -> CodeBlock.of("%N(%L, %L)", "set${klass.simpleName}", index, parameterName) }
+  override val resultSetAction: (Int) -> CodeBlock =
+    { index -> CodeBlock.of("%N(%L)", "get${klass.simpleName}", index) }
+
+  /**
+   * See [NullablePrimitiveDecorator].
+   */
+  fun decorateForNullable(notNull: Boolean): SqlMappable = if (notNull) this else NullablePrimitiveDecorator(this)
+}
+
+/**
+ * Decorates a [SqlMappable] for a primitive value with nullability information.
+ */
+class NullablePrimitiveDecorator(private val delegate: JdbcTypes) : SqlMappable {
+  override val klass: KClass<*>
+    get() = delegate.klass
+  override val typeName: TypeName
+    get() = delegate.typeName.copy(true)
+  override val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
+    get() = delegate.statementAction
+  override val resultSetAction: (index: Int) -> CodeBlock
+    get() = { CodeBlock.of("%L.takeUnless { wasNull() }", delegate.resultSetAction(it)) }
+}
+
+/**
+ * Types with support in the Postgres JDBC driver.
+ */
+enum class PostgresSupportedTypes(
+  override val klass: KClass<*>,
+  override val statementAction: (Int, CodeBlock) -> CodeBlock,
+  override val resultSetAction: (index: Int) -> CodeBlock,
+) : SqlMappable {
+  UUID(
+    java.util.UUID::class,
+    { index, parameterName -> CodeBlock.of("setObject(%L, %L)", index, parameterName) },
+    { index -> CodeBlock.of("getObject(%L) as %N", index, java.util.UUID::class.asTypeName()) },
+  ),
+}
