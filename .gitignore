@@ -1,0 +1,29 @@
+####
+# Gradle folder
+#
+.gradle
+reports
+build/
+local.properties
+build-cache/
+
+####
+# IntelliJ
+#
+**/.idea/*
+out/
+*.iml
+# Ignore local runtime configurations
+.run/*
+
+####
+# Temp folders/files
+#
+logs/
+*.log
+*.bak
+
+####
+# Mac Files
+#
+.DS_Store
