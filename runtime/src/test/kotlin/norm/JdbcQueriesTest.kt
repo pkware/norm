@@ -1,5 +1,6 @@
+package norm
+
 import com.google.common.truth.Truth.assertThat
-import norm.JdbcQueries
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 

@@ -10,7 +10,7 @@ import plugin.Parameter
 /**
  * Adds a method for the given SQL statement to the receiver `interface` builder.
  */
-fun TypeSpec.Builder.addSqlStatementInterfaceMethod(query: SqlStatement) {
+internal fun TypeSpec.Builder.addSqlStatementInterfaceMethod(query: SqlStatement) {
   val interfaceBuilder = this
 	/*
 	 * For each query, we potentially generate multiple functions: a simple function that maps rows into value objects,

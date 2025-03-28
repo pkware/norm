@@ -2,10 +2,15 @@ package norm.generator
 
 import com.google.common.truth.Truth.assertThat
 import com.google.common.truth.Truth.assertWithMessage
+import com.pkware.norm.generator.generateCode
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.adapter
+import com.squareup.wire.WireJsonAdapterFactory
+import okio.buffer
+import okio.source
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 import plugin.GenerateRequest
-import java.io.StringWriter
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.stream.Stream
@@ -15,7 +20,7 @@ import kotlin.io.path.pathString
 import kotlin.io.path.readText
 import kotlin.io.path.relativeTo
 
-class ProgramTest {
+class GenerateCodeTest {
 
   @ParameterizedTest
   @MethodSource("scenarios")
@@ -23,14 +28,14 @@ class ProgramTest {
     val expectedFiles = mutableMapOf<String, String>()
     var request: GenerateRequest? = null
     fun loadTestFiles(directory: Path) {
-      Files.list(directory).use {
-        it.forEach {
-          if (it.endsWith("setup.json")) {
+      Files.list(directory).use { files ->
+        files.forEach { file ->
+          if (file.endsWith("setup.json")) {
             request = readGenerateRequestFromFile(directory.resolve("setup.json"))
-          } else if (it.isDirectory()) {
-            loadTestFiles(it)
+          } else if (file.isDirectory()) {
+            loadTestFiles(file)
           } else {
-            expectedFiles[it.relativeTo(scenarioDirectory).pathString] = it.readText()
+            expectedFiles[file.relativeTo(scenarioDirectory).pathString] = file.readText()
           }
         }
       }
@@ -38,11 +43,9 @@ class ProgramTest {
     loadTestFiles(scenarioDirectory)
 
     assertWithMessage("Directory $scenarioDirectory does not have a setup.json").that(request).isNotNull()
-    val result = Program(request!!).execute()
-    val createdFiles = result.files.associate { spec ->
-      val writer = StringWriter()
-      spec.writeTo(writer)
-      Pair(spec.relativePath, writer.toString())
+    val result = generateCode(request?.catalog!!, request!!.queries, "test")
+    val createdFiles = result.associate { spec ->
+      Pair(spec.name, spec.contents)
     }.toMutableMap()
 
     for ((fileName, content) in expectedFiles.entries) {
@@ -59,5 +62,14 @@ class ProgramTest {
   companion object {
     @JvmStatic
     fun scenarios(): Stream<Path> = Files.list(Path("src/test/scenarios").toAbsolutePath())
+
+    @OptIn(ExperimentalStdlibApi::class)
+    fun readGenerateRequestFromFile(path: Path): GenerateRequest {
+      val moshi = Moshi.Builder()
+        .addLast(WireJsonAdapterFactory())
+        .build()
+      val adapter = moshi.adapter<GenerateRequest>()
+      return path.source().buffer().use(adapter::fromJson)!!
+    }
   }
 }

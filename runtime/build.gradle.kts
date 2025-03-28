@@ -1,6 +1,7 @@
 plugins {
   `kotlin-only`
   `java-library`
+  id("com.pkware.gradle.publish")
 }
 
 dependencies {

@@ -17,7 +17,7 @@ import plugin.Table
  * @param packageName to use for generated types.
  * @param catalog Postgres catalog to use when resolving projection information.
  */
-class TypeRepository(
+internal class TypeRepository(
   private val packageName: String,
   private val catalog: Catalog,
 ) {
@@ -55,6 +55,7 @@ class TypeRepository(
     val nameOfTypeBeingDefined = ClassName(packageName, tableName)
     val typeBeingDefined = TypeSpec.classBuilder(nameOfTypeBeingDefined)
       .addModifiers(KModifier.DATA)
+      .addAnnotation(JvmRecord::class)
     val mapperArguments = mutableListOf<CodeBlock>()
     val primaryConstructor = FunSpec.constructorBuilder()
     // Parameters required to invoke the mapper
@@ -96,6 +97,7 @@ class TypeRepository(
     val nameOfTypeBeingDefined = ClassName(packageName, queryName.titleCase())
     val typeBeingDefined = TypeSpec.classBuilder(nameOfTypeBeingDefined)
       .addModifiers(KModifier.DATA)
+      .addAnnotation(JvmRecord::class)
     val mapperArguments = mutableListOf<CodeBlock>()
     val primaryConstructor = FunSpec.constructorBuilder()
 

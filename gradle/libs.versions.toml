@@ -6,6 +6,7 @@ kotlinPoet = "com.squareup:kotlinpoet:1.18.1"
 mockito-kotlin = "org.mockito.kotlin:mockito-kotlin:5.4.0"
 moshi = "com.squareup.moshi:moshi:1.15.2"
 postgresql = "org.postgresql:postgresql:42.7.5"
+wire = { module = "com.squareup.wire:wire-runtime", version.ref = "wire" }
 wire-json = { module = "com.squareup.wire:wire-moshi-adapter", version.ref = "wire" }
 
 [plugins]
