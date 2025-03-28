@@ -24,9 +24,9 @@ public class NormPlugin : Plugin<Project> {
       NormExtensionImplementation::class.java,
       this,
     )
-    // TODO Gradle task to download sqlc if not available, or throw if it's the wrong version of sqlc or use docker task from PKWARE
+    // FIXME Gradle task to download sqlc if not available, or throw if it's the wrong version of sqlc or use docker task from PKWARE
 
-    // TODO We need to start a DB and pass that to the yaml and generate task so they can link to it.
+    // FIXME We need to start a DB and pass that to the yaml and generate task so they can link to it.
 
     val kotlinSourceSet = project.extensions.getByName<KotlinProjectExtension>("kotlin")
       .sourceSets.getByName("main").kotlin

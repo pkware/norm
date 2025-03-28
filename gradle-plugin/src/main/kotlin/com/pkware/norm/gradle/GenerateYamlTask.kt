@@ -45,7 +45,7 @@ internal abstract class GenerateYamlTask @Inject constructor(
   init {
     group = NormPlugin.NORM_GROUP
     description = "Generate a sqlc YAML configuration file."
-    // TODO Can we just assign this?
+    // FIXME Can we just assign this? Need to test that dependencies are working correctly.
 //    sqlcConfiguration.set(project.layout.buildDirectory.file("tmp/norm/${sqlSource.name}/sqlc.yaml"))
     val sqlcConfigurationFileParent = sqlcConfiguration.get().asFile.parentFile
     relativizer.set(project.projectDir.toRelativeString(sqlcConfigurationFileParent))
@@ -55,13 +55,10 @@ internal abstract class GenerateYamlTask @Inject constructor(
 
   @TaskAction
   fun generateYaml() {
-    val packageName = database.packageName.get()
-
     val relativizer = relativizer.get()
     val schemaPaths = database.schemas.get().map { "$relativizer/$it" }
     val queryPaths = database.queries.get().map { "$relativizer/$it" }
 
-    // FIXME Remove the package name from the options
     // FIXME upload the WASM plugin to Github and use a URL
     @Language("yaml")
     val template = """
@@ -78,8 +75,6 @@ internal abstract class GenerateYamlTask @Inject constructor(
 			|    codegen:
 			|      - out: .
 			|        plugin: norm
-			|        options:
-			|          packageName: $packageName
     """.trimMargin()
 
     sqlcConfiguration.get().asFile.writeText(template)
