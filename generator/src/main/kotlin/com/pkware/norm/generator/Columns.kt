@@ -15,7 +15,7 @@ import plugin.Column
 /**
  * Details on how to map this column's type between Java and SQL.
  */
-val Column.mappableType: SqlMappable
+internal val Column.mappableType: SqlMappable
   get() = when (val typeName = type?.name) {
     "smallserial", "pg_catalog.serial2" -> JdbcTypes.SHORT.decorateForNullable(not_null)
     "serial", "pg_catalog.serial4" -> JdbcTypes.INT.decorateForNullable(not_null)
@@ -57,7 +57,7 @@ val Column.mappableType: SqlMappable
  *
  * Prefer this to [SqlMappable.typeName] as this contains additional column-specific information.
  */
-val Column.typeName: TypeName
+internal val Column.typeName: TypeName
   get() {
     val type = mappableType.klass
 

@@ -1,60 +1,65 @@
 package norm.gradle
 
-import org.gradle.api.file.DirectoryProperty
+import com.pkware.norm.generator.generateCode
+import com.pkware.norm.gradle.NormPlugin
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.adapter
+import com.squareup.wire.WireJsonAdapterFactory
+import okio.buffer
+import okio.sink
+import okio.source
+import org.gradle.api.DefaultTask
 import org.gradle.api.file.RegularFileProperty
-import org.gradle.api.provider.ListProperty
-import org.gradle.api.provider.Property
-import org.gradle.api.tasks.Exec
-import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.CacheableTask
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.Nested
 import org.gradle.api.tasks.OutputDirectory
-import org.gradle.api.tasks.OutputFile
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
+import plugin.GenerateRequest
+import javax.inject.Inject
 
-// TODO Make cacheable
-// @CacheableTask
-// TODO Should we have a SourceTask?
-public abstract class GenerateSchemasTask : Exec() {
+/**
+ * Generates Kotlin code from SQL sources.
+ */
+@CacheableTask
+internal abstract class GenerateSchemasTask @Inject constructor(
+  @get:Nested val database: Database,
+) : DefaultTask() {
 
-  @get:Input
-  public abstract val packageName: Property<String>
-
-  @get:Input
-  public abstract val schemas: ListProperty<String>
-
-  @get:Input
-  public abstract val queries: ListProperty<String>
+  /**
+   * JSON file that contains the schema.
+   */
+  @get:InputFile
+  @get:PathSensitive(PathSensitivity.RELATIVE)
+  abstract val schemaJsonFile: RegularFileProperty
 
   @get:OutputDirectory
-  public abstract val generatedSources: DirectoryProperty
+  val generatedSources = database.generatedPackageDirectory(project)
 
-  @get:OutputFile
-  public abstract val configuration: RegularFileProperty
+  init {
+    group = NormPlugin.NORM_GROUP
+    description = "Generate Kotlin code from SQL."
+  }
 
   @TaskAction
-  public fun run() {
-    // Start a database?
-    // Apply migrations
-    // Query the schema/resolve queries
-    // Generate code
+  @OptIn(ExperimentalStdlibApi::class)
+  fun run() {
+    val moshi = Moshi.Builder()
+      .add(WireJsonAdapterFactory())
+      .build()
+    val requestJsonAdapter = moshi.adapter<GenerateRequest>()
 
-    configuration.set(project.layout.buildDirectory.file("tmp/norm"))
-    val configuration = """
-      version: '2'
-      plugins:
-      - name: norm
-        process:
-          cmd: sqlc-gen-json
-      sql:
-      - schema: [${schemas.get().joinToString()}]
-        queries: [${queries.get().joinToString()}]
-        engine: postgresql
-        codegen:
-        - out: $generatedSources
-          plugin: norm
-          options:
-            indent: "  "
-            filename: codegen.json
-    """.trimIndent()
-    this.configuration.get().asFile.writeText(configuration)
+    val request = schemaJsonFile.get().asFile.source().buffer().use(requestJsonAdapter::fromJson)!!
+    val catalog = request.catalog!!
+
+    val files = generateCode(catalog, request.queries, database.packageName.get())
+    val directory = generatedSources.get().asFile
+    for (fileContent in files) {
+      val file = directory.resolve(fileContent.name)
+      file.parentFile.mkdirs()
+      file.sink().buffer().use { it.write(fileContent.contents) }
+    }
   }
 }

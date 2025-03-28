@@ -8,7 +8,7 @@ import plugin.Table
 /**
  * Finds a [Table] matching the given [Identifier] in the [Catalog].
  */
-fun Catalog.resolveTable(table: Identifier): Table {
+internal fun Catalog.resolveTable(table: Identifier): Table {
   val candidateTables = schemas.asSequence()
     .filter { table.schema.isEmpty() || it.name == table.schema }
     .flatMap(Schema::tables)

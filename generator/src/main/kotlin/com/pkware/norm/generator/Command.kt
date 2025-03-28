@@ -16,7 +16,7 @@ import com.squareup.kotlinpoet.TypeName
 // - batchexec: Batching behavior is defined by caller convention, not in generated code
 // - batchone: JDBC doesn't support returning values from batch executions
 // - batchmany: JDBC doesn't support returning values from batch executions
-enum class Command(private val sqlcCmd: String) {
+internal enum class Command(private val sqlcCmd: String) {
   /**
    * The SQL statement must return at exactly 1 result.
    *

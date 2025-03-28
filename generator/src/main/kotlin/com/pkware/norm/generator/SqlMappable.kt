@@ -12,7 +12,7 @@ import kotlin.reflect.KClass
 /**
  * Data type that can be mapped between Java and SQL using JDBC.
  */
-interface SqlMappable {
+internal interface SqlMappable {
 
   /**
    * Kotlin [KClass] for the data.
@@ -39,7 +39,7 @@ interface SqlMappable {
 /**
  * Types with first-class support in JDBC.
  */
-enum class JdbcTypes(override val klass: KClass<*>) : SqlMappable {
+internal enum class JdbcTypes(override val klass: KClass<*>) : SqlMappable {
   BOOLEAN(Boolean::class),
   SHORT(Short::class),
   INT(Int::class),
@@ -65,7 +65,7 @@ enum class JdbcTypes(override val klass: KClass<*>) : SqlMappable {
 /**
  * Decorates a [SqlMappable] for a primitive value with nullability information.
  */
-class NullablePrimitiveDecorator(private val delegate: JdbcTypes) : SqlMappable {
+internal class NullablePrimitiveDecorator(private val delegate: JdbcTypes) : SqlMappable {
   override val klass: KClass<*>
     get() = delegate.klass
   override val typeName: TypeName
@@ -79,7 +79,7 @@ class NullablePrimitiveDecorator(private val delegate: JdbcTypes) : SqlMappable 
 /**
  * Types with support in the Postgres JDBC driver.
  */
-enum class PostgresSupportedTypes(
+internal enum class PostgresSupportedTypes(
   override val klass: KClass<*>,
   override val statementAction: (Int, CodeBlock) -> CodeBlock,
   override val resultSetAction: (index: Int) -> CodeBlock,

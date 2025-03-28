@@ -17,14 +17,14 @@ import java.sql.ResultSet
  *
  * Aims to carry the information need to generate Kotlin code for a SQL statement.
  */
-class SqlStatement(
+internal class SqlStatement(
   private val catalog: Catalog,
   private val query: Query,
   private val generator: TypeRepository,
 ) {
 
   /**
-   * Inputs required by the SQL statement..
+   * Inputs required by the SQL statement.
    */
   val parameters: List<Parameter>
 
@@ -162,7 +162,7 @@ class SqlStatement(
  * @param builder Code to build the [kotlinType]. Assume a [ResultSet] is the receiver.
  * @param creationParameters Inputs to a function (constructor, mapper, etc.) able to create a [kotlinType].
  */
-data class ReturnType(
+internal data class ReturnType(
   val kotlinType: TypeName?,
   val builder: List<CodeBlock>,
   val creationParameters: List<ParameterSpec> = emptyList(),

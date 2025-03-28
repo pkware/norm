@@ -13,3 +13,10 @@ gradlePlugin {
     }
   }
 }
+
+dependencies {
+  implementation(projects.generator)
+  implementation(libs.wire.json)
+  implementation(libs.moshi)
+  implementation(kotlin("gradle-plugin"))
+}

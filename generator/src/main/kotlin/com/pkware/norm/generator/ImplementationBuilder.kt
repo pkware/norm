@@ -25,7 +25,7 @@ import java.util.concurrent.locks.ReentrantLock
  *
  * Populates the throws, kdoc, parameters, and return type using [statement].
  */
-fun sqlFunction(statement: SqlStatement): FunSpec.Builder {
+internal fun sqlFunction(statement: SqlStatement): FunSpec.Builder {
   val function = FunSpec.builder(statement.name)
     .throws(SQLException::class)
     .addKdoc(statement.comments.joinToString("\n", transform = String::trim))
@@ -50,7 +50,7 @@ fun sqlFunction(statement: SqlStatement): FunSpec.Builder {
  *
  * Populates the throws, kdoc, parameters, and return type using [statement].
  */
-fun mapperFunction(statement: SqlStatement): FunSpec.Builder {
+internal fun mapperFunction(statement: SqlStatement): FunSpec.Builder {
   val mapperReturnType = statement.resultRowShape.mapperReturnType
   val function = sqlFunction(statement)
     .addTypeVariable(mapperReturnType)
@@ -72,7 +72,7 @@ fun mapperFunction(statement: SqlStatement): FunSpec.Builder {
 /**
  * Adds a method for the given SQL statement to the receiver `class` builder.
  */
-fun TypeSpec.Builder.addSqlStatementImplementationMethod(statement: SqlStatement) {
+internal fun TypeSpec.Builder.addSqlStatementImplementationMethod(statement: SqlStatement) {
   val classBuilder = this
   val function = mapperFunction(statement).apply {
     addModifiers(KModifier.OVERRIDE)
@@ -158,7 +158,7 @@ private fun FunSpec.Builder.buildExecRows(statement: SqlStatement) {
  *
  * Populates the throws, kdoc, parameters, and return type using [statement].
  */
-fun batchFunction(statement: SqlStatement): FunSpec.Builder = sqlFunction(statement).apply {
+internal fun batchFunction(statement: SqlStatement): FunSpec.Builder = sqlFunction(statement).apply {
   parameters.clear()
   val t = TypeVariableName("T", ANY)
   addTypeVariable(t)

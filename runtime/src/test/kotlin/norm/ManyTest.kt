@@ -1,4 +1,5 @@
-import norm.Many
+package norm
+
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.mock
