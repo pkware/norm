@@ -40,7 +40,8 @@ internal val Column.mappableType: SqlMappable
     // 			// Date and time mappings from https://jdbc.postgresql.org/documentation/head/java8-date-time.html
     // 			"date" -> LocalDate::class
     // 			"pg_catalog.time", "pg_catalog.timetz" -> LocalTime::class
-    // 			"pg_catalog.timestamp" -> LocalDateTime::class
+
+    // FIXME Handle timestamp type			"pg_catalog.timestamp" -> LocalDateTime::class
     // 			"pg_catalog.timestamptz", "timestamptz" -> OffsetDateTime::class
     //
     "text", "varchar", "pg_catalog.varchar", "bpchar", "pg_catalog.bpchar", "string" -> JdbcTypes.STRING

@@ -92,7 +92,7 @@ internal class SqlStatement(
    */
   private val isSingleTableStarProjection: Boolean
     get() {
-      // TODO verify that the columns are in the right order.
+      // FIXME verify that the columns are in the right order.
       val resolvedTable = starProjectionTable ?: return false
       val tableColumns = resolvedTable.columns.asSequence().map(Column::type).toMutableSet()
       val queryColumns = query.columns.asSequence().map(Column::type).toSet()
@@ -103,7 +103,7 @@ internal class SqlStatement(
   init {
     resultRowShape = computeReturnType()
 
-    // TODO SQLC doesn't preserve case on @named parameters. We should file a bug.
+    // FIXME SQLC doesn't preserve case on @named parameters. We should file a bug.
     // Convert $1 style query parameters to JDBC-compatible ? parameters.
     // First we find all the placeholders, and create a list of parameters where each index matches the position of a
     // future JDBC parameter. We populate the list by mapping the query parameters to placeholder indexes.

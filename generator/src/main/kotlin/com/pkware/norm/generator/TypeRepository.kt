@@ -107,7 +107,7 @@ internal class TypeRepository(
 
     // Parameters required to invoke the mapper
     val mapperParameters = mutableListOf<ParameterSpec>()
-    // TODO There are all kinds of bugs here with the index and the offset I think
+    // FIXME There are all kinds of bugs here with the index and the offset I think
     var index = 1
     for (column in queryResults) {
       val columnType = if (column.embed_table != null) {
