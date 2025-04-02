@@ -22,7 +22,6 @@ NORM does not:
 ### Before release
 - [ ] Gradle plugin: sqlc on more platforms
 - [ ] Gradle plugin: connect to a real DB
-- [ ] Reconcile batch behavior. The new code had a good approach, but looks like I had something in the old as well.
 - [ ] Dynamic SQL, especially around adding filters to existing projections.
 - [ ] Check support for all the sqlc commands like :one, :many. I think the new code identified ways to make more of them work than the old.
 - [ ] Support the timestamp type

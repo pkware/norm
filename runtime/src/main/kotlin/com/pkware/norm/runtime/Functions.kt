@@ -12,7 +12,7 @@ public fun <T> inputValue(input: T): T = input
  *
  * @param results The batch results
  * @param totalCount Total number of results.
- * @param batchSize Size of query batch.
+ * @param batchSize Size of the query batch.
  */
 public fun combineExecBatchResults(results: List<IntArray>, totalCount: Int, batchSize: Int): IntArray =
   if (results.size > 1) {

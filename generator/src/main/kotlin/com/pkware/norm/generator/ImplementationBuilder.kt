@@ -160,7 +160,7 @@ private fun FunSpec.Builder.buildExecRows(statement: SqlStatement) {
  */
 internal fun batchFunction(statement: SqlStatement): FunSpec.Builder = sqlFunction(statement).apply {
   parameters.clear()
-  val t = TypeVariableName("T", ANY)
+  val t = TypeVariableName("Input", ANY)
   addTypeVariable(t)
   returns(INT_ARRAY)
   addParameter("stream", ITERABLE.parameterizedBy(t))
