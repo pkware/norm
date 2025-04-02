@@ -14,24 +14,23 @@ import plugin.GenerateRequest
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.stream.Stream
-import kotlin.io.path.Path
-import kotlin.io.path.isDirectory
-import kotlin.io.path.pathString
-import kotlin.io.path.readText
-import kotlin.io.path.relativeTo
+import kotlin.io.path.*
 
 class GenerateCodeTest {
 
+  // FIXME Document how to generate scenarios
   @ParameterizedTest
   @MethodSource("scenarios")
-  fun a(scenarioDirectory: Path) {
+  fun verifyGeneratedCode(scenarioDirectory: Path) {
     val expectedFiles = mutableMapOf<String, String>()
     var request: GenerateRequest? = null
     fun loadTestFiles(directory: Path) {
       Files.list(directory).use { files ->
         files.forEach { file ->
-          if (file.endsWith("setup.json")) {
-            request = readGenerateRequestFromFile(directory.resolve("setup.json"))
+          if (file.endsWith("schema.json")) {
+            request = readGenerateRequestFromFile(directory.resolve("schema.json"))
+          } else if (file.isDirectory() && file.fileName.endsWith("sql")) {
+            // No op
           } else if (file.isDirectory()) {
             loadTestFiles(file)
           } else {
@@ -42,10 +41,10 @@ class GenerateCodeTest {
     }
     loadTestFiles(scenarioDirectory)
 
-    assertWithMessage("Directory $scenarioDirectory does not have a setup.json").that(request).isNotNull()
-    val result = generateCode(request?.catalog!!, request!!.queries, "test")
+    assertWithMessage("Directory $scenarioDirectory does not have a schema.json").that(request).isNotNull()
+    val result = generateCode(request?.catalog!!, request!!.queries, "example")
     val createdFiles = result.associate { spec ->
-      Pair(spec.name, spec.contents)
+      Pair(spec.name, spec.contents.utf8())
     }.toMutableMap()
 
     for ((fileName, content) in expectedFiles.entries) {

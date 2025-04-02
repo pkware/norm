@@ -17,17 +17,17 @@ import plugin.Column
  */
 internal val Column.mappableType: SqlMappable
   get() = when (val typeName = type?.name) {
-    "smallserial", "pg_catalog.serial2" -> JdbcTypes.SHORT.decorateForNullable(not_null)
-    "serial", "pg_catalog.serial4" -> JdbcTypes.INT.decorateForNullable(not_null)
-    "bigserial", "pg_catalog.serial8" -> JdbcTypes.LONG.decorateForNullable(not_null)
+    "smallserial", "serial2", "pg_catalog.serial2" -> JdbcTypes.SHORT.decorateForNullable(not_null)
+    "serial", "serial4", "pg_catalog.serial4" -> JdbcTypes.INT.decorateForNullable(not_null)
+    "bigserial", "serial8", "pg_catalog.serial8" -> JdbcTypes.LONG.decorateForNullable(not_null)
 
+    "smallint", "int2", "pg_catalog.int2" -> JdbcTypes.SHORT.decorateForNullable(not_null)
     "integer", "int", "int4", "pg_catalog.int4" -> JdbcTypes.INT.decorateForNullable(not_null)
-    "smallint", "pg_catalog.int2" -> JdbcTypes.SHORT.decorateForNullable(not_null)
     "bigint", "int8", "pg_catalog.int8" -> JdbcTypes.LONG.decorateForNullable(not_null)
 
-    "real", "pg_catalog.float4" -> JdbcTypes.FLOAT.decorateForNullable(not_null)
-    "float", "double precision", "pg_catalog.float8" -> JdbcTypes.DOUBLE.decorateForNullable(not_null)
-    "pg_catalog.numeric" -> JdbcTypes.BIG_DECIMAL
+    "real", "float4", "pg_catalog.float4" -> JdbcTypes.FLOAT.decorateForNullable(not_null)
+    "float", "double precision", "float8", "pg_catalog.float8" -> JdbcTypes.DOUBLE.decorateForNullable(not_null)
+    "numeric", "pg_catalog.numeric" -> JdbcTypes.BIG_DECIMAL
 
     "bool", "pg_catalog.bool" -> JdbcTypes.BOOLEAN.decorateForNullable(not_null)
 
