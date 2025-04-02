@@ -98,6 +98,13 @@ internal fun TypeSpec.Builder.addSqlStatementImplementationMethod(statement: Sql
   }
 }
 
+/**
+ * Builds a function that returns exactly 1, non-null result.
+ *
+ * The query author is in the best position to determine if a query is capable of returning no or some results.
+ * The caller in Java shouldn't have to think about that.
+ * Accordingly, we make this query be exact and the [buildMany] query flexible on return number.
+ */
 private fun FunSpec.Builder.buildOne(statement: SqlStatement) {
   val resultRowShape = statement.resultRowShape
   beginControlFlow("val rowReader: %T.() -> %T = {", RESULT_SET, resultRowShape.mapperReturnType)
@@ -118,6 +125,13 @@ private fun FunSpec.Builder.buildOne(statement: SqlStatement) {
   }
 }
 
+/**
+ * Builds a function that returns 0 to many results.
+ *
+ * The query author is in the best position to determine if a query is capable of returning no or some results.
+ * The caller in Java shouldn't have to think about that.
+ * Accordingly, we make this query return a `Many` and the [buildOne] query be exact.
+ */
 private fun FunSpec.Builder.buildMany(statement: SqlStatement) {
   val resultRowShape = statement.resultRowShape
   beginControlFlow("val rowReader: %T.() -> %T = {", RESULT_SET, resultRowShape.mapperReturnType)

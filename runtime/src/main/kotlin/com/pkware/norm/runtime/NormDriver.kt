@@ -89,7 +89,7 @@ public class NormDriver(private val dataSource: DataSource) {
    *
    * @param sql to execute.
    * @param action to execute with the [PreparedStatement].
-   * @param R Type to return.
+   * @param RowType Type to return.
    *
    * @throws SQLException if a database access error occurs.
    * @throws SQLTimeoutException when the driver has determined that the timeout value specified by the
@@ -97,7 +97,7 @@ public class NormDriver(private val dataSource: DataSource) {
    * attempt.
    */
   @Throws(SQLException::class, SQLTimeoutException::class)
-  public fun <R> execute(@Language("SQL") sql: String, action: PreparedStatement.() -> R): R {
+  public fun <RowType> execute(@Language("SQL") sql: String, action: PreparedStatement.() -> RowType): RowType {
     val (connection, onClose) = connectionAndClose()
     try {
       return connection.prepareStatement(sql).use(action)
@@ -110,13 +110,13 @@ public class NormDriver(private val dataSource: DataSource) {
    * Executes a query that returns exactly 1 row.
    *
    * @param sql to execute.
-   * @param rowReader Expression to extract an [R] from the [ResultSet].
+   * @param rowReader Expression to extract an [RowType] from the [ResultSet].
    * @param queryBinder Expression to populate and prepare the [PreparedStatement]. `null` if no changes need to be made
    * to the [PreparedStatement], such as when not providing query arguments.
-   * @param R Type to return.
-   * @return A single [R].
+   * @param RowType Type to return.
+   * @return A single [RowType].
    *
-   * @throws IllegalStateException if the query returns 0 results, or more than one result.
+   * @throws IllegalStateException if the query returns 0 results or more than one result.
    * @throws SQLException if a database access error occurs.
    * @throws SQLTimeoutException when the driver has determined that the timeout value specified by the
    * `setLoginTimeout` method has been exceeded and has at least tried to cancel the current database connection
@@ -125,11 +125,11 @@ public class NormDriver(private val dataSource: DataSource) {
    * @see queryMany if multiple results should be allowed.
    */
   @Throws(IllegalStateException::class, SQLException::class, SQLTimeoutException::class)
-  public fun <R> queryOne(
+  public fun <RowType> queryOne(
     @Language("SQL") sql: String,
-    rowReader: (ResultSet) -> R,
+    rowReader: (ResultSet) -> RowType,
     queryBinder: (PreparedStatement.() -> Unit)? = null,
-  ): R = execute(sql) {
+  ): RowType = execute(sql) {
     if (queryBinder != null) queryBinder(this)
     executeQuery().use { resultSet ->
       check(resultSet.next()) { "No results returned for $sql" }
@@ -145,18 +145,18 @@ public class NormDriver(private val dataSource: DataSource) {
    * This function _does not_ execute the query.
    *
    * @param sql to execute.
-   * @param rowReader Expression to extract an [R] from the [ResultSet].
+   * @param rowReader Expression to extract an [RowType] from the [ResultSet].
    * @param queryBinder Expression to populate and prepare the [PreparedStatement].
-   * @param R Type to return.
+   * @param RowType Type to return.
    * @return the deferred execution of the [sql] query.
    *
    * @see queryOne if a single result must exist.
    */
-  public fun <R> queryMany(
+  public fun <RowType> queryMany(
     @Language("SQL") sql: String,
-    rowReader: ResultSet.() -> R,
+    rowReader: ResultSet.() -> RowType,
     queryBinder: (PreparedStatement.() -> Unit)? = null,
-  ): Many<R> = JdbcMany(sql, rowReader, queryBinder)
+  ): Many<RowType> = JdbcMany(sql, rowReader, queryBinder)
 
   /**
    * Executes a SQL statement, returning the number of modified rows.
