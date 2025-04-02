@@ -2,15 +2,12 @@ package com.pkware.norm.gradle
 
 import norm.gradle.Database
 import org.gradle.api.DefaultTask
-import org.gradle.api.file.ConfigurableFileCollection
+import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.CacheableTask
-import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.Nested
 import org.gradle.api.tasks.OutputFile
-import org.gradle.api.tasks.PathSensitive
-import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.intellij.lang.annotations.Language
 import javax.inject.Inject
@@ -31,26 +28,15 @@ internal abstract class GenerateYamlTask @Inject constructor(
   @get:Internal
   abstract val relativizer: Property<String>
 
-  @get:InputFiles
-  @get:PathSensitive(PathSensitivity.RELATIVE)
-  abstract val schemas: ConfigurableFileCollection
-
-  @get:InputFiles
-  @get:PathSensitive(PathSensitivity.RELATIVE)
-  abstract val queries: ConfigurableFileCollection
-
   @get:OutputFile
-  val sqlcConfiguration = project.layout.buildDirectory.file("tmp/norm/${database.name}/sqlc.yaml")
+  abstract val sqlcConfiguration: RegularFileProperty
 
   init {
     group = NormPlugin.NORM_GROUP
-    description = "Generate a sqlc YAML configuration file."
-    // FIXME Can we just assign this? Need to test that dependencies are working correctly.
-//    sqlcConfiguration.set(project.layout.buildDirectory.file("tmp/norm/${sqlSource.name}/sqlc.yaml"))
+    description = "Generates a sqlc YAML configuration file."
+    sqlcConfiguration.set(project.layout.buildDirectory.file("tmp/norm/${database.name}/sqlc.yaml"))
     val sqlcConfigurationFileParent = sqlcConfiguration.get().asFile.parentFile
     relativizer.set(project.projectDir.toRelativeString(sqlcConfigurationFileParent))
-    schemas.from(database.schemas.map { it.map(project.projectDir::resolve) })
-    queries.from(database.queries.map { it.map(project.projectDir::resolve) })
   }
 
   @TaskAction

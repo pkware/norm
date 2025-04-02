@@ -32,14 +32,12 @@ public class NormPlugin : Plugin<Project> {
       .sourceSets.getByName("main").kotlin
     norm.databases.all {
       val yamlTask =
-        tasks.register<GenerateYamlTask>("generateNormYaml${name.uppercaseFirstChar()}", this)
-      val sqlcTask = tasks.register<RunSqlcTask>("runSqlc${name.uppercaseFirstChar()}", this)
+        tasks.register<GenerateYamlTask>("normGenerateYaml${name.uppercaseFirstChar()}", this)
+      val sqlcTask = tasks.register<RunSqlcTask>("normRunSqlc${name.uppercaseFirstChar()}", this)
       sqlcTask.configure {
         sqlcConfiguration.set(yamlTask.flatMap { it.sqlcConfiguration })
-        queries.setFrom(yamlTask.map { it.queries })
-        schemas.setFrom(yamlTask.map { it.schemas })
       }
-      val generateCodeTask = tasks.register<GenerateSchemasTask>("generateNormCode${name.uppercaseFirstChar()}", this)
+      val generateCodeTask = tasks.register<GenerateSchemasTask>("normGenerateCode${name.uppercaseFirstChar()}", this)
       generateCodeTask.configure {
         schemaJsonFile.set(sqlcTask.flatMap { it.schemaJsonFile })
       }

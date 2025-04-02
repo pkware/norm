@@ -40,7 +40,7 @@ internal abstract class GenerateSchemasTask @Inject constructor(
 
   init {
     group = NormPlugin.NORM_GROUP
-    description = "Generate Kotlin code from SQL."
+    description = "Generates Kotlin code from SQL."
   }
 
   @TaskAction
