@@ -60,6 +60,8 @@ internal abstract class RunSqlcTask @Inject constructor(
     group = NormPlugin.NORM_GROUP
     description = "Runs sqlc to resolve the Postgres schema."
     schemaJsonFile.set(database.schemaJsonFile(project))
+    schemas.from(database.schemas.map { it.map(project.projectDir::resolve) })
+    queries.from(database.queries.map { it.map(project.projectDir::resolve) })
   }
 
   @TaskAction
