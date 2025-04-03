@@ -1,19 +1,17 @@
 package norm.gradle
 
 import com.pkware.norm.gradle.NormPlugin
+import org.apache.tools.ant.taskdefs.condition.Os
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.RegularFileProperty
-import org.gradle.api.provider.Property
 import org.gradle.api.tasks.CacheableTask
-import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
-import org.gradle.kotlin.dsl.property
 import org.gradle.process.ExecOperations
 import javax.inject.Inject
 
@@ -28,12 +26,6 @@ internal abstract class RunSqlcTask @Inject constructor(
   database: Database,
   private val execOperations: ExecOperations,
 ) : DefaultTask() {
-
-  /**
-   * Path to the `sqlc` command line tool.
-   */
-  @get:Input
-  val sqlc: Property<String> = project.objects.property<String>().convention("/opt/homebrew/bin/sqlc")
 
   /**
    * YAML configuration file used by `sqlc`.
@@ -66,8 +58,17 @@ internal abstract class RunSqlcTask @Inject constructor(
 
   @TaskAction
   fun invokeSqlc() {
+    val sqlc = if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+      """C:\Program Files\sqlc\sqlc.exe"""
+    } else if(Os.isFamily(Os.FAMILY_MAC)) {
+      "/opt/homebrew/bin/sqlc"
+    } else if(Os.isFamily(Os.FAMILY_UNIX)) {
+      "/snap/bin/sqlc"
+    } else {
+      error("Operating system not supported")
+    }
     execOperations.exec {
-      commandLine(sqlc.get(), "generate", "--file", sqlcConfiguration.get().asFile.absolutePath)
+      commandLine(sqlc, "generate", "--file", sqlcConfiguration.get().asFile.absolutePath)
       standardOutput = System.out
     }.assertNormalExitValue()
   }

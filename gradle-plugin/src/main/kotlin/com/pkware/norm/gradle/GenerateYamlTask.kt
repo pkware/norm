@@ -45,14 +45,13 @@ internal abstract class GenerateYamlTask @Inject constructor(
     val schemaPaths = database.schemas.get().map { "$relativizer/$it" }
     val queryPaths = database.queries.get().map { "$relativizer/$it" }
 
-    // FIXME upload the WASM plugin to Github and use a URL
     @Language("yaml")
     val template = """
 			|version: '2'
 			|plugins:
 			|  - name: norm
 			|    wasm:
-			|      url: file:///Volumes/Code/pkware/norm/sqlc-plugin/target/wasm32-wasip1/release/sqlc-exporter.wasm
+			|      url: https://github.com/pkware/norm/releases/download/0.0.1/sqlc-exporter.wasm
 			|      sha256: e796dde73d2aee9a5870ee28174feb651a6d9baaae28d03ad5f45cc95f212e69
 			|sql:
 			|  - schema: [${schemaPaths.joinToString()}]
