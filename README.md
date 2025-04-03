@@ -18,9 +18,11 @@ NORM does not:
 - Facilitate serialization (JSON, protobuf, etc)
 - Support JVM-first database modeling
 
+## Gradle
+See the [Gradle plugin README](gradle-plugin/README.md) for setup details.
+
 ## TODO
 ### Before release
-- [ ] Gradle plugin: sqlc on more platforms
 - [ ] Gradle plugin: connect to a real DB
 - [ ] Dynamic SQL, especially around adding filters to existing projections.
 - [ ] Check support for all the sqlc commands like :one, :many. I think the new code identified ways to make more of them work than the old.
