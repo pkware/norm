@@ -1,7 +1,5 @@
-package com.pkware.norm.gradle
+package norm.gradle
 
-import norm.gradle.GenerateSchemasTask
-import norm.gradle.RunSqlcTask
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.kotlin.dsl.getByName

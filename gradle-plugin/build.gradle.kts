@@ -9,7 +9,7 @@ gradlePlugin {
   plugins {
     register("norm-plugin") {
       id = "com.pkware.norm"
-      implementationClass = "com.pkware.norm.gradle.NormPlugin"
+      implementationClass = "norm.gradle.NormPlugin"
     }
   }
 }

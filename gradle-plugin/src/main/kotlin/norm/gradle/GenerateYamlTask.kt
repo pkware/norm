@@ -1,6 +1,5 @@
-package com.pkware.norm.gradle
+package norm.gradle
 
-import norm.gradle.Database
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.Property

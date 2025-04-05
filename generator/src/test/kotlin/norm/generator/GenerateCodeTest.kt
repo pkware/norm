@@ -2,7 +2,6 @@ package norm.generator
 
 import com.google.common.truth.Truth.assertThat
 import com.google.common.truth.Truth.assertWithMessage
-import com.pkware.norm.generator.generateCode
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.adapter
 import com.squareup.wire.WireJsonAdapterFactory

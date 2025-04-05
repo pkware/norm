@@ -1,4 +1,4 @@
-package com.pkware.norm.generator
+package norm.generator
 
 /**
  * Converts the first letter of the string to uppercase.

@@ -1,6 +1,5 @@
 package norm.gradle
 
-import com.pkware.norm.gradle.NormPlugin
 import org.apache.tools.ant.taskdefs.condition.Os
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection

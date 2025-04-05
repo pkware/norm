@@ -1,7 +1,6 @@
 package norm.gradle
 
-import com.pkware.norm.generator.generateCode
-import com.pkware.norm.gradle.NormPlugin
+import norm.generator.generateCode
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.adapter
 import com.squareup.wire.WireJsonAdapterFactory

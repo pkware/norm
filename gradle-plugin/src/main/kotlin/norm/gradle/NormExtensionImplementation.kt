@@ -1,6 +1,5 @@
-package com.pkware.norm.gradle
+package norm.gradle
 
-import norm.gradle.Database
 import org.gradle.api.NamedDomainObjectContainer
 import org.gradle.api.internal.project.ProjectInternal
 import org.gradle.api.provider.Property

@@ -1,4 +1,4 @@
-package com.pkware.norm.generator
+package norm.generator
 
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock

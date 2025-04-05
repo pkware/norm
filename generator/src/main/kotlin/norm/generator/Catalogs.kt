@@ -1,4 +1,4 @@
-package com.pkware.norm.generator
+package norm.generator
 
 import plugin.Catalog
 import plugin.Identifier
