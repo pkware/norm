@@ -15,6 +15,7 @@ out/
 *.iml
 # Ignore local runtime configurations
 .run/*
+**/scratch*.kts
 
 ####
 # Temp folders/files
