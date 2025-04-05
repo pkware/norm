@@ -61,7 +61,7 @@ internal enum class Command(private val sqlcCmd: String) {
   override fun toString(): String = sqlcCmd
 
   companion object {
-    private val NORM_MANY = ClassName("com.pkware.norm.runtime", "Many")
+    private val NORM_MANY = ClassName(RUNTIME_PACKAGE, "Many")
 
     /**
      * Finds the [Command] matching the sqlc `cmd` string.

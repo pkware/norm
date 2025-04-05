@@ -245,7 +245,7 @@ private fun buildExecRowsBatch(statement: SqlStatement): FunSpec = batchFunction
 
 private val RESULT_SET = ResultSet::class.asTypeName()
 
-private val PROCESS_EXEC_RESULTS = MemberName("com.pkware.norm.runtime", "combineExecBatchResults")
+private val PROCESS_EXEC_RESULTS = MemberName(RUNTIME_PACKAGE, "combineExecBatchResults")
 
 /**
  * Name of the parameter representing a query mapper.

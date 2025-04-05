@@ -1,8 +1,5 @@
 package example
 
-import com.pkware.norm.runtime.Many
-import com.pkware.norm.runtime.NormDriver
-import com.pkware.norm.runtime.RealTransacter
 import java.math.BigDecimal
 import java.sql.Blob
 import java.sql.ResultSet
@@ -16,6 +13,9 @@ import kotlin.Long
 import kotlin.Short
 import kotlin.String
 import kotlin.jvm.Throws
+import norm.Many
+import norm.NormDriver
+import norm.RealTransacter
 
 public class PostgresQueries(
   driver: NormDriver,

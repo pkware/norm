@@ -1,7 +1,7 @@
 package example
 
-import com.pkware.norm.runtime.NormDriver
 import kotlin.jvm.optionals.getOrNull
+import norm.NormDriver
 
 // I was using this as a playground to shape the API. It's a scratchpad
 fun main() {

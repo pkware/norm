@@ -10,7 +10,7 @@ import plugin.Catalog
 import plugin.File
 import plugin.Query
 
-private val NORM_DRIVER = ClassName("com.pkware.norm.runtime", "NormDriver")
+private val NORM_DRIVER = ClassName(RUNTIME_PACKAGE, "NormDriver")
 
 /**
  * Generates Kotlin models and query files for use with the NORM runtime.
@@ -42,7 +42,7 @@ public fun generateCode(catalog: Catalog, queries: List<Query>, packageName: Str
 private fun generateQueryImplementation(queries: List<SqlStatement>, interfaceType: TypeName): TypeSpec {
   val classBuilder = TypeSpec.classBuilder("PostgresQueries")
     .addSuperinterface(interfaceType)
-    .superclass(ClassName("com.pkware.norm.runtime", "RealTransacter"))
+    .superclass(ClassName(RUNTIME_PACKAGE, "RealTransacter"))
     .addSuperclassConstructorParameter("driver")
     .primaryConstructor(
       FunSpec.constructorBuilder()
@@ -57,7 +57,7 @@ private fun generateQueryImplementation(queries: List<SqlStatement>, interfaceTy
 
 private fun generateQueryInterface(queries: List<SqlStatement>, interfaceName: String): TypeSpec {
   val interfaceBuilder = TypeSpec.interfaceBuilder(interfaceName)
-    .addSuperinterface(ClassName("com.pkware.norm.runtime", "Transacter"))
+    .addSuperinterface(ClassName(RUNTIME_PACKAGE, "Transacter"))
 
   queries.forEach(interfaceBuilder::addSqlStatementInterfaceMethod)
 

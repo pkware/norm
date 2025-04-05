@@ -1,6 +1,6 @@
 @file:JvmName("Functions")
 
-package com.pkware.norm.runtime
+package norm
 
 /**
  * Returns the [input].

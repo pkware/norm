@@ -1,7 +1,5 @@
 package example
 
-import com.pkware.norm.runtime.Many
-import com.pkware.norm.runtime.Transacter
 import java.math.BigDecimal
 import java.sql.Blob
 import java.sql.SQLException
@@ -14,6 +12,8 @@ import kotlin.Long
 import kotlin.Short
 import kotlin.String
 import kotlin.jvm.Throws
+import norm.Many
+import norm.Transacter
 
 public interface Queries : Transacter {
   @Throws(SQLException::class)

@@ -1,4 +1,4 @@
-package com.pkware.norm.runtime
+package norm
 
 private class RollbackException(val value: Any? = null) : Throwable()
 private class TransactionWrapper<R>(

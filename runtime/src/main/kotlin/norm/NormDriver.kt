@@ -1,4 +1,4 @@
-package com.pkware.norm.runtime
+package norm
 
 import org.intellij.lang.annotations.Language
 import java.sql.Connection

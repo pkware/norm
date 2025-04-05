@@ -1,15 +1,15 @@
 package example
 
-import com.pkware.norm.runtime.Many
-import com.pkware.norm.runtime.RealTransacter
-import com.pkware.norm.runtime.Transaction
 import example.ExampleQueries.Raw.ADD_AUTHOR_SQL
 import example.ExampleQueries.Raw.DELETE_AUTHOR_SQL
 import example.ExampleQueries.Raw.GET_AUTHOR_BY_NAME_SQL
 import example.ExampleQueries.Raw.LIST_AUTHORS_SQL
 import example.ExampleQueries.Raw.MAP_AUTHOR_BOOKS_SQL
 import example.ExampleQueries.Raw.UPDATE_AUTHOR_NAME_SQL
+import norm.Many
 import norm.single
+import norm.RealTransacter
+import norm.Transaction
 import java.util.Optional
 import javax.sql.DataSource
 

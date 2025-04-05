@@ -1,4 +1,4 @@
-package com.pkware.norm.runtime
+package norm
 
 import java.sql.Connection
 import java.sql.SQLException

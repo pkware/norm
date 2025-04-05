@@ -1,4 +1,4 @@
-package com.pkware.norm.runtime
+package norm
 
 /**
  * Transaction that returns a result.

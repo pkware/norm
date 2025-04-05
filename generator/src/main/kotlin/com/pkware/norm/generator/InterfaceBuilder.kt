@@ -76,7 +76,7 @@ internal fun TypeSpec.Builder.addSqlStatementInterfaceMethod(query: SqlStatement
  *
  * Using this is more readable than using an inline lamda at each call site, and lets the JIT inline sooner.
  */
-private val COLUMN_VALUE = MemberName("com.pkware.norm.runtime", "inputValue").reference()
+private val COLUMN_VALUE = MemberName(RUNTIME_PACKAGE, "inputValue").reference()
 
 /**
  * Default batch size to use.
