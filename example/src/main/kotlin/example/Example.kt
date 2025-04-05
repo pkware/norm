@@ -1,12 +1,12 @@
 package example
 
-import org.postgresql.jdbc.PgConnection
+import com.pkware.norm.runtime.NormDriver
 import kotlin.jvm.optionals.getOrNull
 
 // I was using this as a playground to shape the API. It's a scratchpad
 fun main() {
-  val connection: PgConnection
-  val queries = JdbcExampleQueries(connection)
+  val driver: NormDriver
+  val queries = PostgresQueries(driver)
   val authorsList = queries.listAuthors().list()
   val authorsToContact = queries.listAuthors { id, name, email, revision -> AuthorContact(name, email) }
   val authorsStartingWithA = queries.listAuthors().stream().use {
@@ -18,13 +18,17 @@ fun main() {
   println(ExampleQueries.Raw.GET_AUTHOR_BY_NAME_SQL)
   println(jake.name)
 
-  queries.transaction { outer ->
-    outer.transaction { inner ->
-
+  queries.transaction {
+    // TODO this should create an unnamed savepoint
+    transaction {
+      // TODO This should rollback to the savepoint. But then how does the caller know whether or not the transaction succeeded? Should they care?
+      rollback()
     }
-    outer.transaction { inner ->
-
+    // TODO this should create a savepoint
+    transaction {
     }
+    // TODO This should rollback everything
+    rollback()
   }
 
   queries.transaction {

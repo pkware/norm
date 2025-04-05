@@ -1,14 +1,14 @@
 package example
 
+import com.pkware.norm.runtime.Many
+import com.pkware.norm.runtime.RealTransacter
+import com.pkware.norm.runtime.Transaction
 import example.ExampleQueries.Raw.ADD_AUTHOR_SQL
 import example.ExampleQueries.Raw.DELETE_AUTHOR_SQL
 import example.ExampleQueries.Raw.GET_AUTHOR_BY_NAME_SQL
 import example.ExampleQueries.Raw.LIST_AUTHORS_SQL
 import example.ExampleQueries.Raw.MAP_AUTHOR_BOOKS_SQL
 import example.ExampleQueries.Raw.UPDATE_AUTHOR_NAME_SQL
-import norm.JdbcQueries
-import norm.Many
-import norm.Transaction
 import norm.single
 import java.util.Optional
 import javax.sql.DataSource
@@ -54,7 +54,7 @@ interface ExampleQueries : Transaction {
 
 public class JdbcExampleQueries(
   dataSource: DataSource
-) : JdbcQueries(dataSource), ExampleQueries {
+) : RealTransacter(dataSource), ExampleQueries {
 
   override fun <T> listAuthors(mapper: (Int, String, String, Int) -> T) =
     connection.prepareStatement(LIST_AUTHORS_SQL).use { statement ->
