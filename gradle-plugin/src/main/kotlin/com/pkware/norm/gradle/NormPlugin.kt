@@ -13,7 +13,7 @@ import org.jetbrains.kotlin.gradle.plugin.KotlinSourceSetContainer
 
 public class NormPlugin : Plugin<Project> {
   override fun apply(target: Project): Unit = target.run {
-    val normConfiguration = configurations.create("norm") {
+    configurations.create("norm") {
       isCanBeConsumed = false
       isCanBeResolved = true
     }

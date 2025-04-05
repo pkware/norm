@@ -53,7 +53,7 @@ public class PostgresQueries(
     pgnumerictype: BigDecimal?,
     booltype: Boolean?,
     pgbooltype: Boolean?,
-    jsonbtypeq: String?,
+    jsonbtype: String?,
     blobtype: Blob?,
     texttype: String?,
     varchartype: String?,
@@ -63,7 +63,7 @@ public class PostgresQueries(
     stringtype: String?,
   ) -> T): Many<T> {
     val sql =
-        "SELECT smallserialtype, serial2type, pgserial2type, serialtype, serial4type, pgserial4type, bigserialtype, serial8type, pgserial8type, smallinttype, int2type, pgint2type, integertype, inttype, int4type, pgint4type, biginttype, int8type, pgint8type, realtype, float4type, pgfloat4type, floattype, doubletype, float8type, pgfloat8type, numerictype, pgnumerictype, booltype, pgbooltype, jsonbtypeq, blobtype, texttype, varchartype, pgvarchartype, bpchartype, pgbpchartype, stringtype FROM Type"
+        "SELECT smallserialtype, serial2type, pgserial2type, serialtype, serial4type, pgserial4type, bigserialtype, serial8type, pgserial8type, smallinttype, int2type, pgint2type, integertype, inttype, int4type, pgint4type, biginttype, int8type, pgint8type, realtype, float4type, pgfloat4type, floattype, doubletype, float8type, pgfloat8type, numerictype, pgnumerictype, booltype, pgbooltype, jsonbtype, blobtype, texttype, varchartype, pgvarchartype, bpchartype, pgbpchartype, stringtype FROM Type"
     val rowReader: ResultSet.() -> T = {
       mapper(
         getShort(1).takeUnless { wasNull() },

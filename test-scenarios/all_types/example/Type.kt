@@ -43,7 +43,7 @@ public data class Type(
   public val pgnumerictype: BigDecimal?,
   public val booltype: Boolean?,
   public val pgbooltype: Boolean?,
-  public val jsonbtypeq: String?,
+  public val jsonbtype: String?,
   public val blobtype: Blob?,
   public val texttype: String?,
   public val varchartype: String?,

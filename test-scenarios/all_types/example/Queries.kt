@@ -48,7 +48,7 @@ public interface Queries : Transacter {
     pgnumerictype: BigDecimal?,
     booltype: Boolean?,
     pgbooltype: Boolean?,
-    jsonbtypeq: String?,
+    jsonbtype: String?,
     blobtype: Blob?,
     texttype: String?,
     varchartype: String?,

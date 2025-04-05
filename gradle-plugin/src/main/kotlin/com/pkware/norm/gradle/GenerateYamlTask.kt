@@ -35,8 +35,8 @@ internal abstract class GenerateYamlTask @Inject constructor(
     group = NormPlugin.NORM_GROUP
     description = "Generates a sqlc YAML configuration file."
     sqlcConfiguration.set(project.layout.buildDirectory.file("tmp/norm/${database.name}/sqlc.yaml"))
-    val sqlcConfigurationFileParent = sqlcConfiguration.get().asFile.parentFile
-    relativizer.set(project.projectDir.toRelativeString(sqlcConfigurationFileParent))
+    val sqlcConfigurationFile = sqlcConfiguration.get().asFile
+    relativizer.set(project.projectDir.toRelativeString(sqlcConfigurationFile))
   }
 
   @TaskAction

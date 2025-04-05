@@ -1,6 +1,5 @@
 package norm.gradle
 
-import com.pkware.norm.gradle.NormPlugin
 import org.gradle.api.Named
 import org.gradle.api.Project
 import org.gradle.api.provider.ListProperty
@@ -36,10 +35,6 @@ public abstract class Database(private val name: String) : Named {
    */
   @get:Input
   public abstract val packageName: Property<String>
-
-  internal fun generatedPackageDirectory(project: Project) = packageName.flatMap { packageName ->
-    project.layout.buildDirectory.dir("${NormPlugin.NORM_GENERATED_CODE}/${packageName.replace('.', '/')}")
-  }
 
   internal fun schemaJsonFile(project: Project) = project.layout.buildDirectory.file("tmp/norm/$name/schema.json")
 }

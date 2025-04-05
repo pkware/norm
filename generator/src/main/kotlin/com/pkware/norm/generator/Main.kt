@@ -33,7 +33,7 @@ public fun generateCode(catalog: Catalog, queries: List<Query>, packageName: Str
       .build()
     val result = Buffer()
     result.outputStream().writer().use(fileSpec::writeTo)
-    File(packageName + "/" + fileSpec.name, result.readByteString())
+    File(packageName.replace('.', '/') + "/" + fileSpec.name, result.readByteString())
   }
     .toList()
   return files

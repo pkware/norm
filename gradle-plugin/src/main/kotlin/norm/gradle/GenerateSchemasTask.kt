@@ -9,6 +9,7 @@ import okio.buffer
 import okio.sink
 import okio.source
 import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.InputFile
@@ -36,11 +37,12 @@ internal abstract class GenerateSchemasTask @Inject constructor(
   abstract val schemaJsonFile: RegularFileProperty
 
   @get:OutputDirectory
-  val generatedSources = database.generatedPackageDirectory(project)
+  abstract val generatedSources: DirectoryProperty
 
   init {
     group = NormPlugin.NORM_GROUP
     description = "Generates Kotlin code from SQL."
+    generatedSources.set(project.layout.buildDirectory.dir(NormPlugin.NORM_GENERATED_CODE))
   }
 
   @TaskAction

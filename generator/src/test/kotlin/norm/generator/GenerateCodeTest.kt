@@ -18,31 +18,24 @@ import kotlin.io.path.*
 
 class GenerateCodeTest {
 
-  // FIXME Document how to generate scenarios
+  /**
+   * Generate `schema.json` files for scenarios by running the Gradle plugin integration tests.
+   */
   @ParameterizedTest
   @MethodSource("scenarios")
-  fun verifyGeneratedCode(scenarioDirectory: Path) {
+  fun `generated code is correct`(scenarioDirectory: Path) {
     val expectedFiles = mutableMapOf<String, String>()
-    var request: GenerateRequest? = null
-    fun loadTestFiles(directory: Path) {
-      Files.list(directory).use { files ->
-        files.forEach { file ->
-          if (file.endsWith("schema.json")) {
-            request = readGenerateRequestFromFile(directory.resolve("schema.json"))
-          } else if (file.isDirectory() && file.fileName.endsWith("sql")) {
-            // No op
-          } else if (file.isDirectory()) {
-            loadTestFiles(file)
-          } else {
-            expectedFiles[file.relativeTo(scenarioDirectory).pathString] = file.readText()
-          }
+    val request = readGenerateRequestFromFile(scenarioDirectory.resolve("schema.json"))
+    Files.walk(scenarioDirectory).use { files ->
+      files.forEach { file ->
+        if (file.toString().endsWith(".kt")) {
+          expectedFiles[file.relativeTo(scenarioDirectory).pathString] = file.readText()
         }
       }
     }
-    loadTestFiles(scenarioDirectory)
 
     assertWithMessage("Directory $scenarioDirectory does not have a schema.json").that(request).isNotNull()
-    val result = generateCode(request?.catalog!!, request!!.queries, "example")
+    val result = generateCode(request.catalog!!, request.queries, "example")
     val createdFiles = result.associate { spec ->
       Pair(spec.name, spec.contents.utf8())
     }.toMutableMap()
@@ -60,7 +53,7 @@ class GenerateCodeTest {
 
   companion object {
     @JvmStatic
-    fun scenarios(): Stream<Path> = Files.list(Path("src/test/scenarios").toAbsolutePath())
+    fun scenarios(): Stream<Path> = Files.list(Path("../test-scenarios").toAbsolutePath())
 
     @OptIn(ExperimentalStdlibApi::class)
     fun readGenerateRequestFromFile(path: Path): GenerateRequest {

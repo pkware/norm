@@ -1,7 +1,7 @@
 plugins {
+  `kotlin-only`
   `kotlin-dsl`
   `java-gradle-plugin`
-  `kotlin-only`
   id("com.pkware.gradle.publish")
 }
 
@@ -19,4 +19,6 @@ dependencies {
   implementation(libs.wire.json)
   implementation(libs.moshi)
   implementation(kotlin("gradle-plugin"))
+
+  testImplementation(gradleTestKit())
 }
