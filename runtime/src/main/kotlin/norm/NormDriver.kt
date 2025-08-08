@@ -97,7 +97,7 @@ public class NormDriver(private val dataSource: DataSource) {
    * attempt.
    */
   @Throws(SQLException::class, SQLTimeoutException::class)
-  public fun <RowType> execute(@Language("SQL") sql: String, action: PreparedStatement.() -> RowType): RowType {
+  public fun <RowType> execute(@Language("PostgreSQL") sql: String, action: PreparedStatement.() -> RowType): RowType {
     val (connection, onClose) = connectionAndClose()
     try {
       return connection.prepareStatement(sql).use(action)
@@ -126,7 +126,7 @@ public class NormDriver(private val dataSource: DataSource) {
    */
   @Throws(IllegalStateException::class, SQLException::class, SQLTimeoutException::class)
   public fun <RowType> queryOne(
-    @Language("SQL") sql: String,
+    @Language("PostgreSQL") sql: String,
     rowReader: (ResultSet) -> RowType,
     queryBinder: (PreparedStatement.() -> Unit)? = null,
   ): RowType = execute(sql) {
@@ -153,7 +153,7 @@ public class NormDriver(private val dataSource: DataSource) {
    * @see queryOne if a single result must exist.
    */
   public fun <RowType> queryMany(
-    @Language("SQL") sql: String,
+    @Language("PostgreSQL") sql: String,
     rowReader: ResultSet.() -> RowType,
     queryBinder: (PreparedStatement.() -> Unit)? = null,
   ): Many<RowType> = JdbcMany(sql, rowReader, queryBinder)
@@ -171,7 +171,7 @@ public class NormDriver(private val dataSource: DataSource) {
    * attempt.
    */
   @Throws(SQLException::class, SQLTimeoutException::class)
-  public fun executeRows(@Language("SQL") sql: String, queryBinder: (PreparedStatement.() -> Unit)? = null): Int =
+  public fun executeRows(@Language("PostgreSQL") sql: String, queryBinder: (PreparedStatement.() -> Unit)? = null): Int =
     execute(sql) {
       if (queryBinder != null) queryBinder(this)
       executeUpdate()
@@ -184,7 +184,7 @@ public class NormDriver(private val dataSource: DataSource) {
    * @param RowType Type to return.
    */
   private inner class JdbcMany<RowType>(
-    @Language("SQL") private val sql: String,
+    @Language("PostgreSQL") private val sql: String,
     private val rowReader: ResultSet.() -> RowType,
     private val queryBinder: (PreparedStatement.() -> Unit)? = null,
   ) : Many<RowType> {
