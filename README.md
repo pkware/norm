@@ -27,7 +27,6 @@ See the [Gradle plugin README](gradle-plugin/README.md) for setup details.
 - [ ] Dynamic SQL, especially around adding filters to existing projections.
 - [ ] Support the timestamp type
 - [ ] Pass detekt
-- [ ] Add a getting started section to the README
 - [ ] Delete old generated files when no longer needed
 
 ### After release
@@ -40,3 +39,5 @@ See the [Gradle plugin README](gradle-plugin/README.md) for setup details.
 - [ ] Populate KDoc using Postgres COMMENTs.
 - [ ] Support batching from Stream, not just Iterable
 - [ ] Make it easy to enforce named arguments for query methods. These are easy to change in SQL and have calling code compile incorrectly. Detekt, Intellij, etc.
+- [ ] JSON/JSONB to Java struct adapter. More broadly, custom type adapters.
+- [ ] Add a getting started section to the README
