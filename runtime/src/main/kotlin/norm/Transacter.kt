@@ -20,7 +20,7 @@ import kotlin.jvm.Throws
 /**
  * A transaction-aware [NormDriver] wrapper which can begin a [Transaction] on the current connection.
  */
-public sealed interface Transacter {
+public interface Transacter {
   /**
    * Starts a [Transaction] and runs [bodyWithReturn] in that transaction.
    *
