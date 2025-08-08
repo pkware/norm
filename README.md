@@ -25,7 +25,6 @@ See the [Gradle plugin README](gradle-plugin/README.md) for setup details.
 ### Before release
 - [ ] Gradle plugin: connect to a real DB
 - [ ] Dynamic SQL, especially around adding filters to existing projections.
-- [ ] Check support for all the sqlc commands like :one, :many. I think the new code identified ways to make more of them work than the old.
 - [ ] Support the timestamp type
 - [ ] Pass detekt
 - [ ] Add a getting started section to the README

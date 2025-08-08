@@ -3,7 +3,6 @@ package norm.generator
 import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.INT
-import com.squareup.kotlinpoet.LONG
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.TypeName
 
@@ -12,10 +11,6 @@ import com.squareup.kotlinpoet.TypeName
  *
  * See the [sqlc documentation](https://docs.sqlc.dev/en/latest/reference/query-annotations.html) for details.
  */
-// Unsupported commands:
-// - batchexec: Batching behavior is defined by caller convention, not in generated code
-// - batchone: JDBC doesn't support returning values from batch executions
-// - batchmany: JDBC doesn't support returning values from batch executions
 internal enum class Command(private val sqlcCmd: String) {
   /**
    * The SQL statement must return at exactly 1 result.
@@ -31,9 +26,7 @@ internal enum class Command(private val sqlcCmd: String) {
    */
   MANY(":many"),
   EXEC(":exec"),
-  EXEC_RESULT(":execresult"),
   EXEC_ROWS(":execrows"),
-  EXEC_LAST_ID(":execlastid"),
   ;
 
   /**
@@ -51,11 +44,7 @@ internal enum class Command(private val sqlcCmd: String) {
     }
     // execute(), low value, probably don't use
     EXEC -> BOOLEAN
-    // via executeUpdate() followed by retrieving the generated keys. See go code for details - this one is non-trivial.
-    EXEC_RESULT -> NORM_MANY.parameterizedBy(LONG)
     EXEC_ROWS -> INT
-    // executeUpdate followed by retrieving the generate key. See go code for details.
-    EXEC_LAST_ID -> error("Use a RETURNING clause to get generated IDs instead of the 'execlastid' command")
   }
 
   override fun toString(): String = sqlcCmd
@@ -68,6 +57,17 @@ internal enum class Command(private val sqlcCmd: String) {
      *
      * See the [sqlc documentation](https://docs.sqlc.dev/en/latest/reference/query-annotations.html) for details.
      */
-    fun fromSqlcCmd(cmd: String): Command = entries.first { it.sqlcCmd == cmd }
+    fun fromSqlcCmd(cmd: String): Command {
+      when(cmd) {
+        ":batchexec" -> throw UnsupportedOperationException("Unsupported sqlc query annotation ':batchexec'. Norm performs batching via Java APIs, not in SQL. Use a regular :exec instead.")
+        ":batchone" -> throw UnsupportedOperationException("Unsupported sqlc query annotation ':batchone'. JDBC doesn't support returning values from batch executions. Use a regular :one instead.")
+        ":batchmany" -> throw UnsupportedOperationException("Unsupported sqlc query annotation ':batchmany'. JDBC doesn't support returning values from batch executions. Use a regular :many instead.")
+        // We technically could support execlastid, but the value of it is low. It adds cognitive overhead compared to a simple RETURNING clause, and is less explicit.
+        ":execlastid" -> throw UnsupportedOperationException("Unsupported sqlc query annotation ':execlastid'. Use a RETURNING clause with a regular :one or :many instead.")
+        // We technically could support execresult, but the value of it is low. It adds cognitive overhead compared to a simple RETURNING clause, and is less explicit.
+        ":execresult" -> throw UnsupportedOperationException("Unsupported sqlc query annotation ':execresult'. Use a RETURNING clause with a regular :one or :many instead.")
+      }
+      return entries.firstOrNull { it.sqlcCmd == cmd } ?: throw UnsupportedOperationException("Unsupported sqlc query annotation '$cmd'.")
+    }
   }
 }

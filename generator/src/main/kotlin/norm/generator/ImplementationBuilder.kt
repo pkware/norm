@@ -85,10 +85,7 @@ internal fun TypeSpec.Builder.addSqlStatementImplementationMethod(statement: Sql
         parameters.removeLast()
         buildExecRows(statement)
       }
-
-      Command.EXEC -> TODO()
-      Command.EXEC_RESULT -> TODO()
-      Command.EXEC_LAST_ID -> TODO()
+      Command.EXEC -> TODO(Command.EXEC.toString())
     }
   }
   classBuilder.addFunction(function.build())
