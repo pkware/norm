@@ -171,11 +171,13 @@ public class NormDriver(private val dataSource: DataSource) {
    * attempt.
    */
   @Throws(SQLException::class, SQLTimeoutException::class)
-  public fun executeRows(@Language("PostgreSQL") sql: String, queryBinder: (PreparedStatement.() -> Unit)? = null): Int =
-    execute(sql) {
-      if (queryBinder != null) queryBinder(this)
-      executeUpdate()
-    }
+  public fun executeRows(
+    @Language("PostgreSQL") sql: String,
+    queryBinder: (PreparedStatement.() -> Unit)? = null,
+  ): Int = execute(sql) {
+    if (queryBinder != null) queryBinder(this)
+    executeUpdate()
+  }
 
   /**
    * @param sql to execute.

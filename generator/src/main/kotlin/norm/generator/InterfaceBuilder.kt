@@ -45,7 +45,7 @@ internal fun TypeSpec.Builder.addSqlStatementInterfaceMethod(query: SqlStatement
         Executes a SQL statement and returns the number of rows updated.
 
         @return The number of rows updated.
-      """.trimIndent()
+    """.trimIndent()
     simpleFunction
       .addModifiers(ABSTRACT)
       .addKdoc(kdoc)
@@ -62,11 +62,15 @@ internal fun TypeSpec.Builder.addSqlStatementInterfaceMethod(query: SqlStatement
 
     val batchSizedFunction = batchFunction.toBuilder().apply {
       parameters.removeLast()
-      addKdoc("""
+      addKdoc(
+        """
         Invokes [%N] with a batch size of %L.
 
         @return The number of rows updated.
-        """.trimIndent(), batchFunction, BATCH_SIZE)
+        """.trimIndent(),
+        batchFunction,
+        BATCH_SIZE,
+      )
       addCode(
         CodeBlock.builder()
           .add("return %N(", batchFunction)

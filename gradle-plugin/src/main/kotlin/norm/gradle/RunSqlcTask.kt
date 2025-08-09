@@ -12,6 +12,7 @@ import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.gradle.process.ExecOperations
+import java.io.File
 import javax.inject.Inject
 
 /**
@@ -41,6 +42,10 @@ internal abstract class RunSqlcTask @Inject constructor(
   @get:PathSensitive(PathSensitivity.RELATIVE)
   abstract val queries: ConfigurableFileCollection
 
+  @get:InputFile
+  @get:PathSensitive(PathSensitivity.RELATIVE)
+  abstract val sqlc: RegularFileProperty
+
   /**
    * JSON file that will contain the schema.
    */
@@ -53,10 +58,6 @@ internal abstract class RunSqlcTask @Inject constructor(
     schemaJsonFile.set(database.schemaJsonFile(project))
     schemas.from(database.schemas.map { it.map(project.projectDir::resolve) })
     queries.from(database.queries.map { it.map(project.projectDir::resolve) })
-  }
-
-  @TaskAction
-  fun invokeSqlc() {
     val sqlc = if (Os.isFamily(Os.FAMILY_WINDOWS)) {
       """C:\Program Files\sqlc\sqlc.exe"""
     } else if (Os.isFamily(Os.FAMILY_MAC)) {
@@ -64,10 +65,20 @@ internal abstract class RunSqlcTask @Inject constructor(
     } else if (Os.isFamily(Os.FAMILY_UNIX)) {
       "/snap/bin/sqlc"
     } else {
-      error("Operating system not supported")
+      error("Operating system isn't supported")
     }
+    this.sqlc.set(File(sqlc))
+  }
+
+  @TaskAction
+  fun invokeSqlc() {
     execOperations.exec {
-      commandLine(sqlc, "generate", "--file", sqlcConfiguration.get().asFile.absolutePath)
+      commandLine(
+        sqlc.get().asFile.absolutePath,
+        "generate",
+        "--file",
+        sqlcConfiguration.get().asFile.absolutePath,
+      )
       standardOutput = System.out
     }.assertNormalExitValue()
   }
