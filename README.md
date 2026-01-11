@@ -29,7 +29,6 @@ See the [Gradle plugin README](gradle-plugin/README.md) for setup details.
 - [ ] Pass detekt
 - [ ] Delete old generated files when no longer needed
 - [ ] Relocate the Spring classes we vendored
-- [ ] Methods that return a `Many` or a `Query` don't throw a SQLException, since they defer their action until a terminal operation is invoked.
 
 ### After release
 - [ ] Enum adapter. Map enums to String and back by default.

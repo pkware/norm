@@ -27,8 +27,11 @@ import java.util.concurrent.locks.ReentrantLock
  */
 internal fun sqlFunction(statement: SqlStatement): FunSpec.Builder {
   val function = FunSpec.builder(statement.name)
-    .throws(SQLException::class)
     .addKdoc(statement.comments.joinToString("\n", transform = String::trim))
+
+  if (statement.command != Command.MANY) {
+    function.throws(SQLException::class)
+  }
 
   for (parameter in statement.parameters.asSequence().mapNotNull(Parameter::column).toSet()) {
     val parameterSpec = ParameterSpec.builder(parameter.name, parameter.typeName)
@@ -164,7 +167,6 @@ private fun TypeSpec.Builder.addManyImplementation(statement: SqlStatement) {
   // 2. Public Many variant: override fun <T : Any> queryName(mapper: ...) -> Many<T>
   val manyFunction = FunSpec.builder(statement.name)
     .addModifiers(KModifier.OVERRIDE)
-    .throws(SQLException::class)
     .addTypeVariable(mapperReturnType)
     .apply {
       for (parameter in queryParameters) {

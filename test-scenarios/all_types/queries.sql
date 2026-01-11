@@ -1,2 +1,5 @@
 -- name: all :many
-SELECT * FROM Type;
+SELECT * FROM type;
+
+-- name: single :one
+SELECT string_type FROM type;
