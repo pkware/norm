@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.springframework.jdbc.core.namedparam;
+package norm.vendor.org.springframework.jdbc.core.namedparam;
 
 import java.util.ArrayList;
 import java.util.List;

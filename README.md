@@ -28,7 +28,6 @@ See the [Gradle plugin README](gradle-plugin/README.md) for setup details.
 - [ ] Support the timestamp type
 - [ ] Pass detekt
 - [ ] Delete old generated files when no longer needed
-- [ ] Relocate the Spring classes we vendored
 
 ### After release
 - [ ] Enum adapter. Map enums to String and back by default.
@@ -43,6 +42,7 @@ See the [Gradle plugin README](gradle-plugin/README.md) for setup details.
 - [ ] JSON/JSONB to Java struct adapter. More broadly, custom type adapters.
 - [ ] Add a getting started section to the README
 - [ ] IntelliJ plugin for SQL fragment tracking. Currently we ship an `intellij-languageinjection.xml` config that provides basic SQL injection for `Query.append()`, but each fragment is analyzed in isolation. A proper plugin implementing `LanguageInjectionContributor` or using the `MultiHostInjector` API could track string values flowing through the builder pattern and reconstruct the full SQL statement for validation. This is how Hibernate and Spring's `JdbcClient` achieve fragment-aware SQL support.
+- [ ] It would be nice for query method Javadocs to have the SQL that they'll execute in them.
 
 ## Background
 ORMs like Hibernate take a code-first approach that doesn't sit well with the authors. It causes confusion as there are

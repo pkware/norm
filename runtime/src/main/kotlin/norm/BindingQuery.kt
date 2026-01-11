@@ -1,7 +1,7 @@
 package norm
 
+import norm.vendor.org.springframework.jdbc.core.namedparam.NamedParameterUtils
 import org.intellij.lang.annotations.Language
-import org.springframework.jdbc.core.namedparam.NamedParameterUtils
 import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.Types
