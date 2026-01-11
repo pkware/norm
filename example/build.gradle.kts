@@ -7,7 +7,7 @@ plugins {
 }
 
 dependencies {
-  implementation("org.postgresql:postgresql:42.7.5")
+  implementation("org.postgresql:postgresql:42.7.7")
 }
 
 repositories {
