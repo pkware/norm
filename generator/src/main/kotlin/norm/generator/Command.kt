@@ -58,16 +58,35 @@ internal enum class Command(private val sqlcCmd: String) {
      * See the [sqlc documentation](https://docs.sqlc.dev/en/latest/reference/query-annotations.html) for details.
      */
     fun fromSqlcCmd(cmd: String): Command {
-      when(cmd) {
-        ":batchexec" -> throw UnsupportedOperationException("Unsupported sqlc query annotation ':batchexec'. Norm performs batching via Java APIs, not in SQL. Use a regular :exec instead.")
-        ":batchone" -> throw UnsupportedOperationException("Unsupported sqlc query annotation ':batchone'. JDBC doesn't support returning values from batch executions. Use a regular :one instead.")
-        ":batchmany" -> throw UnsupportedOperationException("Unsupported sqlc query annotation ':batchmany'. JDBC doesn't support returning values from batch executions. Use a regular :many instead.")
-        // We technically could support execlastid, but the value of it is low. It adds cognitive overhead compared to a simple RETURNING clause, and is less explicit.
-        ":execlastid" -> throw UnsupportedOperationException("Unsupported sqlc query annotation ':execlastid'. Use a RETURNING clause with a regular :one or :many instead.")
-        // We technically could support execresult, but the value of it is low. It adds cognitive overhead compared to a simple RETURNING clause, and is less explicit.
-        ":execresult" -> throw UnsupportedOperationException("Unsupported sqlc query annotation ':execresult'. Use a RETURNING clause with a regular :one or :many instead.")
+      when (cmd) {
+        ":batchexec" -> throw UnsupportedOperationException(
+          "Unsupported sqlc query annotation ':batchexec'." +
+            " Norm performs batching via Java APIs, not in SQL. Use a regular :exec instead.",
+        )
+        ":batchone" -> throw UnsupportedOperationException(
+          "Unsupported sqlc query annotation ':batchone'." +
+            " JDBC doesn't support returning values from batch executions. Use a regular :one instead.",
+        )
+        ":batchmany" -> throw UnsupportedOperationException(
+          "Unsupported sqlc query annotation ':batchmany'." +
+            " JDBC doesn't support returning values from batch executions. Use a regular :many instead.",
+        )
+        // We technically could support execlastid, but the value of it is low.
+        // It adds cognitive overhead compared to a simple RETURNING clause, and is less explicit.
+        ":execlastid" -> throw UnsupportedOperationException(
+          "Unsupported sqlc query annotation ':execlastid'." +
+            " Use a RETURNING clause with a regular :one or :many instead.",
+        )
+        // We technically could support execresult, but the value of it is low.
+        // It adds cognitive overhead compared to a simple RETURNING clause, and is less explicit.
+        ":execresult" -> throw UnsupportedOperationException(
+          "Unsupported sqlc query annotation ':execresult'." +
+            " Use a RETURNING clause with a regular :one or :many instead.",
+        )
       }
-      return entries.firstOrNull { it.sqlcCmd == cmd } ?: throw UnsupportedOperationException("Unsupported sqlc query annotation '$cmd'.")
+      return entries.firstOrNull {
+        it.sqlcCmd == cmd
+      } ?: throw UnsupportedOperationException("Unsupported sqlc query annotation '$cmd'.")
     }
   }
 }

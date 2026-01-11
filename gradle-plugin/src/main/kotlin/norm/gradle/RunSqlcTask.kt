@@ -59,9 +59,9 @@ internal abstract class RunSqlcTask @Inject constructor(
   fun invokeSqlc() {
     val sqlc = if (Os.isFamily(Os.FAMILY_WINDOWS)) {
       """C:\Program Files\sqlc\sqlc.exe"""
-    } else if(Os.isFamily(Os.FAMILY_MAC)) {
+    } else if (Os.isFamily(Os.FAMILY_MAC)) {
       "/opt/homebrew/bin/sqlc"
-    } else if(Os.isFamily(Os.FAMILY_UNIX)) {
+    } else if (Os.isFamily(Os.FAMILY_UNIX)) {
       "/snap/bin/sqlc"
     } else {
       error("Operating system not supported")

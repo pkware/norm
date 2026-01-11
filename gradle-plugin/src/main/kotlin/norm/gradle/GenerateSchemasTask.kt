@@ -1,9 +1,9 @@
 package norm.gradle
 
-import norm.generator.generateCode
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.adapter
 import com.squareup.wire.WireJsonAdapterFactory
+import norm.generator.generateCode
 import okio.buffer
 import okio.sink
 import okio.source

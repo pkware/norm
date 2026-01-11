@@ -1,9 +1,5 @@
 package norm.gradle
 
-import org.gradle.testkit.runner.GradleRunner
-import org.junit.jupiter.api.BeforeEach
-import org.junit.jupiter.api.io.TempDir
-import java.nio.file.Path
 import com.google.common.truth.Truth.assertThat
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.adapter
@@ -11,13 +7,17 @@ import com.squareup.wire.WireJsonAdapterFactory
 import okio.buffer
 import okio.sink
 import okio.source
+import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome.SUCCESS
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.io.TempDir
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 import plugin.GenerateRequest
 import java.nio.file.DirectoryNotEmptyException
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
+import java.nio.file.Path
 import java.util.stream.Stream
 import kotlin.io.path.Path
 import kotlin.io.path.absolutePathString

@@ -18,9 +18,9 @@ import java.sql.ResultSet
  * Aims to carry the information need to generate Kotlin code for a SQL statement.
  */
 internal class SqlStatement(
-    private val catalog: Catalog,
-    private val query: Query,
-    private val generator: TypeRepository,
+  private val catalog: Catalog,
+  private val query: Query,
+  private val generator: TypeRepository,
 ) {
 
   /**
