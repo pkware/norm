@@ -10,6 +10,7 @@ import okio.source
 import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome.SUCCESS
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
@@ -91,7 +92,55 @@ class NormPluginTest {
     }
   }
 
-  // TODO Test that package with periods gets properly generated
+  @Test
+  fun `packageNames with periods are correctly generated`() {
+    val scenarioDirectory = scenarios().findFirst().get()
+    scenarioDirectory.resolve("sql").absolutePathString()
+    val buildFileContent = """
+      plugins {
+        kotlin("jvm")
+        id("com.pkware.norm")
+      }
+
+      norm {
+        databases {
+          create("Test") {
+            packageName = "example.with.periods"
+            schemas.addAll("${testProjectDir.relativize(scenarioDirectory.resolve("schema.sql"))}")
+            queries.addAll("${testProjectDir.relativize(scenarioDirectory.resolve("queries.sql"))}")
+          }
+        }
+      }
+    """.trimIndent()
+    buildFile.writeText(buildFileContent)
+
+    val result = GradleRunner.create()
+      .withProjectDir(testProjectDir.toFile())
+      .withArguments("normGenerateCode")
+      .withPluginClasspath()
+      .build()
+
+    println(result.output)
+    assertThat(result.task(":normGenerateCodeTest")!!.outcome).isEqualTo(SUCCESS)
+
+    val generatedCodeDirectory = testProjectDir.resolve("build").resolve(NormPlugin.NORM_GENERATED_CODE)
+
+    // Verify the folder structure matches the package name with periods
+    val packageDirectory = generatedCodeDirectory.resolve("example/with/periods")
+    assertThat(Files.exists(packageDirectory)).isTrue()
+
+    // Verify generated Kotlin files have the correct package declaration
+    Files.list(packageDirectory).use { files ->
+      val kotlinFiles = files.filter { it.toString().endsWith(".kt") }.toList()
+      assertThat(kotlinFiles).isNotEmpty()
+
+      kotlinFiles.forEach { kotlinFile ->
+        val content = Files.readString(kotlinFile)
+        assertThat(content).contains("package example.with.periods")
+      }
+    }
+  }
+
   // TODO Test that tasks are correctly cached
 
   @OptIn(ExperimentalStdlibApi::class)
