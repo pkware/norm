@@ -8,8 +8,10 @@ import kotlin.jvm.Throws
 
 /**
  * Lazy-evaluation of a SQL query that potentially returns many results.
+ *
+ * @param RowType The type of object produced from each row of the result set.
  */
-public interface Many<T> {
+public interface Many<RowType> {
   /**
    * Consumes the underlying [ResultSet] as a [Stream].
    *
@@ -23,7 +25,7 @@ public interface Many<T> {
    * attempt.
    */
   @Throws(SQLException::class, SQLTimeoutException::class)
-  public fun stream(): Stream<T> = list().stream()
+  public fun stream(): Stream<RowType> = list().stream()
 
   /**
    * Consumes the underlying [ResultSet] as a [MutableList].
@@ -36,14 +38,14 @@ public interface Many<T> {
    * attempt.
    */
   @Throws(SQLException::class, SQLTimeoutException::class)
-  public fun list(): MutableList<T> = collection(::mutableListOf)
+  public fun list(): MutableList<RowType> = collection(::mutableListOf)
 
   /**
    * Consumes the underlying [ResultSet] as a [MutableSet].
    *
-   * Be cautious about using this method. The uniqueness of [T] may not be the same as how `DISTINCT` behaves in SQL.
+   * Be cautious about using this method. The uniqueness of [RowType] may not be the same as how `DISTINCT` behaves in SQL.
    * Generally, this function is useful for simple cases such as a set of primary keys, but prefer [list] for more
-   * complex [T]s.
+   * complex [RowType]s.
    *
    * The caller receives possession of the set. It will not be modified after being returned.
    *
@@ -53,7 +55,7 @@ public interface Many<T> {
    * attempt.
    */
   @Throws(SQLException::class, SQLTimeoutException::class)
-  public fun distinct(): MutableSet<T> = collection(::mutableSetOf)
+  public fun distinct(): MutableSet<RowType> = collection(::mutableSetOf)
 
   /**
    * Consumes the underlying [ResultSet] as a [TCollection].
@@ -70,13 +72,13 @@ public interface Many<T> {
    * attempt.
    */
   @Throws(SQLException::class, SQLTimeoutException::class)
-  public fun <TCollection : MutableCollection<T>> collection(factory: () -> TCollection): TCollection
+  public fun <TCollection : MutableCollection<RowType>> collection(factory: () -> TCollection): TCollection
 
   /**
-   * Consumes a single [T] from the underlying [ResultSet].
+   * Consumes a single [RowType] from the underlying [ResultSet].
    *
-   * If the [ResultSet] has no entries, returns `null`. Note that if [T] is naturally nullable, you cannot distinguish
-   * between a `null` [T] and an empty [ResultSet].
+   * If the [ResultSet] has no entries, returns `null`. Note that if [RowType] is naturally nullable, you cannot distinguish
+   * between a `null` [RowType] and an empty [ResultSet].
    *
    * @throws IllegalStateException if the query returns more than one result.
    * @throws SQLException if a database access error occurs.
@@ -85,5 +87,5 @@ public interface Many<T> {
    * attempt.
    */
   @Throws(IllegalStateException::class, SQLException::class, SQLTimeoutException::class)
-  public fun firstOrNull(): T? = list().firstOrNull()
+  public fun firstOrNull(): RowType? = list().firstOrNull()
 }
