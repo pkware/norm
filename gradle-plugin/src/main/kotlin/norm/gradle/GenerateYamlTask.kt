@@ -10,6 +10,8 @@ import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.TaskAction
 import org.intellij.lang.annotations.Language
 import javax.inject.Inject
+import kotlin.io.path.Path
+import kotlin.io.path.relativeTo
 
 /**
  * Generates a YAML configuration file for use with `sqlc`.
@@ -22,10 +24,10 @@ internal abstract class GenerateYamlTask @Inject constructor(
 ) : DefaultTask() {
 
   /**
-   * sqlc insists on resolving the SQL file locations relative to the configuration file.
+   * The absolute path of the project directory.
    */
   @get:Internal
-  abstract val relativizer: Property<String>
+  abstract val projectDirectory: Property<String>
 
   @get:OutputFile
   abstract val sqlcConfiguration: RegularFileProperty
@@ -34,15 +36,22 @@ internal abstract class GenerateYamlTask @Inject constructor(
     group = NormPlugin.NORM_GROUP
     description = "Generates a sqlc YAML configuration file."
     sqlcConfiguration.set(project.layout.buildDirectory.file("tmp/norm/${database.name}/sqlc.yaml"))
-    val sqlcConfigurationFile = sqlcConfiguration.get().asFile
-    relativizer.set(project.projectDir.toRelativeString(sqlcConfigurationFile))
+    projectDirectory.set(project.projectDir.absolutePath)
   }
 
   @TaskAction
   fun generateYaml() {
-    val relativizer = relativizer.get()
-    val schemaPaths = database.schemas.get().map { "$relativizer/$it" }
-    val queryPaths = database.queries.get().map { "$relativizer/$it" }
+    // sqlc insists on resolving the SQL file locations relative to the directory containing the configuration file.
+    val projectDirectory = Path(projectDirectory.get())
+    val sqlcConfigurationDirectory = sqlcConfiguration.get().asFile.toPath().parent
+    val schemaPaths = database.schemas.get().map {
+      val schemaFile = projectDirectory.resolve(it)
+      schemaFile.relativeTo(sqlcConfigurationDirectory).toString()
+    }
+    val queryPaths = database.queries.get().map {
+      val queryFile = projectDirectory.resolve(it)
+      queryFile.relativeTo(sqlcConfigurationDirectory).toString()
+    }
 
     @Language("yaml")
     val template = """

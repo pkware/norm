@@ -21,7 +21,6 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.stream.Stream
 import kotlin.io.path.Path
-import kotlin.io.path.absolutePathString
 import kotlin.io.path.relativeTo
 import kotlin.io.path.writeText
 
@@ -39,7 +38,6 @@ class NormPluginTest {
   @ParameterizedTest
   @MethodSource("scenarios")
   fun `code can be generated`(scenarioDirectory: Path) {
-    scenarioDirectory.resolve("sql").absolutePathString()
     val buildFileContent = """
       plugins {
         kotlin("jvm")
@@ -50,8 +48,8 @@ class NormPluginTest {
         databases {
           create("Test") {
             packageName = "example"
-            schemas.addAll("${testProjectDir.relativize(scenarioDirectory.resolve("schema.sql"))}")
-            queries.addAll("${testProjectDir.relativize(scenarioDirectory.resolve("queries.sql"))}")
+            schemas.addAll("${scenarioDirectory.resolve("schema.sql").normalize().toAbsolutePath()}")
+            queries.addAll("${scenarioDirectory.resolve("queries.sql").normalize().toAbsolutePath()}")
           }
         }
       }
@@ -95,7 +93,6 @@ class NormPluginTest {
   @Test
   fun `packageNames with periods are correctly generated`() {
     val scenarioDirectory = scenarios().findFirst().get()
-    scenarioDirectory.resolve("sql").absolutePathString()
     val buildFileContent = """
       plugins {
         kotlin("jvm")
@@ -106,8 +103,8 @@ class NormPluginTest {
         databases {
           create("Test") {
             packageName = "example.with.periods"
-            schemas.addAll("${testProjectDir.relativize(scenarioDirectory.resolve("schema.sql"))}")
-            queries.addAll("${testProjectDir.relativize(scenarioDirectory.resolve("queries.sql"))}")
+            schemas.addAll("${scenarioDirectory.resolve("schema.sql").normalize().toAbsolutePath()}")
+            queries.addAll("${scenarioDirectory.resolve("queries.sql").normalize().toAbsolutePath()}")
           }
         }
       }
@@ -139,6 +136,37 @@ class NormPluginTest {
         assertThat(content).contains("package example.with.periods")
       }
     }
+  }
+
+  @Test
+  fun `relative paths can be used for schemas and queries`() {
+    val scenarioDirectory = scenarios().findFirst().get()
+    val buildFileContent = """
+      plugins {
+        kotlin("jvm")
+        id("com.pkware.norm")
+      }
+
+      norm {
+        databases {
+          create("Test") {
+            packageName = "example"
+            schemas.addAll("../${testProjectDir.relativize(scenarioDirectory.resolve("schema.sql"))}")
+            queries.addAll("../${testProjectDir.relativize(scenarioDirectory.resolve("queries.sql"))}")
+          }
+        }
+      }
+    """.trimIndent()
+    buildFile.writeText(buildFileContent)
+
+    val result = GradleRunner.create()
+      .withProjectDir(testProjectDir.toFile())
+      .withArguments("normGenerateCode")
+      .withPluginClasspath()
+      .build()
+
+    println(result.output)
+    assertThat(result.task(":normGenerateCodeTest")!!.outcome).isEqualTo(SUCCESS)
   }
 
   // TODO Test that tasks are correctly cached
