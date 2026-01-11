@@ -62,8 +62,7 @@ public class PostgresQueries(
     pg_bpchar_type: String?,
     string_type: String,
   ) -> T, block: (String, ResultSet.() -> T) -> R): R {
-    val sql =
-        "SELECT smallserial_type, serial2_type, pg_serial2_type, serial_type, serial4_type, pg_serial4_type, bigserial_type, serial8_type, pg_serial8_type, smallint_type, int2_type, pg_int2_type, integer_type, int_type, int4_type, pg_int4_type, bigint_type, int8_type, pg_int8_type, real_type, float4_type, pg_float4_type, float_type, double_type, float8_type, pg_float8_type, numeric_type, pg_numeric_type, bool_type, pg_bool_type, jsonb_type, blob_type, text_type, varchar_type, pg_varchar_type, bpchar_type, pg_bpchar_type, string_type FROM type"
+    val sql = "SELECT smallserial_type, serial2_type, pg_serial2_type, serial_type, serial4_type, pg_serial4_type, bigserial_type, serial8_type, pg_serial8_type, smallint_type, int2_type, pg_int2_type, integer_type, int_type, int4_type, pg_int4_type, bigint_type, int8_type, pg_int8_type, real_type, float4_type, pg_float4_type, float_type, double_type, float8_type, pg_float8_type, numeric_type, pg_numeric_type, bool_type, pg_bool_type, jsonb_type, blob_type, text_type, varchar_type, pg_varchar_type, bpchar_type, pg_bpchar_type, string_type FROM type"
     val rowReader: ResultSet.() -> T = {
       mapper(
         getShort(1).takeUnless { wasNull() },
