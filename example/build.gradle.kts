@@ -1,7 +1,7 @@
 import org.gradle.kotlin.dsl.version
 
 plugins {
-  kotlin("jvm") version "2.1.20"
+  kotlin("jvm") version "2.2.21"
   // TODO Use the latest version, and don't use a SNAPSHOT
   id("com.pkware.norm") version "1.0.0-SNAPSHOT"
 }
