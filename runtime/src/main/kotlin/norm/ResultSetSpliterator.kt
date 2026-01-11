@@ -40,5 +40,5 @@ internal class ResultSetSpliterator<RowType>(
 
   override fun estimateSize(): Long = Long.MAX_VALUE
 
-  override fun characteristics(): Int = Spliterator.SIZED or Spliterator.IMMUTABLE
+  override fun characteristics(): Int = Spliterator.IMMUTABLE
 }

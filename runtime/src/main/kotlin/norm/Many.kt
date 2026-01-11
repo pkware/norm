@@ -15,7 +15,8 @@ public interface Many<RowType> {
   /**
    * Consumes the underlying [ResultSet] as a [Stream].
    *
-   * You must call [Stream.close] after completion, or you will leak the SQL resources.
+   * You must call [Stream.close] after completion, or you will leak the SQL resources. This is typically done via
+   * try-with-resources, or Kotlin's [use] function.
    *
    * Prefer [list] when practical, as the lifecycle of the SQL resources is better managed.
    *
@@ -77,8 +78,8 @@ public interface Many<RowType> {
   /**
    * Consumes a single [RowType] from the underlying [ResultSet].
    *
-   * If the [ResultSet] has no entries, returns `null`. Note that if [RowType] is naturally nullable, you cannot distinguish
-   * between a `null` [RowType] and an empty [ResultSet].
+   * If the [ResultSet] has no entries, returns `null`. Note that if [RowType] is naturally nullable, you cannot
+   * distinguish between a `null` [RowType] and an empty [ResultSet].
    *
    * @throws IllegalStateException if the query returns more than one result.
    * @throws SQLException if a database access error occurs.
