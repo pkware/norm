@@ -15,14 +15,14 @@ import kotlin.String
 import kotlin.jvm.Throws
 import norm.Many
 import norm.NormDriver
+import norm.Query
 import norm.RealTransacter
 
 public class PostgresQueries(
   driver: NormDriver,
 ) : RealTransacter(driver),
     Queries {
-  @Throws(SQLException::class)
-  override fun <T : Any> all(mapper: (
+  private fun <T : Any, R> all(mapper: (
     smallserialtype: Short?,
     serial2type: Short?,
     pgserial2type: Short?,
@@ -61,7 +61,7 @@ public class PostgresQueries(
     bpchartype: String?,
     pgbpchartype: String?,
     stringtype: String?,
-  ) -> T): Many<T> {
+  ) -> T, block: (String, ResultSet.() -> T) -> R): R {
     val sql =
         "SELECT smallserialtype, serial2type, pgserial2type, serialtype, serial4type, pgserial4type, bigserialtype, serial8type, pgserial8type, smallinttype, int2type, pgint2type, integertype, inttype, int4type, pgint4type, biginttype, int8type, pgint8type, realtype, float4type, pgfloat4type, floattype, doubletype, float8type, pgfloat8type, numerictype, pgnumerictype, booltype, pgbooltype, jsonbtype, blobtype, texttype, varchartype, pgvarchartype, bpchartype, pgbpchartype, stringtype FROM Type"
     val rowReader: ResultSet.() -> T = {
@@ -106,6 +106,89 @@ public class PostgresQueries(
         getString(38),
       )
     }
-    return driver.queryMany(sql, rowReader)
+    return block(sql, rowReader)
   }
+
+  @Throws(SQLException::class)
+  override fun <T : Any> all(mapper: (
+    smallserialtype: Short?,
+    serial2type: Short?,
+    pgserial2type: Short?,
+    serialtype: Int?,
+    serial4type: Int?,
+    pgserial4type: Int?,
+    bigserialtype: Long?,
+    serial8type: Long?,
+    pgserial8type: Long?,
+    smallinttype: Short?,
+    int2type: Short?,
+    pgint2type: Short?,
+    integertype: Int?,
+    inttype: Int?,
+    int4type: Int?,
+    pgint4type: Int?,
+    biginttype: Long?,
+    int8type: Long?,
+    pgint8type: Long?,
+    realtype: Float?,
+    float4type: Float?,
+    pgfloat4type: Float?,
+    floattype: Double?,
+    doubletype: Double?,
+    float8type: Double?,
+    pgfloat8type: Double?,
+    numerictype: BigDecimal?,
+    pgnumerictype: BigDecimal?,
+    booltype: Boolean?,
+    pgbooltype: Boolean?,
+    jsonbtype: String?,
+    blobtype: Blob?,
+    texttype: String?,
+    varchartype: String?,
+    pgvarchartype: String?,
+    bpchartype: String?,
+    pgbpchartype: String?,
+    stringtype: String?,
+  ) -> T): Many<T> = all(mapper, driver::queryMany)
+
+  override fun <T : Any> allDynamically(mapper: (
+    smallserialtype: Short?,
+    serial2type: Short?,
+    pgserial2type: Short?,
+    serialtype: Int?,
+    serial4type: Int?,
+    pgserial4type: Int?,
+    bigserialtype: Long?,
+    serial8type: Long?,
+    pgserial8type: Long?,
+    smallinttype: Short?,
+    int2type: Short?,
+    pgint2type: Short?,
+    integertype: Int?,
+    inttype: Int?,
+    int4type: Int?,
+    pgint4type: Int?,
+    biginttype: Long?,
+    int8type: Long?,
+    pgint8type: Long?,
+    realtype: Float?,
+    float4type: Float?,
+    pgfloat4type: Float?,
+    floattype: Double?,
+    doubletype: Double?,
+    float8type: Double?,
+    pgfloat8type: Double?,
+    numerictype: BigDecimal?,
+    pgnumerictype: BigDecimal?,
+    booltype: Boolean?,
+    pgbooltype: Boolean?,
+    jsonbtype: String?,
+    blobtype: Blob?,
+    texttype: String?,
+    varchartype: String?,
+    pgvarchartype: String?,
+    bpchartype: String?,
+    pgbpchartype: String?,
+    stringtype: String?,
+  ) -> T): Query<T> = all(mapper, driver::dynamic)
 }

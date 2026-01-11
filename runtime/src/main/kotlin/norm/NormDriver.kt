@@ -180,6 +180,26 @@ public class NormDriver(private val dataSource: DataSource) {
   }
 
   /**
+   * Prepares a [Query] for executing a dynamic query.
+   *
+   * This function _does not_ execute the query.
+   *
+   * Unlike other methods in this class, this function doesn't take a `queryBinder`. That's because building a dynamic
+   * query with arbitrary parameters in addition to parameters defined statically is extremely brittle. It requires
+   * developers to look in multiple locations for the right combination of argument names, positions, and ordering.
+   * Queries that are intended for dynamic use should define only the `SELECT` clause.
+   *
+   * @param sql to execute.
+   * @param rowReader Expression to extract an [RowType] from the [ResultSet].
+   * @param RowType Type to return.
+   * @return the deferred execution of the [sql] query.
+   */
+  public fun <RowType> dynamic(
+    @Language("PostgreSQL") sql: String,
+    rowReader: ResultSet.() -> RowType,
+  ): Query<RowType> = BindingQuery(sql, rowReader, this)
+
+  /**
    * @param sql to execute.
    * @param rowReader Expression to extract an [RowType] from the [ResultSet].
    * @param queryBinder Expression to populate and prepare the [PreparedStatement].

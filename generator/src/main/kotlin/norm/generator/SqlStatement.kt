@@ -56,6 +56,16 @@ internal class SqlStatement(
     }
 
   /**
+   * Whether this SQL statement can have a dynamic variant generated.
+   *
+   * Dynamic queries return [Query] instead of [Many], allowing callers to append SQL fragments
+   * and bind parameters at runtime. Only parameterless `:many` queries are eligible, as they
+   * serve as a base for dynamic composition.
+   */
+  val canBeDynamic: Boolean
+    get() = command == Command.MANY && parameters.isEmpty()
+
+  /**
    * Name assigned to the SQL statement by the developer.
    *
    * See [sqlc documentation](https://docs.sqlc.dev/en/latest/reference/query-annotations.html).

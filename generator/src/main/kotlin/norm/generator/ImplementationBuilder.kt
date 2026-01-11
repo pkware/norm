@@ -70,28 +70,172 @@ internal fun mapperFunction(statement: SqlStatement): FunSpec.Builder {
 }
 
 /**
- * Adds a method for the given SQL statement to the receiver `class` builder.
+ * Adds implementation method(s) for the given SQL statement to the receiver `class` builder.
  */
 internal fun TypeSpec.Builder.addSqlStatementImplementationMethod(statement: SqlStatement) {
-  val classBuilder = this
+  when (statement.command) {
+    Command.ONE -> addOneImplementation(statement)
+    Command.MANY -> addManyImplementation(statement)
+    Command.EXEC_ROWS -> addExecRowsImplementation(statement)
+    Command.EXEC -> TODO(Command.EXEC.toString())
+  }
+}
+
+/**
+ * Generates the implementation for a `:one` query.
+ *
+ * These queries return exactly one result row, mapped via the provided mapper function.
+ */
+private fun TypeSpec.Builder.addOneImplementation(statement: SqlStatement) {
   val function = mapperFunction(statement).apply {
     addModifiers(KModifier.OVERRIDE)
     addStatement("val sql = %S", statement.sql)
-    when (statement.command) {
-      Command.ONE -> buildOne(statement)
-      Command.MANY -> buildMany(statement)
-      Command.EXEC_ROWS -> {
-        typeVariables.clear()
-        parameters.removeLast()
-        buildExecRows(statement)
-      }
-      Command.EXEC -> TODO(Command.EXEC.toString())
-    }
+    buildOne(statement)
   }
-  classBuilder.addFunction(function.build())
+  addFunction(function.build())
+}
+
+/**
+ * Generates the implementation for a `:many` query.
+ *
+ * Uses a helper pattern to enable code sharing between `Many<T>` and `Query<T>` variants.
+ *
+ * This generates:
+ * 1. A private helper function that takes a block parameter to decide which driver method to call
+ * 2. A public `Many` variant that calls the helper with `driver::queryMany`
+ * 3. If eligible, a public `Query` variant that calls the helper with `driver::dynamic`
+ */
+private fun TypeSpec.Builder.addManyImplementation(statement: SqlStatement) {
+  val resultRowShape = statement.resultRowShape
+  val mapperReturnType = resultRowShape.mapperReturnType
+  val rTypeVariable = TypeVariableName("R")
+  val queryParameters = statement.parameters.mapNotNull(Parameter::column)
+  // 1. Private helper function
+  val helperFunction = FunSpec.builder(statement.name)
+    .addModifiers(KModifier.PRIVATE)
+    .addTypeVariable(mapperReturnType)
+    .addTypeVariable(rTypeVariable)
+    .apply {
+      // Add query parameters first
+      for (parameter in queryParameters) {
+        addParameter(
+          ParameterSpec.builder(parameter.name, parameter.typeName)
+            .addKdoc(parameter.comment)
+            .build(),
+        )
+      }
+    }
+    .addParameter(
+      ParameterSpec(
+        MAPPER_PARAMETER_NAME,
+        LambdaTypeName.get(
+          parameters = resultRowShape.creationParameters.toTypedArray<ParameterSpec>(),
+          returnType = mapperReturnType,
+        ),
+      ),
+    )
+    .addParameter(
+      ParameterSpec(
+        "block",
+        LambdaTypeName.get(
+          parameters = listOf(
+            ParameterSpec.unnamed(String::class.asTypeName()),
+            ParameterSpec.unnamed(
+              LambdaTypeName.get(
+                receiver = RESULT_SET,
+                returnType = mapperReturnType,
+              ),
+            ),
+          ),
+          returnType = rTypeVariable,
+        ),
+      ),
+    )
+    .returns(rTypeVariable)
+    .addStatement("val sql = %S", statement.sql)
+    .apply {
+      beginControlFlow("val rowReader: %T.() -> %T = {", RESULT_SET, mapperReturnType)
+      addCode("%L\n", mapperInvocation(resultRowShape.builder))
+      endControlFlow()
+    }
+    .addStatement("return block(sql, rowReader)")
+    .build()
+  addFunction(helperFunction)
+  // 2. Public Many variant: override fun <T : Any> queryName(mapper: ...) -> Many<T>
+  val manyFunction = FunSpec.builder(statement.name)
+    .addModifiers(KModifier.OVERRIDE)
+    .throws(SQLException::class)
+    .addTypeVariable(mapperReturnType)
+    .apply {
+      for (parameter in queryParameters) {
+        addParameter(
+          ParameterSpec.builder(parameter.name, parameter.typeName)
+            .addKdoc(parameter.comment)
+            .build(),
+        )
+      }
+    }
+    .addParameter(
+      ParameterSpec(
+        MAPPER_PARAMETER_NAME,
+        LambdaTypeName.get(
+          parameters = resultRowShape.creationParameters.toTypedArray<ParameterSpec>(),
+          returnType = mapperReturnType,
+        ),
+      ),
+    )
+    .returns(statement.command.applyTo(mapperReturnType))
+    .apply {
+      val args = (
+        queryParameters.map { CodeBlock.of("%N", it.name) } + listOf(
+          CodeBlock.of("%N", MAPPER_PARAMETER_NAME),
+          CodeBlock.of("driver::queryMany"),
+        )
+        ).joinToString(", ")
+      addStatement("return %N($args)", statement.name)
+    }
+    .build()
+  addFunction(manyFunction)
+  // 3. If eligible, public Query variant: override fun <T : Any> queryNameDynamically(mapper: ...) -> Query<T>
+  if (statement.canBeDynamic) {
+    val dynamicName = "${statement.name}Dynamically"
+    val dynamicFunction = FunSpec.builder(dynamicName)
+      .addModifiers(KModifier.OVERRIDE)
+      .addTypeVariable(mapperReturnType)
+      .addParameter(
+        ParameterSpec(
+          MAPPER_PARAMETER_NAME,
+          LambdaTypeName.get(
+            parameters = resultRowShape.creationParameters.toTypedArray<ParameterSpec>(),
+            returnType = mapperReturnType,
+          ),
+        ),
+      )
+      .returns(Command.NORM_QUERY.parameterizedBy(mapperReturnType))
+      .addStatement("return %N(%N, driver::dynamic)", statement.name, MAPPER_PARAMETER_NAME)
+      .build()
+    addFunction(dynamicFunction)
+  }
+}
+
+/**
+ * Generates the implementation for an `:execrows` query.
+ *
+ * These queries execute DML and return the number of affected rows.
+ * If the statement can be batched, also generates a batch variant.
+ */
+private fun TypeSpec.Builder.addExecRowsImplementation(statement: SqlStatement) {
+  val function = mapperFunction(statement).apply {
+    addModifiers(KModifier.OVERRIDE)
+    typeVariables.clear()
+    parameters.removeLast()
+    addStatement("val sql = %S", statement.sql)
+    buildExecRows(statement)
+  }
+  addFunction(function.build())
 
   if (statement.canBeBatched) {
-    classBuilder.addFunction(buildExecRowsBatch(statement))
+    addFunction(buildExecRowsBatch(statement))
   }
 }
 
@@ -100,7 +244,7 @@ internal fun TypeSpec.Builder.addSqlStatementImplementationMethod(statement: Sql
  *
  * The query author is in the best position to determine if a query is capable of returning no or some results.
  * The caller in Java shouldn't have to think about that.
- * Accordingly, we make this query be exact and the [buildMany] query flexible on return number.
+ * Accordingly, we make `:one` queries be exact and `:many` queries flexible on return number.
  */
 private fun FunSpec.Builder.buildOne(statement: SqlStatement) {
   val resultRowShape = statement.resultRowShape
@@ -119,33 +263,6 @@ private fun FunSpec.Builder.buildOne(statement: SqlStatement) {
     endControlFlow()
   } else {
     addStatement("return driver.queryOne(sql, rowReader)")
-  }
-}
-
-/**
- * Builds a function that returns 0 to many results.
- *
- * The query author is in the best position to determine if a query is capable of returning no or some results.
- * The caller in Java shouldn't have to think about that.
- * Accordingly, we make this query return a `Many` and the [buildOne] query be exact.
- */
-private fun FunSpec.Builder.buildMany(statement: SqlStatement) {
-  val resultRowShape = statement.resultRowShape
-  beginControlFlow("val rowReader: %T.() -> %T = {", RESULT_SET, resultRowShape.mapperReturnType)
-  addCode("%L\n", mapperInvocation(resultRowShape.builder))
-  // Close the rowReader
-  endControlFlow()
-
-  val queryParameters = statement.parameters.mapNotNull(Parameter::column)
-  if (queryParameters.isNotEmpty()) {
-    beginControlFlow("return driver.queryMany(sql, rowReader) {")
-    for ((index, parameter) in queryParameters.withIndex()) {
-      val typeInfo = parameter.mappableType
-      addCode("%L\n", typeInfo.statementAction(index + 1, CodeBlock.of(parameter.name)))
-    }
-    endControlFlow()
-  } else {
-    addStatement("return driver.queryMany(sql, rowReader)")
   }
 }
 

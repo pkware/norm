@@ -51,6 +51,7 @@ internal enum class Command(private val sqlcCmd: String) {
 
   companion object {
     private val NORM_MANY = ClassName(RUNTIME_PACKAGE, "Many")
+    internal val NORM_QUERY = ClassName(RUNTIME_PACKAGE, "Query")
 
     /**
      * Finds the [Command] matching the sqlc `cmd` string.

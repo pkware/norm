@@ -7,5 +7,5 @@ plugins {
 dependencies {
   compileOnlyApi(libs.postgresql)
 
-  testImplementation(libs.mockito.kotlin)
+  testImplementation(libs.bundles.mockito)
 }

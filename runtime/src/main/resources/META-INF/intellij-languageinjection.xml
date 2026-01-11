@@ -1,0 +1,10 @@
+<languageInjections>
+  <!-- SQL injection for Query.append() fragments -->
+  <injection language="PostgreSQL" injector-id="kotlin">
+    <display-name>Norm Query.append SQL fragment</display-name>
+    <place><![CDATA[
+      kotlinParameter()
+        .ofFunction(0, kotlinFunction().withName("append").definedInClass("norm.Query"))
+    ]]></place>
+  </injection>
+</languageInjections>

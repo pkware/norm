@@ -2,6 +2,7 @@ package example
 
 import norm.NormDriver
 import org.postgresql.ds.PGSimpleDataSource
+import kotlin.random.Random
 
 fun main() {
   val queries = setupNorm()
@@ -48,6 +49,34 @@ fun main() {
   // Any query can be mapped to a custom type. This makes it easy to use existing DTOs, modify mutable models, etc.
   val authorContacts = queries.listAuthors { id, name, email, revision ->
     AuthorContact(name, email)
+  }.list()
+
+  // Norm provides a Query API for dynamic SQL. When possible, prefer the static API as it's type-safe,
+  // verified at compile time, and slightly more efficient. Norm's Query API is more memory and CPU efficient than
+  // libraries that use reflection-based mapping such as Spring's JdbcClient.
+  val query = queries.listAuthorsDynamically()
+    .append(" WHERE")
+  if (Random.nextBoolean()) {
+    query
+      .append(" name LIKE '%:name%'")
+      .bind("name", "George")
+  } else {
+    query
+      .append(" startsWith(name, :letter)")
+      .bind("letter", "G")
+  }
+  val dynamicAuthors = query.list()
+
+  // Kotlin makes dynamic query building more pleasant.
+  val kotlinDynamicAuthors = queries.listAuthorsDynamically().run {
+    append(" WHERE")
+    if (Random.nextBoolean()) {
+      append(" name LIKE '%:name%'")
+      bind("name", "George")
+    } else {
+      append(" startsWith(name, :letter)")
+      bind("letter", "G")
+    }
   }.list()
 
   // DMLs are also supported.

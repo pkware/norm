@@ -2,8 +2,12 @@ package norm.generator
 
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
+import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier.ABSTRACT
+import com.squareup.kotlinpoet.LambdaTypeName
 import com.squareup.kotlinpoet.MemberName
+import com.squareup.kotlinpoet.ParameterSpec
+import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.TypeSpec
 import plugin.Parameter
 
@@ -86,7 +90,56 @@ internal fun TypeSpec.Builder.addSqlStatementInterfaceMethod(query: SqlStatement
     interfaceBuilder.addFunction(batchSizedFunction.build())
   }
   interfaceBuilder.addFunction(simpleFunction.build())
+
+  // Generate dynamic query variants for eligible queries
+  if (query.canBeDynamic) {
+    interfaceBuilder.addDynamicInterfaceMethods(query)
+  }
 }
+
+/**
+ * Adds dynamic query interface methods for the given SQL statement.
+ *
+ * Dynamic queries return [Query] instead of [Many], allowing callers to append SQL fragments
+ * and bind parameters at runtime.
+ */
+private fun TypeSpec.Builder.addDynamicInterfaceMethods(query: SqlStatement) {
+  val dynamicName = "${query.name}Dynamically"
+  val resultRowShape = query.resultRowShape
+  val mapperReturnType = resultRowShape.mapperReturnType
+
+  // Abstract mapper function: fun <T : Any> queryNameDynamically(mapper: ...) -> Query<T>
+  val dynamicMapperFunction = FunSpec.builder(dynamicName)
+    .addTypeVariable(mapperReturnType)
+    .addParameter(
+      ParameterSpec(
+        MAPPER_PARAMETER_NAME,
+        LambdaTypeName.get(
+          parameters = resultRowShape.creationParameters.toTypedArray(),
+          returnType = mapperReturnType,
+        ),
+      ),
+    )
+    .returns(Command.NORM_QUERY.parameterizedBy(mapperReturnType))
+    .addModifiers(ABSTRACT)
+    .build()
+  addFunction(dynamicMapperFunction)
+
+  // Simple function: fun queryNameDynamically(): Query<RowType> = queryNameDynamically(::RowType)
+  val dynamicSimpleFunction = FunSpec.builder(dynamicName)
+    .returns(Command.NORM_QUERY.parameterizedBy(resultRowShape.kotlinType!!))
+  val simpleFunctionBody = CodeBlock.builder()
+    .add("return %N(", dynamicName)
+  if (resultRowShape.isComposedOfMultipleColumns) {
+    simpleFunctionBody.add("%L)", (resultRowShape.kotlinType as ClassName).constructorReference())
+  } else {
+    simpleFunctionBody.add("%L)", COLUMN_VALUE)
+  }
+  dynamicSimpleFunction.addCode(simpleFunctionBody.build())
+  addFunction(dynamicSimpleFunction.build())
+}
+
+private const val MAPPER_PARAMETER_NAME = "mapper"
 
 /**
  * Reference to a runtime method that returns the input value.

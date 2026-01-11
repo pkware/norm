@@ -81,7 +81,7 @@ class NormPluginTest {
           Files.copy(
             file,
             target,
-            // TODO Uncomment this to set up a new scenario
+            // TODO Uncomment this to set up a new scenario or replace golden files
 //            java.nio.file.StandardCopyOption.REPLACE_EXISTING
           )
         } catch (ignored: FileAlreadyExistsException) {
