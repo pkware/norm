@@ -25,5 +25,5 @@ repositories {
 
 dependencies {
   implementation(kotlin("gradle-plugin"))
-  implementation("com.pkware:pkware-conventions:4.8.1")
+  implementation("com.pkware:pkware-conventions:4.11.0")
 }

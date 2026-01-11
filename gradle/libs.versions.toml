@@ -1,5 +1,5 @@
 [versions]
-wire = "4.9.11"
+wire = "5.4.0"
 
 [libraries]
 kotlinPoet = "com.squareup:kotlinpoet:1.18.1"

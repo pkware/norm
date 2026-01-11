@@ -22,5 +22,5 @@ pluginManagement {
 }
 
 plugins {
-  id("com.pkware.gradle.gradle-enterprise") version "4.8.1"
+  id("com.pkware.gradle.gradle-enterprise") version "4.11.0"
 }
