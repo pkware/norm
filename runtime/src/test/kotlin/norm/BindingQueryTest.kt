@@ -302,6 +302,7 @@ private class StubMany<T>(private val items: List<T>) : Many<T> {
 /**
  * A no-op PreparedStatement for delegation.
  */
+@Suppress("EmptyFunctionBlock") // We're inheriting but don't need most implementations
 private object NoOpPreparedStatement : PreparedStatement {
   override fun executeQuery() = throw UnsupportedOperationException()
   override fun executeUpdate() = throw UnsupportedOperationException()

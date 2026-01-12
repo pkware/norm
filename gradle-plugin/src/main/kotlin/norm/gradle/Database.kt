@@ -11,9 +11,6 @@ import org.gradle.api.tasks.Input
  */
 public abstract class Database(private val name: String) : Named {
 
-  @Input
-  override fun getName(): String = name
-
   /**
    * Paths to files containing the SQL schema.
    *
@@ -35,6 +32,9 @@ public abstract class Database(private val name: String) : Named {
    */
   @get:Input
   public abstract val packageName: Property<String>
+
+  @Input
+  override fun getName(): String = name
 
   internal fun schemaJsonFile(project: Project) = project.layout.buildDirectory.file("tmp/norm/$name/schema.json")
 }

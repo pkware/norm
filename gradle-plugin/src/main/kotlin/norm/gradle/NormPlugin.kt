@@ -9,6 +9,9 @@ import org.gradle.kotlin.dsl.support.uppercaseFirstChar
 import org.jetbrains.kotlin.gradle.dsl.KotlinProjectExtension
 import org.jetbrains.kotlin.gradle.plugin.KotlinSourceSetContainer
 
+/**
+ * Gradle build plugin for generating Kotlin code from SQL modes using NORM.
+ */
 public class NormPlugin : Plugin<Project> {
   override fun apply(target: Project): Unit = target.run {
     configurations.create("norm") {
@@ -33,11 +36,11 @@ public class NormPlugin : Plugin<Project> {
         tasks.register<GenerateYamlTask>("normGenerateYaml${name.uppercaseFirstChar()}", this)
       val sqlcTask = tasks.register<RunSqlcTask>("normRunSqlc${name.uppercaseFirstChar()}", this)
       sqlcTask.configure {
-        sqlcConfiguration.set(yamlTask.flatMap { it.sqlcConfiguration })
+        sqlcConfiguration.set(yamlTask.flatMap { task -> task.sqlcConfiguration })
       }
       val generateCodeTask = tasks.register<GenerateSchemasTask>("normGenerateCode${name.uppercaseFirstChar()}", this)
       generateCodeTask.configure {
-        schemaJsonFile.set(sqlcTask.flatMap { it.schemaJsonFile })
+        schemaJsonFile.set(sqlcTask.flatMap { task -> task.schemaJsonFile })
       }
 
       kotlinSourceSet.srcDir(generateCodeTask)
@@ -51,6 +54,9 @@ public class NormPlugin : Plugin<Project> {
     ).dependencies.add(project.dependencies.create("com.pkware.norm:runtime:$NORM_VERSION"))
   }
 
+  /**
+   * Constants you might find useful.
+   */
   public companion object {
     /**
      * Directory in which NORM code is generated.

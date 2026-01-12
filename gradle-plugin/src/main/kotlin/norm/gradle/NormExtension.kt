@@ -3,6 +3,9 @@ package norm.gradle
 import org.gradle.api.NamedDomainObjectContainer
 import org.gradle.api.provider.Property
 
+/**
+ * Marker annotation required by Gradle.
+ */
 @DslMarker
 public annotation class NormDsl
 

@@ -74,6 +74,8 @@ public class NormDriver(private val dataSource: DataSource) {
   internal fun newTransaction(): Transaction {
     val enclosing = transaction
     val connection = enclosing?.connection ?: dataSource.connection
+
+    @Suppress("UseLet") // Let can't help here. This is a detekt false positive.
     val savepoint = if (enclosing != null) connection.setSavepoint() else null
     val transaction = Transaction(enclosing, this, connection, savepoint)
     this.transaction = transaction
