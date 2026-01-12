@@ -8,19 +8,33 @@ include(
   "runtime",
 )
 
+dependencyResolutionManagement {
+  repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+  repositories {
+    mavenCentral()
+  }
+}
+
 pluginManagement {
   repositories {
     mavenCentral()
-    mavenLocal()
-    maven {
-      url = uri("https://packages.smartcrypt.com/repository/maven-group/")
-      name = "pkwareNexus"
-      credentials(org.gradle.api.credentials.PasswordCredentials::class)
-    }
     gradlePluginPortal()
   }
 }
 
 plugins {
-  id("com.pkware.gradle.gradle-enterprise") version "4.11.0"
+  id("com.gradle.develocity") version "3.19.2"
+}
+
+val isCiServer = System.getenv().containsKey("CI")
+
+develocity {
+  buildScan {
+    termsOfUseUrl = "https://gradle.com/terms-of-service"
+    termsOfUseAgree.set("yes")
+    publishing.onlyIf { _ -> false }
+    if (isCiServer) {
+      tag("CI")
+    }
+  }
 }

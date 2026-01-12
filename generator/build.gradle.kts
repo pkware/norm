@@ -2,7 +2,7 @@ plugins {
   `kotlin-only`
   alias(libs.plugins.wire)
   `java-library`
-  id("com.pkware.gradle.publish")
+  `publish-convention`
 }
 
 dependencies {
@@ -21,4 +21,8 @@ wire {
   kotlin {
     excludes = listOf("plugin.CodegenService")
   }
+}
+
+kotlin {
+  explicitApi()
 }

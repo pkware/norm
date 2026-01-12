@@ -2,7 +2,7 @@ plugins {
   `kotlin-only`
   `kotlin-dsl`
   `java-gradle-plugin`
-  id("com.pkware.gradle.publish")
+  `publish-convention`
 }
 
 gradlePlugin {
@@ -21,4 +21,8 @@ dependencies {
   implementation(kotlin("gradle-plugin"))
 
   testImplementation(gradleTestKit())
+}
+
+kotlin {
+  explicitApi()
 }

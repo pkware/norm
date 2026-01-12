@@ -2,12 +2,11 @@ import org.gradle.kotlin.dsl.version
 
 plugins {
   kotlin("jvm") version "2.2.21"
-  // TODO Use the latest version, and don't use a SNAPSHOT
-  id("com.pkware.norm") version "1.0.0-SNAPSHOT"
+  alias(libs.plugins.norm)
 }
 
 dependencies {
-  implementation("org.postgresql:postgresql:42.7.7")
+  implementation(libs.postgresql)
 }
 
 repositories {

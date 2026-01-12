@@ -22,7 +22,7 @@ class ReturnTypeTest {
       )
 
       assertThat(returnType.mapperReturnType).isEqualTo(
-        TypeVariableName("T", ANY)
+        TypeVariableName("T", ANY),
       )
     }
 
@@ -34,7 +34,7 @@ class ReturnTypeTest {
       )
 
       assertThat(returnType.mapperReturnType).isEqualTo(
-        TypeVariableName("T", ANY.copy(nullable = true))
+        TypeVariableName("T", ANY.copy(nullable = true)),
       )
     }
 
@@ -48,7 +48,7 @@ class ReturnTypeTest {
       )
 
       assertThat(returnType.mapperReturnType).isEqualTo(
-        TypeVariableName("T", ANY)
+        TypeVariableName("T", ANY),
       )
     }
   }
@@ -73,7 +73,7 @@ class ReturnTypeTest {
         kotlinType = String::class.asTypeName(),
         builder = listOf(CodeBlock.of("getString(1)")),
         creationParameters = listOf(
-          ParameterSpec.builder("name", String::class).build()
+          ParameterSpec.builder("name", String::class).build(),
         ),
       )
 

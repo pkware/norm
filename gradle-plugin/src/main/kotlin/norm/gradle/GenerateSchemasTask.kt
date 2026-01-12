@@ -24,9 +24,7 @@ import javax.inject.Inject
  * Generates Kotlin code from SQL sources.
  */
 @CacheableTask
-internal abstract class GenerateSchemasTask @Inject constructor(
-  @get:Nested val database: Database,
-) : DefaultTask() {
+internal abstract class GenerateSchemasTask @Inject constructor(@get:Nested val database: Database) : DefaultTask() {
 
   /**
    * JSON file that contains the schema.

@@ -1,5 +1,3 @@
-import org.gradle.api.credentials.PasswordCredentials
-
 plugins {
   `kotlin-dsl`
 }
@@ -10,20 +8,20 @@ gradlePlugin {
       id = "kotlin-only"
       implementationClass = "com.pkware.gradle.KotlinOnlyPlugin"
     }
+    register("publish-convention-plugin") {
+      id = "publish-convention"
+      implementationClass = "com.pkware.gradle.PublishConventionPlugin"
+    }
   }
 }
 
 repositories {
   mavenCentral()
-  maven {
-    url = uri("https://packages.smartcrypt.com/repository/maven-group/")
-    name = "pkwareNexus"
-    credentials(PasswordCredentials::class)
-  }
   gradlePluginPortal()
 }
 
 dependencies {
   implementation(kotlin("gradle-plugin"))
-  implementation("com.pkware:pkware-conventions:4.11.0")
+  implementation("com.diffplug.spotless:spotless-plugin-gradle:7.0.2")
+  implementation("io.gitlab.arturbosch.detekt:io.gitlab.arturbosch.detekt.gradle.plugin:1.23.8")
 }

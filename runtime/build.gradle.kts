@@ -1,11 +1,15 @@
 plugins {
   `kotlin-only`
   `java-library`
-  id("com.pkware.gradle.publish")
+  `publish-convention`
 }
 
 dependencies {
   compileOnlyApi(libs.postgresql)
 
   testImplementation(libs.bundles.mockito)
+}
+
+kotlin {
+  explicitApi()
 }

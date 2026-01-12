@@ -19,9 +19,7 @@ import kotlin.io.path.relativeTo
  * See [RunSqlcTask] for the task that generates Kotlin code.
  */
 @CacheableTask
-internal abstract class GenerateYamlTask @Inject constructor(
-  @get:Nested val database: Database,
-) : DefaultTask() {
+internal abstract class GenerateYamlTask @Inject constructor(@get:Nested val database: Database) : DefaultTask() {
 
   /**
    * The absolute path of the project directory.

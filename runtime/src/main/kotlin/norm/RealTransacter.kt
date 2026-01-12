@@ -5,9 +5,9 @@ private class RollbackException(val value: Any? = null) : Throwable()
 /**
  * DSL interface providing [rollback] and nested [transaction] calls.
  */
-private class TransactionWrapper<R>(
-  val transaction: Transaction,
-) : TransactionWithoutReturn, TransactionWithReturn<R> {
+private class TransactionWrapper<R>(val transaction: Transaction) :
+  TransactionWithoutReturn,
+  TransactionWithReturn<R> {
   override fun rollback(): Nothing {
     transaction.checkThreadConfinement()
     throw RollbackException()

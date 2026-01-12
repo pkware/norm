@@ -17,10 +17,7 @@ import plugin.Table
  * @param packageName to use for generated types.
  * @param catalog Postgres catalog to use when resolving projection information.
  */
-internal class TypeRepository(
-  private val packageName: String,
-  private val catalog: Catalog,
-) {
+internal class TypeRepository(private val packageName: String, private val catalog: Catalog) {
   private val tableModels = mutableMapOf<Table, Pair<ReturnType, TypeSpec>>()
   private val queryModels = mutableListOf<Pair<ReturnType, TypeSpec>>()
 
