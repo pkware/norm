@@ -27,6 +27,8 @@ See the [Gradle plugin README](gradle-plugin/README.md) for setup details.
 - [ ] Support the timestamp type
 - [ ] Pass detekt
 - [ ] Delete old generated files when no longer needed
+- [ ] Framework support
+- [ ] Read/write transactions
 
 ### After release
 - [ ] Enum adapter. Map enums to String and back by default.

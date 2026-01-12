@@ -93,7 +93,7 @@ internal class SqlStatement(
   val sql: String
 
   /**
-   * If this SQl statement targets just a single table, will contain a reference to that [Table]. Otherwise, `null`.
+   * If this SQL statement targets just a single table, will contain a reference to that [Table]. Otherwise, `null`.
    */
   private val starProjectionTable: Table? by lazy(::determineStarProjectionTable)
 
@@ -102,18 +102,16 @@ internal class SqlStatement(
    */
   private val isSingleTableStarProjection: Boolean
     get() {
-      // FIXME verify that the columns are in the right order.
       val resolvedTable = starProjectionTable ?: return false
-      val tableColumns = resolvedTable.columns.asSequence().map(Column::type).toMutableSet()
-      val queryColumns = query.columns.asSequence().map(Column::type).toSet()
-      val columnsInTheTableButNotInTheQuery = tableColumns subtract queryColumns
-      return columnsInTheTableButNotInTheQuery.isEmpty()
+      val tableColumnNames = resolvedTable.columns.asSequence().map(Column::name).toSet()
+      val queryColumnNames = query.columns.asSequence().map(Column::name).toSet()
+      return tableColumnNames == queryColumnNames
     }
 
   init {
     resultRowShape = computeReturnType()
 
-    // FIXME SQLC doesn't preserve case on @named parameters. We should file a bug.
+    // TODO SQLC doesn't preserve case on @named parameters. We should file a bug.
     // Convert $1 style query parameters to JDBC-compatible ? parameters.
     // First we find all the placeholders, and create a list of parameters where each index matches the position of a
     // future JDBC parameter. We populate the list by mapping the query parameters to placeholder indexes.
@@ -132,7 +130,7 @@ internal class SqlStatement(
     return if (queryResults.isEmpty()) {
       // The query doesn't return anything
       ReturnType(null, emptyList())
-    } else if (queryResults.size == 1) {
+    } else if (queryResults.size == 1 && queryResults.first().embed_table == null) {
       // The query returns a single column, so no wrapper is needed
       val column = queryResults.first()
       ReturnType(
