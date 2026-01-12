@@ -74,7 +74,8 @@ public class NormDriver(private val dataSource: DataSource) {
   internal fun newTransaction(): Transaction {
     val enclosing = transaction
     val connection = enclosing?.connection ?: dataSource.connection
-    val transaction = Transaction(enclosing, this, connection)
+    val savepoint = if (enclosing != null) connection.setSavepoint() else null
+    val transaction = Transaction(enclosing, this, connection, savepoint)
     this.transaction = transaction
 
     if (enclosing == null) {

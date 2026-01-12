@@ -1,6 +1,10 @@
 package norm
 
 private class RollbackException(val value: Any? = null) : Throwable()
+
+/**
+ * DSL interface providing [rollback] and nested [transaction] calls.
+ */
 private class TransactionWrapper<R>(
   val transaction: Transaction,
 ) : TransactionWithoutReturn, TransactionWithReturn<R> {
@@ -12,12 +16,6 @@ private class TransactionWrapper<R>(
     transaction.checkThreadConfinement()
     throw RollbackException(returnValue)
   }
-
-  override fun transaction(body: TransactionWithoutReturn.() -> Unit) =
-    (transaction.transacter as Transacter).transaction(false, body)
-
-  override fun <R> transaction(body: TransactionWithReturn<R>.() -> R): R =
-    (transaction.transacter as Transacter).transactionWithResult(false, body)
 }
 
 /**
@@ -38,13 +36,15 @@ public abstract class RealTransacter(protected val driver: NormDriver) : Transac
     thrownException: Throwable?,
     returnValue: R?,
   ): R {
-    if (enclosing != null) {
+    if (enclosing != null && thrownException !is RollbackException) {
+      // Only propagate failure to parent if it's a real exception.
+      // Explicit rollbacks are isolated to their savepoint.
       enclosing.childrenSuccessful = transaction.successful && transaction.childrenSuccessful
     }
 
-    if (enclosing == null && thrownException is RollbackException) {
-      // We can safely cast to R here because the rollback exception is always created with the
-      // correct type.
+    if (thrownException is RollbackException) {
+      // Return rollback value for both outermost and nested transactions.
+      // The savepoint was already rolled back in Transaction.endTransaction().
       @Suppress("UNCHECKED_CAST")
       return thrownException.value as R
     } else if (thrownException != null) {

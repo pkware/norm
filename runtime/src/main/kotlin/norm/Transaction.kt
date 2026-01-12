@@ -2,6 +2,7 @@ package norm
 
 import java.sql.Connection
 import java.sql.SQLException
+import java.sql.Savepoint
 import kotlin.jvm.Throws
 
 /**
@@ -12,11 +13,13 @@ import kotlin.jvm.Throws
  * never to escape the lambda scope of [Transacter.transaction] and [Transacter.transactionWithResult].
  *
  * @param enclosingTransaction The parent transaction, if there is any.
+ * @param savepoint The savepoint for nested transactions, `null` for outermost transactions.
  */
 public class Transaction(
   internal val enclosingTransaction: Transaction?,
   private val connectionManager: NormDriver,
   internal val connection: Connection,
+  private val savepoint: Savepoint?,
 ) {
   private val ownerThreadId = Thread.currentThread().threadId()
 
@@ -51,6 +54,11 @@ public class Transaction(
       }
       connection.autoCommit = true
       connection.close()
+    } else {
+      // Nested transaction: rollback to savepoint if unsuccessful
+      if (!successful && savepoint != null) {
+        connection.rollback(savepoint)
+      }
     }
     connectionManager.transaction = enclosingTransaction
   }

@@ -24,7 +24,6 @@ See the [Gradle plugin README](gradle-plugin/README.md) for setup details.
 ## TODO
 ### Before release
 - [ ] Gradle plugin: connect to a real DB
-- [ ] Implement and fix all the tests
 - [ ] Support the timestamp type
 - [ ] Pass detekt
 - [ ] Delete old generated files when no longer needed

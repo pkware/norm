@@ -99,15 +99,15 @@ fun main() {
 
   // Nested transactions are also available, and incremental rollbacks too.
   queries.transaction {
-    // TODO This creates an unnamed savepoint.
-    transaction {
-      // TODO Rollback to the savepoint. But then how does the caller know whether or not the transaction succeeded? Should they care?
+    // This creates an unnamed savepoint, since it's inside an outer transaction
+    queries.transaction {
+      // Rollback to the savepoint
       rollback()
     }
-    // TODO this should create an unnamed savepoint
-    transaction {
+    // This creates an unnamed savepoint and commits it, since rollback isn't called.
+    queries.transaction {
     }
-    // TODO Rollback everything.
+    // Rollback the outer transaction. All savepoints are rolled back as well.
     rollback()
   }
 
