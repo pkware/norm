@@ -1,7 +1,7 @@
 plugins {
-  `kotlin-only`
+  `kotlin-conventions`
   `java-library`
-  `publish-convention`
+  `publish-conventions`
 }
 
 dependencies {

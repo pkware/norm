@@ -1,8 +1,8 @@
 plugins {
-  `kotlin-only`
+  `kotlin-conventions`
   alias(libs.plugins.wire)
   `java-library`
-  `publish-convention`
+  `publish-conventions`
 }
 
 dependencies {

@@ -1,8 +1,8 @@
 plugins {
-  `kotlin-only`
+  `kotlin-conventions`
   `kotlin-dsl`
   `java-gradle-plugin`
-  `publish-convention`
+  `publish-conventions`
 }
 
 gradlePlugin {

@@ -4,12 +4,16 @@ plugins {
 
 gradlePlugin {
   plugins {
-    register("kotlin-only-conventions-plugin") {
-      id = "kotlin-only"
-      implementationClass = "com.pkware.gradle.KotlinOnlyPlugin"
+    register("java-conventions-plugin") {
+      id = "java-conventions"
+      implementationClass = "com.pkware.gradle.JavaConventionsPlugin"
+    }
+    register("kotlin-conventions-plugin") {
+      id = "kotlin-conventions"
+      implementationClass = "com.pkware.gradle.KotlinConventionsPlugin"
     }
     register("publish-convention-plugin") {
-      id = "publish-convention"
+      id = "publish-conventions"
       implementationClass = "com.pkware.gradle.PublishConventionPlugin"
     }
   }
@@ -22,6 +26,6 @@ repositories {
 
 dependencies {
   implementation(kotlin("gradle-plugin"))
-  implementation("com.diffplug.spotless:spotless-plugin-gradle:7.0.2")
+  implementation("com.diffplug.spotless:spotless-plugin-gradle:7.2.1")
   implementation("io.gitlab.arturbosch.detekt:io.gitlab.arturbosch.detekt.gradle.plugin:1.23.8")
 }
