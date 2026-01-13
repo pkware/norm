@@ -65,7 +65,7 @@ class KotlinOnlyPlugin : Plugin<Project> {
 
         dependencies {
           implementation(libs.findLibrary("junit-params").get().get().toString())
-          implementation(libs.findLibrary("truth").get().get().toString())
+          implementation(libs.findLibrary("assertk").get().get().toString())
         }
 
         targets.all {

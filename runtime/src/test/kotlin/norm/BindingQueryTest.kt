@@ -1,6 +1,11 @@
 package norm
 
-import com.google.common.truth.Truth.assertThat
+import assertk.assertThat
+import assertk.assertions.contains
+import assertk.assertions.containsExactly
+import assertk.assertions.doesNotContain
+import assertk.assertions.isEqualTo
+import assertk.assertions.isNotNull
 import org.intellij.lang.annotations.Language
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
@@ -115,7 +120,7 @@ class BindingQueryTest {
       assertThat(capturedBindings).containsExactly(
         1 to "active",
         2 to 42,
-      ).inOrder()
+      )
     }
 
     @Test
@@ -128,7 +133,7 @@ class BindingQueryTest {
           .single()
       }
 
-      assertThat(exception.message).contains("userId")
+      assertThat(exception.message).isNotNull().contains("userId")
     }
 
     @Test
@@ -147,7 +152,7 @@ class BindingQueryTest {
       assertThat(capturedBindings).containsExactly(
         1 to "Alice",
         2 to "Alice",
-      ).inOrder()
+      )
     }
 
     @Test
@@ -207,7 +212,7 @@ class BindingQueryTest {
         query.bind("name", "Alice")
       }
 
-      assertThat(exception.message).contains("Cannot mix")
+      assertThat(exception.message).isNotNull().contains("Cannot mix")
     }
 
     @Test
@@ -219,7 +224,7 @@ class BindingQueryTest {
         query.bind(42)
       }
 
-      assertThat(exception.message).contains("Cannot mix")
+      assertThat(exception.message).isNotNull().contains("Cannot mix")
     }
   }
 

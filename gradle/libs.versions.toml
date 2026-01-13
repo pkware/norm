@@ -4,13 +4,13 @@ ktlint = "1.5.0"
 wire = "5.4.0"
 
 [libraries]
+assertk = "com.willowtreeapps.assertk:assertk:0.28.1"
 junit-params = { module = "org.junit.jupiter:junit-jupiter-params", version.ref = "junit" }
 kotlinPoet = "com.squareup:kotlinpoet:2.2.0"
 mockito-junit = "org.mockito:mockito-junit-jupiter:5.21.0"
 mockito-kotlin = "org.mockito.kotlin:mockito-kotlin:5.4.0"
 moshi = "com.squareup.moshi:moshi:1.15.2"
 postgresql = "org.postgresql:postgresql:42.7.7"
-truth = "com.google.truth:truth:1.4.5"
 wire = { module = "com.squareup.wire:wire-runtime", version.ref = "wire" }
 wire-json = { module = "com.squareup.wire:wire-moshi-adapter", version.ref = "wire" }
 

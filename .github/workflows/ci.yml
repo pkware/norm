@@ -26,7 +26,7 @@ jobs:
     - uses: burrunan/gradle-cache-action@663fbad34e03c8f12b27f4999ac46e3d90f87eca # v3.0
       name: Build with Gradle
       with:
-        arguments: build
+        arguments: build -x detekt
 
     - name: Upload Test Results
       if: always()

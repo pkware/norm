@@ -1,7 +1,10 @@
 package norm.generator
 
-import com.google.common.truth.Truth.assertThat
-import com.google.common.truth.Truth.assertWithMessage
+import assertk.assertThat
+import assertk.assertions.isEmpty
+import assertk.assertions.isEqualTo
+import assertk.assertions.isNotNull
+import assertk.assertions.isTrue
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.adapter
 import com.squareup.wire.WireJsonAdapterFactory
@@ -37,21 +40,22 @@ class GenerateCodeTest {
       }
     }
 
-    assertWithMessage("Directory $scenarioDirectory does not have a schema.json").that(request).isNotNull()
+    assertThat(request, "Directory $scenarioDirectory does not have a schema.json").isNotNull()
     val result = generateCode(request.catalog!!, request.queries, "example")
     val createdFiles = result.associate { spec ->
       Pair(spec.name, spec.contents.utf8())
     }.toMutableMap()
 
     for ((fileName, content) in expectedFiles.entries) {
-      assertThat(createdFiles).containsKey(fileName)
+      assertThat(fileName in createdFiles, "Expected file $fileName to be generated").isTrue()
       val createdFileContent = createdFiles.remove(fileName)
-      assertWithMessage(
+      assertThat(
+        createdFileContent,
         "Content for ${scenarioDirectory.resolve(fileName).toAbsolutePath()}",
-      ).that(createdFileContent).isEqualTo(content)
+      ).isEqualTo(content)
     }
 
-    assertWithMessage("More files were created than expected").that(createdFiles).isEmpty()
+    assertThat(createdFiles, "More files were created than expected").isEmpty()
   }
 
   companion object {

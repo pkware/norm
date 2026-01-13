@@ -1,6 +1,9 @@
 package norm
 
-import com.google.common.truth.Truth.assertThat
+import assertk.assertThat
+import assertk.assertions.containsExactly
+import assertk.assertions.isEqualTo
+import assertk.assertions.isNull
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
@@ -64,7 +67,7 @@ class ManyTest {
 
       val result = many().list()
 
-      assertThat(result).containsExactly("Alice", "Bob", "Charlie").inOrder()
+      assertThat(result).containsExactly("Alice", "Bob", "Charlie")
     }
   }
 
@@ -150,7 +153,7 @@ class ManyTest {
 
       val result = many().stream().toList()
 
-      assertThat(result).containsExactly("Alice", "Bob", "Charlie").inOrder()
+      assertThat(result).containsExactly("Alice", "Bob", "Charlie")
     }
   }
 }

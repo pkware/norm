@@ -1,6 +1,16 @@
 package norm.generator
 
-import com.google.common.truth.Truth.assertThat
+import assertk.assertThat
+import assertk.assertions.contains
+import assertk.assertions.containsExactly
+import assertk.assertions.hasSize
+import assertk.assertions.isEmpty
+import assertk.assertions.isEqualTo
+import assertk.assertions.isFalse
+import assertk.assertions.isIn
+import assertk.assertions.isNull
+import assertk.assertions.isSameInstanceAs
+import assertk.assertions.isTrue
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.INT
 import com.squareup.kotlinpoet.INT_ARRAY
@@ -257,7 +267,7 @@ class SqlStatementTest {
     @Test
     fun `query with single parameter`() {
       val statement = createStatement(
-        "SELECT * FROM author WHERE id = \$1;",
+        $$"SELECT * FROM author WHERE id = $1;",
         params = listOf(param(1, "id", "int4")),
       )
       assertThat(statement.parameters).hasSize(1)
@@ -267,7 +277,7 @@ class SqlStatementTest {
     @Test
     fun `query with multiple parameters in order`() {
       val statement = createStatement(
-        "INSERT INTO author (name, email, bio) VALUES (\$1, \$2, \$3);",
+        $$"INSERT INTO author (name, email, bio) VALUES ($1, $2, $3);",
         cmd = ":exec",
         params = listOf(
           param(1, "name"),
@@ -276,14 +286,14 @@ class SqlStatementTest {
         ),
       )
       assertThat(statement.parameters).hasSize(3)
-      assertThat(statement.parameters.map { it.number }).containsExactly(1, 2, 3).inOrder()
+      assertThat(statement.parameters.map { it.number }).containsExactly(1, 2, 3)
     }
 
     @Test
     fun `query with non-sequential parameter references`() {
       // SQL uses $3, $1, $2 but params are defined 1, 2, 3
       val statement = createStatement(
-        "SELECT * FROM t WHERE c = \$3 AND a = \$1 AND b = \$2;",
+        $$"SELECT * FROM t WHERE c = $3 AND a = $1 AND b = $2;",
         params = listOf(
           param(1, "a"),
           param(2, "b"),
@@ -291,14 +301,14 @@ class SqlStatementTest {
         ),
       )
       // Parameters should be in placeholder order as they appear in SQL
-      assertThat(statement.parameters.map { it.number }).containsExactly(3, 1, 2).inOrder()
+      assertThat(statement.parameters.map { it.number }).containsExactly(3, 1, 2)
     }
 
     @Test
     fun `parameter referenced multiple times`() {
       val param1 = param(1, "id", "int4")
       val statement = createStatement(
-        "SELECT * FROM t WHERE a = \$1 OR b = \$1;",
+        $$"SELECT * FROM t WHERE a = $1 OR b = $1;",
         params = listOf(param1),
       )
       // Same parameter appears twice
@@ -314,7 +324,7 @@ class SqlStatementTest {
     @Test
     fun `single placeholder converted to question mark`() {
       val statement = createStatement(
-        "SELECT * FROM author WHERE id = \$1;",
+        $$"SELECT * FROM author WHERE id = $1;",
         params = listOf(param(1)),
       )
       assertThat(statement.sql).isEqualTo("SELECT * FROM author WHERE id = ?;")
@@ -323,7 +333,7 @@ class SqlStatementTest {
     @Test
     fun `multiple placeholders converted`() {
       val statement = createStatement(
-        "SELECT * FROM t WHERE a = \$1 AND b = \$2 AND c = \$3;",
+        $$"SELECT * FROM t WHERE a = $1 AND b = $2 AND c = $3;",
         params = listOf(param(1), param(2), param(3)),
       )
       assertThat(statement.sql).isEqualTo("SELECT * FROM t WHERE a = ? AND b = ? AND c = ?;")
@@ -339,7 +349,7 @@ class SqlStatementTest {
     fun `double digit placeholder converted`() {
       val params = (1..12).map { param(it) }
       val statement = createStatement(
-        "INSERT INTO t VALUES (\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9, \$10, \$11, \$12);",
+        $$"INSERT INTO t VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);",
         cmd = ":exec",
         params = params,
       )
@@ -381,7 +391,7 @@ class SqlStatementTest {
     @Test
     fun `SELECT cannot be batched`() {
       val statement = createStatement(
-        "SELECT * FROM t WHERE id = \$1;",
+        $$"SELECT * FROM t WHERE id = $1;",
         cmd = ":one",
         params = listOf(param(1)),
       )
@@ -391,7 +401,7 @@ class SqlStatementTest {
     @Test
     fun `MANY cannot be batched`() {
       val statement = createStatement(
-        "SELECT * FROM t WHERE status = \$1;",
+        $$"SELECT * FROM t WHERE status = $1;",
         cmd = ":many",
         params = listOf(param(1)),
       )
@@ -410,7 +420,7 @@ class SqlStatementTest {
     @Test
     fun `DML with RETURNING cannot be batched`() {
       val statement = createStatement(
-        "INSERT INTO t (name) VALUES (\$1) RETURNING id;",
+        $$"INSERT INTO t (name) VALUES ($1) RETURNING id;",
         cmd = ":exec",
         params = listOf(param(1)),
         columns = listOf(column("id", type = "int4")),
@@ -421,7 +431,7 @@ class SqlStatementTest {
     @Test
     fun `DML with params and no RETURNING can be batched`() {
       val statement = createStatement(
-        "INSERT INTO t (name) VALUES (\$1);",
+        $$"INSERT INTO t (name) VALUES ($1);",
         cmd = ":exec",
         params = listOf(param(1)),
       )
@@ -431,7 +441,7 @@ class SqlStatementTest {
     @Test
     fun `execrows with params can be batched`() {
       val statement = createStatement(
-        "UPDATE t SET status = 'done' WHERE id = \$1;",
+        $$"UPDATE t SET status = 'done' WHERE id = $1;",
         cmd = ":execrows",
         params = listOf(param(1)),
       )
@@ -455,7 +465,7 @@ class SqlStatementTest {
     @Test
     fun `MANY with params cannot be dynamic`() {
       val statement = createStatement(
-        "SELECT * FROM t WHERE status = \$1;",
+        $$"SELECT * FROM t WHERE status = $1;",
         cmd = ":many",
         params = listOf(param(1)),
         columns = listOf(column("id")),
@@ -567,7 +577,7 @@ class SqlStatementTest {
           columns = listOf(column("val", type = type)),
         )
         assertThat(statement.resultRowShape.kotlinType?.toString())
-          .isAnyOf("kotlin.Short", "kotlin.Int", "kotlin.Long")
+          .isIn("kotlin.Short", "kotlin.Int", "kotlin.Long")
       }
 
       for (type in floatTypes) {
@@ -576,7 +586,7 @@ class SqlStatementTest {
           columns = listOf(column("val", type = type)),
         )
         assertThat(statement.resultRowShape.kotlinType?.toString())
-          .isAnyOf("kotlin.Float", "kotlin.Double")
+          .isIn("kotlin.Float", "kotlin.Double")
       }
 
       for (type in textTypes) {
