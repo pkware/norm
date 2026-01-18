@@ -158,10 +158,10 @@ public class PostgresQueries(
         getBytes(57),
         getBytes(58),
         getBytes(59),
-        getInt(60).takeUnless { wasNull() },
-        getInt(61),
-        getString(62),
-        getString(63),
+        getArray(60).array.let { it as IntArray }.takeUnless { wasNull() },
+        getArray(61).array.let { it as IntArray },
+        getArray(62).array.let { it as Array<String> }.takeUnless { wasNull() },
+        getArray(63).array.let { it as Array<String> },
       )
     }
     return block(sql, rowReader)

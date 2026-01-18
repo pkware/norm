@@ -16,40 +16,61 @@ import plugin.Column
  * Details on how to map this column's type between Java and SQL.
  */
 internal val Column.mappableType: SqlMappable
-  get() = when (val typeName = type?.name) {
-    "smallserial", "serial2", "pg_catalog.serial2" -> JdbcTypes.SHORT.decorateForNullable(not_null)
-    "serial", "serial4", "pg_catalog.serial4" -> JdbcTypes.INT.decorateForNullable(not_null)
-    "bigserial", "serial8", "pg_catalog.serial8" -> JdbcTypes.LONG.decorateForNullable(not_null)
+  get() {
+    val baseType = when (val typeName = type?.name) {
+      "smallserial", "serial2", "pg_catalog.serial2" -> JdbcTypes.SHORT.decorateForNullable(not_null)
+      "serial", "serial4", "pg_catalog.serial4" -> JdbcTypes.INT.decorateForNullable(not_null)
+      "bigserial", "serial8", "pg_catalog.serial8" -> JdbcTypes.LONG.decorateForNullable(not_null)
 
-    "smallint", "int2", "pg_catalog.int2" -> JdbcTypes.SHORT.decorateForNullable(not_null)
-    "integer", "int", "int4", "pg_catalog.int4" -> JdbcTypes.INT.decorateForNullable(not_null)
-    "bigint", "int8", "pg_catalog.int8" -> JdbcTypes.LONG.decorateForNullable(not_null)
+      "smallint", "int2", "pg_catalog.int2" -> JdbcTypes.SHORT.decorateForNullable(not_null)
+      "integer", "int", "int4", "pg_catalog.int4" -> JdbcTypes.INT.decorateForNullable(not_null)
+      "bigint", "int8", "pg_catalog.int8" -> JdbcTypes.LONG.decorateForNullable(not_null)
 
-    "real", "float4", "pg_catalog.float4" -> JdbcTypes.FLOAT.decorateForNullable(not_null)
-    "float", "double precision", "float8", "pg_catalog.float8" -> JdbcTypes.DOUBLE.decorateForNullable(not_null)
-    "numeric", "pg_catalog.numeric" -> JdbcTypes.BIG_DECIMAL
+      "real", "float4", "pg_catalog.float4" -> JdbcTypes.FLOAT.decorateForNullable(not_null)
+      "float", "double precision", "float8", "pg_catalog.float8" -> JdbcTypes.DOUBLE.decorateForNullable(not_null)
+      "numeric", "pg_catalog.numeric" -> JdbcTypes.BIG_DECIMAL
 
-    "bool", "pg_catalog.bool" -> JdbcTypes.BOOLEAN.decorateForNullable(not_null)
+      "bool", "pg_catalog.bool" -> JdbcTypes.BOOLEAN.decorateForNullable(not_null)
 
-    "jsonb" -> JdbcTypes.STRING
+      "jsonb" -> JdbcTypes.STRING
 
-    "blob" -> JdbcTypes.BLOB
-    "bytea", "pg_catalog.bytea" -> PostgresSupportedTypes.BYTE_ARRAY
+      "blob" -> JdbcTypes.BLOB
+      "bytea", "pg_catalog.bytea" -> PostgresSupportedTypes.BYTE_ARRAY
 
-    // Date and time mappings from https://jdbc.postgresql.org/documentation/head/java8-date-time.html
-    "date", "pg_catalog.date" -> PostgresSupportedTypes.LOCAL_DATE
-    "time", "pg_catalog.time" -> PostgresSupportedTypes.LOCAL_TIME
-    "timetz", "pg_catalog.timetz" -> PostgresSupportedTypes.OFFSET_TIME
-    "timestamp", "pg_catalog.timestamp" -> PostgresSupportedTypes.LOCAL_DATE_TIME
-    "timestamptz", "pg_catalog.timestamptz" -> PostgresSupportedTypes.OFFSET_DATE_TIME
+      // Date and time mappings from https://jdbc.postgresql.org/documentation/head/java8-date-time.html
+      "date", "pg_catalog.date" -> PostgresSupportedTypes.LOCAL_DATE
+      "time", "pg_catalog.time" -> PostgresSupportedTypes.LOCAL_TIME
+      "timetz", "pg_catalog.timetz" -> PostgresSupportedTypes.OFFSET_TIME
+      "timestamp", "pg_catalog.timestamp" -> PostgresSupportedTypes.LOCAL_DATE_TIME
+      "timestamptz", "pg_catalog.timestamptz" -> PostgresSupportedTypes.OFFSET_DATE_TIME
 
-    "text", "varchar", "pg_catalog.varchar", "bpchar", "pg_catalog.bpchar", "string" -> JdbcTypes.STRING
+      "text", "varchar", "pg_catalog.varchar", "bpchar", "pg_catalog.bpchar", "string" -> JdbcTypes.STRING
 
-    "uuid", "pg_catalog.uuid" -> PostgresSupportedTypes.UUID
+      "uuid", "pg_catalog.uuid" -> PostgresSupportedTypes.UUID
 
-    // 			"void" -> Nothing::class
-    // 			"any" -> Any::class
-    else -> error("Postgres type $typeName for column $fullyQualifiedName is not mapped to a Kotlin type")
+      // 			"void" -> Nothing::class
+      // 			"any" -> Any::class
+      else -> error("Postgres type $typeName for column $fullyQualifiedName is not mapped to a Kotlin type")
+    }
+
+    // Wrap in array decorator if this is an array column
+    return if (is_array) {
+      // Compute array type name without calling this.typeName (to avoid circular dependency)
+      val elementType = baseType.klass
+      val arrayTypeName = when (elementType) {
+        Boolean::class -> BOOLEAN_ARRAY
+        Short::class -> SHORT_ARRAY
+        Int::class -> INT_ARRAY
+        Long::class -> LONG_ARRAY
+        Float::class -> FLOAT_ARRAY
+        Double::class -> DOUBLE_ARRAY
+        else -> ARRAY.parameterizedBy(elementType.asTypeName())
+      }.copy(nullable = !not_null)
+
+      ArrayTypeDecorator(baseType, arrayTypeName)
+    } else {
+      baseType
+    }
   }
 
 /**

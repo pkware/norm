@@ -82,6 +82,49 @@ internal class NullablePrimitiveDecorator(private val delegate: JdbcTypes) : Sql
 }
 
 /**
+ * Decorates a [SqlMappable] to handle PostgreSQL array types.
+ *
+ * Arrays in PostgreSQL are accessed via JDBC's getArray() method, which returns
+ * a [java.sql.Array] object. The .array property provides the actual Kotlin array.
+ *
+ * @param delegate The base type mapper for the array element type
+ * @param arrayTypeName The Kotlin array type (e.g., [IntArray], `Array<String>`)
+ */
+internal class ArrayTypeDecorator(private val delegate: SqlMappable, private val arrayTypeName: TypeName) :
+  SqlMappable {
+
+  override val klass: KClass<*>
+    get() = delegate.klass
+
+  override val typeName: TypeName
+    get() = arrayTypeName
+
+  override val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
+    get() = { index, parameterName ->
+      // For arrays, use setObject which works with both primitive and object arrays
+      CodeBlock.of("setObject(%L, %L)", index, parameterName)
+    }
+
+  override val resultSetAction: (index: Int) -> CodeBlock
+    get() = { index ->
+      // JDBC arrays: getArray(i).array returns Object (the actual array)
+      // Cast to the appropriate Kotlin array type
+      val accessor = CodeBlock.of(
+        "getArray(%L).array.let { it as %T }",
+        index,
+        arrayTypeName.copy(nullable = false),
+      )
+
+      // Add null check if the type is nullable
+      if (arrayTypeName.isNullable) {
+        CodeBlock.of("%L.takeUnless { wasNull() }", accessor)
+      } else {
+        accessor
+      }
+    }
+}
+
+/**
  * Types with support in the Postgres JDBC driver.
  */
 internal enum class PostgresSupportedTypes(

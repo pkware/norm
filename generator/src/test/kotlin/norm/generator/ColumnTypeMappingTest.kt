@@ -1,6 +1,7 @@
 package norm.generator
 
 import assertk.assertThat
+import assertk.assertions.contains
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isIn
@@ -623,6 +624,51 @@ class ColumnTypeMappingTest {
         assertThat(kotlinType.isNullable).isFalse()
         assertThat(kotlinType).isEqualTo(ARRAY.parameterizedBy(String::class.asTypeName()))
       }
+    }
+  }
+
+  @Nested
+  inner class ArrayResultSetAccessors {
+
+    @Test
+    fun `int array generates getArray accessor`() {
+      val col = column("tags", type = "int4", isArray = true)
+      val accessor = col.mappableType.resultSetAction(1)
+      val accessorString = accessor.toString()
+
+      assertThat(accessorString).contains("getArray(1)")
+      assertThat(accessorString).contains("as kotlin.IntArray")
+    }
+
+    @Test
+    fun `nullable int array includes wasNull check`() {
+      val col = column("tags", type = "int4", isArray = true, notNull = false)
+      val accessor = col.mappableType.resultSetAction(1)
+      val accessorString = accessor.toString()
+
+      assertThat(accessorString).contains("getArray(1)")
+      assertThat(accessorString).contains("takeUnless")
+      assertThat(accessorString).contains("wasNull()")
+    }
+
+    @Test
+    fun `text array generates getArray accessor with Array cast`() {
+      val col = column("labels", type = "text", isArray = true)
+      val accessor = col.mappableType.resultSetAction(1)
+      val accessorString = accessor.toString()
+
+      assertThat(accessorString).contains("getArray(1)")
+      assertThat(accessorString).contains("as kotlin.Array<kotlin.String>")
+    }
+
+    @Test
+    fun `UUID array generates getArray accessor`() {
+      val col = column("user_ids", type = "uuid", isArray = true)
+      val accessor = col.mappableType.resultSetAction(1)
+      val accessorString = accessor.toString()
+
+      assertThat(accessorString).contains("getArray(1)")
+      assertThat(accessorString).contains("as kotlin.Array<java.util.UUID>")
     }
   }
 
