@@ -63,17 +63,11 @@ norm/
 
 ## Build & Test
 
-**Run Gradle from the `example` directory.** It uses a composite build that includes the main NORM modules, so you test against local changes.
+Example Gradle tasks:
 
-```bash
-cd example
-
-./gradlew build                     # Build all modules
-./gradlew test                      # Run all tests
-./gradlew :norm:generator:test      # Test specific module
-./gradlew normGenerateCodeExample   # Generate example query code
-./gradlew compileKotlin             # Compile example (verifies generated code)
-```
+- `build`                     # Build all modules
+- `test`                      # Run all tests
+- `:generator:test`           # Test specific module
 
 ### Prerequisites
 
