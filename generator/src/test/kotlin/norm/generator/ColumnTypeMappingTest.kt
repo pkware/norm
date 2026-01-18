@@ -5,8 +5,15 @@ import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isIn
 import assertk.assertions.isTrue
+import com.squareup.kotlinpoet.ARRAY
+import com.squareup.kotlinpoet.BOOLEAN_ARRAY
+import com.squareup.kotlinpoet.DOUBLE_ARRAY
+import com.squareup.kotlinpoet.FLOAT_ARRAY
 import com.squareup.kotlinpoet.INT
 import com.squareup.kotlinpoet.INT_ARRAY
+import com.squareup.kotlinpoet.LONG_ARRAY
+import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
+import com.squareup.kotlinpoet.SHORT_ARRAY
 import com.squareup.kotlinpoet.asTypeName
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
@@ -16,8 +23,11 @@ import plugin.Identifier
 import plugin.Parameter
 import plugin.Query
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
+import java.time.OffsetDateTime
 import java.time.OffsetTime
+import java.util.UUID
 
 /**
  * Tests for PostgreSQL to Kotlin type mapping logic in Column.mappableType extension property.
@@ -253,7 +263,7 @@ class ColumnTypeMappingTest {
         columns = listOf(column("created_at", type = "timestamp")),
       )
       assertThat(statement.resultRowShape.kotlinType)
-        .isEqualTo(java.time.LocalDateTime::class.asTypeName())
+        .isEqualTo(LocalDateTime::class.asTypeName())
     }
 
     @Test
@@ -263,7 +273,7 @@ class ColumnTypeMappingTest {
         columns = listOf(column("created_at", type = "pg_catalog.timestamp")),
       )
       assertThat(statement.resultRowShape.kotlinType)
-        .isEqualTo(java.time.LocalDateTime::class.asTypeName())
+        .isEqualTo(LocalDateTime::class.asTypeName())
     }
 
     @Test
@@ -274,7 +284,7 @@ class ColumnTypeMappingTest {
       )
       val kotlinType = statement.resultRowShape.kotlinType!!
       assertThat(kotlinType.isNullable).isTrue()
-      assertThat(kotlinType).isEqualTo(java.time.LocalDateTime::class.asTypeName().copy(nullable = true))
+      assertThat(kotlinType).isEqualTo(LocalDateTime::class.asTypeName().copy(nullable = true))
     }
 
     @Test
@@ -285,7 +295,7 @@ class ColumnTypeMappingTest {
       )
       val kotlinType = statement.resultRowShape.kotlinType!!
       assertThat(kotlinType.isNullable).isFalse()
-      assertThat(kotlinType).isEqualTo(java.time.LocalDateTime::class.asTypeName())
+      assertThat(kotlinType).isEqualTo(LocalDateTime::class.asTypeName())
     }
   }
 
@@ -298,7 +308,7 @@ class ColumnTypeMappingTest {
         columns = listOf(column("updated_at", type = "timestamptz")),
       )
       assertThat(statement.resultRowShape.kotlinType)
-        .isEqualTo(java.time.OffsetDateTime::class.asTypeName())
+        .isEqualTo(OffsetDateTime::class.asTypeName())
     }
 
     @Test
@@ -308,7 +318,7 @@ class ColumnTypeMappingTest {
         columns = listOf(column("updated_at", type = "pg_catalog.timestamptz")),
       )
       assertThat(statement.resultRowShape.kotlinType)
-        .isEqualTo(java.time.OffsetDateTime::class.asTypeName())
+        .isEqualTo(OffsetDateTime::class.asTypeName())
     }
 
     @Test
@@ -319,7 +329,7 @@ class ColumnTypeMappingTest {
       )
       val kotlinType = statement.resultRowShape.kotlinType!!
       assertThat(kotlinType.isNullable).isTrue()
-      assertThat(kotlinType).isEqualTo(java.time.OffsetDateTime::class.asTypeName().copy(nullable = true))
+      assertThat(kotlinType).isEqualTo(OffsetDateTime::class.asTypeName().copy(nullable = true))
     }
 
     @Test
@@ -330,7 +340,7 @@ class ColumnTypeMappingTest {
       )
       val kotlinType = statement.resultRowShape.kotlinType!!
       assertThat(kotlinType.isNullable).isFalse()
-      assertThat(kotlinType).isEqualTo(java.time.OffsetDateTime::class.asTypeName())
+      assertThat(kotlinType).isEqualTo(OffsetDateTime::class.asTypeName())
     }
   }
 
@@ -343,7 +353,7 @@ class ColumnTypeMappingTest {
         columns = listOf(column("id", type = "uuid")),
       )
       assertThat(statement.resultRowShape.kotlinType)
-        .isEqualTo(java.util.UUID::class.asTypeName())
+        .isEqualTo(UUID::class.asTypeName())
     }
 
     @Test
@@ -353,7 +363,7 @@ class ColumnTypeMappingTest {
         columns = listOf(column("id", type = "pg_catalog.uuid")),
       )
       assertThat(statement.resultRowShape.kotlinType)
-        .isEqualTo(java.util.UUID::class.asTypeName())
+        .isEqualTo(UUID::class.asTypeName())
     }
 
     @Test
@@ -364,7 +374,7 @@ class ColumnTypeMappingTest {
       )
       val kotlinType = statement.resultRowShape.kotlinType!!
       assertThat(kotlinType.isNullable).isTrue()
-      assertThat(kotlinType).isEqualTo(java.util.UUID::class.asTypeName().copy(nullable = true))
+      assertThat(kotlinType).isEqualTo(UUID::class.asTypeName().copy(nullable = true))
     }
 
     @Test
@@ -375,19 +385,199 @@ class ColumnTypeMappingTest {
       )
       val kotlinType = statement.resultRowShape.kotlinType!!
       assertThat(kotlinType.isNullable).isFalse()
-      assertThat(kotlinType).isEqualTo(java.util.UUID::class.asTypeName())
+      assertThat(kotlinType).isEqualTo(UUID::class.asTypeName())
     }
   }
 
   @Nested
   inner class ArrayTypes {
-    @Test
-    fun `array column maps correctly`() {
-      val statement = createStatement(
-        "SELECT tags FROM post;",
-        columns = listOf(column("tags", type = "int4", isArray = true)),
-      )
-      assertThat(statement.resultRowShape.kotlinType).isEqualTo(INT_ARRAY)
+
+    @Nested
+    inner class PrimitiveArrays {
+      @Test
+      fun `boolean array maps to BooleanArray`() {
+        val statement = createStatement(
+          "SELECT flags FROM settings;",
+          columns = listOf(column("flags", type = "bool", isArray = true)),
+        )
+        assertThat(statement.resultRowShape.kotlinType).isEqualTo(BOOLEAN_ARRAY)
+      }
+
+      @Test
+      fun `smallint array maps to ShortArray`() {
+        val statement = createStatement(
+          "SELECT values FROM data;",
+          columns = listOf(column("values", type = "int2", isArray = true)),
+        )
+        assertThat(statement.resultRowShape.kotlinType).isEqualTo(SHORT_ARRAY)
+      }
+
+      @Test
+      fun `int array maps to IntArray`() {
+        val statement = createStatement(
+          "SELECT tags FROM post;",
+          columns = listOf(column("tags", type = "int4", isArray = true)),
+        )
+        assertThat(statement.resultRowShape.kotlinType).isEqualTo(INT_ARRAY)
+      }
+
+      @Test
+      fun `bigint array maps to LongArray`() {
+        val statement = createStatement(
+          "SELECT ids FROM batch;",
+          columns = listOf(column("ids", type = "int8", isArray = true)),
+        )
+        assertThat(statement.resultRowShape.kotlinType).isEqualTo(LONG_ARRAY)
+      }
+
+      @Test
+      fun `float array maps to FloatArray`() {
+        val statement = createStatement(
+          "SELECT measurements FROM sensor;",
+          columns = listOf(column("measurements", type = "float4", isArray = true)),
+        )
+        assertThat(statement.resultRowShape.kotlinType).isEqualTo(FLOAT_ARRAY)
+      }
+
+      @Test
+      fun `double array maps to DoubleArray`() {
+        val statement = createStatement(
+          "SELECT coordinates FROM location;",
+          columns = listOf(column("coordinates", type = "float8", isArray = true)),
+        )
+        assertThat(statement.resultRowShape.kotlinType).isEqualTo(DOUBLE_ARRAY)
+      }
+    }
+
+    @Nested
+    inner class GenericArrays {
+      @Test
+      fun `text array maps to Array of String`() {
+        val statement = createStatement(
+          "SELECT tags FROM post;",
+          columns = listOf(column("tags", type = "text", isArray = true)),
+        )
+        assertThat(statement.resultRowShape.kotlinType)
+          .isEqualTo(ARRAY.parameterizedBy(String::class.asTypeName()))
+      }
+
+      @Test
+      fun `varchar array maps to Array of String`() {
+        val statement = createStatement(
+          "SELECT labels FROM item;",
+          columns = listOf(column("labels", type = "varchar", isArray = true)),
+        )
+        assertThat(statement.resultRowShape.kotlinType)
+          .isEqualTo(ARRAY.parameterizedBy(String::class.asTypeName()))
+      }
+
+      @Test
+      fun `uuid array maps to Array of UUID`() {
+        val statement = createStatement(
+          "SELECT user_ids FROM group;",
+          columns = listOf(column("user_ids", type = "uuid", isArray = true)),
+        )
+        assertThat(statement.resultRowShape.kotlinType)
+          .isEqualTo(ARRAY.parameterizedBy(UUID::class.asTypeName()))
+      }
+
+      @Test
+      fun `date array maps to Array of LocalDate`() {
+        val statement = createStatement(
+          "SELECT holidays FROM calendar;",
+          columns = listOf(column("holidays", type = "date", isArray = true)),
+        )
+        assertThat(statement.resultRowShape.kotlinType)
+          .isEqualTo(ARRAY.parameterizedBy(LocalDate::class.asTypeName()))
+      }
+
+      @Test
+      fun `time array maps to Array of LocalTime`() {
+        val statement = createStatement(
+          "SELECT meeting_times FROM schedule;",
+          columns = listOf(column("meeting_times", type = "time", isArray = true)),
+        )
+        assertThat(statement.resultRowShape.kotlinType)
+          .isEqualTo(ARRAY.parameterizedBy(LocalTime::class.asTypeName()))
+      }
+
+      @Test
+      fun `timetz array maps to Array of OffsetTime`() {
+        val statement = createStatement(
+          "SELECT event_times FROM schedule;",
+          columns = listOf(column("event_times", type = "timetz", isArray = true)),
+        )
+        assertThat(statement.resultRowShape.kotlinType)
+          .isEqualTo(ARRAY.parameterizedBy(OffsetTime::class.asTypeName()))
+      }
+
+      @Test
+      fun `timestamp array maps to Array of LocalDateTime`() {
+        val statement = createStatement(
+          "SELECT created_dates FROM audit;",
+          columns = listOf(column("created_dates", type = "timestamp", isArray = true)),
+        )
+        assertThat(statement.resultRowShape.kotlinType)
+          .isEqualTo(ARRAY.parameterizedBy(LocalDateTime::class.asTypeName()))
+      }
+
+      @Test
+      fun `timestamptz array maps to Array of OffsetDateTime`() {
+        val statement = createStatement(
+          "SELECT updated_dates FROM audit;",
+          columns = listOf(column("updated_dates", type = "timestamptz", isArray = true)),
+        )
+        assertThat(statement.resultRowShape.kotlinType)
+          .isEqualTo(ARRAY.parameterizedBy(OffsetDateTime::class.asTypeName()))
+      }
+    }
+
+    @Nested
+    inner class NullableArrays {
+      @Test
+      fun `nullable int array`() {
+        val statement = createStatement(
+          "SELECT tags FROM post;",
+          columns = listOf(column("tags", type = "int4", notNull = false, isArray = true)),
+        )
+        val kotlinType = statement.resultRowShape.kotlinType!!
+        assertThat(kotlinType.isNullable).isTrue()
+        assertThat(kotlinType).isEqualTo(INT_ARRAY.copy(nullable = true))
+      }
+
+      @Test
+      fun `non-null int array`() {
+        val statement = createStatement(
+          "SELECT tags FROM post;",
+          columns = listOf(column("tags", type = "int4", notNull = true, isArray = true)),
+        )
+        val kotlinType = statement.resultRowShape.kotlinType!!
+        assertThat(kotlinType.isNullable).isFalse()
+        assertThat(kotlinType).isEqualTo(INT_ARRAY)
+      }
+
+      @Test
+      fun `nullable text array`() {
+        val statement = createStatement(
+          "SELECT labels FROM item;",
+          columns = listOf(column("labels", type = "text", notNull = false, isArray = true)),
+        )
+        val kotlinType = statement.resultRowShape.kotlinType!!
+        assertThat(kotlinType.isNullable).isTrue()
+        assertThat(kotlinType)
+          .isEqualTo(ARRAY.parameterizedBy(String::class.asTypeName()).copy(nullable = true))
+      }
+
+      @Test
+      fun `non-null text array`() {
+        val statement = createStatement(
+          "SELECT labels FROM item;",
+          columns = listOf(column("labels", type = "text", notNull = true, isArray = true)),
+        )
+        val kotlinType = statement.resultRowShape.kotlinType!!
+        assertThat(kotlinType.isNullable).isFalse()
+        assertThat(kotlinType).isEqualTo(ARRAY.parameterizedBy(String::class.asTypeName()))
+      }
     }
   }
 

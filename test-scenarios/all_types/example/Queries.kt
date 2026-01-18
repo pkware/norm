@@ -10,10 +10,12 @@ import java.time.OffsetDateTime
 import java.time.OffsetTime
 import java.util.UUID
 import kotlin.Any
+import kotlin.Array
 import kotlin.Boolean
 import kotlin.Double
 import kotlin.Float
 import kotlin.Int
+import kotlin.IntArray
 import kotlin.Long
 import kotlin.Short
 import kotlin.String
@@ -81,6 +83,10 @@ public interface Queries : Transacter {
     uuid_type: UUID?,
     uuid_notnull_type: UUID,
     pg_uuid_type: UUID?,
+    int_array_type: IntArray?,
+    int_array_notnull_type: IntArray,
+    text_array_type: Array<String>?,
+    text_array_notnull_type: Array<String>,
   ) -> T): Many<T>
 
   public fun all(): Many<Type> = all(::Type)
@@ -142,6 +148,10 @@ public interface Queries : Transacter {
     uuid_type: UUID?,
     uuid_notnull_type: UUID,
     pg_uuid_type: UUID?,
+    int_array_type: IntArray?,
+    int_array_notnull_type: IntArray,
+    text_array_type: Array<String>?,
+    text_array_notnull_type: Array<String>,
   ) -> T): Query<T>
 
   public fun allDynamically(): Query<Type> = allDynamically(::Type)

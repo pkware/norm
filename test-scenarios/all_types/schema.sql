@@ -54,5 +54,9 @@ CREATE TABLE type (
   pg_timestamptz_type pg_catalog.timestamptz,
   uuid_type uuid,
   uuid_notnull_type uuid NOT NULL,
-  pg_uuid_type pg_catalog.uuid
+  pg_uuid_type pg_catalog.uuid,
+  int_array_type int4[],
+  int_array_notnull_type int4[] NOT NULL,
+  text_array_type text[],
+  text_array_notnull_type text[] NOT NULL
 );
