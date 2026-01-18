@@ -20,7 +20,7 @@ sourceSets {
   test {
     kotlin {
       // Include generated PostgresQueries.kt and Type.kt
-      srcDir(rootProject.file("test-scenarios/all_types/example"))
+      srcDir(rootProject.file("test-scenarios-basic/all_types/example"))
     }
   }
 }

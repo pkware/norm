@@ -4,6 +4,7 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.CacheableTask
+import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.Nested
 import org.gradle.api.tasks.OutputFile
@@ -16,7 +17,10 @@ import kotlin.io.path.relativeTo
 /**
  * Generates a YAML configuration file for use with `sqlc`.
  *
- * See [RunSqlcTask] for the task that generates Kotlin code.
+ * When [useDatabase] is enabled, the YAML is generated without database connection info,
+ * which will be added later by [RunSqlcTask] after the container starts.
+ *
+ * See [RunSqlcTask] for the task that invokes sqlc.
  */
 @CacheableTask
 internal abstract class GenerateYamlTask @Inject constructor(@get:Nested val database: Database) : DefaultTask() {
@@ -29,6 +33,13 @@ internal abstract class GenerateYamlTask @Inject constructor(@get:Nested val dat
 
   @get:OutputFile
   abstract val sqlcConfiguration: RegularFileProperty
+
+  /**
+   * Whether database-backed analysis is enabled.
+   * Tracked as input to ensure task re-runs when toggling database on/off.
+   */
+  @get:Input
+  abstract val useDatabase: Property<Boolean>
 
   init {
     group = NormPlugin.NORM_GROUP
@@ -51,21 +62,22 @@ internal abstract class GenerateYamlTask @Inject constructor(@get:Nested val dat
       queryFile.relativeTo(sqlcConfigurationDirectory).toString()
     }
 
+    // Note: database section will be added by RunSqlcTask if useDatabase is true
     @Language("yaml")
     val template = """
-			|version: '2'
-			|plugins:
-			|  - name: norm
-			|    wasm:
-			|      url: https://github.com/pkware/norm/releases/download/0.0.2/sqlc-exporter.wasm
-			|      sha256: f6d1d7bc9b8659e3c77dd0434ae4f8a25599116951950089b8d46c2275a886ea
-			|sql:
-			|  - schema: [${schemaPaths.joinToString()}]
-			|    queries: [${queryPaths.joinToString()}]
-			|    engine: postgresql
-			|    codegen:
-			|      - out: .
-			|        plugin: norm
+      |version: '2'
+      |plugins:
+      |  - name: norm
+      |    wasm:
+      |      url: https://github.com/pkware/norm/releases/download/0.0.2/sqlc-exporter.wasm
+      |      sha256: f6d1d7bc9b8659e3c77dd0434ae4f8a25599116951950089b8d46c2275a886ea
+      |sql:
+      |  - schema: [${schemaPaths.joinToString()}]
+      |    queries: [${queryPaths.joinToString()}]
+      |    engine: postgresql
+      |    codegen:
+      |      - out: .
+      |        plugin: norm
     """.trimMargin()
 
     sqlcConfiguration.get().asFile.writeText(template)

@@ -21,14 +21,66 @@ NORM does not:
 ## Gradle
 See the [Gradle plugin README](gradle-plugin/README.md) for setup details.
 
+### Database-Backed Query Analysis (Enabled by Default)
+
+**NORM now uses Testcontainers by default** for enhanced query validation. On your first build, NORM will:
+- Start a PostgreSQL 18 container using Testcontainers
+- Apply your schema files to the database
+- Provide database connection to sqlc for enhanced type resolution
+- Enable sqlc to properly handle Postgres domains, enums, and extensions
+- Automatically stop the container when build completes
+
+**No configuration required** - it just works out of the box!
+
+**Requirements:**
+- Docker must be installed and running
+- Internet connection (first run only, to pull PostgreSQL image)
+
+**Performance:**
+- First run: ~10-20 seconds to pull Docker image (cached afterwards)
+- Subsequent runs: ~2-5 seconds to start container + apply schemas
+- Container is created fresh for each task execution (not shared across builds)
+- Schema application is always idempotent (fresh database each run)
+- Container automatically stops after task completes
+
+**Customization:**
+
+Override PostgreSQL version:
+```kotlin
+norm {
+  databases {
+    register("example") {
+      packageName.set("example")
+      schemas.add("src/main/sql/schema.sql")
+      queries.add("src/main/sql/queries.sql")
+      postgresVersion.set("16") // Override default 18
+    }
+  }
+}
+```
+
+Opt out (for faster builds without validation):
+```kotlin
+norm {
+  databases {
+    register("example") {
+      packageName.set("example")
+      schemas.add("src/main/sql/schema.sql")
+      queries.add("src/main/sql/queries.sql")
+      useDatabase.set(false) // Disable database-backed analysis
+    }
+  }
+}
+```
+
 ## TODO
 ### Before release
-- [ ] Gradle plugin: connect to a real DB
-- [ ] Pass detekt
 - [ ] Delete old generated files when no longer needed
 - [ ] Framework support
 - [ ] Read/write transactions
-- [ ] Setup github and renovate for rust
+- [ ] Integration tests for `CALL` queries
+- [ ] Verify that the example works from Github
+- [ ] Automatically download sqlc
 
 ### After release
 - [ ] Enum adapter. Map enums to String and back by default.
@@ -43,6 +95,7 @@ See the [Gradle plugin README](gradle-plugin/README.md) for setup details.
 - [ ] Add a getting started section to the README
 - [ ] IntelliJ plugin for SQL fragment tracking. Currently we ship an `intellij-languageinjection.xml` config that provides basic SQL injection for `Query.append()`, but each fragment is analyzed in isolation. A proper plugin implementing `LanguageInjectionContributor` or using the `MultiHostInjector` API could track string values flowing through the builder pattern and reconstruct the full SQL statement for validation. This is how Hibernate and Spring's `JdbcClient` achieve fragment-aware SQL support.
 - [ ] It would be nice for query method Javadocs to have the SQL that they'll execute in them.
+- [ ] Setup github and renovate for rust
 
 ## Background
 ORMs like Hibernate take a code-first approach that doesn't sit well with the authors. It causes confusion as there are

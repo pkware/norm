@@ -7,7 +7,6 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
-import java.util.stream.Stream
 import kotlin.io.path.ExperimentalPathApi
 import kotlin.io.path.copyTo
 import kotlin.io.path.createDirectories
@@ -29,16 +28,26 @@ import kotlin.io.path.walk
 @Tag("generateGoldenFiles")
 @Execution(ExecutionMode.SAME_THREAD)
 @OptIn(ExperimentalPathApi::class)
-class GenerateGoldenFilesTest {
+class GenerateGoldenFiles {
 
   @ParameterizedTest
-  @MethodSource("scenarios")
-  fun `generate golden files`(scenarioDirectory: Path) {
+  @MethodSource("basicScenarios")
+  fun `generate golden files without type resolution`(scenarioDirectory: Path) {
+    executeGradleProject(scenarioDirectory, false)
+  }
+
+  @ParameterizedTest
+  @MethodSource("complexScenarios")
+  fun `generate golden files with type resolution`(scenarioDirectory: Path) {
+    executeGradleProject(scenarioDirectory, true)
+  }
+
+  private fun executeGradleProject(scenarioDirectory: Path, requiresDatabase: Boolean) {
     val projectDir = Path.of("build/tmp/generateGoldenFiles/${scenarioDirectory.fileName}")
     projectDir.createDirectories()
 
     val project = TestProject(projectDir, scenarioDirectory)
-    project.setup()
+    project.setup(requiresDatabase)
 
     // Run generation - use runCatching to capture partial success
     // (e.g., if some files generate but compilation would fail)
@@ -78,11 +87,17 @@ class GenerateGoldenFilesTest {
   }
 
   companion object {
-    @JvmStatic
-    fun scenarios(): Stream<Path> {
-      val filter = System.getProperty("scenario", "")
-      return NormPluginTest.scenarios()
-        .filter { filter.isBlank() || it.fileName.toString() == filter }
+
+    private val scenarioToRun = System.getProperty("scenario", "")
+    private val scenariosFilter: (Path) -> Boolean = {
+      scenarioToRun.isBlank() ||
+        it.fileName.toString() == scenarioToRun
     }
+
+    @JvmStatic
+    fun basicScenarios() = NormPluginTest.basicScenarios().filter(scenariosFilter)
+
+    @JvmStatic
+    fun complexScenarios() = NormPluginTest.complexScenarios().filter(scenariosFilter)
   }
 }

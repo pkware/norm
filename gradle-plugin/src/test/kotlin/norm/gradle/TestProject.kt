@@ -33,7 +33,7 @@ class TestProject(private val projectDir: Path, private val scenarioDirectory: P
    * Sets up both settings.gradle.kts and build.gradle.kts for a standard scenario test.
    * Requires [scenarioDirectory] to be set.
    */
-  fun setup() {
+  fun setup(requiresDatabase: Boolean) {
     setupSettingsOnly()
 
     val buildFileContent = """
@@ -48,6 +48,7 @@ class TestProject(private val projectDir: Path, private val scenarioDirectory: P
             packageName = "example"
             schemas.addAll("${scenarioDirectory.resolve("schema.sql").normalize().toAbsolutePath()}")
             queries.addAll("${scenarioDirectory.resolve("queries.sql").normalize().toAbsolutePath()}")
+            useDatabase = $requiresDatabase
           }
         }
       }

@@ -13,8 +13,8 @@ import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
+import java.nio.file.Files
 import java.nio.file.Path
-import java.util.stream.Stream
 import kotlin.io.path.ExperimentalPathApi
 import kotlin.io.path.Path
 import kotlin.io.path.exists
@@ -35,10 +35,20 @@ class NormPluginTest {
   private lateinit var testProjectDir: Path
 
   @ParameterizedTest
-  @MethodSource("scenarios")
-  fun `code can be generated and matches golden files`(scenarioDirectory: Path) {
+  @MethodSource("basicScenarios")
+  fun `code can be generated and matches golden files without type resolution`(scenarioDirectory: Path) {
+    executeGradleProject(scenarioDirectory, false)
+  }
+
+  @ParameterizedTest
+  @MethodSource("complexScenarios")
+  fun `code can be generated and matches golden files with type resolution`(scenarioDirectory: Path) {
+    executeGradleProject(scenarioDirectory, true)
+  }
+
+  private fun executeGradleProject(scenarioDirectory: Path, requiresDatabase: Boolean) {
     val project = TestProject(testProjectDir, scenarioDirectory)
-    project.setup()
+    project.setup(requiresDatabase)
 
     // Run full build to verify generated code compiles
     project.gradle("build").build()
@@ -71,7 +81,7 @@ class NormPluginTest {
 
   @Test
   fun `packageNames with periods are correctly generated`() {
-    val scenarioDirectory = scenarios().findFirst().get()
+    val scenarioDirectory = basicScenarios().first()
     val project = TestProject(testProjectDir, scenarioDirectory)
     project.setupSettingsOnly()
 
@@ -88,6 +98,7 @@ class NormPluginTest {
             packageName = "example.with.periods"
             schemas.addAll("${scenarioDirectory.resolve("schema.sql").normalize().toAbsolutePath()}")
             queries.addAll("${scenarioDirectory.resolve("queries.sql").normalize().toAbsolutePath()}")
+            useDatabase = false  // Schema-only validation is sufficient
           }
         }
       }
@@ -111,7 +122,7 @@ class NormPluginTest {
 
   @Test
   fun `relative paths can be used for schemas and queries`() {
-    val scenarioDirectory = scenarios().findFirst().get()
+    val scenarioDirectory = basicScenarios().first()
     val project = TestProject(testProjectDir, scenarioDirectory)
     project.setupSettingsOnly()
 
@@ -128,6 +139,7 @@ class NormPluginTest {
             packageName = "example"
             schemas.addAll("../${testProjectDir.relativize(scenarioDirectory.resolve("schema.sql"))}")
             queries.addAll("../${testProjectDir.relativize(scenarioDirectory.resolve("queries.sql"))}")
+            useDatabase = false  // Schema-only validation is sufficient
           }
         }
       }
@@ -150,7 +162,11 @@ class NormPluginTest {
 
   companion object {
     @JvmStatic
-    fun scenarios(): Stream<Path> =
-      Path("../test-scenarios/").normalize().toAbsolutePath().listDirectoryEntries().stream()
+    fun basicScenarios() = Path("../test-scenarios-basic/").normalize().toAbsolutePath().listDirectoryEntries()
+      .filter(Files::isDirectory)
+
+    @JvmStatic
+    fun complexScenarios() = Path("../test-scenarios-complex/").normalize().toAbsolutePath().listDirectoryEntries()
+      .filter(Files::isDirectory)
   }
 }

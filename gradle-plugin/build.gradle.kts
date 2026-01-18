@@ -20,6 +20,9 @@ dependencies {
   implementation(libs.moshi)
   implementation(kotlin("gradle-plugin"))
 
+  // Add Testcontainers for database-backed analysis
+  implementation(libs.testcontainers.postgresql)
+
   testImplementation(gradleTestKit())
 }
 

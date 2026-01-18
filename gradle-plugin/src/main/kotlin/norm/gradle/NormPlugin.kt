@@ -25,20 +25,45 @@ public class NormPlugin : Plugin<Project> {
       NormExtensionImplementation::class.java,
       this,
     )
-    // FIXME Gradle task to download sqlc if not available, or throw if it's the wrong version of sqlc or use docker task from PKWARE
-
-    // FIXME We need to start a DB and pass that to the yaml and generate task so they can link to it.
+    // TODO: Gradle task to download sqlc if not available, or throw if it's the wrong version
 
     val kotlinSourceSet = project.extensions.getByName<KotlinProjectExtension>("kotlin")
       .sourceSets.getByName("main").kotlin
+
     norm.databases.all {
-      val yamlTask =
-        tasks.register<GenerateYamlTask>("normGenerateYaml${name.uppercaseFirstChar()}", this)
-      val sqlcTask = tasks.register<RunSqlcTask>("normRunSqlc${name.uppercaseFirstChar()}", this)
+      // Set defaults for database properties
+      useDatabase.convention(true)
+      postgresVersion.convention("18")
+
+      // Register YAML generation task
+      val yamlTask = tasks.register<GenerateYamlTask>(
+        "normGenerateYaml${name.uppercaseFirstChar()}",
+        this,
+      )
+
+      yamlTask.configure {
+        useDatabase.set(this@all.useDatabase)
+      }
+
+      // Register sqlc execution task
+      val sqlcTask = tasks.register<RunSqlcTask>(
+        "normRunSqlc${name.uppercaseFirstChar()}",
+        this,
+      )
+
       sqlcTask.configure {
         sqlcConfiguration.set(yamlTask.flatMap { task -> task.sqlcConfiguration })
+        useDatabase.set(this@all.useDatabase)
+        postgresVersion.set(this@all.postgresVersion)
+        databaseName.set(name)
       }
-      val generateCodeTask = tasks.register<GenerateSchemasTask>("normGenerateCode${name.uppercaseFirstChar()}", this)
+
+      // Register code generation task
+      val generateCodeTask = tasks.register<GenerateSchemasTask>(
+        "normGenerateCode${name.uppercaseFirstChar()}",
+        this,
+      )
+
       generateCodeTask.configure {
         schemaJsonFile.set(sqlcTask.flatMap { task -> task.schemaJsonFile })
       }

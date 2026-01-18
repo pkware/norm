@@ -15,8 +15,8 @@ import org.junit.jupiter.params.provider.MethodSource
 import plugin.GenerateRequest
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.stream.Stream
 import kotlin.io.path.Path
+import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.pathString
 import kotlin.io.path.readText
 import kotlin.io.path.relativeTo
@@ -59,7 +59,12 @@ class GenerateCodeTest {
 
   companion object {
     @JvmStatic
-    fun scenarios(): Stream<Path> = Files.list(Path("../test-scenarios").toAbsolutePath())
+    fun scenarios() = listOf(
+      Path("../test-scenarios-basic"),
+      Path("../test-scenarios-complex"),
+    )
+      .flatMap { it.toAbsolutePath().listDirectoryEntries() }
+      .filter(Files::isDirectory)
 
     @OptIn(ExperimentalStdlibApi::class)
     fun readGenerateRequestFromFile(path: Path): GenerateRequest {

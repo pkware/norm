@@ -33,6 +33,34 @@ public abstract class Database(private val name: String) : Named {
   @get:Input
   public abstract val packageName: Property<String>
 
+  /**
+   * Whether to use a database for enhanced query analysis.
+   *
+   * When `true` (the default), NORM starts a PostgreSQL container (via Testcontainers),
+   * applies the schema files, and provides a database connection to sqlc for enhanced
+   * type resolution. This enables sqlc to properly handle Postgres domains, enums, and
+   * extensions that require catalog introspection.
+   *
+   * When `false`, NORM performs schema-only analysis without a database connection,
+   * which is faster but less comprehensive.
+   *
+   * **Requirements**: Docker must be installed and running when enabled.
+   */
+  @get:Input
+  public abstract val useDatabase: Property<Boolean>
+
+  /**
+   * PostgreSQL version to use for the database container.
+   *
+   * Defaults to `"18"` (latest stable at time of implementation).
+   * Only used when [useDatabase] is `true`.
+   *
+   * Example values: `"16"`, `"15"`, `"14"`, or specific tags like `"16.1-alpine"`.
+   * The value is used as the Docker image tag for `postgres:<version>`.
+   */
+  @get:Input
+  public abstract val postgresVersion: Property<String>
+
   @Input
   override fun getName(): String = name
 
