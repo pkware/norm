@@ -250,6 +250,204 @@ class SqlStatementTest {
       assertThat(statement.resultRowShape.creationParameters).hasSize(4)
       assertThat(statement.resultRowShape.builder).hasSize(4)
     }
+
+    @Test
+    fun `query with regular column before and after embedded table`() {
+      val authorTable = Table(
+        Identifier(name = "author"),
+        columns = listOf(
+          column("id", type = "int4"),
+          column("name"),
+        ),
+      )
+      val catalog = Catalog(schemas = listOf(Schema(tables = listOf(authorTable))))
+
+      val statement = createStatement(
+        "SELECT b.id, sqlc.embed(author), b.published_year FROM book b JOIN author ON b.author_id = author.id;",
+        name = "BookWithAuthorAndColumns",
+        columns = listOf(
+          column("id", type = "int4"), // Index should be 1
+          column("author", embedTable = Identifier(name = "author")), // Indices should be 2-3
+          column("published_year", type = "int4"), // Index should be 4
+        ),
+        catalog = catalog,
+      )
+
+      val builders = statement.resultRowShape.builder.map { it.toString() }
+      // Expected indices: 1 (id), 2-3 (author.id, author.name), 4 (published_year)
+      assertThat(builders).hasSize(4)
+      assertThat(builders[0]).contains("getInt(1)") // b.id
+      assertThat(builders[1]).contains("getInt(2)") // author.id
+      assertThat(builders[2]).contains("getString(3)") // author.name
+      // BUG LIKELY HERE: published_year should use index 4, but may use wrong index
+      assertThat(builders[3]).contains("getInt(4)") // b.published_year
+    }
+
+    @Test
+    fun `query with three consecutive embedded tables`() {
+      // Test cumulative index offset errors with multiple consecutive embeds
+      val authorTable = Table(
+        Identifier(name = "author"),
+        columns = listOf(
+          column("id", type = "int4"),
+          column("name"),
+        ),
+      )
+      val publisherTable = Table(
+        Identifier(name = "publisher"),
+        columns = listOf(
+          column("id", type = "int4"),
+          column("company_name"),
+          column("country"),
+        ),
+      )
+      val reviewerTable = Table(
+        Identifier(name = "reviewer"),
+        columns = listOf(
+          column("id", type = "int4"),
+          column("reviewer_name"),
+        ),
+      )
+      val catalog = Catalog(schemas = listOf(Schema(tables = listOf(authorTable, publisherTable, reviewerTable))))
+
+      val statement = createStatement(
+        "SELECT sqlc.embed(author), sqlc.embed(publisher), sqlc.embed(reviewer) FROM book;",
+        name = "ThreeEmbeds",
+        columns = listOf(
+          column("author", embedTable = Identifier(name = "author")), // Indices 1-2
+          column("publisher", embedTable = Identifier(name = "publisher")), // Indices 3-5
+          column("reviewer", embedTable = Identifier(name = "reviewer")), // Indices 6-7
+        ),
+        catalog = catalog,
+      )
+
+      val builders = statement.resultRowShape.builder.map { it.toString() }
+      // Expected: 2 (author) + 3 (publisher) + 2 (reviewer) = 7 total indices
+      assertThat(builders).hasSize(7)
+      // Author columns
+      assertThat(builders[0]).contains("getInt(1)")
+      assertThat(builders[1]).contains("getString(2)")
+      // Publisher columns - BUG LIKELY HERE: may start at wrong index
+      assertThat(builders[2]).contains("getInt(3)")
+      assertThat(builders[3]).contains("getString(4)")
+      assertThat(builders[4]).contains("getString(5)")
+      // Reviewer columns - BUG LIKELY HERE: cumulative offset error
+      assertThat(builders[5]).contains("getInt(6)")
+      assertThat(builders[6]).contains("getString(7)")
+    }
+
+    @Test
+    fun `query with regular columns surrounding embed`() {
+      // Test the "sandwich" pattern: regular columns on both sides of multi-column embed
+      val authorTable = Table(
+        Identifier(name = "author"),
+        columns = listOf(
+          column("id", type = "int4"),
+          column("name"),
+          column("email"),
+        ),
+      )
+      val catalog = Catalog(schemas = listOf(Schema(tables = listOf(authorTable))))
+
+      val statement = createStatement(
+        "SELECT b.title, b.isbn, sqlc.embed(author), b.page_count, b.price FROM book b JOIN author;",
+        name = "SandwichBook",
+        columns = listOf(
+          column("title"), // Index 1
+          column("isbn"), // Index 2
+          column("author", embedTable = Identifier(name = "author")), // Indices 3-5
+          column("page_count", type = "int4"), // Index 6
+          column("price", type = "float8"), // Index 7
+        ),
+        catalog = catalog,
+      )
+
+      val builders = statement.resultRowShape.builder.map { it.toString() }
+      // Expected: 2 regular + 3 (author) + 2 regular = 7 total
+      assertThat(builders).hasSize(7)
+      assertThat(builders[0]).contains("getString(1)") // title
+      assertThat(builders[1]).contains("getString(2)") // isbn
+      assertThat(builders[2]).contains("getInt(3)") // author.id
+      assertThat(builders[3]).contains("getString(4)") // author.name
+      assertThat(builders[4]).contains("getString(5)") // author.email
+      // BUG LIKELY HERE: indices 6-7 after 3-column embed
+      assertThat(builders[5]).contains("getInt(6)") // page_count
+      assertThat(builders[6]).contains("getDouble(7)") // price
+    }
+
+    @Test
+    fun `query with single column embedded table followed by regular columns`() {
+      // Edge case: test if bug is specific to multi-column embeds
+      val categoryTable = Table(
+        Identifier(name = "category"),
+        columns = listOf(
+          column("name"),
+        ),
+      )
+      val catalog = Catalog(schemas = listOf(Schema(tables = listOf(categoryTable))))
+
+      val statement = createStatement(
+        "SELECT sqlc.embed(category), b.title, b.id FROM book b JOIN category;",
+        name = "SingleColumnEmbed",
+        columns = listOf(
+          column("category", embedTable = Identifier(name = "category")), // Index 1
+          column("title"), // Index 2
+          column("id", type = "int4"), // Index 3
+        ),
+        catalog = catalog,
+      )
+
+      val builders = statement.resultRowShape.builder.map { it.toString() }
+      assertThat(builders).hasSize(3)
+      assertThat(builders[0]).contains("getString(1)") // category.name
+      assertThat(builders[1]).contains("getString(2)") // title
+      assertThat(builders[2]).contains("getInt(3)") // id
+    }
+
+    @Test
+    fun `query with alternating regular and embed columns`() {
+      // Most complex: multiple alternations between regular and embed columns
+      val authorTable = Table(
+        Identifier(name = "author"),
+        columns = listOf(
+          column("id", type = "int4"),
+          column("name"),
+        ),
+      )
+      val publisherTable = Table(
+        Identifier(name = "publisher"),
+        columns = listOf(
+          column("id", type = "int4"),
+          column("company_name"),
+        ),
+      )
+      val catalog = Catalog(schemas = listOf(Schema(tables = listOf(authorTable, publisherTable))))
+
+      val statement = createStatement(
+        "SELECT b.title, sqlc.embed(author), b.isbn, sqlc.embed(publisher), b.year FROM book b;",
+        name = "AlternatingPattern",
+        columns = listOf(
+          column("title"), // Index 1
+          column("author", embedTable = Identifier(name = "author")), // Indices 2-3
+          column("isbn"), // Index 4
+          column("publisher", embedTable = Identifier(name = "publisher")), // Indices 5-6
+          column("year", type = "int4"), // Index 7
+        ),
+        catalog = catalog,
+      )
+
+      val builders = statement.resultRowShape.builder.map { it.toString() }
+      assertThat(builders).hasSize(7)
+      assertThat(builders[0]).contains("getString(1)") // title
+      assertThat(builders[1]).contains("getInt(2)") // author.id
+      assertThat(builders[2]).contains("getString(3)") // author.name
+      // BUG LIKELY HERE: isbn after first embed
+      assertThat(builders[3]).contains("getString(4)") // isbn
+      assertThat(builders[4]).contains("getInt(5)") // publisher.id
+      assertThat(builders[5]).contains("getString(6)") // publisher.company_name
+      // BUG LIKELY HERE: year after second embed
+      assertThat(builders[6]).contains("getInt(7)") // year
+    }
   }
 
   @Nested

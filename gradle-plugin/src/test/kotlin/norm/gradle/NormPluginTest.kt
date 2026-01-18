@@ -15,6 +15,7 @@ import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome.SUCCESS
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.CleanupMode
 import org.junit.jupiter.api.io.TempDir
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
@@ -30,7 +31,7 @@ import kotlin.io.path.writeText
 
 class NormPluginTest {
 
-  @TempDir
+  @TempDir(cleanup = CleanupMode.ON_SUCCESS)
   private lateinit var testProjectDir: Path
   private lateinit var buildFile: Path
   private lateinit var settingsFile: Path

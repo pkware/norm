@@ -86,10 +86,6 @@ internal class TypeRepository(private val packageName: String, private val catal
    * @param queryName Name of the query. Used to generate the Kotlin model name.
    * @param queryResults Columns that are returned by the query.
    */
-  // TODO Tests:
-  //  - regular, embed, regular
-  //  - regular, regular
-  //  - embed, embed
   fun buildTypeProjectionForQuery(queryName: String, queryResults: List<Column>): ReturnType {
     val nameOfTypeBeingDefined = ClassName(packageName, queryName.titleCase())
     val typeBeingDefined = TypeSpec.classBuilder(nameOfTypeBeingDefined)
@@ -104,37 +100,54 @@ internal class TypeRepository(private val packageName: String, private val catal
 
     // Parameters required to invoke the mapper
     val mapperParameters = mutableListOf<ParameterSpec>()
-    // FIXME There are all kinds of bugs here with the index and the offset I think
     var index = 1
     for (column in queryResults) {
       val columnType = if (column.embed_table != null) {
-        // sqlc.embed() column. Return the table model of the target table
+        // sqlc.embed() column. Ensure the embedded type is registered, then build inline constructor.
         val table = catalog.resolveTable(column.embed_table)
-        val embeddedType = getTypeProjectionForTable(table, index)
-        index += embeddedType.builder.size
+
+        // Register the embedded type itself (with default offset) so it gets generated
+        getTypeProjectionForTable(table, columnOffset = 1)
+
+        val embeddedTypeClassName = ClassName(
+          packageName,
+          table.rel!!.name.snakeToCamelCase().titleCase(),
+        )
 
         val embeddedTypeConstructorInvocation = CodeBlock.builder()
-          .addStatement("%T(", embeddedType.kotlinType)
+          .addStatement("%T(", embeddedTypeClassName)
           .indent()
-        for (parameter in embeddedType.creationParameters) {
+
+        for (embeddedColumn in table.columns) {
+          val embeddedColumnType = embeddedColumn.typeName
+
+          // Prefix parameter with embed column name to avoid duplicates across multiple embeds
+          val paramName = "${column.name}_${embeddedColumn.name}"
+          val parameter = ParameterSpec(paramName, embeddedColumnType)
+
           secondaryConstructor!!.addParameter(parameter)
+          mapperParameters.add(parameter)
+          mapperArguments.add(embeddedColumn.mappableType.resultSetAction(index))
+          index++
+
           embeddedTypeConstructorInvocation.addStatement("%N,", parameter)
         }
+
         embeddedTypeConstructorInvocation
           .unindent()
           .add(")")
         secondaryToPrimaryConstructorInputs.add(embeddedTypeConstructorInvocation.build())
 
-        // When generating the mapper, we just flatten all the columns. Proper creation of the embedded models is
-        // delegated to the secondary constructor.
-        mapperParameters.addAll(embeddedType.creationParameters)
-        mapperArguments.addAll(embeddedType.builder)
-        embeddedType.kotlinType!!
+        embeddedTypeClassName
       } else {
         // We have a regular column
         val columnType = column.typeName
         val parameter = ParameterSpec(column.name, columnType)
         secondaryConstructor?.addParameter(parameter)
+
+        // Add parameter to secondary-to-primary constructor call inputs
+        secondaryToPrimaryConstructorInputs.add(CodeBlock.of("%N", parameter))
+
         mapperParameters.add(parameter)
         mapperArguments.add(column.mappableType.resultSetAction(index))
         index++
