@@ -45,5 +45,11 @@ CREATE TABLE type (
   pg_time_type pg_catalog.time,
   timetz_type timetz,
   timetz_notnull_type timetz NOT NULL,
-  pg_timetz_type pg_catalog.timetz
+  pg_timetz_type pg_catalog.timetz,
+  timestamp_type timestamp,
+  timestamp_notnull_type timestamp NOT NULL,
+  pg_timestamp_type pg_catalog.timestamp,
+  timestamptz_type timestamptz,
+  timestamptz_notnull_type timestamptz NOT NULL,
+  pg_timestamptz_type pg_catalog.timestamptz
 );

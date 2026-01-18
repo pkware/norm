@@ -8,7 +8,9 @@ import java.sql.Blob
 import java.sql.ResultSet
 import java.sql.Statement
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
+import java.time.OffsetDateTime
 import java.time.OffsetTime
 import kotlin.reflect.KClass
 
@@ -106,5 +108,15 @@ internal enum class PostgresSupportedTypes(
     OffsetTime::class,
     { index, parameterName -> CodeBlock.of("setObject(%L, %L)", index, parameterName) },
     { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, OffsetTime::class.asTypeName()) },
+  ),
+  LOCAL_DATE_TIME(
+    LocalDateTime::class,
+    { index, parameterName -> CodeBlock.of("setObject(%L, %L)", index, parameterName) },
+    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, LocalDateTime::class.asTypeName()) },
+  ),
+  OFFSET_DATE_TIME(
+    OffsetDateTime::class,
+    { index, parameterName -> CodeBlock.of("setObject(%L, %L)", index, parameterName) },
+    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, OffsetDateTime::class.asTypeName()) },
   ),
 }

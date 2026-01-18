@@ -245,6 +245,96 @@ class ColumnTypeMappingTest {
   }
 
   @Nested
+  inner class TimestampWithoutTimezoneTypes {
+    @Test
+    fun `timestamp maps to LocalDateTime`() {
+      val statement = createStatement(
+        "SELECT created_at FROM records;",
+        columns = listOf(column("created_at", type = "timestamp")),
+      )
+      assertThat(statement.resultRowShape.kotlinType)
+        .isEqualTo(java.time.LocalDateTime::class.asTypeName())
+    }
+
+    @Test
+    fun `pg_catalog timestamp maps to LocalDateTime`() {
+      val statement = createStatement(
+        "SELECT created_at FROM records;",
+        columns = listOf(column("created_at", type = "pg_catalog.timestamp")),
+      )
+      assertThat(statement.resultRowShape.kotlinType)
+        .isEqualTo(java.time.LocalDateTime::class.asTypeName())
+    }
+
+    @Test
+    fun `nullable timestamp column`() {
+      val statement = createStatement(
+        "SELECT created_at FROM records;",
+        columns = listOf(column("created_at", type = "timestamp", notNull = false)),
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isTrue()
+      assertThat(kotlinType).isEqualTo(java.time.LocalDateTime::class.asTypeName().copy(nullable = true))
+    }
+
+    @Test
+    fun `non-null timestamp column`() {
+      val statement = createStatement(
+        "SELECT created_at FROM records;",
+        columns = listOf(column("created_at", type = "timestamp", notNull = true)),
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isFalse()
+      assertThat(kotlinType).isEqualTo(java.time.LocalDateTime::class.asTypeName())
+    }
+  }
+
+  @Nested
+  inner class TimestampWithTimezoneTypes {
+    @Test
+    fun `timestamptz maps to OffsetDateTime`() {
+      val statement = createStatement(
+        "SELECT updated_at FROM records;",
+        columns = listOf(column("updated_at", type = "timestamptz")),
+      )
+      assertThat(statement.resultRowShape.kotlinType)
+        .isEqualTo(java.time.OffsetDateTime::class.asTypeName())
+    }
+
+    @Test
+    fun `pg_catalog timestamptz maps to OffsetDateTime`() {
+      val statement = createStatement(
+        "SELECT updated_at FROM records;",
+        columns = listOf(column("updated_at", type = "pg_catalog.timestamptz")),
+      )
+      assertThat(statement.resultRowShape.kotlinType)
+        .isEqualTo(java.time.OffsetDateTime::class.asTypeName())
+    }
+
+    @Test
+    fun `nullable timestamptz column`() {
+      val statement = createStatement(
+        "SELECT updated_at FROM records;",
+        columns = listOf(column("updated_at", type = "timestamptz", notNull = false)),
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isTrue()
+      assertThat(kotlinType).isEqualTo(java.time.OffsetDateTime::class.asTypeName().copy(nullable = true))
+    }
+
+    @Test
+    fun `non-null timestamptz column`() {
+      val statement = createStatement(
+        "SELECT updated_at FROM records;",
+        columns = listOf(column("updated_at", type = "timestamptz", notNull = true)),
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isFalse()
+      assertThat(kotlinType).isEqualTo(java.time.OffsetDateTime::class.asTypeName())
+    }
+  }
+
+  @Nested
   inner class ArrayTypes {
     @Test
     fun `array column maps correctly`() {

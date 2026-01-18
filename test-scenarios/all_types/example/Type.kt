@@ -3,7 +3,9 @@ package example
 import java.math.BigDecimal
 import java.sql.Blob
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
+import java.time.OffsetDateTime
 import java.time.OffsetTime
 import kotlin.Boolean
 import kotlin.Double
@@ -63,4 +65,10 @@ public data class Type(
   public val timetz_type: OffsetTime?,
   public val timetz_notnull_type: OffsetTime,
   public val pg_timetz_type: OffsetTime?,
+  public val timestamp_type: LocalDateTime?,
+  public val timestamp_notnull_type: LocalDateTime,
+  public val pg_timestamp_type: LocalDateTime?,
+  public val timestamptz_type: OffsetDateTime?,
+  public val timestamptz_notnull_type: OffsetDateTime,
+  public val pg_timestamptz_type: OffsetDateTime?,
 )

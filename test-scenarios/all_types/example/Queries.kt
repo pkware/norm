@@ -4,7 +4,9 @@ import java.math.BigDecimal
 import java.sql.Blob
 import java.sql.SQLException
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
+import java.time.OffsetDateTime
 import java.time.OffsetTime
 import kotlin.Any
 import kotlin.Boolean
@@ -69,6 +71,12 @@ public interface Queries : Transacter {
     timetz_type: OffsetTime?,
     timetz_notnull_type: OffsetTime,
     pg_timetz_type: OffsetTime?,
+    timestamp_type: LocalDateTime?,
+    timestamp_notnull_type: LocalDateTime,
+    pg_timestamp_type: LocalDateTime?,
+    timestamptz_type: OffsetDateTime?,
+    timestamptz_notnull_type: OffsetDateTime,
+    pg_timestamptz_type: OffsetDateTime?,
   ) -> T): Many<T>
 
   public fun all(): Many<Type> = all(::Type)
@@ -121,6 +129,12 @@ public interface Queries : Transacter {
     timetz_type: OffsetTime?,
     timetz_notnull_type: OffsetTime,
     pg_timetz_type: OffsetTime?,
+    timestamp_type: LocalDateTime?,
+    timestamp_notnull_type: LocalDateTime,
+    pg_timestamp_type: LocalDateTime?,
+    timestamptz_type: OffsetDateTime?,
+    timestamptz_notnull_type: OffsetDateTime,
+    pg_timestamptz_type: OffsetDateTime?,
   ) -> T): Query<T>
 
   public fun allDynamically(): Query<Type> = allDynamically(::Type)
