@@ -39,5 +39,11 @@ CREATE TABLE type (
   string_type string NOT NULL,
   date_type date,
   date_notnull_type date NOT NULL,
-  pg_date_type pg_catalog.date
+  pg_date_type pg_catalog.date,
+  time_type time,
+  time_notnull_type time NOT NULL,
+  pg_time_type pg_catalog.time,
+  timetz_type timetz,
+  timetz_notnull_type timetz NOT NULL,
+  pg_timetz_type pg_catalog.timetz
 );

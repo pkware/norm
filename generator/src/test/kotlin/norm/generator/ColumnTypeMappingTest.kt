@@ -15,6 +15,9 @@ import plugin.Column
 import plugin.Identifier
 import plugin.Parameter
 import plugin.Query
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.OffsetTime
 
 /**
  * Tests for PostgreSQL to Kotlin type mapping logic in Column.mappableType extension property.
@@ -115,7 +118,7 @@ class ColumnTypeMappingTest {
         columns = listOf(column("birth_date", type = "date")),
       )
       assertThat(statement.resultRowShape.kotlinType)
-        .isEqualTo(java.time.LocalDate::class.asTypeName())
+        .isEqualTo(LocalDate::class.asTypeName())
     }
 
     @Test
@@ -125,7 +128,7 @@ class ColumnTypeMappingTest {
         columns = listOf(column("birth_date", type = "pg_catalog.date")),
       )
       assertThat(statement.resultRowShape.kotlinType)
-        .isEqualTo(java.time.LocalDate::class.asTypeName())
+        .isEqualTo(LocalDate::class.asTypeName())
     }
 
     @Test
@@ -136,7 +139,7 @@ class ColumnTypeMappingTest {
       )
       val kotlinType = statement.resultRowShape.kotlinType!!
       assertThat(kotlinType.isNullable).isTrue()
-      assertThat(kotlinType).isEqualTo(java.time.LocalDate::class.asTypeName().copy(nullable = true))
+      assertThat(kotlinType).isEqualTo(LocalDate::class.asTypeName().copy(nullable = true))
     }
 
     @Test
@@ -147,7 +150,97 @@ class ColumnTypeMappingTest {
       )
       val kotlinType = statement.resultRowShape.kotlinType!!
       assertThat(kotlinType.isNullable).isFalse()
-      assertThat(kotlinType).isEqualTo(java.time.LocalDate::class.asTypeName())
+      assertThat(kotlinType).isEqualTo(LocalDate::class.asTypeName())
+    }
+  }
+
+  @Nested
+  inner class TimeWithoutTimezoneTypes {
+    @Test
+    fun `time maps to LocalTime`() {
+      val statement = createStatement(
+        "SELECT start_time FROM schedule;",
+        columns = listOf(column("start_time", type = "time")),
+      )
+      assertThat(statement.resultRowShape.kotlinType)
+        .isEqualTo(LocalTime::class.asTypeName())
+    }
+
+    @Test
+    fun `pg_catalog time maps to LocalTime`() {
+      val statement = createStatement(
+        "SELECT start_time FROM schedule;",
+        columns = listOf(column("start_time", type = "pg_catalog.time")),
+      )
+      assertThat(statement.resultRowShape.kotlinType)
+        .isEqualTo(LocalTime::class.asTypeName())
+    }
+
+    @Test
+    fun `nullable time column`() {
+      val statement = createStatement(
+        "SELECT start_time FROM schedule;",
+        columns = listOf(column("start_time", type = "time", notNull = false)),
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isTrue()
+      assertThat(kotlinType).isEqualTo(LocalTime::class.asTypeName().copy(nullable = true))
+    }
+
+    @Test
+    fun `non-null time column`() {
+      val statement = createStatement(
+        "SELECT start_time FROM schedule;",
+        columns = listOf(column("start_time", type = "time", notNull = true)),
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isFalse()
+      assertThat(kotlinType).isEqualTo(LocalTime::class.asTypeName())
+    }
+  }
+
+  @Nested
+  inner class TimeWithTimezoneTypes {
+    @Test
+    fun `timetz maps to OffsetTime`() {
+      val statement = createStatement(
+        "SELECT meeting_time FROM events;",
+        columns = listOf(column("meeting_time", type = "timetz")),
+      )
+      assertThat(statement.resultRowShape.kotlinType)
+        .isEqualTo(OffsetTime::class.asTypeName())
+    }
+
+    @Test
+    fun `pg_catalog timetz maps to OffsetTime`() {
+      val statement = createStatement(
+        "SELECT meeting_time FROM events;",
+        columns = listOf(column("meeting_time", type = "pg_catalog.timetz")),
+      )
+      assertThat(statement.resultRowShape.kotlinType)
+        .isEqualTo(OffsetTime::class.asTypeName())
+    }
+
+    @Test
+    fun `nullable timetz column`() {
+      val statement = createStatement(
+        "SELECT meeting_time FROM events;",
+        columns = listOf(column("meeting_time", type = "timetz", notNull = false)),
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isTrue()
+      assertThat(kotlinType).isEqualTo(OffsetTime::class.asTypeName().copy(nullable = true))
+    }
+
+    @Test
+    fun `non-null timetz column`() {
+      val statement = createStatement(
+        "SELECT meeting_time FROM events;",
+        columns = listOf(column("meeting_time", type = "timetz", notNull = true)),
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isFalse()
+      assertThat(kotlinType).isEqualTo(OffsetTime::class.asTypeName())
     }
   }
 
