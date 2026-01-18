@@ -119,4 +119,9 @@ internal enum class PostgresSupportedTypes(
     { index, parameterName -> CodeBlock.of("setObject(%L, %L)", index, parameterName) },
     { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, OffsetDateTime::class.asTypeName()) },
   ),
+  BYTE_ARRAY(
+    ByteArray::class,
+    { index, parameterName -> CodeBlock.of("setBytes(%L, %L)", index, parameterName) },
+    { index -> CodeBlock.of("getBytes(%L)", index) },
+  ),
 }

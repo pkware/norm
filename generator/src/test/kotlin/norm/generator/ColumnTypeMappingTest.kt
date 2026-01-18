@@ -390,6 +390,51 @@ class ColumnTypeMappingTest {
   }
 
   @Nested
+  inner class ByteaTypes {
+    @Test
+    fun `bytea maps to ByteArray`() {
+      val statement = createStatement(
+        "SELECT data FROM files;",
+        columns = listOf(column("data", type = "bytea")),
+      )
+      assertThat(statement.resultRowShape.kotlinType)
+        .isEqualTo(ByteArray::class.asTypeName())
+    }
+
+    @Test
+    fun `pg_catalog bytea maps to ByteArray`() {
+      val statement = createStatement(
+        "SELECT data FROM files;",
+        columns = listOf(column("data", type = "pg_catalog.bytea")),
+      )
+      assertThat(statement.resultRowShape.kotlinType)
+        .isEqualTo(ByteArray::class.asTypeName())
+    }
+
+    @Test
+    fun `nullable bytea column`() {
+      val statement = createStatement(
+        "SELECT data FROM files;",
+        columns = listOf(column("data", type = "bytea", notNull = false)),
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isTrue()
+      assertThat(kotlinType).isEqualTo(ByteArray::class.asTypeName().copy(nullable = true))
+    }
+
+    @Test
+    fun `non-null bytea column`() {
+      val statement = createStatement(
+        "SELECT data FROM files;",
+        columns = listOf(column("data", type = "bytea", notNull = true)),
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isFalse()
+      assertThat(kotlinType).isEqualTo(ByteArray::class.asTypeName())
+    }
+  }
+
+  @Nested
   inner class ArrayTypes {
 
     @Nested

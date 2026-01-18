@@ -34,8 +34,7 @@ internal val Column.mappableType: SqlMappable
     "jsonb" -> JdbcTypes.STRING
 
     "blob" -> JdbcTypes.BLOB
-    // TODO Handle additional types
-//     			"bytea", "pg_catalog.bytea" -> ByteArray::class
+    "bytea", "pg_catalog.bytea" -> PostgresSupportedTypes.BYTE_ARRAY
 
     // Date and time mappings from https://jdbc.postgresql.org/documentation/head/java8-date-time.html
     "date", "pg_catalog.date" -> PostgresSupportedTypes.LOCAL_DATE
@@ -50,7 +49,7 @@ internal val Column.mappableType: SqlMappable
 
     // 			"void" -> Nothing::class
     // 			"any" -> Any::class
-    else -> error("Postgres type $typeName is not mapped to a Kotlin type")
+    else -> error("Postgres type $typeName for column $fullyQualifiedName is not mapped to a Kotlin type")
   }
 
 /**
@@ -77,4 +76,10 @@ internal val Column.typeName: TypeName
     }.copy(nullable = !not_null)
 
     return typeName
+  }
+
+internal val Column.fullyQualifiedName: String
+  get() {
+    val tableName = table?.name.orEmpty()
+    return tableName + name
   }

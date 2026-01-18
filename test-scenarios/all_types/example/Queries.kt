@@ -12,6 +12,7 @@ import java.util.UUID
 import kotlin.Any
 import kotlin.Array
 import kotlin.Boolean
+import kotlin.ByteArray
 import kotlin.Double
 import kotlin.Float
 import kotlin.Int
@@ -83,6 +84,9 @@ public interface Queries : Transacter {
     uuid_type: UUID?,
     uuid_notnull_type: UUID,
     pg_uuid_type: UUID?,
+    bytea_type: ByteArray?,
+    bytea_notnull_type: ByteArray,
+    pg_bytea_type: ByteArray?,
     int_array_type: IntArray?,
     int_array_notnull_type: IntArray,
     text_array_type: Array<String>?,
@@ -148,6 +152,9 @@ public interface Queries : Transacter {
     uuid_type: UUID?,
     uuid_notnull_type: UUID,
     pg_uuid_type: UUID?,
+    bytea_type: ByteArray?,
+    bytea_notnull_type: ByteArray,
+    pg_bytea_type: ByteArray?,
     int_array_type: IntArray?,
     int_array_notnull_type: IntArray,
     text_array_type: Array<String>?,
