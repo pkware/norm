@@ -86,10 +86,10 @@ public interface Queries : Transacter {
     bytea_type: ByteArray?,
     bytea_notnull_type: ByteArray,
     pg_bytea_type: ByteArray?,
-    int_array_type: Array<Int>?,
-    int_array_notnull_type: Array<Int>,
-    text_array_type: Array<String>?,
-    text_array_notnull_type: Array<String>,
+    int_array_type: Array<Int?>?,
+    int_array_notnull_type: Array<Int?>,
+    text_array_type: Array<String?>?,
+    text_array_notnull_type: Array<String?>,
   ) -> T): Many<T>
 
   public fun all(): Many<Type> = all(::Type)
@@ -154,10 +154,10 @@ public interface Queries : Transacter {
     bytea_type: ByteArray?,
     bytea_notnull_type: ByteArray,
     pg_bytea_type: ByteArray?,
-    int_array_type: Array<Int>?,
-    int_array_notnull_type: Array<Int>,
-    text_array_type: Array<String>?,
-    text_array_notnull_type: Array<String>,
+    int_array_type: Array<Int?>?,
+    int_array_notnull_type: Array<Int?>,
+    text_array_type: Array<String?>?,
+    text_array_notnull_type: Array<String?>,
   ) -> T): Query<T>
 
   public fun allDynamically(): Query<Type> = allDynamically(::Type)

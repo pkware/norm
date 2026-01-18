@@ -487,7 +487,7 @@ class ColumnTypeMappingTest {
           columns = listOf(column("flags", type = "bool", isArray = true)),
         )
         assertThat(statement.resultRowShape.kotlinType)
-          .isEqualTo(ARRAY.parameterizedBy(Boolean::class.asTypeName()))
+          .isEqualTo(ARRAY.parameterizedBy(Boolean::class.asTypeName().copy(nullable = true)))
       }
 
       @Test
@@ -497,7 +497,7 @@ class ColumnTypeMappingTest {
           columns = listOf(column("values", type = "int2", isArray = true)),
         )
         assertThat(statement.resultRowShape.kotlinType)
-          .isEqualTo(ARRAY.parameterizedBy(Short::class.asTypeName()))
+          .isEqualTo(ARRAY.parameterizedBy(Short::class.asTypeName().copy(nullable = true)))
       }
 
       @Test
@@ -507,7 +507,7 @@ class ColumnTypeMappingTest {
           columns = listOf(column("tags", type = "int4", isArray = true)),
         )
         assertThat(statement.resultRowShape.kotlinType)
-          .isEqualTo(ARRAY.parameterizedBy(Int::class.asTypeName()))
+          .isEqualTo(ARRAY.parameterizedBy(Int::class.asTypeName().copy(nullable = true)))
       }
 
       @Test
@@ -517,7 +517,7 @@ class ColumnTypeMappingTest {
           columns = listOf(column("ids", type = "int8", isArray = true)),
         )
         assertThat(statement.resultRowShape.kotlinType)
-          .isEqualTo(ARRAY.parameterizedBy(Long::class.asTypeName()))
+          .isEqualTo(ARRAY.parameterizedBy(Long::class.asTypeName().copy(nullable = true)))
       }
 
       @Test
@@ -527,7 +527,7 @@ class ColumnTypeMappingTest {
           columns = listOf(column("measurements", type = "float4", isArray = true)),
         )
         assertThat(statement.resultRowShape.kotlinType)
-          .isEqualTo(ARRAY.parameterizedBy(Float::class.asTypeName()))
+          .isEqualTo(ARRAY.parameterizedBy(Float::class.asTypeName().copy(nullable = true)))
       }
 
       @Test
@@ -537,7 +537,7 @@ class ColumnTypeMappingTest {
           columns = listOf(column("coordinates", type = "float8", isArray = true)),
         )
         assertThat(statement.resultRowShape.kotlinType)
-          .isEqualTo(ARRAY.parameterizedBy(Double::class.asTypeName()))
+          .isEqualTo(ARRAY.parameterizedBy(Double::class.asTypeName().copy(nullable = true)))
       }
     }
 
@@ -550,7 +550,7 @@ class ColumnTypeMappingTest {
           columns = listOf(column("tags", type = "text", isArray = true)),
         )
         assertThat(statement.resultRowShape.kotlinType)
-          .isEqualTo(ARRAY.parameterizedBy(String::class.asTypeName()))
+          .isEqualTo(ARRAY.parameterizedBy(String::class.asTypeName().copy(nullable = true)))
       }
 
       @Test
@@ -560,7 +560,7 @@ class ColumnTypeMappingTest {
           columns = listOf(column("labels", type = "varchar", isArray = true)),
         )
         assertThat(statement.resultRowShape.kotlinType)
-          .isEqualTo(ARRAY.parameterizedBy(String::class.asTypeName()))
+          .isEqualTo(ARRAY.parameterizedBy(String::class.asTypeName().copy(nullable = true)))
       }
 
       @Test
@@ -570,7 +570,7 @@ class ColumnTypeMappingTest {
           columns = listOf(column("user_ids", type = "uuid", isArray = true)),
         )
         assertThat(statement.resultRowShape.kotlinType)
-          .isEqualTo(ARRAY.parameterizedBy(UUID::class.asTypeName()))
+          .isEqualTo(ARRAY.parameterizedBy(UUID::class.asTypeName().copy(nullable = true)))
       }
 
       @Test
@@ -580,7 +580,7 @@ class ColumnTypeMappingTest {
           columns = listOf(column("holidays", type = "date", isArray = true)),
         )
         assertThat(statement.resultRowShape.kotlinType)
-          .isEqualTo(ARRAY.parameterizedBy(LocalDate::class.asTypeName()))
+          .isEqualTo(ARRAY.parameterizedBy(LocalDate::class.asTypeName().copy(nullable = true)))
       }
 
       @Test
@@ -590,7 +590,7 @@ class ColumnTypeMappingTest {
           columns = listOf(column("meeting_times", type = "time", isArray = true)),
         )
         assertThat(statement.resultRowShape.kotlinType)
-          .isEqualTo(ARRAY.parameterizedBy(LocalTime::class.asTypeName()))
+          .isEqualTo(ARRAY.parameterizedBy(LocalTime::class.asTypeName().copy(nullable = true)))
       }
 
       @Test
@@ -600,7 +600,7 @@ class ColumnTypeMappingTest {
           columns = listOf(column("event_times", type = "timetz", isArray = true)),
         )
         assertThat(statement.resultRowShape.kotlinType)
-          .isEqualTo(ARRAY.parameterizedBy(OffsetTime::class.asTypeName()))
+          .isEqualTo(ARRAY.parameterizedBy(OffsetTime::class.asTypeName().copy(nullable = true)))
       }
 
       @Test
@@ -610,7 +610,7 @@ class ColumnTypeMappingTest {
           columns = listOf(column("created_dates", type = "timestamp", isArray = true)),
         )
         assertThat(statement.resultRowShape.kotlinType)
-          .isEqualTo(ARRAY.parameterizedBy(LocalDateTime::class.asTypeName()))
+          .isEqualTo(ARRAY.parameterizedBy(LocalDateTime::class.asTypeName().copy(nullable = true)))
       }
 
       @Test
@@ -620,7 +620,7 @@ class ColumnTypeMappingTest {
           columns = listOf(column("updated_dates", type = "timestamptz", isArray = true)),
         )
         assertThat(statement.resultRowShape.kotlinType)
-          .isEqualTo(ARRAY.parameterizedBy(OffsetDateTime::class.asTypeName()))
+          .isEqualTo(ARRAY.parameterizedBy(OffsetDateTime::class.asTypeName().copy(nullable = true)))
       }
     }
 
@@ -635,7 +635,7 @@ class ColumnTypeMappingTest {
         val kotlinType = statement.resultRowShape.kotlinType!!
         assertThat(kotlinType.isNullable).isTrue()
         assertThat(kotlinType)
-          .isEqualTo(ARRAY.parameterizedBy(Int::class.asTypeName()).copy(nullable = true))
+          .isEqualTo(ARRAY.parameterizedBy(Int::class.asTypeName().copy(nullable = true)).copy(nullable = true))
       }
 
       @Test
@@ -646,7 +646,7 @@ class ColumnTypeMappingTest {
         )
         val kotlinType = statement.resultRowShape.kotlinType!!
         assertThat(kotlinType.isNullable).isFalse()
-        assertThat(kotlinType).isEqualTo(ARRAY.parameterizedBy(Int::class.asTypeName()))
+        assertThat(kotlinType).isEqualTo(ARRAY.parameterizedBy(Int::class.asTypeName().copy(nullable = true)))
       }
 
       @Test
@@ -658,7 +658,7 @@ class ColumnTypeMappingTest {
         val kotlinType = statement.resultRowShape.kotlinType!!
         assertThat(kotlinType.isNullable).isTrue()
         assertThat(kotlinType)
-          .isEqualTo(ARRAY.parameterizedBy(String::class.asTypeName()).copy(nullable = true))
+          .isEqualTo(ARRAY.parameterizedBy(String::class.asTypeName().copy(nullable = true)).copy(nullable = true))
       }
 
       @Test
@@ -669,7 +669,7 @@ class ColumnTypeMappingTest {
         )
         val kotlinType = statement.resultRowShape.kotlinType!!
         assertThat(kotlinType.isNullable).isFalse()
-        assertThat(kotlinType).isEqualTo(ARRAY.parameterizedBy(String::class.asTypeName()))
+        assertThat(kotlinType).isEqualTo(ARRAY.parameterizedBy(String::class.asTypeName().copy(nullable = true)))
       }
     }
   }
@@ -684,7 +684,7 @@ class ColumnTypeMappingTest {
       val accessorString = accessor.toString()
 
       assertThat(accessorString).contains("getArray(1)")
-      assertThat(accessorString).contains("as kotlin.Array<kotlin.Int>")
+      assertThat(accessorString).contains("as kotlin.Array<kotlin.Int?>")
     }
 
     @Test
@@ -704,7 +704,7 @@ class ColumnTypeMappingTest {
       val accessorString = accessor.toString()
 
       assertThat(accessorString).contains("getArray(1)")
-      assertThat(accessorString).contains("as kotlin.Array<kotlin.String>")
+      assertThat(accessorString).contains("as kotlin.Array<kotlin.String?>")
     }
 
     @Test
@@ -714,7 +714,7 @@ class ColumnTypeMappingTest {
       val accessorString = accessor.toString()
 
       assertThat(accessorString).contains("getArray(1)")
-      assertThat(accessorString).contains("as kotlin.Array<java.util.UUID>")
+      assertThat(accessorString).contains("as kotlin.Array<java.util.UUID?>")
     }
   }
 

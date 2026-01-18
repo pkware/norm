@@ -5,6 +5,7 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.asTypeName
 import plugin.Column
+import kotlin.reflect.KClass
 
 /**
  * Details on how to map this column's type between Java and SQL.
@@ -49,12 +50,8 @@ internal val Column.mappableType: SqlMappable
 
     // Wrap in array decorator if this is an array column
     return if (is_array) {
-      // PostgreSQL JDBC driver returns boxed arrays (Array<Int>, Array<String>, etc.)
-      // not primitive arrays (IntArray, ShortArray, etc.)
-      // So we always use ARRAY.parameterizedBy() for all element types
-      val elementType = baseType.klass
-      val arrayTypeName = ARRAY.parameterizedBy(elementType.asTypeName()).copy(nullable = !not_null)
-
+      // Compute array type name without calling this.typeName (to avoid circular dependency)
+      val arrayTypeName = wrapInArrayIfNeeded(baseType.klass)
       ArrayTypeDecorator(baseType, arrayTypeName)
     } else {
       baseType
@@ -67,21 +64,18 @@ internal val Column.mappableType: SqlMappable
  * Prefer this to [SqlMappable.typeName] as this contains additional column-specific information.
  */
 internal val Column.typeName: TypeName
-  get() {
-    val type = mappableType.klass
-
-    val typeName = if (is_array) {
-      // PostgreSQL JDBC returns boxed arrays for all types
-      ARRAY.parameterizedBy(type.asTypeName())
-    } else {
-      type.asTypeName()
-    }.copy(nullable = !not_null)
-
-    return typeName
-  }
+  get() = wrapInArrayIfNeeded(mappableType.klass)
 
 internal val Column.fullyQualifiedName: String
   get() {
     val tableName = table?.name.orEmpty()
     return tableName + name
   }
+
+private fun Column.wrapInArrayIfNeeded(type: KClass<*>): TypeName = if (is_array) {
+  // PostgreSQL JDBC returns boxed arrays for all types. PostgreSQL arrays can contain NULL. The only way to prevent
+  // that is with a CHECK constraint, but we don't have access to those. That could be a future improvement.
+  ARRAY.parameterizedBy(type.asTypeName().copy(nullable = true))
+} else {
+  type.asTypeName()
+}.copy(nullable = !not_null)

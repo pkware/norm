@@ -90,10 +90,10 @@ public class PostgresQueries(
     bytea_type: ByteArray?,
     bytea_notnull_type: ByteArray,
     pg_bytea_type: ByteArray?,
-    int_array_type: Array<Int>?,
-    int_array_notnull_type: Array<Int>,
-    text_array_type: Array<String>?,
-    text_array_notnull_type: Array<String>,
+    int_array_type: Array<Int?>?,
+    int_array_notnull_type: Array<Int?>,
+    text_array_type: Array<String?>?,
+    text_array_notnull_type: Array<String?>,
   ) -> T, block: (String, ResultSet.() -> T) -> R): R {
     val sql = "SELECT smallserial_type, serial2_type, pg_serial2_type, serial_type, serial4_type, pg_serial4_type, bigserial_type, serial8_type, pg_serial8_type, smallint_type, int2_type, pg_int2_type, integer_type, int_type, int4_type, pg_int4_type, bigint_type, int8_type, pg_int8_type, real_type, float4_type, pg_float4_type, float_type, double_type, float8_type, pg_float8_type, numeric_type, pg_numeric_type, bool_type, pg_bool_type, jsonb_type, blob_type, text_type, varchar_type, pg_varchar_type, bpchar_type, pg_bpchar_type, string_type, date_type, date_notnull_type, pg_date_type, time_type, time_notnull_type, pg_time_type, timetz_type, timetz_notnull_type, pg_timetz_type, timestamp_type, timestamp_notnull_type, pg_timestamp_type, timestamptz_type, timestamptz_notnull_type, pg_timestamptz_type, uuid_type, uuid_notnull_type, pg_uuid_type, bytea_type, bytea_notnull_type, pg_bytea_type, int_array_type, int_array_notnull_type, text_array_type, text_array_notnull_type FROM type"
     val rowReader: ResultSet.() -> T = {
@@ -157,10 +157,10 @@ public class PostgresQueries(
         getBytes(57),
         getBytes(58),
         getBytes(59),
-        getArray(60)?.array?.let { it as Array<Int> },
-        getArray(61).array.let { it as Array<Int> },
-        getArray(62)?.array?.let { it as Array<String> },
-        getArray(63).array.let { it as Array<String> },
+        getArray(60)?.array?.let { it as Array<Int?> },
+        getArray(61).array.let { it as Array<Int?> },
+        getArray(62)?.array?.let { it as Array<String?> },
+        getArray(63).array.let { it as Array<String?> },
       )
     }
     return block(sql, rowReader)
@@ -226,10 +226,10 @@ public class PostgresQueries(
     bytea_type: ByteArray?,
     bytea_notnull_type: ByteArray,
     pg_bytea_type: ByteArray?,
-    int_array_type: Array<Int>?,
-    int_array_notnull_type: Array<Int>,
-    text_array_type: Array<String>?,
-    text_array_notnull_type: Array<String>,
+    int_array_type: Array<Int?>?,
+    int_array_notnull_type: Array<Int?>,
+    text_array_type: Array<String?>?,
+    text_array_notnull_type: Array<String?>,
   ) -> T): Many<T> = all(mapper, driver::queryMany)
 
   override fun <T : Any> allDynamically(mapper: (
@@ -292,10 +292,10 @@ public class PostgresQueries(
     bytea_type: ByteArray?,
     bytea_notnull_type: ByteArray,
     pg_bytea_type: ByteArray?,
-    int_array_type: Array<Int>?,
-    int_array_notnull_type: Array<Int>,
-    text_array_type: Array<String>?,
-    text_array_notnull_type: Array<String>,
+    int_array_type: Array<Int?>?,
+    int_array_notnull_type: Array<Int?>,
+    text_array_type: Array<String?>?,
+    text_array_notnull_type: Array<String?>,
   ) -> T): Query<T> = all(mapper, driver::dynamic)
 
   @Throws(SQLException::class)
