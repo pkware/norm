@@ -58,6 +58,7 @@ internal enum class Command(private val sqlcCmd: String) {
      *
      * See the [sqlc documentation](https://docs.sqlc.dev/en/latest/reference/query-annotations.html) for details.
      */
+    @Suppress("ThrowsCount") // The many throws are very intentional and the clearest way to accomplish this
     fun fromSqlcCmd(cmd: String): Command {
       when (cmd) {
         ":batchexec" -> throw UnsupportedOperationException(

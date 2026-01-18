@@ -759,8 +759,4 @@ class ColumnTypeMappingTest {
     table = table,
     embed_table = embedTable,
   )
-
-  // Helper to create a parameter
-  private fun param(number: Int, name: String = "p$number", type: String = "varchar") =
-    Parameter(number = number, column = Column(name = name, type = Identifier(name = type)))
 }

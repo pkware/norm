@@ -28,20 +28,6 @@ abstract class PostgresTestBase {
   protected lateinit var driver: NormDriver
   private lateinit var connection: Connection
 
-  companion object {
-    /**
-     * Shared PostgreSQL container for all tests in this class.
-     * Uses alpine variant for smaller image size (~80MB vs ~300MB).
-     */
-    @Container
-    @JvmStatic
-    val postgres: PostgreSQLContainer<*> = PostgreSQLContainer("postgres:18-alpine")
-      .withDatabaseName("test")
-      .withUsername("test")
-      .withPassword("test")
-      .waitingFor(Wait.forListeningPort())
-  }
-
   @BeforeEach
   fun setupDatabase() {
     // Create a new connection for each test (not pooled - simpler for tests)
@@ -90,6 +76,20 @@ abstract class PostgresTestBase {
     connection.createStatement().use { stmt ->
       stmt.execute(sql)
     }
+  }
+
+  companion object {
+    /**
+     * Shared PostgreSQL container for all tests in this class.
+     * Uses alpine variant for smaller image size (~80MB vs ~300MB).
+     */
+    @Container
+    @JvmStatic
+    val postgres: PostgreSQLContainer<*> = PostgreSQLContainer("postgres:18-alpine")
+      .withDatabaseName("test")
+      .withUsername("test")
+      .withPassword("test")
+      .waitingFor(Wait.forListeningPort())
   }
 
   /**
