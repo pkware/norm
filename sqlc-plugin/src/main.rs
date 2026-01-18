@@ -16,9 +16,8 @@ pub fn create_codegen_response(content: &String) -> codegen::GenerateResponse {
 }
 
 fn main() {
-    let stdin = io::stdin();
-    let mut stdin = stdin.lock();
-    let buffer = stdin.fill_buf().unwrap();
+    let mut buffer = Vec::new();
+    io::stdin().read_to_end(&mut buffer).unwrap();
 
     let request = codegen::GenerateRequest::parse_from_bytes(&buffer).unwrap();
     let json = print_to_string(&request).unwrap();

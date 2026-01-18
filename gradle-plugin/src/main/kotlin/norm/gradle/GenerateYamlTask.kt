@@ -57,8 +57,8 @@ internal abstract class GenerateYamlTask @Inject constructor(@get:Nested val dat
 			|plugins:
 			|  - name: norm
 			|    wasm:
-			|      url: https://github.com/pkware/norm/releases/download/0.0.1/sqlc-exporter.wasm
-			|      sha256: e796dde73d2aee9a5870ee28174feb651a6d9baaae28d03ad5f45cc95f212e69
+			|      url: https://github.com/pkware/norm/releases/download/0.0.2/sqlc-exporter.wasm
+			|      sha256: f6d1d7bc9b8659e3c77dd0434ae4f8a25599116951950089b8d46c2275a886ea
 			|sql:
 			|  - schema: [${schemaPaths.joinToString()}]
 			|    queries: [${queryPaths.joinToString()}]
