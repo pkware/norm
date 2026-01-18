@@ -33,10 +33,36 @@ class NormPluginTest {
   @TempDir
   private lateinit var testProjectDir: Path
   private lateinit var buildFile: Path
+  private lateinit var settingsFile: Path
 
   @BeforeEach
   fun setup() {
     buildFile = testProjectDir.resolve("build.gradle.kts")
+    settingsFile = testProjectDir.resolve("settings.gradle.kts")
+
+    // Create settings.gradle.kts with composite build inclusion
+    // This enables automatic dependency substitution: Maven coordinates → local project
+    val includePath = rootNormProjectPath.toString().replace('\\', '/')
+    val settingsContent = """
+      rootProject.name = "norm-test-project"
+
+      // Include the parent NORM build to substitute runtime dependency with local project
+      includeBuild("$includePath")
+
+      pluginManagement {
+        repositories {
+          mavenCentral()
+          gradlePluginPortal()
+        }
+      }
+
+      dependencyResolutionManagement {
+        repositories {
+          mavenCentral()
+        }
+      }
+    """.trimIndent()
+    settingsFile.writeText(settingsContent)
   }
 
   @ParameterizedTest
@@ -62,7 +88,7 @@ class NormPluginTest {
 
     val result = GradleRunner.create()
       .withProjectDir(testProjectDir.toFile())
-      .withArguments("normGenerateCode")
+      .withArguments("build")
       .withPluginClasspath()
       .build()
 
@@ -190,6 +216,8 @@ class NormPluginTest {
   }
 
   companion object {
+    private val rootNormProjectPath = Path("../").normalize().toAbsolutePath()
+
     @JvmStatic
     fun scenarios(): Stream<Path> = Files.list(Path("../test-scenarios/").normalize().toAbsolutePath())
   }

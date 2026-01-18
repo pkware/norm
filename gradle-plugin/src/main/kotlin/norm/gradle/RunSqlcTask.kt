@@ -80,6 +80,8 @@ internal abstract class RunSqlcTask @Inject constructor(
         sqlcConfiguration.get().asFile.absolutePath,
       )
       standardOutput = System.out
+      // Pass through environment variables so sqlc can access $HOME and other necessary vars
+      environment = System.getenv()
     }.assertNormalExitValue()
   }
 }
