@@ -14,7 +14,6 @@ import kotlin.ByteArray
 import kotlin.Double
 import kotlin.Float
 import kotlin.Int
-import kotlin.IntArray
 import kotlin.Long
 import kotlin.Short
 import kotlin.String
@@ -81,8 +80,8 @@ public data class Type(
   public val bytea_type: ByteArray?,
   public val bytea_notnull_type: ByteArray,
   public val pg_bytea_type: ByteArray?,
-  public val int_array_type: IntArray?,
-  public val int_array_notnull_type: IntArray,
+  public val int_array_type: Array<Int>?,
+  public val int_array_notnull_type: Array<Int>,
   public val text_array_type: Array<String>?,
   public val text_array_notnull_type: Array<String>,
 )

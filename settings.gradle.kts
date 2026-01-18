@@ -3,6 +3,7 @@ enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 rootProject.name = "norm"
 
 include(
+  "e2e-tests",
   "generator",
   "gradle-plugin",
   "runtime",

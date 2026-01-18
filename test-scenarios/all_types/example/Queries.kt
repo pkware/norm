@@ -16,7 +16,6 @@ import kotlin.ByteArray
 import kotlin.Double
 import kotlin.Float
 import kotlin.Int
-import kotlin.IntArray
 import kotlin.Long
 import kotlin.Short
 import kotlin.String
@@ -87,8 +86,8 @@ public interface Queries : Transacter {
     bytea_type: ByteArray?,
     bytea_notnull_type: ByteArray,
     pg_bytea_type: ByteArray?,
-    int_array_type: IntArray?,
-    int_array_notnull_type: IntArray,
+    int_array_type: Array<Int>?,
+    int_array_notnull_type: Array<Int>,
     text_array_type: Array<String>?,
     text_array_notnull_type: Array<String>,
   ) -> T): Many<T>
@@ -155,8 +154,8 @@ public interface Queries : Transacter {
     bytea_type: ByteArray?,
     bytea_notnull_type: ByteArray,
     pg_bytea_type: ByteArray?,
-    int_array_type: IntArray?,
-    int_array_notnull_type: IntArray,
+    int_array_type: Array<Int>?,
+    int_array_notnull_type: Array<Int>,
     text_array_type: Array<String>?,
     text_array_notnull_type: Array<String>,
   ) -> T): Query<T>

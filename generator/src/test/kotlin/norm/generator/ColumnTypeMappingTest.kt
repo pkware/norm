@@ -7,14 +7,8 @@ import assertk.assertions.isFalse
 import assertk.assertions.isIn
 import assertk.assertions.isTrue
 import com.squareup.kotlinpoet.ARRAY
-import com.squareup.kotlinpoet.BOOLEAN_ARRAY
-import com.squareup.kotlinpoet.DOUBLE_ARRAY
-import com.squareup.kotlinpoet.FLOAT_ARRAY
 import com.squareup.kotlinpoet.INT
-import com.squareup.kotlinpoet.INT_ARRAY
-import com.squareup.kotlinpoet.LONG_ARRAY
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
-import com.squareup.kotlinpoet.SHORT_ARRAY
 import com.squareup.kotlinpoet.asTypeName
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
@@ -23,6 +17,7 @@ import plugin.Column
 import plugin.Identifier
 import plugin.Parameter
 import plugin.Query
+import java.sql.Blob
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -436,62 +431,113 @@ class ColumnTypeMappingTest {
   }
 
   @Nested
+  inner class BlobTypes {
+    @Test
+    fun `oid maps to Blob`() {
+      val statement = createStatement(
+        "SELECT data FROM files;",
+        columns = listOf(column("data", type = "oid")),
+      )
+      assertThat(statement.resultRowShape.kotlinType)
+        .isEqualTo(Blob::class.asTypeName())
+    }
+
+    @Test
+    fun `pg_catalog oid maps to Blob`() {
+      val statement = createStatement(
+        "SELECT data FROM files;",
+        columns = listOf(column("data", type = "pg_catalog.oid")),
+      )
+      assertThat(statement.resultRowShape.kotlinType)
+        .isEqualTo(Blob::class.asTypeName())
+    }
+
+    @Test
+    fun `nullable oid column`() {
+      val statement = createStatement(
+        "SELECT data FROM files;",
+        columns = listOf(column("data", type = "oid", notNull = false)),
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isTrue()
+      assertThat(kotlinType).isEqualTo(Blob::class.asTypeName().copy(nullable = true))
+    }
+
+    @Test
+    fun `non-null oid column`() {
+      val statement = createStatement(
+        "SELECT data FROM files;",
+        columns = listOf(column("data", type = "oid", notNull = true)),
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isFalse()
+      assertThat(kotlinType).isEqualTo(Blob::class.asTypeName())
+    }
+  }
+
+  @Nested
   inner class ArrayTypes {
 
     @Nested
-    inner class PrimitiveArrays {
+    inner class NumericArrays {
       @Test
-      fun `boolean array maps to BooleanArray`() {
+      fun `boolean array maps to Array of Boolean`() {
         val statement = createStatement(
           "SELECT flags FROM settings;",
           columns = listOf(column("flags", type = "bool", isArray = true)),
         )
-        assertThat(statement.resultRowShape.kotlinType).isEqualTo(BOOLEAN_ARRAY)
+        assertThat(statement.resultRowShape.kotlinType)
+          .isEqualTo(ARRAY.parameterizedBy(Boolean::class.asTypeName()))
       }
 
       @Test
-      fun `smallint array maps to ShortArray`() {
+      fun `smallint array maps to Array of Short`() {
         val statement = createStatement(
           "SELECT values FROM data;",
           columns = listOf(column("values", type = "int2", isArray = true)),
         )
-        assertThat(statement.resultRowShape.kotlinType).isEqualTo(SHORT_ARRAY)
+        assertThat(statement.resultRowShape.kotlinType)
+          .isEqualTo(ARRAY.parameterizedBy(Short::class.asTypeName()))
       }
 
       @Test
-      fun `int array maps to IntArray`() {
+      fun `int array maps to Array of Int`() {
         val statement = createStatement(
           "SELECT tags FROM post;",
           columns = listOf(column("tags", type = "int4", isArray = true)),
         )
-        assertThat(statement.resultRowShape.kotlinType).isEqualTo(INT_ARRAY)
+        assertThat(statement.resultRowShape.kotlinType)
+          .isEqualTo(ARRAY.parameterizedBy(Int::class.asTypeName()))
       }
 
       @Test
-      fun `bigint array maps to LongArray`() {
+      fun `bigint array maps to Array of Long`() {
         val statement = createStatement(
           "SELECT ids FROM batch;",
           columns = listOf(column("ids", type = "int8", isArray = true)),
         )
-        assertThat(statement.resultRowShape.kotlinType).isEqualTo(LONG_ARRAY)
+        assertThat(statement.resultRowShape.kotlinType)
+          .isEqualTo(ARRAY.parameterizedBy(Long::class.asTypeName()))
       }
 
       @Test
-      fun `float array maps to FloatArray`() {
+      fun `float array maps to Array of Float`() {
         val statement = createStatement(
           "SELECT measurements FROM sensor;",
           columns = listOf(column("measurements", type = "float4", isArray = true)),
         )
-        assertThat(statement.resultRowShape.kotlinType).isEqualTo(FLOAT_ARRAY)
+        assertThat(statement.resultRowShape.kotlinType)
+          .isEqualTo(ARRAY.parameterizedBy(Float::class.asTypeName()))
       }
 
       @Test
-      fun `double array maps to DoubleArray`() {
+      fun `double array maps to Array of Double`() {
         val statement = createStatement(
           "SELECT coordinates FROM location;",
           columns = listOf(column("coordinates", type = "float8", isArray = true)),
         )
-        assertThat(statement.resultRowShape.kotlinType).isEqualTo(DOUBLE_ARRAY)
+        assertThat(statement.resultRowShape.kotlinType)
+          .isEqualTo(ARRAY.parameterizedBy(Double::class.asTypeName()))
       }
     }
 
@@ -588,7 +634,8 @@ class ColumnTypeMappingTest {
         )
         val kotlinType = statement.resultRowShape.kotlinType!!
         assertThat(kotlinType.isNullable).isTrue()
-        assertThat(kotlinType).isEqualTo(INT_ARRAY.copy(nullable = true))
+        assertThat(kotlinType)
+          .isEqualTo(ARRAY.parameterizedBy(Int::class.asTypeName()).copy(nullable = true))
       }
 
       @Test
@@ -599,7 +646,7 @@ class ColumnTypeMappingTest {
         )
         val kotlinType = statement.resultRowShape.kotlinType!!
         assertThat(kotlinType.isNullable).isFalse()
-        assertThat(kotlinType).isEqualTo(INT_ARRAY)
+        assertThat(kotlinType).isEqualTo(ARRAY.parameterizedBy(Int::class.asTypeName()))
       }
 
       @Test
@@ -637,18 +684,17 @@ class ColumnTypeMappingTest {
       val accessorString = accessor.toString()
 
       assertThat(accessorString).contains("getArray(1)")
-      assertThat(accessorString).contains("as kotlin.IntArray")
+      assertThat(accessorString).contains("as kotlin.Array<kotlin.Int>")
     }
 
     @Test
-    fun `nullable int array includes wasNull check`() {
+    fun `nullable int array uses safe call operators`() {
       val col = column("tags", type = "int4", isArray = true, notNull = false)
       val accessor = col.mappableType.resultSetAction(1)
       val accessorString = accessor.toString()
 
       assertThat(accessorString).contains("getArray(1)")
-      assertThat(accessorString).contains("takeUnless")
-      assertThat(accessorString).contains("wasNull()")
+      assertThat(accessorString).contains("?.")
     }
 
     @Test

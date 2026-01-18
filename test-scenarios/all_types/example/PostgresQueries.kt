@@ -17,7 +17,6 @@ import kotlin.ByteArray
 import kotlin.Double
 import kotlin.Float
 import kotlin.Int
-import kotlin.IntArray
 import kotlin.Long
 import kotlin.Short
 import kotlin.String
@@ -91,8 +90,8 @@ public class PostgresQueries(
     bytea_type: ByteArray?,
     bytea_notnull_type: ByteArray,
     pg_bytea_type: ByteArray?,
-    int_array_type: IntArray?,
-    int_array_notnull_type: IntArray,
+    int_array_type: Array<Int>?,
+    int_array_notnull_type: Array<Int>,
     text_array_type: Array<String>?,
     text_array_notnull_type: Array<String>,
   ) -> T, block: (String, ResultSet.() -> T) -> R): R {
@@ -158,9 +157,9 @@ public class PostgresQueries(
         getBytes(57),
         getBytes(58),
         getBytes(59),
-        getArray(60).array.let { it as IntArray }.takeUnless { wasNull() },
-        getArray(61).array.let { it as IntArray },
-        getArray(62).array.let { it as Array<String> }.takeUnless { wasNull() },
+        getArray(60)?.array?.let { it as Array<Int> },
+        getArray(61).array.let { it as Array<Int> },
+        getArray(62)?.array?.let { it as Array<String> },
         getArray(63).array.let { it as Array<String> },
       )
     }
@@ -227,8 +226,8 @@ public class PostgresQueries(
     bytea_type: ByteArray?,
     bytea_notnull_type: ByteArray,
     pg_bytea_type: ByteArray?,
-    int_array_type: IntArray?,
-    int_array_notnull_type: IntArray,
+    int_array_type: Array<Int>?,
+    int_array_notnull_type: Array<Int>,
     text_array_type: Array<String>?,
     text_array_notnull_type: Array<String>,
   ) -> T): Many<T> = all(mapper, driver::queryMany)
@@ -293,8 +292,8 @@ public class PostgresQueries(
     bytea_type: ByteArray?,
     bytea_notnull_type: ByteArray,
     pg_bytea_type: ByteArray?,
-    int_array_type: IntArray?,
-    int_array_notnull_type: IntArray,
+    int_array_type: Array<Int>?,
+    int_array_notnull_type: Array<Int>,
     text_array_type: Array<String>?,
     text_array_notnull_type: Array<String>,
   ) -> T): Query<T> = all(mapper, driver::dynamic)

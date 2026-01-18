@@ -107,19 +107,25 @@ internal class ArrayTypeDecorator(private val delegate: SqlMappable, private val
 
   override val resultSetAction: (index: Int) -> CodeBlock
     get() = { index ->
-      // JDBC arrays: getArray(i).array returns Object (the actual array)
+      // JDBC arrays: getArray(i) returns java.sql.Array or null
+      // getArray(i).array returns Object (the actual array)
       // Cast to the appropriate Kotlin array type
-      val accessor = CodeBlock.of(
-        "getArray(%L).array.let { it as %T }",
-        index,
-        arrayTypeName.copy(nullable = false),
-      )
-
-      // Add null check if the type is nullable
       if (arrayTypeName.isNullable) {
-        CodeBlock.of("%L.takeUnless { wasNull() }", accessor)
+        // For nullable arrays, use safe calls to handle NULL values
+        // getArray() returns null when the column value is NULL
+        CodeBlock.of(
+          "getArray(%L)?.array?.let { it as %T }",
+          index,
+          arrayTypeName.copy(nullable = false),
+        )
       } else {
-        accessor
+        // For non-nullable arrays, keep existing behavior
+        // (will throw NPE if column is unexpectedly null)
+        CodeBlock.of(
+          "getArray(%L).array.let { it as %T }",
+          index,
+          arrayTypeName.copy(nullable = false),
+        )
       }
     }
 }

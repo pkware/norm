@@ -1,13 +1,7 @@
 package norm.generator
 
 import com.squareup.kotlinpoet.ARRAY
-import com.squareup.kotlinpoet.BOOLEAN_ARRAY
-import com.squareup.kotlinpoet.DOUBLE_ARRAY
-import com.squareup.kotlinpoet.FLOAT_ARRAY
-import com.squareup.kotlinpoet.INT_ARRAY
-import com.squareup.kotlinpoet.LONG_ARRAY
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
-import com.squareup.kotlinpoet.SHORT_ARRAY
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.asTypeName
 import plugin.Column
@@ -34,7 +28,7 @@ internal val Column.mappableType: SqlMappable
 
       "jsonb" -> JdbcTypes.STRING
 
-      "blob" -> JdbcTypes.BLOB
+      "oid", "pg_catalog.oid" -> JdbcTypes.BLOB
       "bytea", "pg_catalog.bytea" -> PostgresSupportedTypes.BYTE_ARRAY
 
       // Date and time mappings from https://jdbc.postgresql.org/documentation/head/java8-date-time.html
@@ -55,17 +49,11 @@ internal val Column.mappableType: SqlMappable
 
     // Wrap in array decorator if this is an array column
     return if (is_array) {
-      // Compute array type name without calling this.typeName (to avoid circular dependency)
+      // PostgreSQL JDBC driver returns boxed arrays (Array<Int>, Array<String>, etc.)
+      // not primitive arrays (IntArray, ShortArray, etc.)
+      // So we always use ARRAY.parameterizedBy() for all element types
       val elementType = baseType.klass
-      val arrayTypeName = when (elementType) {
-        Boolean::class -> BOOLEAN_ARRAY
-        Short::class -> SHORT_ARRAY
-        Int::class -> INT_ARRAY
-        Long::class -> LONG_ARRAY
-        Float::class -> FLOAT_ARRAY
-        Double::class -> DOUBLE_ARRAY
-        else -> ARRAY.parameterizedBy(elementType.asTypeName())
-      }.copy(nullable = !not_null)
+      val arrayTypeName = ARRAY.parameterizedBy(elementType.asTypeName()).copy(nullable = !not_null)
 
       ArrayTypeDecorator(baseType, arrayTypeName)
     } else {
@@ -83,15 +71,8 @@ internal val Column.typeName: TypeName
     val type = mappableType.klass
 
     val typeName = if (is_array) {
-      when (type) {
-        Boolean::class -> BOOLEAN_ARRAY
-        Short::class -> SHORT_ARRAY
-        Int::class -> INT_ARRAY
-        Long::class -> LONG_ARRAY
-        Float::class -> FLOAT_ARRAY
-        Double::class -> DOUBLE_ARRAY
-        else -> ARRAY.parameterizedBy(type.asTypeName())
-      }
+      // PostgreSQL JDBC returns boxed arrays for all types
+      ARRAY.parameterizedBy(type.asTypeName())
     } else {
       type.asTypeName()
     }.copy(nullable = !not_null)

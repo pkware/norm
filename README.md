@@ -24,18 +24,17 @@ See the [Gradle plugin README](gradle-plugin/README.md) for setup details.
 ## TODO
 ### Before release
 - [ ] Gradle plugin: connect to a real DB
-- [ ] Support the timestamp type
 - [ ] Pass detekt
 - [ ] Delete old generated files when no longer needed
 - [ ] Framework support
 - [ ] Read/write transactions
+- [ ] Setup github and renovate for rust
 
 ### After release
 - [ ] Enum adapter. Map enums to String and back by default.
 - [ ] List/array/stream/iterable adapter. If given one of these, just convert it to an array.
 - [ ] Value class adapter (inline classes)
 - [ ] Different behavior for read & write transactions
-- [ ] Use save-points for nested transactions—the new code has a model for this already.
 - [ ] ScopedValue instead of ThreadLocal? Requires Java 25+
 - [ ] Populate KDoc using Postgres COMMENTs.
 - [ ] Support batching from Stream, not just Iterable
