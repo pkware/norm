@@ -35,10 +35,10 @@ internal val Column.mappableType: SqlMappable
 
     "blob" -> JdbcTypes.BLOB
     // TODO Handle additional types
-    // 			"bytea", "pg_catalog.bytea" -> ByteString::class
+//     			"bytea", "pg_catalog.bytea" -> ByteArray::class
     //
     // 			// Date and time mappings from https://jdbc.postgresql.org/documentation/head/java8-date-time.html
-    // 			"date" -> LocalDate::class
+    "date", "pg_catalog.date" -> PostgresSupportedTypes.LOCAL_DATE
     // 			"pg_catalog.time", "pg_catalog.timetz" -> LocalTime::class
 
     // FIXME Handle timestamp type			"pg_catalog.timestamp" -> LocalDateTime::class

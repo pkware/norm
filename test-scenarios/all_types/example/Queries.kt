@@ -3,6 +3,7 @@ package example
 import java.math.BigDecimal
 import java.sql.Blob
 import java.sql.SQLException
+import java.time.LocalDate
 import kotlin.Any
 import kotlin.Boolean
 import kotlin.Double
@@ -57,6 +58,9 @@ public interface Queries : Transacter {
     bpchar_type: String?,
     pg_bpchar_type: String?,
     string_type: String,
+    date_type: LocalDate?,
+    date_notnull_type: LocalDate,
+    pg_date_type: LocalDate?,
   ) -> T): Many<T>
 
   public fun all(): Many<Type> = all(::Type)
@@ -100,6 +104,9 @@ public interface Queries : Transacter {
     bpchar_type: String?,
     pg_bpchar_type: String?,
     string_type: String,
+    date_type: LocalDate?,
+    date_notnull_type: LocalDate,
+    pg_date_type: LocalDate?,
   ) -> T): Query<T>
 
   public fun allDynamically(): Query<Type> = allDynamically(::Type)

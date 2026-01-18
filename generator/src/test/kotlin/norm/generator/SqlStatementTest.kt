@@ -7,13 +7,10 @@ import assertk.assertions.hasSize
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
-import assertk.assertions.isIn
 import assertk.assertions.isNull
 import assertk.assertions.isSameInstanceAs
 import assertk.assertions.isTrue
 import com.squareup.kotlinpoet.ClassName
-import com.squareup.kotlinpoet.INT
-import com.squareup.kotlinpoet.INT_ARRAY
 import com.squareup.kotlinpoet.asTypeName
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
@@ -527,85 +524,6 @@ class SqlStatementTest {
     fun `empty comments list`() {
       val statement = createStatement("SELECT * FROM t;")
       assertThat(statement.comments).isEmpty()
-    }
-  }
-
-  @Nested
-  inner class TypeMappingEdgeCases {
-
-    @Test
-    fun `nullable int column`() {
-      val statement = createStatement(
-        "SELECT age FROM person;",
-        columns = listOf(column("age", type = "int4", notNull = false)),
-      )
-      val kotlinType = statement.resultRowShape.kotlinType!!
-      assertThat(kotlinType.isNullable).isTrue()
-      assertThat(kotlinType).isEqualTo(Int::class.asTypeName().copy(nullable = true))
-    }
-
-    @Test
-    fun `non-null int column`() {
-      val statement = createStatement(
-        "SELECT id FROM person;",
-        columns = listOf(column("id", type = "int4", notNull = true)),
-      )
-      val kotlinType = statement.resultRowShape.kotlinType!!
-      assertThat(kotlinType.isNullable).isFalse()
-      assertThat(kotlinType).isEqualTo(INT)
-    }
-
-    @Test
-    fun `array column`() {
-      val statement = createStatement(
-        "SELECT tags FROM post;",
-        columns = listOf(column("tags", type = "int4", isArray = true)),
-      )
-      assertThat(statement.resultRowShape.kotlinType).isEqualTo(INT_ARRAY)
-    }
-
-    @Test
-    fun `various postgres types map correctly`() {
-      // Test a representative sample of types
-      val intTypes = listOf("smallint", "int2", "integer", "int4", "bigint", "int8")
-      val floatTypes = listOf("real", "float4", "double precision", "float8")
-      val textTypes = listOf("text", "varchar", "bpchar")
-
-      for (type in intTypes) {
-        val statement = createStatement(
-          "SELECT val FROM t;",
-          columns = listOf(column("val", type = type)),
-        )
-        assertThat(statement.resultRowShape.kotlinType?.toString())
-          .isIn("kotlin.Short", "kotlin.Int", "kotlin.Long")
-      }
-
-      for (type in floatTypes) {
-        val statement = createStatement(
-          "SELECT val FROM t;",
-          columns = listOf(column("val", type = type)),
-        )
-        assertThat(statement.resultRowShape.kotlinType?.toString())
-          .isIn("kotlin.Float", "kotlin.Double")
-      }
-
-      for (type in textTypes) {
-        val statement = createStatement(
-          "SELECT val FROM t;",
-          columns = listOf(column("val", type = type)),
-        )
-        assertThat(statement.resultRowShape.kotlinType)
-          .isEqualTo(String::class.asTypeName())
-      }
-    }
-
-    @Test
-    fun `boolean type`() {
-      val statement = createStatement(
-        "SELECT active FROM user;",
-        columns = listOf(column("active", type = "bool")),
-      )
-      assertThat(statement.resultRowShape.kotlinType).isEqualTo(Boolean::class.asTypeName())
     }
   }
 

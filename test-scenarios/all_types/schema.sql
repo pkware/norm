@@ -36,5 +36,8 @@ CREATE TABLE type (
   pg_varchar_type pg_catalog.varchar,
   bpchar_type bpchar,
   pg_bpchar_type pg_catalog.bpchar,
-  string_type string NOT NULL
+  string_type string NOT NULL,
+  date_type date,
+  date_notnull_type date NOT NULL,
+  pg_date_type pg_catalog.date
 );

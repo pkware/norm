@@ -7,6 +7,7 @@ import java.math.BigDecimal
 import java.sql.Blob
 import java.sql.ResultSet
 import java.sql.Statement
+import java.time.LocalDate
 import kotlin.reflect.KClass
 
 /**
@@ -88,5 +89,10 @@ internal enum class PostgresSupportedTypes(
     java.util.UUID::class,
     { index, parameterName -> CodeBlock.of("setObject(%L, %L)", index, parameterName) },
     { index -> CodeBlock.of("getObject(%L) as %N", index, java.util.UUID::class.asTypeName()) },
+  ),
+  LOCAL_DATE(
+    LocalDate::class,
+    { index, parameterName -> CodeBlock.of("setObject(%L, %L)", index, parameterName) },
+    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, LocalDate::class.asTypeName()) },
   ),
 }

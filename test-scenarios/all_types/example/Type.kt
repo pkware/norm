@@ -2,6 +2,7 @@ package example
 
 import java.math.BigDecimal
 import java.sql.Blob
+import java.time.LocalDate
 import kotlin.Boolean
 import kotlin.Double
 import kotlin.Float
@@ -51,4 +52,7 @@ public data class Type(
   public val bpchar_type: String?,
   public val pg_bpchar_type: String?,
   public val string_type: String,
+  public val date_type: LocalDate?,
+  public val date_notnull_type: LocalDate,
+  public val pg_date_type: LocalDate?,
 )
