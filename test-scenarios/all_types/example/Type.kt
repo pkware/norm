@@ -7,6 +7,7 @@ import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.OffsetDateTime
 import java.time.OffsetTime
+import java.util.UUID
 import kotlin.Boolean
 import kotlin.Double
 import kotlin.Float
@@ -71,4 +72,7 @@ public data class Type(
   public val timestamptz_type: OffsetDateTime?,
   public val timestamptz_notnull_type: OffsetDateTime,
   public val pg_timestamptz_type: OffsetDateTime?,
+  public val uuid_type: UUID?,
+  public val uuid_notnull_type: UUID,
+  public val pg_uuid_type: UUID?,
 )

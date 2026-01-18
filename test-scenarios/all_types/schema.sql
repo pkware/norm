@@ -51,5 +51,8 @@ CREATE TABLE type (
   pg_timestamp_type pg_catalog.timestamp,
   timestamptz_type timestamptz,
   timestamptz_notnull_type timestamptz NOT NULL,
-  pg_timestamptz_type pg_catalog.timestamptz
+  pg_timestamptz_type pg_catalog.timestamptz,
+  uuid_type uuid,
+  uuid_notnull_type uuid NOT NULL,
+  pg_uuid_type pg_catalog.uuid
 );

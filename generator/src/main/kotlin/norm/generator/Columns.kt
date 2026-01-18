@@ -45,9 +45,9 @@ internal val Column.mappableType: SqlMappable
     "timestamptz", "pg_catalog.timestamptz" -> PostgresSupportedTypes.OFFSET_DATE_TIME
 
     "text", "varchar", "pg_catalog.varchar", "bpchar", "pg_catalog.bpchar", "string" -> JdbcTypes.STRING
-    //
-    // 			"uuid" -> UUID::class
-    //
+
+    "uuid", "pg_catalog.uuid" -> PostgresSupportedTypes.UUID
+
     // 			"void" -> Nothing::class
     // 			"any" -> Any::class
     else -> error("Postgres type $typeName is not mapped to a Kotlin type")

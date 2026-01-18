@@ -92,7 +92,7 @@ internal enum class PostgresSupportedTypes(
   UUID(
     java.util.UUID::class,
     { index, parameterName -> CodeBlock.of("setObject(%L, %L)", index, parameterName) },
-    { index -> CodeBlock.of("getObject(%L) as %N", index, java.util.UUID::class.asTypeName()) },
+    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, java.util.UUID::class.asTypeName()) },
   ),
   LOCAL_DATE(
     LocalDate::class,

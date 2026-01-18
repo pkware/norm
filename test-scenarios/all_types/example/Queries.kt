@@ -8,6 +8,7 @@ import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.OffsetDateTime
 import java.time.OffsetTime
+import java.util.UUID
 import kotlin.Any
 import kotlin.Boolean
 import kotlin.Double
@@ -77,6 +78,9 @@ public interface Queries : Transacter {
     timestamptz_type: OffsetDateTime?,
     timestamptz_notnull_type: OffsetDateTime,
     pg_timestamptz_type: OffsetDateTime?,
+    uuid_type: UUID?,
+    uuid_notnull_type: UUID,
+    pg_uuid_type: UUID?,
   ) -> T): Many<T>
 
   public fun all(): Many<Type> = all(::Type)
@@ -135,6 +139,9 @@ public interface Queries : Transacter {
     timestamptz_type: OffsetDateTime?,
     timestamptz_notnull_type: OffsetDateTime,
     pg_timestamptz_type: OffsetDateTime?,
+    uuid_type: UUID?,
+    uuid_notnull_type: UUID,
+    pg_uuid_type: UUID?,
   ) -> T): Query<T>
 
   public fun allDynamically(): Query<Type> = allDynamically(::Type)

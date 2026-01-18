@@ -335,6 +335,51 @@ class ColumnTypeMappingTest {
   }
 
   @Nested
+  inner class UuidTypes {
+    @Test
+    fun `uuid maps to UUID`() {
+      val statement = createStatement(
+        "SELECT id FROM users;",
+        columns = listOf(column("id", type = "uuid")),
+      )
+      assertThat(statement.resultRowShape.kotlinType)
+        .isEqualTo(java.util.UUID::class.asTypeName())
+    }
+
+    @Test
+    fun `pg_catalog uuid maps to UUID`() {
+      val statement = createStatement(
+        "SELECT id FROM users;",
+        columns = listOf(column("id", type = "pg_catalog.uuid")),
+      )
+      assertThat(statement.resultRowShape.kotlinType)
+        .isEqualTo(java.util.UUID::class.asTypeName())
+    }
+
+    @Test
+    fun `nullable uuid column`() {
+      val statement = createStatement(
+        "SELECT id FROM users;",
+        columns = listOf(column("id", type = "uuid", notNull = false)),
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isTrue()
+      assertThat(kotlinType).isEqualTo(java.util.UUID::class.asTypeName().copy(nullable = true))
+    }
+
+    @Test
+    fun `non-null uuid column`() {
+      val statement = createStatement(
+        "SELECT id FROM users;",
+        columns = listOf(column("id", type = "uuid", notNull = true)),
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isFalse()
+      assertThat(kotlinType).isEqualTo(java.util.UUID::class.asTypeName())
+    }
+  }
+
+  @Nested
   inner class ArrayTypes {
     @Test
     fun `array column maps correctly`() {
