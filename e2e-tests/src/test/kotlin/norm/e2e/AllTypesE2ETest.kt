@@ -8,7 +8,6 @@ import assertk.assertions.isNotNull
 import assertk.assertions.isNull
 import example.PostgresQueries
 import example.Queries
-import example.Type
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
@@ -34,92 +33,22 @@ class AllTypesE2ETest : PostgresTestBase() {
 
   @Test
   fun `single query returns correct string value`() {
-    // Given: A row with string_type = "test-value"
-    insertMinimalRow(stringType = "test-value")
+    insertRowWithArrays(stringType = "test-value")
 
-    // When: Execute single query (-- name: single :one)
     val result = queries.single { stringType -> stringType }
 
-    // Then: Should return the exact value
     assertThat(result).isEqualTo("test-value")
   }
 
   @Test
   fun `all query returns multiple rows in order`() {
     // Given: Three rows with different string values
-    insertMinimalRow(stringType = "first")
-    insertMinimalRow(stringType = "second")
-    insertMinimalRow(stringType = "third")
+    insertRowWithArrays(stringType = "first")
+    insertRowWithArrays(stringType = "second")
+    insertRowWithArrays(stringType = "third")
 
-    // When: Execute all query and extract string_type (parameter 38)
-    val results = queries.all {
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?, // 10
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?, // 20
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?, // 30
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        stringType: String, // 38
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?, // 48
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?, // 58
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-        _: Any?,
-      ->
-      // 63
-      stringType
-    }.list()
+    // When: Query all rows and extract string_type
+    val results = queries.all().list().map { it.string_type }
 
     // Then: Should return all three values in insertion order
     assertThat(results).containsExactly("first", "second", "third")
@@ -137,7 +66,7 @@ class AllTypesE2ETest : PostgresTestBase() {
       )
 
       // When: Query and retrieve the Type object
-      val result = queries.all(::Type).list().first()
+      val result = queries.all().list().first()
 
       // Then: Arrays should contain the expected values
       assertThat(result.int_array_notnull_type).containsExactly(1, 2, 3)
@@ -153,7 +82,7 @@ class AllTypesE2ETest : PostgresTestBase() {
       )
 
       // When: Query and retrieve the Type object
-      val result = queries.all(::Type).list().first()
+      val result = queries.all().list().first()
 
       // Then: Nullable array columns should be null
       assertThat(result.int_array_type).isNull()
@@ -169,7 +98,7 @@ class AllTypesE2ETest : PostgresTestBase() {
       )
 
       // When: Query and retrieve the Type object
-      val result = queries.all(::Type).list().first()
+      val result = queries.all().list().first()
 
       // Then: Arrays should be empty, not null
       assertThat(result.int_array_type).isNotNull().isEmpty()
@@ -185,17 +114,12 @@ class AllTypesE2ETest : PostgresTestBase() {
       )
 
       // When: Query and retrieve the Type object
-      val result = queries.all(::Type).list().first()
+      val result = queries.all().list().first()
 
       // Then: Arrays should have 3 elements with null at index 1
       assertThat(result.int_array_notnull_type).containsExactly(1, null, 3)
       assertThat(result.text_array_notnull_type).containsExactly("a", null, "c")
     }
-  }
-
-  // Helper: Insert a minimal row (only required fields)
-  private fun insertMinimalRow(stringType: String = "test") {
-    insertRowWithArrays(stringType = stringType)
   }
 
   /**
