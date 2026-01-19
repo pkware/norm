@@ -135,6 +135,16 @@ Commands: `:one` (single result), `:many` (multiple results), `:execrows` (retur
 - Runtime tests use Mockito for JDBC mocking
 - Gradle plugin tests use Gradle TestKit
 
+### Golden Files
+
+Test scenarios in `test-scenarios/` contain inputs (`schema.sql`, `queries.sql`) and expected outputs (`schema.json`, `example/*.kt`).
+
+To regenerate golden files after changing the generator:
+- All scenarios: `./gradlew :gradle-plugin:generateGoldenFiles`
+- Single scenario: `./gradlew :gradle-plugin:generateGoldenFiles -Pscenario=<name>`
+
+The task captures generator output even if it doesn't compile, enabling iterative development.
+
 ## IntelliJ Integration
 
 - SQL language injection configured via `runtime/src/main/resources/META-INF/intellij-languageinjection.xml`

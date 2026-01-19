@@ -26,3 +26,25 @@ dependencies {
 kotlin {
   explicitApi()
 }
+
+// Exclude golden file generation from regular test runs
+tasks.test {
+  useJUnitPlatform {
+    excludeTags("generateGoldenFiles")
+  }
+}
+
+tasks.register<Test>("generateGoldenFiles") {
+  description = "Generates golden files for test scenarios"
+  group = "verification"
+
+  testClassesDirs = sourceSets.test.get().output.classesDirs
+  classpath = sourceSets.test.get().runtimeClasspath
+
+  useJUnitPlatform {
+    includeTags("generateGoldenFiles")
+  }
+
+  // Pass through scenario filter if provided
+  systemProperty("scenario", project.findProperty("scenario") ?: "")
+}

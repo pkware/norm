@@ -24,8 +24,7 @@ import kotlin.io.path.relativeTo
 class GenerateCodeTest {
 
   /**
-   * Generate `schema.json` files for scenarios by running the Gradle plugin integration tests. Look for a TO-DO comment
-   * about code that needs to be uncommented to generate files.
+   * Generate `schema.json` files for scenarios by running `./gradlew :gradle-plugin:generateGoldenFiles`.
    */
   @ParameterizedTest
   @MethodSource("scenarios")

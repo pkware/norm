@@ -2,16 +2,10 @@ package norm.gradle
 
 import assertk.assertThat
 import assertk.assertions.contains
+import assertk.assertions.isEmpty
+import assertk.assertions.isEqualTo
 import assertk.assertions.isNotEmpty
 import assertk.assertions.isTrue
-import com.squareup.moshi.Moshi
-import com.squareup.moshi.adapter
-import com.squareup.wire.WireJsonAdapterFactory
-import okio.buffer
-import okio.sink
-import okio.source
-import org.gradle.testkit.runner.GradleRunner
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.CleanupMode
 import org.junit.jupiter.api.io.TempDir
@@ -19,117 +13,70 @@ import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
-import plugin.GenerateRequest
-import java.nio.file.DirectoryNotEmptyException
-import java.nio.file.FileAlreadyExistsException
-import java.nio.file.Files
 import java.nio.file.Path
 import java.util.stream.Stream
+import kotlin.io.path.ExperimentalPathApi
 import kotlin.io.path.Path
+import kotlin.io.path.exists
+import kotlin.io.path.extension
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.pathString
+import kotlin.io.path.readText
 import kotlin.io.path.relativeTo
+import kotlin.io.path.walk
 import kotlin.io.path.writeText
 
 @Execution(ExecutionMode.SAME_THREAD)
+@OptIn(ExperimentalPathApi::class)
 class NormPluginTest {
 
   @TempDir(cleanup = CleanupMode.ON_SUCCESS)
   private lateinit var testProjectDir: Path
-  private lateinit var buildFile: Path
-  private lateinit var settingsFile: Path
-
-  @BeforeEach
-  fun setup() {
-    buildFile = testProjectDir.resolve("build.gradle.kts")
-    settingsFile = testProjectDir.resolve("settings.gradle.kts")
-
-    // Create settings.gradle.kts with composite build inclusion
-    // This enables automatic dependency substitution: Maven coordinates → local project
-    val includePath = rootNormProjectPath.toString().replace('\\', '/')
-    val settingsContent = """
-      rootProject.name = "norm-test-project"
-
-      // Include the parent NORM build to substitute runtime dependency with local project
-      includeBuild("$includePath")
-
-      pluginManagement {
-        repositories {
-          mavenCentral()
-          gradlePluginPortal()
-        }
-      }
-
-      dependencyResolutionManagement {
-        repositories {
-          mavenCentral()
-        }
-      }
-    """.trimIndent()
-    settingsFile.writeText(settingsContent)
-  }
 
   @ParameterizedTest
   @MethodSource("scenarios")
-  fun `code can be generated`(scenarioDirectory: Path) {
-    val buildFileContent = """
-      plugins {
-        kotlin("jvm")
-        id("com.pkware.norm")
-      }
+  fun `code can be generated and matches golden files`(scenarioDirectory: Path) {
+    val project = TestProject(testProjectDir, scenarioDirectory)
+    project.setup()
 
-      norm {
-        databases {
-          create("Test") {
-            packageName = "example"
-            schemas.addAll("${scenarioDirectory.resolve("schema.sql").normalize().toAbsolutePath()}")
-            queries.addAll("${scenarioDirectory.resolve("queries.sql").normalize().toAbsolutePath()}")
-          }
-        }
-      }
+    // Run full build to verify generated code compiles
+    project.gradle("build").build()
 
-      kotlin {
-        compilerOptions {
-          allWarningsAsErrors = true
-        }
-      }
-    """.trimIndent()
-    buildFile.writeText(buildFileContent)
+    // Collect and compare Kotlin files
+    val expectedFiles = collectKotlinFiles(scenarioDirectory.resolve("example"), scenarioDirectory)
+    val generatedFiles = collectKotlinFiles(project.generatedCodeDirectory, project.generatedCodeDirectory)
 
-    GradleRunner.create()
-      .withProjectDir(testProjectDir.toFile())
-      .withArguments("build")
-      .withPluginClasspath()
-      .forwardOutput()
-      .build()
-
-    // Copy the schema file from the project back to the scenario folder,
-    // so it can be used in generator integration tests
-    transferSchemaJsonToDirectory(scenarioDirectory)
-
-    // Copy the generated code back to the scenario folder. For new scenarios, this bootstraps the test. For existing
-    // scenarios, it shows a change in how the code is being generated.
-    val generatedCodeDirectory = testProjectDir.resolve("build").resolve(NormPlugin.NORM_GENERATED_CODE)
-    Files.walk(generatedCodeDirectory).use { files ->
-      files.forEach { file ->
-        val pathRelativeToBase = file.relativeTo(generatedCodeDirectory)
-        val target = scenarioDirectory.resolve(pathRelativeToBase)
-        try {
-          Files.copy(
-            file,
-            target,
-            // TODO Uncomment this to set up a new scenario or replace golden files
-//            java.nio.file.StandardCopyOption.REPLACE_EXISTING
-          )
-        } catch (ignored: FileAlreadyExistsException) {
-        } catch (ignored: DirectoryNotEmptyException) {
-        }
-      }
+    // Assert all expected files exist and match
+    for ((relativePath, expectedContent) in expectedFiles) {
+      assertThat(
+        generatedFiles.containsKey(relativePath),
+        "Expected file $relativePath to be generated",
+      ).isTrue()
+      assertThat(
+        generatedFiles[relativePath],
+        "Content mismatch for $relativePath",
+      ).isEqualTo(expectedContent)
     }
+
+    // Assert no unexpected files were generated (stale golden files)
+    val unexpectedFiles = generatedFiles.keys - expectedFiles.keys
+    assertThat(unexpectedFiles, "Unexpected files were generated").isEmpty()
+
+    // Assert schema.json matches (after cleaning)
+    val generatedSchema = TestProject.readAndCleanSchemaJson(project.schemaJsonPath)
+    val goldenSchema = TestProject.readAndCleanSchemaJson(scenarioDirectory.resolve("schema.json"))
+    assertThat(generatedSchema, "schema.json mismatch").isEqualTo(goldenSchema)
   }
 
   @Test
   fun `packageNames with periods are correctly generated`() {
     val scenarioDirectory = scenarios().findFirst().get()
-    val buildFileContent = """
+    val project = TestProject(testProjectDir, scenarioDirectory)
+    project.setupSettingsOnly()
+
+    project.buildFile.writeText(
+      """
       plugins {
         kotlin("jvm")
         id("com.pkware.norm")
@@ -144,38 +91,32 @@ class NormPluginTest {
           }
         }
       }
-    """.trimIndent()
-    buildFile.writeText(buildFileContent)
+      """.trimIndent(),
+    )
 
-    GradleRunner.create()
-      .withProjectDir(testProjectDir.toFile())
-      .withArguments("normGenerateCode")
-      .withPluginClasspath()
-      .forwardOutput()
-      .build()
-
-    val generatedCodeDirectory = testProjectDir.resolve("build").resolve(NormPlugin.NORM_GENERATED_CODE)
+    project.gradle("normGenerateCode").build()
 
     // Verify the folder structure matches the package name with periods
-    val packageDirectory = generatedCodeDirectory.resolve("example/with/periods")
-    assertThat(Files.exists(packageDirectory)).isTrue()
+    val packageDirectory = project.generatedCodeDirectory.resolve("example/with/periods")
+    assertThat(packageDirectory.exists()).isTrue()
 
     // Verify generated Kotlin files have the correct package declaration
-    Files.list(packageDirectory).use { files ->
-      val kotlinFiles = files.filter { it.toString().endsWith(".kt") }.toList()
-      assertThat(kotlinFiles).isNotEmpty()
+    val kotlinFiles = packageDirectory.listDirectoryEntries("*.kt")
+    assertThat(kotlinFiles).isNotEmpty()
 
-      kotlinFiles.forEach { kotlinFile ->
-        val content = Files.readString(kotlinFile)
-        assertThat(content).contains("package example.with.periods")
-      }
+    kotlinFiles.forEach { kotlinFile ->
+      assertThat(kotlinFile.readText()).contains("package example.with.periods")
     }
   }
 
   @Test
   fun `relative paths can be used for schemas and queries`() {
     val scenarioDirectory = scenarios().findFirst().get()
-    val buildFileContent = """
+    val project = TestProject(testProjectDir, scenarioDirectory)
+    project.setupSettingsOnly()
+
+    project.buildFile.writeText(
+      """
       plugins {
         kotlin("jvm")
         id("com.pkware.norm")
@@ -190,37 +131,26 @@ class NormPluginTest {
           }
         }
       }
-    """.trimIndent()
-    buildFile.writeText(buildFileContent)
+      """.trimIndent(),
+    )
 
-    GradleRunner.create()
-      .withProjectDir(testProjectDir.toFile())
-      .withArguments("normGenerateCode")
-      .withPluginClasspath()
-      .forwardOutput()
-      .build()
+    project.gradle("normGenerateCode").build()
   }
 
   // TODO Test that tasks are correctly cached
 
-  @OptIn(ExperimentalStdlibApi::class)
-  private fun transferSchemaJsonToDirectory(scenarioDirectory: Path) {
-    val moshi = Moshi.Builder()
-      .add(WireJsonAdapterFactory())
-      .build()
-    val requestJsonAdapter = moshi.adapter<GenerateRequest>()
-
-    val request =
-      testProjectDir.resolve("build/tmp/norm/Test/schema.json").source().buffer().use(requestJsonAdapter::fromJson)!!
-        // Clear the settings because they have environment-specific file paths and so aren't suitable for source control
-        .copy(settings = null)
-    scenarioDirectory.resolve("schema.json").sink().buffer().use { requestJsonAdapter.toJson(it, request) }
-  }
+  /**
+   * Collects all Kotlin files from [directory], returning a map of relative path to content.
+   */
+  private fun collectKotlinFiles(directory: Path, baseDir: Path): Map<String, String> = directory.walk()
+    .filter { it.isRegularFile() && it.extension == "kt" }
+    .associate { file ->
+      file.relativeTo(baseDir).pathString to file.readText()
+    }
 
   companion object {
-    private val rootNormProjectPath = Path("../").normalize().toAbsolutePath()
-
     @JvmStatic
-    fun scenarios(): Stream<Path> = Files.list(Path("../test-scenarios/").normalize().toAbsolutePath())
+    fun scenarios(): Stream<Path> =
+      Path("../test-scenarios/").normalize().toAbsolutePath().listDirectoryEntries().stream()
   }
 }
