@@ -8,7 +8,7 @@ package norm
 public fun <T> inputValue(input: T): T = input
 
 /**
- * Combines the results of multiple `exec` batches.
+ * Combines the results of multiple [java.sql.Statement.executeBatch] calls.
  *
  * @param results The batch results
  * @param totalCount Total number of results.
