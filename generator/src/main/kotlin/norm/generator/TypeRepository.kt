@@ -239,6 +239,7 @@ internal class TypeRepository(
     val mapping = mutableMapOf<String, plugin.Identifier>()
 
     for (query in queries) {
+      @Suppress("LoopWithTooManyJumpStatements")
       for (parameter in query.params) {
         val column = parameter.column ?: continue
         val tableName = column.table?.name ?: continue

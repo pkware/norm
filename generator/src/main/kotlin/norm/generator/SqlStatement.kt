@@ -126,6 +126,30 @@ internal class SqlStatement(
   }
 
   /**
+   * List of deduplicated parameter names, indexed by position in the parameters list.
+   *
+   * When sqlc cannot infer meaningful parameter names (e.g., for extension function parameters),
+   * it may assign the same name to multiple parameters. This list ensures each parameter gets a unique name
+   * by appending numeric suffixes (name, name2, name3, ...).
+   */
+  private val deduplicatedParameterNames: List<String> by lazy {
+    val nameCount = mutableMapOf<String, Int>()
+    parameters.mapNotNull(Parameter::column).map { column ->
+      val baseName = column.name
+      val count = nameCount.compute(baseName) { _, v -> (v ?: 0) + 1 }!!
+      if (count == 1) baseName else "$baseName$count"
+    }
+  }
+
+  /**
+   * Returns the deduplicated parameter name at the given index.
+   *
+   * This handles cases where sqlc assigns duplicate names to parameters by appending numeric suffixes.
+   * Returns a fallback name if the index is out of bounds.
+   */
+  fun getParameterName(index: Int): String = deduplicatedParameterNames.getOrElse(index) { "param$index" }
+
+  /**
    * Resolves the mappable type for a column with domain type support.
    */
   fun resolveMappableType(column: Column): SqlMappable = generator.resolveMappableType(column)

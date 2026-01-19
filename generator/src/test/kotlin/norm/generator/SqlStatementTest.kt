@@ -791,6 +791,236 @@ class SqlStatementTest {
     }
   }
 
+  @Nested
+  inner class ParameterNameDeduplication {
+
+    @Test
+    fun `parameters with unique names are unchanged`() {
+      val statement = createStatement(
+        $$"SELECT * FROM t WHERE a = $1 AND b = $2 AND c = $3;",
+        params = listOf(
+          param(1, "id", "int4"),
+          param(2, "name", "text"),
+          param(3, "email", "text"),
+        ),
+      )
+
+      assertThat(statement.getParameterName(0)).isEqualTo("id")
+      assertThat(statement.getParameterName(1)).isEqualTo("name")
+      assertThat(statement.getParameterName(2)).isEqualTo("email")
+    }
+
+    @Test
+    fun `two duplicate names get deduplicated`() {
+      val statement = createStatement(
+        $$"SELECT * FROM t WHERE a = $1 AND b = $2;",
+        params = listOf(
+          param(1, "value", "text"),
+          param(2, "value", "text"),
+        ),
+      )
+
+      assertThat(statement.getParameterName(0)).isEqualTo("value")
+      assertThat(statement.getParameterName(1)).isEqualTo("value2")
+    }
+
+    @Test
+    fun `three duplicate names get deduplicated`() {
+      val statement = createStatement(
+        $$"SELECT * FROM normal_rand($1, $2, $3);",
+        cmd = ":many",
+        params = listOf(
+          param(1, "normal_rand", "int4"),
+          param(2, "normal_rand", "float8"),
+          param(3, "normal_rand", "float8"),
+        ),
+        columns = listOf(column("normal_rand", type = "float8")),
+      )
+
+      assertThat(statement.getParameterName(0)).isEqualTo("normal_rand")
+      assertThat(statement.getParameterName(1)).isEqualTo("normal_rand2")
+      assertThat(statement.getParameterName(2)).isEqualTo("normal_rand3")
+    }
+
+    @Test
+    fun `mixed unique and duplicate names`() {
+      val statement = createStatement(
+        $$"SELECT * FROM t WHERE a = $1 AND b = $2 AND c = $3 AND d = $4 AND e = $5;",
+        params = listOf(
+          param(1, "id", "int4"),
+          param(2, "value", "text"),
+          param(3, "value", "text"),
+          param(4, "name", "text"),
+          param(5, "value", "text"),
+        ),
+      )
+
+      assertThat(statement.getParameterName(0)).isEqualTo("id")
+      assertThat(statement.getParameterName(1)).isEqualTo("value")
+      assertThat(statement.getParameterName(2)).isEqualTo("value2")
+      assertThat(statement.getParameterName(3)).isEqualTo("name")
+      assertThat(statement.getParameterName(4)).isEqualTo("value3")
+    }
+
+    @Test
+    fun `empty parameter list`() {
+      val statement = createStatement("SELECT * FROM t;")
+
+      // Out of bounds on empty list should return fallback
+      assertThat(statement.getParameterName(0)).isEqualTo("param0")
+    }
+
+    @Test
+    fun `out of bounds index returns fallback`() {
+      val statement = createStatement(
+        $$"SELECT * FROM t WHERE a = $1 AND b = $2;",
+        params = listOf(
+          param(1, "id", "int4"),
+          param(2, "name", "text"),
+        ),
+      )
+
+      assertThat(statement.getParameterName(5)).isEqualTo("param5")
+    }
+
+    @Test
+    fun `negative index returns fallback`() {
+      val statement = createStatement(
+        $$"SELECT * FROM t WHERE a = $1 AND b = $2;",
+        params = listOf(
+          param(1, "id", "int4"),
+          param(2, "name", "text"),
+        ),
+      )
+
+      assertThat(statement.getParameterName(-1)).isEqualTo("param-1")
+    }
+
+    @Test
+    fun `crosstab function with duplicate parameter names`() {
+      val statement = createStatement(
+        $$"SELECT * FROM crosstab($1, $2) AS ct(user_id int, setting1 text, setting2 text);",
+        cmd = ":many",
+        params = listOf(
+          param(1, "crosstab", "text"),
+          param(2, "crosstab", "text"),
+        ),
+        columns = listOf(
+          column("user_id", type = "int4"),
+          column("setting1", type = "text"),
+          column("setting2", type = "text"),
+        ),
+      )
+
+      assertThat(statement.getParameterName(0)).isEqualTo("crosstab")
+      assertThat(statement.getParameterName(1)).isEqualTo("crosstab2")
+    }
+
+    @Test
+    fun `decode function with duplicate names`() {
+      val statement = createStatement(
+        $$"SELECT decode($1, $2) AS decoded;",
+        params = listOf(
+          param(1, "decode", "text"),
+          param(2, "decode", "text"),
+        ),
+        columns = listOf(column("decoded", type = "bytea")),
+      )
+
+      assertThat(statement.getParameterName(0)).isEqualTo("decode")
+      assertThat(statement.getParameterName(1)).isEqualTo("decode2")
+    }
+
+    @Test
+    fun `hmac function with three duplicate names`() {
+      val statement = createStatement(
+        $$"SELECT hmac($1, $2, $3) AS signature;",
+        params = listOf(
+          param(1, "hmac", "text"),
+          param(2, "hmac", "text"),
+          param(3, "hmac", "text"),
+        ),
+        columns = listOf(column("signature", type = "bytea")),
+      )
+
+      assertThat(statement.getParameterName(0)).isEqualTo("hmac")
+      assertThat(statement.getParameterName(1)).isEqualTo("hmac2")
+      assertThat(statement.getParameterName(2)).isEqualTo("hmac3")
+    }
+
+    @Test
+    fun `getParameterName with same column object multiple times`() {
+      // Create a single Column object that will be reused
+      val sharedColumn = Column(name = "value", type = Identifier(name = "text"))
+      val statement = createStatement(
+        $$"SELECT * FROM t WHERE a = $1 AND b = $2 AND c = $3;",
+        params = listOf(
+          Parameter(number = 1, column = sharedColumn),
+          Parameter(number = 2, column = sharedColumn),
+          Parameter(number = 3, column = sharedColumn),
+        ),
+      )
+
+      // Even though it's the same Column object, each position should get a unique name
+      assertThat(statement.getParameterName(0)).isEqualTo("value")
+      assertThat(statement.getParameterName(1)).isEqualTo("value2")
+      assertThat(statement.getParameterName(2)).isEqualTo("value3")
+    }
+
+    @Test
+    fun `parameter name deduplication preserves parameter order`() {
+      val statement = createStatement(
+        $$"SELECT * FROM t WHERE a = $1 AND b = $2 AND c = $3;",
+        params = listOf(
+          param(1, "value", "text"),
+          param(2, "value", "text"),
+          param(3, "value", "text"),
+        ),
+      )
+
+      // Call getParameterName multiple times for same index - should return same result
+      assertThat(statement.getParameterName(0)).isEqualTo("value")
+      assertThat(statement.getParameterName(0)).isEqualTo("value")
+      assertThat(statement.getParameterName(1)).isEqualTo("value2")
+      assertThat(statement.getParameterName(1)).isEqualTo("value2")
+      assertThat(statement.getParameterName(2)).isEqualTo("value3")
+      assertThat(statement.getParameterName(2)).isEqualTo("value3")
+    }
+
+    @Test
+    fun `four duplicate names get deduplicated correctly`() {
+      val statement = createStatement(
+        $$"SELECT * FROM t WHERE a = $1 AND b = $2 AND c = $3 AND d = $4;",
+        params = listOf(
+          param(1, "param", "text"),
+          param(2, "param", "text"),
+          param(3, "param", "text"),
+          param(4, "param", "text"),
+        ),
+      )
+
+      assertThat(statement.getParameterName(0)).isEqualTo("param")
+      assertThat(statement.getParameterName(1)).isEqualTo("param2")
+      assertThat(statement.getParameterName(2)).isEqualTo("param3")
+      assertThat(statement.getParameterName(3)).isEqualTo("param4")
+    }
+
+    @Test
+    fun `digest function with duplicate names`() {
+      val statement = createStatement(
+        $$"SELECT digest($1, $2) AS hash;",
+        params = listOf(
+          param(1, "digest", "text"),
+          param(2, "digest", "text"),
+        ),
+        columns = listOf(column("hash", type = "bytea")),
+      )
+
+      assertThat(statement.getParameterName(0)).isEqualTo("digest")
+      assertThat(statement.getParameterName(1)).isEqualTo("digest2")
+    }
+  }
+
   // Helper to create SqlStatement with common defaults
   private fun createStatement(
     sql: String,

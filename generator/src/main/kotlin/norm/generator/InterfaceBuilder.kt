@@ -38,8 +38,9 @@ internal fun TypeSpec.Builder.addSqlStatementInterfaceMethod(query: SqlStatement
   val simpleFunctionBody = CodeBlock.builder()
     .add("return %N(", query.name)
 
-  for (parameter in query.parameters.asSequence().mapNotNull(Parameter::column).toSet()) {
-    simpleFunctionBody.add("%N, ", parameter.name)
+  for ((index, _) in query.parameters.asSequence().mapNotNull(Parameter::column).withIndex()) {
+    val parameterName = query.getParameterName(index)
+    simpleFunctionBody.add("%N, ", parameterName)
   }
 
   if (query.resultRowShape.isComposedOfMultipleColumns) {

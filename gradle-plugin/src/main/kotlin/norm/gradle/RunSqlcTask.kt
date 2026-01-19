@@ -120,8 +120,8 @@ internal abstract class RunSqlcTask @Inject constructor(
         runSqlc()
       } finally {
         // Always stop container after task completes
+        logger.lifecycle("NORM: Stopping PostgreSQL container...")
         try {
-          logger.lifecycle("NORM: Stopping PostgreSQL container...")
           container.stop()
         } catch (expected: Exception) {
           logger.warn("NORM: Failed to stop container", expected)

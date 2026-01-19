@@ -3,6 +3,8 @@ package example
 import java.sql.SQLException
 import kotlin.Any
 import kotlin.Boolean
+import kotlin.ByteArray
+import kotlin.Double
 import kotlin.Int
 import kotlin.IntArray
 import kotlin.String
@@ -120,4 +122,158 @@ public interface Queries : Transacter {
     setting_key: String,
     setting_value: String?,
   )
+
+  /**
+   * Test: Simple digest function with 2 parameters returning bytea
+   * Function: digest(data text, algorithm text) → bytea
+   * Expected: Parameters (String, String), Return ByteArray
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> computeDigest(
+    digest: String,
+    digest2: String,
+    mapper: (hash: ByteArray) -> T,
+  ): T
+
+  /**
+   * Test: Simple digest function with 2 parameters returning bytea
+   * Function: digest(data text, algorithm text) → bytea
+   * Expected: Parameters (String, String), Return ByteArray
+   */
+  @Throws(SQLException::class)
+  public fun computeDigest(digest: String, digest2: String): ByteArray = computeDigest(digest, digest2, ::inputValue)
+
+  /**
+   * Test: HMAC function with 3 parameters (text, bytea, text) returning bytea
+   * Function: hmac(data text, key bytea, algorithm text) → bytea
+   * Expected: Parameters (String, ByteArray, String), Return ByteArray
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> computeHmac(
+    hmac: String,
+    hmac2: String,
+    hmac3: String,
+    mapper: (signature: ByteArray) -> T,
+  ): T
+
+  /**
+   * Test: HMAC function with 3 parameters (text, bytea, text) returning bytea
+   * Function: hmac(data text, key bytea, algorithm text) → bytea
+   * Expected: Parameters (String, ByteArray, String), Return ByteArray
+   */
+  @Throws(SQLException::class)
+  public fun computeHmac(
+    hmac: String,
+    hmac2: String,
+    hmac3: String,
+  ): ByteArray = computeHmac(hmac, hmac2, hmac3, ::inputValue)
+
+  /**
+   * Test: Nested function calls - encode(digest(...))
+   * Functions: digest(text, text) → bytea, encode(bytea, text) → text
+   * Expected: Parameters (String, String, String), Return String
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> computeEncodedHash(
+    digest: String,
+    digest2: String,
+    encode: String,
+    mapper: (encoded_hash: String) -> T,
+  ): T
+
+  /**
+   * Test: Nested function calls - encode(digest(...))
+   * Functions: digest(text, text) → bytea, encode(bytea, text) → text
+   * Expected: Parameters (String, String, String), Return String
+   */
+  @Throws(SQLException::class)
+  public fun computeEncodedHash(
+    digest: String,
+    digest2: String,
+    encode: String,
+  ): String = computeEncodedHash(digest, digest2, encode, ::inputValue)
+
+  /**
+   * Test: decode function - reverse of encode
+   * Function: decode(data text, format text) → bytea
+   * Expected: Parameters (String, String), Return ByteArray
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> decodeData(
+    decode: String,
+    decode2: String,
+    mapper: (decoded: ByteArray) -> T,
+  ): T
+
+  /**
+   * Test: decode function - reverse of encode
+   * Function: decode(data text, format text) → bytea
+   * Expected: Parameters (String, String), Return ByteArray
+   */
+  @Throws(SQLException::class)
+  public fun decodeData(decode: String, decode2: String): ByteArray = decodeData(decode, decode2, ::inputValue)
+
+  /**
+   * Test: Set-returning function normal_rand with 3 numeric parameters
+   * Function: normal_rand(num_rows int, mean float8, stddev float8) → setof float8
+   * Expected: Parameters (Int, Double, Double), Return Many<Double>
+   */
+  public fun <T> generateRandomNumbers(
+    normal_rand: Int,
+    normal_rand2: Double,
+    normal_rand3: Double,
+    mapper: (normal_rand: Double?) -> T,
+  ): Many<T>
+
+  /**
+   * Test: Set-returning function normal_rand with 3 numeric parameters
+   * Function: normal_rand(num_rows int, mean float8, stddev float8) → setof float8
+   * Expected: Parameters (Int, Double, Double), Return Many<Double>
+   */
+  public fun generateRandomNumbers(
+    normal_rand: Int,
+    normal_rand2: Double,
+    normal_rand3: Double,
+  ): Many<Double?> = generateRandomNumbers(normal_rand, normal_rand2, normal_rand3, ::inputValue)
+
+  /**
+   * Test: crosstab with single parameter and explicit column definitions
+   * Function: crosstab(sql text) → setof record
+   * Expected: Parameters (String), Return Many with structured result
+   */
+  public fun <T : Any> getUserSettingsPivot(crosstab: String, mapper: (
+    user_id: Int?,
+    setting1: String?,
+    setting2: String?,
+  ) -> T): Many<T>
+
+  /**
+   * Test: crosstab with single parameter and explicit column definitions
+   * Function: crosstab(sql text) → setof record
+   * Expected: Parameters (String), Return Many with structured result
+   */
+  public fun getUserSettingsPivot(crosstab: String): Many<GetUserSettingsPivot> = getUserSettingsPivot(crosstab, ::GetUserSettingsPivot)
+
+  /**
+   * Test: crosstab with 2 parameters - source and category SQLs
+   * Function: crosstab(source_sql text, category_sql text) → setof record
+   * Expected: Parameters (String, String), Return Many with structured result
+   */
+  public fun <T : Any> getUserSettingsByCategory(
+    crosstab: String,
+    crosstab2: String,
+    mapper: (
+      row_name: String?,
+      category1: Int?,
+      category2: Int?,
+      category3: Int?,
+    ) -> T,
+  ): Many<T>
+
+  /**
+   * Test: crosstab with 2 parameters - source and category SQLs
+   * Function: crosstab(source_sql text, category_sql text) → setof record
+   * Expected: Parameters (String, String), Return Many with structured result
+   */
+  public fun getUserSettingsByCategory(crosstab: String, crosstab2: String): Many<GetUserSettingsByCategory> = getUserSettingsByCategory(crosstab, crosstab2, ::GetUserSettingsByCategory)
 }

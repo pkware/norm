@@ -4,6 +4,8 @@ import java.sql.ResultSet
 import java.sql.SQLException
 import kotlin.Any
 import kotlin.Boolean
+import kotlin.ByteArray
+import kotlin.Double
 import kotlin.Int
 import kotlin.IntArray
 import kotlin.String
@@ -165,4 +167,169 @@ public class PostgresQueries(
       combineExecBatchResults(results, totalCount, batchSize)
     }
   }
+
+  @Throws(SQLException::class)
+  override fun <T : Any> computeDigest(
+    digest: String,
+    digest2: String,
+    mapper: (hash: ByteArray) -> T,
+  ): T {
+    val sql = "SELECT digest(?, ?) AS hash"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getBytes(1),
+      )
+    }
+    return driver.queryOne(sql, rowReader) {
+      setString(1, digest)
+      setString(2, digest2)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <T : Any> computeHmac(
+    hmac: String,
+    hmac2: String,
+    hmac3: String,
+    mapper: (signature: ByteArray) -> T,
+  ): T {
+    val sql = "SELECT hmac(?, ?, ?) AS signature"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getBytes(1),
+      )
+    }
+    return driver.queryOne(sql, rowReader) {
+      setString(1, hmac)
+      setString(2, hmac2)
+      setString(3, hmac3)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <T : Any> computeEncodedHash(
+    digest: String,
+    digest2: String,
+    encode: String,
+    mapper: (encoded_hash: String) -> T,
+  ): T {
+    val sql = "SELECT encode(digest(?, ?), ?) AS encoded_hash"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getString(1),
+      )
+    }
+    return driver.queryOne(sql, rowReader) {
+      setString(1, digest)
+      setString(2, digest2)
+      setString(3, encode)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <T : Any> decodeData(
+    decode: String,
+    decode2: String,
+    mapper: (decoded: ByteArray) -> T,
+  ): T {
+    val sql = "SELECT decode(?, ?) AS decoded"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getBytes(1),
+      )
+    }
+    return driver.queryOne(sql, rowReader) {
+      setString(1, decode)
+      setString(2, decode2)
+    }
+  }
+
+  private fun <T, R> generateRandomNumbers(
+    normal_rand: Int,
+    normal_rand2: Double,
+    normal_rand3: Double,
+    mapper: (normal_rand: Double?) -> T,
+    block: (String, ResultSet.() -> T) -> R,
+  ): R {
+    val sql = "SELECT normal_rand FROM normal_rand(?, ?, ?)"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getDouble(1).takeUnless { wasNull() },
+      )
+    }
+    return block(sql, rowReader)
+  }
+
+  override fun <T> generateRandomNumbers(
+    normal_rand: Int,
+    normal_rand2: Double,
+    normal_rand3: Double,
+    mapper: (normal_rand: Double?) -> T,
+  ): Many<T> = generateRandomNumbers(normal_rand, normal_rand2, normal_rand3, mapper, driver::queryMany)
+
+  private fun <T : Any, R> getUserSettingsPivot(
+    crosstab: String,
+    mapper: (
+      user_id: Int?,
+      setting1: String?,
+      setting2: String?,
+    ) -> T,
+    block: (String, ResultSet.() -> T) -> R,
+  ): R {
+    val sql = """
+        |SELECT user_id, setting1, setting2
+        |FROM crosstab(?) AS ct(user_id int, setting1 text, setting2 text)
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1).takeUnless { wasNull() },
+        getString(2),
+        getString(3),
+      )
+    }
+    return block(sql, rowReader)
+  }
+
+  override fun <T : Any> getUserSettingsPivot(crosstab: String, mapper: (
+    user_id: Int?,
+    setting1: String?,
+    setting2: String?,
+  ) -> T): Many<T> = getUserSettingsPivot(crosstab, mapper, driver::queryMany)
+
+  private fun <T : Any, R> getUserSettingsByCategory(
+    crosstab: String,
+    crosstab2: String,
+    mapper: (
+      row_name: String?,
+      category1: Int?,
+      category2: Int?,
+      category3: Int?,
+    ) -> T,
+    block: (String, ResultSet.() -> T) -> R,
+  ): R {
+    val sql = """
+        |SELECT row_name, category1, category2, category3
+        |FROM crosstab(?, ?) AS ct(row_name text, category1 int, category2 int, category3 int)
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getString(1),
+        getInt(2).takeUnless { wasNull() },
+        getInt(3).takeUnless { wasNull() },
+        getInt(4).takeUnless { wasNull() },
+      )
+    }
+    return block(sql, rowReader)
+  }
+
+  override fun <T : Any> getUserSettingsByCategory(
+    crosstab: String,
+    crosstab2: String,
+    mapper: (
+      row_name: String?,
+      category1: Int?,
+      category2: Int?,
+      category3: Int?,
+    ) -> T,
+  ): Many<T> = getUserSettingsByCategory(crosstab, crosstab2, mapper, driver::queryMany)
 }
