@@ -34,7 +34,8 @@ internal fun sqlFunction(statement: SqlStatement): FunSpec.Builder {
   }
 
   for (parameter in statement.parameters.asSequence().mapNotNull(Parameter::column).toSet()) {
-    val parameterSpec = ParameterSpec.builder(parameter.name, parameter.typeName)
+    val parameterType = statement.resolveColumnType(parameter)
+    val parameterSpec = ParameterSpec.builder(parameter.name, parameterType)
       // TODO Comments don't work
       .addKdoc(parameter.comment)
       .build()
@@ -122,7 +123,7 @@ private fun TypeSpec.Builder.addManyImplementation(statement: SqlStatement) {
       // Add query parameters first
       for (parameter in queryParameters) {
         addParameter(
-          ParameterSpec.builder(parameter.name, parameter.typeName)
+          ParameterSpec.builder(parameter.name, statement.resolveColumnType(parameter))
             .addKdoc(parameter.comment)
             .build(),
         )
@@ -171,7 +172,7 @@ private fun TypeSpec.Builder.addManyImplementation(statement: SqlStatement) {
     .apply {
       for (parameter in queryParameters) {
         addParameter(
-          ParameterSpec.builder(parameter.name, parameter.typeName)
+          ParameterSpec.builder(parameter.name, statement.resolveColumnType(parameter))
             .addKdoc(parameter.comment)
             .build(),
         )
@@ -278,7 +279,7 @@ private fun FunSpec.Builder.buildOne(statement: SqlStatement) {
   if (queryParameters.isNotEmpty()) {
     beginControlFlow("return driver.queryOne(sql, rowReader) {")
     for ((index, parameter) in queryParameters.withIndex()) {
-      val typeInfo = parameter.mappableType
+      val typeInfo = statement.resolveMappableType(parameter)
       addCode("%L\n", typeInfo.statementAction(index + 1, CodeBlock.of(parameter.name)))
     }
     endControlFlow()
@@ -292,7 +293,7 @@ private fun FunSpec.Builder.buildExecRows(statement: SqlStatement) {
   if (queryParameters.isNotEmpty()) {
     beginControlFlow("return driver.executeRows(sql) {")
     for ((index, parameter) in queryParameters.withIndex()) {
-      val typeInfo = parameter.mappableType
+      val typeInfo = statement.resolveMappableType(parameter)
       addCode("%L\n", typeInfo.statementAction(index + 1, CodeBlock.of(parameter.name)))
     }
     endControlFlow()
@@ -306,7 +307,7 @@ private fun FunSpec.Builder.buildExec(statement: SqlStatement) {
   if (queryParameters.isNotEmpty()) {
     beginControlFlow("driver.execute(sql) {")
     for ((index, parameter) in queryParameters.withIndex()) {
-      val typeInfo = parameter.mappableType
+      val typeInfo = statement.resolveMappableType(parameter)
       addCode("%L\n", typeInfo.statementAction(index + 1, CodeBlock.of(parameter.name)))
     }
     addCode("execute()\n")
@@ -334,7 +335,7 @@ internal fun batchFunction(statement: SqlStatement): FunSpec.Builder = sqlFuncti
     val lambda = LambdaTypeName.get(
       receiver = t,
       // TODO I suspect there's a bug here. I'm not sure why this is coming through as non-nullable. IDK if it would be more accurate with a real DB and this is a sqlc limitation, or if I have a bug in my code, or what. But it should be nullable.
-      returnType = parameter.mappableType.typeName,
+      returnType = statement.resolveColumnType(parameter),
     )
     addParameter(parameter.name, lambda)
   }
@@ -357,7 +358,7 @@ private fun buildExecRowsBatch(statement: SqlStatement): FunSpec = batchFunction
   )
   beginControlFlow("for (entry in stream) {")
   for ((index, parameter) in statement.parameters.asSequence().mapNotNull(Parameter::column).withIndex()) {
-    val typeInfo = parameter.mappableType
+    val typeInfo = statement.resolveMappableType(parameter)
     addStatement("%L", typeInfo.statementAction(index + 1, CodeBlock.of("entry.${parameter.name}()")))
   }
   addCode(
@@ -411,7 +412,7 @@ private fun buildExecBatch(statement: SqlStatement): FunSpec = batchFunction(sta
   )
   beginControlFlow("for (entry in stream) {")
   for ((index, parameter) in queryParameters.withIndex()) {
-    val typeInfo = parameter.mappableType
+    val typeInfo = statement.resolveMappableType(parameter)
     addStatement("%L", typeInfo.statementAction(index + 1, CodeBlock.of("entry.${parameter.name}()")))
   }
   addCode(

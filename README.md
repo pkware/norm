@@ -80,9 +80,9 @@ norm {
 - [ ] Read/write transactions
 - [ ] Integration tests for `CALL` queries
 - [ ] Verify that the example works from Github
-- [ ] Automatically download sqlc
 
 ### After release
+- [ ] Automatically download sqlc
 - [ ] Enum adapter. Map enums to String and back by default.
 - [ ] List/array/stream/iterable adapter. If given one of these, just convert it to an array.
 - [ ] Value class adapter (inline classes)

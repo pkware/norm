@@ -21,7 +21,7 @@ private val NORM_DRIVER = ClassName(RUNTIME_PACKAGE, "NormDriver")
  * @return The generated files. File names include the package hierarchy.
  */
 public fun generateCode(catalog: Catalog, queries: List<Query>, packageName: String): List<File> {
-  val generator = TypeRepository(packageName, catalog)
+  val generator = TypeRepository(packageName, catalog, queries)
 
   val resolvedQueries = queries.map { SqlStatement(catalog, it, generator) }
   val interfaceCode = generateQueryInterface(resolvedQueries, "Queries")

@@ -125,6 +125,16 @@ internal class SqlStatement(
     sql = query.text.replace(SQLC_ARGUMENT_REGEX, "?")
   }
 
+  /**
+   * Resolves the mappable type for a column with domain type support.
+   */
+  fun resolveMappableType(column: Column): SqlMappable = generator.resolveMappableType(column)
+
+  /**
+   * Resolves the Kotlin [TypeName] for a column with domain type support.
+   */
+  fun resolveColumnType(column: Column): TypeName = generator.resolveColumnType(column)
+
   private fun computeReturnType(): ReturnType {
     val queryResults = query.columns
     return if (queryResults.isEmpty()) {
@@ -133,10 +143,11 @@ internal class SqlStatement(
     } else if (queryResults.size == 1 && queryResults.first().embed_table == null) {
       // The query returns a single column, so no wrapper is needed
       val column = queryResults.first()
+      val columnType = generator.resolveColumnType(column)
       ReturnType(
-        column.typeName,
-        listOf(column.mappableType.resultSetAction(1)),
-        listOf(ParameterSpec(column.name, column.typeName)),
+        columnType,
+        listOf(generator.resolveMappableType(column).resultSetAction(1)),
+        listOf(ParameterSpec(column.name, columnType)),
       )
     } else if (isSingleTableStarProjection) {
       // The query is a star projection (eg SELECT * ...). Return a model of the table.

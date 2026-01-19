@@ -26,9 +26,11 @@ import java.time.OffsetTime
 import java.util.UUID
 
 /**
- * Tests for PostgreSQL to Kotlin type mapping logic in Column.mappableType extension property.
+ * Tests for PostgreSQL to Kotlin type mapping logic in TypeRepository.resolveMappableType().
  */
 class ColumnTypeMappingTest {
+
+  private val typeRepository = TypeRepository("test", Catalog())
 
   @Nested
   inner class IntegerTypes {
@@ -680,7 +682,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `int array generates getArray accessor`() {
       val col = column("tags", type = "int4", isArray = true)
-      val accessor = col.mappableType.resultSetAction(1)
+      val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
       val accessorString = accessor.toString()
 
       assertThat(accessorString).contains("getArray(1)")
@@ -690,7 +692,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `nullable int array uses safe call operators`() {
       val col = column("tags", type = "int4", isArray = true, notNull = false)
-      val accessor = col.mappableType.resultSetAction(1)
+      val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
       val accessorString = accessor.toString()
 
       assertThat(accessorString).contains("getArray(1)")
@@ -700,7 +702,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `text array generates getArray accessor with Array cast`() {
       val col = column("labels", type = "text", isArray = true)
-      val accessor = col.mappableType.resultSetAction(1)
+      val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
       val accessorString = accessor.toString()
 
       assertThat(accessorString).contains("getArray(1)")
@@ -710,7 +712,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `UUID array generates getArray accessor`() {
       val col = column("user_ids", type = "uuid", isArray = true)
-      val accessor = col.mappableType.resultSetAction(1)
+      val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
       val accessorString = accessor.toString()
 
       assertThat(accessorString).contains("getArray(1)")

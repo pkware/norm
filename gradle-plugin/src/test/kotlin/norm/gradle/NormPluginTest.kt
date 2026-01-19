@@ -7,7 +7,6 @@ import assertk.assertions.isEqualTo
 import assertk.assertions.isNotEmpty
 import assertk.assertions.isTrue
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.CleanupMode
 import org.junit.jupiter.api.io.TempDir
 import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
@@ -31,7 +30,7 @@ import kotlin.io.path.writeText
 @OptIn(ExperimentalPathApi::class)
 class NormPluginTest {
 
-  @TempDir(cleanup = CleanupMode.ON_SUCCESS)
+  @TempDir
   private lateinit var testProjectDir: Path
 
   @ParameterizedTest
