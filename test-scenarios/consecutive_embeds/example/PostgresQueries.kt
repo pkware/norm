@@ -13,12 +13,6 @@ public class PostgresQueries(
   driver: NormDriver,
 ) : RealTransacter(driver),
     Queries {
-  /**
-   * Two consecutive embeds
-   * Expected indices:
-   * 1-2: author (id, name)
-   * 3-5: publisher (id, company_name, country)
-   */
   @Throws(SQLException::class)
   override fun <T : Any> getTwoConsecutiveEmbeds(id: Int, mapper: (
     author_id: Int,
@@ -50,14 +44,6 @@ public class PostgresQueries(
     }
   }
 
-  /**
-   * Three consecutive embeds - tests cumulative offset errors
-   * Expected indices:
-   * 1-2: author (id, name)
-   * 3-5: publisher (id, company_name, country)
-   * 6-7: reviewer (id, reviewer_name)
-   * BUG HYPOTHESIS: Second and third embeds may start at wrong indices
-   */
   @Throws(SQLException::class)
   override fun <T : Any> getThreeConsecutiveEmbeds(id: Int, mapper: (
     author_id: Int,
@@ -95,13 +81,6 @@ public class PostgresQueries(
     }
   }
 
-  /**
-   * Embed, regular, embed pattern
-   * Expected indices:
-   * 1-2: author (id, name)
-   * 3: b.title
-   * 4-6: publisher (id, company_name, country)
-   */
   @Throws(SQLException::class)
   override fun <T : Any> getEmbedRegularEmbed(id: Int, mapper: (
     author_id: Int,

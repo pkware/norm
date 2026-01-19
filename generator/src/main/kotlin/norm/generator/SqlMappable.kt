@@ -1,6 +1,7 @@
 package norm.generator
 
 import com.squareup.kotlinpoet.CodeBlock
+import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.asTypeName
 import java.math.BigDecimal
@@ -76,7 +77,10 @@ internal class NullablePrimitiveDecorator(private val delegate: JdbcTypes) : Sql
   override val typeName: TypeName
     get() = delegate.typeName.copy(true)
   override val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
-    get() = delegate.statementAction
+    get() = { index, parameterName ->
+      val member = MemberName("norm", "set${klass.simpleName}", isExtension = true)
+      CodeBlock.of("%M(%L, %L)", member, index, parameterName)
+    }
   override val resultSetAction: (index: Int) -> CodeBlock
     get() = { CodeBlock.of("%L.takeUnless { wasNull() }", delegate.resultSetAction(it)) }
 }
@@ -110,23 +114,23 @@ internal class ArrayTypeDecorator(private val delegate: SqlMappable, private val
       // JDBC arrays: getArray(i) returns java.sql.Array or null
       // getArray(i).array returns Object (the actual array)
       // Cast to the appropriate Kotlin array type
-      if (arrayTypeName.isNullable) {
+      val getArray = if (arrayTypeName.isNullable) {
         // For nullable arrays, use safe calls to handle NULL values
         // getArray() returns null when the column value is NULL
-        CodeBlock.of(
-          "getArray(%L)?.array?.let { it as %T }",
-          index,
-          arrayTypeName.copy(nullable = false),
-        )
+        "getArray(%L)?.array?"
       } else {
-        // For non-nullable arrays, keep existing behavior
-        // (will throw NPE if column is unexpectedly null)
-        CodeBlock.of(
-          "getArray(%L).array.let { it as %T }",
-          index,
-          arrayTypeName.copy(nullable = false),
-        )
+        "getArray(%L).array"
       }
+      CodeBlock.of(
+        """
+        $getArray.let {
+          @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
+          it as %T
+        }
+        """.trimIndent(),
+        index,
+        arrayTypeName.copy(nullable = false),
+      )
     }
 }
 

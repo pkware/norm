@@ -15,9 +15,6 @@ public class PostgresQueries(
   driver: NormDriver,
 ) : RealTransacter(driver),
     Queries {
-  /**
-   * Simple embed: single table returned as embedded object
-   */
   @Throws(SQLException::class)
   override fun <T : Any> getAuthor(id: Int, mapper: (
     author_id: Int,
@@ -73,9 +70,6 @@ public class PostgresQueries(
     author_email: String,
   ) -> T): Query<T> = listBooksWithAuthors(mapper, driver::dynamic)
 
-  /**
-   * Regular column after embed
-   */
   @Throws(SQLException::class)
   override fun <T : Any> getAuthorWithBookTitle(id: Int, mapper: (
     author_id: Int,

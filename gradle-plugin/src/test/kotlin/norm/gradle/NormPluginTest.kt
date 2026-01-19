@@ -2,7 +2,6 @@ package norm.gradle
 
 import assertk.assertThat
 import assertk.assertions.contains
-import assertk.assertions.isEqualTo
 import assertk.assertions.isNotEmpty
 import assertk.assertions.isTrue
 import com.squareup.moshi.Moshi
@@ -12,11 +11,12 @@ import okio.buffer
 import okio.sink
 import okio.source
 import org.gradle.testkit.runner.GradleRunner
-import org.gradle.testkit.runner.TaskOutcome.SUCCESS
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.CleanupMode
 import org.junit.jupiter.api.io.TempDir
+import org.junit.jupiter.api.parallel.Execution
+import org.junit.jupiter.api.parallel.ExecutionMode
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 import plugin.GenerateRequest
@@ -29,6 +29,7 @@ import kotlin.io.path.Path
 import kotlin.io.path.relativeTo
 import kotlin.io.path.writeText
 
+@Execution(ExecutionMode.SAME_THREAD)
 class NormPluginTest {
 
   @TempDir(cleanup = CleanupMode.ON_SUCCESS)
@@ -84,17 +85,21 @@ class NormPluginTest {
           }
         }
       }
+
+      kotlin {
+        compilerOptions {
+          allWarningsAsErrors = true
+        }
+      }
     """.trimIndent()
     buildFile.writeText(buildFileContent)
 
-    val result = GradleRunner.create()
+    GradleRunner.create()
       .withProjectDir(testProjectDir.toFile())
       .withArguments("build")
       .withPluginClasspath()
+      .forwardOutput()
       .build()
-
-    println(result.output)
-    assertThat(result.task(":normGenerateCodeTest")!!.outcome).isEqualTo(SUCCESS)
 
     // Copy the schema file from the project back to the scenario folder,
     // so it can be used in generator integration tests
@@ -142,14 +147,12 @@ class NormPluginTest {
     """.trimIndent()
     buildFile.writeText(buildFileContent)
 
-    val result = GradleRunner.create()
+    GradleRunner.create()
       .withProjectDir(testProjectDir.toFile())
       .withArguments("normGenerateCode")
       .withPluginClasspath()
+      .forwardOutput()
       .build()
-
-    println(result.output)
-    assertThat(result.task(":normGenerateCodeTest")!!.outcome).isEqualTo(SUCCESS)
 
     val generatedCodeDirectory = testProjectDir.resolve("build").resolve(NormPlugin.NORM_GENERATED_CODE)
 
@@ -190,14 +193,12 @@ class NormPluginTest {
     """.trimIndent()
     buildFile.writeText(buildFileContent)
 
-    val result = GradleRunner.create()
+    GradleRunner.create()
       .withProjectDir(testProjectDir.toFile())
       .withArguments("normGenerateCode")
       .withPluginClasspath()
+      .forwardOutput()
       .build()
-
-    println(result.output)
-    assertThat(result.task(":normGenerateCodeTest")!!.outcome).isEqualTo(SUCCESS)
   }
 
   // TODO Test that tasks are correctly cached

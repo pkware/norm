@@ -16,6 +16,7 @@ import com.squareup.kotlinpoet.TypeVariableName
 import com.squareup.kotlinpoet.asTypeName
 import com.squareup.kotlinpoet.jvm.throws
 import plugin.Parameter
+import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.SQLException
 import java.util.concurrent.locks.ReentrantLock
@@ -27,7 +28,6 @@ import java.util.concurrent.locks.ReentrantLock
  */
 internal fun sqlFunction(statement: SqlStatement): FunSpec.Builder {
   val function = FunSpec.builder(statement.name)
-    .addKdoc(statement.comments.joinToString("\n", transform = String::trim))
 
   if (statement.command != Command.MANY) {
     function.throws(SQLException::class)
@@ -80,7 +80,7 @@ internal fun TypeSpec.Builder.addSqlStatementImplementationMethod(statement: Sql
     Command.ONE -> addOneImplementation(statement)
     Command.MANY -> addManyImplementation(statement)
     Command.EXEC_ROWS -> addExecRowsImplementation(statement)
-    Command.EXEC -> TODO(Command.EXEC.toString())
+    Command.EXEC -> addExecImplementation(statement)
   }
 }
 
@@ -242,6 +242,25 @@ private fun TypeSpec.Builder.addExecRowsImplementation(statement: SqlStatement) 
 }
 
 /**
+ * Generates the implementation for an `:exec` query.
+ *
+ * These queries execute DML without returning a result.
+ * If the statement can be batched, also generates a batch variant.
+ */
+private fun TypeSpec.Builder.addExecImplementation(statement: SqlStatement) {
+  val function = sqlFunction(statement).apply {
+    addModifiers(KModifier.OVERRIDE)
+    addStatement("val sql = %S", statement.sql)
+    buildExec(statement)
+  }
+  addFunction(function.build())
+
+  if (statement.canBeBatched) {
+    addFunction(buildExecBatch(statement))
+  }
+}
+
+/**
  * Builds a function that returns exactly 1, non-null result.
  *
  * The query author is in the best position to determine if a query is capable of returning no or some results.
@@ -282,6 +301,21 @@ private fun FunSpec.Builder.buildExecRows(statement: SqlStatement) {
   }
 }
 
+private fun FunSpec.Builder.buildExec(statement: SqlStatement) {
+  val queryParameters = statement.parameters.mapNotNull(Parameter::column)
+  if (queryParameters.isNotEmpty()) {
+    beginControlFlow("driver.execute(sql) {")
+    for ((index, parameter) in queryParameters.withIndex()) {
+      val typeInfo = parameter.mappableType
+      addCode("%L\n", typeInfo.statementAction(index + 1, CodeBlock.of(parameter.name)))
+    }
+    addCode("execute()\n")
+    endControlFlow()
+  } else {
+    addStatement("driver.execute(sql, %T::execute)", PreparedStatement::class.asTypeName())
+  }
+}
+
 /**
  * Produces a function builder with a signature reflecting a SQL statement, a generic return type, a stream to take
  * multiple inputs, a batch size, and a mapper to produce the return type.
@@ -297,11 +331,12 @@ internal fun batchFunction(statement: SqlStatement): FunSpec.Builder = sqlFuncti
 
   val queryParameters = statement.parameters.mapNotNull(Parameter::column)
   for (parameter in queryParameters) {
-    val lamda = LambdaTypeName.get(
+    val lambda = LambdaTypeName.get(
       receiver = t,
-      returnType = parameter.typeName,
+      // TODO I suspect there's a bug here. I'm not sure why this is coming through as non-nullable. IDK if it would be more accurate with a real DB and this is a sqlc limitation, or if I have a bug in my code, or what. But it should be nullable.
+      returnType = parameter.mappableType.typeName,
     )
-    addParameter(parameter.name, lamda)
+    addParameter(parameter.name, lambda)
   }
 
   addParameter("batchSize", INT)
@@ -357,6 +392,56 @@ private fun buildExecRowsBatch(statement: SqlStatement): FunSpec = batchFunction
   endControlFlow()
 
   returns(INT_ARRAY)
+}.build()
+
+private fun buildExecBatch(statement: SqlStatement): FunSpec = batchFunction(statement).apply {
+  addModifiers(KModifier.OVERRIDE)
+
+  val queryParameters = statement.parameters.mapNotNull(Parameter::column)
+  addStatement("val sql = %S", statement.sql)
+  beginControlFlow("return driver.execute(sql) {")
+  addCode(
+    """
+		|var totalCount = 0
+		|var batchCount = 0
+		|val results = mutableListOf<IntArray>()
+		|
+    """.trimMargin(),
+    ReentrantLock::class.asTypeName(),
+  )
+  beginControlFlow("for (entry in stream) {")
+  for ((index, parameter) in queryParameters.withIndex()) {
+    val typeInfo = parameter.mappableType
+    addStatement("%L", typeInfo.statementAction(index + 1, CodeBlock.of("entry.${parameter.name}()")))
+  }
+  addCode(
+    """
+		|addBatch()
+		|batchCount++
+		|if (batchCount == batchSize) {
+		|  executeBatch()
+		|  batchCount = 0
+		|}
+		|
+    """.trimMargin(),
+  )
+  // Close the forEach
+  endControlFlow()
+
+  addCode(
+    """
+		|if (batchCount > 0) {
+		|  results.add(executeBatch())
+		|  totalCount += batchCount
+		|}
+		|%M(results, totalCount, batchSize)
+		|
+    """.trimMargin(),
+    PROCESS_EXEC_RESULTS,
+  )
+
+  // Close the query
+  endControlFlow()
 }.build()
 
 private val RESULT_SET = ResultSet::class.asTypeName()

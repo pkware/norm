@@ -63,3 +63,17 @@ CREATE TABLE type (
   text_array_type text[],
   text_array_notnull_type text[] NOT NULL
 );
+
+-- Stored procedure for :exec testing (no parameters)
+CREATE OR REPLACE PROCEDURE reset_type_table()
+LANGUAGE SQL
+AS $$
+  DELETE FROM type;
+$$;
+
+-- Stored procedure for :exec testing (with parameters)
+CREATE OR REPLACE PROCEDURE update_string_type(p_id INT, p_new_value TEXT)
+LANGUAGE SQL
+AS $$
+  UPDATE type SET string_type = p_new_value WHERE serial_type = p_id;
+$$;

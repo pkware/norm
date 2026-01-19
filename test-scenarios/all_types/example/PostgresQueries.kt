@@ -2,6 +2,7 @@ package example
 
 import java.math.BigDecimal
 import java.sql.Blob
+import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.SQLException
 import java.time.LocalDate
@@ -17,14 +18,18 @@ import kotlin.ByteArray
 import kotlin.Double
 import kotlin.Float
 import kotlin.Int
+import kotlin.IntArray
 import kotlin.Long
 import kotlin.Short
 import kotlin.String
+import kotlin.collections.Iterable
 import kotlin.jvm.Throws
 import norm.Many
 import norm.NormDriver
 import norm.Query
 import norm.RealTransacter
+import norm.combineExecBatchResults
+import norm.setInt
 
 public class PostgresQueries(
   driver: NormDriver,
@@ -157,10 +162,22 @@ public class PostgresQueries(
         getBytes(57),
         getBytes(58),
         getBytes(59),
-        getArray(60)?.array?.let { it as Array<Int?> },
-        getArray(61).array.let { it as Array<Int?> },
-        getArray(62)?.array?.let { it as Array<String?> },
-        getArray(63).array.let { it as Array<String?> },
+        getArray(60)?.array?.let {
+              @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
+              it as Array<Int?>
+            },
+        getArray(61).array.let {
+              @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
+              it as Array<Int?>
+            },
+        getArray(62)?.array?.let {
+              @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
+              it as Array<String?>
+            },
+        getArray(63).array.let {
+              @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
+              it as Array<String?>
+            },
       )
     }
     return block(sql, rowReader)
@@ -307,5 +324,212 @@ public class PostgresQueries(
       )
     }
     return driver.queryOne(sql, rowReader)
+  }
+
+  @Throws(SQLException::class)
+  override fun insertOne(string_type: String): Int {
+    val sql = "INSERT INTO type(string_type) VALUES (?)"
+    return driver.executeRows(sql) {
+      setString(1, string_type)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any> insertOne(
+    stream: Iterable<Input>,
+    string_type: Input.() -> String,
+    batchSize: Int,
+  ): IntArray {
+    val sql = "INSERT INTO type(string_type) VALUES (?)"
+    return driver.execute(sql) {
+      var totalCount = 0
+      var batchCount = 0
+      val results = mutableListOf<IntArray>()
+      for (entry in stream) {
+        setString(1, entry.string_type())
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          results.add(executeBatch())
+          batchCount = 0
+          // Performance optimization to reduce register updates per loop iteration
+          totalCount += batchSize
+        }
+      }
+      if (batchCount > 0) {
+        results.add(executeBatch())
+        totalCount += batchCount
+      }
+      combineExecBatchResults(results, totalCount, batchSize)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun insertMultiple(string_type: String, int_type: Int?): Int {
+    val sql = "INSERT INTO type(string_type, int_type) VALUES (?, ?)"
+    return driver.executeRows(sql) {
+      setString(1, string_type)
+      setInt(2, int_type)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any> insertMultiple(
+    stream: Iterable<Input>,
+    string_type: Input.() -> String,
+    int_type: Input.() -> Int?,
+    batchSize: Int,
+  ): IntArray {
+    val sql = "INSERT INTO type(string_type, int_type) VALUES (?, ?)"
+    return driver.execute(sql) {
+      var totalCount = 0
+      var batchCount = 0
+      val results = mutableListOf<IntArray>()
+      for (entry in stream) {
+        setString(1, entry.string_type())
+        setInt(2, entry.int_type())
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          results.add(executeBatch())
+          batchCount = 0
+          // Performance optimization to reduce register updates per loop iteration
+          totalCount += batchSize
+        }
+      }
+      if (batchCount > 0) {
+        results.add(executeBatch())
+        totalCount += batchCount
+      }
+      combineExecBatchResults(results, totalCount, batchSize)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun updateAllStrings(string_type: String): Int {
+    val sql = "UPDATE type SET string_type = ? WHERE string_type IS NOT NULL"
+    return driver.executeRows(sql) {
+      setString(1, string_type)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any> updateAllStrings(
+    stream: Iterable<Input>,
+    string_type: Input.() -> String,
+    batchSize: Int,
+  ): IntArray {
+    val sql = "UPDATE type SET string_type = ? WHERE string_type IS NOT NULL"
+    return driver.execute(sql) {
+      var totalCount = 0
+      var batchCount = 0
+      val results = mutableListOf<IntArray>()
+      for (entry in stream) {
+        setString(1, entry.string_type())
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          results.add(executeBatch())
+          batchCount = 0
+          // Performance optimization to reduce register updates per loop iteration
+          totalCount += batchSize
+        }
+      }
+      if (batchCount > 0) {
+        results.add(executeBatch())
+        totalCount += batchCount
+      }
+      combineExecBatchResults(results, totalCount, batchSize)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun deleteAll(): Int {
+    val sql = "DELETE FROM type"
+    return driver.executeRows(sql)
+  }
+
+  @Throws(SQLException::class)
+  override fun deleteById(serial_type: Int?): Int {
+    val sql = "DELETE FROM type WHERE serial_type = ?"
+    return driver.executeRows(sql) {
+      setInt(1, serial_type)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any> deleteById(
+    stream: Iterable<Input>,
+    serial_type: Input.() -> Int?,
+    batchSize: Int,
+  ): IntArray {
+    val sql = "DELETE FROM type WHERE serial_type = ?"
+    return driver.execute(sql) {
+      var totalCount = 0
+      var batchCount = 0
+      val results = mutableListOf<IntArray>()
+      for (entry in stream) {
+        setInt(1, entry.serial_type())
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          results.add(executeBatch())
+          batchCount = 0
+          // Performance optimization to reduce register updates per loop iteration
+          totalCount += batchSize
+        }
+      }
+      if (batchCount > 0) {
+        results.add(executeBatch())
+        totalCount += batchCount
+      }
+      combineExecBatchResults(results, totalCount, batchSize)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun resetTypes() {
+    val sql = "CALL reset_type_table()"
+    driver.execute(sql, PreparedStatement::execute)
+  }
+
+  @Throws(SQLException::class)
+  override fun updateStringType(p_id: Int, p_new_value: String) {
+    val sql = "CALL update_string_type(?, ?)"
+    driver.execute(sql) {
+      setInt(1, p_id)
+      setString(2, p_new_value)
+      execute()
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any> updateStringType(
+    stream: Iterable<Input>,
+    p_id: Input.() -> Int,
+    p_new_value: Input.() -> String,
+    batchSize: Int,
+  ): IntArray {
+    val sql = "CALL update_string_type(?, ?)"
+    return driver.execute(sql) {
+      var totalCount = 0
+      var batchCount = 0
+      val results = mutableListOf<IntArray>()
+      for (entry in stream) {
+        setInt(1, entry.p_id())
+        setString(2, entry.p_new_value())
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          executeBatch()
+          batchCount = 0
+        }
+      }
+      if (batchCount > 0) {
+        results.add(executeBatch())
+        totalCount += batchCount
+      }
+      combineExecBatchResults(results, totalCount, batchSize)
+    }
   }
 }

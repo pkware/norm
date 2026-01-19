@@ -19,7 +19,7 @@ class FunctionsTest {
       val combined = combineExecBatchResults(
         results = listOf(singleResult),
         totalCount = 3,
-        batchSize = 3
+        batchSize = 3,
       )
 
       assertThat(combined).isSameInstanceAs(singleResult)
@@ -33,7 +33,7 @@ class FunctionsTest {
       val combined = combineExecBatchResults(
         results = listOf(batch1, batch2),
         totalCount = 6,
-        batchSize = 3
+        batchSize = 3,
       )
 
       assertThat(combined.toList()).containsExactly(1, 1, 1, 2, 2, 2)
@@ -48,7 +48,7 @@ class FunctionsTest {
       val combined = combineExecBatchResults(
         results = listOf(batch1, batch2, batch3),
         totalCount = 6,
-        batchSize = 2
+        batchSize = 2,
       )
 
       assertThat(combined.toList()).containsExactly(1, 1, 2, 2, 3, 3)
@@ -62,7 +62,7 @@ class FunctionsTest {
       val combined = combineExecBatchResults(
         results = listOf(batch1, batch2),
         totalCount = 5,
-        batchSize = 3
+        batchSize = 3,
       )
 
       assertThat(combined.toList()).containsExactly(1, 1, 1, 2, 2)
@@ -77,7 +77,7 @@ class FunctionsTest {
       val combined = combineExecBatchResults(
         results = listOf(batch1, batch2, batch3),
         totalCount = 13,
-        batchSize = 5
+        batchSize = 5,
       )
 
       assertThat(combined.size).isEqualTo(13)
@@ -92,7 +92,7 @@ class FunctionsTest {
       val combined = combineExecBatchResults(
         results = listOf(batch1, batch2),
         totalCount = 5,
-        batchSize = 3
+        batchSize = 3,
       )
 
       assertThat(combined.toList()).containsExactly(1, 0, 1, 1, 1)
@@ -107,7 +107,7 @@ class FunctionsTest {
       val combined = combineExecBatchResults(
         results = listOf(batch1, batch2, batch3),
         totalCount = 3,
-        batchSize = 1
+        batchSize = 1,
       )
 
       assertThat(combined.toList()).containsExactly(1, 2, 3)

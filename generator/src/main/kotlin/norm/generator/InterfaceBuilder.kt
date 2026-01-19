@@ -9,7 +9,9 @@ import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.TypeSpec
+import com.squareup.kotlinpoet.asClassName
 import plugin.Parameter
+import java.sql.Statement
 
 /**
  * Adds a method for the given SQL statement to the receiver `interface` builder.
@@ -18,15 +20,21 @@ internal fun TypeSpec.Builder.addSqlStatementInterfaceMethod(query: SqlStatement
   val interfaceBuilder = this
 	/*
 	 * For each query, we potentially generate multiple functions: a simple function that maps rows into value objects,
-	 * and a mapper function that takes a lambda allowing the row to be mapped as-desired. These have similar signatures,
-	 * so we have the baseFunction that encapsulates that.
+	 * and a mapper function that takes a lambda allowing the row to be mapped as-desired. These have similar signatures.
 	 */
   val simpleFunction = sqlFunction(query)
+  if (query.comments.isNotEmpty()) {
+    simpleFunction.addKdoc(query.comments.joinToString("\n", postfix = "\n\n", transform = String::trim))
+  }
 
   // Not every query needs a mapper function, but it's easier to build it up in code here and end up not attaching it to
   // the TypeSpec than it is to build it up conditionally.
   val mapperFunction = mapperFunction(query)
     .addModifiers(ABSTRACT)
+  if (query.comments.isNotEmpty()) {
+    mapperFunction.addKdoc(query.comments.joinToString("\n", postfix = "\n\n", transform = String::trim))
+  }
+
   val simpleFunctionBody = CodeBlock.builder()
     .add("return %N(", query.name)
 
@@ -39,55 +47,80 @@ internal fun TypeSpec.Builder.addSqlStatementInterfaceMethod(query: SqlStatement
   } else {
     simpleFunctionBody.add("%L)", COLUMN_VALUE)
   }
-  if (query.command != Command.EXEC_ROWS) {
-    // We're going to generate the mapper function so consumers have the power to control allocations and how the
-    // columns are consumed.
-    interfaceBuilder.addFunction(mapperFunction.build())
-    simpleFunction.addCode(simpleFunctionBody.build())
-  } else {
-    val kdoc = """
-        Executes a SQL statement and returns the number of rows updated.
-
-        @return The number of rows updated.
-    """.trimIndent()
-    simpleFunction
-      .addModifiers(ABSTRACT)
-      .addKdoc(kdoc)
-    val batchFunction = batchFunction(query)
-      .build()
-
-    // Full parameter function to allow customization of batch size
-    interfaceBuilder.addFunction(
-      batchFunction.toBuilder()
-        .addKdoc(kdoc)
-        .addModifiers(ABSTRACT)
-        .build(),
-    )
-
-    val batchSizedFunction = batchFunction.toBuilder().apply {
-      parameters.removeLast()
-      addKdoc(
-        """
-        Invokes [%N] with a batch size of %L.
-
-        @return The number of rows updated.
-        """.trimIndent(),
-        batchFunction,
-        BATCH_SIZE,
-      )
-      addCode(
-        CodeBlock.builder()
-          .add("return %N(", batchFunction)
-          .apply {
-            for (parameter in parameters) {
-              add("%N, ", parameter)
-            }
-          }
-          .add("%L)", BATCH_SIZE)
-          .build(),
-      )
+  when (query.command) {
+    Command.ONE, Command.MANY -> {
+      // We're going to generate the mapper function so consumers have the power to control allocations and how the
+      // columns are consumed.
+      interfaceBuilder.addFunction(mapperFunction.build())
+      simpleFunction.addCode(simpleFunctionBody.build())
     }
-    interfaceBuilder.addFunction(batchSizedFunction.build())
+    Command.EXEC, Command.EXEC_ROWS -> {
+      val kdoc = if (query.command == Command.EXEC_ROWS) {
+        """
+        Norm: Executes a SQL statement and returns the number of rows updated.
+
+        @return The number of rows updated.
+        """.trimIndent()
+      } else {
+        """
+        Norm: Executes a SQL statement.
+        """.trimIndent()
+      }
+      simpleFunction
+        .addModifiers(ABSTRACT)
+        .addKdoc(kdoc)
+
+      if (query.canBeBatched) {
+        val batchFunction = batchFunction(query)
+          .build()
+
+        // Full parameter function to allow customization of batch size
+        interfaceBuilder.addFunction(
+          batchFunction.toBuilder()
+            .addKdoc(kdoc)
+            .addKdoc(
+              """
+
+
+              @return An array containing the result of each batch. The array has the same number as elements as [stream]
+                      had. The number in each slot can have one of several meanings:
+                      1. A number greater than or equal to zero -- indicates that the
+                         command was processed successfully and is an update count giving the
+                         number of rows in the database that were affected by the command's execution
+                      2. A value of [%M] -- indicates that the command was processed successfully
+                         but that the number of rows affected is unknown
+                      3. A value of [%M] -- indicates that the command failed to execute
+                         successfully and occurs only if a driver continues to process commands after a command fails
+              """.trimIndent(),
+              MemberName(Statement::class.asClassName(), "SUCCESS_NO_INFO"),
+              MemberName(Statement::class.asClassName(), "EXECUTE_FAILED"),
+            )
+            .addModifiers(ABSTRACT)
+            .build(),
+        )
+
+        val batchSizedFunction = batchFunction.toBuilder().apply {
+          parameters.removeLast()
+          addKdoc(
+            "Norm: Invokes [%N] with a batch size of %L.",
+            batchFunction,
+            BATCH_SIZE,
+          )
+          addCode(
+            CodeBlock.builder()
+              .add("return %N(", batchFunction)
+              .apply {
+                for (parameter in parameters) {
+                  add("%N, ", parameter)
+                }
+              }
+              .add("%L)", BATCH_SIZE)
+              .build(),
+          )
+        }
+        interfaceBuilder.addFunction(batchSizedFunction.build())
+      }
+    }
   }
   interfaceBuilder.addFunction(simpleFunction.build())
 

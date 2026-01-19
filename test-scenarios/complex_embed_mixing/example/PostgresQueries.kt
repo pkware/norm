@@ -13,16 +13,6 @@ public class PostgresQueries(
   driver: NormDriver,
 ) : RealTransacter(driver),
     Queries {
-  /**
-   * THE CRITICAL TEST: regular, embed, regular pattern (TODO at TypeRepository.kt:89-90)
-   * Expected indices:
-   * 1: b.id
-   * 2: b.title
-   * 3-4: author (id, name)
-   * 5: b.isbn
-   * 6: b.published_year
-   * BUG HYPOTHESIS: After the embed, isbn and published_year may use wrong indices
-   */
   @Throws(SQLException::class)
   override fun <T : Any> getComplexBook(id: Int, mapper: (
     id: Int,
@@ -58,15 +48,6 @@ public class PostgresQueries(
     }
   }
 
-  /**
-   * Sandwich pattern: regular columns on both sides of 3-column embed
-   * Expected indices:
-   * 1: b.title
-   * 2: b.isbn
-   * 3-5: publisher (id, company_name, country)
-   * 6: b.page_count
-   * 7: b.published_year
-   */
   @Throws(SQLException::class)
   override fun <T : Any> getSandwichBook(id: Int, mapper: (
     title: String,
@@ -104,15 +85,6 @@ public class PostgresQueries(
     }
   }
 
-  /**
-   * Multiple embeds with regular columns between
-   * Expected indices:
-   * 1: b.title
-   * 2-3: author (id, name)
-   * 4: b.isbn
-   * 5-7: publisher (id, company_name, country)
-   * 8: b.published_year
-   */
   @Throws(SQLException::class)
   override fun <T : Any> getAlternatingBook(id: Int, mapper: (
     title: String,

@@ -1,5 +1,5 @@
 -- name: getComplexBook :one
--- THE CRITICAL TEST: regular, embed, regular pattern (TODO at TypeRepository.kt:89-90)
+-- THE CRITICAL TEST: regular, embed, regular pattern
 -- Expected indices:
 --   1: b.id
 --   2: b.title

@@ -1,10 +1,10 @@
 package norm.generator
 
-import com.squareup.kotlinpoet.BOOLEAN
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.INT
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.TypeName
+import com.squareup.kotlinpoet.UNIT
 
 /**
  * sqlc command indicating how a SQL statement should be executed.
@@ -25,7 +25,15 @@ internal enum class Command(private val sqlcCmd: String) {
    * Examples include `SELECT` queries, PRAGMAs, and other DMLs that have `RETURNING` clauses.
    */
   MANY(":many"),
+
+  /**
+   * Executes without a return.
+   */
   EXEC(":exec"),
+
+  /**
+   * Returns the number of rows updated.
+   */
   EXEC_ROWS(":execrows"),
   ;
 
@@ -43,7 +51,7 @@ internal enum class Command(private val sqlcCmd: String) {
       NORM_MANY.parameterizedBy(singleRowType)
     }
     // execute(), low value, probably don't use
-    EXEC -> BOOLEAN
+    EXEC -> UNIT
     EXEC_ROWS -> INT
   }
 
