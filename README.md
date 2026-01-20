@@ -75,7 +75,6 @@ norm {
 
 ## TODO
 ### Before release
-- [ ] Delete old generated files when no longer needed
 - [ ] Framework support
 - [ ] Read/write transactions
 

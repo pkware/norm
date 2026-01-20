@@ -55,6 +55,17 @@ internal abstract class GenerateSchemasTask @Inject constructor(@get:Nested val 
 
     val files = generateCode(catalog, request.queries, database.packageName.get())
     val directory = generatedSources.get().asFile
+
+    // Calculate package directory path
+    val packagePath = database.packageName.get().replace('.', '/')
+    val packageDirectory = directory.resolve(packagePath)
+
+    // Clean package directory to remove stale generated files
+    if (packageDirectory.exists()) {
+      packageDirectory.deleteRecursively()
+    }
+
+    // Write new files (directory structure will be created automatically)
     for (fileContent in files) {
       val file = directory.resolve(fileContent.name)
       file.parentFile.mkdirs()
