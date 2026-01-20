@@ -1,6 +1,7 @@
 package norm.generator
 
 import com.squareup.kotlinpoet.ARRAY
+import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FunSpec
@@ -30,13 +31,23 @@ import kotlin.reflect.KClass
  * @param packageName to use for generated types.
  * @param catalog Postgres catalog to use when resolving projection information.
  * @param queries All queries to be generated. Used to build domain type resolution mapping.
+ * @param frameworks Frameworks for which to generate code.
  */
 internal class TypeRepository(
   private val packageName: String,
   private val catalog: Catalog,
   queries: List<plugin.Query> = emptyList(),
+  private val frameworks: Set<Framework> = emptySet(),
 ) {
+
+  /**
+   * Projections of SQL tables.
+   */
   private val tableModels = mutableMapOf<Table, Pair<ReturnType, TypeSpec>>()
+
+  /**
+   * Projections needed to return results from queries.
+   */
   private val queryModels = mutableListOf<Pair<ReturnType, TypeSpec>>()
 
   /**
@@ -74,6 +85,7 @@ internal class TypeRepository(
    * @param table for which to generate the model.
    * @param columnOffset Column index offset to use when generating column accessors.
    */
+  // TODO Does the columnOffset result in a bug if the same table is sometimes standalone and sometimes embedded?
   fun getTypeProjectionForTable(table: Table, columnOffset: Int = 1): ReturnType = tableModels.computeIfAbsent(table) {
     val tableName = table.rel!!.name
       .snakeToCamelCase()
@@ -82,6 +94,7 @@ internal class TypeRepository(
     val typeBeingDefined = TypeSpec.classBuilder(nameOfTypeBeingDefined)
       .addModifiers(KModifier.DATA)
       .addAnnotation(JvmRecord::class)
+      .annotateForFrameworks(frameworks, table.rel.name)
     val mapperArguments = mutableListOf<CodeBlock>()
     val primaryConstructor = FunSpec.constructorBuilder()
     // Parameters required to invoke the mapper
@@ -95,11 +108,13 @@ internal class TypeRepository(
       typeBeingDefined.addProperty(
         PropertySpec.builder(column.name, columnType)
           .initializer(column.name)
+          .also { if (column.isPrimaryKey) it.annotateForFrameworks(frameworks) }
           .build(),
       )
     }
+    typeBeingDefined.primaryConstructor(primaryConstructor.build())
     val returnType = ReturnType(nameOfTypeBeingDefined, mapperArguments, mapperParameters)
-    returnType to typeBeingDefined.primaryConstructor(primaryConstructor.build()).build()
+    returnType to typeBeingDefined.build()
   }.first
 
   /**
@@ -320,3 +335,39 @@ internal class TypeRepository(
     type.asTypeName()
   }.copy(nullable = !notNull)
 }
+
+private fun TypeSpec.Builder.annotateForFrameworks(frameworks: Set<Framework>, tableName: String): TypeSpec.Builder =
+  apply {
+    for (framework in frameworks) {
+      val annotation = when (framework) {
+        Framework.MICRONAUT_DATA_JDBC -> MICRONAUT_DATA_TABLE_ANNOTATION
+        Framework.SPRING_DATA_JDBC -> SPRING_DATA_TABLE_ANNOTATION
+        Framework.ALL_TABLES -> continue // No specific annotations required
+      }
+      addAnnotation(
+        AnnotationSpec.builder(annotation)
+          .addMember(""""$tableName"""")
+          .build(),
+      )
+    }
+  }
+
+private fun PropertySpec.Builder.annotateForFrameworks(frameworks: Set<Framework>): PropertySpec.Builder = apply {
+  for (framework in frameworks) {
+    when (framework) {
+      Framework.MICRONAUT_DATA_JDBC -> addAnnotation(
+        AnnotationSpec
+          .builder(MICRONAUT_DATA_ID_ANNOTATION)
+          .useSiteTarget(AnnotationSpec.UseSiteTarget.FIELD)
+          .build(),
+      )
+      Framework.SPRING_DATA_JDBC -> addAnnotation(SPRING_DATA_ID_ANNOTATION)
+      Framework.ALL_TABLES -> continue // No specific annotations required
+    }
+  }
+}
+
+private val MICRONAUT_DATA_ID_ANNOTATION = ClassName("io.micronaut.data.annotation", "Id")
+private val MICRONAUT_DATA_TABLE_ANNOTATION = ClassName("io.micronaut.data.annotation", "MappedEntity")
+private val SPRING_DATA_ID_ANNOTATION = ClassName("org.springframework.data.annotation", "Id")
+private val SPRING_DATA_TABLE_ANNOTATION = ClassName("org.springframework.data.relational.core.mapping", "Table")

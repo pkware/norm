@@ -32,12 +32,27 @@ class TestProject(private val projectDir: Path, private val scenarioDirectory: P
   /**
    * Sets up both settings.gradle.kts and build.gradle.kts for a standard scenario test.
    * Requires [scenarioDirectory] to be set.
+   *
+   * @param requiresDatabase Whether to use a database for enhanced query analysis.
+   * @param frameworks Optional set of framework names to enable. If empty, no frameworks are configured.
    */
-  fun setup(requiresDatabase: Boolean) {
+  fun setup(requiresDatabase: Boolean, frameworks: Set<String> = emptySet()) {
     setupSettingsOnly()
 
+    val frameworkImport = if (frameworks.isNotEmpty()) {
+      "import norm.generator.Framework\n\n"
+    } else {
+      ""
+    }
+
+    val frameworksConfigBlock = if (frameworks.isNotEmpty()) {
+      "frameworks.addAll(${frameworks.joinToString(", ") { "Framework.$it" }})"
+    } else {
+      ""
+    }
+
     val buildFileContent = """
-      plugins {
+      ${frameworkImport}plugins {
         kotlin("jvm")
         id("com.pkware.norm")
       }
@@ -49,6 +64,7 @@ class TestProject(private val projectDir: Path, private val scenarioDirectory: P
             schemas.addAll("${scenarioDirectory.resolve("schema.sql").normalize().toAbsolutePath()}")
             queries.addAll("${scenarioDirectory.resolve("queries.sql").normalize().toAbsolutePath()}")
             useDatabase = $requiresDatabase
+            $frameworksConfigBlock
           }
         }
       }

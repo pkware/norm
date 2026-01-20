@@ -53,7 +53,13 @@ internal abstract class GenerateSchemasTask @Inject constructor(@get:Nested val 
     val request = schemaJsonFile.get().asFile.source().buffer().use(requestJsonAdapter::fromJson)!!
     val catalog = request.catalog!!
 
-    val files = generateCode(catalog, request.queries, database.packageName.get())
+    val files = generateCode(
+      catalog,
+      request.queries,
+      database.packageName.get(),
+      database.frameworks.get(),
+      database.frameworkSchemas.get(),
+    )
     val directory = generatedSources.get().asFile
 
     // Calculate package directory path

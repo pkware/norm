@@ -74,9 +74,6 @@ norm {
 ```
 
 ## TODO
-### Before release
-- [ ] Framework support
-
 ### After release
 - [ ] Automatically download sqlc
 - [ ] Enum adapter. Map enums to String and back by default.

@@ -55,7 +55,8 @@ class NormPluginTest {
     project.gradle("build").build()
 
     // Collect and compare Kotlin files
-    val expectedFiles = collectKotlinFiles(scenarioDirectory.resolve("example"), scenarioDirectory)
+    val goldenDir = scenarioDirectory.resolve("example")
+    val expectedFiles = collectKotlinFiles(goldenDir, goldenDir)
     val generatedFiles = collectKotlinFiles(project.generatedCodeDirectory, project.generatedCodeDirectory)
 
     // Assert all expected files exist and match

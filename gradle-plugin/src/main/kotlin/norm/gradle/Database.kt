@@ -1,9 +1,11 @@
 package norm.gradle
 
+import norm.generator.Framework
 import org.gradle.api.Named
 import org.gradle.api.Project
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
+import org.gradle.api.provider.SetProperty
 import org.gradle.api.tasks.Input
 
 /**
@@ -61,6 +63,31 @@ public abstract class Database(private val name: String) : Named {
   @get:Input
   public abstract val postgresVersion: Property<String>
 
+  /**
+   * Frameworks for which to generate entity annotations.
+   *
+   * When specified, Norm generates framework-specific annotations on entity classes:
+   * - [Framework.MICRONAUT_DATA_JDBC]: `@MappedEntity` on classes, `@Id` on primary keys
+   * - [Framework.SPRING_DATA_JDBC]: `@Table` on classes, `@Id` on primary keys
+   * - [Framework.ALL_TABLES]: Generates entities for all tables (no annotations)
+   *
+   * When empty (the default), entities are only generated for tables referenced in queries.
+   */
+  @get:Input
+  public abstract val frameworks: SetProperty<Framework>
+
+  /**
+   * Schemas for which to generate framework entities.
+   *
+   * When empty (the default), entities are generated for all schemas.
+   * When specified, only tables from the listed schemas get framework entity generation.
+   */
+  @get:Input
+  public abstract val frameworkSchemas: SetProperty<String>
+
+  /**
+   * Returns the name of this database configuration.
+   */
   @Input
   override fun getName(): String = name
 
