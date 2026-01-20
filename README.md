@@ -76,7 +76,6 @@ norm {
 ## TODO
 ### Before release
 - [ ] Framework support
-- [ ] Read/write transactions
 
 ### After release
 - [ ] Automatically download sqlc
