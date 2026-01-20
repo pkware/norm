@@ -78,8 +78,6 @@ norm {
 - [ ] Delete old generated files when no longer needed
 - [ ] Framework support
 - [ ] Read/write transactions
-- [ ] Integration tests for `CALL` queries
-- [ ] Verify that the example works from Github
 
 ### After release
 - [ ] Automatically download sqlc

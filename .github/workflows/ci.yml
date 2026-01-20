@@ -24,9 +24,16 @@ jobs:
         distribution: 'temurin'
 
     - uses: burrunan/gradle-cache-action@663fbad34e03c8f12b27f4999ac46e3d90f87eca # v3.0
-      name: Build with Gradle
+      name: Build Norm
       with:
-        arguments: build -x detekt
+        arguments: build
+
+    - uses: burrunan/gradle-cache-action@663fbad34e03c8f12b27f4999ac46e3d90f87eca # v3.0
+      name: Build Example
+      with:
+        arguments: build
+        build-root-directory: example
+        execution-only-caches: true # See https://github.com/burrunan/gradle-cache-action/issues/15
 
     - name: Upload Test Results
       if: always()
