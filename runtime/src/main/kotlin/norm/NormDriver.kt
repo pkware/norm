@@ -32,7 +32,7 @@ public class NormDriver(private val dataSource: DataSource) {
   private fun Connection.beginTransaction() {
     check(autoCommit) {
       """
-			Expected autoCommit to be true by default. For compatibility with NORM make sure it is
+			Expected autoCommit to be true by default. For compatibility with Norm make sure it is
 			set to true when returning a connection from [JdbcDriver.getConnection()]
       """.trimIndent()
     }

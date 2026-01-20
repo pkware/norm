@@ -10,7 +10,7 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinProjectExtension
 import org.jetbrains.kotlin.gradle.plugin.KotlinSourceSetContainer
 
 /**
- * Gradle build plugin for generating Kotlin code from SQL modes using NORM.
+ * Gradle build plugin for generating Kotlin code from SQL modes using Norm.
  */
 public class NormPlugin : Plugin<Project> {
   override fun apply(target: Project): Unit = target.run {
@@ -84,7 +84,7 @@ public class NormPlugin : Plugin<Project> {
    */
   public companion object {
     /**
-     * Directory in which NORM code is generated.
+     * Directory in which Norm code is generated.
      */
     public const val NORM_GENERATED_CODE: String = "generated/norm"
     internal const val NORM_GROUP: String = "norm"

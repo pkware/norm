@@ -120,11 +120,11 @@ internal abstract class RunSqlcTask @Inject constructor(
         runSqlc()
       } finally {
         // Always stop container after task completes
-        logger.lifecycle("NORM: Stopping PostgreSQL container...")
+        logger.lifecycle("Norm: Stopping PostgreSQL container...")
         try {
           container.stop()
         } catch (expected: Exception) {
-          logger.warn("NORM: Failed to stop container", expected)
+          logger.warn("Norm: Failed to stop container", expected)
         }
       }
     } else {
@@ -137,7 +137,7 @@ internal abstract class RunSqlcTask @Inject constructor(
     val version = postgresVersion.get()
     val dbName = databaseName.get()
 
-    logger.lifecycle("NORM: Starting PostgreSQL $version container...")
+    logger.lifecycle("Norm: Starting PostgreSQL $version container...")
 
     val imageName = DockerImageName.parse("postgres:$version")
       .asCompatibleSubstituteFor("postgres")
@@ -157,12 +157,12 @@ internal abstract class RunSqlcTask @Inject constructor(
 
       start()
 
-      logger.lifecycle("NORM: PostgreSQL container ready at $host:$firstMappedPort")
+      logger.lifecycle("Norm: PostgreSQL container ready at $host:$firstMappedPort")
     }
   }
 
   private fun applySchemas(container: PostgreSQLContainer<*>) {
-    logger.lifecycle("NORM: Applying schemas to database...")
+    logger.lifecycle("Norm: Applying schemas to database...")
 
     val combinedSchema = schemas.files
       .sortedBy { it.absolutePath }
@@ -182,7 +182,7 @@ internal abstract class RunSqlcTask @Inject constructor(
       error("Failed to apply schemas:\n${result.stderr}")
     }
 
-    logger.lifecycle("NORM: Schemas applied successfully")
+    logger.lifecycle("Norm: Schemas applied successfully")
   }
 
   private fun updateYamlWithDatabaseUri(uri: String) {

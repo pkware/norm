@@ -1,18 +1,18 @@
-# NORM
-NORM is Not an ORM. NORM is a SQL-first code generator for Postgres and Kotlin.
+# Norm
+Norm is Not an ORM. Norm is a SQL-first code generator for Postgres and Kotlin.
 
-NORM generates Kotlin code from your SQL DDL and DML. This lets you write highly performant code in a great data
+Norm generates Kotlin code from your SQL DDL and DML. This lets you write highly performant code in a great data
 modification language, while getting fully type-safe and compile-time checked mapping code on the JVM.
 
-NORM also provides a thin runtime, optimized for the Postgres JDBC driver, to make working with JDBC less error prone.
+Norm also provides a thin runtime, optimized for the Postgres JDBC driver, to make working with JDBC less error prone.
 
-NORM strives to:
+Norm strives to:
 1. Be correct
 2. Be performant
 3. Give you the APIs needed to meet typical requirements
 4. Be debuggable & readable
 
-NORM does not:
+Norm does not:
 - Have an entity model
 - Integrate or compete with JPA
 - Facilitate serialization (JSON, protobuf, etc)
@@ -23,7 +23,7 @@ See the [Gradle plugin README](gradle-plugin/README.md) for setup details.
 
 ### Database-Backed Query Analysis (Enabled by Default)
 
-**NORM now uses Testcontainers by default** for enhanced query validation. On your first build, NORM will:
+**Norm now uses Testcontainers by default** for enhanced query validation. On your first build, Norm will:
 - Start a PostgreSQL 18 container using Testcontainers
 - Apply your schema files to the database
 - Provide database connection to sqlc for enhanced type resolution
@@ -105,15 +105,15 @@ well-known issues that arise with ORMs in terms of performance, nullability, etc
 Solutions like Spring Data or Micronaut Data ease the ORM pain significantly. However, they still require a dev to
 manually map database types into Java by creating POJOs, adding annotations, and occasionally writing POJOs.
 
-SQLDelight can be considered the spiritual predecessor to this project. Both NORM and SQLDelight are database-first and
-generate code via Gradle plugin from database sources. However, SQLDelight struggles with Postgres syntax, so NORM was
+SQLDelight can be considered the spiritual predecessor to this project. Both Norm and SQLDelight are database-first and
+generate code via Gradle plugin from database sources. However, SQLDelight struggles with Postgres syntax, so Norm was
 created to be more Postgres-oriented.
 
 sqlc is also database-first. There were a lot of things we liked about sqlc, but 2 things stuck out as limits for us.
 The first was that the code produced by the native Kotlin support it has fell short of the developer experience we
 wanted. It didn't add enough safety on queries and didn't lend itself well to additional features. The second was that
 it didn't integrate nicely into our build tooling. We wanted a Gradle integration so devs can use the tooling they are
-familiar with. However, sqlc does so much well that we continue to use it as the foundation of NORM.
+familiar with. However, sqlc does so much well that we continue to use it as the foundation of Norm.
 
 ## Developing
 Load the `example` project into Intellij or use it as your Gradle entry point. See the [README](example/README.md) for

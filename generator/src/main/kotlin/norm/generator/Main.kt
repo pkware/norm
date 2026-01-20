@@ -13,7 +13,7 @@ import plugin.Query
 private val NORM_DRIVER = ClassName(RUNTIME_PACKAGE, "NormDriver")
 
 /**
- * Generates Kotlin models and query files for use with the NORM runtime.
+ * Generates Kotlin models and query files for use with the Norm runtime.
  *
  * @param catalog The Postgres schema catalog.
  * @param queries The queries for which to generate code.

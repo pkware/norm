@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test
 /**
  * E2E tests for the all_types test scenario.
  *
- * Tests validate that NORM's generated code correctly:
+ * Tests validate that Norm's generated code correctly:
  * - Executes queries against real PostgreSQL
  * - Returns correct data types
  * - Handles multiple rows

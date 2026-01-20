@@ -11,29 +11,29 @@ This project has multiple README files with important context:
 
 ## Project Overview
 
-NORM (Not an ORM) is a SQL-first code generator for Postgres and Kotlin. It generates type-safe Kotlin code from SQL DDL and DML, letting developers write performant SQL while getting compile-time checked mapping code.
+Norm (Not an ORM) is a SQL-first code generator for Postgres and Kotlin. It generates type-safe Kotlin code from SQL DDL and DML, letting developers write performant SQL while getting compile-time checked mapping code.
 
 ## Related Projects
 
-Understanding these projects is valuable when designing and implementing NORM features:
+Understanding these projects is valuable when designing and implementing Norm features:
 
 ### sqlc (https://sqlc.dev)
 
-NORM uses sqlc as its foundation. sqlc parses SQL files and schema, then outputs structured metadata (queries, parameters, column types) that NORM's generator consumes. The protocol is defined in `proto/codegen.proto`.
+Norm uses sqlc as its foundation. sqlc parses SQL files and schema, then outputs structured metadata (queries, parameters, column types) that Norm's generator consumes. The protocol is defined in `proto/codegen.proto`.
 
-When working on NORM:
+When working on Norm:
 - sqlc's output format determines what information is available to the generator
 - sqlc documentation explains the `-- name: queryName :command` annotation syntax
-- Limitations in sqlc's Postgres support may affect what NORM can do
+- Limitations in sqlc's Postgres support may affect what Norm can do
 
 ### SQLDelight (https://github.com/cashapp/sqldelight)
 
-SQLDelight is the spiritual predecessor to NORM. Both are database-first and generate code via Gradle plugins. NORM was created because SQLDelight struggles with Postgres-specific syntax.
+SQLDelight is the spiritual predecessor to Norm. Both are database-first and generate code via Gradle plugins. Norm was created because SQLDelight struggles with Postgres-specific syntax.
 
-When working on NORM:
+When working on Norm:
 - SQLDelight's API design choices are worth studying for similar features
-- Its Gradle plugin integration patterns informed NORM's approach
-- Features SQLDelight supports well may be good candidates for NORM
+- Its Gradle plugin integration patterns informed Norm's approach
+- Features SQLDelight supports well may be good candidates for Norm
 
 ## Module Structure
 
@@ -100,7 +100,7 @@ The `runtime` module provides:
 
 ### Generated Code Pattern
 
-For each SQL file, NORM generates:
+For each SQL file, Norm generates:
 - An **interface** with query methods (e.g., `PostgresQueries`)
 - An **implementation** using `NormDriver`
 - **Data classes** for result types (Java records when possible)

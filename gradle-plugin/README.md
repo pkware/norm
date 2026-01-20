@@ -62,7 +62,7 @@ norm {
 
 ### Database-Backed Query Analysis (Enabled by Default)
 
-**NORM now uses Testcontainers by default** for enhanced query validation. On your first build, NORM will:
+**Norm now uses Testcontainers by default** for enhanced query validation. On your first build, Norm will:
 - Start a PostgreSQL 18 container using Testcontainers
 - Apply your schema files to the database
 - Provide database connection to sqlc for enhanced type resolution
@@ -84,7 +84,7 @@ norm {
 
 **Container Lifecycle:**
 
-NORM creates a fresh PostgreSQL container for each task execution:
+Norm creates a fresh PostgreSQL container for each task execution:
 - Container starts when `normRunSqlc` task begins
 - Schemas are applied to the fresh database
 - sqlc connects and generates type information

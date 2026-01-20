@@ -36,12 +36,12 @@ public abstract class Database(private val name: String) : Named {
   /**
    * Whether to use a database for enhanced query analysis.
    *
-   * When `true` (the default), NORM starts a PostgreSQL container (via Testcontainers),
+   * When `true` (the default), Norm starts a PostgreSQL container (via Testcontainers),
    * applies the schema files, and provides a database connection to sqlc for enhanced
    * type resolution. This enables sqlc to properly handle Postgres domains, enums, and
    * extensions that require catalog introspection.
    *
-   * When `false`, NORM performs schema-only analysis without a database connection,
+   * When `false`, Norm performs schema-only analysis without a database connection,
    * which is faster but less comprehensive.
    *
    * **Requirements**: Docker must be installed and running when enabled.

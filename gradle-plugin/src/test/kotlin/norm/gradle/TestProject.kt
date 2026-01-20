@@ -14,7 +14,7 @@ import kotlin.io.path.deleteIfExists
 import kotlin.io.path.writeText
 
 /**
- * Sets up a Gradle test project configured to use the NORM plugin with a specific scenario.
+ * Sets up a Gradle test project configured to use the Norm plugin with a specific scenario.
  *
  * The project uses Gradle's composite build feature to substitute the published `runtime` artifact
  * with the local project, enabling tests to run against unpublished changes.
@@ -70,7 +70,7 @@ class TestProject(private val projectDir: Path, private val scenarioDirectory: P
     val settingsContent = """
       rootProject.name = "norm-test-project"
 
-      // Include the parent NORM build to substitute runtime dependency with local project
+      // Include the parent Norm build to substitute runtime dependency with local project
       includeBuild("$includePath")
 
       pluginManagement {

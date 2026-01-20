@@ -5,7 +5,7 @@ plugins {
 }
 
 dependencies {
-  // NORM runtime (required by generated code)
+  // Norm runtime (required by generated code)
   implementation(projects.runtime)
 
   // PostgreSQL JDBC driver
