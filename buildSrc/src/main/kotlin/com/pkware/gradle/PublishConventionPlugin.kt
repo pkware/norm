@@ -23,9 +23,32 @@ class PublishConventionPlugin : Plugin<Project> {
 
     configure<PublishingExtension> {
       publications {
-        register<MavenPublication>("mavenJava") {
-          from(components["java"])
-          pom {
+        // For non-plugin projects, manually create the publication
+        // For plugin projects, java-gradle-plugin auto-creates "pluginMaven"
+        if (!pluginManager.hasPlugin("java-gradle-plugin")) {
+          register<MavenPublication>("mavenJava") {
+            from(components["java"])
+          }
+        }
+      }
+      repositories {
+        maven {
+          name = "MavenCentral"
+          url = uri(if (version.toString().isReleaseBuild) releaseRepositoryUrl else snapshotRepositoryUrl)
+          credentials {
+            username = repositoryUsername
+            password = repositoryPassword
+          }
+        }
+      }
+    }
+
+    // Configure POM for all Maven publications after they've been created
+    afterEvaluate {
+      val publicationName = if (pluginManager.hasPlugin("java-gradle-plugin")) "pluginMaven" else "mavenJava"
+      configure<PublishingExtension> {
+        publications {
+          (getByName(publicationName) as MavenPublication).pom {
             name.set(pomName)
             description.set(pomDescription)
             packaging = pomPackaging
@@ -59,16 +82,6 @@ class PublishConventionPlugin : Plugin<Project> {
           }
         }
       }
-      repositories {
-        maven {
-          name = "MavenCentral"
-          url = uri(if (version.toString().isReleaseBuild) releaseRepositoryUrl else snapshotRepositoryUrl)
-          credentials {
-            username = repositoryUsername
-            password = repositoryPassword
-          }
-        }
-      }
     }
 
     val isCiServer = System.getenv().containsKey("CI")
@@ -84,7 +97,11 @@ class PublishConventionPlugin : Plugin<Project> {
           signingPassword,
         )
 
-        sign(extensions.getByType<PublishingExtension>().publications["mavenJava"])
+        // Sign the correct publication based on project type
+        val publicationName = if (pluginManager.hasPlugin("java-gradle-plugin")) "pluginMaven" else "mavenJava"
+        afterEvaluate {
+          sign(extensions.getByType<PublishingExtension>().publications[publicationName])
+        }
       }
     }
 
