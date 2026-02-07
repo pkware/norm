@@ -191,11 +191,20 @@ internal abstract class RunSqlcTask @Inject constructor(
     val yamlFile = sqlcConfiguration.get().asFile
     val content = yamlFile.readText()
 
-    // Insert database section after "engine: postgresql"
-    val updatedContent = content.replace(
-      "engine: postgresql",
-      "engine: postgresql\n    database:\n      uri: $uri",
-    )
+    val updatedContent = if (content.contains("    database:")) {
+      // Database section already exists from a previous run - update the URI
+      // This handles the case where Gradle cached GenerateYamlTask but re-ran this task
+      content.replace(
+        Regex("(    database:\\s*\\n\\s*uri:)[^\\n]*"),
+        "$1 $uri",
+      )
+    } else {
+      // No database section yet - add it after "engine: postgresql"
+      content.replace(
+        "engine: postgresql",
+        "engine: postgresql\n    database:\n      uri: $uri",
+      )
+    }
 
     yamlFile.writeText(updatedContent)
   }

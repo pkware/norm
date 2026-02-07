@@ -150,6 +150,74 @@ class NormPluginTest {
     project.gradle("normGenerateCode").build()
   }
 
+  /**
+   * Tests that RunSqlcTask correctly handles YAML updates when re-run with cached inputs.
+   *
+   * When GenerateYamlTask is cached (UP_TO_DATE) but RunSqlcTask re-runs, the task modifies
+   * its input file (the YAML) which already contains a database section from the previous run.
+   * The update logic must be idempotent to avoid creating duplicate database sections.
+   */
+  @Test
+  fun `consecutive runs with useDatabase do not duplicate database section in YAML`() {
+    val scenarioDirectory = Path("../test-scenarios-basic/basic_embeds").normalize().toAbsolutePath()
+    val project = TestProject(projectDir, scenarioDirectory)
+    project.setupSettingsOnly()
+
+    val schema = scenarioDirectory.resolve("schema.sql")
+    val queries = scenarioDirectory.resolve("queries.sql")
+
+    project.buildFile.writeText(
+      """
+      plugins {
+        kotlin("jvm")
+        id("com.pkware.norm")
+      }
+
+      norm {
+        databases {
+          create("Test") {
+            packageName = "example"
+            schemas.addAll("$schema")
+            queries.addAll("$queries")
+            useDatabase = true
+            postgresVersion = "17"
+          }
+        }
+      }
+      """.trimIndent(),
+    )
+
+    // First run - generates YAML and runs sqlc with database
+    val firstRun = project.gradle("normRunSqlcTest").build()
+    assertThat(firstRun.task(":normGenerateYamlTest")?.outcome).isEqualTo(SUCCESS)
+    assertThat(firstRun.task(":normRunSqlcTest")?.outcome).isEqualTo(SUCCESS)
+
+    // Read the YAML and verify it has exactly one database section
+    val yamlPath = projectDir.resolve("build/tmp/norm/Test/sqlc.yaml")
+    val firstYamlContent = yamlPath.readText()
+    val firstDatabaseCount = firstYamlContent.split("database:").size - 1
+    assertThat(firstDatabaseCount, "First run should have exactly one database section")
+      .isEqualTo(1)
+
+    // Second run - Force RunSqlcTask to re-run by deleting its output (schema.json)
+    // but keep GenerateYamlTask's output (the YAML) intact
+    // This simulates the scenario where GenerateYamlTask is cached but RunSqlcTask needs to run
+    projectDir.resolve("build/tmp/norm/Test/schema.json").toFile().delete()
+
+    // Second run should succeed - the fix makes updateYamlWithDatabaseUri idempotent
+    val secondRun = project.gradle("normRunSqlcTest").build()
+    assertThat(secondRun.task(":normRunSqlcTest")?.outcome).isEqualTo(SUCCESS)
+
+    // Verify GenerateYamlTask was cached but RunSqlcTask executed
+    assertThat(secondRun.task(":normGenerateYamlTest")?.outcome?.name).isEqualTo("UP_TO_DATE")
+
+    // Read the YAML and verify it still has exactly ONE database section (no duplication)
+    val secondYamlContent = yamlPath.readText()
+    val secondDatabaseCount = secondYamlContent.split("database:").size - 1
+    assertThat(secondDatabaseCount, "Second run should still have exactly one database section")
+      .isEqualTo(1)
+  }
+
   // TODO Test that tasks are correctly cached
 
   @Test
