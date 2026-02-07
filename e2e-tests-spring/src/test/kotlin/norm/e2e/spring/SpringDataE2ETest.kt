@@ -3,10 +3,12 @@ package norm.e2e.spring
 import assertk.assertThat
 import assertk.assertions.hasSize
 import assertk.assertions.isEqualTo
+import assertk.assertions.isNotEmpty
 import assertk.assertions.isNotNull
 import assertk.assertions.isNull
 import assertk.assertions.isPresent
 import example.Author
+import example.Book
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -27,6 +29,9 @@ class SpringDataE2ETest {
 
   @Autowired
   lateinit var authorRepository: AuthorRepository
+
+  @Autowired
+  lateinit var bookRepository: BookRepository
 
   @BeforeEach
   fun setup() {
@@ -103,5 +108,15 @@ class SpringDataE2ETest {
     // Verify deleted
     val found = authorRepository.findById(author.id)
     assertThat(found.isPresent).isEqualTo(false)
+  }
+
+  @Test
+  fun `can query fields named using underscore`() {
+    val author = authorRepository.save(Author(id = 0, name = "Charles Dickens", email = null))
+    bookRepository.save(Book(0, "Oliver Twist", author.id))
+
+    // Use a Spring Data JDBC method that gets a runtime proxy
+    val books = bookRepository.findByAuthorId(author.id)
+    assertThat(books).isNotEmpty()
   }
 }

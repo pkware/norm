@@ -7,7 +7,7 @@ CREATE TABLE author (
 CREATE TABLE book (
   id SERIAL PRIMARY KEY,
   title TEXT NOT NULL,
-  author_id INT NOT NULL REFERENCES author(id)
+  author_id INT NOT NULL REFERENCES author(id) ON DELETE CASCADE
 );
 
 -- Orphan table: not referenced in any query

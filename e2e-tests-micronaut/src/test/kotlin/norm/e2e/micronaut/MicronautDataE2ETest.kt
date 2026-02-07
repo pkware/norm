@@ -3,10 +3,12 @@ package norm.e2e.micronaut
 import assertk.assertThat
 import assertk.assertions.hasSize
 import assertk.assertions.isEqualTo
+import assertk.assertions.isNotEmpty
 import assertk.assertions.isNotNull
 import assertk.assertions.isNull
 import assertk.assertions.isPresent
 import example.Author
+import example.Book
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest
 import jakarta.inject.Inject
 import org.junit.jupiter.api.Test
@@ -24,6 +26,9 @@ class MicronautDataE2ETest {
 
   @Inject
   lateinit var authorRepository: AuthorRepository
+
+  @Inject
+  lateinit var bookRepository: BookRepository
 
   @Test
   fun `can persist and retrieve Norm-generated entity`() {
@@ -105,5 +110,15 @@ class MicronautDataE2ETest {
     // Verify deleted
     val found = authorRepository.findById(author.id)
     assertThat(found.isPresent).isEqualTo(false)
+  }
+
+  @Test
+  fun `can query fields named using underscore`() {
+    val author = authorRepository.save(Author(id = 0, name = "Charles Dickens", email = null))
+    bookRepository.save(Book(0, "Oliver Twist", author.id))
+
+    // Use a Micronaut Data JDBC method that gets a runtime proxy
+    val books = bookRepository.findByAuthorId(author.id)
+    assertThat(books).isNotEmpty()
   }
 }
