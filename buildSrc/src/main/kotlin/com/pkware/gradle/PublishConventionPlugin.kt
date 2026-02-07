@@ -150,4 +150,3 @@ val Project.pomName: String
 
 val Project.pomDescription: String
   get() = properties.getOrDefault("POM_NAME", name).toString()
-

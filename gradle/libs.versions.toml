@@ -22,6 +22,7 @@ wire-json = { module = "com.squareup.wire:wire-moshi-adapter", version.ref = "wi
 [plugins]
 # TODO Use the latest version, and don't use a SNAPSHOT
 norm = "com.pkware.norm:1.0.0-SNAPSHOT"
+shadow = "com.gradleup.shadow:9.3.1"
 wire = { id = "com.squareup.wire", version.ref = "wire" }
 
 [bundles]
