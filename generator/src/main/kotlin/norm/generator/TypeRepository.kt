@@ -101,14 +101,16 @@ internal class TypeRepository(
     val mapperParameters = mutableListOf<ParameterSpec>()
     for ((index, column) in table.columns.withIndex()) {
       val columnType = resolveColumnType(column)
-      val parameter = ParameterSpec(column.name, columnType)
+      val propertyName = determineKotlinPropertyName(column.name, frameworks)
+      val parameter = ParameterSpec(propertyName, columnType)
       primaryConstructor.addParameter(parameter)
       mapperParameters.add(parameter)
       mapperArguments.add(resolveMappableType(column).resultSetAction(index + columnOffset))
       typeBeingDefined.addProperty(
-        PropertySpec.builder(column.name, columnType)
-          .initializer(column.name)
-          .also { if (column.isPrimaryKey) it.annotateForFrameworks(frameworks) }
+        PropertySpec.builder(propertyName, columnType)
+          .initializer(propertyName)
+          .addColumnMappingAnnotationIfNeeded(propertyName, column.name, frameworks)
+          .also { if (column.isPrimaryKey) it.addIdAnnotationForFrameworks(frameworks) }
           .build(),
       )
     }
@@ -336,6 +338,72 @@ internal class TypeRepository(
   }.copy(nullable = !notNull)
 }
 
+/**
+ * Determines the Kotlin property name for a database column.
+ *
+ * For frameworks that require camelCase naming (Micronaut Data, Spring Data),
+ * converts snake_case column names to camelCase. Otherwise, uses the original name.
+ *
+ * @param columnName The original database column name
+ * @param frameworks The set of frameworks for which code is being generated
+ * @return The property name to use in the generated Kotlin class
+ */
+private fun determineKotlinPropertyName(columnName: String, frameworks: Set<Framework>): String {
+  val requiresCamelCase = frameworks.any {
+    it == Framework.MICRONAUT_DATA_JDBC || it == Framework.SPRING_DATA_JDBC
+  }
+  return if (requiresCamelCase) {
+    columnName.snakeToCamelCase()
+  } else {
+    columnName
+  }
+}
+
+/**
+ * Adds a column mapping annotation if the property name differs from the database column name.
+ *
+ * This is necessary when frameworks use camelCase property names but the database uses snake_case.
+ * For example, when a database column `author_id` is converted to a property `authorId`, this function
+ * adds the appropriate mapping annotation to preserve the database relationship.
+ *
+ * - Micronaut Data JDBC: `@field:MappedProperty("column_name")`
+ * - Spring Data JDBC: `@Column("column_name")`
+ *
+ * This function handles column-to-property mapping. For primary key annotations, see
+ * [addIdAnnotationForFrameworks].
+ *
+ * @param propertyName The Kotlin property name (possibly camelCase)
+ * @param columnName The original database column name (possibly snake_case)
+ * @param frameworks The set of frameworks for which code is being generated
+ * @see addIdAnnotationForFrameworks
+ */
+private fun PropertySpec.Builder.addColumnMappingAnnotationIfNeeded(
+  propertyName: String,
+  columnName: String,
+  frameworks: Set<Framework>,
+): PropertySpec.Builder = apply {
+  if (propertyName != columnName) {
+    for (framework in frameworks) {
+      when (framework) {
+        Framework.MICRONAUT_DATA_JDBC -> addAnnotation(
+          AnnotationSpec
+            .builder(MICRONAUT_DATA_MAPPED_PROPERTY_ANNOTATION)
+            .addMember(""""$columnName"""")
+            .useSiteTarget(AnnotationSpec.UseSiteTarget.FIELD)
+            .build(),
+        )
+        Framework.SPRING_DATA_JDBC -> addAnnotation(
+          AnnotationSpec
+            .builder(SPRING_DATA_COLUMN_ANNOTATION)
+            .addMember(""""$columnName"""")
+            .build(),
+        )
+        Framework.ALL_TABLES -> continue // No mapping annotations needed
+      }
+    }
+  }
+}
+
 private fun TypeSpec.Builder.annotateForFrameworks(frameworks: Set<Framework>, tableName: String): TypeSpec.Builder =
   apply {
     for (framework in frameworks) {
@@ -352,7 +420,20 @@ private fun TypeSpec.Builder.annotateForFrameworks(frameworks: Set<Framework>, t
     }
   }
 
-private fun PropertySpec.Builder.annotateForFrameworks(frameworks: Set<Framework>): PropertySpec.Builder = apply {
+/**
+ * Adds framework-specific ID annotations to primary key properties.
+ *
+ * This function marks properties as entity identifiers using framework conventions:
+ * - Micronaut Data JDBC: `@field:Id`
+ * - Spring Data JDBC: `@Id`
+ *
+ * This function handles primary key identification. For column name mapping annotations, see
+ * [addColumnMappingAnnotationIfNeeded].
+ *
+ * @param frameworks The set of frameworks for which code is being generated
+ * @see addColumnMappingAnnotationIfNeeded
+ */
+private fun PropertySpec.Builder.addIdAnnotationForFrameworks(frameworks: Set<Framework>): PropertySpec.Builder = apply {
   for (framework in frameworks) {
     when (framework) {
       Framework.MICRONAUT_DATA_JDBC -> addAnnotation(
@@ -369,5 +450,7 @@ private fun PropertySpec.Builder.annotateForFrameworks(frameworks: Set<Framework
 
 private val MICRONAUT_DATA_ID_ANNOTATION = ClassName("io.micronaut.data.annotation", "Id")
 private val MICRONAUT_DATA_TABLE_ANNOTATION = ClassName("io.micronaut.data.annotation", "MappedEntity")
+private val MICRONAUT_DATA_MAPPED_PROPERTY_ANNOTATION = ClassName("io.micronaut.data.annotation", "MappedProperty")
 private val SPRING_DATA_ID_ANNOTATION = ClassName("org.springframework.data.annotation", "Id")
 private val SPRING_DATA_TABLE_ANNOTATION = ClassName("org.springframework.data.relational.core.mapping", "Table")
+private val SPRING_DATA_COLUMN_ANNOTATION = ClassName("org.springframework.data.relational.core.mapping", "Column")

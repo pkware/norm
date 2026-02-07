@@ -2,7 +2,7 @@ package example
 
 import io.micronaut.`data`.`annotation`.Id
 import io.micronaut.`data`.`annotation`.MappedEntity
-import io.micronaut.data.annotation.MappedProperty
+import io.micronaut.`data`.`annotation`.MappedProperty
 import kotlin.Int
 import kotlin.String
 import kotlin.jvm.JvmRecord

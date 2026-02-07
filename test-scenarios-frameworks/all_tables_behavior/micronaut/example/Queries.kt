@@ -22,7 +22,7 @@ public interface Queries : Transacter {
   public fun <T : Any> getBook(id: Int, mapper: (
     id: Int,
     title: String,
-    author_id: Int,
+    authorId: Int,
   ) -> T): T
 
   @Throws(SQLException::class)

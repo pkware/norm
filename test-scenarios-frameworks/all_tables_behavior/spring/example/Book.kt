@@ -4,7 +4,7 @@ import kotlin.Int
 import kotlin.String
 import kotlin.jvm.JvmRecord
 import org.springframework.`data`.`annotation`.Id
-import org.springframework.data.relational.core.mapping.Column
+import org.springframework.`data`.relational.core.mapping.Column
 import org.springframework.`data`.relational.core.mapping.Table
 
 @JvmRecord
