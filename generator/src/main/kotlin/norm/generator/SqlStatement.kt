@@ -29,13 +29,13 @@ internal class SqlStatement(
   val parameters: List<Parameter>
 
   /**
-   * sqlc Command applied to the SQL statement.
+   * Command applied to the SQL statement.
    *
-   * In sqlc, statements are annotated with a Command that defines how they'll behave at runtime. Where [resultRowShape]
+   * Statements are annotated with a Command that defines how they'll behave at runtime. Where [resultRowShape]
    * contains information about the shape of a single row, [command] impacts what the Kotlin return type of a statement
    * is.
    *
-   * See [Command] and the [sqlc documentation](https://docs.sqlc.dev/en/latest/reference/query-annotations.html).
+   * See [Command].
    */
   val command get() = Command.fromSqlcCmd(query.cmd)
 
@@ -67,8 +67,6 @@ internal class SqlStatement(
 
   /**
    * Name assigned to the SQL statement by the developer.
-   *
-   * See [sqlc documentation](https://docs.sqlc.dev/en/latest/reference/query-annotations.html).
    */
   val name get() = query.name
 
@@ -111,23 +109,15 @@ internal class SqlStatement(
   init {
     resultRowShape = computeReturnType()
 
-    // Convert $1 style query parameters to JDBC-compatible ? parameters.
-    // First we find all the placeholders, and create a list of parameters where each index matches the position of a
-    // future JDBC parameter. We populate the list by mapping the query parameters to placeholder indexes.
-    // Finally we replace the placeholders in the query text.
-    parameters = SQLC_ARGUMENT_REGEX.findAll(query.text)
-      .map { match ->
-        val parameterNumber = match.value.substring(1).toInt()
-        query.params.first { it.number == parameterNumber }
-      }
-      .toList()
-    sql = query.text.replace(SQLC_ARGUMENT_REGEX, "?")
+    // SQL already uses JDBC ? placeholders. Parameters are ordered by number, matching placeholder order.
+    parameters = query.params.sortedBy { it.number }
+    sql = query.text
   }
 
   /**
    * List of deduplicated parameter names, indexed by position in the parameters list.
    *
-   * When sqlc cannot infer meaningful parameter names (e.g., for extension function parameters),
+   * When the analyzer cannot infer meaningful parameter names (e.g., for extension function parameters),
    * it may assign the same name to multiple parameters. This list ensures each parameter gets a unique name
    * by appending numeric suffixes (name, name2, name3, ...).
    */
@@ -143,7 +133,7 @@ internal class SqlStatement(
   /**
    * Returns the deduplicated parameter name at the given index.
    *
-   * This handles cases where sqlc assigns duplicate names to parameters by appending numeric suffixes.
+   * Handles cases where the analyzer assigns duplicate names to parameters by appending numeric suffixes.
    * Returns a fallback name if the index is out of bounds.
    */
   fun getParameterName(index: Int): String = deduplicatedParameterNames.getOrElse(index) { "param$index" }
@@ -189,10 +179,6 @@ internal class SqlStatement(
     // Table is null when using sqlc.embed(). Just means it's not a star projection.
     val table = queryColumns.first().table ?: return null
     return catalog.resolveTable(table)
-  }
-
-  private companion object {
-    private val SQLC_ARGUMENT_REGEX = Regex("""\$\d+""")
   }
 }
 

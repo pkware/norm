@@ -1,15 +1,15 @@
 -- name: getUserByEmail :one
-SELECT * FROM users WHERE email = $1;
+SELECT * FROM users WHERE email = ?;
 
 -- name: listUsersByAge :many
-SELECT * FROM users WHERE age > $1;
+SELECT * FROM users WHERE age > ?;
 
 -- name: getUsersByZipCode :many
-SELECT * FROM users WHERE zip_code = $1;
+SELECT * FROM users WHERE zip_code = ?;
 
 -- name: createUser :exec
 INSERT INTO users (email, age, zip_code)
-VALUES ($1, $2, $3);
+VALUES (?, ?, ?);
 
 -- name: updateUser :exec
 UPDATE users

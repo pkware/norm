@@ -1,8 +1,5 @@
 package norm.generator
 
-/** Matches `$1`, `$2`, etc. — PostgreSQL positional parameters. */
-internal val POSITIONAL_PARAM = Regex("""\$\d+""")
-
 /** Matches `func_name(` to find the start of function calls. */
 internal val FUNCTION_CALL_START = Regex("""(\w+)\(""")
 
@@ -15,6 +12,36 @@ internal val SQL_KEYWORDS = setOf(
   "CASE", "WHEN", "THEN", "ELSE", "END", "CAST", "IS", "LIKE", "ILIKE",
   "CALL", "DO", "WITH", "RETURNING", "CONFLICT",
 )
+
+/**
+ * Finds the index of the closing parenthesis that matches an opening `(` at [openParenthesisIndex].
+ *
+ * @param text The string to search.
+ * @param openParenthesisIndex The index of the opening `(`. The search starts at `openParenthesisIndex + 1`.
+ * @return The index of the matching `)`, or `-1` if unbalanced.
+ */
+internal fun findMatchingCloseParenthesis(text: String, openParenthesisIndex: Int): Int {
+  var depth = 1
+  var i = openParenthesisIndex + 1
+  while (i < text.length && depth > 0) {
+    when (text[i]) {
+      '(' -> depth++
+      ')' -> depth--
+    }
+    i++
+  }
+  return if (depth == 0) i - 1 else -1
+}
+
+/**
+ * Finds the best matching [FunctionOverload] for a call with [argCount] arguments.
+ *
+ * Prefers an exact match by argument count. Falls back to overloads with more arguments
+ * (default parameters) or overloads with no named arguments (variadic/generic).
+ */
+internal fun findOverload(overloads: List<FunctionOverload>, argCount: Int): FunctionOverload? =
+  overloads.find { it.argNames.size == argCount || it.argNames.isEmpty() }
+    ?: overloads.find { it.argNames.size >= argCount }
 
 /**
  * Splits text on a delimiter character, respecting nested parentheses.

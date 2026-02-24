@@ -1,6 +1,6 @@
 -- name: getAuthor :one
 -- Simple embed: single table returned as embedded object
-SELECT sqlc.embed(author) FROM author WHERE id = $1;
+SELECT sqlc.embed(author) FROM author WHERE id = ?;
 
 -- name: listBooksWithAuthors :many
 -- Regular column before embed
@@ -13,4 +13,4 @@ JOIN author ON b.author_id = author.id;
 SELECT sqlc.embed(author), b.title
 FROM book b
 JOIN author ON b.author_id = author.id
-WHERE b.id = $1;
+WHERE b.id = ?;

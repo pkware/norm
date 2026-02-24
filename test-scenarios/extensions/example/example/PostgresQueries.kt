@@ -21,14 +21,19 @@ public class PostgresQueries(
 ) : RealTransacter(driver),
     Queries {
   @Throws(SQLException::class)
-  override fun createUser(username: String, crypt_param1: String) {
+  override fun createUser(
+    username: String,
+    crypt_param1: String,
+    crypt2_param1: String?,
+  ) {
     val sql = """
-        |INSERT INTO user_credentials (username, password_hash)
-        |VALUES (?, crypt(?, gen_salt('bf')))
+        |INSERT INTO user_credentials (username, password_hash, nullable_password_hash)
+        |VALUES (?, crypt(?, gen_salt('bf')), crypt(?, gen_salt('bf')))
         """.trimMargin()
     driver.execute(sql) {
       setString(1, username)
       setString(2, crypt_param1)
+      setString(3, crypt2_param1)
       execute()
     }
   }
@@ -38,11 +43,12 @@ public class PostgresQueries(
     stream: Iterable<Input>,
     username: Input.() -> String,
     crypt_param1: Input.() -> String,
+    crypt2_param1: Input.() -> String?,
     batchSize: Int,
   ): IntArray {
     val sql = """
-        |INSERT INTO user_credentials (username, password_hash)
-        |VALUES (?, crypt(?, gen_salt('bf')))
+        |INSERT INTO user_credentials (username, password_hash, nullable_password_hash)
+        |VALUES (?, crypt(?, gen_salt('bf')), crypt(?, gen_salt('bf')))
         """.trimMargin()
     return driver.execute(sql) {
       var totalCount = 0
@@ -51,6 +57,7 @@ public class PostgresQueries(
       for (entry in stream) {
         setString(1, entry.username())
         setString(2, entry.crypt_param1())
+        setString(3, entry.crypt2_param1())
         addBatch()
         batchCount++
         if (batchCount == batchSize) {

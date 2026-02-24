@@ -33,6 +33,7 @@ public interface Queries : Transacter {
     stream: Iterable<Input>,
     username: Input.() -> String,
     crypt_param1: Input.() -> String,
+    crypt2_param1: Input.() -> String?,
     batchSize: Int,
   ): IntArray
 
@@ -44,7 +45,8 @@ public interface Queries : Transacter {
     stream: Iterable<Input>,
     username: Input.() -> String,
     crypt_param1: Input.() -> String,
-  ): IntArray = createUser(stream, username, crypt_param1, 100)
+    crypt2_param1: Input.() -> String?,
+  ): IntArray = createUser(stream, username, crypt_param1, crypt2_param1, 100)
 
   /**
    * Query using pgcrypto for password hashing
@@ -52,7 +54,11 @@ public interface Queries : Transacter {
    * Norm: Executes a SQL statement.
    */
   @Throws(SQLException::class)
-  public fun createUser(username: String, crypt_param1: String)
+  public fun createUser(
+    username: String,
+    crypt_param1: String,
+    crypt2_param1: String?,
+  )
 
   /**
    * Query using pgcrypto for password verification

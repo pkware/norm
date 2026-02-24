@@ -8,7 +8,6 @@ import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isNull
-import assertk.assertions.isSameInstanceAs
 import assertk.assertions.isTrue
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.asTypeName
@@ -462,7 +461,7 @@ class SqlStatementTest {
     @Test
     fun `query with single parameter`() {
       val statement = createStatement(
-        $$"SELECT * FROM author WHERE id = $1;",
+        "SELECT * FROM author WHERE id = ?;",
         params = listOf(param(1, "id", "int4")),
       )
       assertThat(statement.parameters).hasSize(1)
@@ -472,7 +471,7 @@ class SqlStatementTest {
     @Test
     fun `query with multiple parameters in order`() {
       val statement = createStatement(
-        $$"INSERT INTO author (name, email, bio) VALUES ($1, $2, $3);",
+        "INSERT INTO author (name, email, bio) VALUES (?, ?, ?);",
         cmd = ":exec",
         params = listOf(
           param(1, "name"),
@@ -483,52 +482,24 @@ class SqlStatementTest {
       assertThat(statement.parameters).hasSize(3)
       assertThat(statement.parameters.map { it.number }).containsExactly(1, 2, 3)
     }
-
-    @Test
-    fun `query with non-sequential parameter references`() {
-      // SQL uses $3, $1, $2 but params are defined 1, 2, 3
-      val statement = createStatement(
-        $$"SELECT * FROM t WHERE c = $3 AND a = $1 AND b = $2;",
-        params = listOf(
-          param(1, "a"),
-          param(2, "b"),
-          param(3, "c"),
-        ),
-      )
-      // Parameters should be in placeholder order as they appear in SQL
-      assertThat(statement.parameters.map { it.number }).containsExactly(3, 1, 2)
-    }
-
-    @Test
-    fun `parameter referenced multiple times`() {
-      val param1 = param(1, "id", "int4")
-      val statement = createStatement(
-        $$"SELECT * FROM t WHERE a = $1 OR b = $1;",
-        params = listOf(param1),
-      )
-      // Same parameter appears twice
-      assertThat(statement.parameters).hasSize(2)
-      assertThat(statement.parameters[0]).isSameInstanceAs(param1)
-      assertThat(statement.parameters[1]).isSameInstanceAs(param1)
-    }
   }
 
   @Nested
-  inner class SqlTextConversion {
+  inner class SqlText {
 
     @Test
-    fun `single placeholder converted to question mark`() {
+    fun `sql text is passed through unchanged`() {
       val statement = createStatement(
-        $$"SELECT * FROM author WHERE id = $1;",
+        "SELECT * FROM author WHERE id = ?;",
         params = listOf(param(1)),
       )
       assertThat(statement.sql).isEqualTo("SELECT * FROM author WHERE id = ?;")
     }
 
     @Test
-    fun `multiple placeholders converted`() {
+    fun `multiple placeholders passed through`() {
       val statement = createStatement(
-        $$"SELECT * FROM t WHERE a = $1 AND b = $2 AND c = $3;",
+        "SELECT * FROM t WHERE a = ? AND b = ? AND c = ?;",
         params = listOf(param(1), param(2), param(3)),
       )
       assertThat(statement.sql).isEqualTo("SELECT * FROM t WHERE a = ? AND b = ? AND c = ?;")
@@ -538,17 +509,6 @@ class SqlStatementTest {
     fun `no placeholders unchanged`() {
       val statement = createStatement("SELECT * FROM author;")
       assertThat(statement.sql).isEqualTo("SELECT * FROM author;")
-    }
-
-    @Test
-    fun `double digit placeholder converted`() {
-      val params = (1..12).map { param(it) }
-      val statement = createStatement(
-        $$"INSERT INTO t VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);",
-        cmd = ":exec",
-        params = params,
-      )
-      assertThat(statement.sql).isEqualTo("INSERT INTO t VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);")
     }
   }
 
@@ -586,7 +546,7 @@ class SqlStatementTest {
     @Test
     fun `SELECT cannot be batched`() {
       val statement = createStatement(
-        $$"SELECT * FROM t WHERE id = $1;",
+        "SELECT * FROM t WHERE id = ?;",
         cmd = ":one",
         params = listOf(param(1)),
       )
@@ -596,7 +556,7 @@ class SqlStatementTest {
     @Test
     fun `MANY cannot be batched`() {
       val statement = createStatement(
-        $$"SELECT * FROM t WHERE status = $1;",
+        "SELECT * FROM t WHERE status = ?;",
         cmd = ":many",
         params = listOf(param(1)),
       )
@@ -615,7 +575,7 @@ class SqlStatementTest {
     @Test
     fun `DML with RETURNING cannot be batched`() {
       val statement = createStatement(
-        $$"INSERT INTO t (name) VALUES ($1) RETURNING id;",
+        "INSERT INTO t (name) VALUES (?) RETURNING id;",
         cmd = ":exec",
         params = listOf(param(1)),
         columns = listOf(column("id", type = "int4")),
@@ -626,7 +586,7 @@ class SqlStatementTest {
     @Test
     fun `DML with params and no RETURNING can be batched`() {
       val statement = createStatement(
-        $$"INSERT INTO t (name) VALUES ($1);",
+        "INSERT INTO t (name) VALUES (?);",
         cmd = ":exec",
         params = listOf(param(1)),
       )
@@ -636,7 +596,7 @@ class SqlStatementTest {
     @Test
     fun `execrows with params can be batched`() {
       val statement = createStatement(
-        $$"UPDATE t SET status = 'done' WHERE id = $1;",
+        "UPDATE t SET status = 'done' WHERE id = ?;",
         cmd = ":execrows",
         params = listOf(param(1)),
       )
@@ -660,7 +620,7 @@ class SqlStatementTest {
     @Test
     fun `MANY with params cannot be dynamic`() {
       val statement = createStatement(
-        $$"SELECT * FROM t WHERE status = $1;",
+        "SELECT * FROM t WHERE status = ?;",
         cmd = ":many",
         params = listOf(param(1)),
         columns = listOf(column("id")),
@@ -797,7 +757,7 @@ class SqlStatementTest {
     @Test
     fun `parameters with unique names are unchanged`() {
       val statement = createStatement(
-        $$"SELECT * FROM t WHERE a = $1 AND b = $2 AND c = $3;",
+        "SELECT * FROM t WHERE a = ? AND b = ? AND c = ?;",
         params = listOf(
           param(1, "id", "int4"),
           param(2, "name", "text"),
@@ -813,7 +773,7 @@ class SqlStatementTest {
     @Test
     fun `two duplicate names get deduplicated`() {
       val statement = createStatement(
-        $$"SELECT * FROM t WHERE a = $1 AND b = $2;",
+        "SELECT * FROM t WHERE a = ? AND b = ?;",
         params = listOf(
           param(1, "value", "text"),
           param(2, "value", "text"),
@@ -827,7 +787,7 @@ class SqlStatementTest {
     @Test
     fun `three duplicate names get deduplicated`() {
       val statement = createStatement(
-        $$"SELECT * FROM normal_rand($1, $2, $3);",
+        "SELECT * FROM normal_rand(?, ?, ?);",
         cmd = ":many",
         params = listOf(
           param(1, "normal_rand", "int4"),
@@ -845,7 +805,7 @@ class SqlStatementTest {
     @Test
     fun `mixed unique and duplicate names`() {
       val statement = createStatement(
-        $$"SELECT * FROM t WHERE a = $1 AND b = $2 AND c = $3 AND d = $4 AND e = $5;",
+        "SELECT * FROM t WHERE a = ? AND b = ? AND c = ? AND d = ? AND e = ?;",
         params = listOf(
           param(1, "id", "int4"),
           param(2, "value", "text"),
@@ -873,7 +833,7 @@ class SqlStatementTest {
     @Test
     fun `out of bounds index returns fallback`() {
       val statement = createStatement(
-        $$"SELECT * FROM t WHERE a = $1 AND b = $2;",
+        "SELECT * FROM t WHERE a = ? AND b = ?;",
         params = listOf(
           param(1, "id", "int4"),
           param(2, "name", "text"),
@@ -886,7 +846,7 @@ class SqlStatementTest {
     @Test
     fun `negative index returns fallback`() {
       val statement = createStatement(
-        $$"SELECT * FROM t WHERE a = $1 AND b = $2;",
+        "SELECT * FROM t WHERE a = ? AND b = ?;",
         params = listOf(
           param(1, "id", "int4"),
           param(2, "name", "text"),
@@ -899,7 +859,7 @@ class SqlStatementTest {
     @Test
     fun `crosstab function with duplicate parameter names`() {
       val statement = createStatement(
-        $$"SELECT * FROM crosstab($1, $2) AS ct(user_id int, setting1 text, setting2 text);",
+        "SELECT * FROM crosstab(?, ?) AS ct(user_id int, setting1 text, setting2 text);",
         cmd = ":many",
         params = listOf(
           param(1, "crosstab", "text"),
@@ -919,7 +879,7 @@ class SqlStatementTest {
     @Test
     fun `decode function with duplicate names`() {
       val statement = createStatement(
-        $$"SELECT decode($1, $2) AS decoded;",
+        "SELECT decode(?, ?) AS decoded;",
         params = listOf(
           param(1, "decode", "text"),
           param(2, "decode", "text"),
@@ -934,7 +894,7 @@ class SqlStatementTest {
     @Test
     fun `hmac function with three duplicate names`() {
       val statement = createStatement(
-        $$"SELECT hmac($1, $2, $3) AS signature;",
+        "SELECT hmac(?, ?, ?) AS signature;",
         params = listOf(
           param(1, "hmac", "text"),
           param(2, "hmac", "text"),
@@ -953,7 +913,7 @@ class SqlStatementTest {
       // Create a single Column object that will be reused
       val sharedColumn = Column(name = "value", type = Identifier(name = "text"))
       val statement = createStatement(
-        $$"SELECT * FROM t WHERE a = $1 AND b = $2 AND c = $3;",
+        "SELECT * FROM t WHERE a = ? AND b = ? AND c = ?;",
         params = listOf(
           Parameter(number = 1, column = sharedColumn),
           Parameter(number = 2, column = sharedColumn),
@@ -970,7 +930,7 @@ class SqlStatementTest {
     @Test
     fun `parameter name deduplication preserves parameter order`() {
       val statement = createStatement(
-        $$"SELECT * FROM t WHERE a = $1 AND b = $2 AND c = $3;",
+        "SELECT * FROM t WHERE a = ? AND b = ? AND c = ?;",
         params = listOf(
           param(1, "value", "text"),
           param(2, "value", "text"),
@@ -990,7 +950,7 @@ class SqlStatementTest {
     @Test
     fun `four duplicate names get deduplicated correctly`() {
       val statement = createStatement(
-        $$"SELECT * FROM t WHERE a = $1 AND b = $2 AND c = $3 AND d = $4;",
+        "SELECT * FROM t WHERE a = ? AND b = ? AND c = ? AND d = ?;",
         params = listOf(
           param(1, "param", "text"),
           param(2, "param", "text"),
@@ -1008,7 +968,7 @@ class SqlStatementTest {
     @Test
     fun `digest function with duplicate names`() {
       val statement = createStatement(
-        $$"SELECT digest($1, $2) AS hash;",
+        "SELECT digest(?, ?) AS hash;",
         params = listOf(
           param(1, "digest", "text"),
           param(2, "digest", "text"),

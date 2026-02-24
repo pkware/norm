@@ -9,7 +9,7 @@ SELECT
 FROM book b
 JOIN author ON b.author_id = author.id
 JOIN publisher ON b.publisher_id = publisher.id
-WHERE b.id = $1;
+WHERE b.id = ?;
 
 -- name: getThreeConsecutiveEmbeds :one
 -- Three consecutive embeds - tests cumulative offset errors
@@ -26,7 +26,7 @@ FROM book b
 JOIN author ON b.author_id = author.id
 JOIN publisher ON b.publisher_id = publisher.id
 JOIN reviewer ON b.reviewer_id = reviewer.id
-WHERE b.id = $1;
+WHERE b.id = ?;
 
 -- name: getEmbedRegularEmbed :one
 -- Embed, regular, embed pattern
@@ -41,4 +41,4 @@ SELECT
 FROM book b
 JOIN author ON b.author_id = author.id
 JOIN publisher ON b.publisher_id = publisher.id
-WHERE b.id = $1;
+WHERE b.id = ?;

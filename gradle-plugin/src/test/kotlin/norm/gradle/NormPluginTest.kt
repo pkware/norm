@@ -155,7 +155,7 @@ class NormPluginTest {
       SELECT * FROM author;
 
       -- name: getById :one
-      SELECT * FROM author WHERE id = $1;
+      SELECT * FROM author WHERE id = ?;
       """.trimIndent(),
     )
 
@@ -227,7 +227,7 @@ class NormPluginTest {
     queries2.writeText(
       $$"""
       -- name: getById :one
-      SELECT * FROM author WHERE id = $1;
+      SELECT * FROM author WHERE id = ?;
       """.trimIndent(),
     )
 

@@ -20,27 +20,45 @@ internal class SqlNullabilityAnalyzer(private val functionOverloads: Map<String,
    * 2. It is a call to a **strict** function (i.e., `pg_proc.proisstrict = true`) where all
    *    arguments are themselves non-null expressions. Strict functions return `null` only when
    *    given `null` input, so non-null inputs guarantee a non-null result. This is applied
-   *    recursively for nested calls like `encode(digest($1, $2), $3)`.
+   *    recursively for nested calls like `encode(digest(?, ?), ?)`.
+   *
+   * A `?` parameter is considered non-null when the corresponding Kotlin parameter is non-null
+   * (as determined by [parameterNotNull]). This allows strict function calls with non-null
+   * parameters to be correctly typed as non-null.
    *
    * This method extracts the top-level SELECT clause (handling nested subqueries in expressions
    * like `SELECT EXISTS(SELECT ...)`) and returns the set of aliases whose expressions match.
    *
    * @param sql The full SQL query text.
+   * @param parameterNotNull Map from 1-based parameter number to whether the parameter is
+   *   non-nullable. Parameters not in this map are assumed nullable.
    * @return Set of column aliases (after `AS`) whose expressions are provably non-null.
    */
-  fun findNonNullAliases(sql: String): Set<String> {
+  fun findNonNullAliases(sql: String, parameterNotNull: Map<Int, Boolean> = emptyMap()): Set<String> {
     val selectClause = extractTopLevelSelectClause(sql) ?: return emptySet()
     if (selectClause.trim() == "*") return emptySet()
 
+    // Build a set of char positions for non-null ? parameters
+    val nonNullParamPositions = buildNonNullParameterPositions(sql, parameterNotNull)
+
     val aliases = mutableSetOf<String>()
+    // Track offset within the full SQL to correctly map ? positions.
+    // selectClause is a substring of sql starting at selectClauseStart.
+    val selectClauseStart = sql.indexOf(selectClause)
+    var itemOffset = selectClauseStart
     for (item in splitAtTopLevel(selectClause, ',')) {
       val trimmed = item.trim()
       val asMatch = AS_ALIAS.find(trimmed)
-      val alias = asMatch?.groupValues?.get(1) ?: continue
-      val expression = trimmed.substring(0, asMatch.range.first).trim()
-      if (isNonNullExpression(expression)) {
-        aliases.add(alias)
+      if (asMatch != null) {
+        val alias = asMatch.groupValues[1]
+        val expression = trimmed.substring(0, asMatch.range.first).trim()
+        val leadingWhitespace = item.length - item.trimStart().length
+        val expressionStart = itemOffset + leadingWhitespace
+        if (isNonNullExpression(expression, nonNullParamPositions, expressionStart)) {
+          aliases.add(alias)
+        }
       }
+      itemOffset += item.length + 1 // +1 for comma
     }
     return aliases
   }
@@ -50,52 +68,76 @@ internal class SqlNullabilityAnalyzer(private val functionOverloads: Map<String,
    *
    * Returns `true` for:
    * - Known non-null constructs: `EXISTS(...)`, `COUNT(...)`, `COALESCE(...)`
-   * - Positional parameters (`$1`, `$2`, ...) — parameters are always non-null
+   * - `?` parameters whose corresponding Kotlin parameter is non-null
    * - Strict function calls where every argument is also a non-null expression (recursive)
    * - String literals (`'...'`) and numeric literals
+   *
+   * @param nonNullPositions Set of char positions in the full SQL where `?` is known non-null.
+   * @param globalOffset The offset of [expression] within the full SQL string, used to look up
+   *   `?` positions in [nonNullPositions].
    */
-  private fun isNonNullExpression(expression: String): Boolean {
-    val upper = expression.trim().uppercase()
+  private fun isNonNullExpression(expression: String, nonNullPositions: Set<Int>, globalOffset: Int): Boolean {
+    val leadingWhitespace = expression.length - expression.trimStart().length
+    val trimmed = expression.trim()
+    val upper = trimmed.uppercase()
 
     if (NON_NULL_EXPRESSIONS.any { upper.startsWith(it) }) return true
-    if (POSITIONAL_PARAM.matches(expression.trim())) return true
 
-    val trimmed = expression.trim()
+    // Check if the expression is a single ? parameter that is non-null
+    if (trimmed == "?") {
+      return (globalOffset + leadingWhitespace) in nonNullPositions
+    }
+
     if (trimmed.startsWith("'") && trimmed.endsWith("'")) return true
     if (trimmed.toDoubleOrNull() != null) return true
 
     // Check for strict function calls: func(arg1, arg2, ...)
-    val funcMatch = FUNCTION_CALL_START.find(trimmed) ?: return false
-    if (funcMatch.range.first != 0) return false // expression doesn't start with the function call
-    val funcName = funcMatch.groupValues[1].lowercase()
-    if (funcName.uppercase() in SQL_KEYWORDS) return false
+    val functionMatch = FUNCTION_CALL_START.find(trimmed) ?: return false
+    if (functionMatch.range.first != 0) return false // expression doesn't start with the function call
+    val functionName = functionMatch.groupValues[1].lowercase()
+    if (functionName.uppercase() in SQL_KEYWORDS) return false
 
-    val overloads = functionOverloads[funcName] ?: return false
+    val overloads = functionOverloads[functionName] ?: return false
 
     // Extract the argument text inside the outermost parentheses
-    val argsStart = funcMatch.range.last + 1
-    var depth = 1
-    var i = argsStart
-    while (i < trimmed.length && depth > 0) {
-      when (trimmed[i]) {
-        '(' -> depth++
-        ')' -> depth--
-      }
-      i++
-    }
-    if (depth != 0) return false
+    val openParenthesis = functionMatch.range.last
+    val closeParenthesis = findMatchingCloseParenthesis(trimmed, openParenthesis)
+    if (closeParenthesis < 0) return false
     // Verify the function call spans the entire expression (no trailing text)
-    if (i != trimmed.length) return false
+    if (closeParenthesis != trimmed.length - 1) return false
 
-    val argsText = trimmed.substring(argsStart, i - 1)
-    val args = splitAtTopLevel(argsText, ',')
+    val argumentsText = trimmed.substring(openParenthesis + 1, closeParenthesis)
+    val args = splitAtTopLevel(argumentsText, ',')
 
-    // Find matching overload by arg count
-    val overload = overloads.find { it.argNames.size == args.size || (it.argNames.isEmpty() && args.isNotEmpty()) }
-      ?: overloads.find { it.argNames.size >= args.size }
+    val overload = findOverload(overloads, args.size)
 
-    // If function is strict and all arguments are non-null, the result is non-null
-    return overload?.isStrict == true && args.all { isNonNullExpression(it) }
+    // If function is strict and all arguments are non-null, the result is non-null.
+    // Each argument's global offset is computed so ? positions can be looked up correctly.
+    if (overload?.isStrict != true) return false
+    var argOffset = globalOffset + leadingWhitespace + openParenthesis + 1
+    for (arg in args) {
+      if (!isNonNullExpression(arg, nonNullPositions, argOffset)) return false
+      argOffset += arg.length + 1 // +1 for comma
+    }
+    return true
+  }
+
+  /**
+   * Builds a set of char positions in [sql] where `?` placeholders correspond to non-null parameters.
+   */
+  private fun buildNonNullParameterPositions(sql: String, parameterNotNull: Map<Int, Boolean>): Set<Int> {
+    if (parameterNotNull.isEmpty()) return emptySet()
+    val positions = mutableSetOf<Int>()
+    var paramNumber = 0
+    for (i in sql.indices) {
+      if (sql[i] == '?') {
+        paramNumber++
+        if (parameterNotNull[paramNumber] == true) {
+          positions.add(i)
+        }
+      }
+    }
+    return positions
   }
 
   /**
@@ -129,7 +171,7 @@ internal class SqlNullabilityAnalyzer(private val functionOverloads: Map<String,
       }
       i++
     }
-    // No FROM found (e.g., `SELECT COALESCE($1, 'default') AS val`)
+    // No FROM found (e.g., `SELECT COALESCE(?, 'default') AS val`)
     return sql.substring(start).trimEnd(';', ' ', '\n', '\t')
   }
 

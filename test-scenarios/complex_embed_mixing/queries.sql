@@ -15,7 +15,7 @@ SELECT
   b.published_year
 FROM book b
 JOIN author ON b.author_id = author.id
-WHERE b.id = $1;
+WHERE b.id = ?;
 
 -- name: getSandwichBook :one
 -- Sandwich pattern: regular columns on both sides of 3-column embed
@@ -33,7 +33,7 @@ SELECT
   b.published_year
 FROM book b
 JOIN publisher ON b.publisher_id = publisher.id
-WHERE b.id = $1;
+WHERE b.id = ?;
 
 -- name: getAlternatingBook :one
 -- Multiple embeds with regular columns between
@@ -52,4 +52,4 @@ SELECT
 FROM book b
 JOIN author ON b.author_id = author.id
 JOIN publisher ON b.publisher_id = publisher.id
-WHERE b.id = $1;
+WHERE b.id = ?;

@@ -72,6 +72,7 @@ Example Gradle tasks:
 - **Line length**: 120 characters max
 - **Linting**: ktlint with IntelliJ IDEA style
 - **Trailing newlines**: Required
+- **Naming**: Use full, properly spelled words in identifiers. No informal abbreviations (e.g., `openParenthesis` not `openParen`, `parameter` not `param`, `expression` not `expr`). Standard well-known abbreviations like `sql`, `id`, `url` are fine.
 - See `.editorconfig` for full details
 
 ## Architecture
@@ -103,13 +104,13 @@ For each SQL file, Norm generates:
 Queries use annotation comments:
 ```sql
 -- name: getAuthorByName :one
-SELECT * FROM author WHERE name = $1;
+SELECT * FROM author WHERE name = ?;
 
 -- name: listAuthors :many
 SELECT * FROM author;
 
 -- name: addAuthor :execrows
-INSERT INTO author(name, email) VALUES ($1, $2);
+INSERT INTO author(name, email) VALUES (?, ?);
 ```
 
 Commands: `:one` (single result), `:many` (multiple results), `:execrows` (returns affected row count)

@@ -22,7 +22,7 @@ SELECT
 FROM book b
 JOIN author ON b.author_id = author.id
 JOIN publisher ON b.publisher_id = publisher.id
-WHERE b.id = $1;
+WHERE b.id = ?;
 
 -- name: listBooksWithFullDetails :many
 -- Similar complex pattern for :many queries
@@ -48,5 +48,5 @@ SELECT
 FROM book b
 JOIN author ON b.author_id = author.id
 LEFT JOIN review r ON r.book_id = b.id
-WHERE b.id = $1
+WHERE b.id = ?
 GROUP BY author.id, author.name, author.email, author.bio, b.title;

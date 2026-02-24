@@ -1,11 +1,11 @@
 -- name: getAuthorByName :one
-SELECT * FROM author WHERE name = $1;
+SELECT * FROM author WHERE name = ?;
 
 -- name: authorAndMostPopularBook :one
 SELECT name, title, copies_sold
 FROM author
   LEFT JOIN book ON author.id = book.author_id
-WHERE name = $1
+WHERE name = ?
 ORDER BY copies_sold DESC
 LIMIT 1;
 
@@ -13,7 +13,7 @@ LIMIT 1;
 SELECT title, copies_sold
 FROM author
   RIGHT JOIN book ON author.id = book.author_id
-WHERE name = $1
+WHERE name = ?
 ORDER BY copies_sold DESC
   LIMIT 1;
 
@@ -24,16 +24,16 @@ SELECT * FROM author;
 SELECT title from book;
 
 -- name: addAuthor :execrows
-INSERT INTO author(name, email) VALUES ($1, $2);
+INSERT INTO author(name, email) VALUES (?, ?);
 
 -- name: setEmailForName :execrows
-UPDATE author SET email = $1 WHERE name = $2;
+UPDATE author SET email = ? WHERE name = ?;
 
 -- name: setEmailForNameReturningId :many
-UPDATE author SET email = $1 WHERE name = $2 RETURNING id;
+UPDATE author SET email = ? WHERE name = ? RETURNING id;
 
 -- -- name: assignBooksToAuthor :exec
--- -- TODO $1 is an int author ID, $2 is a list of book IDs. No return value should be generated.
--- CALL assign_books_to_author($1, $2);
+-- -- TODO first ? is an int author ID, second ? is a list of book IDs. No return value should be generated.
+-- CALL assign_books_to_author(?, ?);
 
 

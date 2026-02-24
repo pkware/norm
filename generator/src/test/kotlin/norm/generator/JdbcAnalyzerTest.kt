@@ -166,7 +166,7 @@ class JdbcAnalyzerTest {
     val parsed = ParsedQuery(
       "insertOne",
       ":execrows",
-      $$"INSERT INTO type(string_type) VALUES ($1)",
+      "INSERT INTO type(string_type) VALUES (?)",
       emptyList(),
     )
 
@@ -183,7 +183,7 @@ class JdbcAnalyzerTest {
     val parsed = ParsedQuery(
       "insertMultiple",
       ":execrows",
-      $$"INSERT INTO type(string_type, int_type) VALUES ($1, $2)",
+      "INSERT INTO type(string_type, int_type) VALUES (?, ?)",
       emptyList(),
     )
 
@@ -232,7 +232,7 @@ class JdbcAnalyzerTest {
     val parsed = ParsedQuery(
       "updateStringType",
       ":exec",
-      $$"CALL update_string_type($1, $2)",
+      "CALL update_string_type(?, ?)",
       emptyList(),
     )
 
@@ -284,7 +284,7 @@ class JdbcAnalyzerTest {
       val parsed = ParsedQuery(
         "existsCheck",
         ":one",
-        $$"SELECT EXISTS(SELECT 1 FROM type WHERE string_type = $1) AS found",
+        "SELECT EXISTS(SELECT 1 FROM type WHERE string_type = ?) AS found",
         emptyList(),
       )
 
@@ -302,7 +302,7 @@ class JdbcAnalyzerTest {
       val parsed = ParsedQuery(
         "notNull",
         ":one",
-        $$"SELECT string_type FROM type WHERE serial_type = $1",
+        "SELECT string_type FROM type WHERE serial_type = ?",
         emptyList(),
       )
 
@@ -318,7 +318,7 @@ class JdbcAnalyzerTest {
       val parsed = ParsedQuery(
         "nullable",
         ":one",
-        $$"SELECT text_type FROM type WHERE serial_type = $1",
+        "SELECT text_type FROM type WHERE serial_type = ?",
         emptyList(),
       )
 
@@ -334,7 +334,7 @@ class JdbcAnalyzerTest {
       val parsed = ParsedQuery(
         "upper",
         ":one",
-        $$"SELECT upper(text_type) AS uppered FROM type WHERE serial_type = $1",
+        "SELECT upper(text_type) AS uppered FROM type WHERE serial_type = ?",
         emptyList(),
       )
 
@@ -342,7 +342,7 @@ class JdbcAnalyzerTest {
 
       assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].name).isEqualTo("uppered")
-      // upper() is strict, but its input is a nullable column reference — not a $N param —
+      // upper() is strict, but its input is a nullable column reference — not a ? param —
       // so the expression can't be proven non-null. JDBC reports columnNullableUnknown.
       assertThat(query.columns[0].not_null).isFalse()
     }
@@ -353,7 +353,7 @@ class JdbcAnalyzerTest {
       val parsed = ParsedQuery(
         "mixed",
         ":one",
-        $$"SELECT COUNT(*) AS total, int_type FROM type WHERE serial_type = $1 GROUP BY int_type",
+        "SELECT COUNT(*) AS total, int_type FROM type WHERE serial_type = ? GROUP BY int_type",
         emptyList(),
       )
 
@@ -372,7 +372,7 @@ class JdbcAnalyzerTest {
       val parsed = ParsedQuery(
         "arithmetic",
         ":one",
-        $$"SELECT int_type + 1 AS incremented FROM type WHERE serial_type = $1",
+        "SELECT int_type + 1 AS incremented FROM type WHERE serial_type = ?",
         emptyList(),
       )
 

@@ -58,15 +58,15 @@ public class JdbcAnalyzer(private val connection: Connection) {
   /**
    * Analyzes a parsed query to determine its parameter types and result column types.
    *
-   * Converts `$1`-style positional parameters to JDBC `?` placeholders, prepares the statement,
-   * then reads metadata from the prepared statement without executing it.
+   * Prepares the statement using the SQL's `?` placeholders and reads metadata from the
+   * prepared statement without executing it.
    *
    * @param parsedQuery The query parsed from a SQL file.
    * @param catalog The schema catalog, used to attach table references to result columns.
    * @return A [Query] proto object with full type information.
    */
   public fun analyzeQuery(parsedQuery: ParsedQuery, catalog: Catalog): Query {
-    val jdbcSql = convertToJdbcPlaceholders(parsedQuery.sql)
+    val jdbcSql = parsedQuery.sql
     val isCallStatement = parsedQuery.sql.trimStart().startsWith("CALL ", ignoreCase = true)
 
     val resultColumns: List<Column>
@@ -75,7 +75,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
     val inferredParams = parameterInferrer.inferParameterInfo(parsedQuery.sql)
     // Named parameters from the query file take priority over inferred names
     val inferredNames = inferredParams.mapValues { it.value.name } + parsedQuery.namedParameters
-    val parameterNotNull = parameterInferrer.resolveParameterNullability(inferredParams, catalog)
+    val parameterNotNull = parameterInferrer.resolveParameterNotNull(inferredParams, catalog)
 
     if (isCallStatement) {
       // CALL statements don't return result sets and may not support getMetaData()
@@ -83,7 +83,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
       parameters = analyzeCallParameters(parsedQuery.sql, jdbcSql)
     } else {
       connection.prepareStatement(jdbcSql).use { ps ->
-        resultColumns = buildResultColumns(ps.metaData, catalog, parsedQuery.sql)
+        resultColumns = buildResultColumns(ps.metaData, catalog, parsedQuery.sql, parameterNotNull)
         parameters = buildParameters(ps.parameterMetaData, inferredNames, parameterNotNull)
       }
     }
@@ -161,10 +161,15 @@ public class JdbcAnalyzer(private val connection: Connection) {
     return tables
   }
 
-  private fun buildResultColumns(rsmd: ResultSetMetaData?, catalog: Catalog, sql: String): List<Column> {
+  private fun buildResultColumns(
+    rsmd: ResultSetMetaData?,
+    catalog: Catalog,
+    sql: String,
+    parameterNotNull: Map<Int, Boolean> = emptyMap(),
+  ): List<Column> {
     if (rsmd == null) return emptyList()
 
-    val nonNullAliases = nullabilityAnalyzer.findNonNullAliases(sql)
+    val nonNullAliases = nullabilityAnalyzer.findNonNullAliases(sql, parameterNotNull)
 
     val columns = mutableListOf<Column>()
     for (i in 1..rsmd.columnCount) {
@@ -284,7 +289,5 @@ public class JdbcAnalyzer(private val connection: Connection) {
 
   private companion object {
     private val CALL_PROCEDURE_NAME = Regex("""CALL\s+(\w+)\s*\(""", RegexOption.IGNORE_CASE)
-
-    fun convertToJdbcPlaceholders(sql: String): String = sql.replace(Regex("""\$\d+"""), "?")
   }
 }

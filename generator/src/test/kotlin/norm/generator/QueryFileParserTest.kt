@@ -34,7 +34,7 @@ class QueryFileParserTest {
       SELECT * FROM users;
 
       -- name: getById :one
-      SELECT * FROM users WHERE id = $1;
+      SELECT * FROM users WHERE id = ?;
     """.trimIndent()
 
     val result = QueryFileParser.parse(content)
@@ -44,7 +44,7 @@ class QueryFileParserTest {
     assertThat(result[0].command).isEqualTo(":many")
     assertThat(result[1].name).isEqualTo("getById")
     assertThat(result[1].command).isEqualTo(":one")
-    assertThat(result[1].sql).isEqualTo($$"SELECT * FROM users WHERE id = $1")
+    assertThat(result[1].sql).isEqualTo("SELECT * FROM users WHERE id = ?")
   }
 
   @Test
@@ -67,7 +67,7 @@ class QueryFileParserTest {
       -- Query using pgcrypto for password hashing
       -- name: createUser :exec
       INSERT INTO user_credentials (username, password_hash)
-      VALUES ($1, crypt($2, gen_salt('bf')));
+      VALUES (?, crypt(?, gen_salt('bf')));
     """.trimIndent()
 
     val result = QueryFileParser.parse(content)
@@ -75,7 +75,7 @@ class QueryFileParserTest {
     assertThat(result).hasSize(1)
     assertThat(result[0].comments).containsExactly("Query using pgcrypto for password hashing")
     assertThat(result[0].sql).isEqualTo(
-      $$"INSERT INTO user_credentials (username, password_hash)\nVALUES ($1, crypt($2, gen_salt('bf')))",
+      "INSERT INTO user_credentials (username, password_hash)\nVALUES (?, crypt(?, gen_salt('bf')))",
     )
   }
 
@@ -109,13 +109,13 @@ class QueryFileParserTest {
     val content = """
       -- name: createUser :exec
       INSERT INTO users (email, age, zip_code)
-      VALUES ($1, $2, $3);
+      VALUES (?, ?, ?);
     """.trimIndent()
 
     val result = QueryFileParser.parse(content)
 
     assertThat(result).hasSize(1)
-    assertThat(result[0].sql).isEqualTo($$"INSERT INTO users (email, age, zip_code)\nVALUES ($1, $2, $3)")
+    assertThat(result[0].sql).isEqualTo("INSERT INTO users (email, age, zip_code)\nVALUES (?, ?, ?)")
   }
 
   @Test
@@ -124,8 +124,8 @@ class QueryFileParserTest {
       -- name: verifyPassword :one
       SELECT EXISTS(
         SELECT 1 FROM user_credentials
-        WHERE username = $1
-        AND password_hash = crypt($2, password_hash)
+        WHERE username = ?
+        AND password_hash = crypt(?, password_hash)
       ) AS valid;
     """.trimIndent()
 
@@ -137,8 +137,8 @@ class QueryFileParserTest {
       """
       SELECT EXISTS(
         SELECT 1 FROM user_credentials
-        WHERE username = $1
-        AND password_hash = crypt($2, password_hash)
+        WHERE username = ?
+        AND password_hash = crypt(?, password_hash)
       ) AS valid
       """.trimIndent(),
     )
@@ -190,7 +190,7 @@ class QueryFileParserTest {
       SELECT string_type FROM type;
 
       -- name: insertOne :execrows
-      INSERT INTO type(string_type) VALUES ($1);
+      INSERT INTO type(string_type) VALUES (?);
 
       -- Execrows without parameters.
       -- name: deleteAll :execrows
@@ -202,7 +202,7 @@ class QueryFileParserTest {
 
       -- Exec with parameters.
       -- name: updateStringType :exec
-      CALL update_string_type($1, $2);
+      CALL update_string_type(?, ?);
     """.trimIndent()
 
     val result = QueryFileParser.parse(content)
@@ -215,7 +215,7 @@ class QueryFileParserTest {
     assertThat(result[3].comments).containsExactly("Execrows without parameters.")
     assertThat(result[4].name).isEqualTo("resetTypes")
     assertThat(result[5].name).isEqualTo("updateStringType")
-    assertThat(result[5].sql).isEqualTo($$"CALL update_string_type($1, $2)")
+    assertThat(result[5].sql).isEqualTo("CALL update_string_type(?, ?)")
   }
 
   @Test
@@ -252,12 +252,12 @@ class QueryFileParserTest {
     val result = QueryFileParser.parse(content)
 
     assertThat(result).hasSize(1)
-    assertThat(result[0].sql).isEqualTo($$"UPDATE users SET name = $1, age = $2 WHERE id = $3")
+    assertThat(result[0].sql).isEqualTo("UPDATE users SET name = ?, age = ? WHERE id = ?")
     assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "name", 2 to "age", 3 to "id"))
   }
 
   @Test
-  fun `same named parameter used twice gets same positional number`() {
+  fun `same named parameter used twice creates separate placeholders`() {
     val content = """
       -- name: search :many
       SELECT * FROM users WHERE name = :name OR email LIKE :name;
@@ -265,8 +265,8 @@ class QueryFileParserTest {
 
     val result = QueryFileParser.parse(content)
 
-    assertThat(result[0].sql).isEqualTo($$"SELECT * FROM users WHERE name = $1 OR email LIKE $1")
-    assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "name"))
+    assertThat(result[0].sql).isEqualTo("SELECT * FROM users WHERE name = ? OR email LIKE ?")
+    assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "name", 2 to "name"))
   }
 
   @Test
@@ -278,7 +278,7 @@ class QueryFileParserTest {
 
     val result = QueryFileParser.parse(content)
 
-    assertThat(result[0].sql).isEqualTo($$"SELECT COUNT(id)::int AS total FROM users WHERE name = $1")
+    assertThat(result[0].sql).isEqualTo("SELECT COUNT(id)::int AS total FROM users WHERE name = ?")
     assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "name"))
   }
 
@@ -291,7 +291,7 @@ class QueryFileParserTest {
 
     val result = QueryFileParser.parse(content)
 
-    assertThat(result[0].sql).isEqualTo($$"SELECT * FROM users WHERE age > $1")
+    assertThat(result[0].sql).isEqualTo("SELECT * FROM users WHERE age > ?")
     assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "limit"))
   }
 
@@ -299,7 +299,7 @@ class QueryFileParserTest {
   fun `does not allow mixing named and positional parameters`() {
     val content = """
       -- name: mixed :one
-      SELECT * FROM users WHERE name = :name AND age > $1;
+      SELECT * FROM users WHERE name = :name AND age > ?;
     """.trimIndent()
 
     assertFailure { QueryFileParser.parse(content) }
@@ -317,7 +317,7 @@ class QueryFileParserTest {
     val result = QueryFileParser.parse(content)
 
     assertThat(result[0].sql).isEqualTo(
-      $$"INSERT INTO users (email, age, zip_code)\nVALUES ($1, $2, $3)",
+      "INSERT INTO users (email, age, zip_code)\nVALUES (?, ?, ?)",
     )
     assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "email", 2 to "age", 3 to "zipCode"))
   }
@@ -340,10 +340,10 @@ class QueryFileParserTest {
       """
       UPDATE organization
       SET
-        name = coalesce($1, organization.name),
-        slug = coalesce($2, organization.slug),
-        tier = coalesce($3, organization.tier)
-      WHERE salesforce_account_id = $4
+        name = coalesce(?, organization.name),
+        slug = coalesce(?, organization.slug),
+        tier = coalesce(?, organization.tier)
+      WHERE salesforce_account_id = ?
       """.trimIndent(),
     )
     assertThat(result[0].namedParameters).isEqualTo(
@@ -360,7 +360,7 @@ class QueryFileParserTest {
 
     val result = QueryFileParser.parse(content)
 
-    assertThat(result[0].sql).isEqualTo($$"INSERT INTO t (val) VALUES ($1::integer)")
+    assertThat(result[0].sql).isEqualTo("INSERT INTO t (val) VALUES (?::integer)")
     assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "value"))
   }
 
@@ -368,12 +368,12 @@ class QueryFileParserTest {
   fun `queries without named parameters have empty namedParameters`() {
     val content = """
       -- name: getById :one
-      SELECT * FROM users WHERE id = $1;
+      SELECT * FROM users WHERE id = ?;
     """.trimIndent()
 
     val result = QueryFileParser.parse(content)
 
-    assertThat(result[0].sql).isEqualTo($$"SELECT * FROM users WHERE id = $1")
+    assertThat(result[0].sql).isEqualTo("SELECT * FROM users WHERE id = ?")
     assertThat(result[0].namedParameters).isEmpty()
   }
 
@@ -386,7 +386,7 @@ class QueryFileParserTest {
 
     val result = QueryFileParser.parse(content)
 
-    assertThat(result[0].sql).isEqualTo($$"SELECT * FROM users WHERE name LIKE ':notaparam' AND id = $1")
+    assertThat(result[0].sql).isEqualTo("SELECT * FROM users WHERE name LIKE ':notaparam' AND id = ?")
     assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "id"))
   }
 }

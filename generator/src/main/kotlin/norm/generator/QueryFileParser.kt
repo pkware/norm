@@ -5,11 +5,11 @@ package norm.generator
  *
  * @param name Developer-assigned name from the `-- name:` annotation.
  * @param command The command type (`:one`, `:many`, `:exec`, `:execrows`).
- * @param sql The SQL text, with positional `$1`-style parameters. If the original SQL used `:name`-style named
- *   parameters, they have been converted to positional form.
+ * @param sql The SQL text, with `?` positional parameters. If the original SQL used `:name`-style named
+ *   parameters, they have been converted to `?` form.
  * @param comments Comment lines preceding the query annotation, used for KDoc generation.
  * @param namedParameters Map from 1-based positional parameter number to the developer-chosen name. Empty when the
- *   query uses `$1`-style positional parameters directly.
+ *   query uses `?` positional parameters directly.
  */
 public data class ParsedQuery(
   val name: String,
@@ -33,23 +33,21 @@ public data class ParsedQuery(
  *
  * ## Named Parameters
  *
- * Queries may use `:paramName` named parameters instead of `$1` positional parameters:
+ * Queries may use `:paramName` named parameters instead of `?` positional parameters:
  * ```sql
  * -- name: updateUser :exec
  * UPDATE users SET name = :name, age = :age WHERE id = :id;
  * ```
  *
- * Named parameters are converted to positional `$N` form in order of first appearance. The same
- * name used multiple times maps to the same positional number. Mixing `:name` and `$N` styles in
- * a single query is not allowed.
+ * Named parameters are converted to `?` placeholders in order of appearance. Each occurrence of
+ * a named parameter produces its own `?` — the same name used multiple times creates multiple
+ * bind slots. Mixing `:name` and `?` styles in a single query is not allowed.
  *
- * Named parameters inside single-quoted string literals are also left untouched.
+ * Named parameters inside single-quoted string literals are left untouched.
  */
 public object QueryFileParser {
 
   private val NAME_ANNOTATION = Regex("""^--\s*name:\s*(\S+)\s+:(\S+)\s*$""")
-
-  private val POSITIONAL_PARAM = Regex("""\$\d+""")
 
   /**
    * Parses the content of a SQL file into a list of [ParsedQuery] instances.
@@ -134,19 +132,22 @@ public object QueryFileParser {
   }
 
   /**
-   * Converts `:paramName` named parameters to `$N` positional parameters.
+   * Converts `:paramName` named parameters to `?` positional placeholders.
    *
    * Scans the SQL character by character to correctly handle:
    * - `::` cast operators (e.g., `value::integer`) — skipped
    * - Single-quoted string literals (e.g., `':notaparam'`) — skipped, including `''` escapes
    * - SQL comments (e.g., `-- comment`) — skipped
    *
-   * @return A pair of (converted SQL, name-to-position map). If the SQL has no named parameters,
+   * Each occurrence of a named parameter produces its own `?` placeholder with its own 1-based
+   * position number. The same name appearing multiple times creates multiple bind slots.
+   *
+   * @return A pair of (converted SQL, position-to-name map). If the SQL has no named parameters,
    *   returns the original SQL with an empty map.
-   * @throws IllegalArgumentException if the query mixes `:name` and `$N` parameter styles.
+   * @throws IllegalArgumentException if the query mixes `:name` and `?` parameter styles.
    */
   private fun convertNamedParameters(sql: String): Pair<String, Map<Int, String>> {
-    val nameToNumber = mutableMapOf<String, Int>()
+    val numberToName = mutableMapOf<Int, String>()
     var nextNumber = 1
     val result = StringBuilder()
     var i = 0
@@ -174,15 +175,16 @@ public object QueryFileParser {
         result.append("::")
         i += 2
       } else if (c == ':' && i + 1 < sql.length && isIdentifierStart(sql[i + 1])) {
-        // Named parameter
+        // Named parameter — each occurrence gets its own ? placeholder
         val nameStart = i + 1
         var nameEnd = nameStart
         while (nameEnd < sql.length && isIdentifierPart(sql[nameEnd])) {
           nameEnd++
         }
         val paramName = sql.substring(nameStart, nameEnd)
-        val number = nameToNumber.getOrPut(paramName) { nextNumber++ }
-        result.append('$').append(number)
+        val position = nextNumber++
+        numberToName[position] = paramName
+        result.append('?')
         i = nameEnd
       } else {
         result.append(c)
@@ -190,16 +192,15 @@ public object QueryFileParser {
       }
     }
 
-    if (nameToNumber.isEmpty()) {
+    if (numberToName.isEmpty()) {
       return sql to emptyMap()
     }
 
-    // Check for mixed styles: named params found, but positional params also present in the original SQL
-    require(!POSITIONAL_PARAM.containsMatchIn(sql)) {
-      $$"Cannot mix named (:param) and positional ($N) parameters in the same query"
+    // Check for mixed styles: named params found, but ? positional params also present in the original SQL
+    require('?' !in sql) {
+      "Cannot mix named (:param) and positional (?) parameters in the same query"
     }
 
-    val numberToName = nameToNumber.entries.associate { (name, number) -> number to name }
     return result.toString() to numberToName
   }
 
