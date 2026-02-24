@@ -105,10 +105,13 @@ class GenerateCodeTest {
       }
     }
 
-    // Reset database: drop all user objects and extensions, then recreate public schema
+    // Reset database: drop all user objects and extensions, then recreate public schema.
+    // DEALLOCATE ALL clears server-side prepared-statement caches so that the next scenario
+    // doesn't hit "cached plan must not change result type" when PostgreSQL reuses a stale plan.
     connection.createStatement().use {
       it.execute(
         """
+        DEALLOCATE ALL;
         DROP SCHEMA public CASCADE;
         CREATE SCHEMA public;
         GRANT ALL ON SCHEMA public TO public;
