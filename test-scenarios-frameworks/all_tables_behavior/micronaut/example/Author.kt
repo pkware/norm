@@ -6,6 +6,9 @@ import kotlin.Int
 import kotlin.String
 import kotlin.jvm.JvmRecord
 
+/**
+ * Maps to the `author` table.
+ */
 @JvmRecord
 @MappedEntity("author")
 public data class Author(

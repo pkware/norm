@@ -259,17 +259,8 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
   /**
    * Finds a column definition in the catalog by name, optionally scoped to a specific table.
    */
-  private fun findColumnInCatalog(columnName: String, tableName: String?, catalog: Catalog): Column? {
-    for (schema in catalog.schemas) {
-      for (table in schema.tables) {
-        if (tableName != null && table.rel?.name != tableName) continue
-        for (column in table.columns) {
-          if (column.name == columnName) return column
-        }
-      }
-    }
-    return null
-  }
+  private fun findColumnInCatalog(columnName: String, tableName: String?, catalog: Catalog): Column? =
+    catalog.findColumn(tableName, columnName)
 
   /**
    * Extracts the top-level comma-separated expressions from a `VALUES (...)` clause,

@@ -166,7 +166,7 @@ internal class SqlStatement(
       // The query is a star projection (eg SELECT * ...). Return a model of the table.
       generator.getTypeProjectionForTable(starProjectionTable!!)
     } else {
-      generator.buildTypeProjectionForQuery(query.name, queryResults)
+      generator.buildTypeProjectionForQuery(query.name, queryResults, query.text)
     }
   }
 

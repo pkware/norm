@@ -84,6 +84,34 @@ internal class PgCatalogLoader(private val connection: Connection) {
     }
 
   /**
+   * Returns table comments for all tables in [schemaName], keyed by table name.
+   *
+   * Comments are set with `COMMENT ON TABLE table IS '...'` in DDL.
+   *
+   * @param schemaName The schema to load comments for.
+   * @return A map from table name to the comment text. Tables without comments are absent.
+   */
+  fun loadTableComments(schemaName: String): Map<String, String> = buildMap {
+    connection.createStatement().use { stmt ->
+      stmt.executeQuery(
+        """
+        SELECT c.relname AS table_name, d.description
+        FROM pg_catalog.pg_description d
+        JOIN pg_catalog.pg_class c ON c.oid = d.objoid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = '$schemaName'
+          AND d.objsubid = 0
+          AND c.relkind IN ('r', 'p')
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) {
+          put(rs.getString("table_name"), rs.getString("description"))
+        }
+      }
+    }
+  }
+
+  /**
    * Returns column comments for all tables in [schemaName], keyed by `"tableName.columnName"`.
    *
    * Comments are set with `COMMENT ON COLUMN table.col IS '...'` in DDL.

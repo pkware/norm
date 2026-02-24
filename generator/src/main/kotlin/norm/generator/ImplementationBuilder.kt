@@ -38,8 +38,7 @@ internal fun sqlFunction(statement: SqlStatement): FunSpec.Builder {
     val parameterName = statement.getParameterName(index)
     val parameterType = statement.resolveColumnType(parameter)
     val parameterSpec = ParameterSpec.builder(parameterName, parameterType)
-      // TODO Comments don't work
-      .addKdoc(parameter.comment)
+      .addKdocIfPresent(parameter.comment)
       .build()
     function.addParameter(parameterSpec)
   }
@@ -126,7 +125,7 @@ private fun TypeSpec.Builder.addManyImplementation(statement: SqlStatement) {
       for ((index, parameter) in queryParameters.withIndex()) {
         addParameter(
           ParameterSpec.builder(statement.getParameterName(index), statement.resolveColumnType(parameter))
-            .addKdoc(parameter.comment)
+            .addKdocIfPresent(parameter.comment)
             .build(),
         )
       }
@@ -175,7 +174,7 @@ private fun TypeSpec.Builder.addManyImplementation(statement: SqlStatement) {
       for ((index, parameter) in queryParameters.withIndex()) {
         addParameter(
           ParameterSpec.builder(statement.getParameterName(index), statement.resolveColumnType(parameter))
-            .addKdoc(parameter.comment)
+            .addKdocIfPresent(parameter.comment)
             .build(),
         )
       }
@@ -456,6 +455,15 @@ private fun buildExecBatch(statement: SqlStatement): FunSpec = batchFunction(sta
 private val RESULT_SET = ResultSet::class.asTypeName()
 
 private val PROCESS_EXEC_RESULTS = MemberName(RUNTIME_PACKAGE, "combineExecBatchResults")
+
+/**
+ * Adds KDoc to the builder only if [comment] is non-empty.
+ *
+ * Avoids rendering empty `/** */` blocks in generated code when no comment is available.
+ */
+private fun ParameterSpec.Builder.addKdocIfPresent(comment: String): ParameterSpec.Builder = apply {
+  if (comment.isNotEmpty()) addKdoc("%L", comment)
+}
 
 /**
  * Name of the parameter representing a query mapper.

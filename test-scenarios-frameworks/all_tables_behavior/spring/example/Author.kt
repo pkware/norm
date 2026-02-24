@@ -6,6 +6,9 @@ import kotlin.jvm.JvmRecord
 import org.springframework.`data`.`annotation`.Id
 import org.springframework.`data`.relational.core.mapping.Table
 
+/**
+ * Maps to the `author` table.
+ */
 @JvmRecord
 @Table("author")
 public data class Author(

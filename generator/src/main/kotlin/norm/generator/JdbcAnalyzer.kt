@@ -72,10 +72,10 @@ public class JdbcAnalyzer(private val connection: Connection) {
     val resultColumns: List<Column>
     val parameters: List<Parameter>
 
-    val inferredParams = parameterInferrer.inferParameterInfo(parsedQuery.sql)
+    val inferredParameters = parameterInferrer.inferParameterInfo(parsedQuery.sql)
     // Named parameters from the query file take priority over inferred names
-    val inferredNames = inferredParams.mapValues { it.value.name } + parsedQuery.namedParameters
-    val parameterNotNull = parameterInferrer.resolveParameterNotNull(inferredParams, catalog)
+    val inferredNames = inferredParameters.mapValues { it.value.name } + parsedQuery.namedParameters
+    val notNullByParameter = parameterInferrer.resolveParameterNotNull(inferredParameters, catalog)
 
     if (isCallStatement) {
       // CALL statements don't return result sets and may not support getMetaData()
@@ -83,8 +83,9 @@ public class JdbcAnalyzer(private val connection: Connection) {
       parameters = analyzeCallParameters(parsedQuery.sql, jdbcSql)
     } else {
       connection.prepareStatement(jdbcSql).use { ps ->
-        resultColumns = buildResultColumns(ps.metaData, catalog, parsedQuery.sql, parameterNotNull)
-        parameters = buildParameters(ps.parameterMetaData, inferredNames, parameterNotNull)
+        resultColumns = buildResultColumns(ps.metaData, catalog, parsedQuery.sql, notNullByParameter)
+        parameters =
+          buildParameters(ps.parameterMetaData, inferredNames, notNullByParameter, inferredParameters, catalog)
       }
     }
 
@@ -102,6 +103,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
     val dbMeta = connection.metaData
     val tables = mutableListOf<Table>()
     val primaryKeys = mutableMapOf<String, Set<String>>()
+    val tableComments = catalogLoader.loadTableComments(schemaName)
     val columnComments = catalogLoader.loadColumnComments(schemaName)
 
     // Discover tables
@@ -154,6 +156,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
         Table(
           rel = Identifier(name = tableName, schema = schemaName),
           columns = columns,
+          comment = tableComments[tableName].orEmpty(),
         ),
       )
     }
@@ -165,17 +168,23 @@ public class JdbcAnalyzer(private val connection: Connection) {
     rsmd: ResultSetMetaData?,
     catalog: Catalog,
     sql: String,
-    parameterNotNull: Map<Int, Boolean> = emptyMap(),
+    notNullByParameter: Map<Int, Boolean> = emptyMap(),
   ): List<Column> {
     if (rsmd == null) return emptyList()
 
-    val nonNullAliases = nullabilityAnalyzer.findNonNullAliases(sql, parameterNotNull)
+    val nonNullAliases = nullabilityAnalyzer.findNonNullAliases(sql, notNullByParameter)
+    val selectItems = parseSelectItems(sql)
 
     val columns = mutableListOf<Column>()
     for (i in 1..rsmd.columnCount) {
       val (baseName, isArray) = resolveTypeName(rsmd.getColumnTypeName(i))
       val tableName = rsmd.getTableName(i).ifEmpty { null }
       val columnLabel = rsmd.getColumnLabel(i)
+      val selectItem = selectItems.getOrNull(i - 1)
+
+      // PostgreSQL JDBC returns the alias for both getColumnName and getColumnLabel when AS is used.
+      // Use the parsed SELECT item to resolve the original column name for comment lookup.
+      val originalColumnName = selectItem?.columnName ?: rsmd.getColumnName(i)
 
       val notNull = when (rsmd.isNullable(i)) {
         ResultSetMetaData.columnNoNulls -> true
@@ -187,15 +196,18 @@ public class JdbcAnalyzer(private val connection: Connection) {
         else -> columnLabel in nonNullAliases
       }
 
+      val comment = tableName?.let { catalog.findColumn(it, originalColumnName)?.comment }.orEmpty()
+
       columns.add(
         Column(
           name = columnLabel,
           not_null = notNull,
           is_array = isArray,
           array_dims = if (isArray) 1 else 0,
+          comment = comment,
           type = Identifier(name = baseName),
           table = tableName?.let { resolveTableIdentifier(it, catalog) },
-          original_name = rsmd.getColumnName(i),
+          original_name = originalColumnName,
         ),
       )
     }
@@ -207,26 +219,41 @@ public class JdbcAnalyzer(private val connection: Connection) {
    *
    * @param pmd The parameter metadata from a prepared statement.
    * @param inferredNames Map from 1-based parameter number to inferred column name.
-   * @param parameterNotNull Map from 1-based parameter number to whether the parameter is non-nullable.
+   * @param notNullByParameter Map from 1-based parameter number to whether the parameter is non-nullable.
    *   Parameters not in this map default to non-nullable.
+   * @param inferredParameters Map from 1-based parameter number to inferred parameter info, used to look
+   *   up column comments from the catalog.
+   * @param catalog The schema catalog, used to look up column comments for parameters.
    */
   private fun buildParameters(
     pmd: java.sql.ParameterMetaData,
     inferredNames: Map<Int, String> = emptyMap(),
-    parameterNotNull: Map<Int, Boolean> = emptyMap(),
+    notNullByParameter: Map<Int, Boolean> = emptyMap(),
+    inferredParameters: Map<Int, InferredParameter> = emptyMap(),
+    catalog: Catalog? = null,
   ): List<Parameter> {
     val parameters = mutableListOf<Parameter>()
     for (i in 1..pmd.parameterCount) {
       val (baseName, isArray) = resolveTypeName(pmd.getParameterTypeName(i))
+
+      val inferred = inferredParameters[i]
+      val tableName = inferred?.tableName
+      val columnName = inferred?.columnName ?: inferred?.name
+      val comment = if (catalog != null && tableName != null && columnName != null) {
+        catalog.findColumn(tableName, columnName)?.comment.orEmpty()
+      } else {
+        ""
+      }
 
       parameters.add(
         Parameter(
           number = i,
           column = Column(
             name = inferredNames[i] ?: "p$i",
-            not_null = parameterNotNull[i] ?: true,
+            not_null = notNullByParameter[i] ?: true,
             is_array = isArray,
             array_dims = if (isArray) 1 else 0,
+            comment = comment,
             type = Identifier(name = baseName),
           ),
         ),
@@ -276,16 +303,8 @@ public class JdbcAnalyzer(private val connection: Connection) {
    * Resolves a table name to an [Identifier] by finding it in the catalog.
    * Falls back to a simple identifier if the table isn't found.
    */
-  private fun resolveTableIdentifier(tableName: String, catalog: Catalog): Identifier {
-    for (schema in catalog.schemas) {
-      for (table in schema.tables) {
-        if (table.rel?.name == tableName) {
-          return table.rel
-        }
-      }
-    }
-    return Identifier(name = tableName)
-  }
+  private fun resolveTableIdentifier(tableName: String, catalog: Catalog): Identifier =
+    catalog.findTable(tableName)?.rel ?: Identifier(name = tableName)
 
   private companion object {
     private val CALL_PROCEDURE_NAME = Regex("""CALL\s+(\w+)\s*\(""", RegexOption.IGNORE_CASE)

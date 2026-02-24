@@ -114,6 +114,14 @@ internal class TypeRepository(
           .build(),
       )
     }
+    typeBeingDefined.addClassKdoc(
+      table.comment,
+      table.rel.name,
+      table.columns.map { column ->
+        val propertyName = determineKotlinPropertyName(column.name, frameworks)
+        PropertySource(propertyName, column.comment, table.rel.name, column.name)
+      },
+    )
     typeBeingDefined.primaryConstructor(primaryConstructor.build())
     val returnType = ReturnType(nameOfTypeBeingDefined, mapperArguments, mapperParameters)
     returnType to typeBeingDefined.build()
@@ -132,7 +140,7 @@ internal class TypeRepository(
    * @param queryName Name of the query. Used to generate the Kotlin model name.
    * @param queryResults Columns that are returned by the query.
    */
-  fun buildTypeProjectionForQuery(queryName: String, queryResults: List<Column>): ReturnType {
+  fun buildTypeProjectionForQuery(queryName: String, queryResults: List<Column>, queryText: String = ""): ReturnType {
     val nameOfTypeBeingDefined = ClassName(packageName, queryName.titleCase())
     val typeBeingDefined = TypeSpec.classBuilder(nameOfTypeBeingDefined)
       .addModifiers(KModifier.DATA)
@@ -207,6 +215,26 @@ internal class TypeRepository(
       )
       primaryConstructor.addParameter(column.name, columnType)
     }
+    val selectItems = parseSelectItems(queryText)
+    typeBeingDefined.addClassKdoc(
+      classComment = "",
+      tableName = null,
+      properties = queryResults.mapIndexed { columnIndex, column ->
+        val selectItem = selectItems.getOrNull(columnIndex)
+        // For computed expressions (no source table and not a simple column reference), include the SQL
+        // expression so it can appear in KDoc. Simple column references (e.g. crosstab output columns)
+        // are excluded because echoing the column name back adds no value.
+        val isComputedExpression = column.table == null && selectItem != null && selectItem.columnName == null
+        PropertySource(
+          propertyName = column.name,
+          comment = column.comment,
+          sourceTable = column.table?.name,
+          sourceColumn = column.original_name.ifEmpty { null },
+          expression = if (isComputedExpression) selectItem.expression else "",
+        )
+      },
+      sql = queryText,
+    )
     typeBeingDefined.primaryConstructor(primaryConstructor.build())
     if (secondaryConstructor != null) {
       secondaryConstructor.callThisConstructor(secondaryToPrimaryConstructorInputs)
@@ -448,6 +476,102 @@ private fun PropertySpec.Builder.addIdAnnotationForFrameworks(frameworks: Set<Fr
       }
     }
   }
+
+/**
+ * Describes a property's source in the database.
+ *
+ * @property propertyName The Kotlin property name.
+ * @property comment The Postgres column comment. Empty if none.
+ * @property sourceTable The database table the column comes from. `null` for computed columns.
+ * @property sourceColumn The original column name in the database. `null` for computed columns.
+ * @property expression The SQL expression for computed columns (e.g. `COUNT(*)`). Empty if not computed.
+ */
+internal data class PropertySource(
+  val propertyName: String,
+  val comment: String,
+  val sourceTable: String?,
+  val sourceColumn: String?,
+  val expression: String = "",
+)
+
+/**
+ * Adds a class-level KDoc block with an optional description, table mapping, and `@property` tags.
+ *
+ * Produces a single consolidated KDoc block rather than separate per-property doc comments, which is the
+ * idiomatic Kotlin style for data classes with constructor properties.
+ *
+ * For table projections, the table name is shown as "Maps to the `X` table.".
+ * For query projections, the SQL is included and source columns are shown per-property as `table.column` references.
+ *
+ * @param classComment The table or class-level comment. May be empty.
+ * @param tableName The database table this class fully maps to. `null` for ad-hoc query projections.
+ * @param properties Source information for each property.
+ * @param sql The SQL query text. Included in query projection KDoc as a fenced code block.
+ */
+internal fun TypeSpec.Builder.addClassKdoc(
+  classComment: String,
+  tableName: String?,
+  properties: List<PropertySource>,
+  sql: String = "",
+) {
+  val hasTableMapping = tableName != null
+  val hasSql = sql.isNotEmpty()
+  val documentedProperties = properties.filter { it.hasDocumentation(hasTableMapping) }
+  if (classComment.isEmpty() && !hasTableMapping && !hasSql && documentedProperties.isEmpty()) return
+
+  val kdoc = buildString {
+    if (classComment.isNotEmpty()) {
+      append(classComment)
+    }
+    if (hasTableMapping) {
+      if (isNotEmpty()) append("\n\n")
+      append("Maps to the `$tableName` table.")
+    }
+    if (hasSql) {
+      if (isNotEmpty()) append("\n\n")
+      append("```sql\n")
+      append(sql.trim())
+      append("\n```")
+    }
+    if (documentedProperties.isNotEmpty()) {
+      if (isNotEmpty()) append("\n\n")
+      for ((index, property) in documentedProperties.withIndex()) {
+        append("@property ${property.propertyName} ")
+        if (property.comment.isNotEmpty()) {
+          append(property.comment)
+        }
+        if (!hasTableMapping) {
+          val source = property.sourceReference()
+          if (source != null) {
+            if (property.comment.isNotEmpty()) append(" ")
+            append("($source)")
+          }
+        }
+        if (index < documentedProperties.lastIndex) append("\n")
+      }
+    }
+  }
+  addKdoc("%L", kdoc)
+}
+
+/**
+ * Whether this property has any documentation to show in KDoc.
+ */
+private fun PropertySource.hasDocumentation(hasTableMapping: Boolean): Boolean =
+  comment.isNotEmpty() || (!hasTableMapping && sourceReference() != null)
+
+/**
+ * Returns a source reference string for display in KDoc, or `null` if none is available.
+ *
+ * - For columns from a table: `` `table.column` ``
+ * - For computed expressions: `` `COUNT(*)` ``
+ */
+private fun PropertySource.sourceReference(): String? = when {
+  sourceTable != null -> "`$sourceTable.$sourceColumn`"
+  expression.isNotEmpty() -> "`$expression`"
+  else -> null
+}
+
 
 private val MICRONAUT_DATA_ID_ANNOTATION = ClassName("io.micronaut.data.annotation", "Id")
 private val MICRONAUT_DATA_TABLE_ANNOTATION = ClassName("io.micronaut.data.annotation", "MappedEntity")

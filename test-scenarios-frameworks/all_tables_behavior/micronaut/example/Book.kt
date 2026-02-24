@@ -7,6 +7,9 @@ import kotlin.Int
 import kotlin.String
 import kotlin.jvm.JvmRecord
 
+/**
+ * Maps to the `book` table.
+ */
 @JvmRecord
 @MappedEntity("book")
 public data class Book(

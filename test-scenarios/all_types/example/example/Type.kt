@@ -19,6 +19,9 @@ import kotlin.Short
 import kotlin.String
 import kotlin.jvm.JvmRecord
 
+/**
+ * Maps to the `type` table.
+ */
 @JvmRecord
 public data class Type(
   public val smallserial_type: Short,
