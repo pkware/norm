@@ -33,9 +33,8 @@ dependencies {
   shaded(libs.moshi)
 
   implementation(kotlin("gradle-plugin"))
-
-  // Add Testcontainers for database-backed analysis
   implementation(libs.testcontainers.postgresql)
+  implementation(libs.postgresql)
 
   testImplementation(gradleTestKit())
 }

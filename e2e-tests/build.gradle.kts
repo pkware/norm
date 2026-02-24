@@ -25,7 +25,7 @@ sourceSets {
   test {
     kotlin {
       // Include generated PostgresQueries.kt and Type.kt for E2E query tests
-      srcDir(rootProject.file("test-scenarios-basic/all_types/example"))
+      srcDir(rootProject.file("test-scenarios/all_types/example"))
       // Note: Framework-generated code (test-scenarios-frameworks/) is NOT included as source
       // because it would conflict with the all_types scenario (same package/class names).
       // Framework annotation verification is done via source file inspection instead.

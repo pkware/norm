@@ -55,7 +55,7 @@ abstract class PostgresTestBase {
     // Load schema from test-scenarios (not duplicated)
     // Working directory is e2e-tests/, so navigate up to project root
     val projectRoot = File(System.getProperty("user.dir")).parentFile
-    val schemaFile = projectRoot.resolve("test-scenarios-basic/all_types/schema.sql")
+    val schemaFile = projectRoot.resolve("test-scenarios/all_types/schema.sql")
 
     if (!schemaFile.exists()) {
       error("Schema file not found: ${schemaFile.absolutePath}")

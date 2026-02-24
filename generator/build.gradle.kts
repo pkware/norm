@@ -11,6 +11,8 @@ dependencies {
 
   testImplementation(libs.wire.json)
   testImplementation(libs.moshi)
+  testImplementation(libs.bundles.testcontainers)
+  testImplementation(libs.postgresql)
 }
 
 wire {

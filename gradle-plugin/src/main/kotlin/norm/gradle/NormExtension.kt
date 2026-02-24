@@ -1,7 +1,6 @@
 package norm.gradle
 
 import org.gradle.api.NamedDomainObjectContainer
-import org.gradle.api.provider.Property
 
 /**
  * Marker annotation required by Gradle.
@@ -14,11 +13,6 @@ public annotation class NormDsl
  */
 @NormDsl
 public interface NormExtension {
-
-  /**
-   * Version of [sqlc](https://sqlc.dev) to use.
-   */
-  public val sqlcVersion: Property<String>
 
   /**
    * Databases for which to generate source code.

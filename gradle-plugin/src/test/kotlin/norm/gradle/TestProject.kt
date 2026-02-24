@@ -1,16 +1,7 @@
 package norm.gradle
 
-import com.squareup.moshi.JsonAdapter
-import com.squareup.moshi.Moshi
-import com.squareup.moshi.adapter
-import com.squareup.wire.WireJsonAdapterFactory
-import okio.buffer
-import okio.sink
-import okio.source
 import org.gradle.testkit.runner.GradleRunner
-import plugin.GenerateRequest
 import java.nio.file.Path
-import kotlin.io.path.deleteIfExists
 import kotlin.io.path.writeText
 
 /**
@@ -26,17 +17,12 @@ class TestProject(private val projectDir: Path, private val scenarioDirectory: P
   val generatedCodeDirectory: Path
     get() = projectDir.resolve("build").resolve(NormPlugin.NORM_GENERATED_CODE)
 
-  val schemaJsonPath: Path
-    get() = projectDir.resolve("build/tmp/norm/Test/schema.json")
-
   /**
    * Sets up both settings.gradle.kts and build.gradle.kts for a standard scenario test.
-   * Requires [scenarioDirectory] to be set.
    *
-   * @param requiresDatabase Whether to use a database for enhanced query analysis.
    * @param frameworks Optional set of framework names to enable. If empty, no frameworks are configured.
    */
-  fun setup(requiresDatabase: Boolean, frameworks: Set<String> = emptySet()) {
+  fun setup(frameworks: Set<String> = emptySet()) {
     setupSettingsOnly()
 
     val frameworkImport = if (frameworks.isNotEmpty()) {
@@ -63,7 +49,6 @@ class TestProject(private val projectDir: Path, private val scenarioDirectory: P
             packageName = "example"
             schemas.addAll("${scenarioDirectory.resolve("schema.sql").normalize().toAbsolutePath()}")
             queries.addAll("${scenarioDirectory.resolve("queries.sql").normalize().toAbsolutePath()}")
-            useDatabase = $requiresDatabase
             $frameworksConfigBlock
           }
         }
@@ -113,28 +98,5 @@ class TestProject(private val projectDir: Path, private val scenarioDirectory: P
 
   companion object {
     val ROOT_NORM_PROJECT_PATH: Path = Path.of("..").normalize().toAbsolutePath()
-
-    @OptIn(ExperimentalStdlibApi::class)
-    private val schemaJsonAdapter: JsonAdapter<GenerateRequest> =
-      Moshi.Builder()
-        .add(WireJsonAdapterFactory())
-        .build()
-        .adapter()
-
-    /**
-     * Reads and cleans a schema.json file by removing environment-specific fields.
-     * Used for both generation (writing) and verification (comparing).
-     */
-    fun readAndCleanSchemaJson(path: Path): GenerateRequest = path.source().buffer().use(schemaJsonAdapter::fromJson)!!
-      .copy(settings = null, sqlc_version = "Norm")
-
-    /**
-     * Writes a cleaned schema.json file, removing environment-specific fields.
-     */
-    fun writeCleanedSchemaJson(source: Path, destination: Path) {
-      val cleaned = readAndCleanSchemaJson(source)
-      destination.deleteIfExists()
-      destination.sink().buffer().use { schemaJsonAdapter.toJson(it, cleaned) }
-    }
   }
 }

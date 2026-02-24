@@ -21,27 +21,18 @@ Norm does not:
 ## Gradle
 See the [Gradle plugin README](gradle-plugin/README.md) for setup details.
 
-### Database-Backed Query Analysis (Enabled by Default)
+### How It Works
 
-**Norm now uses Testcontainers by default** for enhanced query validation. On your first build, Norm will:
-- Start a PostgreSQL 18 container using Testcontainers
+Norm uses JDBC metadata APIs to analyze your SQL. During the build, Norm will:
+- Start a PostgreSQL container using Testcontainers
 - Apply your schema files to the database
-- Provide database connection to sqlc for enhanced type resolution
-- Enable sqlc to properly handle Postgres domains, enums, and extensions
-- Automatically stop the container when build completes
-
-**No configuration required** - it just works out of the box!
+- Use JDBC `DatabaseMetaData` and `PreparedStatement` metadata to introspect types
+- Generate fully type-safe Kotlin code
+- Stop the container
 
 **Requirements:**
 - Docker must be installed and running
 - Internet connection (first run only, to pull PostgreSQL image)
-
-**Performance:**
-- First run: ~10-20 seconds to pull Docker image (cached afterwards)
-- Subsequent runs: ~2-5 seconds to start container + apply schemas
-- Container is created fresh for each task execution (not shared across builds)
-- Schema application is always idempotent (fresh database each run)
-- Container automatically stops after task completes
 
 **Customization:**
 
@@ -59,23 +50,8 @@ norm {
 }
 ```
 
-Opt out (for faster builds without validation):
-```kotlin
-norm {
-  databases {
-    register("example") {
-      packageName.set("example")
-      schemas.add("src/main/sql/schema.sql")
-      queries.add("src/main/sql/queries.sql")
-      useDatabase.set(false) // Disable database-backed analysis
-    }
-  }
-}
-```
-
 ## TODO
 ### After release
-- [ ] Automatically download sqlc
 - [ ] Enum adapter. Map enums to String and back by default.
 - [ ] List/array/stream/iterable adapter. If given one of these, just convert it to an array.
 - [ ] Value class adapter (inline classes)
@@ -88,7 +64,7 @@ norm {
 - [ ] Add a getting started section to the README
 - [ ] IntelliJ plugin for SQL fragment tracking. Currently we ship an `intellij-languageinjection.xml` config that provides basic SQL injection for `Query.append()`, but each fragment is analyzed in isolation. A proper plugin implementing `LanguageInjectionContributor` or using the `MultiHostInjector` API could track string values flowing through the builder pattern and reconstruct the full SQL statement for validation. This is how Hibernate and Spring's `JdbcClient` achieve fragment-aware SQL support.
 - [ ] It would be nice for query method Javadocs to have the SQL that they'll execute in them.
-- [ ] Setup github and renovate for rust
+- [ ] Support sqlc.embed() equivalent via SQL functions or table references
 
 ## Background
 ORMs like Hibernate take a code-first approach that doesn't sit well with the authors. It causes confusion as there are
@@ -102,11 +78,10 @@ SQLDelight can be considered the spiritual predecessor to this project. Both Nor
 generate code via Gradle plugin from database sources. However, SQLDelight struggles with Postgres syntax, so Norm was
 created to be more Postgres-oriented.
 
-sqlc is also database-first. There were a lot of things we liked about sqlc, but 2 things stuck out as limits for us.
-The first was that the code produced by the native Kotlin support it has fell short of the developer experience we
-wanted. It didn't add enough safety on queries and didn't lend itself well to additional features. The second was that
-it didn't integrate nicely into our build tooling. We wanted a Gradle integration so devs can use the tooling they are
-familiar with. However, sqlc does so much well that we continue to use it as the foundation of Norm.
+sqlc is also database-first. There were a lot of things we liked about sqlc, but its code output fell short of the
+developer experience we wanted, and it didn't integrate nicely into our build tooling. Norm originally used sqlc as its
+foundation but has since replaced it with direct JDBC metadata analysis, eliminating the external binary dependency
+and gaining full control over PostgreSQL type resolution.
 
 ## Developing
 Load the `example` project into Intellij or use it as your Gradle entry point. See the [README](example/README.md) for

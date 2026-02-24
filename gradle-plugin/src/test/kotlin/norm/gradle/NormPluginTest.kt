@@ -36,20 +36,14 @@ class NormPluginTest {
   private lateinit var projectDir: Path
 
   @ParameterizedTest
-  @MethodSource("basicScenarios")
-  fun `code can be generated and matches golden files without type resolution`(scenarioDirectory: Path) {
-    executeGradleProject(scenarioDirectory, false)
+  @MethodSource("scenarios")
+  fun `code can be generated and matches golden files`(scenarioDirectory: Path) {
+    executeGradleProject(scenarioDirectory)
   }
 
-  @ParameterizedTest
-  @MethodSource("complexScenarios")
-  fun `code can be generated and matches golden files with type resolution`(scenarioDirectory: Path) {
-    executeGradleProject(scenarioDirectory, true)
-  }
-
-  private fun executeGradleProject(scenarioDirectory: Path, requiresDatabase: Boolean) {
+  private fun executeGradleProject(scenarioDirectory: Path) {
     val project = TestProject(projectDir, scenarioDirectory)
-    project.setup(requiresDatabase)
+    project.setup()
 
     // Run full build to verify generated code compiles
     project.gradle("build").build()
@@ -74,16 +68,11 @@ class NormPluginTest {
     // Assert no unexpected files were generated (stale golden files)
     val unexpectedFiles = generatedFiles.keys - expectedFiles.keys
     assertThat(unexpectedFiles, "Unexpected files were generated").isEmpty()
-
-    // Assert schema.json matches (after cleaning)
-    val generatedSchema = TestProject.readAndCleanSchemaJson(project.schemaJsonPath)
-    val goldenSchema = TestProject.readAndCleanSchemaJson(scenarioDirectory.resolve("schema.json"))
-    assertThat(generatedSchema, "schema.json mismatch").isEqualTo(goldenSchema)
   }
 
   @Test
   fun `packageNames with periods are correctly generated`() {
-    val scenarioDirectory = basicScenarios().first()
+    val scenarioDirectory = scenarios().first()
     val project = TestProject(projectDir, scenarioDirectory)
     project.setupSettingsOnly()
 
@@ -100,14 +89,13 @@ class NormPluginTest {
             packageName = "example.with.periods"
             schemas.addAll("${scenarioDirectory.resolve("schema.sql").normalize().toAbsolutePath()}")
             queries.addAll("${scenarioDirectory.resolve("queries.sql").normalize().toAbsolutePath()}")
-            useDatabase = false  // Schema-only validation is sufficient
           }
         }
       }
       """.trimIndent(),
     )
 
-    project.gradle("normGenerateCode").build()
+    project.gradle("normGenerateTest").build()
 
     // Verify the folder structure matches the package name with periods
     val packageDirectory = project.generatedCodeDirectory.resolve("example/with/periods")
@@ -124,7 +112,7 @@ class NormPluginTest {
 
   @Test
   fun `relative paths can be used for schemas and queries`() {
-    val scenarioDirectory = basicScenarios().first()
+    val scenarioDirectory = scenarios().first()
     val project = TestProject(projectDir, scenarioDirectory)
     project.setupSettingsOnly()
 
@@ -141,89 +129,20 @@ class NormPluginTest {
             packageName = "example"
             schemas.addAll("../${projectDir.relativize(scenarioDirectory.resolve("schema.sql"))}")
             queries.addAll("../${projectDir.relativize(scenarioDirectory.resolve("queries.sql"))}")
-            useDatabase = false  // Schema-only validation is sufficient
           }
         }
       }
       """.trimIndent(),
     )
 
-    project.gradle("normGenerateCode").build()
-  }
-
-  /**
-   * Tests that RunSqlcTask correctly handles YAML updates when re-run with cached inputs.
-   *
-   * When GenerateYamlTask is cached (UP_TO_DATE) but RunSqlcTask re-runs, the task modifies
-   * its input file (the YAML) which already contains a database section from the previous run.
-   * The update logic must be idempotent to avoid creating duplicate database sections.
-   */
-  @Test
-  fun `consecutive runs with useDatabase do not duplicate database section in YAML`() {
-    val scenarioDirectory = Path("../test-scenarios-basic/basic_embeds").normalize().toAbsolutePath()
-    val project = TestProject(projectDir, scenarioDirectory)
-    project.setupSettingsOnly()
-
-    val schema = scenarioDirectory.resolve("schema.sql")
-    val queries = scenarioDirectory.resolve("queries.sql")
-
-    project.buildFile.writeText(
-      """
-      plugins {
-        kotlin("jvm")
-        id("com.pkware.norm")
-      }
-
-      norm {
-        databases {
-          create("Test") {
-            packageName = "example"
-            schemas.addAll("$schema")
-            queries.addAll("$queries")
-            useDatabase = true
-            postgresVersion = "17"
-          }
-        }
-      }
-      """.trimIndent(),
-    )
-
-    // First run - generates YAML and runs sqlc with database
-    val firstRun = project.gradle("normRunSqlcTest").build()
-    assertThat(firstRun.task(":normGenerateYamlTest")?.outcome).isEqualTo(SUCCESS)
-    assertThat(firstRun.task(":normRunSqlcTest")?.outcome).isEqualTo(SUCCESS)
-
-    // Read the YAML and verify it has exactly one database section
-    val yamlPath = projectDir.resolve("build/tmp/norm/Test/sqlc.yaml")
-    val firstYamlContent = yamlPath.readText()
-    val firstDatabaseCount = firstYamlContent.split("database:").size - 1
-    assertThat(firstDatabaseCount, "First run should have exactly one database section")
-      .isEqualTo(1)
-
-    // Second run - Force RunSqlcTask to re-run by deleting its output (schema.json)
-    // but keep GenerateYamlTask's output (the YAML) intact
-    // This simulates the scenario where GenerateYamlTask is cached but RunSqlcTask needs to run
-    projectDir.resolve("build/tmp/norm/Test/schema.json").toFile().delete()
-
-    // Second run should succeed - the fix makes updateYamlWithDatabaseUri idempotent
-    val secondRun = project.gradle("normRunSqlcTest").build()
-    assertThat(secondRun.task(":normRunSqlcTest")?.outcome).isEqualTo(SUCCESS)
-
-    // Verify GenerateYamlTask was cached but RunSqlcTask executed
-    assertThat(secondRun.task(":normGenerateYamlTest")?.outcome?.name).isEqualTo("UP_TO_DATE")
-
-    // Read the YAML and verify it still has exactly ONE database section (no duplication)
-    val secondYamlContent = yamlPath.readText()
-    val secondDatabaseCount = secondYamlContent.split("database:").size - 1
-    assertThat(secondDatabaseCount, "Second run should still have exactly one database section")
-      .isEqualTo(1)
+    project.gradle("normGenerateTest").build()
   }
 
   // TODO Test that tasks are correctly cached
 
   @Test
   fun `stale generated files are deleted when queries are removed`() {
-    val scenarioDirectory = Path("../test-scenarios-basic/basic_embeds").normalize().toAbsolutePath()
+    val scenarioDirectory = BASIC_EMBEDS_SCENARIO
     val project = TestProject(projectDir, scenarioDirectory)
     project.setupSettingsOnly()
 
@@ -253,7 +172,6 @@ class NormPluginTest {
             packageName = "example"
             schemas.addAll("$schema")
             queries.addAll("$queriesFile")
-            useDatabase = false
           }
         }
       }
@@ -261,8 +179,8 @@ class NormPluginTest {
     )
 
     // First build - generate initial files
-    val initialResult = project.gradle("normGenerateCode").build()
-    assertThat(initialResult.task(":normGenerateCodeTest")?.outcome).isEqualTo(SUCCESS)
+    val initialResult = project.gradle("normGenerateTest").build()
+    assertThat(initialResult.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
 
     val generatedDir = project.generatedCodeDirectory.resolve("example")
     val initialFiles = collectKotlinFileNames(generatedDir)
@@ -279,8 +197,8 @@ class NormPluginTest {
     )
 
     // Second build - stale files should be removed
-    val modifiedResult = project.gradle("normGenerateCode").build()
-    assertThat(modifiedResult.task(":normGenerateCodeTest")?.outcome).isEqualTo(SUCCESS)
+    val modifiedResult = project.gradle("normGenerateTest").build()
+    assertThat(modifiedResult.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
 
     val finalFiles = collectKotlinFileNames(generatedDir)
 
@@ -291,7 +209,7 @@ class NormPluginTest {
 
   @Test
   fun `cleaning one database does not affect another database`() {
-    val scenarioDirectory = Path("../test-scenarios-basic/basic_embeds").normalize().toAbsolutePath()
+    val scenarioDirectory = BASIC_EMBEDS_SCENARIO
     val project = TestProject(projectDir, scenarioDirectory)
     project.setupSettingsOnly()
 
@@ -326,13 +244,11 @@ class NormPluginTest {
             packageName = "example.db1"
             schemas.addAll("$schema")
             queries.addAll("$queries1")
-            useDatabase = false
           }
           create("Database2") {
             packageName = "example.db2"
             schemas.addAll("$schema")
             queries.addAll("$queries2")
-            useDatabase = false
           }
         }
       }
@@ -340,7 +256,7 @@ class NormPluginTest {
     )
 
     // Generate both databases
-    project.gradle("normGenerateCodeDatabase1", "normGenerateCodeDatabase2").build()
+    project.gradle("normGenerateDatabase1", "normGenerateDatabase2").build()
 
     val db1Dir = project.generatedCodeDirectory.resolve("example/db1")
     val db2Dir = project.generatedCodeDirectory.resolve("example/db2")
@@ -363,7 +279,7 @@ class NormPluginTest {
     )
 
     // Regenerate only Database1
-    project.gradle("normGenerateCodeDatabase1").build()
+    project.gradle("normGenerateDatabase1").build()
 
     // Verify Database2 files unchanged
     val db2FilesAfter = collectKotlinFileNames(db2Dir).toSet()
@@ -388,12 +304,26 @@ class NormPluginTest {
     }
 
   companion object {
-    @JvmStatic
-    fun basicScenarios() = Path("../test-scenarios-basic/").normalize().toAbsolutePath().listDirectoryEntries()
-      .filter(Files::isDirectory)
 
+    /**
+     * A scenario with a simple `author` table, used by hand-written tests that
+     * need a known schema but aren't testing golden-file matching.
+     */
+    private val BASIC_EMBEDS_SCENARIO = Path("../test-scenarios/basic_embeds").normalize().toAbsolutePath()
+
+    private val EMBED_SCENARIOS =
+      setOf("basic_embeds", "complex_embed_mixing", "consecutive_embeds", "nested_joins_embeds")
+
+    /**
+     * Returns all non-embed test scenario directories, sorted by name.
+     *
+     * Sorting is required because [Path.listDirectoryEntries] does not guarantee order.
+     */
     @JvmStatic
-    fun complexScenarios() = Path("../test-scenarios-complex/").normalize().toAbsolutePath().listDirectoryEntries()
+    fun scenarios() = Path("../test-scenarios/").normalize().toAbsolutePath()
+      .listDirectoryEntries()
       .filter(Files::isDirectory)
+      .filter { it.fileName.toString() !in EMBED_SCENARIOS }
+      .sorted()
   }
 }

@@ -433,20 +433,21 @@ private fun TypeSpec.Builder.annotateForFrameworks(frameworks: Set<Framework>, t
  * @param frameworks The set of frameworks for which code is being generated
  * @see addColumnMappingAnnotationIfNeeded
  */
-private fun PropertySpec.Builder.addIdAnnotationForFrameworks(frameworks: Set<Framework>): PropertySpec.Builder = apply {
-  for (framework in frameworks) {
-    when (framework) {
-      Framework.MICRONAUT_DATA_JDBC -> addAnnotation(
-        AnnotationSpec
-          .builder(MICRONAUT_DATA_ID_ANNOTATION)
-          .useSiteTarget(AnnotationSpec.UseSiteTarget.FIELD)
-          .build(),
-      )
-      Framework.SPRING_DATA_JDBC -> addAnnotation(SPRING_DATA_ID_ANNOTATION)
-      Framework.ALL_TABLES -> continue // No specific annotations required
+private fun PropertySpec.Builder.addIdAnnotationForFrameworks(frameworks: Set<Framework>): PropertySpec.Builder =
+  apply {
+    for (framework in frameworks) {
+      when (framework) {
+        Framework.MICRONAUT_DATA_JDBC -> addAnnotation(
+          AnnotationSpec
+            .builder(MICRONAUT_DATA_ID_ANNOTATION)
+            .useSiteTarget(AnnotationSpec.UseSiteTarget.FIELD)
+            .build(),
+        )
+        Framework.SPRING_DATA_JDBC -> addAnnotation(SPRING_DATA_ID_ANNOTATION)
+        Framework.ALL_TABLES -> continue // No specific annotations required
+      }
     }
   }
-}
 
 private val MICRONAUT_DATA_ID_ANNOTATION = ClassName("io.micronaut.data.annotation", "Id")
 private val MICRONAUT_DATA_TABLE_ANNOTATION = ClassName("io.micronaut.data.annotation", "MappedEntity")

@@ -4,7 +4,7 @@
 
 This project has multiple README files with important context:
 - `README.md` - Project background, motivation, and design philosophy
-- `gradle-plugin/README.md` - Plugin usage, sqlc version requirements
+- `gradle-plugin/README.md` - Plugin usage and configuration
 - `runtime/README.md` - Runtime API documentation (if present)
 
 **Always read relevant READMEs** when working on a module or feature to understand the intended design and constraints.
@@ -16,15 +16,6 @@ Norm (Not an ORM) is a SQL-first code generator for Postgres and Kotlin. It gene
 ## Related Projects
 
 Understanding these projects is valuable when designing and implementing Norm features:
-
-### sqlc (https://sqlc.dev)
-
-Norm uses sqlc as its foundation. sqlc parses SQL files and schema, then outputs structured metadata (queries, parameters, column types) that Norm's generator consumes. The protocol is defined in `proto/codegen.proto`.
-
-When working on Norm:
-- sqlc's output format determines what information is available to the generator
-- sqlc documentation explains the `-- name: queryName :command` annotation syntax
-- Limitations in sqlc's Postgres support may affect what Norm can do
 
 ### SQLDelight (https://github.com/cashapp/sqldelight)
 
@@ -39,13 +30,14 @@ When working on Norm:
 
 ```
 norm/
-├── generator/       # Code generator that produces Kotlin from sqlc output
-├── gradle-plugin/   # Gradle plugin wrapping sqlc + generator
-├── runtime/         # Thin runtime library for JDBC operations
-├── example/         # Usage examples
-├── proto/           # Protocol buffer definitions (sqlc plugin interface)
-├── test-scenarios/  # Generated code test fixtures
-└── buildSrc/        # Shared Gradle build logic
+├── generator/                 # Code generator: JDBC analysis → Kotlin via KotlinPoet
+├── gradle-plugin/             # Gradle plugin orchestrating container + analysis + generation
+├── runtime/                   # Thin runtime library for JDBC operations
+├── example/                   # Usage examples
+├── proto/                     # Protocol buffer definitions (internal Wire types)
+├── test-scenarios/            # Test scenarios with golden files
+├── test-scenarios-frameworks/ # Framework-specific test scenarios
+└── buildSrc/                  # Shared Gradle build logic
 ```
 
 ### Module Dependencies
@@ -57,8 +49,8 @@ norm/
 
 - **Kotlin** - Primary language
 - **KotlinPoet** - Code generation library (in `generator`)
-- **Wire** - Protocol buffer implementation for sqlc communication
-- **sqlc** - External tool that parses SQL and provides schema/query metadata
+- **Wire** - Protocol buffer types used as internal model (from `proto/codegen.proto`)
+- **Testcontainers** - Starts PostgreSQL for JDBC-based schema/query analysis
 - **Gradle** - Build system with convention plugins in `buildSrc`
 
 ## Build & Test
@@ -72,7 +64,7 @@ Example Gradle tasks:
 ### Prerequisites
 
 - JDK 17+
-- sqlc installed (see gradle-plugin/README.md for version requirements)
+- Docker (for Testcontainers)
 
 ## Code Style
 
@@ -86,9 +78,10 @@ Example Gradle tasks:
 
 ### Code Generation Pipeline
 
-1. **sqlc** parses SQL files and schema, outputs JSON matching `proto/codegen.proto`
-2. **generator** reads sqlc JSON, produces Kotlin via KotlinPoet
-3. **gradle-plugin** orchestrates: runs sqlc → feeds output to generator → writes `.kt` files
+1. **gradle-plugin** starts a PostgreSQL Testcontainer and applies schema SQL files
+2. **JdbcAnalyzer** uses JDBC metadata APIs to build a `Catalog` (tables, columns, enums, domains) and analyze queries (parameter types, result column types)
+3. **generator** takes the `Catalog` + analyzed `Query` objects (Wire proto types from `proto/codegen.proto`) and produces Kotlin via KotlinPoet
+4. **gradle-plugin** writes the generated `.kt` files
 
 ### Runtime Library
 
@@ -107,7 +100,7 @@ For each SQL file, Norm generates:
 
 ## SQL Conventions
 
-Queries use sqlc annotation format:
+Queries use annotation comments:
 ```sql
 -- name: getAuthorByName :one
 SELECT * FROM author WHERE name = $1;
@@ -123,21 +116,24 @@ Commands: `:one` (single result), `:many` (multiple results), `:execrows` (retur
 
 ## Key Files
 
+- `generator/src/main/kotlin/norm/generator/JdbcAnalyzer.kt` - JDBC-based schema and query analysis
+- `generator/src/main/kotlin/norm/generator/QueryFileParser.kt` - Parses `-- name: X :cmd` annotations from SQL
 - `generator/src/main/kotlin/norm/generator/InterfaceBuilder.kt` - Generates query interfaces
 - `generator/src/main/kotlin/norm/generator/ImplementationBuilder.kt` - Generates implementations
+- `gradle-plugin/src/main/kotlin/norm/gradle/NormGenerateTask.kt` - Gradle task orchestrating the pipeline
 - `runtime/src/main/kotlin/norm/NormDriver.kt` - Core runtime driver
 - `runtime/src/main/kotlin/norm/Query.kt` - Dynamic query API
-- `proto/codegen.proto` - sqlc plugin protocol definition
+- `proto/codegen.proto` - Wire proto definitions for internal model types
 
 ## Testing
 
-- Generator tests use JSON fixtures in `test-scenarios/`
+- Generator tests use Testcontainers to run the full pipeline (JDBC analysis → code generation) and compare against golden files
 - Runtime tests use Mockito for JDBC mocking
-- Gradle plugin tests use Gradle TestKit
+- Gradle plugin tests use Gradle TestKit for integration testing
 
 ### Golden Files
 
-Test scenarios in `test-scenarios/` contain inputs (`schema.sql`, `queries.sql`) and expected outputs (`schema.json`, `example/*.kt`).
+Test scenarios in `test-scenarios-*/` contain inputs (`schema.sql`, `queries.sql`) and expected outputs (`example/*.kt`).
 
 To regenerate golden files after changing the generator:
 - All scenarios: `./gradlew :gradle-plugin:generateGoldenFiles`

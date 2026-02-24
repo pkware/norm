@@ -19,7 +19,7 @@ public class PostgresQueries(
     name: String,
     email: String?,
   ) -> T): T {
-    val sql = "SELECT id, name, email FROM author WHERE id = ?"
+    val sql = "SELECT * FROM author WHERE id = ?"
     val rowReader: ResultSet.() -> T = {
       mapper(
         getInt(1),
@@ -38,7 +38,7 @@ public class PostgresQueries(
     title: String,
     authorId: Int,
   ) -> T): T {
-    val sql = "SELECT id, title, author_id FROM book WHERE id = ?"
+    val sql = "SELECT * FROM book WHERE id = ?"
     val rowReader: ResultSet.() -> T = {
       mapper(
         getInt(1),

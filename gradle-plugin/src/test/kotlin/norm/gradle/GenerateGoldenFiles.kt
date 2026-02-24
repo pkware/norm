@@ -33,15 +33,9 @@ import kotlin.io.path.walk
 class GenerateGoldenFiles {
 
   @ParameterizedTest
-  @MethodSource("basicScenarios")
-  fun `generate golden files without type resolution`(scenarioDirectory: Path) {
-    executeGradleProject(scenarioDirectory, false)
-  }
-
-  @ParameterizedTest
-  @MethodSource("complexScenarios")
-  fun `generate golden files with type resolution`(scenarioDirectory: Path) {
-    executeGradleProject(scenarioDirectory, true)
+  @MethodSource("scenarios")
+  fun `generate golden files`(scenarioDirectory: Path) {
+    executeGradleProject(scenarioDirectory)
   }
 
   @ParameterizedTest
@@ -49,42 +43,35 @@ class GenerateGoldenFiles {
   fun `generate golden files for framework scenarios`(scenario: FrameworkGoldenScenario) {
     executeGradleProjectWithFrameworks(
       scenario.scenarioDirectory,
-      requiresDatabase = false,
       frameworks = scenario.frameworks,
       goldenSubdir = scenario.goldenSubdir,
     )
   }
 
-  private fun executeGradleProject(scenarioDirectory: Path, requiresDatabase: Boolean) {
-    executeGradleProjectInternal(scenarioDirectory, requiresDatabase, emptySet(), "example")
+  private fun executeGradleProject(scenarioDirectory: Path) {
+    executeGradleProjectInternal(scenarioDirectory, emptySet(), "example")
   }
 
   private fun executeGradleProjectWithFrameworks(
     scenarioDirectory: Path,
-    requiresDatabase: Boolean,
     frameworks: Set<String>,
     goldenSubdir: String,
   ) {
-    executeGradleProjectInternal(scenarioDirectory, requiresDatabase, frameworks, goldenSubdir)
+    executeGradleProjectInternal(scenarioDirectory, frameworks, goldenSubdir)
   }
 
-  private fun executeGradleProjectInternal(
-    scenarioDirectory: Path,
-    requiresDatabase: Boolean,
-    frameworks: Set<String>,
-    goldenSubdir: String,
-  ) {
+  private fun executeGradleProjectInternal(scenarioDirectory: Path, frameworks: Set<String>, goldenSubdir: String) {
     val projectDirSuffix = if (goldenSubdir == "example") "" else "-$goldenSubdir"
     val projectDir = Path.of("build/tmp/generateGoldenFiles/${scenarioDirectory.fileName}$projectDirSuffix")
     projectDir.createDirectories()
 
     val project = TestProject(projectDir, scenarioDirectory)
-    project.setup(requiresDatabase, frameworks)
+    project.setup(frameworks)
 
     // Run generation - use runCatching to capture partial success
     // (e.g., if some files generate but compilation would fail)
     val result = runCatching {
-      project.gradle("normGenerateCodeTest").build()
+      project.gradle("normGenerateTest").build()
     }
 
     // Copy whatever was generated, even if the build failed partway through
@@ -106,10 +93,6 @@ class GenerateGoldenFiles {
         }
     }
 
-    // Copy cleaned schema.json
-    val schemaJsonTarget = scenarioDirectory.resolve("schema.json")
-    TestProject.writeCleanedSchemaJson(project.schemaJsonPath, schemaJsonTarget)
-
     // Now rethrow if generation failed, so the test reports the failure
     result.getOrThrow()
 
@@ -126,10 +109,7 @@ class GenerateGoldenFiles {
     }
 
     @JvmStatic
-    fun basicScenarios() = NormPluginTest.basicScenarios().filter(scenariosFilter)
-
-    @JvmStatic
-    fun complexScenarios() = NormPluginTest.complexScenarios().filter(scenariosFilter)
+    fun scenarios() = NormPluginTest.scenarios().filter(scenariosFilter)
 
     @JvmStatic
     fun frameworkScenarios(): List<FrameworkGoldenScenario> {

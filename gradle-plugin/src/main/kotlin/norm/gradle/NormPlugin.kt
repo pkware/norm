@@ -10,7 +10,15 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinProjectExtension
 import org.jetbrains.kotlin.gradle.plugin.KotlinSourceSetContainer
 
 /**
- * Gradle build plugin for generating Kotlin code from SQL modes using Norm.
+ * Gradle build plugin for generating Kotlin code from SQL using Norm.
+ *
+ * For each configured database, registers a `normGenerate<Name>` task that:
+ * 1. Starts a PostgreSQL container via Testcontainers
+ * 2. Applies schema files to create the database structure
+ * 3. Uses JDBC metadata to analyze queries and introspect the schema
+ * 4. Generates type-safe Kotlin code
+ *
+ * Docker must be installed and running.
  */
 public class NormPlugin : Plugin<Project> {
   override fun apply(target: Project): Unit = target.run {
@@ -25,50 +33,23 @@ public class NormPlugin : Plugin<Project> {
       NormExtensionImplementation::class.java,
       this,
     )
-    // TODO: Gradle task to download sqlc if not available, or throw if it's the wrong version
 
     val kotlinSourceSet = project.extensions.getByName<KotlinProjectExtension>("kotlin")
       .sourceSets.getByName("main").kotlin
 
     norm.databases.all {
-      // Set defaults for database properties
-      useDatabase.convention(true)
       postgresVersion.convention("18")
 
-      // Register YAML generation task
-      val yamlTask = tasks.register<GenerateYamlTask>(
-        "normGenerateYaml${name.uppercaseFirstChar()}",
+      val generateTask = tasks.register<NormGenerateTask>(
+        "normGenerate${name.uppercaseFirstChar()}",
         this,
       )
 
-      yamlTask.configure {
-        useDatabase.set(this@all.useDatabase)
-      }
-
-      // Register sqlc execution task
-      val sqlcTask = tasks.register<RunSqlcTask>(
-        "normRunSqlc${name.uppercaseFirstChar()}",
-        this,
-      )
-
-      sqlcTask.configure {
-        sqlcConfiguration.set(yamlTask.flatMap { task -> task.sqlcConfiguration })
-        useDatabase.set(this@all.useDatabase)
+      generateTask.configure {
         postgresVersion.set(this@all.postgresVersion)
-        databaseName.set(name)
       }
 
-      // Register code generation task
-      val generateCodeTask = tasks.register<GenerateSchemasTask>(
-        "normGenerateCode${name.uppercaseFirstChar()}",
-        this,
-      )
-
-      generateCodeTask.configure {
-        schemaJsonFile.set(sqlcTask.flatMap { task -> task.schemaJsonFile })
-      }
-
-      kotlinSourceSet.srcDir(generateCodeTask)
+      kotlinSourceSet.srcDir(generateTask)
     }
 
     // Add the runtime dependency to the project

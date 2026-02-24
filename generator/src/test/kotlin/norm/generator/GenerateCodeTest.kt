@@ -3,30 +3,46 @@ package norm.generator
 import assertk.assertThat
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
-import assertk.assertions.isNotNull
 import assertk.assertions.isTrue
-import com.squareup.moshi.Moshi
-import com.squareup.moshi.adapter
-import com.squareup.wire.WireJsonAdapterFactory
-import okio.buffer
-import okio.source
+import org.junit.jupiter.api.AfterAll
+import org.junit.jupiter.api.BeforeAll
+import org.junit.jupiter.api.parallel.Execution
+import org.junit.jupiter.api.parallel.ExecutionMode
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
-import plugin.GenerateRequest
+import org.testcontainers.containers.PostgreSQLContainer
+import org.testcontainers.containers.wait.strategy.Wait
+import org.testcontainers.containers.wait.strategy.WaitAllStrategy
+import org.testcontainers.junit.jupiter.Container
+import org.testcontainers.junit.jupiter.Testcontainers
+import org.testcontainers.utility.DockerImageName
 import java.nio.file.Files
 import java.nio.file.Path
+import java.sql.Connection
+import java.sql.DriverManager
+import java.time.Duration
 import kotlin.io.path.Path
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.pathString
 import kotlin.io.path.readText
 import kotlin.io.path.relativeTo
 
+/**
+ * Tests the full code generation pipeline: schema SQL → JDBC analysis → Kotlin code generation.
+ *
+ * Uses a real PostgreSQL Testcontainer to analyze schemas and queries via JDBC metadata,
+ * then compares generated Kotlin code against golden files.
+ *
+ * Golden files are regenerated via `./gradlew :gradle-plugin:generateGoldenFiles`.
+ */
+@Testcontainers
+@Execution(ExecutionMode.SAME_THREAD)
 class GenerateCodeTest {
 
   /**
    * Represents a framework test scenario.
    *
-   * @property scenarioDirectory The directory containing the scenario's schema.json
+   * @property scenarioDirectory The directory containing the scenario's `schema.sql` and `queries.sql`
    * @property frameworks The set of frameworks to pass to generateCode()
    * @property goldenSubdir The subdirectory name containing expected golden files (e.g., "micronaut")
    */
@@ -36,8 +52,6 @@ class GenerateCodeTest {
 
   /**
    * Validates that generated code matches expected golden files.
-   *
-   * Generate `schema.json` files for scenarios by running `./gradlew :gradle-plugin:generateGoldenFiles`.
    */
   @ParameterizedTest
   @MethodSource("scenarios")
@@ -52,8 +66,6 @@ class GenerateCodeTest {
 
   /**
    * Validates that code generation with different framework configurations produces correct output.
-   *
-   * Generate `schema.json` and golden files by running `./gradlew :gradle-plugin:generateGoldenFiles`.
    */
   @ParameterizedTest
   @MethodSource("frameworkScenarios")
@@ -67,9 +79,12 @@ class GenerateCodeTest {
   }
 
   /**
-   * Asserts that generated code matches expected golden files.
+   * Applies a scenario's schema to the database, runs the full analysis and generation pipeline,
+   * and asserts that the generated code matches the expected golden files.
    *
-   * @param scenarioDirectory The directory containing the scenario's schema.json
+   * Resets the database schema between scenarios by dropping and recreating the `public` schema.
+   *
+   * @param scenarioDirectory The directory containing schema.sql and queries.sql
    * @param goldenSubdirectory The directory containing expected .kt golden files
    * @param packageName The package name to pass to generateCode()
    * @param frameworks The set of frameworks to pass to generateCode()
@@ -80,9 +95,8 @@ class GenerateCodeTest {
     packageName: String,
     frameworks: Set<Framework>,
   ) {
+    // Collect expected golden files
     val expectedFiles = mutableMapOf<String, String>()
-    val request = readGenerateRequestFromFile(scenarioDirectory.resolve("schema.json"))
-
     Files.walk(goldenSubdirectory).use { files ->
       files.forEach { file ->
         if (file.toString().endsWith(".kt")) {
@@ -91,12 +105,32 @@ class GenerateCodeTest {
       }
     }
 
-    assertThat(request, "Directory $scenarioDirectory does not have a schema.json").isNotNull()
-    val result = generateCode(request.catalog!!, request.queries, packageName, frameworks, emptySet())
+    // Reset database: drop all user objects and extensions, then recreate public schema
+    connection.createStatement().use {
+      it.execute(
+        """
+        DROP SCHEMA public CASCADE;
+        CREATE SCHEMA public;
+        GRANT ALL ON SCHEMA public TO public;
+        """.trimIndent(),
+      )
+    }
+    val schema = scenarioDirectory.resolve("schema.sql").readText()
+    connection.createStatement().use { it.execute(schema) }
+
+    // Run the full pipeline
+    val analyzer = JdbcAnalyzer(connection)
+    val catalog = analyzer.buildCatalog()
+
+    val parsedQueries = QueryFileParser.parse(scenarioDirectory.resolve("queries.sql").readText())
+    val analyzedQueries = parsedQueries.map { analyzer.analyzeQuery(it, catalog) }
+
+    val result = generateCode(catalog, analyzedQueries, packageName, frameworks, emptySet())
     val createdFiles = result.associate { spec ->
       Pair(spec.name, spec.contents.utf8())
     }.toMutableMap()
 
+    // Compare generated code with golden files
     for ((fileName, content) in expectedFiles.entries) {
       assertThat(fileName in createdFiles, "Expected file $fileName to be generated").isTrue()
       val createdFileContent = createdFiles.remove(fileName)
@@ -110,13 +144,44 @@ class GenerateCodeTest {
   }
 
   companion object {
+    // Embed scenarios use sqlc.embed() which is not yet supported by the JDBC analyzer
+    private val EMBED_SCENARIOS =
+      setOf("basic_embeds", "complex_embed_mixing", "consecutive_embeds", "nested_joins_embeds")
+
+    @JvmField
+    @Container
+    val container: PostgreSQLContainer<*> = PostgreSQLContainer(
+      DockerImageName.parse("postgres:18").asCompatibleSubstituteFor("postgres"),
+    ).apply {
+      withDatabaseName("norm_generate_test")
+      waitingFor(
+        WaitAllStrategy()
+          .withStrategy(Wait.forLogMessage(".*database system is ready to accept connections.*\\n", 2))
+          .withStrategy(Wait.forListeningPort())
+          .withStartupTimeout(Duration.ofSeconds(60)),
+      )
+    }
+
+    private lateinit var connection: Connection
+
     @JvmStatic
-    fun scenarios() = listOf(
-      Path("../test-scenarios-basic"),
-      Path("../test-scenarios-complex"),
-    )
-      .flatMap { it.toAbsolutePath().listDirectoryEntries() }
+    @BeforeAll
+    fun setup() {
+      connection = DriverManager.getConnection(container.jdbcUrl, container.username, container.password)
+    }
+
+    @JvmStatic
+    @AfterAll
+    fun teardown() {
+      if (::connection.isInitialized) connection.close()
+    }
+
+    @JvmStatic
+    fun scenarios() = Path("../test-scenarios").toAbsolutePath()
+      .listDirectoryEntries()
       .filter(Files::isDirectory)
+      .filter { it.fileName.toString() !in EMBED_SCENARIOS }
+      .sorted()
 
     /**
      * Provides test scenarios for framework-specific code generation tests.
@@ -139,15 +204,6 @@ class GenerateCodeTest {
             FrameworkScenario(scenarioDir, setOf(Framework.ALL_TABLES), "all-tables"),
           )
         }
-    }
-
-    @OptIn(ExperimentalStdlibApi::class)
-    fun readGenerateRequestFromFile(path: Path): GenerateRequest {
-      val moshi = Moshi.Builder()
-        .addLast(WireJsonAdapterFactory())
-        .build()
-      val adapter = moshi.adapter<GenerateRequest>()
-      return path.source().buffer().use(adapter::fromJson)!!
     }
   }
 }
