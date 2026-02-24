@@ -110,7 +110,7 @@ internal class TypeRepository(
         PropertySpec.builder(propertyName, columnType)
           .initializer(propertyName)
           .addColumnMappingAnnotationIfNeeded(propertyName, column.name, frameworks)
-          .also { if (column.isPrimaryKey) it.addIdAnnotationForFrameworks(frameworks) }
+          .also { if (column.is_primary_key) it.addIdAnnotationForFrameworks(frameworks) }
           .build(),
       )
     }

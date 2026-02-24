@@ -39,6 +39,7 @@ class FrameworkAnnotationTest {
         Column(
           name = "id",
           not_null = true,
+          is_primary_key = true,
           type = Identifier(name = "serial"),
           table = Identifier(name = tableName),
         ),
@@ -330,6 +331,7 @@ class FrameworkAnnotationTest {
           Column(
             name = "id",
             not_null = true,
+            is_primary_key = true,
             type = Identifier(name = "serial"),
             table = Identifier(name = "user_account"),
           ),

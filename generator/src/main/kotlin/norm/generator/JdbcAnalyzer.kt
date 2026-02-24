@@ -147,6 +147,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
               type = Identifier(name = baseName),
               table = Identifier(name = tableName, schema = schemaName),
               original_name = columnName,
+              is_primary_key = columnName in primaryKeys.getValue(tableName),
             ),
           )
         }

@@ -64,7 +64,7 @@ private fun generateModelsForFrameworks(
     // If the filters are empty, the caller doesn't want any filtering.
     if (frameworkSchemas.isEmpty() || frameworkSchemas.contains(schema.name)) {
       for (table in schema.tables) {
-        if (table.columns.any(Column::isPrimaryKey)) {
+        if (table.columns.any(Column::is_primary_key)) {
           generator.getTypeProjectionForTable(table)
         }
 
