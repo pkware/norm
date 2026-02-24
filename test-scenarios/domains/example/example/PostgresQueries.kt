@@ -149,4 +149,69 @@ public class PostgresQueries(
       combineExecBatchResults(results, totalCount, batchSize)
     }
   }
+
+  @Throws(SQLException::class)
+  override fun updateUser(
+    email: String,
+    age: Int,
+    zipCode: String,
+    id: Int,
+  ) {
+    val sql = """
+        |UPDATE users
+        |SET
+        |  email = coalesce(?, users.email),
+        |  age = coalesce(?, users.age),
+        |  zip_code = coalesce(?, users.zip_code)
+        |WHERE id = ?
+        """.trimMargin()
+    driver.execute(sql) {
+      setString(1, email)
+      setInt(2, age)
+      setString(3, zipCode)
+      setInt(4, id)
+      execute()
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any> updateUser(
+    stream: Iterable<Input>,
+    email: Input.() -> String,
+    age: Input.() -> Int,
+    zipCode: Input.() -> String,
+    id: Input.() -> Int,
+    batchSize: Int,
+  ): IntArray {
+    val sql = """
+        |UPDATE users
+        |SET
+        |  email = coalesce(?, users.email),
+        |  age = coalesce(?, users.age),
+        |  zip_code = coalesce(?, users.zip_code)
+        |WHERE id = ?
+        """.trimMargin()
+    return driver.execute(sql) {
+      var totalCount = 0
+      var batchCount = 0
+      val results = mutableListOf<IntArray>()
+      for (entry in stream) {
+        setString(1, entry.email())
+        setInt(2, entry.age())
+        setString(3, entry.zipCode())
+        setInt(4, entry.id())
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          executeBatch()
+          batchCount = 0
+        }
+      }
+      if (batchCount > 0) {
+        results.add(executeBatch())
+        totalCount += batchCount
+      }
+      combineExecBatchResults(results, totalCount, batchSize)
+    }
+  }
 }

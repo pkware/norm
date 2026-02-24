@@ -73,7 +73,8 @@ public class JdbcAnalyzer(private val connection: Connection) {
     val parameters: List<Parameter>
 
     val inferredParams = parameterInferrer.inferParameterInfo(parsedQuery.sql)
-    val inferredNames = inferredParams.mapValues { it.value.name }
+    // Named parameters from the query file take priority over inferred names
+    val inferredNames = inferredParams.mapValues { it.value.name } + parsedQuery.namedParameters
     val parameterNotNull = parameterInferrer.resolveParameterNullability(inferredParams, catalog)
 
     if (isCallStatement) {
