@@ -22,7 +22,7 @@ import kotlin.reflect.KClass
  *
  * Responsibilities:
  * - Generates Kotlin data classes for query results and table projections
- * - Resolves SQL types (including Postgres domains) to Kotlin types
+ * - Resolves SQL types to Kotlin types
  *
  * These responsibilities are intentionally coupled: generating data classes requires
  * knowing how to resolve column types, and both operations use the same catalog
@@ -30,13 +30,11 @@ import kotlin.reflect.KClass
  *
  * @param packageName to use for generated types.
  * @param catalog Postgres catalog to use when resolving projection information.
- * @param queries All queries to be generated. Used to build domain type resolution mapping.
  * @param frameworks Frameworks for which to generate code.
  */
 internal class TypeRepository(
   private val packageName: String,
   private val catalog: Catalog,
-  queries: List<plugin.Query> = emptyList(),
   private val frameworks: Set<Framework> = emptySet(),
 ) {
 
@@ -49,17 +47,6 @@ internal class TypeRepository(
    * Projections needed to return results from queries.
    */
   private val queryModels = mutableListOf<Pair<ReturnType, TypeSpec>>()
-
-  /**
-   * Maps domain types to their underlying base types by analyzing query parameters.
-   *
-   * sqlc resolves domain types to base types for parameters in WHERE clauses,
-   * so we can build a mapping by comparing table column types with parameter types.
-   *
-   * Key format: "domain_type_name" -> base_type_identifier
-   * Example: "email" -> Identifier("text")
-   */
-  private val domainTypeMapping: Map<String, plugin.Identifier> = buildDomainTypeMapping(queries)
 
   /**
    * Types generated during query generation that are needed for complete compilation of query code.
@@ -256,62 +243,14 @@ internal class TypeRepository(
     wrapInArrayIfNeeded(resolveMappableType(column).klass, column.is_array, column.not_null)
 
   /**
-   * Resolves the [SqlMappable] for a column, handling both standard types and Postgres domains.
+   * Resolves the [SqlMappable] for a column.
    */
   fun resolveMappableType(column: Column): SqlMappable {
     val typeName = column.type?.name
       ?: error("Column ${column.fullyQualifiedName} has no type")
 
-    // Try standard type first
-    tryResolveStandardType(typeName, column.not_null, column.is_array)?.let { return it }
-
-    // Check if it's a domain type and resolve recursively
-    domainTypeMapping[typeName]?.let { baseType ->
-      return resolveMappableType(column.copy(type = baseType))
-    }
-
-    error("Postgres type $typeName for column ${column.fullyQualifiedName} is not mapped to a Kotlin type")
-  }
-
-  /**
-   * Builds domain-to-base-type mapping by comparing catalog column types with parameter types.
-   *
-   * sqlc resolves domains for parameters but not for table schemas, so when they differ,
-   * the parameter type is the resolved base type.
-   */
-  private fun buildDomainTypeMapping(queries: List<plugin.Query>): Map<String, plugin.Identifier> {
-    val tableColumnTypes = buildTableColumnTypeIndex()
-    val mapping = mutableMapOf<String, plugin.Identifier>()
-
-    for (query in queries) {
-      @Suppress("LoopWithTooManyJumpStatements")
-      for (parameter in query.params) {
-        val column = parameter.column ?: continue
-        val tableName = column.table?.name ?: continue
-        val parameterType = column.type ?: continue
-        val key = "$tableName.${column.name}"
-
-        val tableColumnType = tableColumnTypes[key] ?: continue
-        if (tableColumnType != parameterType.name) {
-          mapping[tableColumnType] = parameterType
-        }
-      }
-    }
-
-    return mapping
-  }
-
-  /** Builds an index of "tableName.columnName" -> typeName from the catalog. */
-  private fun buildTableColumnTypeIndex(): Map<String, String> = buildMap {
-    for (schema in catalog.schemas) {
-      for (table in schema.tables) {
-        val tableName = table.rel?.name ?: continue
-        for (column in table.columns) {
-          val typeName = column.type?.name ?: continue
-          put("$tableName.${column.name}", typeName)
-        }
-      }
-    }
+    return tryResolveStandardType(typeName, column.not_null, column.is_array)
+      ?: error("Postgres type $typeName for column ${column.fullyQualifiedName} is not mapped to a Kotlin type")
   }
 
   /** Returns the [SqlMappable] for a standard Postgres type, or `null` if not recognized. */
@@ -571,7 +510,6 @@ private fun PropertySource.sourceReference(): String? = when {
   expression.isNotEmpty() -> "`$expression`"
   else -> null
 }
-
 
 private val MICRONAUT_DATA_ID_ANNOTATION = ClassName("io.micronaut.data.annotation", "Id")
 private val MICRONAUT_DATA_TABLE_ANNOTATION = ClassName("io.micronaut.data.annotation", "MappedEntity")

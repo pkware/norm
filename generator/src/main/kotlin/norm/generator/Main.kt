@@ -30,7 +30,7 @@ public fun generateCode(
   frameworks: Set<Framework>,
   frameworkSchemas: Set<String>,
 ): List<File> {
-  val generator = TypeRepository(packageName, catalog, queries, frameworks)
+  val generator = TypeRepository(packageName, catalog, frameworks)
 
   generateModelsForFrameworks(catalog, generator, frameworks, frameworkSchemas)
 

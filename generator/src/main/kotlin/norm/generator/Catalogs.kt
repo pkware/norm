@@ -23,19 +23,17 @@ internal fun Catalog.resolveTable(table: Identifier): Table {
 /**
  * Finds a [Table] by its unqualified name, or `null` if not found.
  */
-internal fun Catalog.findTable(tableName: String): Table? =
-  schemas.asSequence()
-    .flatMap(Schema::tables)
-    .firstOrNull { it.rel?.name == tableName }
+internal fun Catalog.findTable(tableName: String): Table? = schemas.asSequence()
+  .flatMap(Schema::tables)
+  .firstOrNull { it.rel?.name == tableName }
 
 /**
  * Finds a [Column] by table and column name, or `null` if not found.
  *
  * When [tableName] is `null`, searches all tables and returns the first match.
  */
-internal fun Catalog.findColumn(tableName: String?, columnName: String): Column? =
-  schemas.asSequence()
-    .flatMap(Schema::tables)
-    .filter { tableName == null || it.rel?.name == tableName }
-    .flatMap(Table::columns)
-    .firstOrNull { it.name == columnName }
+internal fun Catalog.findColumn(tableName: String?, columnName: String): Column? = schemas.asSequence()
+  .flatMap(Schema::tables)
+  .filter { tableName == null || it.rel?.name == tableName }
+  .flatMap(Table::columns)
+  .firstOrNull { it.name == columnName }

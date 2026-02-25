@@ -23,10 +23,6 @@ jobs:
         java-version: 21
         distribution: 'temurin'
 
-    - name: Set up sqlc
-      run: |
-        sudo snap install sqlc
-
     - name: Build Norm
       uses: burrunan/gradle-cache-action@663fbad34e03c8f12b27f4999ac46e3d90f87eca # v3.0
       with:

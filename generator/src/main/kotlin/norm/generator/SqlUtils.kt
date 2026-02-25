@@ -74,11 +74,7 @@ internal fun splitAtTopLevel(text: String, delimiter: Char): List<String> {
  * @property tableName The table qualifier for qualified column references (e.g. `author` in `author.name`).
  *   `null` for unqualified references and computed expressions.
  */
-internal data class SelectItem(
-  val expression: String,
-  val columnName: String?,
-  val tableName: String?,
-)
+internal data class SelectItem(val expression: String, val columnName: String?, val tableName: String?)
 
 /**
  * Parses the SELECT clause of a SQL statement to extract individual select items.
@@ -173,8 +169,14 @@ private fun findTopLevelKeyword(sql: String, keyword: String, startIndex: Int): 
   var i = startIndex
   while (i <= sql.length - keyword.length) {
     when (sql[i]) {
-      '(' -> { depth++; i++ }
-      ')' -> { depth--; i++ }
+      '(' -> {
+        depth++
+        i++
+      }
+      ')' -> {
+        depth--
+        i++
+      }
       else -> {
         if (depth == 0 && sql.regionMatches(i, keyword, 0, keyword.length, ignoreCase = true)) {
           val before = i == 0 || !sql[i - 1].isLetterOrDigit()
