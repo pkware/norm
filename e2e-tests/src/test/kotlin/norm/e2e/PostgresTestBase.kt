@@ -1,6 +1,6 @@
 package norm.e2e
 
-import norm.NormDriver
+import norm.ConnectionProvider
 import org.intellij.lang.annotations.Language
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.parallel.Execution
@@ -25,7 +25,7 @@ import javax.sql.DataSource
 @Execution(ExecutionMode.SAME_THREAD)
 abstract class PostgresTestBase {
 
-  protected lateinit var driver: NormDriver
+  protected lateinit var connectionProvider: ConnectionProvider
   private lateinit var connection: Connection
 
   @BeforeEach
@@ -40,7 +40,7 @@ abstract class PostgresTestBase {
 
     // Wrap connection in a simple DataSource
     val dataSource = SingleConnectionDataSource(connection)
-    driver = NormDriver(dataSource)
+    connectionProvider = ConnectionProvider(dataSource)
 
     // Ensure clean state before loading schema
     connection.createStatement().use { stmt ->

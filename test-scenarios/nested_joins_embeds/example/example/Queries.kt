@@ -9,9 +9,8 @@ import kotlin.String
 import kotlin.jvm.Throws
 import norm.Many
 import norm.Query
-import norm.Transacter
 
-public interface Queries : Transacter {
+public interface Queries {
   /**
    * Real-world complex query: 10+ columns with multiple embeds
    * This simulates a realistic join-heavy query with mixed regular and embed columns

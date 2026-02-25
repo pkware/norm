@@ -11,10 +11,9 @@ import kotlin.String
 import kotlin.collections.Iterable
 import kotlin.jvm.Throws
 import norm.Many
-import norm.Transacter
 import norm.inputValue
 
-public interface Queries : Transacter {
+public interface Queries {
   /**
    * Norm: Executes a SQL statement.
    *

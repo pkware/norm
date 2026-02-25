@@ -24,17 +24,18 @@ import kotlin.Short
 import kotlin.String
 import kotlin.collections.Iterable
 import kotlin.jvm.Throws
+import norm.ConnectionProvider
 import norm.Many
 import norm.NormDriver
 import norm.Query
-import norm.RealTransacter
 import norm.combineExecBatchResults
 import norm.setInt
 
 public class PostgresQueries(
-  driver: NormDriver,
-) : RealTransacter(driver),
-    Queries {
+  connectionProvider: ConnectionProvider,
+) : Queries {
+  private val driver: NormDriver = NormDriver(connectionProvider)
+
   private fun <T : Any, R> all(mapper: (
     smallserial_type: Short,
     serial2_type: Short,

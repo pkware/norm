@@ -9,14 +9,15 @@ import kotlin.Long
 import kotlin.String
 import kotlin.collections.Iterable
 import kotlin.jvm.Throws
+import norm.ConnectionProvider
 import norm.NormDriver
-import norm.RealTransacter
 import norm.combineExecBatchResults
 
 public class PostgresQueries(
-  driver: NormDriver,
-) : RealTransacter(driver),
-    Queries {
+  connectionProvider: ConnectionProvider,
+) : Queries {
+  private val driver: NormDriver = NormDriver(connectionProvider)
+
   @Throws(SQLException::class)
   override fun <T : Any> getAuthorById(id: Int, mapper: (
     id: Int,

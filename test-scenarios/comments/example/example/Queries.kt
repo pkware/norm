@@ -8,9 +8,8 @@ import kotlin.Long
 import kotlin.String
 import kotlin.collections.Iterable
 import kotlin.jvm.Throws
-import norm.Transacter
 
-public interface Queries : Transacter {
+public interface Queries {
   @Throws(SQLException::class)
   public fun <T : Any> getAuthorById(id: Int, mapper: (
     id: Int,

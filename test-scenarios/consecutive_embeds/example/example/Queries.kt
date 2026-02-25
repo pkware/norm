@@ -5,9 +5,8 @@ import kotlin.Any
 import kotlin.Int
 import kotlin.String
 import kotlin.jvm.Throws
-import norm.Transacter
 
-public interface Queries : Transacter {
+public interface Queries {
   /**
    * Two consecutive embeds
    * Expected indices:

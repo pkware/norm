@@ -1,131 +1,159 @@
 package example
 
-import norm.NormDriver
-import org.postgresql.ds.PGSimpleDataSource
+import io.micronaut.context.ApplicationContext
+import io.micronaut.transaction.TransactionDefinition
+import io.micronaut.transaction.TransactionOperations
+import jakarta.inject.Singleton
+import jakarta.transaction.Transactional
+import java.sql.Connection
 import kotlin.random.Random
 
 fun main() {
-  val queries = setupNorm()
-
-  // Single item retrievals are trivial with Norm.
-  // Generated entities are Java records/Kotlin data classes.
-  val george = queries.getAuthorByName("George R.R. Martin")
-
-  // Custom projections are effortless, correctly typed, and have the right nullability.
-  // Here a LEFT JOIN means columns from the book table can be null.
-  // Note that Norm doesn't do name mangling. Entity members have the same name as in the database.
-  val georgesBestSeller = queries.authorAndMostPopularBook("George R.R. Martin")
-  if (georgesBestSeller.title == null) {
-    println("George R.R. Martin didn't write any books")
-  } else {
-    println("George R.R. Martin's most popular book was '${georgesBestSeller.title}' with ${georgesBestSeller.copies_sold} sold.")
+  // Start Micronaut and get the example bean.
+  // In a real application, Micronaut manages the lifecycle automatically.
+  ApplicationContext.run().use { context ->
+    context.getBean(Example::class.java).run()
   }
-
-  // Queries that result in multiple rows have multiple result-handling options.
-  // list() materializes the entire result set into a list.
-  val authorsList = queries.listAuthors().list()
-
-  // stream() materializes the results lazily, but holds a reference to the JDBC Connection. Close the Stream when done
-  // with it.
-  queries.listAuthors().stream().use { stream ->
-    stream.forEach(::println)
-  }
-
-  // distinct() makes it easy to get a Set, and since projections are records/data classes, this will always be safe!
-  // But note that it might not be what you want, and SQL DISTINCT is probably better. See the Javadoc.
-  val uniqueBooks = queries.listBooks().distinct()
-
-  // You can map to a collection of your choosing as well.
-  val books = queries.listBooks().collection(::mutableListOf)
-
-  // And even add the results directly to an existing collection. Here we add the books to the books list a second time.
-  queries.listBooks().collection { books }
-
-  // 0 or 1 results are easy too.
-  queries.mostPopularBook("George R.R. Martin").firstOrNull()?.let {
-    println("George R.R. Martin's most popular book was '${it.title}' with ${it.copies_sold} sold.")
-  }
-
-  // Any query can be mapped to a custom type. This makes it easy to use existing DTOs, modify mutable models, etc.
-  val authorContacts = queries.listAuthors { id, name, email, revision ->
-    AuthorContact(name, email)
-  }.list()
-
-  // Norm provides a Query API for dynamic SQL. When possible, prefer the static API as it's type-safe,
-  // verified at compile time, and slightly more efficient. Norm's Query API is more memory and CPU efficient than
-  // libraries that use reflection-based mapping such as Spring's JdbcClient.
-  val query = queries.listAuthorsDynamically()
-    .append(" WHERE")
-  if (Random.nextBoolean()) {
-    query
-      .append(" name LIKE '%:name%'")
-      .bind("name", "George")
-  } else {
-    query
-      .append(" startsWith(name, :letter)")
-      .bind("letter", "G")
-  }
-  val dynamicAuthors = query.list()
-
-  // Kotlin makes dynamic query building more pleasant.
-  val kotlinDynamicAuthors = queries.listAuthorsDynamically().run {
-    append(" WHERE")
-    if (Random.nextBoolean()) {
-      append(" name LIKE '%:name%'")
-      bind("name", "George")
-    } else {
-      append(" startsWith(name, :letter)")
-      bind("letter", "G")
-    }
-  }.list()
-
-  // DMLs are also supported.
-  require(queries.setEmailForName("stephenking@example.com", "Stephen King") == 1)
-
-  // Efficient batch updates are easy and have no overhead compared to manual batching.
-  val authorsToAdd = listOf(
-    AuthorContact("J.K. Rowling", "harrypotterauthor@example.com"),
-    AuthorContact("Dr. Seuss", "whoswho@example.com"),
-    AuthorContact("Leo Tolstoy", null),
-  )
-  queries.addAuthor(authorsToAdd, AuthorContact::name, AuthorContact::email)
-
-  // Transactions are naturally scoped, and are tied to the initiating thread.
-  queries.transaction {
-    for (author in authorsToAdd) {
-      queries.addAuthor(author.name, author.email)
-    }
-  }
-
-  // Nested transactions are also available, and incremental rollbacks too.
-  queries.transaction {
-    // This creates an unnamed savepoint, since it's inside an outer transaction
-    queries.transaction {
-      // Rollback to the savepoint
-      rollback()
-    }
-    // This creates an unnamed savepoint and commits it, since rollback isn't called.
-    queries.transaction {
-    }
-    // Rollback the outer transaction. All savepoints are rolled back as well.
-    rollback()
-  }
-
 }
 
-private fun setupNorm(): PostgresQueries {
-  // You probably want to use a connection pool like HikariCP.
-  val dataSource = PGSimpleDataSource().apply {
-    setURL("jdbc:postgresql://localhost:5432/postgres")
-    user = "postgres"
-    password = ""
+// Micronaut AOP requires `open` for @Transactional methods to work (compile-time subclassing).
+@Singleton
+open class Example(
+  private val queries: PostgresQueries,
+  private val transactionOperations: TransactionOperations<Connection>,
+) {
+
+  fun run() {
+    // ── Query Patterns ──────────────────────────────────────────────────────────────────────────────
+
+    // Single item retrievals are trivial with Norm.
+    // Generated entities are Java records/Kotlin data classes.
+    val george = queries.getAuthorByName("George R.R. Martin")
+
+    // Custom projections are effortless, correctly typed, and have the right nullability.
+    // Here a LEFT JOIN means columns from the book table can be null.
+    // Note that Norm doesn't do name mangling. Entity members have the same name as in the database.
+    val georgesBestSeller = queries.authorAndMostPopularBook("George R.R. Martin")
+    if (georgesBestSeller.title == null) {
+      println("George R.R. Martin didn't write any books")
+    } else {
+      println("George R.R. Martin's most popular book was '${georgesBestSeller.title}' with ${georgesBestSeller.copies_sold} sold.")
+    }
+
+    // Queries that result in multiple rows have multiple result-handling options.
+    // list() materializes the entire result set into a list.
+    val authorsList = queries.listAuthors().list()
+
+    // stream() materializes the results lazily, but holds a reference to the JDBC Connection. Close the Stream when done
+    // with it.
+    queries.listAuthors().stream().use { stream ->
+      stream.forEach(::println)
+    }
+
+    // distinct() makes it easy to get a Set, and since projections are records/data classes, this will always be safe!
+    // But note that it might not be what you want, and SQL DISTINCT is probably better. See the Javadoc.
+    val uniqueBooks = queries.listBooks().distinct()
+
+    // You can map to a collection of your choosing as well.
+    val books = queries.listBooks().collection(::mutableListOf)
+
+    // And even add the results directly to an existing collection. Here we add the books to the books list a second time.
+    queries.listBooks().collection { books }
+
+    // 0 or 1 results are easy too.
+    queries.mostPopularBook("George R.R. Martin").firstOrNull()?.let {
+      println("George R.R. Martin's most popular book was '${it.title}' with ${it.copies_sold} sold.")
+    }
+
+    // Any query can be mapped to a custom type. This makes it easy to use existing DTOs, modify mutable models, etc.
+    val authorContacts = queries.listAuthors { id, name, email, revision ->
+      AuthorContact(name, email)
+    }.list()
+
+    // Norm provides a Query API for dynamic SQL. When possible, prefer the static API as it's type-safe,
+    // verified at compile time, and slightly more efficient. Norm's Query API is more memory and CPU efficient than
+    // libraries that use reflection-based mapping such as Spring's JdbcClient.
+    val query = queries.listAuthorsDynamically()
+      .append(" WHERE")
+    if (Random.nextBoolean()) {
+      query
+        .append(" name LIKE '%:name%'")
+        .bind("name", "George")
+    } else {
+      query
+        .append(" startsWith(name, :letter)")
+        .bind("letter", "G")
+    }
+    val dynamicAuthors = query.list()
+
+    // Kotlin makes dynamic query building more pleasant.
+    val kotlinDynamicAuthors = queries.listAuthorsDynamically().run {
+      append(" WHERE")
+      if (Random.nextBoolean()) {
+        append(" name LIKE '%:name%'")
+        bind("name", "George")
+      } else {
+        append(" startsWith(name, :letter)")
+        bind("letter", "G")
+      }
+    }.list()
+
+    // DMLs are also supported.
+    require(queries.setEmailForName("stephenking@example.com", "Stephen King") == 1)
+
+    // Efficient batch updates are easy and have no overhead compared to manual batching.
+    val authorsToAdd = listOf(
+      AuthorContact("J.K. Rowling", "harrypotterauthor@example.com"),
+      AuthorContact("Dr. Seuss", "whoswho@example.com"),
+      AuthorContact("Leo Tolstoy", null),
+    )
+    queries.addAuthor(authorsToAdd, AuthorContact::name, AuthorContact::email)
+
+    // Programmatic: scoped transaction wrapping multiple queries.
+    // All queries inside the block share one connection and commit atomically on success.
+    transactionOperations.executeWrite {
+      queries.addAuthor("Author A", "a@example.com")
+      queries.addAuthor("Author B", "b@example.com")
+    }
+
+    // Programmatic: explicit rollback without throwing an exception.
+    // setRollbackOnly() marks the transaction for rollback — when the block returns, the framework rolls back instead
+    // of committing.
+    transactionOperations.executeWrite { status ->
+      queries.addAuthor("Ghost", "ghost@example.com")
+      status.setRollbackOnly()
+    }
+
+    // Declarative: @Transactional method — all queries share one transaction.
+    createAuthorWithBooks("New Author", "new@example.com", listOf("Book 1", "Book 2"))
+
+    // Nested transactions (savepoints): NESTED propagation creates a savepoint when a transaction is already active,
+    // or starts a new transaction when none is. This lets code be context-independent — it doesn't need to know
+    // whether the caller already started a transaction.
+    val nested = TransactionDefinition.of(TransactionDefinition.Propagation.NESTED)
+    transactionOperations.executeWrite {
+      queries.addAuthor("Persisted", "p@example.com")
+
+      // This nested block rolls back independently via its savepoint.
+      runCatching {
+        transactionOperations.execute(nested) {
+          queries.addAuthor("Rolled Back", "rb@example.com")
+          error("Trigger savepoint rollback")
+        }
+      }
+      // "Persisted" survives, "Rolled Back" does not.
+    }
   }
 
-  // Treat the Norm instance as a singleton. Norm is thread-safe.
-  val norm = NormDriver(dataSource)
-  // Creating new instances of Query classes is cheap, but they are also thread-safe and can be treated as a singleton.
-  val queries = PostgresQueries(norm)
-  return queries
+  /**
+   * Declarative transactions: annotate a method with `@Transactional` and the framework manages the transaction
+   * lifecycle. All Norm queries called within this method automatically participate in the same transaction.
+   * If any query fails, the entire method rolls back.
+   */
+  @Transactional
+  open fun createAuthorWithBooks(name: String, email: String, bookTitles: List<String>) {
+    queries.addAuthor(name, email)
+  }
 }
 
 data class AuthorContact(val name: String, val email: String?)

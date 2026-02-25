@@ -1,7 +1,6 @@
 package norm
 
 import org.intellij.lang.annotations.Language
-import java.sql.Connection
 import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.SQLException
@@ -12,80 +11,27 @@ import javax.sql.DataSource
 import kotlin.jvm.Throws
 
 /**
- * Maintains connections to an underlying SQL database and provides APIs for managing transactions
- * and executing SQL statements.
+ * Provides APIs for executing SQL statements against a database.
  *
- * A transaction is expected never to escape the thread it is created on, or more specifically,
- * never to escape the lambda scope of [Transacter.transaction] and [Transacter.transactionWithResult].
+ * Connections are obtained through the [ConnectionProvider] supplied at construction time. For standalone use,
+ * construct with a [DataSource]:
+ * ```kotlin
+ * val driver = NormDriver(dataSource)
+ * ```
+ *
+ * For framework-managed transactions (Micronaut `@Transactional`, Spring `@Transactional`), supply a
+ * [ConnectionProvider] that participates in the active transaction context. This ensures that Norm queries
+ * automatically share the framework's connection and transaction scope.
  */
-public class NormDriver(private val dataSource: DataSource) {
-
-  // TODO ScopedValue instead of ThreadLocal
-  private val transactions = ThreadLocal<Transaction>()
-
-  internal var transaction: Transaction?
-    get() = transactions.get()
-    set(value) {
-      transactions.set(value)
-    }
-
-  private fun Connection.beginTransaction() {
-    check(autoCommit) {
-      """
-			Expected autoCommit to be true by default. For compatibility with Norm make sure it is
-			set to true when returning a connection from [JdbcDriver.getConnection()]
-      """.trimIndent()
-    }
-    autoCommit = false
-  }
+public class NormDriver(private val connectionProvider: ConnectionProvider) {
 
   /**
-   * Returns a [Connection] and handler which closes the connection after the transaction finished.
+   * Creates a [NormDriver] backed by a [DataSource].
    *
-   * @throws SQLException if a database access error occurs.
-   * @throws SQLTimeoutException when the driver has determined that the timeout value specified by the
-   * `setLoginTimeout` method has been exceeded and has at least tried to cancel the current database connection
-   * attempt.
+   * Each query obtains a new connection from the [dataSource] and closes it after the operation completes.
+   * This constructor is appropriate for standalone use without a framework.
    */
-  @Throws(SQLException::class, SQLTimeoutException::class)
-  public fun connectionAndClose(): Pair<Connection, () -> Unit> {
-    val enclosing = transaction
-    return if (enclosing != null) {
-      enclosing.connection to {}
-    } else {
-      val connection = dataSource.connection
-      return connection to { connection.close() }
-    }
-  }
-
-  /**
-   * Start a new [Transaction] on the database.
-   *
-   * This call will block until a transaction can be started.
-   *
-   * See the [NormDriver] class documentation for threading specifics.
-   *
-   * @throws SQLException if a database access error occurs.
-   * @throws SQLTimeoutException when the driver has determined that the timeout value specified by the
-   * `setLoginTimeout` method has been exceeded and has at least tried to cancel the current database connection
-   * attempt.
-   */
-  @Throws(SQLException::class, SQLTimeoutException::class)
-  internal fun newTransaction(): Transaction {
-    val enclosing = transaction
-    val connection = enclosing?.connection ?: dataSource.connection
-
-    @Suppress("UseLet") // Let can't help here. This is a detekt false positive.
-    val savepoint = if (enclosing != null) connection.setSavepoint() else null
-    val transaction = Transaction(enclosing, this, connection, savepoint)
-    this.transaction = transaction
-
-    if (enclosing == null) {
-      connection.beginTransaction()
-    }
-
-    return transaction
-  }
+  public constructor(dataSource: DataSource) : this(ConnectionProvider(dataSource))
 
   /**
    * Executes a SQL statement.
@@ -100,14 +46,10 @@ public class NormDriver(private val dataSource: DataSource) {
    * attempt.
    */
   @Throws(SQLException::class, SQLTimeoutException::class)
-  public fun <RowType> execute(@Language("PostgreSQL") sql: String, action: PreparedStatement.() -> RowType): RowType {
-    val (connection, onClose) = connectionAndClose()
-    try {
-      return connection.prepareStatement(sql).use(action)
-    } finally {
-      onClose()
+  public fun <RowType> execute(@Language("PostgreSQL") sql: String, action: PreparedStatement.() -> RowType): RowType =
+    connectionProvider.withConnection { connection ->
+      connection.prepareStatement(sql).use(action)
     }
-  }
 
   /**
    * Executes a query that returns exactly 1 row.
@@ -215,14 +157,14 @@ public class NormDriver(private val dataSource: DataSource) {
   ) : Many<RowType> {
 
     override fun stream(): Stream<RowType> {
-      val (connection, onClose) = connectionAndClose()
-      val statement = connection.prepareStatement(sql)
+      val borrowed = connectionProvider.borrowConnection()
+      val statement = borrowed.connection.prepareStatement(sql)
       queryBinder?.let { it(statement) }
       val resultSet = statement.executeQuery()
       val closeAll = {
         resultSet.close()
         statement.close()
-        onClose()
+        borrowed.close()
       }
       val spliterator = ResultSetSpliterator(resultSet, closeAll, rowReader)
       val stream = StreamSupport.stream(spliterator, false)

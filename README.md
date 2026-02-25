@@ -55,9 +55,6 @@ norm {
 - [ ] Enum adapter. Map enums to String and back by default.
 - [ ] List/array/stream/iterable adapter. If given one of these, just convert it to an array.
 - [ ] Value class adapter (inline classes)
-- [ ] Different behavior for read & write transactions
-- [ ] ScopedValue instead of ThreadLocal? Requires Java 25+
-- [ ] Populate KDoc using Postgres COMMENTs.
 - [ ] Support batching from Stream, not just Iterable
 - [ ] Make it easy to enforce named arguments for query methods. These are easy to change in SQL and have calling code compile incorrectly. Detekt, Intellij, etc.
 - [ ] JSON/JSONB to Java struct adapter. More broadly, custom type adapters.

@@ -28,7 +28,7 @@ class AllTypesE2ETest : PostgresTestBase() {
 
   @BeforeEach
   fun setupQueries() {
-    queries = PostgresQueries(driver)
+    queries = PostgresQueries(connectionProvider)
   }
 
   @Test

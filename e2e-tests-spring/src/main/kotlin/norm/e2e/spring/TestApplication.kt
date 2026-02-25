@@ -9,6 +9,6 @@ import org.springframework.data.jdbc.repository.config.EnableJdbcRepositories
  * This application demonstrates that Norm-generated entities with
  * `@Table` annotations work correctly with Spring Data JDBC repositories.
  */
-@SpringBootApplication
+@SpringBootApplication(scanBasePackages = ["norm.e2e.spring", "example"])
 @EnableJdbcRepositories
 class TestApplication

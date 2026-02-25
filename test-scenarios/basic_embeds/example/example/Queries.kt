@@ -7,9 +7,8 @@ import kotlin.String
 import kotlin.jvm.Throws
 import norm.Many
 import norm.Query
-import norm.Transacter
 
-public interface Queries : Transacter {
+public interface Queries {
   /**
    * Simple embed: single table returned as embedded object
    */

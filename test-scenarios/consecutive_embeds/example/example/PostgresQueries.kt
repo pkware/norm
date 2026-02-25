@@ -7,12 +7,10 @@ import kotlin.Int
 import kotlin.String
 import kotlin.jvm.Throws
 import norm.NormDriver
-import norm.RealTransacter
 
 public class PostgresQueries(
-  driver: NormDriver,
-) : RealTransacter(driver),
-    Queries {
+  private val driver: NormDriver,
+) : Queries {
   @Throws(SQLException::class)
   override fun <T : Any> getTwoConsecutiveEmbeds(id: Int, mapper: (
     author_id: Int,

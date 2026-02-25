@@ -33,7 +33,10 @@ norm/
 ├── generator/                 # Code generator: JDBC analysis → Kotlin via KotlinPoet
 ├── gradle-plugin/             # Gradle plugin orchestrating container + analysis + generation
 ├── runtime/                   # Thin runtime library for JDBC operations
-├── example/                   # Usage examples
+├── example/                   # Micronaut usage examples (composite build)
+├── e2e-tests/                 # End-to-end tests (standalone, no framework)
+├── e2e-tests-micronaut/       # Micronaut integration tests
+├── e2e-tests-spring/          # Spring integration tests
 ├── proto/                     # Protocol buffer definitions (internal Wire types)
 ├── test-scenarios/            # Test scenarios with golden files
 ├── test-scenarios-frameworks/ # Framework-specific test scenarios
@@ -87,17 +90,23 @@ Example Gradle tasks:
 ### Runtime Library
 
 The `runtime` module provides:
-- `NormDriver` - Main entry point, wraps DataSource
+- `NormDriver` - Main entry point, wraps `ConnectionProvider`
+- `ConnectionProvider` - Abstraction for obtaining JDBC connections (framework integration point)
+- `BorrowedConnection` - Extended-lifecycle connection for lazy streaming
 - `Query<T>` - Dynamic query builder with parameter binding
 - `Many<T>` - Terminal operations for multi-row results
-- `Transacter` / `Transaction` - Transaction management
 
 ### Generated Code Pattern
 
 For each SQL file, Norm generates:
-- An **interface** with query methods (e.g., `PostgresQueries`)
-- An **implementation** using `NormDriver`
+- An **interface** with query methods (e.g., `Queries`)
+- An **implementation** taking `ConnectionProvider` (e.g., `PostgresQueries`)
 - **Data classes** for result types (Java records when possible)
+
+When a framework is configured (`frameworks` property), Norm also generates:
+- DI annotations on `PostgresQueries` (`@Singleton` for Micronaut, `@Component` for Spring)
+- A framework-specific `ConnectionProvider` implementation (e.g., `MicronautConnectionProvider`)
+- `@Requires(missingBeans)` escape hatches for Micronaut (users can override generated beans)
 
 ## SQL Conventions
 

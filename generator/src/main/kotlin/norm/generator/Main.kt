@@ -1,17 +1,26 @@
 package norm.generator
 
+import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
+import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
 import okio.Buffer
+import okio.ByteString.Companion.encodeUtf8
 import plugin.Catalog
 import plugin.Column
 import plugin.File
 import plugin.Query
 
 private val NORM_DRIVER = ClassName(RUNTIME_PACKAGE, "NormDriver")
+private val CONNECTION_PROVIDER = ClassName(RUNTIME_PACKAGE, "ConnectionProvider")
+
+private val JAKARTA_SINGLETON = ClassName("jakarta.inject", "Singleton")
+private val MICRONAUT_REQUIRES = ClassName("io.micronaut.context.annotation", "Requires")
+private val SPRING_COMPONENT = ClassName("org.springframework.stereotype", "Component")
 
 /**
  * Generates Kotlin models and query files for use with the Norm runtime.
@@ -35,10 +44,12 @@ public fun generateCode(
   generateModelsForFrameworks(catalog, generator, frameworks, frameworkSchemas)
 
   val resolvedQueries = queries.map { SqlStatement(catalog, it, generator) }
+  val queriesInterface = ClassName(packageName, "Queries")
   val interfaceCode = generateQueryInterface(resolvedQueries, "Queries")
-  val classCode = generateQueryImplementation(resolvedQueries, ClassName(packageName, "Queries"))
+  val classCode = generateQueryImplementation(resolvedQueries, queriesInterface, frameworks)
+  val connectionProviders = generateConnectionProviders(packageName, frameworks)
 
-  val files = (sequenceOf(interfaceCode, classCode) + generator.requiredTypes).map {
+  val typeSpecFiles = (sequenceOf(interfaceCode, classCode) + generator.requiredTypes).map {
     val fileSpec = FileSpec.builder(packageName, "${it.name}.kt")
       .addType(it)
       .build()
@@ -47,7 +58,7 @@ public fun generateCode(
     File(packageName.replace('.', '/') + "/" + fileSpec.name, result.readByteString())
   }
     .toList()
-  return files
+  return typeSpecFiles + connectionProviders
 }
 
 private fun generateModelsForFrameworks(
@@ -74,27 +85,109 @@ private fun generateModelsForFrameworks(
   }
 }
 
-private fun generateQueryImplementation(queries: List<SqlStatement>, interfaceType: TypeName): TypeSpec {
+private fun generateQueryImplementation(
+  queries: List<SqlStatement>,
+  interfaceType: ClassName,
+  frameworks: Set<Framework>,
+): TypeSpec {
   val classBuilder = TypeSpec.classBuilder("PostgresQueries")
     .addSuperinterface(interfaceType)
-    .superclass(ClassName(RUNTIME_PACKAGE, "RealTransacter"))
-    .addSuperclassConstructorParameter("driver")
     .primaryConstructor(
       FunSpec.constructorBuilder()
-        .addParameter("driver", NORM_DRIVER)
+        .addParameter("connectionProvider", CONNECTION_PROVIDER)
         .build(),
     )
+    .addProperty(
+      PropertySpec.builder("driver", NORM_DRIVER, KModifier.PRIVATE)
+        .initializer("%T(connectionProvider)", NORM_DRIVER)
+        .build(),
+    )
+
+  addDependencyInjectionAnnotations(classBuilder, frameworks, interfaceType)
 
   queries.forEach(classBuilder::addSqlStatementImplementationMethod)
 
   return classBuilder.build()
 }
 
+/**
+ * Adds framework-specific dependency injection annotations to generated classes.
+ *
+ * - Micronaut: `@Singleton` + `@Requires(missingBeans = [beanType])` — auto-registers the class as a bean,
+ *   but steps aside if the user provides their own implementation.
+ * - Spring: `@Component` — auto-registers via component scanning.
+ *
+ * @param classBuilder The class to annotate.
+ * @param frameworks The frameworks for which to generate annotations.
+ * @param missingBeanType The type to check in `@Requires(missingBeans)`. When this type is already
+ *   present in the DI container, the generated bean is skipped.
+ */
+private fun addDependencyInjectionAnnotations(
+  classBuilder: TypeSpec.Builder,
+  frameworks: Set<Framework>,
+  missingBeanType: TypeName,
+) {
+  for (framework in frameworks) {
+    when (framework) {
+      Framework.MICRONAUT_DATA_JDBC -> {
+        classBuilder.addAnnotation(JAKARTA_SINGLETON)
+        classBuilder.addAnnotation(
+          AnnotationSpec.builder(MICRONAUT_REQUIRES)
+            .addMember("missingBeans = [%T::class]", missingBeanType)
+            .build(),
+        )
+      }
+      Framework.SPRING_DATA_JDBC -> classBuilder.addAnnotation(SPRING_COMPONENT)
+      Framework.ALL_TABLES -> continue
+    }
+  }
+}
+
 private fun generateQueryInterface(queries: List<SqlStatement>, interfaceName: String): TypeSpec {
   val interfaceBuilder = TypeSpec.interfaceBuilder(interfaceName)
-    .addSuperinterface(ClassName(RUNTIME_PACKAGE, "Transacter"))
 
   queries.forEach(interfaceBuilder::addSqlStatementInterfaceMethod)
 
   return interfaceBuilder.build()
+}
+
+private const val PACKAGE_PLACEHOLDER = "packages.placeholder"
+
+/**
+ * Generates framework-specific [ConnectionProvider] implementations from template resources.
+ *
+ * When a DI framework is configured, users need a [ConnectionProvider] that bridges the framework's
+ * connection management to Norm. Rather than requiring users to write this boilerplate, we generate it.
+ *
+ * These implementations are static (no per-schema variation), so they're shipped as plain `.kt` template
+ * files with a package placeholder, rather than using KotlinPoet.
+ *
+ * - Micronaut: Uses `ConnectionOperations<Connection>` to participate in `@Transactional` scopes.
+ * - Spring: Uses `DataSourceUtils` to participate in `@Transactional` scopes.
+ *
+ * @return A list of [File]s to include in the generated output. Empty when no DI frameworks are configured.
+ */
+private fun generateConnectionProviders(packageName: String, frameworks: Set<Framework>): List<File> {
+  val result = mutableListOf<File>()
+  for (framework in frameworks) {
+    when (framework) {
+      Framework.MICRONAUT_DATA_JDBC -> result.add(loadTemplate(packageName, "MicronautConnectionProvider"))
+      Framework.SPRING_DATA_JDBC -> result.add(loadTemplate(packageName, "SpringConnectionProvider"))
+      Framework.ALL_TABLES -> continue
+    }
+  }
+  return result
+}
+
+/**
+ * Loads a `.kt.template` resource, substitutes the package name, and returns it as a [File].
+ */
+private fun loadTemplate(packageName: String, className: String): File {
+  val resourcePath = "/norm/generator/$className.kt"
+  val template = object {}.javaClass.getResourceAsStream(resourcePath)
+    ?.bufferedReader()?.readText()
+    ?: error("Template resource not found: $resourcePath")
+  val contents = template.replace(PACKAGE_PLACEHOLDER, packageName)
+  val path = packageName.replace('.', '/') + "/$className.kt"
+  return File(path, contents.encodeUtf8())
 }

@@ -48,6 +48,22 @@ norm {
 - **Valid values:** PostgreSQL version tags (e.g., "16", "15", "14", "16.1-alpine")
 - **Effect:** Overrides the default PostgreSQL version for the database container
 
+**Property: `frameworks`**
+- **Type:** `SetProperty<Framework>`
+- **Default:** empty (no framework annotations or DI wiring)
+- **Valid values:** `Framework.MICRONAUT_DATA_JDBC`, `Framework.SPRING_DATA_JDBC`
+- **Effect:** When set, the generator produces framework-ready code:
+  - **Entity annotations:** Micronaut adds `@MappedEntity`, `@Id`, and `@MappedProperty`. Spring adds `@Table`, `@Id`, and `@Column`.
+  - **DI registration:** `PostgresQueries` is annotated with `@Singleton` (Micronaut) or `@Component` (Spring), so it auto-registers in the DI container.
+  - **ConnectionProvider:** A framework-specific `ConnectionProvider` implementation is generated (`MicronautConnectionProvider` or `SpringConnectionProvider`) that bridges the framework's connection management to Norm, enabling `@Transactional` support.
+  - **Override escape hatch (Micronaut):** Generated beans use `@Requires(missingBeans = [...])`, so providing your own `Queries` or `ConnectionProvider` bean disables the generated one.
+  - When empty, entities are plain data classes and no DI wiring is generated.
+
+**Property: `frameworkSchemas`**
+- **Type:** `SetProperty<String>`
+- **Default:** empty (generate entities for all schemas)
+- **Effect:** Restricts framework entity generation to the specified schemas. When empty, entities are generated for all tables in all schemas.
+
 ### How It Works
 
 Norm uses direct JDBC metadata analysis to generate type-safe Kotlin code:

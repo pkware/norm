@@ -10,22 +10,15 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
 import org.mockito.Mock
 import org.mockito.junit.jupiter.MockitoExtension
-import org.mockito.junit.jupiter.MockitoSettings
 import org.mockito.kotlin.any
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
-import org.mockito.quality.Strictness
 import java.sql.Connection
 import java.sql.PreparedStatement
 import java.sql.ResultSet
-import javax.sql.DataSource
 
 @ExtendWith(MockitoExtension::class)
-@MockitoSettings(strictness = Strictness.LENIENT)
 class ManyTest {
-
-  @Mock
-  lateinit var dataSource: DataSource
 
   @Mock
   lateinit var connection: Connection
@@ -40,11 +33,13 @@ class ManyTest {
 
   @BeforeEach
   fun setup() {
-    whenever(dataSource.connection).thenReturn(connection)
-    whenever(connection.autoCommit).thenReturn(true)
     whenever(connection.prepareStatement(any<String>())).thenReturn(preparedStatement)
     whenever(preparedStatement.executeQuery()).thenReturn(resultSet)
-    driver = NormDriver(dataSource)
+    val provider = object : ConnectionProvider {
+      override fun <R> withConnection(block: (Connection) -> R): R = block(connection)
+      override fun borrowConnection() = BorrowedConnection(connection) {}
+    }
+    driver = NormDriver(provider)
   }
 
   private fun many(): Many<String?> = driver.queryMany("SELECT name FROM users", { getString(1) })
@@ -154,6 +149,17 @@ class ManyTest {
       val result = many().stream().toList()
 
       assertThat(result).containsExactly("Alice", "Bob", "Charlie")
+    }
+
+    @Test
+    fun `stream with forEach consumes all rows`() {
+      whenever(resultSet.next()).thenReturn(true, true, false)
+      whenever(resultSet.getString(1)).thenReturn("Alice", "Bob")
+
+      val collected = mutableListOf<String?>()
+      many().stream().forEach { collected.add(it) }
+
+      assertThat(collected).containsExactly("Alice", "Bob")
     }
   }
 }

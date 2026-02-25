@@ -11,12 +11,10 @@ import kotlin.jvm.Throws
 import norm.Many
 import norm.NormDriver
 import norm.Query
-import norm.RealTransacter
 
 public class PostgresQueries(
-  driver: NormDriver,
-) : RealTransacter(driver),
-    Queries {
+  private val driver: NormDriver,
+) : Queries {
   @Throws(SQLException::class)
   override fun <T : Any> getBookDetails(id: Int, mapper: (
     title: String,

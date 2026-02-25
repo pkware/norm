@@ -24,10 +24,9 @@ import kotlin.collections.Iterable
 import kotlin.jvm.Throws
 import norm.Many
 import norm.Query
-import norm.Transacter
 import norm.inputValue
 
-public interface Queries : Transacter {
+public interface Queries {
   public fun <T : Any> all(mapper: (
     smallserial_type: Short,
     serial2_type: Short,
