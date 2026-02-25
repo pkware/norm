@@ -106,11 +106,18 @@ public class JdbcAnalyzer(private val connection: Connection) {
     val tableComments = catalogLoader.loadTableComments(schemaName)
     val columnComments = catalogLoader.loadColumnComments(schemaName)
 
-    // Discover tables
+    // Discover tables. Include "PARTITIONED TABLE" so that partitioned parents (relkind='p') are found
+    // alongside regular tables (relkind='r'). Without this, queries against partitioned tables fail because
+    // the parent table is missing from the catalog.
+    // Partition children (e.g., event_2026) are excluded — they are implementation details of the parent.
+    val partitionChildren = catalogLoader.loadPartitionChildren(schemaName)
     val tableNames = mutableListOf<String>()
-    dbMeta.getTables(null, schemaName, null, arrayOf("TABLE")).use { rs ->
+    dbMeta.getTables(null, schemaName, null, arrayOf("TABLE", "PARTITIONED TABLE")).use { rs ->
       while (rs.next()) {
-        tableNames.add(rs.getString("TABLE_NAME"))
+        val name = rs.getString("TABLE_NAME")
+        if (name !in partitionChildren) {
+          tableNames.add(name)
+        }
       }
     }
 

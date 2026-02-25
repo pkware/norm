@@ -84,6 +84,34 @@ internal class PgCatalogLoader(private val connection: Connection) {
     }
 
   /**
+   * Returns the names of partition children in [schemaName].
+   *
+   * Partition children (e.g., `event_2026 PARTITION OF event`) are implementation details of partitioned
+   * tables. They appear as regular `"TABLE"` entries in JDBC metadata but should be excluded from the catalog
+   * because users query the parent table, not individual partitions.
+   *
+   * @param schemaName The schema to check for partitions.
+   * @return A set of table names that are partition children and should be excluded from the catalog.
+   */
+  fun loadPartitionChildren(schemaName: String): Set<String> = buildSet {
+    connection.createStatement().use { stmt ->
+      stmt.executeQuery(
+        """
+        SELECT c.relname
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = '$schemaName'
+          AND c.relispartition = true
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) {
+          add(rs.getString("relname"))
+        }
+      }
+    }
+  }
+
+  /**
    * Returns table comments for all tables in [schemaName], keyed by table name.
    *
    * Comments are set with `COMMENT ON TABLE table IS '...'` in DDL.

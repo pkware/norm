@@ -16,7 +16,13 @@ internal fun Catalog.resolveTable(table: Identifier): Table {
     .filter { it.rel == table }
     .toList()
 
-  check(candidateTables.size == 1) { "Found multiple catalog tables matching $table" }
+  check(candidateTables.size == 1) {
+    if (candidateTables.isEmpty()) {
+      "No catalog table found matching $table"
+    } else {
+      "Found multiple catalog tables matching $table: ${candidateTables.map { it.rel }}"
+    }
+  }
   return candidateTables.first()
 }
 
