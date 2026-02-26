@@ -21,7 +21,10 @@ import java.nio.file.Path
 import java.sql.Connection
 import java.sql.DriverManager
 import java.time.Duration
+import java.util.Properties
 import kotlin.io.path.Path
+import kotlin.io.path.exists
+import kotlin.io.path.inputStream
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.pathString
 import kotlin.io.path.readText
@@ -126,7 +129,20 @@ class GenerateCodeTest {
     val catalog = analyzer.buildCatalog()
 
     val parsedQueries = QueryFileParser.parse(scenarioDirectory.resolve("queries.sql").readText())
-    val analyzedQueries = parsedQueries.map { analyzer.analyzeQuery(it, catalog) }
+
+    // Scenarios opt in to CRUD generation via norm.properties. The default here is false (not true
+    // as in production) because most test scenarios' golden files were written without CRUD output.
+    val scenarioProperties = Properties().apply {
+      val propsFile = scenarioDirectory.resolve("norm.properties")
+      if (propsFile.exists()) propsFile.inputStream().use { load(it) }
+    }
+    val allParsedQueries = if (scenarioProperties.getProperty("generateCrud", "false").toBoolean()) {
+      CrudQuerySynthesizer.synthesizeAndMerge(catalog, parsedQueries)
+    } else {
+      parsedQueries
+    }
+
+    val analyzedQueries = allParsedQueries.map { analyzer.analyzeQuery(it, catalog) }
 
     val result = generateCode(catalog, analyzedQueries, packageName, frameworks, emptySet())
     val createdFiles = result.associate { spec ->

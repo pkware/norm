@@ -112,13 +112,14 @@ public class JdbcAnalyzer(private val connection: Connection) {
     //   "MATERIALIZED VIEW"  — materialized views (relkind='m')
     // Partition children (e.g., event_2026) are excluded — they are implementation details of the parent.
     val partitionChildren = catalogLoader.loadPartitionChildren(schemaName)
-    val tableNames = mutableListOf<String>()
+    val tableEntries = mutableListOf<Pair<String, String>>() // (name, TABLE_TYPE)
     val tableTypes = arrayOf("TABLE", "PARTITIONED TABLE", "VIEW", "MATERIALIZED VIEW")
     dbMeta.getTables(null, schemaName, null, tableTypes).use { rs ->
       while (rs.next()) {
         val name = rs.getString("TABLE_NAME")
+        val type = rs.getString("TABLE_TYPE")
         if (name !in partitionChildren) {
-          tableNames.add(name)
+          tableEntries.add(name to type)
         }
       }
     }
@@ -128,13 +129,14 @@ public class JdbcAnalyzer(private val connection: Connection) {
     // base table columns via pg_depend, where NOT NULL constraints exist.
     val viewNotNullColumns = catalogLoader.loadViewColumnNullability(schemaName)
 
-    return tableNames.map { tableName ->
+    return tableEntries.map { (tableName, tableType) ->
       val primaryKeyColumns = loadPrimaryKeyColumns(dbMeta, schemaName, tableName)
       val columns = loadColumns(dbMeta, schemaName, tableName, columnComments, viewNotNullColumns, primaryKeyColumns)
       Table(
         rel = Identifier(name = tableName, schema = schemaName),
         columns = columns,
         comment = tableComments[tableName].orEmpty(),
+        is_view = tableType == "VIEW" || tableType == "MATERIALIZED VIEW",
       )
     }
   }
@@ -162,6 +164,9 @@ public class JdbcAnalyzer(private val connection: Connection) {
         val typeName = rs.getString("TYPE_NAME")
         val nullable = rs.getString("IS_NULLABLE")
         val comment = columnComments["$tableName.$columnName"]
+        val isAutoIncrement = rs.getString("IS_AUTOINCREMENT") == "YES"
+        val hasDefault = !rs.getString("COLUMN_DEF").isNullOrEmpty()
+        val isGenerated = rs.getString("IS_GENERATEDCOLUMN") == "YES"
 
         val (baseName, isArray) = resolveTypeName(typeName)
 
@@ -179,6 +184,9 @@ public class JdbcAnalyzer(private val connection: Connection) {
             table = Identifier(name = tableName, schema = schemaName),
             original_name = columnName,
             is_primary_key = columnName in primaryKeyColumns,
+            is_auto_increment = isAutoIncrement,
+            has_default = hasDefault,
+            is_generated = isGenerated,
           ),
         )
       }

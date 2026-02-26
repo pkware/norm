@@ -1,5 +1,6 @@
 package norm.gradle
 
+import norm.generator.CrudQuerySynthesizer
 import norm.generator.JdbcAnalyzer
 import norm.generator.QueryFileParser
 import norm.generator.generateCode
@@ -90,7 +91,14 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
           .sortedBy { it.absolutePath }
           .flatMap { file -> QueryFileParser.parse(file.readText()) }
 
-        val analyzedQueries = parsedQueries.map { parsed ->
+        // Optionally synthesize CRUD queries (user-defined queries take priority over synthetic ones)
+        val allParsedQueries = if (database.generateCrud.get()) {
+          CrudQuerySynthesizer.synthesizeAndMerge(catalog, parsedQueries)
+        } else {
+          parsedQueries
+        }
+
+        val analyzedQueries = allParsedQueries.map { parsed ->
           analyzer.analyzeQuery(parsed, catalog)
         }
 

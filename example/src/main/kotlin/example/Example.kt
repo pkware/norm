@@ -24,8 +24,6 @@ open class Example(
 ) {
 
   fun run() {
-    // ── Query Patterns ──────────────────────────────────────────────────────────────────────────────
-
     // Single item retrievals are trivial with Norm.
     // Generated entities are Java records/Kotlin data classes.
     val george = queries.getAuthorByName("George R.R. Martin")
@@ -108,6 +106,29 @@ open class Example(
       AuthorContact("Leo Tolstoy", null),
     )
     queries.addAuthor(authorsToAdd, AuthorContact::name, AuthorContact::email)
+
+    // By default, Norm generates repository-style CRUD methods for each table. These are synthesized from your schema.
+
+    // insertAuthor() accepts only the "insertable" columns (excluding auto-increment, defaults, and
+    // generated columns) and returns the database-assigned values via RETURNING.
+    val inserted = queries.insertAuthor("Toni Morrison", "morrison@example.com")
+    println("Inserted author with id=${inserted.id}, revision=${inserted.revision}")
+
+    // findAuthorById() returns a Many<Author>, the same Author type used by hand-written queries.
+    val found = queries.findAuthorById(inserted.id).firstOrNull()
+    println("Found: ${found?.name}")
+
+    // existsAuthorById() is a quick existence check — no need to fetch the full row.
+    val exists = queries.existsAuthorById(inserted.id)
+    println("Author exists: $exists")
+
+    // findAllAuthor() and countAuthor() cover common listing and counting patterns.
+    val allAuthors = queries.findAllAuthor().list()
+    val authorCount = queries.countAuthor()
+    println("Total authors: $authorCount")
+
+    // deleteAuthorById() returns the number of deleted rows, just like a hand-written :execrows query.
+    val deleted = queries.deleteAuthorById(inserted.id)
 
     // Programmatic: scoped transaction wrapping multiple queries.
     // All queries inside the block share one connection and commit atomically on success.

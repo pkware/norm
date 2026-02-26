@@ -27,7 +27,8 @@ Norm uses JDBC metadata APIs to analyze your SQL. During the build, Norm will:
 - Start a PostgreSQL container using Testcontainers
 - Apply your schema files to the database
 - Use JDBC `DatabaseMetaData` and `PreparedStatement` metadata to introspect types
-- Generate fully type-safe Kotlin code
+- Generate fully type-safe Kotlin code for your queries
+- Auto-generate CRUD methods (insert, find, exists, count, delete) for each table
 - Stop the container
 
 **Requirements:**

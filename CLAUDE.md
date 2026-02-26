@@ -103,6 +103,8 @@ For each SQL file, Norm generates:
 - An **implementation** taking `ConnectionProvider` (e.g., `PostgresQueries`)
 - **Data classes** for result types (Java records when possible)
 
+By default, Norm also auto-generates CRUD methods (insert, find, exists, count, delete) for each non-view table. These are synthesized as `ParsedQuery` objects by `CrudQuerySynthesizer`, merged with user queries (user queries win on name conflicts), and fed through the same analysis pipeline. Disable with `generateCrud = false`.
+
 When a framework is configured (`frameworks` property), Norm also generates:
 - DI annotations on `PostgresQueries` (`@Singleton` for Micronaut, `@Component` for Spring)
 - A framework-specific `ConnectionProvider` implementation (e.g., `MicronautConnectionProvider`)
@@ -128,6 +130,7 @@ Commands: `:one` (single result), `:many` (multiple results), `:execrows` (retur
 
 - `generator/src/main/kotlin/norm/generator/JdbcAnalyzer.kt` - JDBC-based schema and query analysis
 - `generator/src/main/kotlin/norm/generator/QueryFileParser.kt` - Parses `-- name: X :cmd` annotations from SQL
+- `generator/src/main/kotlin/norm/generator/CrudQuerySynthesizer.kt` - Synthesizes CRUD queries from catalog tables
 - `generator/src/main/kotlin/norm/generator/InterfaceBuilder.kt` - Generates query interfaces
 - `generator/src/main/kotlin/norm/generator/ImplementationBuilder.kt` - Generates implementations
 - `gradle-plugin/src/main/kotlin/norm/gradle/NormGenerateTask.kt` - Gradle task orchestrating the pipeline

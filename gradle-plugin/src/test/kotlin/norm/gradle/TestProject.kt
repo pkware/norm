@@ -2,6 +2,9 @@ package norm.gradle
 
 import org.gradle.testkit.runner.GradleRunner
 import java.nio.file.Path
+import java.util.Properties
+import kotlin.io.path.exists
+import kotlin.io.path.inputStream
 import kotlin.io.path.writeText
 
 /**
@@ -20,10 +23,16 @@ class TestProject(private val projectDir: Path, private val scenarioDirectory: P
   /**
    * Sets up both settings.gradle.kts and build.gradle.kts for a standard scenario test.
    *
+   * Reads optional `norm.properties` from the scenario directory for per-scenario configuration.
+   * Supported properties:
+   * - `generateCrud=true` — enables CRUD method generation.
+   *
    * @param frameworks Optional set of framework names to enable. If empty, no frameworks are configured.
    */
   fun setup(frameworks: Set<String> = emptySet()) {
     setupSettingsOnly()
+
+    val scenarioProperties = loadScenarioProperties()
 
     val frameworkImport = if (frameworks.isNotEmpty()) {
       "import norm.generator.Framework\n\n"
@@ -36,6 +45,9 @@ class TestProject(private val projectDir: Path, private val scenarioDirectory: P
     } else {
       ""
     }
+
+    val generateCrud = scenarioProperties.getProperty("generateCrud", "false").toBoolean()
+    val generateCrudBlock = "generateCrud = $generateCrud"
 
     val buildFileContent = """
       ${frameworkImport}plugins {
@@ -50,6 +62,7 @@ class TestProject(private val projectDir: Path, private val scenarioDirectory: P
             schemas.addAll("${scenarioDirectory.resolve("schema.sql").normalize().toAbsolutePath()}")
             queries.addAll("${scenarioDirectory.resolve("queries.sql").normalize().toAbsolutePath()}")
             $frameworksConfigBlock
+            $generateCrudBlock
           }
         }
       }
@@ -61,6 +74,18 @@ class TestProject(private val projectDir: Path, private val scenarioDirectory: P
       }
     """.trimIndent()
     buildFile.writeText(buildFileContent)
+  }
+
+  /**
+   * Loads scenario-specific configuration from `norm.properties` if it exists.
+   */
+  private fun loadScenarioProperties(): Properties {
+    val propsFile = scenarioDirectory.resolve("norm.properties")
+    return Properties().apply {
+      if (propsFile.exists()) {
+        propsFile.inputStream().use { load(it) }
+      }
+    }
   }
 
   /**

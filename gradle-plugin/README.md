@@ -59,6 +59,20 @@ norm {
   - **Override escape hatch (Micronaut):** Generated beans use `@Requires(missingBeans = [...])`, so providing your own `Queries` or `ConnectionProvider` bean disables the generated one.
   - When empty, entities are plain data classes and no DI wiring is generated.
 
+**Property: `generateCrud`**
+- **Type:** `Property<Boolean>`
+- **Default:** `true`
+- **Effect:** When `true`, Norm auto-generates repository-style CRUD methods for every non-view table in the schema:
+  - `insert<Table>(...)` — inserts a row, excluding auto-increment, server-default, and generated columns from parameters. Returns the excluded columns via `RETURNING` when applicable.
+  - `find<Table>ById(...)` — selects by primary key (requires PK)
+  - `exists<Table>ById(...)` — checks existence by primary key (requires PK)
+  - `findAll<Table>()` — selects all rows
+  - `count<Table>()` — counts all rows
+  - `delete<Table>ById(...)` — deletes by primary key (requires PK)
+  - `deleteAll<Table>()` — deletes all rows
+- **Conflict resolution:** If a user-written query has the same name as a synthesized CRUD method, the user query takes priority and the CRUD method is skipped.
+- **Disabling:** Set `generateCrud = false` to disable CRUD generation entirely.
+
 **Property: `frameworkSchemas`**
 - **Type:** `SetProperty<String>`
 - **Default:** empty (generate entities for all schemas)

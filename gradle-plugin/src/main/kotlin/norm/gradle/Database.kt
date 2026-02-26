@@ -59,6 +59,17 @@ public abstract class Database(private val name: String) : Named {
   public abstract val frameworks: SetProperty<Framework>
 
   /**
+   * Whether to generate CRUD methods (insert, find, exists, count, delete) for each table.
+   *
+   * When `true`, Norm synthesizes repository-style methods for every non-view table in the schema.
+   * If a user-written query has the same name as a synthesized one, the user query takes priority.
+   *
+   * Defaults to `true`.
+   */
+  @get:Input
+  public abstract val generateCrud: Property<Boolean>
+
+  /**
    * Schemas for which to generate framework entities.
    *
    * When empty (the default), entities are generated for all schemas.

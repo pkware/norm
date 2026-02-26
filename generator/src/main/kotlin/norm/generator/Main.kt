@@ -78,8 +78,6 @@ private fun generateModelsForFrameworks(
         if (table.columns.any(Column::is_primary_key)) {
           generator.getTypeProjectionForTable(table)
         }
-
-        // TODO Generate a Repository interface for each table
       }
     }
   }

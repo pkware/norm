@@ -76,6 +76,8 @@ message Table {
   Identifier rel = 1;
   repeated Column columns = 2;
   string comment = 3;
+  // True for VIEWs and MATERIALIZED VIEWs.
+  bool is_view = 4;
 }
 
 message Identifier {
@@ -104,6 +106,12 @@ message Column {
   bool unsigned = 16;
   int32 array_dims = 17;
   bool is_primary_key = 18;
+  // True when JDBC reports IS_AUTOINCREMENT = "YES" (e.g. SERIAL, IDENTITY columns).
+  bool is_auto_increment = 19;
+  // True when the column has a server-side DEFAULT expression (COLUMN_DEF is non-empty).
+  bool has_default = 20;
+  // True when JDBC reports IS_GENERATEDCOLUMN = "YES" (GENERATED ALWAYS AS ... STORED).
+  bool is_generated = 21;
 }
 
 message Query {
