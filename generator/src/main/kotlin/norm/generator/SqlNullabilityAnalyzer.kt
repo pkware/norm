@@ -175,6 +175,21 @@ internal class SqlNullabilityAnalyzer(private val functionOverloads: Map<String,
     return sql.substring(start).trimEnd(';', ' ', '\n', '\t')
   }
 
+  /**
+   * Checks whether a SQL expression is a known non-null construct based on its prefix.
+   *
+   * This is a lightweight check that identifies top-level constructs like `EXISTS(...)`,
+   * `COUNT(...)`, and `COALESCE(...)` without requiring an `AS` alias. It does not perform
+   * the full recursive strictness analysis that [findNonNullAliases] does for aliased expressions.
+   *
+   * Useful as a fallback in [JdbcAnalyzer.buildResultColumns] for un-aliased SELECT items
+   * where [findNonNullAliases] cannot help (it requires `AS alias` syntax).
+   */
+  fun isKnownNonNullExpression(expression: String): Boolean {
+    val upper = expression.trim().uppercase()
+    return NON_NULL_EXPRESSIONS.any { upper.startsWith(it) }
+  }
+
   private companion object {
     /** Matches `AS alias` at the end of a select expression. */
     private val AS_ALIAS = Regex("""\bAS\s+(\w+)\s*$""", RegexOption.IGNORE_CASE)

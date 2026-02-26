@@ -77,6 +77,20 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
       ?: FROM_TABLE.find(sql)?.groupValues?.get(1)?.let(::tableSimpleName)
     val whereIndex = sql.indexOf(" WHERE ", ignoreCase = true)
 
+    // COALESCE pattern: SET col = coalesce(?, fallback) — always nullable regardless of column constraint.
+    // Scoped to the SET clause (before WHERE) so it doesn't affect WHERE conditions.
+    val setEndIndex = if (whereIndex > 0) whereIndex else sql.length
+    val setClauseForCoalesce = sql.substring(0, setEndIndex)
+    for (match in COLUMN_EQUALS_COALESCE_PARAM.findAll(setClauseForCoalesce)) {
+      val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::unquoteIdentifier)
+      val colName = unquoteIdentifier(match.groupValues[2])
+      val paramNum = paramIndex.paramNumberAt(match.range.last)
+      if (paramNum !in params) {
+        params[paramNum] =
+          InferredParameter(colName, qualifiedTable ?: tableName, inheritsNullability = false, alwaysNullable = true)
+      }
+    }
+
     if (whereIndex > 0) {
       // SET col = ? (before WHERE — inherits nullability)
       val setClause = sql.substring(0, whereIndex)
@@ -84,8 +98,10 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
         val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::unquoteIdentifier)
         val colName = unquoteIdentifier(match.groupValues[2])
         val paramNum = paramIndex.paramNumberAt(match.range.last)
-        params[paramNum] =
-          InferredParameter(funcNames[paramNum] ?: colName, qualifiedTable ?: tableName, inheritsNullability = true)
+        if (paramNum !in params) {
+          params[paramNum] =
+            InferredParameter(funcNames[paramNum] ?: colName, qualifiedTable ?: tableName, inheritsNullability = true)
+        }
       }
 
       // WHERE col <op> ? (after WHERE — does NOT inherit nullability)
@@ -105,8 +121,10 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
         val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::unquoteIdentifier)
         val colName = unquoteIdentifier(match.groupValues[2])
         val paramNum = paramIndex.paramNumberAt(match.range.last)
-        params[paramNum] =
-          InferredParameter(funcNames[paramNum] ?: colName, qualifiedTable ?: tableName, inheritsNullability = false)
+        if (paramNum !in params) {
+          params[paramNum] =
+            InferredParameter(funcNames[paramNum] ?: colName, qualifiedTable ?: tableName, inheritsNullability = false)
+        }
       }
     }
 
@@ -132,6 +150,10 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
   fun resolveParameterNotNull(inferredParams: Map<Int, InferredParameter>, catalog: Catalog): Map<Int, Boolean> {
     val notNullMap = mutableMapOf<Int, Boolean>()
     for ((paramNum, inferred) in inferredParams) {
+      if (inferred.alwaysNullable) {
+        notNullMap[paramNum] = false
+        continue
+      }
       if (!inferred.inheritsNullability) {
         notNullMap[paramNum] = true
         continue
@@ -308,6 +330,17 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
       )
 
     /**
+     * Matches `col = coalesce(?, ...)` — a column assignment where COALESCE wraps the parameter.
+     * The `?` is the first argument, meaning `null` = "use the fallback expression".
+     * Group 1: optional table qualifier, Group 2: column name.
+     */
+    private val COLUMN_EQUALS_COALESCE_PARAM =
+      Regex(
+        """(?:($SQL_IDENTIFIER)\.)?($SQL_IDENTIFIER)\s*=\s*coalesce\(\s*\?""",
+        RegexOption.IGNORE_CASE,
+      )
+
+    /**
      * Strips surrounding double-quotes from a SQL identifier, if present.
      * For example, `"name"` becomes `name`, and `author` stays `author`.
      */
@@ -377,10 +410,14 @@ private data class ArgExpression(val text: String, val paramPositions: List<Int>
  * @property columnName The column name used for nullability lookup in the catalog. When a parameter
  *   appears inside a function call in an INSERT VALUES clause, [name] may be the function's formal
  *   argument name while [columnName] is the INSERT target column. `null` defaults to using [name].
+ * @property alwaysNullable When `true`, the parameter is unconditionally nullable regardless of the
+ *   target column's `NOT NULL` constraint. Used for `COALESCE(?, fallback)` patterns in SET clauses,
+ *   where `null` means "keep the current value".
  */
 internal data class InferredParameter(
   val name: String,
   val tableName: String?,
   val inheritsNullability: Boolean,
   val columnName: String? = null,
+  val alwaysNullable: Boolean = false,
 )

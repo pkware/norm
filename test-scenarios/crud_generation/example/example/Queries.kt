@@ -103,7 +103,7 @@ public interface Queries {
    * ```
    */
   @Throws(SQLException::class)
-  public fun <T> countAuditLog(mapper: (count: Long?) -> T): T
+  public fun <T : Any> countAuditLog(mapper: (count: Long) -> T): T
 
   /**
    * ```sql
@@ -111,7 +111,7 @@ public interface Queries {
    * ```
    */
   @Throws(SQLException::class)
-  public fun countAuditLog(): Long? = countAuditLog(::inputValue)
+  public fun countAuditLog(): Long = countAuditLog(::inputValue)
 
   /**
    * ```sql
@@ -168,7 +168,7 @@ public interface Queries {
    * ```
    */
   @Throws(SQLException::class)
-  public fun <T> existsAuthorById(id: Int, mapper: (exists: Boolean?) -> T): T
+  public fun <T : Any> existsAuthorById(id: Int, mapper: (exists: Boolean) -> T): T
 
   /**
    * ```sql
@@ -176,7 +176,7 @@ public interface Queries {
    * ```
    */
   @Throws(SQLException::class)
-  public fun existsAuthorById(id: Int): Boolean? = existsAuthorById(id, ::inputValue)
+  public fun existsAuthorById(id: Int): Boolean = existsAuthorById(id, ::inputValue)
 
   /**
    * ```sql
@@ -236,7 +236,7 @@ public interface Queries {
    * ```
    */
   @Throws(SQLException::class)
-  public fun <T> countAuthor(mapper: (count: Long?) -> T): T
+  public fun <T : Any> countAuthor(mapper: (count: Long) -> T): T
 
   /**
    * ```sql
@@ -244,7 +244,7 @@ public interface Queries {
    * ```
    */
   @Throws(SQLException::class)
-  public fun countAuthor(): Long? = countAuthor(::inputValue)
+  public fun countAuthor(): Long = countAuthor(::inputValue)
 
   /**
    * ```sql
@@ -349,10 +349,10 @@ public interface Queries {
    * ```
    */
   @Throws(SQLException::class)
-  public fun <T> existsOrderItemById(
+  public fun <T : Any> existsOrderItemById(
     order_id: Int,
     item_id: Int,
-    mapper: (exists: Boolean?) -> T,
+    mapper: (exists: Boolean) -> T,
   ): T
 
   /**
@@ -361,7 +361,7 @@ public interface Queries {
    * ```
    */
   @Throws(SQLException::class)
-  public fun existsOrderItemById(order_id: Int, item_id: Int): Boolean? = existsOrderItemById(order_id, item_id, ::inputValue)
+  public fun existsOrderItemById(order_id: Int, item_id: Int): Boolean = existsOrderItemById(order_id, item_id, ::inputValue)
 
   /**
    * ```sql
@@ -454,7 +454,7 @@ public interface Queries {
    * ```
    */
   @Throws(SQLException::class)
-  public fun <T> countOrderItem(mapper: (count: Long?) -> T): T
+  public fun <T : Any> countOrderItem(mapper: (count: Long) -> T): T
 
   /**
    * ```sql
@@ -462,7 +462,7 @@ public interface Queries {
    * ```
    */
   @Throws(SQLException::class)
-  public fun countOrderItem(): Long? = countOrderItem(::inputValue)
+  public fun countOrderItem(): Long = countOrderItem(::inputValue)
 
   /**
    * ```sql
@@ -525,7 +525,7 @@ public interface Queries {
    * ```
    */
   @Throws(SQLException::class)
-  public fun <T> existsProductById(id: Int, mapper: (exists: Boolean?) -> T): T
+  public fun <T : Any> existsProductById(id: Int, mapper: (exists: Boolean) -> T): T
 
   /**
    * ```sql
@@ -533,7 +533,7 @@ public interface Queries {
    * ```
    */
   @Throws(SQLException::class)
-  public fun existsProductById(id: Int): Boolean? = existsProductById(id, ::inputValue)
+  public fun existsProductById(id: Int): Boolean = existsProductById(id, ::inputValue)
 
   /**
    * ```sql
@@ -623,7 +623,7 @@ public interface Queries {
    * ```
    */
   @Throws(SQLException::class)
-  public fun <T> countProduct(mapper: (count: Long?) -> T): T
+  public fun <T : Any> countProduct(mapper: (count: Long) -> T): T
 
   /**
    * ```sql
@@ -631,7 +631,7 @@ public interface Queries {
    * ```
    */
   @Throws(SQLException::class)
-  public fun countProduct(): Long? = countProduct(::inputValue)
+  public fun countProduct(): Long = countProduct(::inputValue)
 
   /**
    * ```sql

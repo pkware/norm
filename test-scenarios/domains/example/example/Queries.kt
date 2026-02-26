@@ -156,9 +156,9 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> updateUser(
     stream: Iterable<Input>,
-    email: Input.() -> String,
-    age: Input.() -> Int,
-    zipCode: Input.() -> String,
+    email: Input.() -> String?,
+    age: Input.() -> Int?,
+    zipCode: Input.() -> String?,
     id: Input.() -> Int,
     batchSize: Int,
   ): IntArray
@@ -188,9 +188,9 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> updateUser(
     stream: Iterable<Input>,
-    email: Input.() -> String,
-    age: Input.() -> Int,
-    zipCode: Input.() -> String,
+    email: Input.() -> String?,
+    age: Input.() -> Int?,
+    zipCode: Input.() -> String?,
     id: Input.() -> Int,
   ): IntArray = updateUser(stream, email, age, zipCode, id, 100)
 
@@ -206,9 +206,9 @@ public interface Queries {
    */
   @Throws(SQLException::class)
   public fun updateUser(
-    email: String,
-    age: Int,
-    zipCode: String,
+    email: String?,
+    age: Int?,
+    zipCode: String?,
     id: Int,
   )
 }

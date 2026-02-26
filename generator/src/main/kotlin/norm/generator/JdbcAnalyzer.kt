@@ -228,10 +228,15 @@ public class JdbcAnalyzer(private val connection: Connection) {
         // This happens for computed expressions (EXISTS, COUNT, COALESCE, function calls, crosstab
         // columns, etc.).
         // Resolution order:
-        //   1. SqlNullabilityAnalyzer: identifies non-null SQL expressions (COUNT, EXISTS, strict functions)
-        //   2. Catalog fallback: if the column maps to a known table column, use its NOT NULL constraint
-        //   3. Default to nullable (safest assumption)
-        else -> columnLabel in nonNullAliases || catalogColumn?.not_null == true
+        //   1. SqlNullabilityAnalyzer (aliased): identifies non-null SQL expressions with AS aliases
+        //   2. SqlNullabilityAnalyzer (un-aliased): checks if the raw expression is a known non-null
+        //      construct (EXISTS, COUNT, COALESCE) — handles SELECT EXISTS(...) without AS
+        //   3. Catalog fallback: if the column maps to a known table column, use its NOT NULL constraint
+        //   4. Default to nullable (safest assumption)
+        else ->
+          columnLabel in nonNullAliases ||
+            selectItem?.expression?.let { nullabilityAnalyzer.isKnownNonNullExpression(it) } == true ||
+            catalogColumn?.not_null == true
       }
 
       val comment = catalogColumn?.comment.orEmpty()

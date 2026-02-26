@@ -153,9 +153,9 @@ public class PostgresQueries(
 
   @Throws(SQLException::class)
   override fun updateUser(
-    email: String,
-    age: Int,
-    zipCode: String,
+    email: String?,
+    age: Int?,
+    zipCode: String?,
     id: Int,
   ) {
     val sql = """
@@ -178,9 +178,9 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> updateUser(
     stream: Iterable<Input>,
-    email: Input.() -> String,
-    age: Input.() -> Int,
-    zipCode: Input.() -> String,
+    email: Input.() -> String?,
+    age: Input.() -> Int?,
+    zipCode: Input.() -> String?,
     id: Input.() -> Int,
     batchSize: Int,
   ): IntArray {

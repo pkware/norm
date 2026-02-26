@@ -88,11 +88,11 @@ public class PostgresQueries(
   override fun <T : Any> findAllAuditLogDynamically(mapper: (message: String, logged_at: OffsetDateTime) -> T): Query<T> = findAllAuditLog(mapper, driver::dynamic)
 
   @Throws(SQLException::class)
-  override fun <T> countAuditLog(mapper: (count: Long?) -> T): T {
+  override fun <T : Any> countAuditLog(mapper: (count: Long) -> T): T {
     val sql = "SELECT COUNT(*) FROM audit_log"
     val rowReader: ResultSet.() -> T = {
       mapper(
-        getLong(1).takeUnless { wasNull() },
+        getLong(1),
       )
     }
     return driver.queryOne(sql, rowReader)
@@ -153,11 +153,11 @@ public class PostgresQueries(
   ) -> T): Many<T> = findAuthorById(id, mapper, driver::queryMany)
 
   @Throws(SQLException::class)
-  override fun <T> existsAuthorById(id: Int, mapper: (exists: Boolean?) -> T): T {
+  override fun <T : Any> existsAuthorById(id: Int, mapper: (exists: Boolean) -> T): T {
     val sql = "SELECT EXISTS(SELECT 1 FROM author WHERE id = ?)"
     val rowReader: ResultSet.() -> T = {
       mapper(
-        getBoolean(1).takeUnless { wasNull() },
+        getBoolean(1),
       )
     }
     return driver.queryOne(sql, rowReader) {
@@ -204,11 +204,11 @@ public class PostgresQueries(
   }
 
   @Throws(SQLException::class)
-  override fun <T> countAuthor(mapper: (count: Long?) -> T): T {
+  override fun <T : Any> countAuthor(mapper: (count: Long) -> T): T {
     val sql = "SELECT COUNT(*) FROM author"
     val rowReader: ResultSet.() -> T = {
       mapper(
-        getLong(1).takeUnless { wasNull() },
+        getLong(1),
       )
     }
     return driver.queryOne(sql, rowReader)
@@ -306,15 +306,15 @@ public class PostgresQueries(
   ): Many<T> = findOrderItemById(order_id, item_id, mapper, driver::queryMany)
 
   @Throws(SQLException::class)
-  override fun <T> existsOrderItemById(
+  override fun <T : Any> existsOrderItemById(
     order_id: Int,
     item_id: Int,
-    mapper: (exists: Boolean?) -> T,
+    mapper: (exists: Boolean) -> T,
   ): T {
     val sql = "SELECT EXISTS(SELECT 1 FROM order_item WHERE order_id = ? AND item_id = ?)"
     val rowReader: ResultSet.() -> T = {
       mapper(
-        getBoolean(1).takeUnless { wasNull() },
+        getBoolean(1),
       )
     }
     return driver.queryOne(sql, rowReader) {
@@ -397,11 +397,11 @@ public class PostgresQueries(
   ) -> T): Query<T> = findAllOrderItem(mapper, driver::dynamic)
 
   @Throws(SQLException::class)
-  override fun <T> countOrderItem(mapper: (count: Long?) -> T): T {
+  override fun <T : Any> countOrderItem(mapper: (count: Long) -> T): T {
     val sql = "SELECT COUNT(*) FROM order_item"
     val rowReader: ResultSet.() -> T = {
       mapper(
-        getLong(1).takeUnless { wasNull() },
+        getLong(1),
       )
     }
     return driver.queryOne(sql, rowReader)
@@ -467,11 +467,11 @@ public class PostgresQueries(
   ) -> T): Many<T> = findProductById(id, mapper, driver::queryMany)
 
   @Throws(SQLException::class)
-  override fun <T> existsProductById(id: Int, mapper: (exists: Boolean?) -> T): T {
+  override fun <T : Any> existsProductById(id: Int, mapper: (exists: Boolean) -> T): T {
     val sql = "SELECT EXISTS(SELECT 1 FROM product WHERE id = ?)"
     val rowReader: ResultSet.() -> T = {
       mapper(
-        getBoolean(1).takeUnless { wasNull() },
+        getBoolean(1),
       )
     }
     return driver.queryOne(sql, rowReader) {
@@ -554,11 +554,11 @@ public class PostgresQueries(
   ) -> T): Query<T> = findAllProduct(mapper, driver::dynamic)
 
   @Throws(SQLException::class)
-  override fun <T> countProduct(mapper: (count: Long?) -> T): T {
+  override fun <T : Any> countProduct(mapper: (count: Long) -> T): T {
     val sql = "SELECT COUNT(*) FROM product"
     val rowReader: ResultSet.() -> T = {
       mapper(
-        getLong(1).takeUnless { wasNull() },
+        getLong(1),
       )
     }
     return driver.queryOne(sql, rowReader)
