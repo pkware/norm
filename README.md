@@ -63,7 +63,6 @@ norm {
 - [ ] It would be nice for query method Javadocs to have the SQL that they'll execute in them.
 - [ ] Support sqlc.embed() equivalent via SQL functions or table references
 - [ ] RLS information in table and repository KDoc
-- [ ] Put `@Blocking` on query methods that block when the framework is Micronaut. Check if Spring has something similar.
 
 ## Background
 ORMs like Hibernate take a code-first approach that doesn't sit well with the authors. It causes confusion as there are
