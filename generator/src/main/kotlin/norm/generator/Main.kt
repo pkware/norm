@@ -11,7 +11,6 @@ import com.squareup.kotlinpoet.TypeSpec
 import okio.Buffer
 import okio.ByteString.Companion.encodeUtf8
 import plugin.Catalog
-import plugin.Column
 import plugin.File
 import plugin.Query
 
@@ -28,8 +27,7 @@ private val SPRING_COMPONENT = ClassName("org.springframework.stereotype", "Comp
  * @param catalog The Postgres schema catalog.
  * @param queries The queries for which to generate code.
  * @param packageName The package in which to generate code.
- * @param frameworks The framework for which to generate code.
- * @param frameworkSchemas Schemas for which to generate framework code.
+ * @param frameworks The frameworks for which to generate DI annotations and connection providers.
  * @return The generated files. File names include the package hierarchy.
  */
 public fun generateCode(
@@ -37,11 +35,8 @@ public fun generateCode(
   queries: List<Query>,
   packageName: String,
   frameworks: Set<Framework>,
-  frameworkSchemas: Set<String>,
 ): List<File> {
-  val generator = TypeRepository(packageName, catalog, frameworks)
-
-  generateModelsForFrameworks(catalog, generator, frameworks, frameworkSchemas)
+  val generator = TypeRepository(packageName, catalog)
 
   val resolvedQueries = queries.map { SqlStatement(catalog, it, generator) }
   val queriesInterface = ClassName(packageName, "Queries")
@@ -59,28 +54,6 @@ public fun generateCode(
   }
     .toList()
   return typeSpecFiles + connectionProviders
-}
-
-private fun generateModelsForFrameworks(
-  catalog: Catalog,
-  generator: TypeRepository,
-  frameworks: Set<Framework>,
-  frameworkSchemas: Set<String>,
-) {
-  if (frameworks.isEmpty()) return
-  // If we're generating code for frameworks, generate projections for all tables of all schemas.
-  // This way the framework(s) can use them in their native modeling (Spring Data repositories, Micronaut repositories, etc.)
-  // TODO Do a regex-based filter and include the table name. That way stuff only gets generated for tables we care about.
-  for (schema in catalog.schemas) {
-    // If the filters are empty, the caller doesn't want any filtering.
-    if (frameworkSchemas.isEmpty() || frameworkSchemas.contains(schema.name)) {
-      for (table in schema.tables) {
-        if (table.columns.any(Column::is_primary_key)) {
-          generator.getTypeProjectionForTable(table)
-        }
-      }
-    }
-  }
 }
 
 private fun generateQueryImplementation(
@@ -127,7 +100,7 @@ private fun addDependencyInjectionAnnotations(
 ) {
   for (framework in frameworks) {
     when (framework) {
-      Framework.MICRONAUT_DATA_JDBC -> {
+      Framework.MICRONAUT_DATA -> {
         classBuilder.addAnnotation(JAKARTA_SINGLETON)
         classBuilder.addAnnotation(
           AnnotationSpec.builder(MICRONAUT_REQUIRES)
@@ -135,8 +108,7 @@ private fun addDependencyInjectionAnnotations(
             .build(),
         )
       }
-      Framework.SPRING_DATA_JDBC -> classBuilder.addAnnotation(SPRING_COMPONENT)
-      Framework.ALL_TABLES -> continue
+      Framework.SPRING_DATA -> classBuilder.addAnnotation(SPRING_COMPONENT)
     }
   }
 }
@@ -165,17 +137,13 @@ private const val PACKAGE_PLACEHOLDER = "packages.placeholder"
  *
  * @return A list of [File]s to include in the generated output. Empty when no DI frameworks are configured.
  */
-private fun generateConnectionProviders(packageName: String, frameworks: Set<Framework>): List<File> {
-  val result = mutableListOf<File>()
-  for (framework in frameworks) {
+private fun generateConnectionProviders(packageName: String, frameworks: Set<Framework>): List<File> =
+  frameworks.map { framework ->
     when (framework) {
-      Framework.MICRONAUT_DATA_JDBC -> result.add(loadTemplate(packageName, "MicronautConnectionProvider"))
-      Framework.SPRING_DATA_JDBC -> result.add(loadTemplate(packageName, "SpringConnectionProvider"))
-      Framework.ALL_TABLES -> continue
+      Framework.MICRONAUT_DATA -> loadTemplate(packageName, "MicronautConnectionProvider")
+      Framework.SPRING_DATA -> loadTemplate(packageName, "SpringConnectionProvider")
     }
   }
-  return result
-}
 
 /**
  * Loads a `.kt.template` resource, substitutes the package name, and returns it as a [File].

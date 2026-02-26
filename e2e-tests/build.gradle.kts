@@ -13,11 +13,6 @@ dependencies {
 
   // Testcontainers for real Postgres in Docker
   testImplementation(libs.bundles.testcontainers)
-
-  // Framework dependencies (compile-only, just to verify annotations are correct)
-  // These verify that generated code compiles against actual framework annotation classes
-  testCompileOnly("io.micronaut.data:micronaut-data-jdbc:4.0.0")
-  testCompileOnly("org.springframework.data:spring-data-jdbc:3.2.0")
 }
 
 // Point test source set to generated code from test-scenarios

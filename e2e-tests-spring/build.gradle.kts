@@ -12,10 +12,10 @@ dependencies {
   // Norm runtime (required by generated code)
   implementation(projects.runtime)
 
-  // Spring Data JDBC (auto-configured by Spring Boot)
-  implementation("org.springframework.boot:spring-boot-starter-data-jdbc")
+  // Spring JDBC + transaction support (without Data JDBC ORM layer)
+  implementation("org.springframework.boot:spring-boot-starter-jdbc")
 
-  // Kotlin reflection - required by Spring Data for constructor discovery on Kotlin data classes
+  // Kotlin reflection - required by Spring for constructor discovery on Kotlin data classes
   runtimeOnly(kotlin("reflect"))
 
   // Database
@@ -27,7 +27,7 @@ dependencies {
   testImplementation(libs.testcontainers.postgresql)
 }
 
-// Include Norm-generated entities (with @Table annotations)
+// Include Norm-generated code (with @Component DI annotations)
 sourceSets {
   main {
     kotlin {

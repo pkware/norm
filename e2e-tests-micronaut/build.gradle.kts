@@ -18,11 +18,14 @@ dependencies {
   // Micronaut Core (required for DI and runtime)
   implementation(libs.micronaut.inject)
 
-  // Micronaut Data JDBC
-  implementation(libs.micronaut.data.jdbc)
+  // Micronaut Data JDBC transaction + connection support (provides ConnectionOperations,
+  // TransactionOperations, @Transactional AOP — without the ORM entity layer)
+  implementation(libs.micronaut.data.tx.jdbc)
+
+  // Micronaut connection pooling
   implementation(libs.micronaut.hikari)
 
-  // KSP annotation processors - generate implementations at compile time
+  // KSP annotation processors - generate DI and @Transactional AOP proxy implementations at compile time
   ksp(libs.micronaut.inject.kotlin)
   ksp(libs.micronaut.data.processor)
 
@@ -35,7 +38,7 @@ dependencies {
   testImplementation(libs.bundles.testcontainers)
 }
 
-// Include Norm-generated entities (with @MappedEntity annotations)
+// Include Norm-generated code (with @Singleton DI annotations)
 sourceSets {
   main {
     kotlin {

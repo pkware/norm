@@ -38,7 +38,7 @@ public interface Queries {
   public fun <T : Any> getBook(id: Int, mapper: (
     id: Int,
     title: String,
-    authorId: Int,
+    author_id: Int,
   ) -> T): T
 
   /**

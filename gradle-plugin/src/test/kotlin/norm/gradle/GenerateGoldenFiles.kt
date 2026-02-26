@@ -119,9 +119,8 @@ class GenerateGoldenFiles {
         .filter(scenariosFilter)
         .flatMap { scenarioDir ->
           listOf(
-            FrameworkGoldenScenario(scenarioDir, setOf("MICRONAUT_DATA_JDBC"), "micronaut"),
-            FrameworkGoldenScenario(scenarioDir, setOf("SPRING_DATA_JDBC"), "spring"),
-            FrameworkGoldenScenario(scenarioDir, setOf("ALL_TABLES"), "all-tables"),
+            FrameworkGoldenScenario(scenarioDir, setOf("MICRONAUT_DATA"), "micronaut"),
+            FrameworkGoldenScenario(scenarioDir, setOf("SPRING_DATA"), "spring"),
           )
         }
     }
@@ -133,7 +132,7 @@ class GenerateGoldenFiles {
  *
  * @property scenarioDirectory The directory containing the scenario's schema.sql and queries.sql files.
  * @property frameworks The set of framework names to enable for code generation. These must match
- *   [Framework][norm.generator.Framework] enum constant names (e.g., "MICRONAUT_DATA_JDBC").
+ *   [Framework][norm.generator.Framework] enum constant names (e.g., "MICRONAUT_DATA").
  * @property goldenSubdir The subdirectory name where golden files should be output relative to
  *   [scenarioDirectory] (e.g., "micronaut", "spring").
  */

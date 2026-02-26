@@ -144,7 +144,7 @@ class GenerateCodeTest {
 
     val analyzedQueries = allParsedQueries.map { analyzer.analyzeQuery(it, catalog) }
 
-    val result = generateCode(catalog, analyzedQueries, packageName, frameworks, emptySet())
+    val result = generateCode(catalog, analyzedQueries, packageName, frameworks)
     val createdFiles = result.associate { spec ->
       Pair(spec.name, spec.contents.utf8())
     }.toMutableMap()
@@ -218,9 +218,8 @@ class GenerateCodeTest {
         .filter(Files::isDirectory)
         .flatMap { scenarioDir ->
           listOf(
-            FrameworkScenario(scenarioDir, setOf(Framework.MICRONAUT_DATA_JDBC), "micronaut"),
-            FrameworkScenario(scenarioDir, setOf(Framework.SPRING_DATA_JDBC), "spring"),
-            FrameworkScenario(scenarioDir, setOf(Framework.ALL_TABLES), "all-tables"),
+            FrameworkScenario(scenarioDir, setOf(Framework.MICRONAUT_DATA), "micronaut"),
+            FrameworkScenario(scenarioDir, setOf(Framework.SPRING_DATA), "spring"),
           )
         }
     }

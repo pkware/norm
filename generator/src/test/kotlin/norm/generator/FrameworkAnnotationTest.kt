@@ -2,11 +2,8 @@ package norm.generator
 
 import assertk.Assert
 import assertk.assertThat
-import assertk.assertions.contains
-import assertk.assertions.containsAtLeast
 import assertk.assertions.containsMatch
 import assertk.assertions.doesNotContain
-import assertk.assertions.isEqualTo
 import assertk.assertions.support.expected
 import assertk.assertions.support.show
 import com.squareup.kotlinpoet.FileSpec
@@ -20,10 +17,11 @@ import plugin.Schema
 import plugin.Table
 
 /**
- * Tests for framework-specific annotation generation in [TypeRepository].
+ * Tests for framework-specific code generation.
  *
- * These tests verify that the correct annotations are added to generated data classes
- * based on the [Framework] configuration.
+ * Verifies that:
+ * - DI annotations (`@Singleton`, `@Component`, `@Requires`) are correctly added to `PostgresQueries`
+ * - Entity classes have **no** ORM annotations regardless of framework configuration
  */
 class FrameworkAnnotationTest {
 
@@ -71,8 +69,51 @@ class FrameworkAnnotationTest {
     )
 
     /**
-     * Converts a TypeSpec to a string representation for assertion.
+     * Generates code with the given frameworks and returns the content of `PostgresQueries.kt`.
      */
+    private fun generatePostgresQueriesCode(frameworks: Set<Framework>): String {
+      val table = createTable("author")
+      val catalog = createCatalog(table)
+      val query = createQuery(
+        "listAuthors",
+        "author",
+        listOf(
+          Column(
+            name = "id",
+            not_null = true,
+            type = Identifier(name = "serial"),
+            table = Identifier(name = "author"),
+          ),
+        ),
+      )
+      val files = generateCode(catalog, listOf(query), TEST_PACKAGE, frameworks)
+      val postgresQueriesFile = files.first { it.name.endsWith("PostgresQueries.kt") }
+      return postgresQueriesFile.contents.utf8()
+    }
+
+    /**
+     * Generates an entity class with the given frameworks and returns its code as a string.
+     */
+    private fun generateEntityCode(frameworks: Set<Framework>): String {
+      val table = createTable(
+        "user_account",
+        Column(
+          name = "username",
+          not_null = true,
+          type = Identifier(name = "text"),
+          table = Identifier(name = "user_account"),
+        ),
+      )
+      val catalog = createCatalog(table)
+      val query = createQuery(
+        "listUsers",
+        "user_account",
+        table.columns,
+      )
+      val files = generateCode(catalog, listOf(query), TEST_PACKAGE, frameworks)
+      return files.map { it.contents.utf8() }.joinToString("\n")
+    }
+
     private fun typeSpecToString(typeSpec: com.squareup.kotlinpoet.TypeSpec): String {
       val fileSpec = FileSpec.builder(TEST_PACKAGE, "${typeSpec.name}.kt")
         .addType(typeSpec)
@@ -82,292 +123,83 @@ class FrameworkAnnotationTest {
   }
 
   @Nested
-  inner class MicronautDataJdbc {
+  inner class MicronautDependencyInjection {
 
     @Test
-    fun `MICRONAUT_DATA_JDBC adds @MappedEntity with correct package`() {
-      val table = createTable("user_account")
-      val catalog = createCatalog(table)
-      val repository = TypeRepository(
-        packageName = TEST_PACKAGE,
-        catalog = catalog,
-        frameworks = setOf(Framework.MICRONAUT_DATA_JDBC),
-      )
-
-      repository.getTypeProjectionForTable(table)
-      val generatedType = repository.requiredTypes.first()
-      val generatedCode = typeSpecToString(generatedType)
-
-      // KotlinPoet escapes keywords like "data" and "annotation" with backticks
-      assertThat(generatedCode).contains("io.micronaut.`data`.`annotation`.MappedEntity")
-      assertThat(generatedCode).contains("""@MappedEntity("user_account")""")
+    fun `MICRONAUT_DATA adds @Singleton to PostgresQueries`() {
+      val code = generatePostgresQueriesCode(setOf(Framework.MICRONAUT_DATA))
+      assertThat(code).containsMatch(Regex("""@Singleton"""))
     }
 
     @Test
-    fun `MICRONAUT_DATA_JDBC adds @Id from correct package`() {
-      val table = createTable("user_account")
-      val catalog = createCatalog(table)
-      val repository = TypeRepository(
-        packageName = TEST_PACKAGE,
-        catalog = catalog,
-        frameworks = setOf(Framework.MICRONAUT_DATA_JDBC),
-      )
-
-      repository.getTypeProjectionForTable(table)
-      val generatedType = repository.requiredTypes.first()
-      val generatedCode = typeSpecToString(generatedType)
-
-      // KotlinPoet escapes keywords like "data" and "annotation" with backticks
-      assertThat(generatedCode).contains("io.micronaut.`data`.`annotation`.Id")
-      // Verify @Id annotation is present on the id property
-      assertThat(generatedCode).contains("@field:Id")
-      // Use a regex pattern that handles different whitespace
-      assertThat(generatedCode).containsMatch(Regex("""@field:Id\s+public val id:"""))
+    fun `MICRONAUT_DATA adds @Requires(missingBeans) to PostgresQueries`() {
+      val code = generatePostgresQueriesCode(setOf(Framework.MICRONAUT_DATA))
+      assertThat(code).containsMatch(Regex("""@Requires\(missingBeans\s*=\s*\[Queries::class]"""))
     }
   }
 
   @Nested
-  inner class SpringDataJdbc {
+  inner class SpringDependencyInjection {
 
     @Test
-    fun `SPRING_DATA_JDBC adds @Table with correct package`() {
-      val table = createTable("user_account")
-      val catalog = createCatalog(table)
-      val repository = TypeRepository(
-        packageName = TEST_PACKAGE,
-        catalog = catalog,
-        frameworks = setOf(Framework.SPRING_DATA_JDBC),
-      )
-
-      repository.getTypeProjectionForTable(table)
-      val generatedType = repository.requiredTypes.first()
-      val generatedCode = typeSpecToString(generatedType)
-
-      // KotlinPoet escapes keywords like "data" with backticks
-      assertThat(generatedCode).contains("org.springframework.`data`.relational.core.mapping.Table")
-      assertThat(generatedCode).contains("""@Table("user_account")""")
-    }
-
-    @Test
-    fun `SPRING_DATA_JDBC adds @Id from correct package`() {
-      val table = createTable("user_account")
-      val catalog = createCatalog(table)
-      val repository = TypeRepository(
-        packageName = TEST_PACKAGE,
-        catalog = catalog,
-        frameworks = setOf(Framework.SPRING_DATA_JDBC),
-      )
-
-      repository.getTypeProjectionForTable(table)
-      val generatedType = repository.requiredTypes.first()
-      val generatedCode = typeSpecToString(generatedType)
-
-      // KotlinPoet escapes keywords like "data" and "annotation" with backticks
-      assertThat(generatedCode).contains("org.springframework.`data`.`annotation`.Id")
-      // Verify @Id annotation is present on the id property
-      assertThat(generatedCode).contains("@Id")
-      // Use a regex pattern that handles different whitespace
-      assertThat(generatedCode).containsMatch(Regex("""@Id\s+public val id:"""))
+    fun `SPRING_DATA adds @Component to PostgresQueries`() {
+      val code = generatePostgresQueriesCode(setOf(Framework.SPRING_DATA))
+      assertThat(code).containsMatch(Regex("""@Component"""))
     }
   }
 
   @Nested
-  inner class BothFrameworks {
+  inner class NoFramework {
 
     @Test
-    fun `Both frameworks together add both annotations`() {
-      val table = createTable("user_account")
-      val catalog = createCatalog(table)
-      val repository = TypeRepository(
-        packageName = TEST_PACKAGE,
-        catalog = catalog,
-        frameworks = setOf(Framework.MICRONAUT_DATA_JDBC, Framework.SPRING_DATA_JDBC),
+    fun `empty frameworks adds no DI annotations`() {
+      val code = generatePostgresQueriesCode(emptySet())
+      assertThat(code).doesNotContain("@Singleton")
+      assertThat(code).doesNotContain("@Component")
+      assertThat(code).doesNotContain("@Requires")
+    }
+  }
+
+  @Nested
+  inner class NoEntityAnnotations {
+
+    @Test
+    fun `MICRONAUT_DATA does not add entity annotations to generated classes`() {
+      val allCode = generateEntityCode(setOf(Framework.MICRONAUT_DATA))
+      assertThat(allCode).doesNotContain("MappedEntity")
+      assertThat(allCode).doesNotContain("MappedProperty")
+      assertThat(allCode).doesNotContain("@field:Id")
+    }
+
+    @Test
+    fun `SPRING_DATA does not add entity annotations to generated classes`() {
+      val allCode = generateEntityCode(setOf(Framework.SPRING_DATA))
+      assertThat(allCode).doesNotContain("@Table")
+      assertThat(allCode).doesNotContain("@Column")
+      assertThat(allCode).doesNotContain("org.springframework.data.annotation.Id")
+    }
+
+    @Test
+    fun `table projection properties use database column names`() {
+      val table = createTable(
+        "user_account",
+        Column(
+          name = "first_name",
+          not_null = true,
+          type = Identifier(name = "text"),
+          table = Identifier(name = "user_account"),
+        ),
       )
+      val catalog = createCatalog(table)
+      val repository = TypeRepository(TEST_PACKAGE, catalog)
 
       repository.getTypeProjectionForTable(table)
       val generatedType = repository.requiredTypes.first()
       val generatedCode = typeSpecToString(generatedType)
 
-      // Both class-level annotations should be present (KotlinPoet escapes keywords with backticks)
-      assertThat(generatedCode).contains("io.micronaut")
-      assertThat(generatedCode).contains("MappedEntity")
-      assertThat(generatedCode).contains("org.springframework")
-      assertThat(generatedCode).contains("relational.core.mapping")
-      assertThat(generatedCode).contains("""@MappedEntity("user_account")""")
-      assertThat(generatedCode).contains("""@Table("user_account")""")
-
-      // Both @Id annotations should be imported (with different qualified references due to conflicts)
-      // When there's a naming conflict, KotlinPoet imports one and uses fully-qualified for the other
-      // Check that both Id annotations are referenced somewhere in the code
-      val idAnnotationMatches = Regex("""@.*Id""").findAll(generatedCode).toList()
-      assertThat(idAnnotationMatches.size).isEqualTo(2)
-    }
-  }
-
-  @Nested
-  inner class AllTablesFramework {
-
-    @Test
-    fun `ALL_TABLES generates models for ALL tables including unused ones`() {
-      // Create a table that IS used in queries
-      val usedTable = createTable(
-        "author",
-        Column(
-          name = "name",
-          not_null = true,
-          type = Identifier(name = "text"),
-          table = Identifier(name = "author"),
-        ),
-      )
-
-      // Create an "orphan" table that is NOT referenced in any query
-      val orphanTable = createTable(
-        "orphan_config",
-        Column(
-          name = "setting_key",
-          not_null = true,
-          type = Identifier(name = "text"),
-          table = Identifier(name = "orphan_config"),
-        ),
-      )
-
-      val catalog = createCatalog(usedTable, orphanTable)
-
-      // Create a query that only references the author table
-      val query = createQuery(
-        "getAuthor",
-        "author",
-        listOf(
-          Column(
-            name = "id",
-            not_null = true,
-            type = Identifier(name = "serial"),
-            table = Identifier(name = "author"),
-          ),
-          Column(
-            name = "name",
-            not_null = true,
-            type = Identifier(name = "text"),
-            table = Identifier(name = "author"),
-          ),
-        ),
-      )
-
-      // Generate code with ALL_TABLES framework - should generate models for all tables
-      val files = generateCode(
-        catalog = catalog,
-        queries = listOf(query),
-        packageName = TEST_PACKAGE,
-        frameworks = setOf(Framework.ALL_TABLES),
-        frameworkSchemas = emptySet(),
-      )
-
-      val fileNames = files.map { it.name }
-
-      // Both tables should have models generated
-      val packagePath = TEST_PACKAGE.replace('.', '/')
-      assertThat(fileNames).containsAtLeast(
-        "$packagePath/Author.kt",
-        "$packagePath/OrphanConfig.kt",
-      )
-    }
-
-    @Test
-    fun `Empty framework set only generates models for tables used in queries`() {
-      // Create a table that IS used in queries
-      val usedTable = createTable(
-        "author",
-        Column(
-          name = "name",
-          not_null = true,
-          type = Identifier(name = "text"),
-          table = Identifier(name = "author"),
-        ),
-      )
-
-      // Create an "orphan" table that is NOT referenced in any query
-      val orphanTable = createTable(
-        "orphan_config",
-        Column(
-          name = "setting_key",
-          not_null = true,
-          type = Identifier(name = "text"),
-          table = Identifier(name = "orphan_config"),
-        ),
-      )
-
-      val catalog = createCatalog(usedTable, orphanTable)
-
-      // With empty frameworks, TypeRepository only generates types when explicitly requested
-      // (i.e., through query generation or explicit getTypeProjectionForTable calls)
-      val repository = TypeRepository(
-        packageName = TEST_PACKAGE,
-        catalog = catalog,
-        frameworks = emptySet(),
-      )
-
-      // Only request the author table - simulating what would happen during query processing
-      repository.getTypeProjectionForTable(usedTable)
-
-      // Get all generated types
-      val generatedTypeNames = repository.requiredTypes.map { it.name }.toSet()
-
-      // Author should be generated (because we explicitly requested it)
-      assertThat(generatedTypeNames).contains("Author")
-
-      // OrphanConfig should NOT be generated (we never requested it, and empty frameworks means no ALL_TABLES)
-      assertThat(generatedTypeNames).doesNotContain("OrphanConfig")
-    }
-  }
-
-  @Nested
-  inner class IdColumnBehavior {
-
-    @Test
-    fun `Non-id columns do not get @Id annotation`() {
-      val table = Table(
-        rel = Identifier(name = "user_account"),
-        columns = listOf(
-          Column(
-            name = "id",
-            not_null = true,
-            is_primary_key = true,
-            type = Identifier(name = "serial"),
-            table = Identifier(name = "user_account"),
-          ),
-          Column(
-            name = "username",
-            not_null = true,
-            type = Identifier(name = "text"),
-            table = Identifier(name = "user_account"),
-          ),
-          Column(
-            name = "email",
-            not_null = true,
-            type = Identifier(name = "text"),
-            table = Identifier(name = "user_account"),
-          ),
-        ),
-      )
-      val catalog = createCatalog(table)
-      val repository = TypeRepository(
-        packageName = TEST_PACKAGE,
-        catalog = catalog,
-        frameworks = setOf(Framework.MICRONAUT_DATA_JDBC),
-      )
-
-      repository.getTypeProjectionForTable(table)
-      val generatedType = repository.requiredTypes.first()
-      val generatedCode = typeSpecToString(generatedType)
-
-      // Count occurrences of @Id - should only appear once (on the id property)
-      val idAnnotationCount = "@field:Id\\b".toRegex().findAll(generatedCode).count()
-      assertThat(idAnnotationCount).isEqualTo(1)
-
-      // Verify @Id is only on the id property, not on username or email
-      assertThat(generatedCode).containsMatch(Regex("""Id\s+public val id:"""))
-      assertThat(generatedCode).doesNotContainMatch(Regex("""Id\s+public val username:"""))
-      assertThat(generatedCode).doesNotContainMatch(Regex("""Id\s+public val email:"""))
+      // Properties should use original snake_case column names, not camelCase
+      assertThat(generatedCode).containsMatch(Regex("""val first_name:"""))
+      assertThat(generatedCode).doesNotContainMatch(Regex("""val firstName:"""))
     }
   }
 }

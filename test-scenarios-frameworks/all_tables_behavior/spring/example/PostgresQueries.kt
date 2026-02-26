@@ -42,7 +42,7 @@ public class PostgresQueries(
   override fun <T : Any> getBook(id: Int, mapper: (
     id: Int,
     title: String,
-    authorId: Int,
+    author_id: Int,
   ) -> T): T {
     val sql = "SELECT * FROM book WHERE id = ?"
     val rowReader: ResultSet.() -> T = {

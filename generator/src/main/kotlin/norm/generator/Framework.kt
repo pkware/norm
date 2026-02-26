@@ -5,21 +5,18 @@ package norm.generator
  */
 public enum class Framework {
   /**
-   * Classes should be generated for all database tables, without specifying framework-specific annotations.
-   */
-  ALL_TABLES,
-
-  /**
-   * Classes should be generated for all database tables, with Micronaut Data JDBC-specific annotations.
+   * Generates Micronaut DI annotations and a `MicronautConnectionProvider` that participates in
+   * Micronaut-managed transactions.
    *
    * See [Micronaut Documentation](https://micronaut-projects.github.io/micronaut-data/latest/guide/).
    */
-  MICRONAUT_DATA_JDBC,
+  MICRONAUT_DATA,
 
   /**
-   * Classes should be generated for all database tables, with Spring Data JDBC-specific annotations.
+   * Generates Spring DI annotations and a `SpringConnectionProvider` that participates in
+   * Spring-managed transactions.
    *
    * See [Spring Documentation](https://docs.spring.io/spring-data/relational/reference/jdbc.html).
    */
-  SPRING_DATA_JDBC,
+  SPRING_DATA,
 }
