@@ -106,13 +106,16 @@ public class JdbcAnalyzer(private val connection: Connection) {
     val tableComments = catalogLoader.loadTableComments(schemaName)
     val columnComments = catalogLoader.loadColumnComments(schemaName)
 
-    // Discover tables. Include "PARTITIONED TABLE" so that partitioned parents (relkind='p') are found
-    // alongside regular tables (relkind='r'). Without this, queries against partitioned tables fail because
-    // the parent table is missing from the catalog.
+    // Discover all table-like relations. PostgreSQL's JDBC driver reports different relkinds as separate types:
+    //   "TABLE"              — regular tables (relkind='r') and partition children
+    //   "PARTITIONED TABLE"  — partitioned parents (relkind='p')
+    //   "VIEW"               — views (relkind='v')
+    //   "MATERIALIZED VIEW"  — materialized views (relkind='m')
     // Partition children (e.g., event_2026) are excluded — they are implementation details of the parent.
     val partitionChildren = catalogLoader.loadPartitionChildren(schemaName)
     val tableNames = mutableListOf<String>()
-    dbMeta.getTables(null, schemaName, null, arrayOf("TABLE", "PARTITIONED TABLE")).use { rs ->
+    val tableTypes = arrayOf("TABLE", "PARTITIONED TABLE", "VIEW", "MATERIALIZED VIEW")
+    dbMeta.getTables(null, schemaName, null, tableTypes).use { rs ->
       while (rs.next()) {
         val name = rs.getString("TABLE_NAME")
         if (name !in partitionChildren) {

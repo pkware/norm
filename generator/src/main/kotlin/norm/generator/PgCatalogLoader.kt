@@ -112,12 +112,13 @@ internal class PgCatalogLoader(private val connection: Connection) {
   }
 
   /**
-   * Returns table comments for all tables in [schemaName], keyed by table name.
+   * Returns comments for all table-like relations in [schemaName], keyed by relation name.
    *
-   * Comments are set with `COMMENT ON TABLE table IS '...'` in DDL.
+   * Includes tables, partitioned tables, views, and materialized views.
+   * Comments are set with `COMMENT ON TABLE|VIEW|MATERIALIZED VIEW name IS '...'` in DDL.
    *
    * @param schemaName The schema to load comments for.
-   * @return A map from table name to the comment text. Tables without comments are absent.
+   * @return A map from relation name to the comment text. Relations without comments are absent.
    */
   fun loadTableComments(schemaName: String): Map<String, String> = buildMap {
     connection.createStatement().use { stmt ->
@@ -129,7 +130,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = '$schemaName'
           AND d.objsubid = 0
-          AND c.relkind IN ('r', 'p')
+          AND c.relkind IN ('r', 'p', 'v', 'm')
         """.trimIndent(),
       ).use { rs ->
         while (rs.next()) {
