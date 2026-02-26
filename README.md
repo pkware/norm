@@ -62,6 +62,8 @@ norm {
 - [ ] IntelliJ plugin for SQL fragment tracking. Currently we ship an `intellij-languageinjection.xml` config that provides basic SQL injection for `Query.append()`, but each fragment is analyzed in isolation. A proper plugin implementing `LanguageInjectionContributor` or using the `MultiHostInjector` API could track string values flowing through the builder pattern and reconstruct the full SQL statement for validation. This is how Hibernate and Spring's `JdbcClient` achieve fragment-aware SQL support.
 - [ ] It would be nice for query method Javadocs to have the SQL that they'll execute in them.
 - [ ] Support sqlc.embed() equivalent via SQL functions or table references
+- [ ] RLS information in table and repository KDoc
+- [ ] Put `@Blocking` on query methods that block when the framework is Micronaut. Check if Spring has something similar.
 
 ## Background
 ORMs like Hibernate take a code-first approach that doesn't sit well with the authors. It causes confusion as there are
