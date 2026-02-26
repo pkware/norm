@@ -30,7 +30,7 @@ wire-json = { module = "com.squareup.wire:wire-moshi-adapter", version.ref = "wi
 
 [plugins]
 idea-ext = "org.jetbrains.gradle.plugin.idea-ext:1.1.9"
-ksp = "com.google.devtools.ksp:2.2.20-2.0.4"
+ksp = "com.google.devtools.ksp:2.2.21-2.0.5"
 # TODO Use the latest version, and don't use a SNAPSHOT
 norm = "com.pkware.norm:1.0.0-SNAPSHOT"
 shadow = "com.gradleup.shadow:9.3.1"
