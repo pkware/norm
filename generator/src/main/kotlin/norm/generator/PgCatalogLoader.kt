@@ -84,6 +84,58 @@ internal class PgCatalogLoader(private val connection: Connection) {
     }
 
   /**
+   * Returns NOT NULL column information for views and materialized views by tracing columns back to their
+   * source base table columns via `pg_depend`.
+   *
+   * JDBC's `getColumns()` reports all view/matview columns as nullable because views carry no constraints.
+   * This method resolves the actual nullability by following dependency links from view columns to base
+   * table columns, where `NOT NULL` constraints exist.
+   *
+   * Only marks a view column as `NOT NULL` when it depends on **exactly one** base table column that is
+   * `NOT NULL`. Columns backed by expressions, multiple source columns, or nullable source columns are
+   * left as nullable (the safe default).
+   *
+   * @param schemaName The schema to check.
+   * @return A set of `"viewName.columnName"` strings for view/matview columns that are non-nullable.
+   */
+  fun loadViewColumnNullability(schemaName: String): Set<String> = buildSet {
+    connection.createStatement().use { stmt ->
+      stmt.executeQuery(
+        """
+        SELECT
+          view_class.relname AS view_name,
+          view_attr.attname AS view_column,
+          source_attr.attnotnull AS source_not_null
+        FROM pg_catalog.pg_depend d
+        JOIN pg_catalog.pg_rewrite rw ON rw.oid = d.objid
+        JOIN pg_catalog.pg_class view_class ON view_class.oid = rw.ev_class
+        JOIN pg_catalog.pg_namespace n ON n.oid = view_class.relnamespace
+        JOIN pg_catalog.pg_attribute source_attr
+          ON source_attr.attrelid = d.refobjid AND source_attr.attnum = d.refobjsubid
+        JOIN pg_catalog.pg_class source_class ON source_class.oid = d.refobjid
+        JOIN pg_catalog.pg_attribute view_attr ON view_attr.attrelid = view_class.oid
+        WHERE n.nspname = '$schemaName'
+          AND view_class.relkind IN ('v', 'm')
+          AND d.classid = 'pg_rewrite'::regclass
+          AND d.refclassid = 'pg_class'::regclass
+          AND d.refobjsubid > 0
+          AND d.deptype = 'n'
+          AND source_class.relkind IN ('r', 'p')
+          AND view_attr.attnum > 0
+          AND view_attr.attname = source_attr.attname
+          AND source_attr.attnum > 0
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) {
+          if (rs.getBoolean("source_not_null")) {
+            add("${rs.getString("view_name")}.${rs.getString("view_column")}")
+          }
+        }
+      }
+    }
+  }
+
+  /**
    * Returns the names of partition children in [schemaName].
    *
    * Partition children (e.g., `event_2026 PARTITION OF event`) are implementation details of partitioned

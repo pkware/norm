@@ -8,6 +8,7 @@ import plugin.Query
 import plugin.Schema
 import plugin.Table
 import java.sql.Connection
+import java.sql.DatabaseMetaData
 import java.sql.ResultSetMetaData
 
 /**
@@ -16,7 +17,7 @@ import java.sql.ResultSetMetaData
  * Produces the same Wire protobuf types ([Catalog], [Query]) that the generator consumes,
  * replacing the previous sqlc-based pipeline with direct database introspection.
  *
- * Uses [java.sql.DatabaseMetaData] for schema introspection and
+ * Uses [DatabaseMetaData] for schema introspection and
  * [java.sql.PreparedStatement.getMetaData] / [java.sql.PreparedStatement.getParameterMetaData]
  * for query type analysis. This works because PostgreSQL's JDBC driver prepares statements
  * server-side and returns full type information without executing the query.
@@ -101,8 +102,6 @@ public class JdbcAnalyzer(private val connection: Connection) {
 
   private fun introspectTables(schemaName: String): List<Table> {
     val dbMeta = connection.metaData
-    val tables = mutableListOf<Table>()
-    val primaryKeys = mutableMapOf<String, Set<String>>()
     val tableComments = catalogLoader.loadTableComments(schemaName)
     val columnComments = catalogLoader.loadColumnComments(schemaName)
 
@@ -124,55 +123,66 @@ public class JdbcAnalyzer(private val connection: Connection) {
       }
     }
 
-    // Load primary keys for each table
-    for (tableName in tableNames) {
-      val pks = mutableSetOf<String>()
-      dbMeta.getPrimaryKeys(null, schemaName, tableName).use { rs ->
-        while (rs.next()) {
-          pks.add(rs.getString("COLUMN_NAME"))
-        }
-      }
-      primaryKeys[tableName] = pks
-    }
+    // For views and materialized views, JDBC's getColumns() reports all columns as nullable because
+    // views carry no constraints. Resolve actual nullability by tracing columns back to their source
+    // base table columns via pg_depend, where NOT NULL constraints exist.
+    val viewNotNullColumns = catalogLoader.loadViewColumnNullability(schemaName)
 
-    // Load columns for each table
-    for (tableName in tableNames) {
-      val columns = mutableListOf<Column>()
-      dbMeta.getColumns(null, schemaName, tableName, null).use { rs ->
-        while (rs.next()) {
-          val columnName = rs.getString("COLUMN_NAME")
-          val typeName = rs.getString("TYPE_NAME")
-          val nullable = rs.getString("IS_NULLABLE")
-          val comment = columnComments["$tableName.$columnName"]
-
-          val (baseName, isArray) = resolveTypeName(typeName)
-
-          columns.add(
-            Column(
-              name = columnName,
-              not_null = nullable == "NO",
-              is_array = isArray,
-              array_dims = if (isArray) 1 else 0,
-              comment = comment.orEmpty(),
-              type = Identifier(name = baseName),
-              table = Identifier(name = tableName, schema = schemaName),
-              original_name = columnName,
-              is_primary_key = columnName in primaryKeys.getValue(tableName),
-            ),
-          )
-        }
-      }
-
-      tables.add(
-        Table(
-          rel = Identifier(name = tableName, schema = schemaName),
-          columns = columns,
-          comment = tableComments[tableName].orEmpty(),
-        ),
+    return tableNames.map { tableName ->
+      val primaryKeyColumns = loadPrimaryKeyColumns(dbMeta, schemaName, tableName)
+      val columns = loadColumns(dbMeta, schemaName, tableName, columnComments, viewNotNullColumns, primaryKeyColumns)
+      Table(
+        rel = Identifier(name = tableName, schema = schemaName),
+        columns = columns,
+        comment = tableComments[tableName].orEmpty(),
       )
     }
+  }
 
-    return tables
+  private fun loadPrimaryKeyColumns(dbMeta: DatabaseMetaData, schemaName: String, tableName: String): Set<String> =
+    buildSet {
+      dbMeta.getPrimaryKeys(null, schemaName, tableName).use { rs ->
+        while (rs.next()) {
+          add(rs.getString("COLUMN_NAME"))
+        }
+      }
+    }
+
+  private fun loadColumns(
+    dbMeta: DatabaseMetaData,
+    schemaName: String,
+    tableName: String,
+    columnComments: Map<String, String>,
+    viewNotNullColumns: Set<String>,
+    primaryKeyColumns: Set<String>,
+  ): List<Column> = buildList {
+    dbMeta.getColumns(null, schemaName, tableName, null).use { rs ->
+      while (rs.next()) {
+        val columnName = rs.getString("COLUMN_NAME")
+        val typeName = rs.getString("TYPE_NAME")
+        val nullable = rs.getString("IS_NULLABLE")
+        val comment = columnComments["$tableName.$columnName"]
+
+        val (baseName, isArray) = resolveTypeName(typeName)
+
+        // For view/matview columns, override JDBC's nullable with the resolved value from pg_depend.
+        val notNull = nullable == "NO" || "$tableName.$columnName" in viewNotNullColumns
+
+        add(
+          Column(
+            name = columnName,
+            not_null = notNull,
+            is_array = isArray,
+            array_dims = if (isArray) 1 else 0,
+            comment = comment.orEmpty(),
+            type = Identifier(name = baseName),
+            table = Identifier(name = tableName, schema = schemaName),
+            original_name = columnName,
+            is_primary_key = columnName in primaryKeyColumns,
+          ),
+        )
+      }
+    }
   }
 
   private fun buildResultColumns(
@@ -197,17 +207,26 @@ public class JdbcAnalyzer(private val connection: Connection) {
       // Use the parsed SELECT item to resolve the original column name for comment lookup.
       val originalColumnName = selectItem?.columnName ?: rsmd.getColumnName(i)
 
+      // Look up the catalog column for comment and nullability fallback.
+      val catalogColumn = tableName?.let { catalog.findColumn(it, originalColumnName) }
+
       val notNull = when (rsmd.isNullable(i)) {
         ResultSetMetaData.columnNoNulls -> true
-        ResultSetMetaData.columnNullable -> false
+        ResultSetMetaData.columnNullable ->
+          // JDBC reports columnNullable for view/matview columns even when the underlying base table column
+          // is NOT NULL. The catalog has the corrected nullability (resolved via pg_depend), so trust it.
+          catalogColumn?.not_null == true
         // columnNullableUnknown: the driver can't determine nullability from schema metadata.
         // This happens for computed expressions (EXISTS, COUNT, COALESCE, function calls, crosstab
-        // columns, etc.). Default to nullable (safer), but override to non-null for expressions
-        // that are known to never produce null.
-        else -> columnLabel in nonNullAliases
+        // columns, etc.).
+        // Resolution order:
+        //   1. SqlNullabilityAnalyzer: identifies non-null SQL expressions (COUNT, EXISTS, strict functions)
+        //   2. Catalog fallback: if the column maps to a known table column, use its NOT NULL constraint
+        //   3. Default to nullable (safest assumption)
+        else -> columnLabel in nonNullAliases || catalogColumn?.not_null == true
       }
 
-      val comment = tableName?.let { catalog.findColumn(it, originalColumnName)?.comment }.orEmpty()
+      val comment = catalogColumn?.comment.orEmpty()
 
       columns.add(
         Column(

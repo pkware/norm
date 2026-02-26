@@ -28,3 +28,11 @@ CALL reset_type_table();
 -- Exec with parameters.
 -- name: updateStringType :exec
 CALL update_string_type(?, ?);
+
+-- Query against a view (pass-through columns preserve nullability from base table).
+-- name: listNotNullView :many
+SELECT * FROM not_null_view;
+
+-- Query against a materialized view with computed columns (aggregates are nullable).
+-- name: getTypeSummary :one
+SELECT * FROM type_summary WHERE string_type = ?;

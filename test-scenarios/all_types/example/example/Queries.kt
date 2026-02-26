@@ -376,4 +376,42 @@ public interface Queries {
    */
   @Throws(SQLException::class)
   public fun updateStringType(p_id: Int, p_new_value: String)
+
+  /**
+   * Query against a view (pass-through columns preserve nullability from base table).
+   */
+  public fun <T : Any> listNotNullView(mapper: (
+    serial_type: Int,
+    string_type: String,
+    int4_type: Int,
+  ) -> T): Many<T>
+
+  /**
+   * Query against a view (pass-through columns preserve nullability from base table).
+   */
+  public fun listNotNullView(): Many<NotNullView> = listNotNullView(::NotNullView)
+
+  public fun <T : Any> listNotNullViewDynamically(mapper: (
+    serial_type: Int,
+    string_type: String,
+    int4_type: Int,
+  ) -> T): Query<T>
+
+  public fun listNotNullViewDynamically(): Query<NotNullView> = listNotNullViewDynamically(::NotNullView)
+
+  /**
+   * Query against a materialized view with computed columns (aggregates are nullable).
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> getTypeSummary(string_type: String, mapper: (
+    string_type: String,
+    row_count: Long?,
+    average_value: Int?,
+  ) -> T): T
+
+  /**
+   * Query against a materialized view with computed columns (aggregates are nullable).
+   */
+  @Throws(SQLException::class)
+  public fun getTypeSummary(string_type: String): TypeSummary = getTypeSummary(string_type, ::TypeSummary)
 }

@@ -533,4 +533,51 @@ public class PostgresQueries(
       combineExecBatchResults(results, totalCount, batchSize)
     }
   }
+
+  private fun <T : Any, R> listNotNullView(mapper: (
+    serial_type: Int,
+    string_type: String,
+    int4_type: Int,
+  ) -> T, block: (String, ResultSet.() -> T) -> R): R {
+    val sql = "SELECT * FROM not_null_view"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        getString(2),
+        getInt(3),
+      )
+    }
+    return block(sql, rowReader)
+  }
+
+  override fun <T : Any> listNotNullView(mapper: (
+    serial_type: Int,
+    string_type: String,
+    int4_type: Int,
+  ) -> T): Many<T> = listNotNullView(mapper, driver::queryMany)
+
+  override fun <T : Any> listNotNullViewDynamically(mapper: (
+    serial_type: Int,
+    string_type: String,
+    int4_type: Int,
+  ) -> T): Query<T> = listNotNullView(mapper, driver::dynamic)
+
+  @Throws(SQLException::class)
+  override fun <T : Any> getTypeSummary(string_type: String, mapper: (
+    string_type: String,
+    row_count: Long?,
+    average_value: Int?,
+  ) -> T): T {
+    val sql = "SELECT * FROM type_summary WHERE string_type = ?"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getString(1),
+        getLong(2).takeUnless { wasNull() },
+        getInt(3).takeUnless { wasNull() },
+      )
+    }
+    return driver.queryOne(sql, rowReader) {
+      setString(1, string_type)
+    }
+  }
 }

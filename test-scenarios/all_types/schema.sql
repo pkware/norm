@@ -64,6 +64,29 @@ CREATE TABLE type (
   text_array_notnull_type text[] NOT NULL
 );
 
+-- View for testing that query result nullability is inferred from the underlying table columns.
+CREATE VIEW not_null_view AS
+  SELECT serial_type, string_type, int4_type FROM type;
+
+COMMENT ON VIEW not_null_view IS 'Non-nullable columns from the type table.';
+
+-- Materialized view for testing nullability inference.
+CREATE MATERIALIZED VIEW not_null_materialized_view AS
+  SELECT serial_type, string_type, text_type FROM type;
+
+COMMENT ON MATERIALIZED VIEW not_null_materialized_view IS 'Mix of nullable and non-nullable columns.';
+
+-- Materialized view with computed columns (aggregates are nullable).
+CREATE MATERIALIZED VIEW type_summary AS
+  SELECT
+    string_type,
+    COUNT(*) AS row_count,
+    AVG(int4_type)::INTEGER AS average_value
+  FROM type
+  GROUP BY string_type;
+
+COMMENT ON MATERIALIZED VIEW type_summary IS 'Aggregated statistics per string_type value.';
+
 -- Stored procedure for :exec testing (no parameters)
 CREATE OR REPLACE PROCEDURE reset_type_table()
 LANGUAGE SQL

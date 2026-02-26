@@ -367,6 +367,47 @@ class JdbcAnalyzerTest {
     }
 
     @Test
+    fun `view column backed by NOT NULL table column is non-null`() {
+      val catalog = analyzer.buildCatalog()
+      val parsed = ParsedQuery(
+        "viewQuery",
+        ":many",
+        "SELECT serial_type, string_type, int4_type FROM not_null_view",
+        emptyList(),
+      )
+
+      val query = analyzer.analyzeQuery(parsed, catalog)
+
+      val columnsByName = query.columns.associateBy { it.name }
+      // These columns are NOT NULL in the underlying "type" table.
+      // JDBC reports columnNullableUnknown for view columns, but the analyzer should
+      // resolve nullability from the catalog.
+      assertThat(columnsByName.getValue("serial_type").not_null).isTrue()
+      assertThat(columnsByName.getValue("string_type").not_null).isTrue()
+      assertThat(columnsByName.getValue("int4_type").not_null).isTrue()
+    }
+
+    @Test
+    fun `materialized view column backed by nullable table column is nullable`() {
+      val catalog = analyzer.buildCatalog()
+      val parsed = ParsedQuery(
+        "matViewQuery",
+        ":one",
+        "SELECT serial_type, string_type, text_type FROM not_null_materialized_view LIMIT 1",
+        emptyList(),
+      )
+
+      val query = analyzer.analyzeQuery(parsed, catalog)
+
+      val columnsByName = query.columns.associateBy { it.name }
+      // serial_type and string_type are NOT NULL in the underlying table.
+      assertThat(columnsByName.getValue("serial_type").not_null).isTrue()
+      assertThat(columnsByName.getValue("string_type").not_null).isTrue()
+      // text_type is nullable in the underlying table — should remain nullable.
+      assertThat(columnsByName.getValue("text_type").not_null).isFalse()
+    }
+
+    @Test
     fun `arithmetic expression is nullable`() {
       val catalog = analyzer.buildCatalog()
       val parsed = ParsedQuery(
