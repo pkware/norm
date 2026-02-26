@@ -29,6 +29,7 @@ wire = { module = "com.squareup.wire:wire-runtime", version.ref = "wire" }
 wire-json = { module = "com.squareup.wire:wire-moshi-adapter", version.ref = "wire" }
 
 [plugins]
+idea-ext = "org.jetbrains.gradle.plugin.idea-ext:1.1.9"
 ksp = "com.google.devtools.ksp:2.2.20-2.0.4"
 # TODO Use the latest version, and don't use a SNAPSHOT
 norm = "com.pkware.norm:1.0.0-SNAPSHOT"

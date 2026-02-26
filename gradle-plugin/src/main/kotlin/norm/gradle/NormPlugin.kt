@@ -7,6 +7,7 @@ import org.gradle.kotlin.dsl.getByType
 import org.gradle.kotlin.dsl.register
 import org.gradle.kotlin.dsl.support.uppercaseFirstChar
 import org.jetbrains.kotlin.gradle.dsl.KotlinProjectExtension
+import org.jetbrains.kotlin.gradle.plugin.KotlinSourceSet
 import org.jetbrains.kotlin.gradle.plugin.KotlinSourceSetContainer
 
 /**
@@ -34,8 +35,8 @@ public class NormPlugin : Plugin<Project> {
       this,
     )
 
-    val kotlinSourceSet = project.extensions.getByName<KotlinProjectExtension>("kotlin")
-      .sourceSets.getByName("main").kotlin
+    val mainSourceSet: KotlinSourceSet = project.extensions.getByName<KotlinProjectExtension>("kotlin")
+      .sourceSets.getByName("main")
 
     norm.databases.all {
       postgresVersion.convention("18")
@@ -49,7 +50,8 @@ public class NormPlugin : Plugin<Project> {
         postgresVersion.set(this@all.postgresVersion)
       }
 
-      kotlinSourceSet.srcDir(generateTask)
+      IdeIntegration.registerGeneratedSources(mainSourceSet, generateTask)
+      IdeIntegration.configureIdeaExtAfterSync(project, generateTask)
     }
 
     // Add the runtime dependency to the project

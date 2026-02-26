@@ -141,6 +141,22 @@ class NormPluginTest {
   // TODO Test that tasks are correctly cached
 
   @Test
+  fun `configuration cache is reused on second build`() {
+    val scenarioDirectory = scenarios().first()
+    val project = TestProject(projectDir, scenarioDirectory)
+    project.setup()
+
+    // First build: populates the configuration cache
+    val firstResult = project.gradle("normGenerateTest", "--configuration-cache").build()
+    assertThat(firstResult.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+    assertThat(firstResult.output).contains("Configuration cache entry stored")
+
+    // Second build: must reuse the configuration cache
+    val secondResult = project.gradle("normGenerateTest", "--configuration-cache").build()
+    assertThat(secondResult.output).contains("Configuration cache entry reused")
+  }
+
+  @Test
   fun `stale generated files are deleted when queries are removed`() {
     val scenarioDirectory = BASIC_EMBEDS_SCENARIO
     val project = TestProject(projectDir, scenarioDirectory)

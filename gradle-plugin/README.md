@@ -117,3 +117,36 @@ norm {
   }
 }
 ```
+
+## IntelliJ IDEA Integration
+
+When you first import a Norm-enabled project into IntelliJ IDEA, generated sources don't exist yet.
+This causes unresolved-reference errors (red squiggles) until you run a build. Norm provides two
+mechanisms to improve this experience.
+
+### Automatic Generation on Sync (`gradle-idea-ext`)
+
+Apply the [gradle-idea-ext](https://github.com/JetBrains/gradle-idea-ext) plugin to your **root**
+project. Norm will automatically register its generation tasks to run after every IntelliJ Gradle
+sync, including first import.
+
+```kotlin
+// settings.gradle.kts
+plugins {
+  id("org.jetbrains.gradle.plugin.idea-ext") version "1.1.9" apply false
+}
+
+// build.gradle.kts (root project)
+plugins {
+  id("org.jetbrains.gradle.plugin.idea-ext")
+}
+```
+
+No additional configuration is needed — Norm detects the plugin and wires `afterSync` automatically.
+
+### Kotlin 2.3.0+ `generatedKotlin` API
+
+When your project uses Kotlin 2.3.0 or later, Norm registers its output via the `generatedKotlin`
+source directory API. This tells the Kotlin toolchain that Norm's output is generated code, enabling
+future IntelliJ support for triggering generation during sync. No configuration is needed; Norm
+detects the API automatically.
