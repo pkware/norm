@@ -39,8 +39,8 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
     // INSERT INTO table(col1, col2) VALUES (?, func(?), ...)
     val insertMatch = INSERT_INTO.find(sql)
     if (insertMatch != null) {
-      val tableName = insertMatch.groupValues[1]
-      val columns = insertMatch.groupValues[2].split(",").map { it.trim() }
+      val tableName = tableSimpleName(insertMatch.groupValues[1])
+      val columns = insertMatch.groupValues[2].split(",").map { unquoteIdentifier(it.trim()) }
       val valueExpressions = extractValuesExpressions(sql)
       if (valueExpressions != null) {
         val (expressions, contentStart) = valueExpressions
@@ -72,17 +72,17 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
     }
 
     // For UPDATE/DELETE/SELECT, split on WHERE to distinguish SET from WHERE contexts
-    val tableName = UPDATE_TABLE.find(sql)?.groupValues?.get(1)
-      ?: DELETE_FROM.find(sql)?.groupValues?.get(1)
-      ?: FROM_TABLE.find(sql)?.groupValues?.get(1)
+    val tableName = UPDATE_TABLE.find(sql)?.groupValues?.get(1)?.let(::tableSimpleName)
+      ?: DELETE_FROM.find(sql)?.groupValues?.get(1)?.let(::tableSimpleName)
+      ?: FROM_TABLE.find(sql)?.groupValues?.get(1)?.let(::tableSimpleName)
     val whereIndex = sql.indexOf(" WHERE ", ignoreCase = true)
 
     if (whereIndex > 0) {
       // SET col = ? (before WHERE — inherits nullability)
       val setClause = sql.substring(0, whereIndex)
       for (match in COLUMN_COMPARES_PARAM.findAll(setClause)) {
-        val qualifiedTable = match.groupValues[1].ifEmpty { null }
-        val colName = match.groupValues[2]
+        val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::unquoteIdentifier)
+        val colName = unquoteIdentifier(match.groupValues[2])
         val paramNum = paramIndex.paramNumberAt(match.range.last)
         params[paramNum] =
           InferredParameter(funcNames[paramNum] ?: colName, qualifiedTable ?: tableName, inheritsNullability = true)
@@ -91,8 +91,8 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
       // WHERE col <op> ? (after WHERE — does NOT inherit nullability)
       val whereClause = sql.substring(whereIndex)
       for (match in COLUMN_COMPARES_PARAM.findAll(whereClause)) {
-        val qualifiedTable = match.groupValues[1].ifEmpty { null }
-        val colName = match.groupValues[2]
+        val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::unquoteIdentifier)
+        val colName = unquoteIdentifier(match.groupValues[2])
         val paramNum = paramIndex.paramNumberAt(whereIndex + match.range.last)
         if (paramNum !in params) {
           params[paramNum] =
@@ -102,8 +102,8 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
     } else {
       // No WHERE clause — all comparisons treated as non-inheriting
       for (match in COLUMN_COMPARES_PARAM.findAll(sql)) {
-        val qualifiedTable = match.groupValues[1].ifEmpty { null }
-        val colName = match.groupValues[2]
+        val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::unquoteIdentifier)
+        val colName = unquoteIdentifier(match.groupValues[2])
         val paramNum = paramIndex.paramNumberAt(match.range.last)
         params[paramNum] =
           InferredParameter(funcNames[paramNum] ?: colName, qualifiedTable ?: tableName, inheritsNullability = false)
@@ -290,12 +290,39 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
   }
 
   private companion object {
-    private val INSERT_INTO = Regex("""INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)""", RegexOption.IGNORE_CASE)
-    private val UPDATE_TABLE = Regex("""UPDATE\s+(\w+)\s""", RegexOption.IGNORE_CASE)
-    private val DELETE_FROM = Regex("""DELETE\s+FROM\s+(\w+)""", RegexOption.IGNORE_CASE)
-    private val FROM_TABLE = Regex("""\bFROM\s+(\w+)""", RegexOption.IGNORE_CASE)
+    // Matches either a double-quoted SQL identifier ("name") or an unquoted one (word).
+    private const val SQL_IDENTIFIER = """(?:"[^"]+"|\w+)"""
+
+    // Matches a possibly schema-qualified table name: `table`, `"table"`, or `"schema"."table"`.
+    private const val QUALIFIED_TABLE = """($SQL_IDENTIFIER(?:\.$SQL_IDENTIFIER)?)"""
+
+    private val INSERT_INTO =
+      Regex("""INSERT\s+INTO\s+$QUALIFIED_TABLE\s*\(([^)]+)\)""", RegexOption.IGNORE_CASE)
+    private val UPDATE_TABLE = Regex("""UPDATE\s+$QUALIFIED_TABLE\s""", RegexOption.IGNORE_CASE)
+    private val DELETE_FROM = Regex("""DELETE\s+FROM\s+$QUALIFIED_TABLE""", RegexOption.IGNORE_CASE)
+    private val FROM_TABLE = Regex("""\bFROM\s+$QUALIFIED_TABLE""", RegexOption.IGNORE_CASE)
     private val COLUMN_COMPARES_PARAM =
-      Regex("""(?:(\w+)\.)?(\w+)\s*(?:=|<>|!=|>=|<=|>|<|LIKE|ILIKE)\s*\?""", RegexOption.IGNORE_CASE)
+      Regex(
+        """(?:($SQL_IDENTIFIER)\.)?($SQL_IDENTIFIER)\s*(?:=|<>|!=|>=|<=|>|<|LIKE|ILIKE)\s*\?""",
+        RegexOption.IGNORE_CASE,
+      )
+
+    /**
+     * Strips surrounding double-quotes from a SQL identifier, if present.
+     * For example, `"name"` becomes `name`, and `author` stays `author`.
+     */
+    private fun unquoteIdentifier(identifier: String): String =
+      if (identifier.startsWith('"') && identifier.endsWith('"')) {
+        identifier.substring(1, identifier.length - 1)
+      } else {
+        identifier
+      }
+
+    /**
+     * Extracts the simple (unqualified, unquoted) table name from a possibly
+     * schema-qualified SQL table reference like `"schema"."tablename"` or `"tablename"`.
+     */
+    private fun tableSimpleName(qualifiedName: String): String = unquoteIdentifier(qualifiedName.split('.').last())
   }
 }
 

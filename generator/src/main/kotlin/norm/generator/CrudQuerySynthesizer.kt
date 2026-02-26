@@ -19,10 +19,17 @@ public object CrudQuerySynthesizer {
    * [userQueries]. User-defined queries take priority: if a user query has the same name as a
    * synthetic CRUD query, the synthetic one is discarded.
    *
+   * @param quoteIdentifier A function that wraps SQL identifiers in double-quotes when they need
+   *   quoting (e.g., reserved words). Defaults to identity (no quoting), which is suitable for
+   *   unit tests that don't have a live database connection.
    * @return The combined list with [userQueries] first, followed by non-conflicting CRUD queries.
    */
-  public fun synthesizeAndMerge(catalog: Catalog, userQueries: List<ParsedQuery>): List<ParsedQuery> {
-    val crudQueries = synthesize(catalog)
+  public fun synthesizeAndMerge(
+    catalog: Catalog,
+    userQueries: List<ParsedQuery>,
+    quoteIdentifier: (String) -> String = { it },
+  ): List<ParsedQuery> {
+    val crudQueries = synthesize(catalog, quoteIdentifier)
     val userQueryNames = userQueries.map { it.name }.toSet()
     return userQueries + crudQueries.filter { it.name !in userQueryNames }
   }
@@ -30,34 +37,36 @@ public object CrudQuerySynthesizer {
   /**
    * Synthesizes CRUD queries for all non-view tables across all schemas.
    *
+   * @param quoteIdentifier A function that wraps SQL identifiers in double-quotes when they need
+   *   quoting (e.g., reserved words). Defaults to identity (no quoting).
    * @return A list of [ParsedQuery] objects ready for JDBC analysis.
    */
-  public fun synthesize(catalog: Catalog): List<ParsedQuery> = buildList {
+  public fun synthesize(catalog: Catalog, quoteIdentifier: (String) -> String = { it }): List<ParsedQuery> = buildList {
     for (schema in catalog.schemas) {
       for (table in schema.tables) {
         if (table.is_view) continue
-        addAll(synthesizeForTable(table))
+        addAll(synthesizeForTable(table, quoteIdentifier))
       }
     }
   }
 
-  private fun synthesizeForTable(table: Table): List<ParsedQuery> {
+  private fun synthesizeForTable(table: Table, quoteIdentifier: (String) -> String): List<ParsedQuery> {
     val tableName = table.rel?.name ?: return emptyList()
     val methodSuffix = tableName.snakeToCamelCase().titleCase()
-    val qualifiedTable = qualifiedTableName(table)
+    val qualifiedTable = qualifiedTableName(table, quoteIdentifier)
     val primaryKeyColumns = table.columns.filter(Column::is_primary_key)
     val allColumns = table.columns
     val sourceFile = "<synthesized CRUD for table '$qualifiedTable'>"
 
     val queries = buildList {
       // INSERT — null when all columns are auto-increment, default, or generated
-      synthesizeInsert(qualifiedTable, methodSuffix, allColumns)?.let(::add)
+      synthesizeInsert(qualifiedTable, methodSuffix, allColumns, quoteIdentifier)?.let(::add)
 
       // PK-dependent methods
       if (primaryKeyColumns.isNotEmpty()) {
-        add(synthesizeFindById(qualifiedTable, methodSuffix, primaryKeyColumns))
-        add(synthesizeExistsById(qualifiedTable, methodSuffix, primaryKeyColumns))
-        add(synthesizeDeleteById(qualifiedTable, methodSuffix, primaryKeyColumns))
+        add(synthesizeFindById(qualifiedTable, methodSuffix, primaryKeyColumns, quoteIdentifier))
+        add(synthesizeExistsById(qualifiedTable, methodSuffix, primaryKeyColumns, quoteIdentifier))
+        add(synthesizeDeleteById(qualifiedTable, methodSuffix, primaryKeyColumns, quoteIdentifier))
       }
 
       // PK-independent methods
@@ -76,19 +85,24 @@ public object CrudQuerySynthesizer {
    * - If ALL columns are excluded (no insertable columns), `null` is returned (skip the method).
    * - If NO columns are excluded (nothing for RETURNING), the command is `:exec` instead of `:one`.
    */
-  private fun synthesizeInsert(qualifiedTable: String, methodSuffix: String, allColumns: List<Column>): ParsedQuery? {
+  private fun synthesizeInsert(
+    qualifiedTable: String,
+    methodSuffix: String,
+    allColumns: List<Column>,
+    quoteIdentifier: (String) -> String,
+  ): ParsedQuery? {
     val insertableColumns = allColumns.filter { !it.is_auto_increment && !it.has_default && !it.is_generated }
     if (insertableColumns.isEmpty()) return null
 
     val returningColumns = allColumns.filter { it.is_auto_increment || it.has_default || it.is_generated }
 
-    val columnNames = insertableColumns.joinToString(", ") { it.name }
+    val columnNames = insertableColumns.joinToString(", ") { quoteIdentifier(it.name) }
     val placeholders = insertableColumns.joinToString(", ") { "?" }
 
     val sql: String
     val command: String
     if (returningColumns.isNotEmpty()) {
-      val returningNames = returningColumns.joinToString(", ") { it.name }
+      val returningNames = returningColumns.joinToString(", ") { quoteIdentifier(it.name) }
       sql = "INSERT INTO $qualifiedTable ($columnNames) VALUES ($placeholders) RETURNING $returningNames"
       command = ":one"
     } else {
@@ -108,8 +122,9 @@ public object CrudQuerySynthesizer {
     qualifiedTable: String,
     methodSuffix: String,
     primaryKeyColumns: List<Column>,
+    quoteIdentifier: (String) -> String,
   ): ParsedQuery {
-    val whereClause = primaryKeyColumns.joinToString(" AND ") { "${it.name} = ?" }
+    val whereClause = primaryKeyColumns.joinToString(" AND ") { "${quoteIdentifier(it.name)} = ?" }
     return ParsedQuery(
       name = "find${methodSuffix}ById",
       command = ":many",
@@ -122,8 +137,9 @@ public object CrudQuerySynthesizer {
     qualifiedTable: String,
     methodSuffix: String,
     primaryKeyColumns: List<Column>,
+    quoteIdentifier: (String) -> String,
   ): ParsedQuery {
-    val whereClause = primaryKeyColumns.joinToString(" AND ") { "${it.name} = ?" }
+    val whereClause = primaryKeyColumns.joinToString(" AND ") { "${quoteIdentifier(it.name)} = ?" }
     return ParsedQuery(
       name = "exists${methodSuffix}ById",
       command = ":one",
@@ -150,8 +166,9 @@ public object CrudQuerySynthesizer {
     qualifiedTable: String,
     methodSuffix: String,
     primaryKeyColumns: List<Column>,
+    quoteIdentifier: (String) -> String,
   ): ParsedQuery {
-    val whereClause = primaryKeyColumns.joinToString(" AND ") { "${it.name} = ?" }
+    val whereClause = primaryKeyColumns.joinToString(" AND ") { "${quoteIdentifier(it.name)} = ?" }
     return ParsedQuery(
       name = "delete${methodSuffix}ById",
       command = ":execrows",
@@ -169,10 +186,15 @@ public object CrudQuerySynthesizer {
 
   /**
    * Returns the schema-qualified table name if the schema is not `public`, otherwise just the table name.
+   * Each part (schema, name) is independently passed through [quoteIdentifier].
    */
-  private fun qualifiedTableName(table: Table): String {
+  private fun qualifiedTableName(table: Table, quoteIdentifier: (String) -> String): String {
     val schema = table.rel?.schema
     val name = table.rel?.name ?: error("qualifiedTableName called with null table name")
-    return if (schema != null && schema != "public") "$schema.$name" else name
+    return if (schema != null && schema != "public") {
+      "${quoteIdentifier(schema)}.${quoteIdentifier(name)}"
+    } else {
+      quoteIdentifier(name)
+    }
   }
 }

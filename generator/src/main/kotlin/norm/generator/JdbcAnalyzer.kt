@@ -347,7 +347,45 @@ public class JdbcAnalyzer(private val connection: Connection) {
   private fun resolveTableIdentifier(tableName: String, catalog: Catalog): Identifier =
     catalog.findTable(tableName)?.rel ?: Identifier(name = tableName)
 
+  /**
+   * Queries PostgreSQL for reserved keywords that cannot be used as unquoted identifiers.
+   *
+   * Uses `pg_get_keywords()` and selects categories `R` (reserved) and `T` (reserved, can be
+   * function or type name). These are the words that PostgreSQL rejects as bare identifiers in
+   * column/table positions.
+   *
+   * @return A set of lowercase reserved words.
+   */
+  public fun fetchReservedWords(): Set<String> = buildSet {
+    connection.createStatement().use { statement ->
+      statement.executeQuery("SELECT word FROM pg_get_keywords() WHERE catcode IN ('R', 'T')").use { resultSet ->
+        while (resultSet.next()) add(resultSet.getString(1))
+      }
+    }
+  }
+
+  /**
+   * Builds an identifier-quoting function based on the connected PostgreSQL instance's reserved words.
+   *
+   * The returned function wraps an identifier in double-quotes only when necessary:
+   * - The identifier is a PostgreSQL reserved word (per [fetchReservedWords]).
+   * - The identifier contains characters that require quoting (uppercase letters, leading digits,
+   *   special characters other than `_` and `$`).
+   *
+   * Normal identifiers like `author`, `id`, `name` pass through unquoted.
+   */
+  public fun buildIdentifierQuoter(): (String) -> String {
+    val reservedWords = fetchReservedWords()
+    return { identifier ->
+      if (needsQuoting(identifier, reservedWords)) "\"$identifier\"" else identifier
+    }
+  }
+
   private companion object {
     private val CALL_PROCEDURE_NAME = Regex("""CALL\s+(\w+)\s*\(""", RegexOption.IGNORE_CASE)
+    private val SAFE_IDENTIFIER = Regex("[a-z_][a-z0-9_\$]*")
+
+    private fun needsQuoting(identifier: String, reservedWords: Set<String>): Boolean =
+      identifier.lowercase() in reservedWords || !identifier.matches(SAFE_IDENTIFIER)
   }
 }

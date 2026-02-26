@@ -3,6 +3,7 @@ package norm.generator
 import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.containsExactly
+import assertk.assertions.doesNotContain
 import assertk.assertions.hasSize
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
@@ -424,6 +425,57 @@ class JdbcAnalyzerTest {
       // Arithmetic on a nullable column — JDBC reports columnNullableUnknown, we default to nullable
       assertThat(query.columns[0].not_null).isFalse()
     }
+  }
+
+  @Test
+  fun `fetchReservedWords returns known PostgreSQL reserved words`() {
+    val reservedWords = analyzer.fetchReservedWords()
+
+    // These are reserved in every PostgreSQL version
+    assertThat(reservedWords).contains("select")
+    assertThat(reservedWords).contains("table")
+    assertThat(reservedWords).contains("where")
+    assertThat(reservedWords).contains("user")
+    assertThat(reservedWords).contains("order")
+  }
+
+  @Test
+  fun `fetchReservedWords does not include unreserved words`() {
+    val reservedWords = analyzer.fetchReservedWords()
+
+    // "name" and "value" are unreserved in PostgreSQL — they can be used as bare identifiers
+    assertThat(reservedWords).doesNotContain("name")
+    assertThat(reservedWords).doesNotContain("value")
+    assertThat(reservedWords).doesNotContain("id")
+  }
+
+  @Test
+  fun `buildIdentifierQuoter quotes reserved words`() {
+    val quoter = analyzer.buildIdentifierQuoter()
+
+    assertThat(quoter("user")).isEqualTo("\"user\"")
+    assertThat(quoter("order")).isEqualTo("\"order\"")
+    assertThat(quoter("select")).isEqualTo("\"select\"")
+  }
+
+  @Test
+  fun `buildIdentifierQuoter leaves normal identifiers unquoted`() {
+    val quoter = analyzer.buildIdentifierQuoter()
+
+    assertThat(quoter("author")).isEqualTo("author")
+    assertThat(quoter("id")).isEqualTo("id")
+    assertThat(quoter("created_at")).isEqualTo("created_at")
+    assertThat(quoter("name")).isEqualTo("name")
+  }
+
+  @Test
+  fun `buildIdentifierQuoter quotes identifiers with unsafe characters`() {
+    val quoter = analyzer.buildIdentifierQuoter()
+
+    // Uppercase letters require quoting to preserve case
+    assertThat(quoter("MyTable")).isEqualTo("\"MyTable\"")
+    // Leading digit is not a valid unquoted identifier start
+    assertThat(quoter("1column")).isEqualTo("\"1column\"")
   }
 
   companion object {

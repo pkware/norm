@@ -166,7 +166,7 @@ class NormPluginTest {
     val schema = scenarioDirectory.resolve("schema.sql")
     val queriesFile = projectDir.resolve("queries.sql")
     queriesFile.writeText(
-      $$"""
+      """
       -- name: getAll :many
       SELECT * FROM author;
 
@@ -241,7 +241,7 @@ class NormPluginTest {
     )
 
     queries2.writeText(
-      $$"""
+      """
       -- name: getById :one
       SELECT * FROM author WHERE id = ?;
       """.trimIndent(),
@@ -358,7 +358,7 @@ class NormPluginTest {
 
     val badQueriesFile = projectDir.resolve("bad_queries.sql")
     badQueriesFile.writeText(
-      $$"""
+      """
       -- name: selectFromNowhere :many
       SELECT * FROM table_that_does_not_exist;
       """.trimIndent(),
@@ -395,7 +395,7 @@ class NormPluginTest {
 
     val badQueriesFile = projectDir.resolve("mixed_params.sql")
     badQueriesFile.writeText(
-      $$"""
+      """
       -- name: mixedParams :one
       SELECT * FROM author WHERE id = :id AND name = ?;
       """.trimIndent(),
@@ -430,9 +430,11 @@ class NormPluginTest {
     val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
     project.setupSettingsOnly()
 
-    // "user" is a PostgreSQL reserved keyword; CRUD-generated queries reference it unquoted and fail
+    // A table whose name contains a literal double-quote character (created via the "" escape in SQL DDL).
+    // CrudQuerySynthesizer wraps identifiers in double-quotes but does not escape embedded quotes,
+    // so the synthesized SQL contains an invalid identifier like `"tab"le"`, causing a SQL error.
     val schema = projectDir.resolve("schema.sql")
-    schema.writeText($$"""CREATE TABLE "user" (id serial PRIMARY KEY, name text NOT NULL);""")
+    schema.writeText("""CREATE TABLE "tab""le" (id serial PRIMARY KEY);""")
 
     val queries = projectDir.resolve("queries.sql")
     queries.writeText("")
@@ -459,7 +461,43 @@ class NormPluginTest {
 
     val result = project.gradle("normGenerateTest").buildAndFail()
     assertThat(result.output).contains("synthesized CRUD for table")
-    assertThat(result.output).contains("user")
+    assertThat(result.output).contains("tab")
+  }
+
+  @Test
+  fun `CRUD generation succeeds for tables with reserved keyword names`() {
+    val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
+    project.setupSettingsOnly()
+
+    // "user" is a PostgreSQL reserved keyword; CRUD-generated SQL must quote it as an identifier
+    val schema = projectDir.resolve("schema.sql")
+    schema.writeText("""CREATE TABLE "user" (id serial PRIMARY KEY, name text NOT NULL);""")
+
+    val queries = projectDir.resolve("queries.sql")
+    queries.writeText("")
+
+    project.buildFile.writeText(
+      """
+      plugins {
+        kotlin("jvm")
+        id("com.pkware.norm")
+      }
+
+      norm {
+        databases {
+          create("Test") {
+            packageName = "example"
+            schemas.addAll("$schema")
+            queries.addAll("$queries")
+            generateCrud = true
+          }
+        }
+      }
+      """.trimIndent(),
+    )
+
+    val result = project.gradle("normGenerateTest").build()
+    assertThat(result.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
   }
 
   companion object {

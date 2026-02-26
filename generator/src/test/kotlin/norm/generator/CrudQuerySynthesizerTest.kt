@@ -204,7 +204,120 @@ class CrudQuerySynthesizerTest {
     )
   }
 
+  @Test
+  fun `quoteIdentifier is applied to table name in all SQL positions`() {
+    val table = table(
+      "user",
+      column("id", "int4", notNull = true, isPrimaryKey = true, isAutoIncrement = true),
+      column("name", "text", notNull = true),
+    )
+    val catalog = catalog(table)
+    val quoter = quoteOnly("user")
+
+    val queries = CrudQuerySynthesizer.synthesize(catalog, quoter)
+    val byName = queries.associateBy { it.name }
+
+    assertThat(byName.getValue("insertUser").sql)
+      .isEqualTo("""INSERT INTO "user" (name) VALUES (?) RETURNING id""")
+    assertThat(byName.getValue("findUserById").sql)
+      .isEqualTo("""SELECT * FROM "user" WHERE id = ?""")
+    assertThat(byName.getValue("existsUserById").sql)
+      .isEqualTo("""SELECT EXISTS(SELECT 1 FROM "user" WHERE id = ?)""")
+    assertThat(byName.getValue("deleteUserById").sql)
+      .isEqualTo("""DELETE FROM "user" WHERE id = ?""")
+    assertThat(byName.getValue("findAllUser").sql)
+      .isEqualTo("""SELECT * FROM "user"""")
+    assertThat(byName.getValue("countUser").sql)
+      .isEqualTo("""SELECT COUNT(*) FROM "user"""")
+    assertThat(byName.getValue("deleteAllUser").sql)
+      .isEqualTo("""DELETE FROM "user"""")
+  }
+
+  @Test
+  fun `quoteIdentifier is applied to column names`() {
+    val table = table(
+      "setting",
+      column("key", "text", notNull = true, isPrimaryKey = true),
+      column("value", "text", notNull = true),
+    )
+    val catalog = catalog(table)
+    val quoter = quoteOnly("key", "value")
+
+    val queries = CrudQuerySynthesizer.synthesize(catalog, quoter)
+    val byName = queries.associateBy { it.name }
+
+    assertThat(byName.getValue("insertSetting").sql)
+      .isEqualTo("""INSERT INTO setting ("key", "value") VALUES (?, ?)""")
+    assertThat(byName.getValue("findSettingById").sql)
+      .isEqualTo("""SELECT * FROM setting WHERE "key" = ?""")
+    assertThat(byName.getValue("deleteSettingById").sql)
+      .isEqualTo("""DELETE FROM setting WHERE "key" = ?""")
+  }
+
+  @Test
+  fun `quoteIdentifier is applied to RETURNING column names`() {
+    val table = table(
+      "task",
+      column("id", "int4", notNull = true, isPrimaryKey = true, isAutoIncrement = true),
+      column("desc", "text", notNull = true),
+      column("default", "text", notNull = true, hasDefault = true),
+    )
+    val catalog = catalog(table)
+    val quoter = quoteOnly("desc", "default")
+
+    val insert = CrudQuerySynthesizer.synthesize(catalog, quoter).first { it.name == "insertTask" }
+
+    assertThat(insert.sql)
+      .isEqualTo("""INSERT INTO task ("desc") VALUES (?) RETURNING id, "default"""")
+  }
+
+  @Test
+  fun `quoteIdentifier is applied to schema-qualified table name parts independently`() {
+    val table = Table(
+      rel = Identifier(name = "order", schema = "select"),
+      columns = listOf(
+        column("id", "int4", notNull = true, isPrimaryKey = true, isAutoIncrement = true),
+        column("item", "text", notNull = true),
+      ),
+    )
+    val catalog = Catalog(
+      default_schema = "select",
+      schemas = listOf(Schema(name = "select", tables = listOf(table))),
+    )
+    val quoter = quoteOnly("select", "order")
+
+    val findAll = CrudQuerySynthesizer.synthesize(catalog, quoter).first { it.name == "findAllOrder" }
+
+    assertThat(findAll.sql).isEqualTo("""SELECT * FROM "select"."order"""")
+  }
+
+  @Test
+  fun `synthesizeAndMerge passes quoteIdentifier through to synthesize`() {
+    val table = table(
+      "user",
+      column("id", "int4", notNull = true, isPrimaryKey = true, isAutoIncrement = true),
+      column("name", "text", notNull = true),
+    )
+    val catalog = catalog(table)
+    val quoter = quoteOnly("user")
+
+    val merged = CrudQuerySynthesizer.synthesizeAndMerge(catalog, emptyList(), quoter)
+
+    assertThat(merged.first { it.name == "findAllUser" }.sql)
+      .isEqualTo("""SELECT * FROM "user"""")
+  }
+
   // --- Helpers ---
+
+  /**
+   * Returns a quoting function that only quotes identifiers in [words], leaving everything else
+   * unquoted. This simulates the behavior of [JdbcAnalyzer.buildIdentifierQuoter] without
+   * needing a live database connection.
+   */
+  private fun quoteOnly(vararg words: String): (String) -> String {
+    val wordSet = words.toSet()
+    return { identifier -> if (identifier in wordSet) "\"$identifier\"" else identifier }
+  }
 
   private fun column(
     name: String,

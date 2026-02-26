@@ -88,7 +88,8 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
         // Parse and optionally synthesize CRUD queries (user-defined queries take priority over synthetic ones)
         val parsedQueries = parseQueryFiles()
         val allParsedQueries = if (database.generateCrud.get()) {
-          CrudQuerySynthesizer.synthesizeAndMerge(catalog, parsedQueries)
+          val quoteIdentifier = analyzer.buildIdentifierQuoter()
+          CrudQuerySynthesizer.synthesizeAndMerge(catalog, parsedQueries, quoteIdentifier)
         } else {
           parsedQueries
         }
