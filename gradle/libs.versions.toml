@@ -2,7 +2,7 @@
 junit = "5.14.2"
 ktlint = "1.5.0"
 micronaut = "4.10.16"
-micronautData = "4.14.2"
+micronautData = "4.14.3"
 testcontainers = "1.21.0"
 wire = "5.4.0"
 
