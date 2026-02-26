@@ -22,3 +22,23 @@ FROM author
 JOIN book ON book.author_id = author.id
 WHERE author.id = ?
 GROUP BY author.name;
+
+-- UPDATE: SET params and WHERE params both get column comments.
+-- name: updateBookTitle :execrows
+UPDATE book SET title = ? WHERE id = ?;
+
+-- Column with no COMMENT ON: isbn should not produce a @param tag.
+-- name: getBookByIsbn :one
+SELECT * FROM book WHERE isbn = ?;
+
+-- :many with parameters: verify params flow through the Many code path.
+-- name: listBooksByAuthor :many
+SELECT * FROM book WHERE author_id = ?;
+
+-- Range: two params on the same column get deduplicated names and both get comments.
+-- name: listBooksByYearRange :many
+SELECT * FROM book WHERE published_year >= ? AND published_year <= ?;
+
+-- Function-wrapped parameter: the param maps to the column despite being inside crypt().
+-- name: createAccount :exec
+INSERT INTO account (username, password) VALUES (?, crypt(?, gen_salt('bf')));

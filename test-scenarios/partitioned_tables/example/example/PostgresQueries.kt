@@ -72,10 +72,6 @@ public class PostgresQueries(
     category: String,
   ) -> T): Many<T> = listEventsByCategory(category, mapper, driver::queryMany)
 
-  /**
-   * @param category Event category.
-   * @param payload Event payload. Null when the event carries no extra data.
-   */
   @Throws(SQLException::class)
   override fun addEvent(category: String, payload: String?) {
     val sql = "INSERT INTO event (category, payload) VALUES (?, ?::jsonb)"

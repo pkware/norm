@@ -14,6 +14,13 @@ import norm.Many
 public interface Queries {
   /**
    * Star projection against a partitioned table.
+   *
+   * ```sql
+   * SELECT * FROM event WHERE id = ? AND created_at = ?
+   * ```
+   *
+   * @param id Unique identifier for the event.
+   * @param created_at When the event occurred. Used as partition key.
    */
   @Throws(SQLException::class)
   public fun <T : Any> getEventById(
@@ -29,21 +36,46 @@ public interface Queries {
 
   /**
    * Star projection against a partitioned table.
+   *
+   * ```sql
+   * SELECT * FROM event WHERE id = ? AND created_at = ?
+   * ```
+   *
+   * @param id Unique identifier for the event.
+   * @param created_at When the event occurred. Used as partition key.
    */
   @Throws(SQLException::class)
   public fun getEventById(id: UUID, created_at: OffsetDateTime): Event = getEventById(id, created_at, ::Event)
 
+  /**
+   * ```sql
+   * SELECT id, created_at, category FROM event WHERE category = ? ORDER BY created_at DESC
+   * ```
+   *
+   * @param category Event category.
+   */
   public fun <T : Any> listEventsByCategory(category: String, mapper: (
     id: UUID,
     created_at: OffsetDateTime,
     category: String,
   ) -> T): Many<T>
 
+  /**
+   * ```sql
+   * SELECT id, created_at, category FROM event WHERE category = ? ORDER BY created_at DESC
+   * ```
+   *
+   * @param category Event category.
+   */
   public fun listEventsByCategory(category: String): Many<ListEventsByCategory> = listEventsByCategory(category, ::ListEventsByCategory)
 
   /**
-   * Norm: Executes a SQL statement.
+   * ```sql
+   * INSERT INTO event (category, payload) VALUES (?, ?::jsonb)
+   * ```
    *
+   * @param category Event category.
+   * @param payload Event payload. Null when the event carries no extra data.
    * @return An array containing the result of each batch. The array has the same number as elements as [stream]
    *         had. The number in each slot can have one of several meanings:
    *         1. A number greater than or equal to zero -- indicates that the
@@ -63,7 +95,23 @@ public interface Queries {
   ): IntArray
 
   /**
-   * Norm: Invokes [addEvent] with a batch size of 100.
+   * ```sql
+   * INSERT INTO event (category, payload) VALUES (?, ?::jsonb)
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @param category Event category.
+   * @param payload Event payload. Null when the event carries no extra data.
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [java.sql.Statement.SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [java.sql.Statement.EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
    */
   @Throws(SQLException::class)
   public fun <Input : Any> addEvent(
@@ -73,7 +121,9 @@ public interface Queries {
   ): IntArray = addEvent(stream, category, payload, 100)
 
   /**
-   * Norm: Executes a SQL statement.
+   * ```sql
+   * INSERT INTO event (category, payload) VALUES (?, ?::jsonb)
+   * ```
    *
    * @param category Event category.
    * @param payload Event payload. Null when the event carries no extra data.

@@ -25,3 +25,15 @@ COMMENT ON COLUMN book.title IS 'Title of the book.';
 COMMENT ON COLUMN book.author_id IS 'Foreign key to the author who wrote the book.';
 COMMENT ON COLUMN book.published_year IS 'Year the book was published. Null if unknown.';
 -- isbn intentionally has no comment to test mixed scenarios.
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+CREATE TABLE account (
+  id SERIAL PRIMARY KEY,
+  username TEXT NOT NULL,
+  password TEXT NOT NULL
+);
+
+COMMENT ON COLUMN account.id IS 'Unique identifier for the account.';
+COMMENT ON COLUMN account.username IS 'Login name for the account.';
+COMMENT ON COLUMN account.password IS 'Encrypted password for the account.';

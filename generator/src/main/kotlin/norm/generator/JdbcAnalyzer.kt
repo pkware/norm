@@ -277,7 +277,10 @@ public class JdbcAnalyzer(private val connection: Connection) {
       val inferred = inferredParameters[i]
       val tableName = inferred?.tableName
       val columnName = inferred?.columnName ?: inferred?.name
-      val comment = if (catalog != null && tableName != null && columnName != null) {
+      // When a function wraps the parameter (e.g., crypt(?, gen_salt('bf'))), the column comment describes
+      // the stored value, not the caller's input. Skip the comment in that case.
+      val isInsideFunctionCall = inferred?.columnName != null && inferred.columnName != inferred.name
+      val comment = if (!isInsideFunctionCall && catalog != null && tableName != null && columnName != null) {
         catalog.findColumn(tableName, columnName)?.comment.orEmpty()
       } else {
         ""

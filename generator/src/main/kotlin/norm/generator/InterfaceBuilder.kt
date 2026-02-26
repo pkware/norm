@@ -17,118 +17,88 @@ import java.sql.Statement
  * Adds a method for the given SQL statement to the receiver `interface` builder.
  */
 internal fun TypeSpec.Builder.addSqlStatementInterfaceMethod(query: SqlStatement) {
-  val interfaceBuilder = this
-	/*
-	 * For each query, we potentially generate multiple functions: a simple function that maps rows into value objects,
-	 * and a mapper function that takes a lambda allowing the row to be mapped as-desired. These have similar signatures.
-	 */
   val simpleFunction = sqlFunction(query)
-  if (query.comments.isNotEmpty()) {
-    simpleFunction.addKdoc(query.comments.joinToString("\n", postfix = "\n\n", transform = String::trim))
-  }
+  simpleFunction.addStandardKdoc(query)
 
-  // Not every query needs a mapper function, but it's easier to build it up in code here and end up not attaching it to
-  // the TypeSpec than it is to build it up conditionally.
-  val mapperFunction = mapperFunction(query)
-    .addModifiers(ABSTRACT)
-  if (query.comments.isNotEmpty()) {
-    mapperFunction.addKdoc(query.comments.joinToString("\n", postfix = "\n\n", transform = String::trim))
-  }
-
-  val simpleFunctionBody = CodeBlock.builder()
-    .add("return %N(", query.name)
-
-  for ((index, _) in query.parameters.asSequence().mapNotNull(Parameter::column).withIndex()) {
-    val parameterName = query.getParameterName(index)
-    simpleFunctionBody.add("%N, ", parameterName)
-  }
-
-  if (query.resultRowShape.isComposedOfMultipleColumns) {
-    simpleFunctionBody.add("%L)", (query.resultRowShape.kotlinType!! as ClassName).constructorReference())
-  } else {
-    simpleFunctionBody.add("%L)", COLUMN_VALUE)
-  }
   when (query.command) {
     Command.ONE, Command.MANY -> {
-      // We're going to generate the mapper function so consumers have the power to control allocations and how the
-      // columns are consumed.
-      interfaceBuilder.addFunction(mapperFunction.build())
-      simpleFunction.addCode(simpleFunctionBody.build())
+      // Generate the mapper function so consumers can control allocations and how columns are consumed.
+      val mapperFunction = mapperFunction(query)
+        .addModifiers(ABSTRACT)
+      mapperFunction.addStandardKdoc(query)
+      addFunction(mapperFunction.build())
+
+      // The simple function delegates to the mapper function with a constructor reference.
+      simpleFunction.addCode(buildMapperDelegationBody(query))
     }
     Command.EXEC, Command.EXEC_ROWS -> {
-      val kdoc = if (query.command == Command.EXEC_ROWS) {
-        """
-        Norm: Executes a SQL statement and returns the number of rows updated.
-
-        @return The number of rows updated.
-        """.trimIndent()
-      } else {
-        """
-        Norm: Executes a SQL statement.
-        """.trimIndent()
+      simpleFunction.addModifiers(ABSTRACT)
+      if (query.command == Command.EXEC_ROWS) {
+        simpleFunction.addKdoc("@return The number of rows updated.\n")
       }
-      simpleFunction
-        .addModifiers(ABSTRACT)
-        .addKdoc(kdoc)
 
       if (query.canBeBatched) {
-        val batchFunction = batchFunction(query)
-          .build()
-
-        // Full parameter function to allow customization of batch size
-        interfaceBuilder.addFunction(
-          batchFunction.toBuilder()
-            .addKdoc(kdoc)
-            .addKdoc(
-              """
-
-
-              @return An array containing the result of each batch. The array has the same number as elements as [stream]
-                      had. The number in each slot can have one of several meanings:
-                      1. A number greater than or equal to zero -- indicates that the
-                         command was processed successfully and is an update count giving the
-                         number of rows in the database that were affected by the command's execution
-                      2. A value of [%M] -- indicates that the command was processed successfully
-                         but that the number of rows affected is unknown
-                      3. A value of [%M] -- indicates that the command failed to execute
-                         successfully and occurs only if a driver continues to process commands after a command fails
-              """.trimIndent(),
-              MemberName(Statement::class.asClassName(), "SUCCESS_NO_INFO"),
-              MemberName(Statement::class.asClassName(), "EXECUTE_FAILED"),
-            )
-            .addModifiers(ABSTRACT)
-            .build(),
-        )
-
-        val batchSizedFunction = batchFunction.toBuilder().apply {
-          parameters.removeLast()
-          addKdoc(
-            "Norm: Invokes [%N] with a batch size of %L.",
-            batchFunction,
-            BATCH_SIZE,
-          )
-          addCode(
-            CodeBlock.builder()
-              .add("return %N(", batchFunction)
-              .apply {
-                for (parameter in parameters) {
-                  add("%N, ", parameter)
-                }
-              }
-              .add("%L)", BATCH_SIZE)
-              .build(),
-          )
-        }
-        interfaceBuilder.addFunction(batchSizedFunction.build())
+        addBatchOverloads(query)
       }
     }
   }
-  interfaceBuilder.addFunction(simpleFunction.build())
+  addFunction(simpleFunction.build())
 
-  // Generate dynamic query variants for eligible queries
   if (query.canBeDynamic) {
-    interfaceBuilder.addDynamicInterfaceMethods(query)
+    addDynamicInterfaceMethods(query)
   }
+}
+
+/**
+ * Builds the delegation body that a simple function uses to call its mapper overload.
+ *
+ * Produces code like: `return queryName(param1, param2, ::RowType)`
+ */
+private fun buildMapperDelegationBody(query: SqlStatement): CodeBlock {
+  val body = CodeBlock.builder().add("return %N(", query.name)
+  for ((index, _) in query.parameters.asSequence().mapNotNull(Parameter::column).withIndex()) {
+    body.add("%N, ", query.getParameterName(index))
+  }
+  if (query.resultRowShape.isComposedOfMultipleColumns) {
+    body.add("%L)", (query.resultRowShape.kotlinType!! as ClassName).constructorReference())
+  } else {
+    body.add("%L)", COLUMN_VALUE)
+  }
+  return body.build()
+}
+
+/**
+ * Adds the two batch overloads for an `:exec` or `:execrows` query: a full overload with a `batchSize` parameter,
+ * and a convenience overload that delegates with a default batch size.
+ */
+private fun TypeSpec.Builder.addBatchOverloads(query: SqlStatement) {
+  val batchFunction = batchFunction(query).build()
+
+  // Full overload with explicit batchSize parameter
+  addFunction(
+    batchFunction.toBuilder()
+      .apply { addBatchKdoc(query) }
+      .addModifiers(ABSTRACT)
+      .build(),
+  )
+
+  // Convenience overload that delegates with a default batch size
+  val convenienceFunction = batchFunction.toBuilder().apply {
+    parameters.removeLast()
+    addBatchKdoc(query, "Uses a batch size of %L.\n\n", BATCH_SIZE)
+    addCode(
+      CodeBlock.builder()
+        .add("return %N(", batchFunction)
+        .apply {
+          for (parameter in parameters) {
+            add("%N, ", parameter)
+          }
+        }
+        .add("%L)", BATCH_SIZE)
+        .build(),
+    )
+  }
+  addFunction(convenienceFunction.build())
 }
 
 /**
@@ -173,7 +143,54 @@ private fun TypeSpec.Builder.addDynamicInterfaceMethods(query: SqlStatement) {
   addFunction(dynamicSimpleFunction.build())
 }
 
-private const val MAPPER_PARAMETER_NAME = "mapper"
+/**
+ * Adds the standard KDoc block for a query method: user comments, SQL code block, optional extra text,
+ * and `@param` tags.
+ *
+ * @param extraFormat Optional format string for additional text between the SQL block and the `@param` tags.
+ * @param extraArgs Format arguments for [extraFormat].
+ */
+private fun FunSpec.Builder.addStandardKdoc(query: SqlStatement, extraFormat: String? = null, vararg extraArgs: Any) {
+  if (query.comments.isNotEmpty()) {
+    addKdoc(query.comments.joinToString("\n", postfix = "\n\n", transform = String::trim))
+  }
+  addKdoc("```sql\n%L\n```\n\n", query.sql)
+  if (extraFormat != null) {
+    addKdoc(extraFormat, *extraArgs)
+  }
+  for ((index, parameter) in query.parameters.asSequence().mapNotNull(Parameter::column).withIndex()) {
+    val comment = parameter.comment
+    if (comment.isNotEmpty()) {
+      addKdoc("@param %L %L\n", query.getParameterName(index), comment)
+    }
+  }
+}
+
+/**
+ * Adds the standard KDoc block for a batch function: comments, SQL, optional extra text, `@param` tags,
+ * and the batch `@return` block.
+ *
+ * @param extraFormat Optional format string for additional text between the SQL block and the `@param` tags.
+ * @param extraArgs Format arguments for [extraFormat].
+ */
+private fun FunSpec.Builder.addBatchKdoc(query: SqlStatement, extraFormat: String? = null, vararg extraArgs: Any) {
+  addStandardKdoc(query, extraFormat, *extraArgs)
+  addKdoc(
+    """
+    @return An array containing the result of each batch. The array has the same number as elements as [stream]
+            had. The number in each slot can have one of several meanings:
+            1. A number greater than or equal to zero -- indicates that the
+               command was processed successfully and is an update count giving the
+               number of rows in the database that were affected by the command's execution
+            2. A value of [%M] -- indicates that the command was processed successfully
+               but that the number of rows affected is unknown
+            3. A value of [%M] -- indicates that the command failed to execute
+               successfully and occurs only if a driver continues to process commands after a command fails
+    """.trimIndent(),
+    MemberName(Statement::class.asClassName(), "SUCCESS_NO_INFO"),
+    MemberName(Statement::class.asClassName(), "EXECUTE_FAILED"),
+  )
+}
 
 /**
  * Reference to a runtime method that returns the input value.

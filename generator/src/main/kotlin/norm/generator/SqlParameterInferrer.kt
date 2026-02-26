@@ -74,32 +74,39 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
     // For UPDATE/DELETE/SELECT, split on WHERE to distinguish SET from WHERE contexts
     val tableName = UPDATE_TABLE.find(sql)?.groupValues?.get(1)
       ?: DELETE_FROM.find(sql)?.groupValues?.get(1)
+      ?: FROM_TABLE.find(sql)?.groupValues?.get(1)
     val whereIndex = sql.indexOf(" WHERE ", ignoreCase = true)
 
     if (whereIndex > 0) {
       // SET col = ? (before WHERE — inherits nullability)
       val setClause = sql.substring(0, whereIndex)
       for (match in COLUMN_COMPARES_PARAM.findAll(setClause)) {
-        val colName = match.groupValues[1]
+        val qualifiedTable = match.groupValues[1].ifEmpty { null }
+        val colName = match.groupValues[2]
         val paramNum = paramIndex.paramNumberAt(match.range.last)
-        params[paramNum] = InferredParameter(funcNames[paramNum] ?: colName, tableName, inheritsNullability = true)
+        params[paramNum] =
+          InferredParameter(funcNames[paramNum] ?: colName, qualifiedTable ?: tableName, inheritsNullability = true)
       }
 
       // WHERE col <op> ? (after WHERE — does NOT inherit nullability)
       val whereClause = sql.substring(whereIndex)
       for (match in COLUMN_COMPARES_PARAM.findAll(whereClause)) {
-        val colName = match.groupValues[1]
+        val qualifiedTable = match.groupValues[1].ifEmpty { null }
+        val colName = match.groupValues[2]
         val paramNum = paramIndex.paramNumberAt(whereIndex + match.range.last)
         if (paramNum !in params) {
-          params[paramNum] = InferredParameter(funcNames[paramNum] ?: colName, tableName, inheritsNullability = false)
+          params[paramNum] =
+            InferredParameter(funcNames[paramNum] ?: colName, qualifiedTable ?: tableName, inheritsNullability = false)
         }
       }
     } else {
       // No WHERE clause — all comparisons treated as non-inheriting
       for (match in COLUMN_COMPARES_PARAM.findAll(sql)) {
-        val colName = match.groupValues[1]
+        val qualifiedTable = match.groupValues[1].ifEmpty { null }
+        val colName = match.groupValues[2]
         val paramNum = paramIndex.paramNumberAt(match.range.last)
-        params[paramNum] = InferredParameter(funcNames[paramNum] ?: colName, tableName, inheritsNullability = false)
+        params[paramNum] =
+          InferredParameter(funcNames[paramNum] ?: colName, qualifiedTable ?: tableName, inheritsNullability = false)
       }
     }
 
@@ -286,8 +293,9 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
     private val INSERT_INTO = Regex("""INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)""", RegexOption.IGNORE_CASE)
     private val UPDATE_TABLE = Regex("""UPDATE\s+(\w+)\s""", RegexOption.IGNORE_CASE)
     private val DELETE_FROM = Regex("""DELETE\s+FROM\s+(\w+)""", RegexOption.IGNORE_CASE)
+    private val FROM_TABLE = Regex("""\bFROM\s+(\w+)""", RegexOption.IGNORE_CASE)
     private val COLUMN_COMPARES_PARAM =
-      Regex("""(\w+)\s*(?:=|<>|!=|>=|<=|>|<|LIKE|ILIKE)\s*\?""", RegexOption.IGNORE_CASE)
+      Regex("""(?:(\w+)\.)?(\w+)\s*(?:=|<>|!=|>=|<=|>|<|LIKE|ILIKE)\s*\?""", RegexOption.IGNORE_CASE)
   }
 }
 

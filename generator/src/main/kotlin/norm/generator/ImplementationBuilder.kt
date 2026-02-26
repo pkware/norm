@@ -19,12 +19,11 @@ import plugin.Parameter
 import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.SQLException
-import java.util.concurrent.locks.ReentrantLock
 
 /**
  * Produces a function builder with a signature reflecting a SQL statement.
  *
- * Populates the throws, kdoc, parameters, and return type using [statement].
+ * Populates the throws, parameters, and return type using [statement].
  */
 internal fun sqlFunction(statement: SqlStatement): FunSpec.Builder {
   val function = FunSpec.builder(statement.name)
@@ -37,10 +36,7 @@ internal fun sqlFunction(statement: SqlStatement): FunSpec.Builder {
   for ((index, parameter) in statement.parameters.asSequence().mapNotNull(Parameter::column).withIndex()) {
     val parameterName = statement.getParameterName(index)
     val parameterType = statement.resolveColumnType(parameter)
-    val parameterSpec = ParameterSpec.builder(parameterName, parameterType)
-      .addKdocIfPresent(parameter.comment)
-      .build()
-    function.addParameter(parameterSpec)
+    function.addParameter(parameterName, parameterType)
   }
 
   val returnType = statement.command.applyTo(statement.resultRowShape.kotlinType)
@@ -53,7 +49,7 @@ internal fun sqlFunction(statement: SqlStatement): FunSpec.Builder {
  * Produces a function builder with a signature reflecting a SQL statement, a generic return type, and a mapper to
  * produce the return type.
  *
- * Populates the throws, kdoc, parameters, and return type using [statement].
+ * Populates the throws, parameters, and return type using [statement].
  */
 internal fun mapperFunction(statement: SqlStatement): FunSpec.Builder {
   val mapperReturnType = statement.resultRowShape.mapperReturnType
@@ -123,11 +119,7 @@ private fun TypeSpec.Builder.addManyImplementation(statement: SqlStatement) {
     .apply {
       // Add query parameters first
       for ((index, parameter) in queryParameters.withIndex()) {
-        addParameter(
-          ParameterSpec.builder(statement.getParameterName(index), statement.resolveColumnType(parameter))
-            .addKdocIfPresent(parameter.comment)
-            .build(),
-        )
+        addParameter(ParameterSpec(statement.getParameterName(index), statement.resolveColumnType(parameter)))
       }
     }
     .addParameter(
@@ -172,11 +164,7 @@ private fun TypeSpec.Builder.addManyImplementation(statement: SqlStatement) {
     .addTypeVariable(mapperReturnType)
     .apply {
       for ((index, parameter) in queryParameters.withIndex()) {
-        addParameter(
-          ParameterSpec.builder(statement.getParameterName(index), statement.resolveColumnType(parameter))
-            .addKdocIfPresent(parameter.comment)
-            .build(),
-        )
+        addParameter(ParameterSpec(statement.getParameterName(index), statement.resolveColumnType(parameter)))
       }
     }
     .addParameter(
@@ -239,7 +227,7 @@ private fun TypeSpec.Builder.addExecRowsImplementation(statement: SqlStatement) 
   addFunction(function.build())
 
   if (statement.canBeBatched) {
-    addFunction(buildExecRowsBatch(statement))
+    addFunction(buildBatch(statement, trackIntermediateResults = true))
   }
 }
 
@@ -258,7 +246,7 @@ private fun TypeSpec.Builder.addExecImplementation(statement: SqlStatement) {
   addFunction(function.build())
 
   if (statement.canBeBatched) {
-    addFunction(buildExecBatch(statement))
+    addFunction(buildBatch(statement, trackIntermediateResults = false))
   }
 }
 
@@ -322,7 +310,7 @@ private fun FunSpec.Builder.buildExec(statement: SqlStatement) {
  * Produces a function builder with a signature reflecting a SQL statement, a generic return type, a stream to take
  * multiple inputs, a batch size, and a mapper to produce the return type.
  *
- * Populates the throws, kdoc, parameters, and return type using [statement].
+ * Populates the throws, parameters, and return type using [statement].
  */
 internal fun batchFunction(statement: SqlStatement): FunSpec.Builder = sqlFunction(statement).apply {
   parameters.clear()
@@ -344,133 +332,89 @@ internal fun batchFunction(statement: SqlStatement): FunSpec.Builder = sqlFuncti
   addParameter("batchSize", INT)
 }
 
-private fun buildExecRowsBatch(statement: SqlStatement): FunSpec = batchFunction(statement).apply {
-  addModifiers(KModifier.OVERRIDE)
-  addStatement("val sql = %S", statement.sql)
-  beginControlFlow("return driver.execute(sql) {")
-  addCode(
-    """
-		|var totalCount = 0
-		|var batchCount = 0
-		|val results = mutableListOf<IntArray>()
-		|
-    """.trimMargin(),
-    ReentrantLock::class.asTypeName(),
-  )
-  beginControlFlow("for (entry in stream) {")
-  for ((index, parameter) in statement.parameters.asSequence().mapNotNull(Parameter::column).withIndex()) {
-    val typeInfo = statement.resolveMappableType(parameter)
-    addStatement(
-      "%L",
-      typeInfo.statementAction(index + 1, CodeBlock.of("entry.${statement.getParameterName(index)}()")),
+/**
+ * Builds a batch execution function for the given statement.
+ *
+ * @param trackIntermediateResults When `true`, intermediate `executeBatch()` results are captured into `results`
+ *   and `totalCount` is tracked per flush. Used by `:execrows` where the per-batch counts matter.
+ *   When `false`, intermediate flushes call `executeBatch()` without capturing. Used by `:exec`.
+ */
+private fun buildBatch(statement: SqlStatement, trackIntermediateResults: Boolean): FunSpec =
+  batchFunction(statement).apply {
+    addModifiers(KModifier.OVERRIDE)
+    addStatement("val sql = %S", statement.sql)
+    beginControlFlow("return driver.execute(sql) {")
+    addCode(
+      """
+			|var totalCount = 0
+			|var batchCount = 0
+			|val results = mutableListOf<IntArray>()
+			|
+      """.trimMargin(),
     )
-  }
-  addCode(
-    """
-		|addBatch()
-		|batchCount++
-		|if (batchCount == batchSize) {
-		|  results.add(executeBatch())
-		|  batchCount = 0
-		|  // Performance optimization to reduce register updates per loop iteration
-		|  totalCount += batchSize
-		|}
-		|
-    """.trimMargin(),
-  )
-  // Close the forEach
-  endControlFlow()
+    beginControlFlow("for (entry in stream) {")
+    for ((index, parameter) in statement.parameters.asSequence().mapNotNull(Parameter::column).withIndex()) {
+      val typeInfo = statement.resolveMappableType(parameter)
+      addStatement(
+        "%L",
+        typeInfo.statementAction(index + 1, CodeBlock.of("entry.${statement.getParameterName(index)}()")),
+      )
+    }
+    if (trackIntermediateResults) {
+      addCode(
+        """
+				|addBatch()
+				|batchCount++
+				|if (batchCount == batchSize) {
+				|  results.add(executeBatch())
+				|  batchCount = 0
+				|  // Performance optimization to reduce register updates per loop iteration
+				|  totalCount += batchSize
+				|}
+				|
+        """.trimMargin(),
+      )
+    } else {
+      addCode(
+        """
+				|addBatch()
+				|batchCount++
+				|if (batchCount == batchSize) {
+				|  executeBatch()
+				|  batchCount = 0
+				|}
+				|
+        """.trimMargin(),
+      )
+    }
+    endControlFlow()
 
-  addCode(
-    """
-		|if (batchCount > 0) {
-		|  results.add(executeBatch())
-		|  totalCount += batchCount
-		|}
-		|%M(results, totalCount, batchSize)
-		|
-    """.trimMargin(),
-    PROCESS_EXEC_RESULTS,
-  )
-
-  // Close the query
-  endControlFlow()
-
-  returns(INT_ARRAY)
-}.build()
-
-private fun buildExecBatch(statement: SqlStatement): FunSpec = batchFunction(statement).apply {
-  addModifiers(KModifier.OVERRIDE)
-
-  val queryParameters = statement.parameters.mapNotNull(Parameter::column)
-  addStatement("val sql = %S", statement.sql)
-  beginControlFlow("return driver.execute(sql) {")
-  addCode(
-    """
-		|var totalCount = 0
-		|var batchCount = 0
-		|val results = mutableListOf<IntArray>()
-		|
-    """.trimMargin(),
-    ReentrantLock::class.asTypeName(),
-  )
-  beginControlFlow("for (entry in stream) {")
-  for ((index, parameter) in queryParameters.withIndex()) {
-    val typeInfo = statement.resolveMappableType(parameter)
-    addStatement(
-      "%L",
-      typeInfo.statementAction(index + 1, CodeBlock.of("entry.${statement.getParameterName(index)}()")),
+    addCode(
+      """
+			|if (batchCount > 0) {
+			|  results.add(executeBatch())
+			|  totalCount += batchCount
+			|}
+			|%M(results, totalCount, batchSize)
+			|
+      """.trimMargin(),
+      PROCESS_EXEC_RESULTS,
     )
-  }
-  addCode(
-    """
-		|addBatch()
-		|batchCount++
-		|if (batchCount == batchSize) {
-		|  executeBatch()
-		|  batchCount = 0
-		|}
-		|
-    """.trimMargin(),
-  )
-  // Close the forEach
-  endControlFlow()
 
-  addCode(
-    """
-		|if (batchCount > 0) {
-		|  results.add(executeBatch())
-		|  totalCount += batchCount
-		|}
-		|%M(results, totalCount, batchSize)
-		|
-    """.trimMargin(),
-    PROCESS_EXEC_RESULTS,
-  )
-
-  // Close the query
-  endControlFlow()
-}.build()
+    endControlFlow()
+    returns(INT_ARRAY)
+  }.build()
 
 private val RESULT_SET = ResultSet::class.asTypeName()
 
 private val PROCESS_EXEC_RESULTS = MemberName(RUNTIME_PACKAGE, "combineExecBatchResults")
 
 /**
- * Adds KDoc to the builder only if [comment] is non-empty.
- *
- * Avoids rendering empty `/** */` blocks in generated code when no comment is available.
- */
-private fun ParameterSpec.Builder.addKdocIfPresent(comment: String): ParameterSpec.Builder = apply {
-  if (comment.isNotEmpty()) addKdoc("%L", comment)
-}
-
-/**
  * Name of the parameter representing a query mapper.
  *
  * The query mapper is a function that maps a result row to the Java type returned by the method.
  */
-private const val MAPPER_PARAMETER_NAME = "mapper"
+internal const val MAPPER_PARAMETER_NAME = "mapper"
 
 /**
  * Generates the invocation of a mapper function.

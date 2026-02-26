@@ -27,6 +27,11 @@ import norm.Query
 import norm.inputValue
 
 public interface Queries {
+  /**
+   * ```sql
+   * SELECT * FROM type
+   * ```
+   */
   public fun <T : Any> all(mapper: (
     smallserial_type: Short,
     serial2_type: Short,
@@ -93,6 +98,11 @@ public interface Queries {
     text_array_notnull_type: Array<String?>,
   ) -> T): Many<T>
 
+  /**
+   * ```sql
+   * SELECT * FROM type
+   * ```
+   */
   public fun all(): Many<Type> = all(::Type)
 
   public fun <T : Any> allDynamically(mapper: (
@@ -163,16 +173,26 @@ public interface Queries {
 
   public fun allDynamically(): Query<Type> = allDynamically(::Type)
 
+  /**
+   * ```sql
+   * SELECT string_type FROM type
+   * ```
+   */
   @Throws(SQLException::class)
   public fun <T : Any> single(mapper: (string_type: String) -> T): T
 
+  /**
+   * ```sql
+   * SELECT string_type FROM type
+   * ```
+   */
   @Throws(SQLException::class)
   public fun single(): String = single(::inputValue)
 
   /**
-   * Norm: Executes a SQL statement and returns the number of rows updated.
-   *
-   * @return The number of rows updated.
+   * ```sql
+   * INSERT INTO type(string_type) VALUES (?)
+   * ```
    *
    * @return An array containing the result of each batch. The array has the same number as elements as [stream]
    *         had. The number in each slot can have one of several meanings:
@@ -192,13 +212,29 @@ public interface Queries {
   ): IntArray
 
   /**
-   * Norm: Invokes [insertOne] with a batch size of 100.
+   * ```sql
+   * INSERT INTO type(string_type) VALUES (?)
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [java.sql.Statement.SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [java.sql.Statement.EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
    */
   @Throws(SQLException::class)
   public fun <Input : Any> insertOne(stream: Iterable<Input>, string_type: Input.() -> String): IntArray = insertOne(stream, string_type, 100)
 
   /**
-   * Norm: Executes a SQL statement and returns the number of rows updated.
+   * ```sql
+   * INSERT INTO type(string_type) VALUES (?)
+   * ```
    *
    * @return The number of rows updated.
    */
@@ -206,9 +242,9 @@ public interface Queries {
   public fun insertOne(string_type: String): Int
 
   /**
-   * Norm: Executes a SQL statement and returns the number of rows updated.
-   *
-   * @return The number of rows updated.
+   * ```sql
+   * INSERT INTO type(string_type, int_type) VALUES (?, ?)
+   * ```
    *
    * @return An array containing the result of each batch. The array has the same number as elements as [stream]
    *         had. The number in each slot can have one of several meanings:
@@ -229,7 +265,21 @@ public interface Queries {
   ): IntArray
 
   /**
-   * Norm: Invokes [insertMultiple] with a batch size of 100.
+   * ```sql
+   * INSERT INTO type(string_type, int_type) VALUES (?, ?)
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [java.sql.Statement.SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [java.sql.Statement.EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
    */
   @Throws(SQLException::class)
   public fun <Input : Any> insertMultiple(
@@ -239,7 +289,9 @@ public interface Queries {
   ): IntArray = insertMultiple(stream, string_type, int_type, 100)
 
   /**
-   * Norm: Executes a SQL statement and returns the number of rows updated.
+   * ```sql
+   * INSERT INTO type(string_type, int_type) VALUES (?, ?)
+   * ```
    *
    * @return The number of rows updated.
    */
@@ -247,9 +299,9 @@ public interface Queries {
   public fun insertMultiple(string_type: String, int_type: Int?): Int
 
   /**
-   * Norm: Executes a SQL statement and returns the number of rows updated.
-   *
-   * @return The number of rows updated.
+   * ```sql
+   * UPDATE type SET string_type = ? WHERE string_type IS NOT NULL
+   * ```
    *
    * @return An array containing the result of each batch. The array has the same number as elements as [stream]
    *         had. The number in each slot can have one of several meanings:
@@ -269,13 +321,29 @@ public interface Queries {
   ): IntArray
 
   /**
-   * Norm: Invokes [updateAllStrings] with a batch size of 100.
+   * ```sql
+   * UPDATE type SET string_type = ? WHERE string_type IS NOT NULL
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [java.sql.Statement.SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [java.sql.Statement.EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
    */
   @Throws(SQLException::class)
   public fun <Input : Any> updateAllStrings(stream: Iterable<Input>, string_type: Input.() -> String): IntArray = updateAllStrings(stream, string_type, 100)
 
   /**
-   * Norm: Executes a SQL statement and returns the number of rows updated.
+   * ```sql
+   * UPDATE type SET string_type = ? WHERE string_type IS NOT NULL
+   * ```
    *
    * @return The number of rows updated.
    */
@@ -285,7 +353,9 @@ public interface Queries {
   /**
    * Execrows without parameters.
    *
-   * Norm: Executes a SQL statement and returns the number of rows updated.
+   * ```sql
+   * DELETE FROM type
+   * ```
    *
    * @return The number of rows updated.
    */
@@ -293,9 +363,11 @@ public interface Queries {
   public fun deleteAll(): Int
 
   /**
-   * Norm: Executes a SQL statement and returns the number of rows updated.
+   * Execrows with 1 parameter.
    *
-   * @return The number of rows updated.
+   * ```sql
+   * DELETE FROM type WHERE serial_type = ?
+   * ```
    *
    * @return An array containing the result of each batch. The array has the same number as elements as [stream]
    *         had. The number in each slot can have one of several meanings:
@@ -315,7 +387,23 @@ public interface Queries {
   ): IntArray
 
   /**
-   * Norm: Invokes [deleteById] with a batch size of 100.
+   * Execrows with 1 parameter.
+   *
+   * ```sql
+   * DELETE FROM type WHERE serial_type = ?
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [java.sql.Statement.SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [java.sql.Statement.EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
    */
   @Throws(SQLException::class)
   public fun <Input : Any> deleteById(stream: Iterable<Input>, serial_type: Input.() -> Int): IntArray = deleteById(stream, serial_type, 100)
@@ -323,7 +411,9 @@ public interface Queries {
   /**
    * Execrows with 1 parameter.
    *
-   * Norm: Executes a SQL statement and returns the number of rows updated.
+   * ```sql
+   * DELETE FROM type WHERE serial_type = ?
+   * ```
    *
    * @return The number of rows updated.
    */
@@ -333,13 +423,19 @@ public interface Queries {
   /**
    * Exec without parameters.
    *
-   * Norm: Executes a SQL statement.
+   * ```sql
+   * CALL reset_type_table()
+   * ```
    */
   @Throws(SQLException::class)
   public fun resetTypes()
 
   /**
-   * Norm: Executes a SQL statement.
+   * Exec with parameters.
+   *
+   * ```sql
+   * CALL update_string_type(?, ?)
+   * ```
    *
    * @return An array containing the result of each batch. The array has the same number as elements as [stream]
    *         had. The number in each slot can have one of several meanings:
@@ -360,7 +456,23 @@ public interface Queries {
   ): IntArray
 
   /**
-   * Norm: Invokes [updateStringType] with a batch size of 100.
+   * Exec with parameters.
+   *
+   * ```sql
+   * CALL update_string_type(?, ?)
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [java.sql.Statement.SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [java.sql.Statement.EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
    */
   @Throws(SQLException::class)
   public fun <Input : Any> updateStringType(
@@ -372,13 +484,19 @@ public interface Queries {
   /**
    * Exec with parameters.
    *
-   * Norm: Executes a SQL statement.
+   * ```sql
+   * CALL update_string_type(?, ?)
+   * ```
    */
   @Throws(SQLException::class)
   public fun updateStringType(p_id: Int, p_new_value: String)
 
   /**
    * Query against a view (pass-through columns preserve nullability from base table).
+   *
+   * ```sql
+   * SELECT * FROM not_null_view
+   * ```
    */
   public fun <T : Any> listNotNullView(mapper: (
     serial_type: Int,
@@ -388,6 +506,10 @@ public interface Queries {
 
   /**
    * Query against a view (pass-through columns preserve nullability from base table).
+   *
+   * ```sql
+   * SELECT * FROM not_null_view
+   * ```
    */
   public fun listNotNullView(): Many<NotNullView> = listNotNullView(::NotNullView)
 
@@ -401,6 +523,10 @@ public interface Queries {
 
   /**
    * Query against a materialized view with computed columns (aggregates are nullable).
+   *
+   * ```sql
+   * SELECT * FROM type_summary WHERE string_type = ?
+   * ```
    */
   @Throws(SQLException::class)
   public fun <T : Any> getTypeSummary(string_type: String, mapper: (
@@ -411,6 +537,10 @@ public interface Queries {
 
   /**
    * Query against a materialized view with computed columns (aggregates are nullable).
+   *
+   * ```sql
+   * SELECT * FROM type_summary WHERE string_type = ?
+   * ```
    */
   @Throws(SQLException::class)
   public fun getTypeSummary(string_type: String): TypeSummary = getTypeSummary(string_type, ::TypeSummary)
