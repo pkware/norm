@@ -10,6 +10,10 @@ package norm.generator
  * @param comments Comment lines preceding the query annotation, used for KDoc generation.
  * @param namedParameters Map from 1-based positional parameter number to the developer-chosen name. Empty when the
  *   query uses `?` positional parameters directly.
+ * @param sourceLine 1-based line number of the `-- name:` annotation in the source file. `0` if unknown
+ *   (for example, for synthesized CRUD queries).
+ * @param sourceFile Path to the SQL file this query was parsed from. Empty string if unknown (for example,
+ *   for synthesized CRUD queries).
  */
 public data class ParsedQuery(
   val name: String,
@@ -17,6 +21,8 @@ public data class ParsedQuery(
   val sql: String,
   val comments: List<String>,
   val namedParameters: Map<Int, String> = emptyMap(),
+  val sourceLine: Int = 0,
+  val sourceFile: String = "",
 )
 
 /**
@@ -53,11 +59,13 @@ public object QueryFileParser {
    * Parses the content of a SQL file into a list of [ParsedQuery] instances.
    *
    * @param content The full text content of a SQL file.
+   * @param sourceFile Path to the SQL file being parsed, stored on each [ParsedQuery] for diagnostics.
+   *   Empty string if the source path is unknown.
    * @return Parsed queries in the order they appear in the file.
    * @throws IllegalArgumentException if a `-- name:` annotation has an invalid format, or if a
    *   query mixes named and positional parameter styles.
    */
-  public fun parse(content: String): List<ParsedQuery> {
+  public fun parse(content: String, sourceFile: String = ""): List<ParsedQuery> {
     val lines = content.lines()
     val queries = mutableListOf<ParsedQuery>()
 
@@ -66,19 +74,22 @@ public object QueryFileParser {
     var currentName: String? = null
     var currentCommand: String? = null
     var currentComments = listOf<String>()
+    var currentSourceLine = 0
     val currentSqlLines = mutableListOf<String>()
 
     // Once the SQL body ends (line ending with `;`), we switch back to accumulating
     // pending comments for the next annotation.
     var sqlBodyComplete = false
 
-    for (line in lines) {
+    for ((lineIndex, line) in lines.withIndex()) {
       val trimmed = line.trim()
       val match = NAME_ANNOTATION.matchEntire(trimmed)
       if (match != null) {
         // Flush previous query if one exists
         if (currentName != null) {
-          queries.add(buildQuery(currentName, currentCommand!!, currentSqlLines, currentComments))
+          queries.add(
+            buildQuery(currentName, currentCommand!!, currentSqlLines, currentComments, currentSourceLine, sourceFile),
+          )
           currentSqlLines.clear()
         }
 
@@ -86,6 +97,7 @@ public object QueryFileParser {
         currentName = match.groupValues[1]
         currentCommand = match.groupValues[2]
         currentComments = pendingComments.toList()
+        currentSourceLine = lineIndex + 1
         pendingComments.clear()
         sqlBodyComplete = false
       } else if (currentName == null || sqlBodyComplete) {
@@ -107,13 +119,22 @@ public object QueryFileParser {
 
     // Flush last query
     if (currentName != null) {
-      queries.add(buildQuery(currentName, currentCommand!!, currentSqlLines, currentComments))
+      queries.add(
+        buildQuery(currentName, currentCommand!!, currentSqlLines, currentComments, currentSourceLine, sourceFile),
+      )
     }
 
     return queries
   }
 
-  private fun buildQuery(name: String, command: String, sqlLines: List<String>, comments: List<String>): ParsedQuery {
+  private fun buildQuery(
+    name: String,
+    command: String,
+    sqlLines: List<String>,
+    comments: List<String>,
+    sourceLine: Int,
+    sourceFile: String,
+  ): ParsedQuery {
     val rawSql = sqlLines
       .joinToString("\n")
       .trim()
@@ -128,6 +149,8 @@ public object QueryFileParser {
       sql = sql,
       comments = comments,
       namedParameters = namedParameters,
+      sourceLine = sourceLine,
+      sourceFile = sourceFile,
     )
   }
 

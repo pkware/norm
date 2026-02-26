@@ -319,6 +319,149 @@ class NormPluginTest {
       file.relativeTo(baseDir).pathString to file.readText()
     }
 
+  @Test
+  fun `schema application failure includes the filename in the error`() {
+    val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
+    project.setupSettingsOnly()
+
+    val badSchemaFile = projectDir.resolve("bad_schema.sql")
+    badSchemaFile.writeText("CREATE TABLE broken (id NOT_A_REAL_TYPE);")
+
+    project.buildFile.writeText(
+      """
+      plugins {
+        kotlin("jvm")
+        id("com.pkware.norm")
+      }
+
+      norm {
+        databases {
+          create("Test") {
+            packageName = "example"
+            schemas.addAll("$badSchemaFile")
+            queries.addAll("${BASIC_EMBEDS_SCENARIO.resolve("queries.sql").normalize().toAbsolutePath()}")
+          }
+        }
+      }
+      """.trimIndent(),
+    )
+
+    val result = project.gradle("normGenerateTest").buildAndFail()
+    assertThat(result.output).contains("bad_schema.sql")
+    assertThat(result.output).contains("line 1")
+  }
+
+  @Test
+  fun `query analysis failure includes the query name in the error`() {
+    val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
+    project.setupSettingsOnly()
+
+    val badQueriesFile = projectDir.resolve("bad_queries.sql")
+    badQueriesFile.writeText(
+      $$"""
+      -- name: selectFromNowhere :many
+      SELECT * FROM table_that_does_not_exist;
+      """.trimIndent(),
+    )
+
+    project.buildFile.writeText(
+      """
+      plugins {
+        kotlin("jvm")
+        id("com.pkware.norm")
+      }
+
+      norm {
+        databases {
+          create("Test") {
+            packageName = "example"
+            schemas.addAll("${BASIC_EMBEDS_SCENARIO.resolve("schema.sql").normalize().toAbsolutePath()}")
+            queries.addAll("$badQueriesFile")
+          }
+        }
+      }
+      """.trimIndent(),
+    )
+
+    val result = project.gradle("normGenerateTest").buildAndFail()
+    assertThat(result.output).contains("selectFromNowhere")
+    assertThat(result.output).contains("bad_queries.sql:1")
+  }
+
+  @Test
+  fun `query file parse failure includes the filename in the error`() {
+    val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
+    project.setupSettingsOnly()
+
+    val badQueriesFile = projectDir.resolve("mixed_params.sql")
+    badQueriesFile.writeText(
+      $$"""
+      -- name: mixedParams :one
+      SELECT * FROM author WHERE id = :id AND name = ?;
+      """.trimIndent(),
+    )
+
+    project.buildFile.writeText(
+      """
+      plugins {
+        kotlin("jvm")
+        id("com.pkware.norm")
+      }
+
+      norm {
+        databases {
+          create("Test") {
+            packageName = "example"
+            schemas.addAll("${BASIC_EMBEDS_SCENARIO.resolve("schema.sql").normalize().toAbsolutePath()}")
+            queries.addAll("$badQueriesFile")
+          }
+        }
+      }
+      """.trimIndent(),
+    )
+
+    val result = project.gradle("normGenerateTest").buildAndFail()
+    assertThat(result.output).contains("mixed_params.sql")
+    assertThat(result.output).contains("Cannot mix named")
+  }
+
+  @Test
+  fun `synthesized CRUD query failure identifies the source table`() {
+    val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
+    project.setupSettingsOnly()
+
+    // "user" is a PostgreSQL reserved keyword; CRUD-generated queries reference it unquoted and fail
+    val schema = projectDir.resolve("schema.sql")
+    schema.writeText($$"""CREATE TABLE "user" (id serial PRIMARY KEY, name text NOT NULL);""")
+
+    val queries = projectDir.resolve("queries.sql")
+    queries.writeText("")
+
+    project.buildFile.writeText(
+      """
+      plugins {
+        kotlin("jvm")
+        id("com.pkware.norm")
+      }
+
+      norm {
+        databases {
+          create("Test") {
+            packageName = "example"
+            schemas.addAll("$schema")
+            queries.addAll("$queries")
+            generateCrud = true
+          }
+        }
+      }
+      """.trimIndent(),
+    )
+
+    val result = project.gradle("normGenerateTest").buildAndFail()
+    assertThat(result.output).contains("synthesized CRUD for table")
+    assertThat(result.output).contains("user")
+  }
+
   companion object {
 
     /**

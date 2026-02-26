@@ -2,6 +2,7 @@ package norm.gradle
 
 import norm.generator.CrudQuerySynthesizer
 import norm.generator.JdbcAnalyzer
+import norm.generator.ParsedQuery
 import norm.generator.QueryFileParser
 import norm.generator.generateCode
 import okio.buffer
@@ -18,11 +19,15 @@ import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
+import org.postgresql.util.PSQLException
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.containers.wait.strategy.Wait
 import org.testcontainers.containers.wait.strategy.WaitAllStrategy
 import org.testcontainers.utility.DockerImageName
+import plugin.Catalog
+import java.sql.Connection
 import java.sql.DriverManager
+import java.sql.SQLException
 import javax.inject.Inject
 
 /**
@@ -74,33 +79,21 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
       val password = container.password
 
       DriverManager.getConnection(jdbcUrl, username, password).use { connection ->
-        // Apply schemas
-        logger.lifecycle("Norm: Applying schemas...")
-        val combinedSchema = schemas.files
-          .sortedBy { it.absolutePath }
-          .joinToString(separator = "\n\n") { it.readText() }
-        connection.createStatement().use { it.execute(combinedSchema) }
-        logger.lifecycle("Norm: Schemas applied successfully")
+        applySchemas(connection)
 
         // Build catalog from database metadata
         val analyzer = JdbcAnalyzer(connection)
         val catalog = analyzer.buildCatalog()
 
-        // Parse and analyze queries
-        val parsedQueries = queries.files
-          .sortedBy { it.absolutePath }
-          .flatMap { file -> QueryFileParser.parse(file.readText()) }
-
-        // Optionally synthesize CRUD queries (user-defined queries take priority over synthetic ones)
+        // Parse and optionally synthesize CRUD queries (user-defined queries take priority over synthetic ones)
+        val parsedQueries = parseQueryFiles()
         val allParsedQueries = if (database.generateCrud.get()) {
           CrudQuerySynthesizer.synthesizeAndMerge(catalog, parsedQueries)
         } else {
           parsedQueries
         }
 
-        val analyzedQueries = allParsedQueries.map { parsed ->
-          analyzer.analyzeQuery(parsed, catalog)
-        }
+        val analyzedQueries = analyzeQueries(analyzer, allParsedQueries, catalog)
 
         // Generate code
         val files = generateCode(
@@ -136,6 +129,81 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
         logger.warn("Norm: Failed to stop container", expected)
       }
     }
+  }
+
+  private fun applySchemas(connection: Connection) {
+    logger.lifecycle("Norm: Applying schemas...")
+    schemas.files.sortedBy { it.absolutePath }.forEach { file ->
+      val content = file.readText()
+      try {
+        connection.createStatement().use { it.execute(content) }
+      } catch (e: SQLException) {
+        val locationInfo = (e as? PSQLException)?.serverErrorMessage?.position
+          ?.takeIf { it > 0 }
+          ?.let { position -> sqlPositionToLineColumn(content, position) }
+          ?.let { (line, column) -> " at line $line, column $column" }
+          ?: ""
+        throw IllegalStateException(
+          "Norm: Failed to apply schema '${file.absolutePath}'$locationInfo: ${e.message}",
+          e,
+        )
+      }
+    }
+    logger.lifecycle("Norm: Schemas applied successfully")
+  }
+
+  private fun parseQueryFiles(): List<ParsedQuery> = queries.files
+    .sortedBy { it.absolutePath }
+    .flatMap { file ->
+      try {
+        QueryFileParser.parse(file.readText(), file.absolutePath)
+      } catch (e: IllegalArgumentException) {
+        throw IllegalStateException(
+          "Norm: Failed to parse query file '${file.absolutePath}': ${e.message}",
+          e,
+        )
+      }
+    }
+
+  private fun analyzeQueries(analyzer: JdbcAnalyzer, parsedQueries: List<ParsedQuery>, catalog: Catalog) =
+    parsedQueries.map { parsed ->
+      try {
+        analyzer.analyzeQuery(parsed, catalog)
+      } catch (e: SQLException) {
+        throw IllegalStateException(
+          "Norm: Failed to analyze query '${parsed.name}'${parsed.sourceLabel()}: ${e.message}",
+          e,
+        )
+      }
+    }
+
+  /**
+   * Formats the source file and line as a parenthesized label for error messages, e.g.
+   * ` (queries.sql:5)` or ` (<synthesized CRUD for table 'author'>)`. Returns an empty
+   * string when [ParsedQuery.sourceFile] is empty.
+   */
+  private fun ParsedQuery.sourceLabel(): String {
+    if (sourceFile.isEmpty()) return ""
+    val lineSegment = if (sourceLine > 0) ":$sourceLine" else ""
+    return " ($sourceFile$lineSegment)"
+  }
+
+  /**
+   * Converts a 1-based character position in a SQL string to a (line, column) pair.
+   *
+   * PostgreSQL reports errors using a character position ([org.postgresql.util.ServerErrorMessage.position])
+   * rather than a line number. This function converts that position to a human-readable line and column
+   * so that errors can be traced back to the correct location in the source file.
+   *
+   * @param sql The full SQL string that was submitted to PostgreSQL.
+   * @param position The 1-based character offset reported by PostgreSQL.
+   * @return A pair of (1-based line number, 1-based column number).
+   */
+  private fun sqlPositionToLineColumn(sql: String, position: Int): Pair<Int, Int> {
+    val textBefore = sql.take((position - 1).coerceAtLeast(0))
+    val line = textBefore.count { it == '\n' } + 1
+    val column = position - textBefore.lastIndexOf('\n') - 1
+    return line to column
   }
 
   private fun createAndStartContainer(): PostgreSQLContainer<*> {

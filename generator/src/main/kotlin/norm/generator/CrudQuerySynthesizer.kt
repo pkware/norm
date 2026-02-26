@@ -47,8 +47,9 @@ public object CrudQuerySynthesizer {
     val qualifiedTable = qualifiedTableName(table)
     val primaryKeyColumns = table.columns.filter(Column::is_primary_key)
     val allColumns = table.columns
+    val sourceFile = "<synthesized CRUD for table '$qualifiedTable'>"
 
-    return buildList {
+    val queries = buildList {
       // INSERT — null when all columns are auto-increment, default, or generated
       synthesizeInsert(qualifiedTable, methodSuffix, allColumns)?.let(::add)
 
@@ -64,6 +65,8 @@ public object CrudQuerySynthesizer {
       add(synthesizeCount(qualifiedTable, methodSuffix))
       add(synthesizeDeleteAll(qualifiedTable, methodSuffix))
     }
+
+    return queries.map { it.copy(sourceFile = sourceFile) }
   }
 
   /**
