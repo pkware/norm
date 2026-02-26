@@ -233,6 +233,19 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
       withDatabaseName(database.name)
       withUsername("norm_user")
       withPassword("norm_password")
+      // Run entirely in RAM — no disk I/O for the throwaway database.
+      // PostgreSQL 18+ stores data in a version-specific subdirectory under /var/lib/postgresql,
+      // so the mount must be at the parent rather than /var/lib/postgresql/data.
+      withTmpFs(mapOf("/var/lib/postgresql" to "rw"))
+      // Disable durability features we don't need in a throwaway container.
+      withCommand(
+        "postgres",
+        "-c", "fsync=off",
+        "-c", "full_page_writes=off",
+        "-c", "synchronous_commit=off",
+        "-c", "max_wal_senders=0",
+        "-c", "wal_level=minimal",
+      )
 
       waitingFor(
         WaitAllStrategy()
