@@ -21,6 +21,8 @@ public interface Queries {
     email: String,
     age: Int?,
     zip_code: String?,
+    current_mood: Mood,
+    previous_mood: Mood?,
   ) -> T): T
 
   /**
@@ -41,6 +43,8 @@ public interface Queries {
     email: String,
     age: Int?,
     zip_code: String?,
+    current_mood: Mood,
+    previous_mood: Mood?,
   ) -> T): Many<T>
 
   /**
@@ -60,6 +64,8 @@ public interface Queries {
     email: String,
     age: Int?,
     zip_code: String?,
+    current_mood: Mood,
+    previous_mood: Mood?,
   ) -> T): Many<T>
 
   /**
@@ -71,8 +77,29 @@ public interface Queries {
 
   /**
    * ```sql
-   * INSERT INTO users (email, age, zip_code)
-   * VALUES (?, ?, ?)
+   * SELECT * FROM users WHERE current_mood = ?
+   * ```
+   */
+  public fun <T : Any> getUsersByMood(current_mood: Mood, mapper: (
+    id: Int,
+    email: String,
+    age: Int?,
+    zip_code: String?,
+    current_mood: Mood,
+    previous_mood: Mood?,
+  ) -> T): Many<T>
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE current_mood = ?
+   * ```
+   */
+  public fun getUsersByMood(current_mood: Mood): Many<Users> = getUsersByMood(current_mood, ::Users)
+
+  /**
+   * ```sql
+   * INSERT INTO users (email, age, zip_code, current_mood, previous_mood)
+   * VALUES (?, ?, ?, ?, ?)
    * ```
    *
    * @return An array containing the result of each batch. The array has the same number as elements as [stream]
@@ -91,13 +118,15 @@ public interface Queries {
     email: Input.() -> String,
     age: Input.() -> Int?,
     zip_code: Input.() -> String?,
+    current_mood: Input.() -> Mood,
+    previous_mood: Input.() -> Mood?,
     batchSize: Int,
   ): IntArray
 
   /**
    * ```sql
-   * INSERT INTO users (email, age, zip_code)
-   * VALUES (?, ?, ?)
+   * INSERT INTO users (email, age, zip_code, current_mood, previous_mood)
+   * VALUES (?, ?, ?, ?, ?)
    * ```
    *
    * Uses a batch size of 100.
@@ -118,12 +147,14 @@ public interface Queries {
     email: Input.() -> String,
     age: Input.() -> Int?,
     zip_code: Input.() -> String?,
-  ): IntArray = createUser(stream, email, age, zip_code, 100)
+    current_mood: Input.() -> Mood,
+    previous_mood: Input.() -> Mood?,
+  ): IntArray = createUser(stream, email, age, zip_code, current_mood, previous_mood, 100)
 
   /**
    * ```sql
-   * INSERT INTO users (email, age, zip_code)
-   * VALUES (?, ?, ?)
+   * INSERT INTO users (email, age, zip_code, current_mood, previous_mood)
+   * VALUES (?, ?, ?, ?, ?)
    * ```
    */
   @Throws(SQLException::class)
@@ -131,6 +162,8 @@ public interface Queries {
     email: String,
     age: Int?,
     zip_code: String?,
+    current_mood: Mood,
+    previous_mood: Mood?,
   )
 
   /**
@@ -209,6 +242,79 @@ public interface Queries {
     email: String?,
     age: Int?,
     zipCode: String?,
+    id: Int,
+  )
+
+  /**
+   * ```sql
+   * UPDATE users
+   * SET
+   *   current_mood = ?,
+   *   previous_mood = ?
+   * WHERE id = ?
+   * ```
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [java.sql.Statement.SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [java.sql.Statement.EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateMood(
+    stream: Iterable<Input>,
+    current_mood: Input.() -> Mood,
+    previous_mood: Input.() -> Mood,
+    id: Input.() -> Int,
+    batchSize: Int,
+  ): IntArray
+
+  /**
+   * ```sql
+   * UPDATE users
+   * SET
+   *   current_mood = ?,
+   *   previous_mood = ?
+   * WHERE id = ?
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [java.sql.Statement.SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [java.sql.Statement.EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateMood(
+    stream: Iterable<Input>,
+    current_mood: Input.() -> Mood,
+    previous_mood: Input.() -> Mood,
+    id: Input.() -> Int,
+  ): IntArray = updateMood(stream, current_mood, previous_mood, id, 100)
+
+  /**
+   * ```sql
+   * UPDATE users
+   * SET
+   *   current_mood = ?,
+   *   previous_mood = ?
+   * WHERE id = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun updateMood(
+    current_mood: Mood,
+    previous_mood: Mood,
     id: Int,
   )
 }

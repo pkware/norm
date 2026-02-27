@@ -7,16 +7,21 @@ import assertk.assertions.isFalse
 import assertk.assertions.isIn
 import assertk.assertions.isTrue
 import com.squareup.kotlinpoet.ARRAY
+import com.squareup.kotlinpoet.ClassName
+import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.INT
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.asTypeName
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import plugin.Catalog
 import plugin.Column
+import plugin.Enum
 import plugin.Identifier
 import plugin.Parameter
 import plugin.Query
+import plugin.Schema
 import java.sql.Blob
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -717,6 +722,109 @@ class ColumnTypeMappingTest {
 
       assertThat(accessorString).contains("getArray(1)")
       assertThat(accessorString).contains("as kotlin.Array<java.util.UUID?>")
+    }
+  }
+
+  @Nested
+  inner class EnumTypes {
+
+    private val moodEnum = Enum(name = "mood", vals = listOf("happy", "sad", "angry"))
+    private val enumCatalog = Catalog(schemas = listOf(Schema(name = "public", enums = listOf(moodEnum))))
+
+    @Test
+    fun `non-null enum column resolves to generated enum type`() {
+      val statement = createStatement(
+        "SELECT current_mood FROM person;",
+        columns = listOf(column("current_mood", type = "mood")),
+        catalog = enumCatalog,
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isFalse()
+      assertThat(kotlinType).isEqualTo(ClassName("test", "Mood"))
+    }
+
+    @Test
+    fun `nullable enum column resolves to nullable generated enum type`() {
+      val statement = createStatement(
+        "SELECT previous_mood FROM person;",
+        columns = listOf(column("previous_mood", type = "mood", notNull = false)),
+        catalog = enumCatalog,
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isTrue()
+      assertThat(kotlinType).isEqualTo(ClassName("test", "Mood").copy(nullable = true))
+    }
+
+    @Test
+    fun `enum array column fails with error`() {
+      assertThrows<IllegalStateException> {
+        createStatement(
+          "SELECT moods FROM person;",
+          columns = listOf(column("moods", type = "mood", isArray = true)),
+          catalog = enumCatalog,
+        )
+      }
+    }
+
+    @Test
+    fun `non-null enum resultSetAction uses adapter decode`() {
+      val repository = TypeRepository("test", enumCatalog)
+      val col = column("current_mood", type = "mood")
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).isEqualTo("moodAdapter.decode(getString(1))")
+    }
+
+    @Test
+    fun `nullable enum resultSetAction uses safe call with adapter`() {
+      val repository = TypeRepository("test", enumCatalog)
+      val col = column("previous_mood", type = "mood", notNull = false)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).isEqualTo("getString(1)?.let { moodAdapter.decode(it) }")
+    }
+
+    @Test
+    fun `non-null enum statementAction uses adapter encode`() {
+      val repository = TypeRepository("test", enumCatalog)
+      val col = column("current_mood", type = "mood")
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("current_mood"))
+      assertThat(action.toString()).isEqualTo("setString(1, moodAdapter.encode(current_mood))")
+    }
+
+    @Test
+    fun `nullable enum statementAction uses setNull fallback`() {
+      val repository = TypeRepository("test", enumCatalog)
+      val col = column("previous_mood", type = "mood", notNull = false)
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("previous_mood"))
+      assertThat(action.toString()).contains("moodAdapter.encode(")
+      assertThat(action.toString()).contains("setNull(1,")
+    }
+
+    @Test
+    fun `enum with comment captures comment from catalog`() {
+      val moodWithComment = Enum(
+        name = "mood",
+        vals = listOf("happy", "sad", "angry"),
+        comment = "Represents emotional state of a person.",
+      )
+      val catalogWithComment =
+        Catalog(schemas = listOf(Schema(name = "public", enums = listOf(moodWithComment))))
+
+      // Create a statement that uses the enum column to trigger enum discovery
+      createStatement(
+        "SELECT current_mood FROM person;",
+        columns = listOf(column("current_mood", type = "mood")),
+        catalog = catalogWithComment,
+      )
+
+      val repository = TypeRepository("test", catalogWithComment)
+      // Resolve the column to trigger enum discovery
+      repository.resolveMappableType(column("current_mood", type = "mood"))
+
+      val discoveredEnums = repository.discoveredEnums
+      assertThat(discoveredEnums).contains(moodWithComment)
+
+      val discoveredMood = discoveredEnums.first { it.name == "mood" }
+      assertThat(discoveredMood.comment).isEqualTo("Represents emotional state of a person.")
     }
   }
 

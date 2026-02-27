@@ -5,9 +5,12 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.ParameterSpec
+import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
+import com.squareup.kotlinpoet.asTypeName
 import okio.Buffer
 import okio.ByteString.Companion.encodeUtf8
 import plugin.Catalog
@@ -16,10 +19,6 @@ import plugin.Query
 
 private val NORM_DRIVER = ClassName(RUNTIME_PACKAGE, "NormDriver")
 private val CONNECTION_PROVIDER = ClassName(RUNTIME_PACKAGE, "ConnectionProvider")
-
-private val JAKARTA_SINGLETON = ClassName("jakarta.inject", "Singleton")
-private val MICRONAUT_REQUIRES = ClassName("io.micronaut.context.annotation", "Requires")
-private val SPRING_COMPONENT = ClassName("org.springframework.stereotype", "Component")
 
 /**
  * Generates Kotlin models and query files for use with the Norm runtime.
@@ -41,10 +40,21 @@ public fun generateCode(
   val resolvedQueries = queries.map { SqlStatement(catalog, it, generator) }
   val queriesInterface = ClassName(packageName, "Queries")
   val interfaceCode = generateQueryInterface(resolvedQueries, "Queries")
-  val classCode = generateQueryImplementation(resolvedQueries, queriesInterface, frameworks)
+
+  // Build enum + adapter TypeSpecs for all enums discovered during query resolution.
+  // discoveredEnums is populated as a side effect of resolving column types above.
+  val enumTypeSpecs = generator.discoveredEnums.sortedBy { it.name }.flatMap { enumDefinition ->
+    listOf(
+      buildEnumTypeSpec(enumDefinition, packageName),
+      buildAdapterTypeSpec(enumDefinition, packageName, frameworks),
+    )
+  }
+
+  val classCode =
+    generateQueryImplementation(resolvedQueries, queriesInterface, frameworks, generator.discoveredEnums, packageName)
   val connectionProviders = generateConnectionProviders(packageName, frameworks)
 
-  val typeSpecFiles = (sequenceOf(interfaceCode, classCode) + generator.requiredTypes).map {
+  val typeSpecFiles = (sequenceOf(interfaceCode, classCode) + generator.requiredTypes + enumTypeSpecs).map {
     val fileSpec = FileSpec.builder(packageName, "${it.name}.kt")
       .addType(it)
       .build()
@@ -60,14 +70,35 @@ private fun generateQueryImplementation(
   queries: List<SqlStatement>,
   interfaceType: ClassName,
   frameworks: Set<Framework>,
+  discoveredEnums: Set<plugin.Enum>,
+  packageName: String,
 ): TypeSpec {
+  val constructorBuilder = FunSpec.constructorBuilder()
+    .addParameter("connectionProvider", CONNECTION_PROVIDER)
+
   val classBuilder = TypeSpec.classBuilder("PostgresQueries")
     .addSuperinterface(interfaceType)
-    .primaryConstructor(
-      FunSpec.constructorBuilder()
-        .addParameter("connectionProvider", CONNECTION_PROVIDER)
+
+  // Add adapter constructor parameters for each discovered enum, sorted by name for deterministic output.
+  for (enumDefinition in discoveredEnums.sortedBy { it.name }) {
+    val enumClassName = ClassName(packageName, enumDefinition.name.snakeToCamelCase().titleCase())
+    val adapterClass = adapterClassName(enumDefinition, packageName)
+    val propertyName = adapterPropertyName(enumDefinition)
+    val adapterType = COLUMN_ADAPTER.parameterizedBy(enumClassName, String::class.asTypeName())
+
+    constructorBuilder.addParameter(
+      ParameterSpec.builder(propertyName, adapterType)
+        .defaultValue("%T()", adapterClass)
         .build(),
     )
+    classBuilder.addProperty(
+      PropertySpec.builder(propertyName, adapterType, KModifier.PRIVATE)
+        .initializer(propertyName)
+        .build(),
+    )
+  }
+
+  classBuilder.primaryConstructor(constructorBuilder.build())
     .addProperty(
       PropertySpec.builder("driver", NORM_DRIVER, KModifier.PRIVATE)
         .initializer("%T(connectionProvider)", NORM_DRIVER)

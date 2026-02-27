@@ -7,9 +7,12 @@ SELECT * FROM users WHERE age > ?;
 -- name: getUsersByZipCode :many
 SELECT * FROM users WHERE zip_code = ?;
 
+-- name: getUsersByMood :many
+SELECT * FROM users WHERE current_mood = ?;
+
 -- name: createUser :exec
-INSERT INTO users (email, age, zip_code)
-VALUES (?, ?, ?);
+INSERT INTO users (email, age, zip_code, current_mood, previous_mood)
+VALUES (?, ?, ?, ?, ?);
 
 -- name: updateUser :exec
 UPDATE users
@@ -18,3 +21,10 @@ SET
   age = coalesce(:age, users.age),
   zip_code = coalesce(:zipCode, users.zip_code)
 WHERE id = :id;
+
+-- name: updateMood :exec
+UPDATE users
+SET
+  current_mood = ?,
+  previous_mood = ?
+WHERE id = ?;

@@ -10,11 +10,11 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
-import com.squareup.kotlinpoet.asTypeName
 import plugin.Catalog
 import plugin.Column
+import plugin.Enum
+import plugin.Schema
 import plugin.Table
-import kotlin.reflect.KClass
 
 /**
  * Repository for types generated as part of query generation.
@@ -41,6 +41,28 @@ internal class TypeRepository(private val packageName: String, private val catal
    * Projections needed to return results from queries.
    */
   private val queryModels = mutableListOf<Pair<ReturnType, TypeSpec>>()
+
+  /**
+   * Index of all enum types in the catalog, keyed by Postgres type name.
+   */
+  private val enumsByName: Map<String, Enum> =
+    catalog.schemas.flatMap(Schema::enums).associateBy(Enum::name)
+
+  /**
+   * Enum types that are actually referenced by columns in resolved queries.
+   *
+   * Populated during [resolveMappableType] calls. Only referenced enums get
+   * generated as Kotlin enum classes and adapters.
+   */
+  private val referencedEnums = mutableSetOf<Enum>()
+
+  /**
+   * The set of Postgres enum types discovered as referenced by query columns.
+   *
+   * Available after all queries have been resolved via [resolveMappableType].
+   */
+  val discoveredEnums: Set<Enum>
+    get() = referencedEnums
 
   /**
    * Types generated during query generation that are needed for complete compilation of query code.
@@ -227,9 +249,15 @@ internal class TypeRepository(private val packageName: String, private val catal
    *
    * Postgres domains (e.g., `CREATE DOMAIN email AS text`) are resolved to their base types
    * by analyzing query parameters. This method handles both standard types and domains.
+   *
+   * Uses [SqlMappable.typeName] rather than [SqlMappable.klass] so that generated types
+   * (like enum classes) can provide their [TypeName] without requiring a [KClass] at generator time.
+   *
+   * Array wrapping is handled by [tryResolveStandardType] which returns an [ArrayTypeDecorator]
+   * whose [SqlMappable.typeName] is already the correct parameterized array type.
    */
   fun resolveColumnType(column: Column): TypeName =
-    wrapInArrayIfNeeded(resolveMappableType(column).klass, column.is_array, column.not_null)
+    resolveMappableType(column).typeName.copy(nullable = !column.not_null)
 
   /**
    * Resolves the [SqlMappable] for a column.
@@ -239,7 +267,23 @@ internal class TypeRepository(private val packageName: String, private val catal
       ?: error("Column ${column.fullyQualifiedName} has no type")
 
     return tryResolveStandardType(typeName, column.not_null, column.is_array)
+      ?: tryResolveEnumType(typeName, column.not_null, column.is_array)
       ?: error("Postgres type $typeName for column ${column.fullyQualifiedName} is not mapped to a Kotlin type")
+  }
+
+  /**
+   * Returns an [EnumTypeSqlMappable] if [typeName] matches a known Postgres enum type, or `null`.
+   *
+   * Enum arrays are not yet supported and return `null` (falling through to the error in
+   * [resolveMappableType]).
+   */
+  private fun tryResolveEnumType(typeName: String, notNull: Boolean, isArray: Boolean): SqlMappable? {
+    if (isArray) return null // Enum arrays not yet supported
+    val enumDefinition = enumsByName[typeName] ?: return null
+    referencedEnums.add(enumDefinition)
+
+    val enumClassName = ClassName(packageName, enumDefinition.name.snakeToCamelCase().titleCase())
+    return EnumTypeSqlMappable(enumClassName, adapterPropertyName(enumDefinition), notNull)
   }
 
   /** Returns the [SqlMappable] for a standard Postgres type, or `null` if not recognized. */
@@ -248,7 +292,7 @@ internal class TypeRepository(private val packageName: String, private val catal
 
     if (!isArray) return baseType
 
-    val arrayTypeName = ARRAY.parameterizedBy(baseType.klass.asTypeName().copy(nullable = true))
+    val arrayTypeName = ARRAY.parameterizedBy(baseType.typeName.copy(nullable = true))
       .copy(nullable = !notNull)
     return ArrayTypeDecorator(baseType, arrayTypeName)
   }
@@ -286,12 +330,6 @@ internal class TypeRepository(private val packageName: String, private val catal
 
     else -> null
   }
-
-  private fun wrapInArrayIfNeeded(type: KClass<*>, isArray: Boolean, notNull: Boolean): TypeName = if (isArray) {
-    ARRAY.parameterizedBy(type.asTypeName().copy(nullable = true))
-  } else {
-    type.asTypeName()
-  }.copy(nullable = !notNull)
 }
 
 /**

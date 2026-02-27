@@ -1,5 +1,6 @@
 package norm.generator
 
+import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.TypeName
@@ -8,6 +9,7 @@ import java.math.BigDecimal
 import java.sql.Blob
 import java.sql.ResultSet
 import java.sql.Statement
+import java.sql.Types
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -177,4 +179,58 @@ internal enum class PostgresSupportedTypes(
     { index, parameterName -> CodeBlock.of("setBytes(%L, %L)", index, parameterName) },
     { index -> CodeBlock.of("getBytes(%L)", index) },
   ),
+}
+
+/**
+ * [SqlMappable] for a PostgreSQL enum column that uses a generated [ColumnAdapter][norm.ColumnAdapter]
+ * for encode/decode.
+ *
+ * Generated types don't exist at generator time, so [klass] is not available — use [typeName] instead.
+ *
+ * The generated read/write code references an adapter property (e.g., `moodAdapter`) on the enclosing
+ * `PostgresQueries` class, which is visible inside the `ResultSet`/`PreparedStatement` receiver lambdas
+ * via Kotlin closure scoping.
+ *
+ * @param enumTypeName The KotlinPoet [ClassName] of the generated Kotlin enum (e.g., `example.Mood`).
+ * @param adapterPropertyName The property name on `PostgresQueries` for the adapter (e.g., `"moodAdapter"`).
+ * @param notNull Whether the column is `NOT NULL`.
+ */
+internal class EnumTypeSqlMappable(
+  private val enumTypeName: ClassName,
+  private val adapterPropertyName: String,
+  private val notNull: Boolean,
+) : SqlMappable {
+
+  override val klass: KClass<*>
+    get() = throw UnsupportedOperationException(
+      "Generated enum type $enumTypeName has no KClass at generator time. Use typeName instead.",
+    )
+
+  override val typeName: TypeName
+    get() = enumTypeName
+
+  override val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
+    get() = if (notNull) {
+      { index, parameterName ->
+        CodeBlock.of("setString(%L, %N.encode(%L))", index, adapterPropertyName, parameterName)
+      }
+    } else {
+      { index, parameterName ->
+        CodeBlock.of(
+          "%L?.let { setString(%L, %N.encode(it)) } ?: setNull(%L, %T.VARCHAR)",
+          parameterName,
+          index,
+          adapterPropertyName,
+          index,
+          Types::class,
+        )
+      }
+    }
+
+  override val resultSetAction: (index: Int) -> CodeBlock
+    get() = if (notNull) {
+      { index -> CodeBlock.of("%N.decode(getString(%L))", adapterPropertyName, index) }
+    } else {
+      { index -> CodeBlock.of("getString(%L)?.let { %N.decode(it) }", index, adapterPropertyName) }
+    }
 }

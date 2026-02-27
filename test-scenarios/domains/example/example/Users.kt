@@ -13,4 +13,6 @@ public data class Users(
   public val email: String,
   public val age: Int?,
   public val zip_code: String?,
+  public val current_mood: Mood,
+  public val previous_mood: Mood?,
 )

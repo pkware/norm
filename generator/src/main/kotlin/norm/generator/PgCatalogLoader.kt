@@ -223,27 +223,58 @@ internal class PgCatalogLoader(private val connection: Connection) {
   /**
    * Returns all enum types defined in [schemaName], with their labels in declaration order.
    *
+   * Comments are set with `COMMENT ON TYPE enumname IS '...'` in DDL.
+   *
    * @param schemaName The schema to introspect.
-   * @return One [Enum] per type, with [Enum.vals] ordered by `enumsortorder`.
+   * @return One [Enum] per type, with [Enum.vals] ordered by `enumsortorder` and [Enum.comment] if present.
    */
-  fun introspectEnums(schemaName: String): List<Enum> = buildMap<String, MutableList<String>> {
-    connection.createStatement().use { stmt ->
-      stmt.executeQuery(
-        """
-          SELECT t.typname, e.enumlabel
-          FROM pg_catalog.pg_type t
-          JOIN pg_catalog.pg_enum e ON t.oid = e.enumtypid
-          JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
-          WHERE n.nspname = '$schemaName'
-          ORDER BY t.typname, e.enumsortorder
-        """.trimIndent(),
-      ).use { rs ->
-        while (rs.next()) {
-          computeIfAbsent(rs.getString("typname")) { mutableListOf() }.add(rs.getString("enumlabel"))
+  fun introspectEnums(schemaName: String): List<Enum> {
+    val enumsByName = buildMap<String, MutableList<String>> {
+      connection.createStatement().use { stmt ->
+        stmt.executeQuery(
+          """
+            SELECT t.typname, e.enumlabel
+            FROM pg_catalog.pg_type t
+            JOIN pg_catalog.pg_enum e ON t.oid = e.enumtypid
+            JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+            WHERE n.nspname = '$schemaName'
+            ORDER BY t.typname, e.enumsortorder
+          """.trimIndent(),
+        ).use { rs ->
+          while (rs.next()) {
+            computeIfAbsent(rs.getString("typname")) { mutableListOf() }.add(rs.getString("enumlabel"))
+          }
         }
       }
     }
-  }.map { (name, values) -> Enum(name = name, vals = values) }
+
+    val enumComments = buildMap<String, String> {
+      connection.createStatement().use { stmt ->
+        stmt.executeQuery(
+          """
+            SELECT t.typname, d.description
+            FROM pg_catalog.pg_description d
+            JOIN pg_catalog.pg_type t ON t.oid = d.objoid
+            JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+            WHERE n.nspname = '$schemaName'
+              AND t.typtype = 'e'
+          """.trimIndent(),
+        ).use { rs ->
+          while (rs.next()) {
+            put(rs.getString("typname"), rs.getString("description"))
+          }
+        }
+      }
+    }
+
+    return enumsByName.map { (name, values) ->
+      Enum(
+        name = name,
+        vals = values,
+        comment = enumComments[name].orEmpty(),
+      )
+    }
+  }
 
   /**
    * Looks up the parameter types and names for a stored procedure from `pg_proc`.
