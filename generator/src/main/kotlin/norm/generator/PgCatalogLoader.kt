@@ -1,6 +1,7 @@
 package norm.generator
 
 import plugin.Column
+import plugin.Domain
 import plugin.Enum
 import plugin.Identifier
 import plugin.Parameter
@@ -9,23 +10,12 @@ import java.sql.Connection
 /**
  * Loads schema metadata from PostgreSQL's system catalogs via JDBC.
  *
- * Provides lazy-loaded caches of [domainTypes] and [functionOverloads] that are computed
- * once per instance, plus on-demand queries for enums, column comments, and stored procedures.
+ * Provides a lazy-loaded cache of [functionOverloads] computed once per instance, plus
+ * on-demand queries for enums, domains, column comments, and stored procedures.
  *
  * @param connection An open JDBC connection to a PostgreSQL database with the schema applied.
  */
 internal class PgCatalogLoader(private val connection: Connection) {
-
-  /**
-   * Maps domain type names to their base type names.
-   *
-   * PostgreSQL domains (e.g., `CREATE DOMAIN email AS TEXT`) appear as their domain name
-   * in JDBC metadata. This map resolves them to the base type so the generator can find
-   * the correct Kotlin type mapping.
-   *
-   * Loaded lazily on first use and cached for the lifetime of this loader.
-   */
-  val domainTypes: Map<String, String> by lazy(::loadAllDomainTypes)
 
   /**
    * Maps function names to their overload metadata from `pg_proc`.
@@ -37,23 +27,6 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * Loaded lazily on first use and cached for the lifetime of this loader.
    */
   val functionOverloads: Map<String, List<FunctionOverload>> by lazy(::loadFunctionOverloads)
-
-  private fun loadAllDomainTypes(): Map<String, String> = buildMap {
-    connection.createStatement().use { stmt ->
-      stmt.executeQuery(
-        """
-      SELECT t.typname AS domain_name, bt.typname AS base_type
-      FROM pg_catalog.pg_type t
-      JOIN pg_catalog.pg_type bt ON t.typbasetype = bt.oid
-      WHERE t.typtype = 'd'
-        """.trimIndent(),
-      ).use { rs ->
-        while (rs.next()) {
-          put(rs.getString("domain_name"), rs.getString("base_type"))
-        }
-      }
-    }
-  }
 
   private fun loadFunctionOverloads(): Map<String, List<FunctionOverload>> =
     buildMap<String, MutableList<FunctionOverload>> {
@@ -273,6 +246,42 @@ internal class PgCatalogLoader(private val connection: Connection) {
         vals = values,
         comment = enumComments[name].orEmpty(),
       )
+    }
+  }
+
+  /**
+   * Returns all domain types defined in [schemaName], with their base types and optional comments.
+   *
+   * PostgreSQL domains (e.g., `CREATE DOMAIN email AS TEXT`) are user-defined types that wrap a
+   * base type with optional constraints. Comments are set with `COMMENT ON DOMAIN name IS '...'`.
+   *
+   * @param schemaName The schema to introspect.
+   * @return One [Domain] per domain type, with [Domain.base_type] as the Postgres base type name
+   *   and [Domain.comment] if present.
+   */
+  fun introspectDomains(schemaName: String): List<Domain> = buildList {
+    connection.createStatement().use { stmt ->
+      stmt.executeQuery(
+        """
+        SELECT t.typname AS domain_name, bt.typname AS base_type, d.description
+        FROM pg_catalog.pg_type t
+        JOIN pg_catalog.pg_type bt ON t.typbasetype = bt.oid
+        JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+        LEFT JOIN pg_catalog.pg_description d ON d.objoid = t.oid AND d.objsubid = 0
+        WHERE n.nspname = '$schemaName'
+          AND t.typtype = 'd'
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) {
+          add(
+            Domain(
+              name = rs.getString("domain_name"),
+              base_type = rs.getString("base_type"),
+              comment = rs.getString("description").orEmpty(),
+            ),
+          )
+        }
+      }
     }
   }
 

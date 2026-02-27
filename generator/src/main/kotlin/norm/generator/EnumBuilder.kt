@@ -127,21 +127,6 @@ internal fun buildAdapterTypeSpec(enumDefinition: Enum, packageName: String, fra
 }
 
 /**
- * Adds framework-specific DI annotations to an adapter class.
- *
- * Unlike `PostgresQueries`, adapters don't use `@Requires(missingBeans)` because there's no
- * interface to check against — users override adapters via constructor parameter defaults instead.
- */
-private fun addAdapterDependencyInjectionAnnotations(classBuilder: TypeSpec.Builder, frameworks: Set<Framework>) {
-  for (framework in frameworks) {
-    when (framework) {
-      Framework.MICRONAUT_DATA -> classBuilder.addAnnotation(JAKARTA_SINGLETON)
-      Framework.SPRING_DATA -> classBuilder.addAnnotation(SPRING_COMPONENT)
-    }
-  }
-}
-
-/**
  * Returns the [ClassName] for the adapter class generated for a Postgres enum type.
  *
  * @param enumDefinition The Postgres enum definition.

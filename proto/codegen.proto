@@ -59,11 +59,25 @@ message Schema {
   repeated Table tables = 3;
   repeated Enum enums = 4;
   repeated CompositeType composite_types = 5;
+  // User-defined domain types in this schema (CREATE DOMAIN ... AS ...).
+  repeated Domain domains = 6;
 }
 
 message CompositeType {
   string name = 1;
   string comment = 2;
+}
+
+// A user-defined domain type (CREATE DOMAIN name AS base_type CHECK (...)).
+// Domains are thin wrappers over a base type with optional constraints.
+// Norm generates a @JvmInline value class for each domain referenced by a query column.
+message Domain {
+  // The unqualified domain name as it appears in pg_type.typname (e.g. "email").
+  string name = 1;
+  // The Postgres base type name (e.g. "text", "int4"). Sourced from the base type's pg_type.typname.
+  string base_type = 2;
+  // Optional comment set via COMMENT ON DOMAIN. Empty string when absent.
+  string comment = 3;
 }
 
 message Enum {

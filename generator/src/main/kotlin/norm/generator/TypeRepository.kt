@@ -12,6 +12,7 @@ import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
 import plugin.Catalog
 import plugin.Column
+import plugin.Domain
 import plugin.Enum
 import plugin.Schema
 import plugin.Table
@@ -49,6 +50,12 @@ internal class TypeRepository(private val packageName: String, private val catal
     catalog.schemas.flatMap(Schema::enums).associateBy(Enum::name)
 
   /**
+   * Index of all domain types in the catalog, keyed by Postgres type name.
+   */
+  private val domainsByName: Map<String, Domain> =
+    catalog.schemas.flatMap(Schema::domains).associateBy(Domain::name)
+
+  /**
    * Enum types that are actually referenced by columns in resolved queries.
    *
    * Populated during [resolveMappableType] calls. Only referenced enums get
@@ -57,12 +64,28 @@ internal class TypeRepository(private val packageName: String, private val catal
   private val referencedEnums = mutableSetOf<Enum>()
 
   /**
+   * Domain types that are actually referenced by columns in resolved queries.
+   *
+   * Populated during [resolveMappableType] calls. Only referenced domains get
+   * generated as value classes and adapters.
+   */
+  private val referencedDomains = mutableSetOf<Domain>()
+
+  /**
    * The set of Postgres enum types discovered as referenced by query columns.
    *
    * Available after all queries have been resolved via [resolveMappableType].
    */
   val discoveredEnums: Set<Enum>
     get() = referencedEnums
+
+  /**
+   * The set of Postgres domain types discovered as referenced by query columns.
+   *
+   * Available after all queries have been resolved via [resolveMappableType].
+   */
+  val discoveredDomains: Set<Domain>
+    get() = referencedDomains
 
   /**
    * Types generated during query generation that are needed for complete compilation of query code.
@@ -268,6 +291,7 @@ internal class TypeRepository(private val packageName: String, private val catal
 
     return tryResolveStandardType(typeName, column.not_null, column.is_array)
       ?: tryResolveEnumType(typeName, column.not_null, column.is_array)
+      ?: tryResolveDomainType(typeName, column.not_null, column.is_array)
       ?: error("Postgres type $typeName for column ${column.fullyQualifiedName} is not mapped to a Kotlin type")
   }
 
@@ -295,6 +319,23 @@ internal class TypeRepository(private val packageName: String, private val catal
     val arrayTypeName = ARRAY.parameterizedBy(baseType.typeName.copy(nullable = true))
       .copy(nullable = !notNull)
     return ArrayTypeDecorator(baseType, arrayTypeName)
+  }
+
+  /**
+   * Returns a [DomainTypeSqlMappable] if [typeName] matches a known Postgres domain type, or `null`.
+   *
+   * Domain arrays are not yet supported and return `null` (falling through to the error in
+   * [resolveMappableType]).
+   */
+  private fun tryResolveDomainType(typeName: String, notNull: Boolean, isArray: Boolean): SqlMappable? {
+    if (isArray) return null // Domain arrays not yet supported
+    val domain = domainsByName[typeName] ?: return null
+    referencedDomains.add(domain)
+
+    val domainClassName = ClassName(packageName, domain.name.snakeToCamelCase().titleCase())
+    val baseTypeInfo = resolveDomainBaseTypeInfo(domain.base_type)
+      ?: error("Domain ${domain.name} has unsupported base type: ${domain.base_type}")
+    return DomainTypeSqlMappable(domainClassName, domainAdapterPropertyName(domain), notNull, baseTypeInfo)
   }
 
   /** Maps a Postgres type name to its base [SqlMappable], or `null` if not recognized. */
@@ -330,6 +371,24 @@ internal class TypeRepository(private val packageName: String, private val catal
 
     else -> null
   }
+}
+
+/**
+ * Maps a Postgres base type name to its [DomainBaseTypeInfo], or returns `null` if unsupported.
+ *
+ * This covers the types most commonly used as domain bases. The mapping must stay in sync with
+ * [TypeRepository.resolveBaseType] — any type supported there as a domain base should have an entry here.
+ */
+internal fun resolveDomainBaseTypeInfo(baseTypeName: String): DomainBaseTypeInfo? = when (baseTypeName) {
+  "text", "varchar", "bpchar" -> DomainBaseTypeInfo("getString", "setString", false, "VARCHAR")
+  "int2" -> DomainBaseTypeInfo("getShort", "setShort", true, "SMALLINT")
+  "int4" -> DomainBaseTypeInfo("getInt", "setInt", true, "INTEGER")
+  "int8" -> DomainBaseTypeInfo("getLong", "setLong", true, "BIGINT")
+  "float4" -> DomainBaseTypeInfo("getFloat", "setFloat", true, "REAL")
+  "float8" -> DomainBaseTypeInfo("getDouble", "setDouble", true, "DOUBLE")
+  "bool" -> DomainBaseTypeInfo("getBoolean", "setBoolean", true, "BOOLEAN")
+  "numeric" -> DomainBaseTypeInfo("getBigDecimal", "setBigDecimal", false, "NUMERIC")
+  else -> null
 }
 
 /**

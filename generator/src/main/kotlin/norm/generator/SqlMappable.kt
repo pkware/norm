@@ -182,6 +182,110 @@ internal enum class PostgresSupportedTypes(
 }
 
 /**
+ * JDBC method metadata for a domain's base type, used to generate the correct
+ * `ResultSet` and `PreparedStatement` calls for reading and writing domain values.
+ *
+ * @property getterName The `ResultSet` getter method name (e.g., `"getString"`, `"getInt"`).
+ * @property setterName The `PreparedStatement` setter method name (e.g., `"setString"`, `"setInt"`).
+ * @property isPrimitive Whether the JDBC getter returns a JVM primitive (`true` for `Int`, `Short`,
+ *   `Long`, `Float`, `Double`, `Boolean`). Primitives require a `wasNull()` check for nullable columns
+ *   because JDBC returns `0`/`false` instead of `null`.
+ * @property sqlTypeConstant The field name on [java.sql.Types] for `setNull()` calls (e.g., `"VARCHAR"`, `"INTEGER"`).
+ */
+internal data class DomainBaseTypeInfo(
+  val getterName: String,
+  val setterName: String,
+  val isPrimitive: Boolean,
+  val sqlTypeConstant: String,
+)
+
+/**
+ * [SqlMappable] for a PostgreSQL domain column that uses a generated [ColumnAdapter][norm.ColumnAdapter]
+ * for encode/decode.
+ *
+ * Generated types don't exist at generator time, so [klass] is not available — use [typeName] instead.
+ *
+ * The generated read/write code references an adapter property (e.g., `emailAdapter`) on the enclosing
+ * `PostgresQueries` class, which is visible inside the `ResultSet`/`PreparedStatement` receiver lambdas
+ * via Kotlin closure scoping.
+ *
+ * @param domainTypeName The KotlinPoet [ClassName] of the generated value class (e.g., `example.Email`).
+ * @param adapterPropertyName The property name on `PostgresQueries` for the adapter (e.g., `"emailAdapter"`).
+ * @param notNull Whether the column is `NOT NULL`.
+ * @param baseTypeInfo JDBC method info for the domain's base type.
+ */
+internal class DomainTypeSqlMappable(
+  private val domainTypeName: ClassName,
+  private val adapterPropertyName: String,
+  private val notNull: Boolean,
+  private val baseTypeInfo: DomainBaseTypeInfo,
+) : SqlMappable {
+
+  override val klass: KClass<*>
+    get() = throw UnsupportedOperationException(
+      "Generated domain type $domainTypeName has no KClass at generator time. Use typeName instead.",
+    )
+
+  override val typeName: TypeName
+    get() = domainTypeName
+
+  override val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
+    get() = if (notNull) {
+      { index, parameterName ->
+        CodeBlock.of(
+          "%N(%L, %N.encode(%L))",
+          baseTypeInfo.setterName,
+          index,
+          adapterPropertyName,
+          parameterName,
+        )
+      }
+    } else {
+      { index, parameterName ->
+        CodeBlock.of(
+          "%L?.let { %N(%L, %N.encode(it)) } ?: setNull(%L, %T.%N)",
+          parameterName,
+          baseTypeInfo.setterName,
+          index,
+          adapterPropertyName,
+          index,
+          Types::class,
+          baseTypeInfo.sqlTypeConstant,
+        )
+      }
+    }
+
+  override val resultSetAction: (index: Int) -> CodeBlock
+    get() = if (notNull) {
+      if (baseTypeInfo.isPrimitive) {
+        { index -> CodeBlock.of("%N.decode(%N(%L))", adapterPropertyName, baseTypeInfo.getterName, index) }
+      } else {
+        { index -> CodeBlock.of("%N.decode(%N(%L))", adapterPropertyName, baseTypeInfo.getterName, index) }
+      }
+    } else {
+      if (baseTypeInfo.isPrimitive) {
+        { index ->
+          CodeBlock.of(
+            "%N(%L).takeUnless { wasNull() }?.let { %N.decode(it) }",
+            baseTypeInfo.getterName,
+            index,
+            adapterPropertyName,
+          )
+        }
+      } else {
+        { index ->
+          CodeBlock.of(
+            "%N(%L)?.let { %N.decode(it) }",
+            baseTypeInfo.getterName,
+            index,
+            adapterPropertyName,
+          )
+        }
+      }
+    }
+}
+
+/**
  * [SqlMappable] for a PostgreSQL enum column that uses a generated [ColumnAdapter][norm.ColumnAdapter]
  * for encode/decode.
  *

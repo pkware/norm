@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import plugin.Catalog
 import plugin.Column
+import plugin.Domain
 import plugin.Enum
 import plugin.Identifier
 import plugin.Parameter
@@ -825,6 +826,481 @@ class ColumnTypeMappingTest {
 
       val discoveredMood = discoveredEnums.first { it.name == "mood" }
       assertThat(discoveredMood.comment).isEqualTo("Represents emotional state of a person.")
+    }
+  }
+
+  @Nested
+  inner class DomainTypes {
+
+    private val emailDomain = Domain(name = "email", base_type = "text")
+    private val positiveIntDomain = Domain(name = "positive_integer", base_type = "int4")
+    private val domainCatalog = Catalog(
+      schemas = listOf(Schema(name = "public", domains = listOf(emailDomain, positiveIntDomain))),
+    )
+
+    @Test
+    fun `non-null TEXT domain column resolves to generated value class type`() {
+      val statement = createStatement(
+        "SELECT email FROM users;",
+        columns = listOf(column("email", type = "email")),
+        catalog = domainCatalog,
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isFalse()
+      assertThat(kotlinType).isEqualTo(ClassName("test", "Email"))
+    }
+
+    @Test
+    fun `non-null INTEGER domain column resolves to generated value class type`() {
+      val statement = createStatement(
+        "SELECT age FROM users;",
+        columns = listOf(column("age", type = "positive_integer")),
+        catalog = domainCatalog,
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isFalse()
+      assertThat(kotlinType).isEqualTo(ClassName("test", "PositiveInteger"))
+    }
+
+    @Test
+    fun `nullable domain column resolves to nullable value class type`() {
+      val statement = createStatement(
+        "SELECT age FROM users;",
+        columns = listOf(column("age", type = "positive_integer", notNull = false)),
+        catalog = domainCatalog,
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isTrue()
+      assertThat(kotlinType).isEqualTo(ClassName("test", "PositiveInteger").copy(nullable = true))
+    }
+
+    @Test
+    fun `domain array column fails with error`() {
+      assertThrows<IllegalStateException> {
+        createStatement(
+          "SELECT emails FROM users;",
+          columns = listOf(column("emails", type = "email", isArray = true)),
+          catalog = domainCatalog,
+        )
+      }
+    }
+
+    @Test
+    fun `resolving a domain column populates discoveredDomains`() {
+      val repository = TypeRepository("test", domainCatalog)
+      repository.resolveMappableType(column("email", type = "email"))
+
+      val discoveredDomains = repository.discoveredDomains
+      assertThat(discoveredDomains).contains(emailDomain)
+    }
+
+    @Test
+    fun `domain with unsupported base type throws error with helpful message`() {
+      val xmlDomain = Domain(name = "xml_doc", base_type = "xml")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(xmlDomain))))
+      val repository = TypeRepository("test", catalog)
+
+      val exception = assertThrows<IllegalStateException> {
+        repository.resolveMappableType(column("doc", type = "xml_doc"))
+      }
+      assertThat(exception.message!!).contains("unsupported base type")
+      assertThat(exception.message!!).contains("xml")
+    }
+
+    @Test
+    fun `non-null TEXT domain resultSetAction uses adapter decode with getString`() {
+      val repository = TypeRepository("test", domainCatalog)
+      val col = column("email", type = "email")
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).isEqualTo("emailAdapter.decode(getString(1))")
+    }
+
+    @Test
+    fun `nullable TEXT domain resultSetAction uses safe call with adapter`() {
+      val repository = TypeRepository("test", domainCatalog)
+      val col = column("email", type = "email", notNull = false)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).isEqualTo("getString(1)?.let { emailAdapter.decode(it) }")
+    }
+
+    @Test
+    fun `non-null INTEGER domain resultSetAction uses adapter decode with getInt`() {
+      val repository = TypeRepository("test", domainCatalog)
+      val col = column("age", type = "positive_integer")
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).isEqualTo("positiveIntegerAdapter.decode(getInt(1))")
+    }
+
+    @Test
+    fun `nullable INTEGER domain resultSetAction uses wasNull check`() {
+      val repository = TypeRepository("test", domainCatalog)
+      val col = column("age", type = "positive_integer", notNull = false)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString())
+        .isEqualTo("getInt(1).takeUnless { wasNull() }?.let { positiveIntegerAdapter.decode(it) }")
+    }
+
+    @Test
+    fun `non-null TEXT domain statementAction uses adapter encode with setString`() {
+      val repository = TypeRepository("test", domainCatalog)
+      val col = column("email", type = "email")
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("email"))
+      assertThat(action.toString()).isEqualTo("setString(1, emailAdapter.encode(email))")
+    }
+
+    @Test
+    fun `nullable TEXT domain statementAction uses setNull fallback`() {
+      val repository = TypeRepository("test", domainCatalog)
+      val col = column("email", type = "email", notNull = false)
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("email"))
+      assertThat(action.toString()).contains("emailAdapter.encode(")
+      assertThat(action.toString()).contains("setNull(1,")
+    }
+
+    @Test
+    fun `non-null INTEGER domain statementAction uses adapter encode with setInt`() {
+      val repository = TypeRepository("test", domainCatalog)
+      val col = column("age", type = "positive_integer")
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("age"))
+      assertThat(action.toString()).isEqualTo("setInt(1, positiveIntegerAdapter.encode(age))")
+    }
+
+    @Test
+    fun `nullable INTEGER domain statementAction uses setNull fallback`() {
+      val repository = TypeRepository("test", domainCatalog)
+      val col = column("age", type = "positive_integer", notNull = false)
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("age"))
+      assertThat(action.toString()).contains("positiveIntegerAdapter.encode(")
+      assertThat(action.toString()).contains("setNull(1,")
+    }
+  }
+
+  /**
+   * Tests for domain base types beyond TEXT and INTEGER.
+   *
+   * Each base type exercises both [resolveDomainBaseTypeInfo] (JDBC method metadata) and
+   * [domainKotlinBaseType] (Kotlin type mapping). These two functions must stay in sync —
+   * a type supported in one but not the other is a bug.
+   */
+  @Nested
+  inner class DomainBaseTypes {
+
+    @Test
+    fun `SMALLINT domain resolves to Short value class`() {
+      val domain = Domain(name = "small_count", base_type = "int2")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("count", type = "small_count")
+
+      assertThat(repository.resolveColumnType(col)).isEqualTo(ClassName("test", "SmallCount"))
+    }
+
+    @Test
+    fun `nullable SMALLINT domain resultSetAction uses wasNull check`() {
+      val domain = Domain(name = "small_count", base_type = "int2")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("count", type = "small_count", notNull = false)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString())
+        .isEqualTo("getShort(1).takeUnless { wasNull() }?.let { smallCountAdapter.decode(it) }")
+    }
+
+    @Test
+    fun `non-null SMALLINT domain statementAction uses setShort`() {
+      val domain = Domain(name = "small_count", base_type = "int2")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("count", type = "small_count")
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("count"))
+      assertThat(action.toString()).isEqualTo("setShort(1, smallCountAdapter.encode(count))")
+    }
+
+    @Test
+    fun `BIGINT domain resolves to Long value class`() {
+      val domain = Domain(name = "big_count", base_type = "int8")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("count", type = "big_count")
+
+      assertThat(repository.resolveColumnType(col)).isEqualTo(ClassName("test", "BigCount"))
+    }
+
+    @Test
+    fun `nullable BIGINT domain resultSetAction uses wasNull check`() {
+      val domain = Domain(name = "big_count", base_type = "int8")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("count", type = "big_count", notNull = false)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString())
+        .isEqualTo("getLong(1).takeUnless { wasNull() }?.let { bigCountAdapter.decode(it) }")
+    }
+
+    @Test
+    fun `non-null BIGINT domain statementAction uses setLong`() {
+      val domain = Domain(name = "big_count", base_type = "int8")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("count", type = "big_count")
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("count"))
+      assertThat(action.toString()).isEqualTo("setLong(1, bigCountAdapter.encode(count))")
+    }
+
+    @Test
+    fun `FLOAT domain resolves to Float value class`() {
+      val domain = Domain(name = "latitude", base_type = "float4")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("lat", type = "latitude")
+
+      assertThat(repository.resolveColumnType(col)).isEqualTo(ClassName("test", "Latitude"))
+    }
+
+    @Test
+    fun `nullable FLOAT domain resultSetAction uses wasNull check`() {
+      val domain = Domain(name = "latitude", base_type = "float4")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("lat", type = "latitude", notNull = false)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString())
+        .isEqualTo("getFloat(1).takeUnless { wasNull() }?.let { latitudeAdapter.decode(it) }")
+    }
+
+    @Test
+    fun `nullable FLOAT domain statementAction uses setNull with REAL`() {
+      val domain = Domain(name = "latitude", base_type = "float4")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("lat", type = "latitude", notNull = false)
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("lat"))
+      assertThat(action.toString()).contains("setFloat(")
+      assertThat(action.toString()).contains("Types.REAL")
+    }
+
+    @Test
+    fun `DOUBLE domain resolves to Double value class`() {
+      val domain = Domain(name = "longitude", base_type = "float8")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("lng", type = "longitude")
+
+      assertThat(repository.resolveColumnType(col)).isEqualTo(ClassName("test", "Longitude"))
+    }
+
+    @Test
+    fun `nullable DOUBLE domain resultSetAction uses wasNull check`() {
+      val domain = Domain(name = "longitude", base_type = "float8")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("lng", type = "longitude", notNull = false)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString())
+        .isEqualTo("getDouble(1).takeUnless { wasNull() }?.let { longitudeAdapter.decode(it) }")
+    }
+
+    @Test
+    fun `nullable DOUBLE domain statementAction uses setNull with DOUBLE`() {
+      val domain = Domain(name = "longitude", base_type = "float8")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("lng", type = "longitude", notNull = false)
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("lng"))
+      assertThat(action.toString()).contains("setDouble(")
+      assertThat(action.toString()).contains("Types.DOUBLE")
+    }
+
+    @Test
+    fun `BOOLEAN domain resolves to Boolean value class`() {
+      val domain = Domain(name = "active_flag", base_type = "bool")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("active", type = "active_flag")
+
+      assertThat(repository.resolveColumnType(col)).isEqualTo(ClassName("test", "ActiveFlag"))
+    }
+
+    @Test
+    fun `nullable BOOLEAN domain resultSetAction uses wasNull check`() {
+      val domain = Domain(name = "active_flag", base_type = "bool")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("active", type = "active_flag", notNull = false)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString())
+        .isEqualTo("getBoolean(1).takeUnless { wasNull() }?.let { activeFlagAdapter.decode(it) }")
+    }
+
+    @Test
+    fun `nullable BOOLEAN domain statementAction uses setNull with BOOLEAN`() {
+      val domain = Domain(name = "active_flag", base_type = "bool")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("active", type = "active_flag", notNull = false)
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("active"))
+      assertThat(action.toString()).contains("setBoolean(")
+      assertThat(action.toString()).contains("Types.BOOLEAN")
+    }
+
+    @Test
+    fun `NUMERIC domain resolves to BigDecimal-backed value class`() {
+      val domain = Domain(name = "currency_amount", base_type = "numeric")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("amount", type = "currency_amount")
+
+      assertThat(repository.resolveColumnType(col)).isEqualTo(ClassName("test", "CurrencyAmount"))
+    }
+
+    @Test
+    fun `nullable NUMERIC domain resultSetAction uses safe call without wasNull`() {
+      val domain = Domain(name = "currency_amount", base_type = "numeric")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("amount", type = "currency_amount", notNull = false)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      // numeric is non-primitive, so uses ?.let instead of wasNull() check
+      assertThat(accessor.toString())
+        .isEqualTo("getBigDecimal(1)?.let { currencyAmountAdapter.decode(it) }")
+    }
+
+    @Test
+    fun `nullable NUMERIC domain statementAction uses setNull with NUMERIC`() {
+      val domain = Domain(name = "currency_amount", base_type = "numeric")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("amount", type = "currency_amount", notNull = false)
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("amount"))
+      assertThat(action.toString()).contains("setBigDecimal(")
+      assertThat(action.toString()).contains("Types.NUMERIC")
+    }
+
+    @Test
+    fun `VARCHAR domain resolves same as TEXT domain`() {
+      val domain = Domain(name = "username", base_type = "varchar")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("name", type = "username")
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).isEqualTo("usernameAdapter.decode(getString(1))")
+    }
+
+    @Test
+    fun `BPCHAR domain resolves same as TEXT domain`() {
+      val domain = Domain(name = "country_code", base_type = "bpchar")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("code", type = "country_code")
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).isEqualTo("countryCodeAdapter.decode(getString(1))")
+    }
+  }
+
+  /**
+   * Direct tests for [resolveDomainBaseTypeInfo], verifying the JDBC method metadata
+   * for each supported Postgres base type.
+   *
+   * These tests ensure that the getter/setter names, primitivity flags, and SQL type constants
+   * are correct for each base type. A mistake here would generate code that compiles but uses
+   * the wrong JDBC method at runtime.
+   */
+  @Nested
+  inner class DomainBaseTypeResolution {
+
+    @Test
+    fun `text resolves to getString and setString`() {
+      val info = resolveDomainBaseTypeInfo("text")!!
+      assertThat(info.getterName).isEqualTo("getString")
+      assertThat(info.setterName).isEqualTo("setString")
+      assertThat(info.isPrimitive).isFalse()
+      assertThat(info.sqlTypeConstant).isEqualTo("VARCHAR")
+    }
+
+    @Test
+    fun `varchar resolves same as text`() {
+      val info = resolveDomainBaseTypeInfo("varchar")!!
+      assertThat(info.getterName).isEqualTo("getString")
+      assertThat(info.setterName).isEqualTo("setString")
+      assertThat(info.isPrimitive).isFalse()
+      assertThat(info.sqlTypeConstant).isEqualTo("VARCHAR")
+    }
+
+    @Test
+    fun `bpchar resolves same as text`() {
+      val info = resolveDomainBaseTypeInfo("bpchar")!!
+      assertThat(info.getterName).isEqualTo("getString")
+      assertThat(info.sqlTypeConstant).isEqualTo("VARCHAR")
+    }
+
+    @Test
+    fun `int2 resolves to getShort and setShort`() {
+      val info = resolveDomainBaseTypeInfo("int2")!!
+      assertThat(info.getterName).isEqualTo("getShort")
+      assertThat(info.setterName).isEqualTo("setShort")
+      assertThat(info.isPrimitive).isTrue()
+      assertThat(info.sqlTypeConstant).isEqualTo("SMALLINT")
+    }
+
+    @Test
+    fun `int4 resolves to getInt and setInt`() {
+      val info = resolveDomainBaseTypeInfo("int4")!!
+      assertThat(info.getterName).isEqualTo("getInt")
+      assertThat(info.setterName).isEqualTo("setInt")
+      assertThat(info.isPrimitive).isTrue()
+      assertThat(info.sqlTypeConstant).isEqualTo("INTEGER")
+    }
+
+    @Test
+    fun `int8 resolves to getLong and setLong`() {
+      val info = resolveDomainBaseTypeInfo("int8")!!
+      assertThat(info.getterName).isEqualTo("getLong")
+      assertThat(info.setterName).isEqualTo("setLong")
+      assertThat(info.isPrimitive).isTrue()
+      assertThat(info.sqlTypeConstant).isEqualTo("BIGINT")
+    }
+
+    @Test
+    fun `float4 resolves to getFloat and setFloat`() {
+      val info = resolveDomainBaseTypeInfo("float4")!!
+      assertThat(info.getterName).isEqualTo("getFloat")
+      assertThat(info.setterName).isEqualTo("setFloat")
+      assertThat(info.isPrimitive).isTrue()
+      assertThat(info.sqlTypeConstant).isEqualTo("REAL")
+    }
+
+    @Test
+    fun `float8 resolves to getDouble and setDouble`() {
+      val info = resolveDomainBaseTypeInfo("float8")!!
+      assertThat(info.getterName).isEqualTo("getDouble")
+      assertThat(info.setterName).isEqualTo("setDouble")
+      assertThat(info.isPrimitive).isTrue()
+      assertThat(info.sqlTypeConstant).isEqualTo("DOUBLE")
+    }
+
+    @Test
+    fun `bool resolves to getBoolean and setBoolean`() {
+      val info = resolveDomainBaseTypeInfo("bool")!!
+      assertThat(info.getterName).isEqualTo("getBoolean")
+      assertThat(info.setterName).isEqualTo("setBoolean")
+      assertThat(info.isPrimitive).isTrue()
+      assertThat(info.sqlTypeConstant).isEqualTo("BOOLEAN")
+    }
+
+    @Test
+    fun `numeric resolves to getBigDecimal and setBigDecimal`() {
+      val info = resolveDomainBaseTypeInfo("numeric")!!
+      assertThat(info.getterName).isEqualTo("getBigDecimal")
+      assertThat(info.setterName).isEqualTo("setBigDecimal")
+      assertThat(info.isPrimitive).isFalse()
+      assertThat(info.sqlTypeConstant).isEqualTo("NUMERIC")
+    }
+
+    @Test
+    fun `unsupported type returns null`() {
+      assertThat(resolveDomainBaseTypeInfo("xml")).isEqualTo(null)
+      assertThat(resolveDomainBaseTypeInfo("jsonb")).isEqualTo(null)
+      assertThat(resolveDomainBaseTypeInfo("bytea")).isEqualTo(null)
     }
   }
 

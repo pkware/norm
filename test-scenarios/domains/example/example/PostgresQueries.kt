@@ -14,20 +14,23 @@ import norm.ConnectionProvider
 import norm.Many
 import norm.NormDriver
 import norm.combineExecBatchResults
-import norm.setInt
 
 public class PostgresQueries(
   connectionProvider: ConnectionProvider,
+  private val emailAdapter: ColumnAdapter<Email, String> = EmailAdapter(),
   private val moodAdapter: ColumnAdapter<Mood, String> = MoodAdapter(),
+  private val positiveIntegerAdapter:
+      ColumnAdapter<PositiveInteger, Int> = PositiveIntegerAdapter(),
+  private val usPostalCodeAdapter: ColumnAdapter<UsPostalCode, String> = UsPostalCodeAdapter(),
 ) : Queries {
   private val driver: NormDriver = NormDriver(connectionProvider)
 
   @Throws(SQLException::class)
-  override fun <T : Any> getUserByEmail(email: String, mapper: (
+  override fun <T : Any> getUserByEmail(email: Email, mapper: (
     id: Int,
-    email: String,
-    age: Int?,
-    zip_code: String?,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
     current_mood: Mood,
     previous_mood: Mood?,
   ) -> T): T {
@@ -35,25 +38,25 @@ public class PostgresQueries(
     val rowReader: ResultSet.() -> T = {
       mapper(
         getInt(1),
-        getString(2),
-        getInt(3).takeUnless { wasNull() },
-        getString(4),
+        emailAdapter.decode(getString(2)),
+        getInt(3).takeUnless { wasNull() }?.let { positiveIntegerAdapter.decode(it) },
+        getString(4)?.let { usPostalCodeAdapter.decode(it) },
         moodAdapter.decode(getString(5)),
         getString(6)?.let { moodAdapter.decode(it) },
       )
     }
     return driver.queryOne(sql, rowReader) {
-      setString(1, email)
+      setString(1, emailAdapter.encode(email))
     }
   }
 
   private fun <T : Any, R> listUsersByAge(
-    age: Int,
+    age: PositiveInteger,
     mapper: (
       id: Int,
-      email: String,
-      age: Int?,
-      zip_code: String?,
+      email: Email,
+      age: PositiveInteger?,
+      zip_code: UsPostalCode?,
       current_mood: Mood,
       previous_mood: Mood?,
     ) -> T,
@@ -63,9 +66,9 @@ public class PostgresQueries(
     val rowReader: ResultSet.() -> T = {
       mapper(
         getInt(1),
-        getString(2),
-        getInt(3).takeUnless { wasNull() },
-        getString(4),
+        emailAdapter.decode(getString(2)),
+        getInt(3).takeUnless { wasNull() }?.let { positiveIntegerAdapter.decode(it) },
+        getString(4)?.let { usPostalCodeAdapter.decode(it) },
         moodAdapter.decode(getString(5)),
         getString(6)?.let { moodAdapter.decode(it) },
       )
@@ -73,22 +76,22 @@ public class PostgresQueries(
     return block(sql, rowReader)
   }
 
-  override fun <T : Any> listUsersByAge(age: Int, mapper: (
+  override fun <T : Any> listUsersByAge(age: PositiveInteger, mapper: (
     id: Int,
-    email: String,
-    age: Int?,
-    zip_code: String?,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
     current_mood: Mood,
     previous_mood: Mood?,
   ) -> T): Many<T> = listUsersByAge(age, mapper, driver::queryMany)
 
   private fun <T : Any, R> getUsersByZipCode(
-    zip_code: String,
+    zip_code: UsPostalCode,
     mapper: (
       id: Int,
-      email: String,
-      age: Int?,
-      zip_code: String?,
+      email: Email,
+      age: PositiveInteger?,
+      zip_code: UsPostalCode?,
       current_mood: Mood,
       previous_mood: Mood?,
     ) -> T,
@@ -98,9 +101,9 @@ public class PostgresQueries(
     val rowReader: ResultSet.() -> T = {
       mapper(
         getInt(1),
-        getString(2),
-        getInt(3).takeUnless { wasNull() },
-        getString(4),
+        emailAdapter.decode(getString(2)),
+        getInt(3).takeUnless { wasNull() }?.let { positiveIntegerAdapter.decode(it) },
+        getString(4)?.let { usPostalCodeAdapter.decode(it) },
         moodAdapter.decode(getString(5)),
         getString(6)?.let { moodAdapter.decode(it) },
       )
@@ -108,11 +111,11 @@ public class PostgresQueries(
     return block(sql, rowReader)
   }
 
-  override fun <T : Any> getUsersByZipCode(zip_code: String, mapper: (
+  override fun <T : Any> getUsersByZipCode(zip_code: UsPostalCode, mapper: (
     id: Int,
-    email: String,
-    age: Int?,
-    zip_code: String?,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
     current_mood: Mood,
     previous_mood: Mood?,
   ) -> T): Many<T> = getUsersByZipCode(zip_code, mapper, driver::queryMany)
@@ -121,9 +124,9 @@ public class PostgresQueries(
     current_mood: Mood,
     mapper: (
       id: Int,
-      email: String,
-      age: Int?,
-      zip_code: String?,
+      email: Email,
+      age: PositiveInteger?,
+      zip_code: UsPostalCode?,
       current_mood: Mood,
       previous_mood: Mood?,
     ) -> T,
@@ -133,9 +136,9 @@ public class PostgresQueries(
     val rowReader: ResultSet.() -> T = {
       mapper(
         getInt(1),
-        getString(2),
-        getInt(3).takeUnless { wasNull() },
-        getString(4),
+        emailAdapter.decode(getString(2)),
+        getInt(3).takeUnless { wasNull() }?.let { positiveIntegerAdapter.decode(it) },
+        getString(4)?.let { usPostalCodeAdapter.decode(it) },
         moodAdapter.decode(getString(5)),
         getString(6)?.let { moodAdapter.decode(it) },
       )
@@ -145,18 +148,18 @@ public class PostgresQueries(
 
   override fun <T : Any> getUsersByMood(current_mood: Mood, mapper: (
     id: Int,
-    email: String,
-    age: Int?,
-    zip_code: String?,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
     current_mood: Mood,
     previous_mood: Mood?,
   ) -> T): Many<T> = getUsersByMood(current_mood, mapper, driver::queryMany)
 
   @Throws(SQLException::class)
   override fun createUser(
-    email: String,
-    age: Int?,
-    zip_code: String?,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
     current_mood: Mood,
     previous_mood: Mood?,
   ) {
@@ -165,9 +168,9 @@ public class PostgresQueries(
         |VALUES (?, ?, ?, ?, ?)
         """.trimMargin()
     driver.execute(sql) {
-      setString(1, email)
-      setInt(2, age)
-      setString(3, zip_code)
+      setString(1, emailAdapter.encode(email))
+      age?.let { setInt(2, positiveIntegerAdapter.encode(it)) } ?: setNull(2, Types.INTEGER)
+      zip_code?.let { setString(3, usPostalCodeAdapter.encode(it)) } ?: setNull(3, Types.VARCHAR)
       setString(4, moodAdapter.encode(current_mood))
       previous_mood?.let { setString(5, moodAdapter.encode(it)) } ?: setNull(5, Types.VARCHAR)
       execute()
@@ -177,9 +180,9 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> createUser(
     stream: Iterable<Input>,
-    email: Input.() -> String,
-    age: Input.() -> Int?,
-    zip_code: Input.() -> String?,
+    email: Input.() -> Email,
+    age: Input.() -> PositiveInteger?,
+    zip_code: Input.() -> UsPostalCode?,
     current_mood: Input.() -> Mood,
     previous_mood: Input.() -> Mood?,
     batchSize: Int,
@@ -193,9 +196,9 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setString(1, entry.email())
-        setInt(2, entry.age())
-        setString(3, entry.zip_code())
+        setString(1, emailAdapter.encode(entry.email()))
+        entry.age()?.let { setInt(2, positiveIntegerAdapter.encode(it)) } ?: setNull(2, Types.INTEGER)
+        entry.zip_code()?.let { setString(3, usPostalCodeAdapter.encode(it)) } ?: setNull(3, Types.VARCHAR)
         setString(4, moodAdapter.encode(entry.current_mood()))
         entry.previous_mood()?.let { setString(5, moodAdapter.encode(it)) } ?: setNull(5, Types.VARCHAR)
         addBatch()
@@ -215,9 +218,9 @@ public class PostgresQueries(
 
   @Throws(SQLException::class)
   override fun updateUser(
-    email: String?,
-    age: Int?,
-    zipCode: String?,
+    email: Email?,
+    age: PositiveInteger?,
+    zipCode: UsPostalCode?,
     id: Int,
   ) {
     val sql = """
@@ -229,9 +232,9 @@ public class PostgresQueries(
         |WHERE id = ?
         """.trimMargin()
     driver.execute(sql) {
-      setString(1, email)
-      setInt(2, age)
-      setString(3, zipCode)
+      email?.let { setString(1, emailAdapter.encode(it)) } ?: setNull(1, Types.VARCHAR)
+      age?.let { setInt(2, positiveIntegerAdapter.encode(it)) } ?: setNull(2, Types.INTEGER)
+      zipCode?.let { setString(3, usPostalCodeAdapter.encode(it)) } ?: setNull(3, Types.VARCHAR)
       setInt(4, id)
       execute()
     }
@@ -240,9 +243,9 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> updateUser(
     stream: Iterable<Input>,
-    email: Input.() -> String?,
-    age: Input.() -> Int?,
-    zipCode: Input.() -> String?,
+    email: Input.() -> Email?,
+    age: Input.() -> PositiveInteger?,
+    zipCode: Input.() -> UsPostalCode?,
     id: Input.() -> Int,
     batchSize: Int,
   ): IntArray {
@@ -259,9 +262,9 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setString(1, entry.email())
-        setInt(2, entry.age())
-        setString(3, entry.zipCode())
+        entry.email()?.let { setString(1, emailAdapter.encode(it)) } ?: setNull(1, Types.VARCHAR)
+        entry.age()?.let { setInt(2, positiveIntegerAdapter.encode(it)) } ?: setNull(2, Types.INTEGER)
+        entry.zipCode()?.let { setString(3, usPostalCodeAdapter.encode(it)) } ?: setNull(3, Types.VARCHAR)
         setInt(4, entry.id())
         addBatch()
         batchCount++

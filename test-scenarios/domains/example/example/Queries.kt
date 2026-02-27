@@ -4,7 +4,6 @@ import java.sql.SQLException
 import kotlin.Any
 import kotlin.Int
 import kotlin.IntArray
-import kotlin.String
 import kotlin.collections.Iterable
 import kotlin.jvm.Throws
 import norm.Many
@@ -16,11 +15,11 @@ public interface Queries {
    * ```
    */
   @Throws(SQLException::class)
-  public fun <T : Any> getUserByEmail(email: String, mapper: (
+  public fun <T : Any> getUserByEmail(email: Email, mapper: (
     id: Int,
-    email: String,
-    age: Int?,
-    zip_code: String?,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
     current_mood: Mood,
     previous_mood: Mood?,
   ) -> T): T
@@ -31,18 +30,18 @@ public interface Queries {
    * ```
    */
   @Throws(SQLException::class)
-  public fun getUserByEmail(email: String): Users = getUserByEmail(email, ::Users)
+  public fun getUserByEmail(email: Email): Users = getUserByEmail(email, ::Users)
 
   /**
    * ```sql
    * SELECT * FROM users WHERE age > ?
    * ```
    */
-  public fun <T : Any> listUsersByAge(age: Int, mapper: (
+  public fun <T : Any> listUsersByAge(age: PositiveInteger, mapper: (
     id: Int,
-    email: String,
-    age: Int?,
-    zip_code: String?,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
     current_mood: Mood,
     previous_mood: Mood?,
   ) -> T): Many<T>
@@ -52,18 +51,18 @@ public interface Queries {
    * SELECT * FROM users WHERE age > ?
    * ```
    */
-  public fun listUsersByAge(age: Int): Many<Users> = listUsersByAge(age, ::Users)
+  public fun listUsersByAge(age: PositiveInteger): Many<Users> = listUsersByAge(age, ::Users)
 
   /**
    * ```sql
    * SELECT * FROM users WHERE zip_code = ?
    * ```
    */
-  public fun <T : Any> getUsersByZipCode(zip_code: String, mapper: (
+  public fun <T : Any> getUsersByZipCode(zip_code: UsPostalCode, mapper: (
     id: Int,
-    email: String,
-    age: Int?,
-    zip_code: String?,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
     current_mood: Mood,
     previous_mood: Mood?,
   ) -> T): Many<T>
@@ -73,7 +72,7 @@ public interface Queries {
    * SELECT * FROM users WHERE zip_code = ?
    * ```
    */
-  public fun getUsersByZipCode(zip_code: String): Many<Users> = getUsersByZipCode(zip_code, ::Users)
+  public fun getUsersByZipCode(zip_code: UsPostalCode): Many<Users> = getUsersByZipCode(zip_code, ::Users)
 
   /**
    * ```sql
@@ -82,9 +81,9 @@ public interface Queries {
    */
   public fun <T : Any> getUsersByMood(current_mood: Mood, mapper: (
     id: Int,
-    email: String,
-    age: Int?,
-    zip_code: String?,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
     current_mood: Mood,
     previous_mood: Mood?,
   ) -> T): Many<T>
@@ -115,9 +114,9 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> createUser(
     stream: Iterable<Input>,
-    email: Input.() -> String,
-    age: Input.() -> Int?,
-    zip_code: Input.() -> String?,
+    email: Input.() -> Email,
+    age: Input.() -> PositiveInteger?,
+    zip_code: Input.() -> UsPostalCode?,
     current_mood: Input.() -> Mood,
     previous_mood: Input.() -> Mood?,
     batchSize: Int,
@@ -144,9 +143,9 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> createUser(
     stream: Iterable<Input>,
-    email: Input.() -> String,
-    age: Input.() -> Int?,
-    zip_code: Input.() -> String?,
+    email: Input.() -> Email,
+    age: Input.() -> PositiveInteger?,
+    zip_code: Input.() -> UsPostalCode?,
     current_mood: Input.() -> Mood,
     previous_mood: Input.() -> Mood?,
   ): IntArray = createUser(stream, email, age, zip_code, current_mood, previous_mood, 100)
@@ -159,9 +158,9 @@ public interface Queries {
    */
   @Throws(SQLException::class)
   public fun createUser(
-    email: String,
-    age: Int?,
-    zip_code: String?,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
     current_mood: Mood,
     previous_mood: Mood?,
   )
@@ -189,9 +188,9 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> updateUser(
     stream: Iterable<Input>,
-    email: Input.() -> String?,
-    age: Input.() -> Int?,
-    zipCode: Input.() -> String?,
+    email: Input.() -> Email?,
+    age: Input.() -> PositiveInteger?,
+    zipCode: Input.() -> UsPostalCode?,
     id: Input.() -> Int,
     batchSize: Int,
   ): IntArray
@@ -221,9 +220,9 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> updateUser(
     stream: Iterable<Input>,
-    email: Input.() -> String?,
-    age: Input.() -> Int?,
-    zipCode: Input.() -> String?,
+    email: Input.() -> Email?,
+    age: Input.() -> PositiveInteger?,
+    zipCode: Input.() -> UsPostalCode?,
     id: Input.() -> Int,
   ): IntArray = updateUser(stream, email, age, zipCode, id, 100)
 
@@ -239,9 +238,9 @@ public interface Queries {
    */
   @Throws(SQLException::class)
   public fun updateUser(
-    email: String?,
-    age: Int?,
-    zipCode: String?,
+    email: Email?,
+    age: PositiveInteger?,
+    zipCode: UsPostalCode?,
     id: Int,
   )
 

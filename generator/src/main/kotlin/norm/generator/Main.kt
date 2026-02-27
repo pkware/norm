@@ -50,11 +50,31 @@ public fun generateCode(
     )
   }
 
+  // Build value class + adapter TypeSpecs for all domains discovered during query resolution.
+  val domainTypeSpecs = generator.discoveredDomains.sortedBy { it.name }.flatMap { domain ->
+    listOf(
+      buildDomainValueClassTypeSpec(domain, packageName),
+      buildDomainAdapterTypeSpec(domain, packageName, frameworks),
+    )
+  }
+
   val classCode =
-    generateQueryImplementation(resolvedQueries, queriesInterface, frameworks, generator.discoveredEnums, packageName)
+    generateQueryImplementation(
+      resolvedQueries,
+      queriesInterface,
+      frameworks,
+      generator.discoveredEnums,
+      generator.discoveredDomains,
+      packageName,
+    )
   val connectionProviders = generateConnectionProviders(packageName, frameworks)
 
-  val typeSpecFiles = (sequenceOf(interfaceCode, classCode) + generator.requiredTypes + enumTypeSpecs).map {
+  val typeSpecFiles = (
+    sequenceOf(
+      interfaceCode,
+      classCode,
+    ) + generator.requiredTypes + enumTypeSpecs + domainTypeSpecs
+    ).map {
     val fileSpec = FileSpec.builder(packageName, "${it.name}.kt")
       .addType(it)
       .build()
@@ -71,6 +91,7 @@ private fun generateQueryImplementation(
   interfaceType: ClassName,
   frameworks: Set<Framework>,
   discoveredEnums: Set<plugin.Enum>,
+  discoveredDomains: Set<plugin.Domain>,
   packageName: String,
 ): TypeSpec {
   val constructorBuilder = FunSpec.constructorBuilder()
@@ -79,21 +100,42 @@ private fun generateQueryImplementation(
   val classBuilder = TypeSpec.classBuilder("PostgresQueries")
     .addSuperinterface(interfaceType)
 
-  // Add adapter constructor parameters for each discovered enum, sorted by name for deterministic output.
-  for (enumDefinition in discoveredEnums.sortedBy { it.name }) {
-    val enumClassName = ClassName(packageName, enumDefinition.name.snakeToCamelCase().titleCase())
-    val adapterClass = adapterClassName(enumDefinition, packageName)
-    val propertyName = adapterPropertyName(enumDefinition)
-    val adapterType = COLUMN_ADAPTER.parameterizedBy(enumClassName, String::class.asTypeName())
+  // Collect all adapter parameters (enums + domains), sorted together by name for deterministic output.
+  data class AdapterParam(val propertyName: String, val adapterType: TypeName, val defaultClass: ClassName)
 
+  val adapterParams = buildList {
+    for (enumDefinition in discoveredEnums) {
+      val enumClassName = ClassName(packageName, enumDefinition.name.snakeToCamelCase().titleCase())
+      add(
+        AdapterParam(
+          adapterPropertyName(enumDefinition),
+          COLUMN_ADAPTER.parameterizedBy(enumClassName, String::class.asTypeName()),
+          adapterClassName(enumDefinition, packageName),
+        ),
+      )
+    }
+    for (domain in discoveredDomains) {
+      val valueClassName = domainValueClassName(domain, packageName)
+      val baseKotlinType = domainKotlinBaseType(domain.base_type)
+      add(
+        AdapterParam(
+          domainAdapterPropertyName(domain),
+          COLUMN_ADAPTER.parameterizedBy(valueClassName, baseKotlinType),
+          domainAdapterClassName(domain, packageName),
+        ),
+      )
+    }
+  }.sortedBy { it.propertyName }
+
+  for (param in adapterParams) {
     constructorBuilder.addParameter(
-      ParameterSpec.builder(propertyName, adapterType)
-        .defaultValue("%T()", adapterClass)
+      ParameterSpec.builder(param.propertyName, param.adapterType)
+        .defaultValue("%T()", param.defaultClass)
         .build(),
     )
     classBuilder.addProperty(
-      PropertySpec.builder(propertyName, adapterType, KModifier.PRIVATE)
-        .initializer(propertyName)
+      PropertySpec.builder(param.propertyName, param.adapterType, KModifier.PRIVATE)
+        .initializer(param.propertyName)
         .build(),
     )
   }

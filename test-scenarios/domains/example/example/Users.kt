@@ -1,7 +1,6 @@
 package example
 
 import kotlin.Int
-import kotlin.String
 import kotlin.jvm.JvmRecord
 
 /**
@@ -10,9 +9,9 @@ import kotlin.jvm.JvmRecord
 @JvmRecord
 public data class Users(
   public val id: Int,
-  public val email: String,
-  public val age: Int?,
-  public val zip_code: String?,
+  public val email: Email,
+  public val age: PositiveInteger?,
+  public val zip_code: UsPostalCode?,
   public val current_mood: Mood,
   public val previous_mood: Mood?,
 )

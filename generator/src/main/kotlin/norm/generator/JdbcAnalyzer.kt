@@ -43,10 +43,12 @@ public class JdbcAnalyzer(private val connection: Connection) {
     val schemaObjects = schemas.map { schemaName ->
       val tables = introspectTables(schemaName)
       val enums = catalogLoader.introspectEnums(schemaName)
+      val domains = catalogLoader.introspectDomains(schemaName)
       Schema(
         name = schemaName,
         tables = tables,
         enums = enums,
+        domains = domains,
       )
     }
 
@@ -260,13 +262,17 @@ public class JdbcAnalyzer(private val connection: Connection) {
   /**
    * Builds [Parameter] objects from JDBC [ParameterMetaData][java.sql.ParameterMetaData].
    *
+   * JDBC's [java.sql.ParameterMetaData.getParameterTypeName] returns the base Postgres type name for
+   * domain columns (e.g., `"text"` instead of `"email"`). When [inferredParameters] maps a parameter
+   * to a catalog column, the catalog column's type name is used instead to preserve domain information.
+   *
    * @param pmd The parameter metadata from a prepared statement.
    * @param inferredNames Map from 1-based parameter number to inferred column name.
    * @param notNullByParameter Map from 1-based parameter number to whether the parameter is non-nullable.
    *   Parameters not in this map default to non-nullable.
    * @param inferredParameters Map from 1-based parameter number to inferred parameter info, used to look
-   *   up column comments from the catalog.
-   * @param catalog The schema catalog, used to look up column comments for parameters.
+   *   up column types and comments from the catalog.
+   * @param catalog The schema catalog, used to look up column types and comments for parameters.
    */
   private fun buildParameters(
     pmd: java.sql.ParameterMetaData,
@@ -277,11 +283,22 @@ public class JdbcAnalyzer(private val connection: Connection) {
   ): List<Parameter> {
     val parameters = mutableListOf<Parameter>()
     for (i in 1..pmd.parameterCount) {
-      val (baseName, isArray) = resolveTypeName(pmd.getParameterTypeName(i))
+      val (jdbcTypeName, isArray) = resolveTypeName(pmd.getParameterTypeName(i))
 
       val inferred = inferredParameters[i]
       val tableName = inferred?.tableName
       val columnName = inferred?.columnName ?: inferred?.name
+
+      // JDBC's getParameterTypeName() returns the base Postgres type for domain columns (e.g., "text"
+      // instead of "email"), losing domain information. When the inferred parameter maps to a known
+      // catalog column, use the catalog column's type name instead — it was populated via
+      // DatabaseMetaData.getColumns() which preserves the domain name (e.g., "email").
+      val typeName = if (catalog != null && tableName != null && columnName != null) {
+        catalog.findColumn(tableName, columnName)?.type?.name ?: jdbcTypeName
+      } else {
+        jdbcTypeName
+      }
+
       // When a function wraps the parameter (e.g., crypt(?, gen_salt('bf'))), the column comment describes
       // the stored value, not the caller's input. Skip the comment in that case.
       val isInsideFunctionCall = inferred?.columnName != null && inferred.columnName != inferred.name
@@ -300,7 +317,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
             is_array = isArray,
             array_dims = if (isArray) 1 else 0,
             comment = comment,
-            type = Identifier(name = baseName),
+            type = Identifier(name = typeName),
           ),
         ),
       )
@@ -331,18 +348,18 @@ public class JdbcAnalyzer(private val connection: Connection) {
   }
 
   /**
-   * Resolves a PostgreSQL type name, stripping the array prefix and resolving domain types.
+   * Resolves a PostgreSQL type name, stripping the array prefix.
    *
    * Array types in Postgres are prefixed with `_` (e.g., `_int4` for `int4[]`).
-   * Domain types are resolved to their base type via [PgCatalogLoader.domainTypes].
+   * Domain type names are preserved (not collapsed to their base type) so that the generator's
+   * [TypeRepository] can resolve them to value classes.
    *
-   * @return A pair of (base type name, isArray).
+   * @return A pair of (type name, isArray).
    */
   private fun resolveTypeName(typeName: String): Pair<String, Boolean> {
     val isArray = typeName.startsWith("_")
     val rawBase = if (isArray) typeName.removePrefix("_") else typeName
-    val baseName = catalogLoader.domainTypes[rawBase] ?: rawBase
-    return baseName to isArray
+    return rawBase to isArray
   }
 
   /**
