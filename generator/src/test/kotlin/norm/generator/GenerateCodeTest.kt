@@ -144,7 +144,10 @@ class GenerateCodeTest {
 
     val analyzedQueries = allParsedQueries.map { analyzer.analyzeQuery(it, catalog) }
 
-    val result = generateCode(catalog, analyzedQueries, packageName, frameworks)
+    val typeMappings = parseTypeMappings(scenarioProperties)
+
+    val effectivePackageName = scenarioProperties.getProperty("packageName") ?: packageName
+    val result = generateCode(catalog, analyzedQueries, effectivePackageName, frameworks, typeMappings)
     val createdFiles = result.associate { spec ->
       Pair(spec.name, spec.contents.utf8())
     }.toMutableMap()
@@ -193,6 +196,36 @@ class GenerateCodeTest {
     @AfterAll
     fun teardown() {
       if (::connection.isInitialized) connection.close()
+    }
+
+    /**
+     * Parses [TypeMapping] entries from scenario properties.
+     *
+     * Format:
+     * - `typeMapping.type.<postgresType>=<kotlinType>:<adapterType>`
+     * - `typeMapping.column.<table>.<column>=<kotlinType>:<adapterType>`
+     */
+    private fun parseTypeMappings(properties: Properties): List<TypeMapping> = buildList {
+      for ((key, value) in properties) {
+        val keyStr = key.toString()
+        val valueStr = value.toString()
+        if (!keyStr.startsWith("typeMapping.")) continue
+        val parts = valueStr.split(":")
+        require(parts.size == 2) { "Invalid type mapping value: $valueStr" }
+        val (kotlinType, adapterType) = parts
+
+        if (keyStr.startsWith("typeMapping.type.")) {
+          val postgresType = keyStr.removePrefix("typeMapping.type.")
+          add(TypeMapping(postgresType, null, null, kotlinType, adapterType))
+        } else if (keyStr.startsWith("typeMapping.column.")) {
+          val remainder = keyStr.removePrefix("typeMapping.column.")
+          val dotIndex = remainder.indexOf('.')
+          require(dotIndex > 0) { "Invalid column mapping key: $keyStr" }
+          val table = remainder.substring(0, dotIndex)
+          val column = remainder.substring(dotIndex + 1)
+          add(TypeMapping("", table, column, kotlinType, adapterType))
+        }
+      }
     }
 
     @JvmStatic

@@ -171,8 +171,8 @@ public class PostgresQueries(
       setString(1, emailAdapter.encode(email))
       age?.let { setInt(2, positiveIntegerAdapter.encode(it)) } ?: setNull(2, Types.INTEGER)
       zip_code?.let { setString(3, usPostalCodeAdapter.encode(it)) } ?: setNull(3, Types.VARCHAR)
-      setString(4, moodAdapter.encode(current_mood))
-      previous_mood?.let { setString(5, moodAdapter.encode(it)) } ?: setNull(5, Types.VARCHAR)
+      setObject(4, moodAdapter.encode(current_mood), Types.OTHER)
+      previous_mood?.let { setObject(5, moodAdapter.encode(it), Types.OTHER) } ?: setNull(5, Types.OTHER)
       execute()
     }
   }
@@ -199,8 +199,8 @@ public class PostgresQueries(
         setString(1, emailAdapter.encode(entry.email()))
         entry.age()?.let { setInt(2, positiveIntegerAdapter.encode(it)) } ?: setNull(2, Types.INTEGER)
         entry.zip_code()?.let { setString(3, usPostalCodeAdapter.encode(it)) } ?: setNull(3, Types.VARCHAR)
-        setString(4, moodAdapter.encode(entry.current_mood()))
-        entry.previous_mood()?.let { setString(5, moodAdapter.encode(it)) } ?: setNull(5, Types.VARCHAR)
+        setObject(4, moodAdapter.encode(entry.current_mood()), Types.OTHER)
+        entry.previous_mood()?.let { setObject(5, moodAdapter.encode(it), Types.OTHER) } ?: setNull(5, Types.OTHER)
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
@@ -295,8 +295,8 @@ public class PostgresQueries(
         |WHERE id = ?
         """.trimMargin()
     driver.execute(sql) {
-      setString(1, moodAdapter.encode(current_mood))
-      setString(2, moodAdapter.encode(previous_mood))
+      setObject(1, moodAdapter.encode(current_mood), Types.OTHER)
+      setObject(2, moodAdapter.encode(previous_mood), Types.OTHER)
       setInt(3, id)
       execute()
     }
@@ -322,8 +322,8 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setString(1, moodAdapter.encode(entry.current_mood()))
-        setString(2, moodAdapter.encode(entry.previous_mood()))
+        setObject(1, moodAdapter.encode(entry.current_mood()), Types.OTHER)
+        setObject(2, moodAdapter.encode(entry.previous_mood()), Types.OTHER)
         setInt(3, entry.id())
         addBatch()
         batchCount++

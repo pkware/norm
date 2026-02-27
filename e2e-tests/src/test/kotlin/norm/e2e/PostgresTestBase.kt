@@ -43,28 +43,28 @@ abstract class PostgresTestBase {
     connectionProvider = ConnectionProvider(dataSource)
 
     // Ensure clean state before loading schema
-    connection.createStatement().use { stmt ->
-      stmt.execute("DROP TABLE IF EXISTS type CASCADE")
-    }
+    cleanDatabase(connection)
 
     // Load schema from test-scenarios
-    loadSchema()
+    val schemaScript = schemaFile().also {
+      if (!it.exists()) error("Schema file not found: ${it.absolutePath}")
+    }.readText()
+    connection.createStatement().use { stmt -> stmt.execute(schemaScript) }
   }
 
-  private fun loadSchema() {
-    // Load schema from test-scenarios (not duplicated)
-    // Working directory is e2e-tests/, so navigate up to project root
-    val projectRoot = File(System.getProperty("user.dir")).parentFile
-    val schemaFile = projectRoot.resolve("test-scenarios/all_types/schema.sql")
+  /**
+   * Returns the schema file to apply before each test.
+   * Subclasses override to point at a different test scenario's schema.
+   */
+  protected open fun schemaFile(): File = projectRoot.resolve("test-scenarios/all_types/schema.sql")
 
-    if (!schemaFile.exists()) {
-      error("Schema file not found: ${schemaFile.absolutePath}")
-    }
-
-    val schemaScript = schemaFile.readText()
-
+  /**
+   * Drops any objects left over from the previous test so the schema can be reapplied cleanly.
+   * Subclasses override to clean up scenario-specific types and tables.
+   */
+  protected open fun cleanDatabase(connection: Connection) {
     connection.createStatement().use { stmt ->
-      stmt.execute(schemaScript)
+      stmt.execute("DROP TABLE IF EXISTS type CASCADE")
     }
   }
 
@@ -79,6 +79,9 @@ abstract class PostgresTestBase {
   }
 
   companion object {
+    /** Root of the Norm repository, resolved relative to e2e-tests' working directory. */
+    val projectRoot: File = File(System.getProperty("user.dir")).parentFile
+
     /**
      * Shared PostgreSQL container for all tests in this class.
      * Uses alpine variant for smaller image size (~80MB vs ~300MB).
@@ -95,10 +98,28 @@ abstract class PostgresTestBase {
   /**
    * Simple DataSource implementation that returns a single connection.
    * Good enough for single-threaded tests. Not suitable for production.
+   *
+   * Returns a [NonClosingConnectionWrapper] so that [norm.NormDriver]'s `connection.use { }` calls
+   * do not actually close the underlying JDBC connection. Connection lifecycle is managed by the
+   * [setupDatabase] / [cleanDatabase] cycle instead.
    */
+  /**
+   * Wraps a [Connection] and makes [close] a no-op.
+   *
+   * [norm.NormDriver] calls `connection.use { }` after each query, which would close the
+   * underlying JDBC connection and break subsequent queries in the same test. This wrapper
+   * intercepts [close] so the connection stays open for the full `@BeforeEach`–`@AfterEach`
+   * lifecycle managed by [setupDatabase].
+   */
+  private class NonClosingConnectionWrapper(conn: Connection) : Connection by conn {
+    override fun close() {
+      // no-op: lifecycle managed by setupDatabase
+    }
+  }
+
   private class SingleConnectionDataSource(private val conn: Connection) : DataSource {
-    override fun getConnection(): Connection = conn
-    override fun getConnection(username: String?, password: String?): Connection = conn
+    override fun getConnection(): Connection = NonClosingConnectionWrapper(conn)
+    override fun getConnection(username: String?, password: String?): Connection = NonClosingConnectionWrapper(conn)
 
     // Unsupported operations (not needed for tests)
     override fun <T> unwrap(iface: Class<T>?): T = throw UnsupportedOperationException()

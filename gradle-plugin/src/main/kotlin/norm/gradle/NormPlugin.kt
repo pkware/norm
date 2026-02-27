@@ -41,6 +41,7 @@ public class NormPlugin : Plugin<Project> {
     norm.databases.all {
       postgresVersion.convention("18")
       generateCrud.convention(true)
+      typeMappings.convention(emptyList())
 
       val generateTask = tasks.register<NormGenerateTask>(
         "normGenerate${name.uppercaseFirstChar()}",

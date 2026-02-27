@@ -72,6 +72,84 @@ norm {
 - **Conflict resolution:** If a user-written query has the same name as a synthesized CRUD method, the user query takes priority and the CRUD method is skipped.
 - **Disabling:** Set `generateCrud = false` to disable CRUD generation entirely.
 
+**Property: `typeMappings`**
+- **Type:** DSL block / `ListProperty<TypeMapping>`
+- **Default:** empty (use Norm's built-in type mappings)
+- **Effect:** Override how specific Postgres types (or individual columns) map to Kotlin types in generated code.
+
+Norm auto-generates adapters for Postgres enum types (→ Kotlin `enum class`) and domain types (→ `@JvmInline value class`). `typeMappings` lets you substitute your own Kotlin type and `ColumnAdapter` implementation whenever those defaults don't fit — for example, mapping a `jsonb` column to a custom data class, or representing an enum as a sealed class.
+
+#### Type-level overrides
+
+A type-level override applies to **every column** of that Postgres type across all tables. It also **suppresses Norm's auto-generation** of the corresponding enum or domain class — you're taking full ownership of the type.
+
+```kotlin
+norm {
+  databases {
+    register("main") {
+      packageName.set("com.example")
+      schemas.add("src/main/sql/schema.sql")
+      queries.add("src/main/sql/queries.sql")
+
+      typeMappings {
+        // Map the Postgres "mood" enum to a hand-written Kotlin enum.
+        // Norm will NOT generate Mood.kt or MoodAdapter.kt.
+        type("mood") mapTo "com.example.CustomMood" using "com.example.CustomMoodAdapter"
+
+        // Map all jsonb columns to a wrapper type.
+        type("jsonb") mapTo "com.example.JsonData" using "com.example.JsonDataAdapter"
+      }
+    }
+  }
+}
+```
+
+#### Column-level overrides
+
+A column-level override applies only to one specific column. It takes **precedence over any type-level override** for the same column. Norm still generates the type-level enum/domain adapter for other columns of that type.
+
+```kotlin
+typeMappings {
+  // users.preferences uses UserPreferences, even though jsonb is mapped to JsonData above.
+  column("users", "preferences") mapTo "com.example.UserPreferences" using "com.example.UserPreferencesAdapter"
+}
+```
+
+#### Adapter injection
+
+Each user-configured mapping becomes a **constructor parameter on `PostgresQueries` without a default value**, so you must supply an instance.
+
+```kotlin
+val queries = PostgresQueries(
+  connectionProvider = connectionProvider,
+  jsonDataAdapter = JsonDataAdapter(),
+  customMoodAdapter = CustomMoodAdapter(),
+  usersPreferencesAdapter = UserPreferencesAdapter(),
+  // Auto-generated adapter — has a default, can be omitted
+  // emailAdapter = EmailAdapter(),
+)
+```
+
+When a `frameworks` setting is present, the DI container satisfies these dependencies automatically. Provide your adapter as a `@Singleton` (Micronaut) or `@Bean` (Spring) and it will be injected into `PostgresQueries`.
+
+#### Writing a `ColumnAdapter`
+
+```kotlin
+class CustomMoodAdapter : ColumnAdapter<CustomMood, String> {
+  override fun decode(databaseValue: String): CustomMood = when (databaseValue) {
+    "happy" -> CustomMood.HAPPY
+    "sad"   -> CustomMood.SAD
+    else    -> error("Unknown mood: $databaseValue")
+  }
+  override fun encode(value: CustomMood): String = when (value) {
+    CustomMood.HAPPY -> "happy"
+    CustomMood.SAD   -> "sad"
+  }
+}
+```
+
+The type parameters are `ColumnAdapter<ApplicationType, DatabaseType>` where `DatabaseType` is the Kotlin type Norm uses to read/write the column over JDBC (typically `String` for text-backed types, `Int` for integer-backed domains, etc.).
+
 ### How It Works
 
 Norm uses direct JDBC metadata analysis to generate type-safe Kotlin code:

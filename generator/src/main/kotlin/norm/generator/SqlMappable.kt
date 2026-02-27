@@ -182,8 +182,8 @@ internal enum class PostgresSupportedTypes(
 }
 
 /**
- * JDBC method metadata for a domain's base type, used to generate the correct
- * `ResultSet` and `PreparedStatement` calls for reading and writing domain values.
+ * JDBC method metadata for a type's wire representation, used to generate the correct
+ * `ResultSet` and `PreparedStatement` calls for reading and writing values through an adapter.
  *
  * @property getterName The `ResultSet` getter method name (e.g., `"getString"`, `"getInt"`).
  * @property setterName The `PreparedStatement` setter method name (e.g., `"setString"`, `"setInt"`).
@@ -191,17 +191,24 @@ internal enum class PostgresSupportedTypes(
  *   `Long`, `Float`, `Double`, `Boolean`). Primitives require a `wasNull()` check for nullable columns
  *   because JDBC returns `0`/`false` instead of `null`.
  * @property sqlTypeConstant The field name on [java.sql.Types] for `setNull()` calls (e.g., `"VARCHAR"`, `"INTEGER"`).
+ * @property useSqlTypeHint When `true`, the setter is generated as `setObject(index, value, Types.sqlTypeConstant)`
+ *   instead of `setterName(index, value)`. Required for Postgres custom types (enums) where the JDBC driver
+ *   refuses to coerce a `VARCHAR` binding — passing `Types.OTHER` bypasses the driver's type enforcement
+ *   and lets Postgres perform the coercion itself.
  */
-internal data class DomainBaseTypeInfo(
+internal data class JdbcTypeInfo(
   val getterName: String,
   val setterName: String,
   val isPrimitive: Boolean,
   val sqlTypeConstant: String,
+  val useSqlTypeHint: Boolean = false,
 )
 
 /**
- * [SqlMappable] for a PostgreSQL domain column that uses a generated [ColumnAdapter][norm.ColumnAdapter]
- * for encode/decode.
+ * [SqlMappable] for a column that uses a [ColumnAdapter][norm.ColumnAdapter] for encode/decode.
+ *
+ * Covers auto-generated adapters (enums, domains) and user-configured adapters. The adapter's
+ * wire type is described by [jdbcTypeInfo], which determines the JDBC getter/setter methods.
  *
  * Generated types don't exist at generator time, so [klass] is not available — use [typeName] instead.
  *
@@ -209,132 +216,101 @@ internal data class DomainBaseTypeInfo(
  * `PostgresQueries` class, which is visible inside the `ResultSet`/`PreparedStatement` receiver lambdas
  * via Kotlin closure scoping.
  *
- * @param domainTypeName The KotlinPoet [ClassName] of the generated value class (e.g., `example.Email`).
+ * @param applicationTypeName The KotlinPoet [ClassName] of the application type (e.g., `example.Email`).
  * @param adapterPropertyName The property name on `PostgresQueries` for the adapter (e.g., `"emailAdapter"`).
  * @param notNull Whether the column is `NOT NULL`.
- * @param baseTypeInfo JDBC method info for the domain's base type.
+ * @param jdbcTypeInfo JDBC method info for the adapter's wire type.
  */
-internal class DomainTypeSqlMappable(
-  private val domainTypeName: ClassName,
+internal class AdaptedTypeSqlMappable(
+  private val applicationTypeName: ClassName,
   private val adapterPropertyName: String,
   private val notNull: Boolean,
-  private val baseTypeInfo: DomainBaseTypeInfo,
+  private val jdbcTypeInfo: JdbcTypeInfo,
 ) : SqlMappable {
 
   override val klass: KClass<*>
     get() = throw UnsupportedOperationException(
-      "Generated domain type $domainTypeName has no KClass at generator time. Use typeName instead.",
+      "Generated type $applicationTypeName has no KClass at generator time. Use typeName instead.",
     )
 
   override val typeName: TypeName
-    get() = domainTypeName
+    get() = applicationTypeName
 
   override val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
     get() = if (notNull) {
-      { index, parameterName ->
-        CodeBlock.of(
-          "%N(%L, %N.encode(%L))",
-          baseTypeInfo.setterName,
-          index,
-          adapterPropertyName,
-          parameterName,
-        )
+      if (jdbcTypeInfo.useSqlTypeHint) {
+        { index, parameterName ->
+          CodeBlock.of(
+            "setObject(%L, %N.encode(%L), %T.%N)",
+            index,
+            adapterPropertyName,
+            parameterName,
+            Types::class,
+            jdbcTypeInfo.sqlTypeConstant,
+          )
+        }
+      } else {
+        { index, parameterName ->
+          CodeBlock.of(
+            "%N(%L, %N.encode(%L))",
+            jdbcTypeInfo.setterName,
+            index,
+            adapterPropertyName,
+            parameterName,
+          )
+        }
       }
     } else {
-      { index, parameterName ->
-        CodeBlock.of(
-          "%L?.let { %N(%L, %N.encode(it)) } ?: setNull(%L, %T.%N)",
-          parameterName,
-          baseTypeInfo.setterName,
-          index,
-          adapterPropertyName,
-          index,
-          Types::class,
-          baseTypeInfo.sqlTypeConstant,
-        )
+      if (jdbcTypeInfo.useSqlTypeHint) {
+        { index, parameterName ->
+          CodeBlock.of(
+            "%L?.let { setObject(%L, %N.encode(it), %T.%N) } ?: setNull(%L, %T.%N)",
+            parameterName,
+            index,
+            adapterPropertyName,
+            Types::class,
+            jdbcTypeInfo.sqlTypeConstant,
+            index,
+            Types::class,
+            jdbcTypeInfo.sqlTypeConstant,
+          )
+        }
+      } else {
+        { index, parameterName ->
+          CodeBlock.of(
+            "%L?.let { %N(%L, %N.encode(it)) } ?: setNull(%L, %T.%N)",
+            parameterName,
+            jdbcTypeInfo.setterName,
+            index,
+            adapterPropertyName,
+            index,
+            Types::class,
+            jdbcTypeInfo.sqlTypeConstant,
+          )
+        }
       }
     }
 
   override val resultSetAction: (index: Int) -> CodeBlock
     get() = if (notNull) {
-      if (baseTypeInfo.isPrimitive) {
-        { index -> CodeBlock.of("%N.decode(%N(%L))", adapterPropertyName, baseTypeInfo.getterName, index) }
-      } else {
-        { index -> CodeBlock.of("%N.decode(%N(%L))", adapterPropertyName, baseTypeInfo.getterName, index) }
-      }
-    } else {
-      if (baseTypeInfo.isPrimitive) {
-        { index ->
-          CodeBlock.of(
-            "%N(%L).takeUnless { wasNull() }?.let { %N.decode(it) }",
-            baseTypeInfo.getterName,
-            index,
-            adapterPropertyName,
-          )
-        }
-      } else {
-        { index ->
-          CodeBlock.of(
-            "%N(%L)?.let { %N.decode(it) }",
-            baseTypeInfo.getterName,
-            index,
-            adapterPropertyName,
-          )
-        }
-      }
-    }
-}
-
-/**
- * [SqlMappable] for a PostgreSQL enum column that uses a generated [ColumnAdapter][norm.ColumnAdapter]
- * for encode/decode.
- *
- * Generated types don't exist at generator time, so [klass] is not available — use [typeName] instead.
- *
- * The generated read/write code references an adapter property (e.g., `moodAdapter`) on the enclosing
- * `PostgresQueries` class, which is visible inside the `ResultSet`/`PreparedStatement` receiver lambdas
- * via Kotlin closure scoping.
- *
- * @param enumTypeName The KotlinPoet [ClassName] of the generated Kotlin enum (e.g., `example.Mood`).
- * @param adapterPropertyName The property name on `PostgresQueries` for the adapter (e.g., `"moodAdapter"`).
- * @param notNull Whether the column is `NOT NULL`.
- */
-internal class EnumTypeSqlMappable(
-  private val enumTypeName: ClassName,
-  private val adapterPropertyName: String,
-  private val notNull: Boolean,
-) : SqlMappable {
-
-  override val klass: KClass<*>
-    get() = throw UnsupportedOperationException(
-      "Generated enum type $enumTypeName has no KClass at generator time. Use typeName instead.",
-    )
-
-  override val typeName: TypeName
-    get() = enumTypeName
-
-  override val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
-    get() = if (notNull) {
-      { index, parameterName ->
-        CodeBlock.of("setString(%L, %N.encode(%L))", index, adapterPropertyName, parameterName)
-      }
-    } else {
-      { index, parameterName ->
+      { index -> CodeBlock.of("%N.decode(%N(%L))", adapterPropertyName, jdbcTypeInfo.getterName, index) }
+    } else if (jdbcTypeInfo.isPrimitive) {
+      { index ->
         CodeBlock.of(
-          "%L?.let { setString(%L, %N.encode(it)) } ?: setNull(%L, %T.VARCHAR)",
-          parameterName,
+          "%N(%L).takeUnless { wasNull() }?.let { %N.decode(it) }",
+          jdbcTypeInfo.getterName,
           index,
           adapterPropertyName,
-          index,
-          Types::class,
         )
       }
-    }
-
-  override val resultSetAction: (index: Int) -> CodeBlock
-    get() = if (notNull) {
-      { index -> CodeBlock.of("%N.decode(getString(%L))", adapterPropertyName, index) }
     } else {
-      { index -> CodeBlock.of("getString(%L)?.let { %N.decode(it) }", index, adapterPropertyName) }
+      { index ->
+        CodeBlock.of(
+          "%N(%L)?.let { %N.decode(it) }",
+          jdbcTypeInfo.getterName,
+          index,
+          adapterPropertyName,
+        )
+      }
     }
 }

@@ -18,6 +18,15 @@ import plugin.Schema
 import plugin.Table
 
 /**
+ * [JdbcTypeInfo] for Postgres enum types.
+ *
+ * Enum types require `setObject(index, value, Types.OTHER)` rather than `setString(index, value)`.
+ * The Postgres JDBC driver rejects `VARCHAR` bindings for enum columns in prepared statements;
+ * `Types.OTHER` bypasses driver-side type enforcement and lets Postgres coerce the string.
+ */
+private val ENUM_JDBC_TYPE_INFO = JdbcTypeInfo("getString", "setObject", false, "OTHER", useSqlTypeHint = true)
+
+/**
  * Repository for types generated as part of query generation.
  *
  * Responsibilities:
@@ -30,8 +39,14 @@ import plugin.Table
  *
  * @param packageName to use for generated types.
  * @param catalog Postgres catalog to use when resolving projection information.
+ * @param typeMappings User-configured type/column overrides. Type-level overrides take precedence
+ *   over auto-generated enums/domains; column-level overrides take precedence over everything.
  */
-internal class TypeRepository(private val packageName: String, private val catalog: Catalog) {
+internal class TypeRepository(
+  private val packageName: String,
+  private val catalog: Catalog,
+  private val typeMappings: List<TypeMapping> = emptyList(),
+) {
 
   /**
    * Projections of SQL tables.
@@ -54,6 +69,14 @@ internal class TypeRepository(private val packageName: String, private val catal
    */
   private val domainsByName: Map<String, Domain> =
     catalog.schemas.flatMap(Schema::domains).associateBy(Domain::name)
+
+  /** Type-level overrides, keyed by Postgres type name. */
+  private val typeLevelOverrides: Map<String, TypeMapping> =
+    typeMappings.filter { it.isTypeLevel }.associateBy { it.postgresType }
+
+  /** Column-level overrides, keyed by (table, column) pair. */
+  private val columnLevelOverrides: Map<Pair<String, String>, TypeMapping> =
+    typeMappings.filter { it.isColumnLevel }.associateBy { it.table!! to it.column!! }
 
   /**
    * Enum types that are actually referenced by columns in resolved queries.
@@ -284,19 +307,72 @@ internal class TypeRepository(private val packageName: String, private val catal
 
   /**
    * Resolves the [SqlMappable] for a column.
+   *
+   * Resolution precedence: column override → type override → standard → enum → domain → error.
    */
   fun resolveMappableType(column: Column): SqlMappable {
     val typeName = column.type?.name
       ?: error("Column ${column.fullyQualifiedName} has no type")
 
-    return tryResolveStandardType(typeName, column.not_null, column.is_array)
+    return tryResolveColumnOverride(column)
+      ?: tryResolveTypeOverride(typeName, column.not_null)
+      ?: tryResolveStandardType(typeName, column.not_null, column.is_array)
       ?: tryResolveEnumType(typeName, column.not_null, column.is_array)
       ?: tryResolveDomainType(typeName, column.not_null, column.is_array)
       ?: error("Postgres type $typeName for column ${column.fullyQualifiedName} is not mapped to a Kotlin type")
   }
 
   /**
-   * Returns an [EnumTypeSqlMappable] if [typeName] matches a known Postgres enum type, or `null`.
+   * Returns an [AdaptedTypeSqlMappable] if the column has a column-level user override, or `null`.
+   */
+  private fun tryResolveColumnOverride(column: Column): SqlMappable? {
+    val tableName = column.table?.name ?: return null
+    val columnName = column.original_name.ifEmpty { column.name }
+    val mapping = columnLevelOverrides[tableName to columnName] ?: return null
+    return buildUserConfiguredMappable(mapping, column.type!!.name, column.not_null)
+  }
+
+  /**
+   * Returns an [AdaptedTypeSqlMappable] if [typeName] has a type-level user override, or `null`.
+   */
+  private fun tryResolveTypeOverride(typeName: String, notNull: Boolean): SqlMappable? {
+    val mapping = typeLevelOverrides[typeName] ?: return null
+    return buildUserConfiguredMappable(mapping, typeName, notNull)
+  }
+
+  /**
+   * Builds an [AdaptedTypeSqlMappable] for a user-configured type mapping.
+   *
+   * Resolves the JDBC wire type for the Postgres type, then creates the mappable with
+   * the user's application type and adapter property name.
+   */
+  private fun buildUserConfiguredMappable(mapping: TypeMapping, postgresType: String, notNull: Boolean): SqlMappable {
+    val applicationClassName = ClassName.bestGuess(mapping.kotlinType)
+    val adapterPropertyName = userAdapterPropertyName(mapping)
+    val jdbcTypeInfo = resolveJdbcTypeInfoForType(postgresType)
+      ?: error(
+        "Postgres type '$postgresType' cannot be used with a custom adapter — " +
+          "no JDBC type mapping is available.",
+      )
+    return AdaptedTypeSqlMappable(applicationClassName, adapterPropertyName, notNull, jdbcTypeInfo)
+  }
+
+  /**
+   * Resolves [JdbcTypeInfo] for any Postgres type, chaining through enums and domains as needed.
+   *
+   * - Enum types → String (VARCHAR)
+   * - Domain types → chains to the domain's base type
+   * - Standard types → uses [resolveJdbcTypeInfo]
+   */
+  private fun resolveJdbcTypeInfoForType(postgresType: String): JdbcTypeInfo? {
+    if (postgresType in enumsByName) return ENUM_JDBC_TYPE_INFO
+    val domain = domainsByName[postgresType]
+    if (domain != null) return resolveJdbcTypeInfoForType(domain.base_type)
+    return resolveJdbcTypeInfo(postgresType)
+  }
+
+  /**
+   * Returns an [AdaptedTypeSqlMappable] if [typeName] matches a known Postgres enum type, or `null`.
    *
    * Enum arrays are not yet supported and return `null` (falling through to the error in
    * [resolveMappableType]).
@@ -307,7 +383,7 @@ internal class TypeRepository(private val packageName: String, private val catal
     referencedEnums.add(enumDefinition)
 
     val enumClassName = ClassName(packageName, enumDefinition.name.snakeToCamelCase().titleCase())
-    return EnumTypeSqlMappable(enumClassName, adapterPropertyName(enumDefinition), notNull)
+    return AdaptedTypeSqlMappable(enumClassName, adapterPropertyName(enumDefinition), notNull, ENUM_JDBC_TYPE_INFO)
   }
 
   /** Returns the [SqlMappable] for a standard Postgres type, or `null` if not recognized. */
@@ -322,7 +398,7 @@ internal class TypeRepository(private val packageName: String, private val catal
   }
 
   /**
-   * Returns a [DomainTypeSqlMappable] if [typeName] matches a known Postgres domain type, or `null`.
+   * Returns an [AdaptedTypeSqlMappable] if [typeName] matches a known Postgres domain type, or `null`.
    *
    * Domain arrays are not yet supported and return `null` (falling through to the error in
    * [resolveMappableType]).
@@ -333,9 +409,9 @@ internal class TypeRepository(private val packageName: String, private val catal
     referencedDomains.add(domain)
 
     val domainClassName = ClassName(packageName, domain.name.snakeToCamelCase().titleCase())
-    val baseTypeInfo = resolveDomainBaseTypeInfo(domain.base_type)
+    val jdbcTypeInfo = resolveJdbcTypeInfo(domain.base_type)
       ?: error("Domain ${domain.name} has unsupported base type: ${domain.base_type}")
-    return DomainTypeSqlMappable(domainClassName, domainAdapterPropertyName(domain), notNull, baseTypeInfo)
+    return AdaptedTypeSqlMappable(domainClassName, domainAdapterPropertyName(domain), notNull, jdbcTypeInfo)
   }
 
   /** Maps a Postgres type name to its base [SqlMappable], or `null` if not recognized. */
@@ -374,20 +450,24 @@ internal class TypeRepository(private val packageName: String, private val catal
 }
 
 /**
- * Maps a Postgres base type name to its [DomainBaseTypeInfo], or returns `null` if unsupported.
+ * Maps a Postgres base type name to its [JdbcTypeInfo], or returns `null` if unsupported.
  *
- * This covers the types most commonly used as domain bases. The mapping must stay in sync with
- * [TypeRepository.resolveBaseType] — any type supported there as a domain base should have an entry here.
+ * This covers the types most commonly used as domain bases and user-configured adapter wire types.
+ * The mapping must stay in sync with [TypeRepository.resolveBaseType] — any type supported there
+ * as a domain base should have an entry here.
  */
-internal fun resolveDomainBaseTypeInfo(baseTypeName: String): DomainBaseTypeInfo? = when (baseTypeName) {
-  "text", "varchar", "bpchar" -> DomainBaseTypeInfo("getString", "setString", false, "VARCHAR")
-  "int2" -> DomainBaseTypeInfo("getShort", "setShort", true, "SMALLINT")
-  "int4" -> DomainBaseTypeInfo("getInt", "setInt", true, "INTEGER")
-  "int8" -> DomainBaseTypeInfo("getLong", "setLong", true, "BIGINT")
-  "float4" -> DomainBaseTypeInfo("getFloat", "setFloat", true, "REAL")
-  "float8" -> DomainBaseTypeInfo("getDouble", "setDouble", true, "DOUBLE")
-  "bool" -> DomainBaseTypeInfo("getBoolean", "setBoolean", true, "BOOLEAN")
-  "numeric" -> DomainBaseTypeInfo("getBigDecimal", "setBigDecimal", false, "NUMERIC")
+internal fun resolveJdbcTypeInfo(baseTypeName: String): JdbcTypeInfo? = when (baseTypeName) {
+  "text", "varchar", "bpchar" -> JdbcTypeInfo("getString", "setString", false, "VARCHAR")
+  "int2" -> JdbcTypeInfo("getShort", "setShort", true, "SMALLINT")
+  "int4" -> JdbcTypeInfo("getInt", "setInt", true, "INTEGER")
+  "int8" -> JdbcTypeInfo("getLong", "setLong", true, "BIGINT")
+  "float4" -> JdbcTypeInfo("getFloat", "setFloat", true, "REAL")
+  "float8" -> JdbcTypeInfo("getDouble", "setDouble", true, "DOUBLE")
+  "bool" -> JdbcTypeInfo("getBoolean", "setBoolean", true, "BOOLEAN")
+  "numeric" -> JdbcTypeInfo("getBigDecimal", "setBigDecimal", false, "NUMERIC")
+  // jsonb requires setObject(..., Types.OTHER): Postgres JDBC rejects setString() for jsonb columns
+  // in prepared statements, just as it does for enum columns.
+  "jsonb" -> JdbcTypeInfo("getString", "setObject", false, "OTHER", useSqlTypeHint = true)
   else -> null
 }
 

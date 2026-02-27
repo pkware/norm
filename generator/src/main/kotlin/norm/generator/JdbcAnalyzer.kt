@@ -289,21 +289,24 @@ public class JdbcAnalyzer(private val connection: Connection) {
       val tableName = inferred?.tableName
       val columnName = inferred?.columnName ?: inferred?.name
 
+      // Look up the catalog column once for type name and comment resolution.
+      val catalogColumn = if (catalog != null && tableName != null && columnName != null) {
+        catalog.findColumn(tableName, columnName)
+      } else {
+        null
+      }
+
       // JDBC's getParameterTypeName() returns the base Postgres type for domain columns (e.g., "text"
       // instead of "email"), losing domain information. When the inferred parameter maps to a known
       // catalog column, use the catalog column's type name instead — it was populated via
       // DatabaseMetaData.getColumns() which preserves the domain name (e.g., "email").
-      val typeName = if (catalog != null && tableName != null && columnName != null) {
-        catalog.findColumn(tableName, columnName)?.type?.name ?: jdbcTypeName
-      } else {
-        jdbcTypeName
-      }
+      val typeName = catalogColumn?.type?.name ?: jdbcTypeName
 
       // When a function wraps the parameter (e.g., crypt(?, gen_salt('bf'))), the column comment describes
       // the stored value, not the caller's input. Skip the comment in that case.
       val isInsideFunctionCall = inferred?.columnName != null && inferred.columnName != inferred.name
-      val comment = if (!isInsideFunctionCall && catalog != null && tableName != null && columnName != null) {
-        catalog.findColumn(tableName, columnName)?.comment.orEmpty()
+      val comment = if (!isInsideFunctionCall && catalogColumn != null) {
+        catalogColumn.comment
       } else {
         ""
       }
@@ -318,6 +321,8 @@ public class JdbcAnalyzer(private val connection: Connection) {
             array_dims = if (isArray) 1 else 0,
             comment = comment,
             type = Identifier(name = typeName),
+            table = if (catalog != null && tableName != null) resolveTableIdentifier(tableName, catalog) else null,
+            original_name = columnName.orEmpty(),
           ),
         ),
       )

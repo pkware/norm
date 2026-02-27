@@ -116,7 +116,7 @@ internal fun domainAdapterClassName(domain: Domain, packageName: String): ClassN
 /**
  * Returns the adapter property name used on `PostgresQueries` for the given domain type.
  *
- * Called from both [TypeRepository] (when creating [DomainTypeSqlMappable]) and [Main][generateCode]
+ * Called from both [TypeRepository] (when creating [AdaptedTypeSqlMappable]) and [Main][generateCode]
  * (when adding constructor parameters to `PostgresQueries`). Centralizing the convention here
  * ensures the generated read/write code always references the same property name.
  */
@@ -125,7 +125,7 @@ internal fun domainAdapterPropertyName(domain: Domain): String = "${domain.name.
 /**
  * Maps a Postgres base type name to the corresponding Kotlin [TypeName].
  *
- * This mapping must stay in sync with [resolveDomainBaseTypeInfo] — both functions need to
+ * This mapping must stay in sync with [resolveJdbcTypeInfo] — both functions need to
  * agree on which Postgres types are supported as domain bases.
  */
 internal fun domainKotlinBaseType(baseTypeName: String): TypeName = when (baseTypeName) {

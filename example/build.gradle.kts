@@ -42,6 +42,12 @@ norm {
       schemas.addAll("src/main/sql/schema.sql")
       queries.addAll("src/main/sql/queries.sql")
       frameworks = setOf(Framework.MICRONAUT_DATA)
+      typeMappings {
+        // Map the Postgres `author_status` enum to idiomatic SCREAMING_SNAKE_CASE Kotlin.
+        // Without this mapping, Norm would auto-generate an enum with lowercase constants
+        // matching the database values (active, inactive, suspended).
+        type("author_status") mapTo "example.AuthorStatus" using "example.AuthorStatusAdapter"
+      }
     }
   }
 }

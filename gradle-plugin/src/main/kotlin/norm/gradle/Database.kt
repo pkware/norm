@@ -1,6 +1,7 @@
 package norm.gradle
 
 import norm.generator.Framework
+import norm.generator.TypeMapping
 import org.gradle.api.Named
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
@@ -72,6 +73,35 @@ public abstract class Database(private val name: String) : Named {
    */
   @get:Input
   public abstract val generateCrud: Property<Boolean>
+
+  /**
+   * User-configured type mappings that override Norm's default type resolution.
+   *
+   * Type-level overrides apply to all columns of that Postgres type and suppress auto-generation
+   * of the matching enum or domain adapter. Column-level overrides apply to a single column and
+   * do NOT suppress auto-generation — other columns of the same type may still need it.
+   *
+   * Use the [typeMappings] builder for a concise DSL:
+   * ```kotlin
+   * typeMappings {
+   *   type("jsonb") mapTo "com.example.JsonData" using "com.example.JsonDataAdapter"
+   *   column("users", "metadata") mapTo "com.example.Metadata" using "com.example.MetadataAdapter"
+   * }
+   * ```
+   */
+  @get:Input
+  public abstract val typeMappings: ListProperty<TypeMapping>
+
+  /**
+   * Configures user-defined type mappings via DSL.
+   *
+   * @see typeMappings
+   */
+  public fun typeMappings(action: TypeMappingDsl.() -> Unit) {
+    val dsl = TypeMappingDsl()
+    action(dsl)
+    typeMappings.addAll(dsl.build())
+  }
 
   /**
    * Returns the name of this database configuration.

@@ -102,6 +102,7 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
           analyzedQueries,
           database.packageName.get(),
           database.frameworks.get(),
+          database.typeMappings.get(),
         )
 
         // Write generated files

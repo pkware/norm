@@ -138,7 +138,7 @@ internal fun adapterClassName(enumDefinition: Enum, packageName: String): ClassN
 /**
  * Returns the adapter property name used on `PostgresQueries` for the given enum type.
  *
- * Called from both [TypeRepository] (when creating [EnumTypeSqlMappable]) and [Main][generateCode]
+ * Called from both [TypeRepository] (when creating [AdaptedTypeSqlMappable]) and [Main][generateCode]
  * (when adding constructor parameters to `PostgresQueries`). Centralizing the convention here
  * ensures the generated read/write code always references the same property name.
  */

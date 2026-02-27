@@ -1,8 +1,11 @@
+CREATE TYPE author_status AS ENUM ('active', 'inactive', 'suspended');
+
 CREATE TABLE author (
   id INT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   name VARCHAR NOT NULL,
   email VARCHAR,
-  revision INT NOT NULL DEFAULT 1
+  revision INT NOT NULL DEFAULT 1,
+  status author_status NOT NULL DEFAULT 'active'
 );
 
 CREATE TABLE book (

@@ -784,20 +784,22 @@ class ColumnTypeMappingTest {
     }
 
     @Test
-    fun `non-null enum statementAction uses adapter encode`() {
+    fun `non-null enum statementAction uses setObject with Types OTHER for Postgres enum coercion`() {
       val repository = TypeRepository("test", enumCatalog)
       val col = column("current_mood", type = "mood")
       val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("current_mood"))
-      assertThat(action.toString()).isEqualTo("setString(1, moodAdapter.encode(current_mood))")
+      // setObject(..., Types.OTHER) is required for Postgres enum columns — setString() is rejected
+      // because the JDBC driver cannot implicitly coerce VARCHAR to a custom enum type.
+      assertThat(action.toString()).isEqualTo("setObject(1, moodAdapter.encode(current_mood), java.sql.Types.OTHER)")
     }
 
     @Test
-    fun `nullable enum statementAction uses setNull fallback`() {
+    fun `nullable enum statementAction uses setNull with Types OTHER fallback`() {
       val repository = TypeRepository("test", enumCatalog)
       val col = column("previous_mood", type = "mood", notNull = false)
       val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("previous_mood"))
       assertThat(action.toString()).contains("moodAdapter.encode(")
-      assertThat(action.toString()).contains("setNull(1,")
+      assertThat(action.toString()).contains("setNull(1, java.sql.Types.OTHER)")
     }
 
     @Test
@@ -978,7 +980,7 @@ class ColumnTypeMappingTest {
   /**
    * Tests for domain base types beyond TEXT and INTEGER.
    *
-   * Each base type exercises both [resolveDomainBaseTypeInfo] (JDBC method metadata) and
+   * Each base type exercises both [resolveJdbcTypeInfo] (JDBC method metadata) and
    * [domainKotlinBaseType] (Kotlin type mapping). These two functions must stay in sync —
    * a type supported in one but not the other is a bug.
    */
@@ -1198,7 +1200,7 @@ class ColumnTypeMappingTest {
   }
 
   /**
-   * Direct tests for [resolveDomainBaseTypeInfo], verifying the JDBC method metadata
+   * Direct tests for [resolveJdbcTypeInfo], verifying the JDBC method metadata
    * for each supported Postgres base type.
    *
    * These tests ensure that the getter/setter names, primitivity flags, and SQL type constants
@@ -1210,7 +1212,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `text resolves to getString and setString`() {
-      val info = resolveDomainBaseTypeInfo("text")!!
+      val info = resolveJdbcTypeInfo("text")!!
       assertThat(info.getterName).isEqualTo("getString")
       assertThat(info.setterName).isEqualTo("setString")
       assertThat(info.isPrimitive).isFalse()
@@ -1219,7 +1221,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `varchar resolves same as text`() {
-      val info = resolveDomainBaseTypeInfo("varchar")!!
+      val info = resolveJdbcTypeInfo("varchar")!!
       assertThat(info.getterName).isEqualTo("getString")
       assertThat(info.setterName).isEqualTo("setString")
       assertThat(info.isPrimitive).isFalse()
@@ -1228,14 +1230,14 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `bpchar resolves same as text`() {
-      val info = resolveDomainBaseTypeInfo("bpchar")!!
+      val info = resolveJdbcTypeInfo("bpchar")!!
       assertThat(info.getterName).isEqualTo("getString")
       assertThat(info.sqlTypeConstant).isEqualTo("VARCHAR")
     }
 
     @Test
     fun `int2 resolves to getShort and setShort`() {
-      val info = resolveDomainBaseTypeInfo("int2")!!
+      val info = resolveJdbcTypeInfo("int2")!!
       assertThat(info.getterName).isEqualTo("getShort")
       assertThat(info.setterName).isEqualTo("setShort")
       assertThat(info.isPrimitive).isTrue()
@@ -1244,7 +1246,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `int4 resolves to getInt and setInt`() {
-      val info = resolveDomainBaseTypeInfo("int4")!!
+      val info = resolveJdbcTypeInfo("int4")!!
       assertThat(info.getterName).isEqualTo("getInt")
       assertThat(info.setterName).isEqualTo("setInt")
       assertThat(info.isPrimitive).isTrue()
@@ -1253,7 +1255,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `int8 resolves to getLong and setLong`() {
-      val info = resolveDomainBaseTypeInfo("int8")!!
+      val info = resolveJdbcTypeInfo("int8")!!
       assertThat(info.getterName).isEqualTo("getLong")
       assertThat(info.setterName).isEqualTo("setLong")
       assertThat(info.isPrimitive).isTrue()
@@ -1262,7 +1264,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `float4 resolves to getFloat and setFloat`() {
-      val info = resolveDomainBaseTypeInfo("float4")!!
+      val info = resolveJdbcTypeInfo("float4")!!
       assertThat(info.getterName).isEqualTo("getFloat")
       assertThat(info.setterName).isEqualTo("setFloat")
       assertThat(info.isPrimitive).isTrue()
@@ -1271,7 +1273,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `float8 resolves to getDouble and setDouble`() {
-      val info = resolveDomainBaseTypeInfo("float8")!!
+      val info = resolveJdbcTypeInfo("float8")!!
       assertThat(info.getterName).isEqualTo("getDouble")
       assertThat(info.setterName).isEqualTo("setDouble")
       assertThat(info.isPrimitive).isTrue()
@@ -1280,7 +1282,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `bool resolves to getBoolean and setBoolean`() {
-      val info = resolveDomainBaseTypeInfo("bool")!!
+      val info = resolveJdbcTypeInfo("bool")!!
       assertThat(info.getterName).isEqualTo("getBoolean")
       assertThat(info.setterName).isEqualTo("setBoolean")
       assertThat(info.isPrimitive).isTrue()
@@ -1289,7 +1291,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `numeric resolves to getBigDecimal and setBigDecimal`() {
-      val info = resolveDomainBaseTypeInfo("numeric")!!
+      val info = resolveJdbcTypeInfo("numeric")!!
       assertThat(info.getterName).isEqualTo("getBigDecimal")
       assertThat(info.setterName).isEqualTo("setBigDecimal")
       assertThat(info.isPrimitive).isFalse()
@@ -1297,10 +1299,261 @@ class ColumnTypeMappingTest {
     }
 
     @Test
+    fun `jsonb resolves to getString and setObject with Types OTHER`() {
+      val info = resolveJdbcTypeInfo("jsonb")!!
+      assertThat(info.getterName).isEqualTo("getString")
+      // setObject(..., Types.OTHER) is required — Postgres JDBC rejects setString() for jsonb columns
+      assertThat(info.setterName).isEqualTo("setObject")
+      assertThat(info.isPrimitive).isFalse()
+      assertThat(info.sqlTypeConstant).isEqualTo("OTHER")
+      assertThat(info.useSqlTypeHint).isTrue()
+    }
+
+    @Test
     fun `unsupported type returns null`() {
-      assertThat(resolveDomainBaseTypeInfo("xml")).isEqualTo(null)
-      assertThat(resolveDomainBaseTypeInfo("jsonb")).isEqualTo(null)
-      assertThat(resolveDomainBaseTypeInfo("bytea")).isEqualTo(null)
+      assertThat(resolveJdbcTypeInfo("xml")).isEqualTo(null)
+      assertThat(resolveJdbcTypeInfo("bytea")).isEqualTo(null)
+    }
+  }
+
+  @Nested
+  inner class UserTypeMappings {
+
+    private val moodEnum = Enum(name = "mood", vals = listOf("happy", "sad", "angry"))
+    private val emailDomain = Domain(name = "email", base_type = "text")
+    private val positiveIntDomain = Domain(name = "positive_integer", base_type = "int4")
+
+    @Test
+    fun `type-level override on enum type`() {
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", enums = listOf(moodEnum))))
+      val mappings = listOf(
+        TypeMapping("mood", null, null, "com.example.CustomMood", "com.example.CustomMoodAdapter"),
+      )
+      val repository = TypeRepository("test", catalog, mappings)
+      val col = column("current_mood", type = "mood")
+      val kotlinType = repository.resolveColumnType(col)
+      assertThat(kotlinType).isEqualTo(ClassName("com.example", "CustomMood"))
+    }
+
+    @Test
+    fun `type-level override on domain type`() {
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(emailDomain))))
+      val mappings = listOf(
+        TypeMapping("email", null, null, "com.example.CustomEmail", "com.example.CustomEmailAdapter"),
+      )
+      val repository = TypeRepository("test", catalog, mappings)
+      val col = column("email", type = "email")
+      val kotlinType = repository.resolveColumnType(col)
+      assertThat(kotlinType).isEqualTo(ClassName("com.example", "CustomEmail"))
+    }
+
+    @Test
+    fun `type-level override on standard type`() {
+      val mappings = listOf(
+        TypeMapping("jsonb", null, null, "com.example.JsonData", "com.example.JsonDataAdapter"),
+      )
+      val repository = TypeRepository("test", Catalog(), mappings)
+      val col = column("metadata", type = "jsonb")
+      val kotlinType = repository.resolveColumnType(col)
+      assertThat(kotlinType).isEqualTo(ClassName("com.example", "JsonData"))
+    }
+
+    @Test
+    fun `column-level override`() {
+      val mappings = listOf(
+        TypeMapping("", "users", "metadata", "com.example.Metadata", "com.example.MetadataAdapter"),
+      )
+      val repository = TypeRepository("test", Catalog(), mappings)
+      val col = column("metadata", type = "jsonb", table = Identifier(name = "users"))
+      val kotlinType = repository.resolveColumnType(col)
+      assertThat(kotlinType).isEqualTo(ClassName("com.example", "Metadata"))
+    }
+
+    @Test
+    fun `column override takes precedence over type override`() {
+      val mappings = listOf(
+        TypeMapping("jsonb", null, null, "com.example.JsonData", "com.example.JsonDataAdapter"),
+        TypeMapping("", "users", "preferences", "com.example.UserPrefs", "com.example.UserPrefsAdapter"),
+      )
+      val repository = TypeRepository("test", Catalog(), mappings)
+
+      // Column override wins for users.preferences
+      val prefsCol = column("preferences", type = "jsonb", table = Identifier(name = "users"))
+      assertThat(repository.resolveColumnType(prefsCol)).isEqualTo(ClassName("com.example", "UserPrefs"))
+
+      // Type override applies to other jsonb columns
+      val settingsCol = column("settings", type = "jsonb", table = Identifier(name = "users"))
+      assertThat(repository.resolveColumnType(settingsCol)).isEqualTo(ClassName("com.example", "JsonData"))
+    }
+
+    @Test
+    fun `type override suppresses auto-generated enum`() {
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", enums = listOf(moodEnum))))
+      val mappings = listOf(
+        TypeMapping("mood", null, null, "com.example.CustomMood", "com.example.CustomMoodAdapter"),
+      )
+      val repository = TypeRepository("test", catalog, mappings)
+      repository.resolveMappableType(column("current_mood", type = "mood"))
+
+      // The enum is still in discoveredEnums (it was referenced), but the *type override*
+      // suppresses generation — that filtering happens in generateCode(), not TypeRepository.
+      // TypeRepository still tracks it for potential use in column-level overrides.
+      // What we verify here is that the resolved type is the user's type, not the auto-generated one.
+      val col = column("current_mood", type = "mood")
+      val resolved = repository.resolveMappableType(col)
+      assertThat(resolved.typeName).isEqualTo(ClassName("com.example", "CustomMood"))
+    }
+
+    @Test
+    fun `type override suppresses auto-generated domain`() {
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(emailDomain))))
+      val mappings = listOf(
+        TypeMapping("email", null, null, "com.example.CustomEmail", "com.example.CustomEmailAdapter"),
+      )
+      val repository = TypeRepository("test", catalog, mappings)
+      val col = column("email", type = "email")
+      val resolved = repository.resolveMappableType(col)
+      assertThat(resolved.typeName).isEqualTo(ClassName("com.example", "CustomEmail"))
+    }
+
+    @Test
+    fun `column override does NOT suppress auto-generated enum`() {
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", enums = listOf(moodEnum))))
+      val mappings = listOf(
+        TypeMapping("", "users", "current_mood", "com.example.CustomMood", "com.example.CustomMoodAdapter"),
+      )
+      val repository = TypeRepository("test", catalog, mappings)
+
+      // Column override applies to users.current_mood
+      val overriddenCol = column("current_mood", type = "mood", table = Identifier(name = "users"))
+      assertThat(repository.resolveColumnType(overriddenCol))
+        .isEqualTo(ClassName("com.example", "CustomMood"))
+
+      // Another mood column still resolves to auto-generated enum
+      val otherCol = column("previous_mood", type = "mood")
+      assertThat(repository.resolveColumnType(otherCol))
+        .isEqualTo(ClassName("test", "Mood"))
+
+      // The enum is discovered (for the non-overridden column)
+      assertThat(repository.discoveredEnums).contains(moodEnum)
+    }
+
+    @Test
+    fun `column override does NOT suppress auto-generated domain`() {
+      val catalog = Catalog(
+        schemas = listOf(Schema(name = "public", domains = listOf(emailDomain, positiveIntDomain))),
+      )
+      val mappings = listOf(
+        TypeMapping("", "users", "email", "com.example.CustomEmail", "com.example.CustomEmailAdapter"),
+      )
+      val repository = TypeRepository("test", catalog, mappings)
+
+      // Column override applies to users.email
+      val overriddenCol = column("email", type = "email", table = Identifier(name = "users"))
+      assertThat(repository.resolveColumnType(overriddenCol))
+        .isEqualTo(ClassName("com.example", "CustomEmail"))
+
+      // Another email column still resolves to auto-generated value class
+      val otherCol = column("contact_email", type = "email")
+      assertThat(repository.resolveColumnType(otherCol))
+        .isEqualTo(ClassName("test", "Email"))
+
+      // The domain is discovered (for the non-overridden column)
+      assertThat(repository.discoveredDomains).contains(emailDomain)
+    }
+
+    @Test
+    fun `unsupported postgres type in type mapping produces error`() {
+      val mappings = listOf(
+        TypeMapping("xml", null, null, "com.example.XmlDoc", "com.example.XmlDocAdapter"),
+      )
+      val repository = TypeRepository("test", Catalog(), mappings)
+      val col = column("doc", type = "xml")
+
+      val exception = assertThrows<IllegalStateException> {
+        repository.resolveMappableType(col)
+      }
+      assertThat(exception.message!!).contains("xml")
+      assertThat(exception.message!!).contains("cannot be used with a custom adapter")
+    }
+
+    @Test
+    fun `non-null type override uses adapter decode in resultSetAction`() {
+      val mappings = listOf(
+        TypeMapping("jsonb", null, null, "com.example.JsonData", "com.example.JsonDataAdapter"),
+      )
+      val repository = TypeRepository("test", Catalog(), mappings)
+      val col = column("metadata", type = "jsonb")
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).isEqualTo("jsonbAdapter.decode(getString(1))")
+    }
+
+    @Test
+    fun `nullable type override uses safe call in resultSetAction`() {
+      val mappings = listOf(
+        TypeMapping("jsonb", null, null, "com.example.JsonData", "com.example.JsonDataAdapter"),
+      )
+      val repository = TypeRepository("test", Catalog(), mappings)
+      val col = column("metadata", type = "jsonb", notNull = false)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).isEqualTo("getString(1)?.let { jsonbAdapter.decode(it) }")
+    }
+
+    @Test
+    fun `non-null type override uses setObject with Types OTHER in statementAction`() {
+      val mappings = listOf(
+        TypeMapping("jsonb", null, null, "com.example.JsonData", "com.example.JsonDataAdapter"),
+      )
+      val repository = TypeRepository("test", Catalog(), mappings)
+      val col = column("metadata", type = "jsonb")
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("metadata"))
+      assertThat(action.toString()).isEqualTo("setObject(1, jsonbAdapter.encode(metadata), java.sql.Types.OTHER)")
+    }
+
+    @Test
+    fun `nullable type override uses setNull fallback in statementAction`() {
+      val mappings = listOf(
+        TypeMapping("jsonb", null, null, "com.example.JsonData", "com.example.JsonDataAdapter"),
+      )
+      val repository = TypeRepository("test", Catalog(), mappings)
+      val col = column("metadata", type = "jsonb", notNull = false)
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("metadata"))
+      assertThat(action.toString()).contains("jsonbAdapter.encode(")
+      assertThat(action.toString()).contains("setNull(1,")
+    }
+
+    @Test
+    fun `type override on enum resolves JDBC type through enum`() {
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", enums = listOf(moodEnum))))
+      val mappings = listOf(
+        TypeMapping("mood", null, null, "com.example.CustomMood", "com.example.CustomMoodAdapter"),
+      )
+      val repository = TypeRepository("test", catalog, mappings)
+      val col = column("current_mood", type = "mood")
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      // Enums use getString/setString — the override should use the same wire type
+      assertThat(accessor.toString()).isEqualTo("moodAdapter.decode(getString(1))")
+    }
+
+    @Test
+    fun `type override on domain resolves JDBC type through domain base`() {
+      val catalog = Catalog(
+        schemas = listOf(Schema(name = "public", domains = listOf(positiveIntDomain))),
+      )
+      val mappings = listOf(
+        TypeMapping(
+          "positive_integer",
+          null,
+          null,
+          "com.example.Age",
+          "com.example.AgeAdapter",
+        ),
+      )
+      val repository = TypeRepository("test", catalog, mappings)
+      val col = column("age", type = "positive_integer")
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      // Domain base type is int4 → getInt
+      assertThat(accessor.toString()).isEqualTo("positiveIntegerAdapter.decode(getInt(1))")
     }
   }
 

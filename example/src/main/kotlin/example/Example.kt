@@ -27,6 +27,8 @@ open class Example(
     // Single item retrievals are trivial with Norm.
     // Generated entities are Java records/Kotlin data classes.
     val george = queries.getAuthorByName("George R.R. Martin")
+    // Type-mapped columns come back as the custom Kotlin type, not the raw wire type.
+    val georgeStatus: AuthorStatus = george.status  // AuthorStatus.ACTIVE, not the raw String "active"
 
     // Custom projections are effortless, correctly typed, and have the right nullability.
     // Here a LEFT JOIN means columns from the book table can be null.
@@ -111,8 +113,10 @@ open class Example(
 
     // insertAuthor() accepts only the "insertable" columns (excluding auto-increment, defaults, and
     // generated columns) and returns the database-assigned values via RETURNING.
+    // `status` has a DEFAULT so it's excluded from parameters — but it comes back as AuthorStatus
+    // in the RETURNING result, already decoded by AuthorStatusAdapter.
     val inserted = queries.insertAuthor("Toni Morrison", "morrison@example.com")
-    println("Inserted author with id=${inserted.id}, revision=${inserted.revision}")
+    println("Inserted author with id=${inserted.id}, revision=${inserted.revision}, status=${inserted.status}")
 
     // findAuthorById() returns a Many<Author>, the same Author type used by hand-written queries.
     val found = queries.findAuthorById(inserted.id).firstOrNull()
