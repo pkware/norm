@@ -42,7 +42,7 @@ dependencies {
 sourceSets {
   main {
     kotlin {
-      srcDir(rootProject.file("test-scenarios-frameworks/all_tables_behavior/micronaut"))
+      srcDir(rootProject.file("test-scenarios-frameworks/comprehensive/micronaut"))
     }
   }
 }

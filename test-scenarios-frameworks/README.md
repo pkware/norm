@@ -18,12 +18,12 @@ framework DI annotation generation and connection provider templates.
 Tests multiple nullable columns and snake_case table names (`user_profile`). Verifies that framework
 DI annotations are correctly generated.
 
-### all_tables_behavior
+### comprehensive
 
-Tests code generation with framework DI annotations for multiple tables:
-- `author` - referenced in queries
-- `book` - referenced in queries
-- `publisher` - orphan table (not referenced in any query)
-
-This scenario validates that `PostgresQueries` gets the correct DI annotations (`@Singleton` for
-Micronaut, `@Component` for Spring) and that connection providers are generated.
+The primary framework scenario used by e2e integration tests. Covers all Norm features with framework
+DI annotations:
+- **Plain tables**: `author`, `book`, `publisher` (orphan table not referenced in queries)
+- **Auto-generated enum adapter**: `mood` Postgres enum → `Mood` + `MoodAdapter` with DI annotations
+- **Auto-generated domain adapters**: `email_address` and `positive_integer` domains → `@JvmInline value class` + adapter with DI annotations
+- **User-configured type mapping**: `jsonb` → `com.example.JsonData` via `com.example.JsonDataAdapter` (no default in constructor — DI must provide the bean)
+- **Nullable adapted columns**: `person.age` (nullable domain) and `person.bio` (nullable user-configured jsonb)

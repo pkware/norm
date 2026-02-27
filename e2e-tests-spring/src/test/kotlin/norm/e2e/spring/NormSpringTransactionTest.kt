@@ -47,6 +47,7 @@ class NormSpringTransactionTest {
   fun cleanDatabase() {
     dataSource.connection.use { connection ->
       connection.createStatement().use { statement ->
+        statement.execute("DELETE FROM person")
         statement.execute("DELETE FROM book")
         statement.execute("DELETE FROM author")
       }

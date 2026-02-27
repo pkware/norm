@@ -1,5 +1,6 @@
 package example
 
+import com.example.JsonData
 import java.sql.SQLException
 import kotlin.Any
 import kotlin.Int
@@ -103,4 +104,94 @@ public interface Queries {
    */
   @Throws(SQLException::class)
   public fun addAuthor(name: String, email: String?)
+
+  /**
+   * Note: publisher is NOT queried
+   *
+   * ```sql
+   * SELECT * FROM person WHERE id = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> getPersonById(id: Int, mapper: (
+    id: Int,
+    name: String,
+    contact_email: EmailAddress,
+    current_mood: Mood,
+    bio: JsonData?,
+  ) -> T): T
+
+  /**
+   * Note: publisher is NOT queried
+   *
+   * ```sql
+   * SELECT * FROM person WHERE id = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun getPersonById(id: Int): Person = getPersonById(id, ::Person)
+
+  /**
+   * ```sql
+   * INSERT INTO person (name, contact_email, current_mood, bio) VALUES (?, ?, ?, ?)
+   * ```
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [java.sql.Statement.SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [java.sql.Statement.EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> createPerson(
+    stream: Iterable<Input>,
+    name: Input.() -> String,
+    contact_email: Input.() -> EmailAddress,
+    current_mood: Input.() -> Mood,
+    bio: Input.() -> JsonData?,
+    batchSize: Int,
+  ): IntArray
+
+  /**
+   * ```sql
+   * INSERT INTO person (name, contact_email, current_mood, bio) VALUES (?, ?, ?, ?)
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [java.sql.Statement.SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [java.sql.Statement.EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> createPerson(
+    stream: Iterable<Input>,
+    name: Input.() -> String,
+    contact_email: Input.() -> EmailAddress,
+    current_mood: Input.() -> Mood,
+    bio: Input.() -> JsonData?,
+  ): IntArray = createPerson(stream, name, contact_email, current_mood, bio, 100)
+
+  /**
+   * ```sql
+   * INSERT INTO person (name, contact_email, current_mood, bio) VALUES (?, ?, ?, ?)
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun createPerson(
+    name: String,
+    contact_email: EmailAddress,
+    current_mood: Mood,
+    bio: JsonData?,
+  )
 }

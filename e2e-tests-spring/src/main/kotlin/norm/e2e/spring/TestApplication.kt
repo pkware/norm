@@ -8,5 +8,5 @@ import org.springframework.boot.autoconfigure.SpringBootApplication
  * Demonstrates that Norm-generated `PostgresQueries` (annotated with `@Component`) integrates
  * correctly with Spring's DI and transaction infrastructure.
  */
-@SpringBootApplication(scanBasePackages = ["norm.e2e.spring", "example"])
+@SpringBootApplication(scanBasePackages = ["norm.e2e.spring", "example", "com.example"])
 class TestApplication
