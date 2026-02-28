@@ -757,14 +757,54 @@ class ColumnTypeMappingTest {
     }
 
     @Test
-    fun `enum array column fails with error`() {
-      assertThrows<IllegalStateException> {
-        createStatement(
-          "SELECT moods FROM person;",
-          columns = listOf(column("moods", type = "mood", isArray = true)),
-          catalog = enumCatalog,
-        )
-      }
+    fun `nullable enum array column resolves to nullable Array of nullable enum type`() {
+      val statement = createStatement(
+        "SELECT moods FROM person;",
+        columns = listOf(column("moods", type = "mood", isArray = true, notNull = false)),
+        catalog = enumCatalog,
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      // Column is nullable, so the array itself is nullable. Elements are always nullable.
+      assertThat(kotlinType.isNullable).isTrue()
+      assertThat(kotlinType.toString()).isEqualTo("kotlin.Array<test.Mood?>?")
+    }
+
+    @Test
+    fun `non-null enum array column resolves to non-null Array of nullable enum type`() {
+      val statement = createStatement(
+        "SELECT moods FROM person;",
+        columns = listOf(column("moods", type = "mood", isArray = true, notNull = true)),
+        catalog = enumCatalog,
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isFalse()
+      assertThat(kotlinType.toString()).isEqualTo("kotlin.Array<test.Mood?>")
+    }
+
+    @Test
+    fun `enum array resultSetAction delegates to decodeArray runtime helper`() {
+      val repository = TypeRepository("test", enumCatalog)
+      val col = column("moods", type = "mood", isArray = true)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).contains("getArray(1)")
+      assertThat(accessor.toString()).contains("norm.decodeArray(moodAdapter)")
+    }
+
+    @Test
+    fun `nullable enum array uses safe call to decodeArray`() {
+      val repository = TypeRepository("test", enumCatalog)
+      val col = column("moods", type = "mood", isArray = true, notNull = false)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).contains("getArray(1)?.")
+      assertThat(accessor.toString()).contains("norm.decodeArray(moodAdapter)")
+    }
+
+    @Test
+    fun `enum array statementAction delegates to encodeToSqlArray runtime helper`() {
+      val repository = TypeRepository("test", enumCatalog)
+      val col = column("moods", type = "mood", isArray = true)
+      val setter = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("moods"))
+      assertThat(setter.toString()).contains("norm.encodeToSqlArray(connection, \"mood\", moodAdapter)")
     }
 
     @Test
@@ -877,14 +917,45 @@ class ColumnTypeMappingTest {
     }
 
     @Test
-    fun `domain array column fails with error`() {
-      assertThrows<IllegalStateException> {
-        createStatement(
-          "SELECT emails FROM users;",
-          columns = listOf(column("emails", type = "email", isArray = true)),
-          catalog = domainCatalog,
-        )
-      }
+    fun `nullable domain array column resolves to nullable Array of nullable value class type`() {
+      val statement = createStatement(
+        "SELECT emails FROM users;",
+        columns = listOf(column("emails", type = "email", isArray = true, notNull = false)),
+        catalog = domainCatalog,
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isTrue()
+      assertThat(kotlinType.toString()).isEqualTo("kotlin.Array<test.Email?>?")
+    }
+
+    @Test
+    fun `non-null domain array column resolves to non-null Array of nullable value class type`() {
+      val statement = createStatement(
+        "SELECT emails FROM users;",
+        columns = listOf(column("emails", type = "email", isArray = true, notNull = true)),
+        catalog = domainCatalog,
+      )
+      val kotlinType = statement.resultRowShape.kotlinType!!
+      assertThat(kotlinType.isNullable).isFalse()
+      assertThat(kotlinType.toString()).isEqualTo("kotlin.Array<test.Email?>")
+    }
+
+    @Test
+    fun `domain array resultSetAction delegates to decodeArray runtime helper`() {
+      val repository = TypeRepository("test", domainCatalog)
+      val col = column("emails", type = "email", isArray = true)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).contains("getArray(1)")
+      assertThat(accessor.toString()).contains("norm.decodeArray(emailAdapter)")
+    }
+
+    @Test
+    fun `integer domain array also delegates to decodeArray`() {
+      val repository = TypeRepository("test", domainCatalog)
+      val col = column("scores", type = "positive_integer", isArray = true)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).contains("getArray(1)")
+      assertThat(accessor.toString()).contains("norm.decodeArray(positiveIntegerAdapter)")
     }
 
     @Test

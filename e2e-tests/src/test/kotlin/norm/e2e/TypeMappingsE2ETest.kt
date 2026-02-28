@@ -61,7 +61,7 @@ class TypeMappingsE2ETest : PostgresTestBase() {
   fun `type-level mood mapping decodes enum to idiomatic Kotlin constants`() {
     insertUser(mood = "happy")
 
-    val user = queries.getUserById(1) { id, email, age, mood, metadata, preferences ->
+    val user = queries.getUserById(1) { _, _, _, mood, metadata, preferences, _, _ ->
       Triple(mood, metadata, preferences)
     }
 
@@ -73,7 +73,7 @@ class TypeMappingsE2ETest : PostgresTestBase() {
   fun `type-level jsonb mapping decodes to JsonData for metadata column`() {
     insertUser(metadata = """{"key": "value"}""")
 
-    val user = queries.getUserById(1) { _, _, _, _, metadata, _ -> metadata }
+    val user = queries.getUserById(1) { _, _, _, _, metadata, _, _, _ -> metadata }
 
     assertThat(user).isEqualTo(JsonData("""{"key": "value"}"""))
   }
@@ -82,7 +82,7 @@ class TypeMappingsE2ETest : PostgresTestBase() {
   fun `column-level override takes precedence over type-level jsonb mapping for preferences`() {
     insertUser(preferences = """{"theme": "dark"}""")
 
-    val user = queries.getUserById(1) { _, _, _, _, _, preferences -> preferences }
+    val user = queries.getUserById(1) { _, _, _, _, _, preferences, _, _ -> preferences }
 
     // users.preferences → UserPreferences (column override), not JsonData (type override)
     assertThat(user).isEqualTo(UserPreferences("""{"theme": "dark"}"""))
@@ -99,7 +99,7 @@ class TypeMappingsE2ETest : PostgresTestBase() {
     )
 
     // Box in a list to satisfy T : Any — the mapper cannot return a nullable T directly.
-    val age = queries.getUserById(1) { _, _, age, _, _, _ -> listOf(age) }.first()
+    val age = queries.getUserById(1) { _, _, age, _, _, _, _, _ -> listOf(age) }.first()
 
     assertThat(age).isNull()
   }
@@ -114,7 +114,7 @@ class TypeMappingsE2ETest : PostgresTestBase() {
       preferences = UserPreferences("""{"lang": "en"}"""),
     )
 
-    val (mood, metadata, preferences) = queries.getUserById(1) { _, _, _, mood, metadata, preferences ->
+    val (mood, metadata, preferences) = queries.getUserById(1) { _, _, _, mood, metadata, preferences, _, _ ->
       Triple(mood, metadata, preferences)
     }
 

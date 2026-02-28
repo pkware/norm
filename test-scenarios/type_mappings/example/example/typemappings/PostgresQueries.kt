@@ -7,6 +7,7 @@ import java.sql.ResultSet
 import java.sql.SQLException
 import java.sql.Types
 import kotlin.Any
+import kotlin.Array
 import kotlin.Int
 import kotlin.IntArray
 import kotlin.String
@@ -16,6 +17,8 @@ import norm.ColumnAdapter
 import norm.ConnectionProvider
 import norm.NormDriver
 import norm.combineExecBatchResults
+import norm.decodeArray
+import norm.encodeToSqlArray
 
 public class PostgresQueries(
   connectionProvider: ConnectionProvider,
@@ -36,6 +39,8 @@ public class PostgresQueries(
     current_mood: CustomMood,
     metadata: JsonData,
     preferences: UserPreferences,
+    past_moods: Array<CustomMood?>?,
+    tag_list: Array<JsonData?>?,
   ) -> T): T {
     val sql = "SELECT * FROM users WHERE id = ?"
     val rowReader: ResultSet.() -> T = {
@@ -46,6 +51,8 @@ public class PostgresQueries(
         moodAdapter.decode(getString(4)),
         jsonbAdapter.decode(getString(5)),
         usersPreferencesAdapter.decode(getString(6)),
+        getArray(7)?.decodeArray(moodAdapter),
+        getArray(8)?.decodeArray(jsonbAdapter),
       )
     }
     return driver.queryOne(sql, rowReader) {
@@ -99,6 +106,53 @@ public class PostgresQueries(
         setObject(3, moodAdapter.encode(entry.current_mood()), Types.OTHER)
         setObject(4, jsonbAdapter.encode(entry.metadata()), Types.OTHER)
         setObject(5, usersPreferencesAdapter.encode(entry.preferences()), Types.OTHER)
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          executeBatch()
+          batchCount = 0
+        }
+      }
+      if (batchCount > 0) {
+        results.add(executeBatch())
+        totalCount += batchCount
+      }
+      combineExecBatchResults(results, totalCount, batchSize)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun updatePastMoods(
+    past_moods: Array<CustomMood?>?,
+    tag_list: Array<JsonData?>?,
+    id: Int,
+  ) {
+    val sql = "UPDATE users SET past_moods = ?, tag_list = ? WHERE id = ?"
+    driver.execute(sql) {
+      past_moods?.let { setArray(1, it.encodeToSqlArray(connection, "mood", moodAdapter)) } ?: setNull(1, Types.ARRAY)
+      tag_list?.let { setArray(2, it.encodeToSqlArray(connection, "jsonb", jsonbAdapter)) } ?: setNull(2, Types.ARRAY)
+      setInt(3, id)
+      execute()
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any> updatePastMoods(
+    stream: Iterable<Input>,
+    past_moods: Input.() -> Array<CustomMood?>?,
+    tag_list: Input.() -> Array<JsonData?>?,
+    id: Input.() -> Int,
+    batchSize: Int,
+  ): IntArray {
+    val sql = "UPDATE users SET past_moods = ?, tag_list = ? WHERE id = ?"
+    return driver.execute(sql) {
+      var totalCount = 0
+      var batchCount = 0
+      val results = mutableListOf<IntArray>()
+      for (entry in stream) {
+        entry.past_moods()?.let { setArray(1, it.encodeToSqlArray(connection, "mood", moodAdapter)) } ?: setNull(1, Types.ARRAY)
+        entry.tag_list()?.let { setArray(2, it.encodeToSqlArray(connection, "jsonb", jsonbAdapter)) } ?: setNull(2, Types.ARRAY)
+        setInt(3, entry.id())
         addBatch()
         batchCount++
         if (batchCount == batchSize) {

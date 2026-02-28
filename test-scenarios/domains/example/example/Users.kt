@@ -1,5 +1,6 @@
 package example
 
+import kotlin.Array
 import kotlin.Int
 import kotlin.jvm.JvmRecord
 
@@ -14,4 +15,6 @@ public data class Users(
   public val zip_code: UsPostalCode?,
   public val current_mood: Mood,
   public val previous_mood: Mood?,
+  public val past_moods: Array<Mood?>?,
+  public val scores: Array<PositiveInteger?>?,
 )

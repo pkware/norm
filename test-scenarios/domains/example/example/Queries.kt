@@ -2,6 +2,7 @@ package example
 
 import java.sql.SQLException
 import kotlin.Any
+import kotlin.Array
 import kotlin.Int
 import kotlin.IntArray
 import kotlin.collections.Iterable
@@ -22,6 +23,8 @@ public interface Queries {
     zip_code: UsPostalCode?,
     current_mood: Mood,
     previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
   ) -> T): T
 
   /**
@@ -44,6 +47,8 @@ public interface Queries {
     zip_code: UsPostalCode?,
     current_mood: Mood,
     previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
   ) -> T): Many<T>
 
   /**
@@ -65,6 +70,8 @@ public interface Queries {
     zip_code: UsPostalCode?,
     current_mood: Mood,
     previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
   ) -> T): Many<T>
 
   /**
@@ -86,6 +93,8 @@ public interface Queries {
     zip_code: UsPostalCode?,
     current_mood: Mood,
     previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
   ) -> T): Many<T>
 
   /**
@@ -314,6 +323,79 @@ public interface Queries {
   public fun updateMood(
     current_mood: Mood,
     previous_mood: Mood,
+    id: Int,
+  )
+
+  /**
+   * ```sql
+   * UPDATE users
+   * SET
+   *   past_moods = ?,
+   *   scores = ?
+   * WHERE id = ?
+   * ```
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [java.sql.Statement.SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [java.sql.Statement.EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateArrayColumns(
+    stream: Iterable<Input>,
+    past_moods: Input.() -> Array<Mood?>,
+    scores: Input.() -> Array<PositiveInteger?>,
+    id: Input.() -> Int,
+    batchSize: Int,
+  ): IntArray
+
+  /**
+   * ```sql
+   * UPDATE users
+   * SET
+   *   past_moods = ?,
+   *   scores = ?
+   * WHERE id = ?
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [java.sql.Statement.SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [java.sql.Statement.EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateArrayColumns(
+    stream: Iterable<Input>,
+    past_moods: Input.() -> Array<Mood?>,
+    scores: Input.() -> Array<PositiveInteger?>,
+    id: Input.() -> Int,
+  ): IntArray = updateArrayColumns(stream, past_moods, scores, id, 100)
+
+  /**
+   * ```sql
+   * UPDATE users
+   * SET
+   *   past_moods = ?,
+   *   scores = ?
+   * WHERE id = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun updateArrayColumns(
+    past_moods: Array<Mood?>,
+    scores: Array<PositiveInteger?>,
     id: Int,
   )
 }

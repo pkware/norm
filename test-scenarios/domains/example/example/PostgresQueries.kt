@@ -4,6 +4,7 @@ import java.sql.ResultSet
 import java.sql.SQLException
 import java.sql.Types
 import kotlin.Any
+import kotlin.Array
 import kotlin.Int
 import kotlin.IntArray
 import kotlin.String
@@ -14,6 +15,8 @@ import norm.ConnectionProvider
 import norm.Many
 import norm.NormDriver
 import norm.combineExecBatchResults
+import norm.decodeArray
+import norm.encodeToSqlArray
 
 public class PostgresQueries(
   connectionProvider: ConnectionProvider,
@@ -33,6 +36,8 @@ public class PostgresQueries(
     zip_code: UsPostalCode?,
     current_mood: Mood,
     previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
   ) -> T): T {
     val sql = "SELECT * FROM users WHERE email = ?"
     val rowReader: ResultSet.() -> T = {
@@ -43,6 +48,8 @@ public class PostgresQueries(
         getString(4)?.let { usPostalCodeAdapter.decode(it) },
         moodAdapter.decode(getString(5)),
         getString(6)?.let { moodAdapter.decode(it) },
+        getArray(7)?.decodeArray(moodAdapter),
+        getArray(8)?.decodeArray(positiveIntegerAdapter),
       )
     }
     return driver.queryOne(sql, rowReader) {
@@ -59,6 +66,8 @@ public class PostgresQueries(
       zip_code: UsPostalCode?,
       current_mood: Mood,
       previous_mood: Mood?,
+      past_moods: Array<Mood?>?,
+      scores: Array<PositiveInteger?>?,
     ) -> T,
     block: (String, ResultSet.() -> T) -> R,
   ): R {
@@ -71,6 +80,8 @@ public class PostgresQueries(
         getString(4)?.let { usPostalCodeAdapter.decode(it) },
         moodAdapter.decode(getString(5)),
         getString(6)?.let { moodAdapter.decode(it) },
+        getArray(7)?.decodeArray(moodAdapter),
+        getArray(8)?.decodeArray(positiveIntegerAdapter),
       )
     }
     return block(sql, rowReader)
@@ -83,6 +94,8 @@ public class PostgresQueries(
     zip_code: UsPostalCode?,
     current_mood: Mood,
     previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
   ) -> T): Many<T> = listUsersByAge(age, mapper, driver::queryMany)
 
   private fun <T : Any, R> getUsersByZipCode(
@@ -94,6 +107,8 @@ public class PostgresQueries(
       zip_code: UsPostalCode?,
       current_mood: Mood,
       previous_mood: Mood?,
+      past_moods: Array<Mood?>?,
+      scores: Array<PositiveInteger?>?,
     ) -> T,
     block: (String, ResultSet.() -> T) -> R,
   ): R {
@@ -106,6 +121,8 @@ public class PostgresQueries(
         getString(4)?.let { usPostalCodeAdapter.decode(it) },
         moodAdapter.decode(getString(5)),
         getString(6)?.let { moodAdapter.decode(it) },
+        getArray(7)?.decodeArray(moodAdapter),
+        getArray(8)?.decodeArray(positiveIntegerAdapter),
       )
     }
     return block(sql, rowReader)
@@ -118,6 +135,8 @@ public class PostgresQueries(
     zip_code: UsPostalCode?,
     current_mood: Mood,
     previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
   ) -> T): Many<T> = getUsersByZipCode(zip_code, mapper, driver::queryMany)
 
   private fun <T : Any, R> getUsersByMood(
@@ -129,6 +148,8 @@ public class PostgresQueries(
       zip_code: UsPostalCode?,
       current_mood: Mood,
       previous_mood: Mood?,
+      past_moods: Array<Mood?>?,
+      scores: Array<PositiveInteger?>?,
     ) -> T,
     block: (String, ResultSet.() -> T) -> R,
   ): R {
@@ -141,6 +162,8 @@ public class PostgresQueries(
         getString(4)?.let { usPostalCodeAdapter.decode(it) },
         moodAdapter.decode(getString(5)),
         getString(6)?.let { moodAdapter.decode(it) },
+        getArray(7)?.decodeArray(moodAdapter),
+        getArray(8)?.decodeArray(positiveIntegerAdapter),
       )
     }
     return block(sql, rowReader)
@@ -153,6 +176,8 @@ public class PostgresQueries(
     zip_code: UsPostalCode?,
     current_mood: Mood,
     previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
   ) -> T): Many<T> = getUsersByMood(current_mood, mapper, driver::queryMany)
 
   @Throws(SQLException::class)
@@ -324,6 +349,65 @@ public class PostgresQueries(
       for (entry in stream) {
         setObject(1, moodAdapter.encode(entry.current_mood()), Types.OTHER)
         setObject(2, moodAdapter.encode(entry.previous_mood()), Types.OTHER)
+        setInt(3, entry.id())
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          executeBatch()
+          batchCount = 0
+        }
+      }
+      if (batchCount > 0) {
+        results.add(executeBatch())
+        totalCount += batchCount
+      }
+      combineExecBatchResults(results, totalCount, batchSize)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun updateArrayColumns(
+    past_moods: Array<Mood?>,
+    scores: Array<PositiveInteger?>,
+    id: Int,
+  ) {
+    val sql = """
+        |UPDATE users
+        |SET
+        |  past_moods = ?,
+        |  scores = ?
+        |WHERE id = ?
+        """.trimMargin()
+    driver.execute(sql) {
+      setArray(1, past_moods.encodeToSqlArray(connection, "mood", moodAdapter))
+      setArray(2, scores.encodeToSqlArray(connection, "positive_integer", positiveIntegerAdapter))
+      setInt(3, id)
+      execute()
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any> updateArrayColumns(
+    stream: Iterable<Input>,
+    past_moods: Input.() -> Array<Mood?>,
+    scores: Input.() -> Array<PositiveInteger?>,
+    id: Input.() -> Int,
+    batchSize: Int,
+  ): IntArray {
+    val sql = """
+        |UPDATE users
+        |SET
+        |  past_moods = ?,
+        |  scores = ?
+        |WHERE id = ?
+        """.trimMargin()
+    return driver.execute(sql) {
+      var totalCount = 0
+      var batchCount = 0
+      val results = mutableListOf<IntArray>()
+      for (entry in stream) {
+        setArray(1, entry.past_moods().encodeToSqlArray(connection, "mood", moodAdapter))
+        setArray(2, entry.scores().encodeToSqlArray(connection, "positive_integer", positiveIntegerAdapter))
         setInt(3, entry.id())
         addBatch()
         batchCount++

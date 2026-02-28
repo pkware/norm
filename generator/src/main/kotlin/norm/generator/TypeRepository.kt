@@ -315,7 +315,7 @@ internal class TypeRepository(
       ?: error("Column ${column.fullyQualifiedName} has no type")
 
     return tryResolveColumnOverride(column)
-      ?: tryResolveTypeOverride(typeName, column.not_null)
+      ?: tryResolveTypeOverride(typeName, column.not_null, column.is_array)
       ?: tryResolveStandardType(typeName, column.not_null, column.is_array)
       ?: tryResolveEnumType(typeName, column.not_null, column.is_array)
       ?: tryResolveDomainType(typeName, column.not_null, column.is_array)
@@ -323,30 +323,36 @@ internal class TypeRepository(
   }
 
   /**
-   * Returns an [AdaptedTypeSqlMappable] if the column has a column-level user override, or `null`.
+   * Returns an adapted [SqlMappable] if the column has a column-level user override, or `null`.
    */
   private fun tryResolveColumnOverride(column: Column): SqlMappable? {
     val tableName = column.table?.name ?: return null
     val columnName = column.original_name.ifEmpty { column.name }
     val mapping = columnLevelOverrides[tableName to columnName] ?: return null
-    return buildUserConfiguredMappable(mapping, column.type!!.name, column.not_null)
+    return buildUserConfiguredMappable(mapping, column.type!!.name, column.not_null, column.is_array)
   }
 
   /**
-   * Returns an [AdaptedTypeSqlMappable] if [typeName] has a type-level user override, or `null`.
+   * Returns an adapted [SqlMappable] if [typeName] has a type-level user override, or `null`.
    */
-  private fun tryResolveTypeOverride(typeName: String, notNull: Boolean): SqlMappable? {
+  private fun tryResolveTypeOverride(typeName: String, notNull: Boolean, isArray: Boolean): SqlMappable? {
     val mapping = typeLevelOverrides[typeName] ?: return null
-    return buildUserConfiguredMappable(mapping, typeName, notNull)
+    return buildUserConfiguredMappable(mapping, typeName, notNull, isArray)
   }
 
   /**
-   * Builds an [AdaptedTypeSqlMappable] for a user-configured type mapping.
+   * Builds an adapted [SqlMappable] for a user-configured type mapping.
    *
-   * Resolves the JDBC wire type for the Postgres type, then creates the mappable with
+   * Resolves the JDBC wire type for the Postgres type, then creates either an
+   * [AdaptedTypeSqlMappable] (scalar) or [AdaptedArrayTypeSqlMappable] (array) with
    * the user's application type and adapter property name.
    */
-  private fun buildUserConfiguredMappable(mapping: TypeMapping, postgresType: String, notNull: Boolean): SqlMappable {
+  private fun buildUserConfiguredMappable(
+    mapping: TypeMapping,
+    postgresType: String,
+    notNull: Boolean,
+    isArray: Boolean,
+  ): SqlMappable {
     val applicationClassName = ClassName.bestGuess(mapping.kotlinType)
     val adapterPropertyName = userAdapterPropertyName(mapping)
     val jdbcTypeInfo = resolveJdbcTypeInfoForType(postgresType)
@@ -354,6 +360,15 @@ internal class TypeRepository(
         "Postgres type '$postgresType' cannot be used with a custom adapter — " +
           "no JDBC type mapping is available.",
       )
+
+    if (isArray) {
+      return AdaptedArrayTypeSqlMappable(
+        applicationTypeName = applicationClassName,
+        adapterPropertyName = adapterPropertyName,
+        columnNotNull = notNull,
+        postgresTypeName = postgresType,
+      )
+    }
     return AdaptedTypeSqlMappable(applicationClassName, adapterPropertyName, notNull, jdbcTypeInfo)
   }
 
@@ -372,18 +387,27 @@ internal class TypeRepository(
   }
 
   /**
-   * Returns an [AdaptedTypeSqlMappable] if [typeName] matches a known Postgres enum type, or `null`.
+   * Returns an adapted [SqlMappable] if [typeName] matches a known Postgres enum type, or `null`.
    *
-   * Enum arrays are not yet supported and return `null` (falling through to the error in
-   * [resolveMappableType]).
+   * For scalar columns, returns [AdaptedTypeSqlMappable]. For array columns (e.g., `mood[]`),
+   * returns [AdaptedArrayTypeSqlMappable] which generates per-element adapter decode/encode calls.
    */
   private fun tryResolveEnumType(typeName: String, notNull: Boolean, isArray: Boolean): SqlMappable? {
-    if (isArray) return null // Enum arrays not yet supported
     val enumDefinition = enumsByName[typeName] ?: return null
     referencedEnums.add(enumDefinition)
 
     val enumClassName = ClassName(packageName, enumDefinition.name.snakeToCamelCase().titleCase())
-    return AdaptedTypeSqlMappable(enumClassName, adapterPropertyName(enumDefinition), notNull, ENUM_JDBC_TYPE_INFO)
+    val propertyName = adapterPropertyName(enumDefinition)
+
+    if (isArray) {
+      return AdaptedArrayTypeSqlMappable(
+        applicationTypeName = enumClassName,
+        adapterPropertyName = propertyName,
+        columnNotNull = notNull,
+        postgresTypeName = typeName,
+      )
+    }
+    return AdaptedTypeSqlMappable(enumClassName, propertyName, notNull, ENUM_JDBC_TYPE_INFO)
   }
 
   /** Returns the [SqlMappable] for a standard Postgres type, or `null` if not recognized. */
@@ -398,20 +422,29 @@ internal class TypeRepository(
   }
 
   /**
-   * Returns an [AdaptedTypeSqlMappable] if [typeName] matches a known Postgres domain type, or `null`.
+   * Returns an adapted [SqlMappable] if [typeName] matches a known Postgres domain type, or `null`.
    *
-   * Domain arrays are not yet supported and return `null` (falling through to the error in
-   * [resolveMappableType]).
+   * For scalar columns, returns [AdaptedTypeSqlMappable]. For array columns (e.g., `email[]`),
+   * returns [AdaptedArrayTypeSqlMappable] which generates per-element adapter decode/encode calls.
    */
   private fun tryResolveDomainType(typeName: String, notNull: Boolean, isArray: Boolean): SqlMappable? {
-    if (isArray) return null // Domain arrays not yet supported
     val domain = domainsByName[typeName] ?: return null
     referencedDomains.add(domain)
 
     val domainClassName = ClassName(packageName, domain.name.snakeToCamelCase().titleCase())
+    val propertyName = domainAdapterPropertyName(domain)
     val jdbcTypeInfo = resolveJdbcTypeInfo(domain.base_type)
       ?: error("Domain ${domain.name} has unsupported base type: ${domain.base_type}")
-    return AdaptedTypeSqlMappable(domainClassName, domainAdapterPropertyName(domain), notNull, jdbcTypeInfo)
+
+    if (isArray) {
+      return AdaptedArrayTypeSqlMappable(
+        applicationTypeName = domainClassName,
+        adapterPropertyName = propertyName,
+        columnNotNull = notNull,
+        postgresTypeName = typeName,
+      )
+    }
+    return AdaptedTypeSqlMappable(domainClassName, propertyName, notNull, jdbcTypeInfo)
   }
 
   /** Maps a Postgres type name to its base [SqlMappable], or `null` if not recognized. */

@@ -53,12 +53,8 @@ norm {
 
 ## TODO
 ### After release
-- [ ] Enum adapter. Map enums to String and back by default.
-- [ ] List/array/stream/iterable adapter. If given one of these, just convert it to an array.
-- [ ] Value class adapter (inline classes)
 - [ ] Support batching from Stream, not just Iterable
 - [ ] Make it easy to enforce named arguments for query methods. These are easy to change in SQL and have calling code compile incorrectly. Detekt, Intellij, etc.
-- [ ] JSON/JSONB to Java struct adapter. More broadly, custom type adapters.
 - [ ] Add a getting started section to the README
 - [ ] IntelliJ plugin for SQL fragment tracking. Currently we ship an `intellij-languageinjection.xml` config that provides basic SQL injection for `Query.append()`, but each fragment is analyzed in isolation. A proper plugin implementing `LanguageInjectionContributor` or using the `MultiHostInjector` API could track string values flowing through the builder pattern and reconstruct the full SQL statement for validation. This is how Hibernate and Spring's `JdbcClient` achieve fragment-aware SQL support.
 - [ ] Support sqlc.embed() equivalent via SQL functions or table references

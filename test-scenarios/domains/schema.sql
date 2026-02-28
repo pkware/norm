@@ -20,5 +20,7 @@ CREATE TABLE users (
   age positive_integer,
   zip_code us_postal_code,
   current_mood mood NOT NULL,
-  previous_mood mood
+  previous_mood mood,
+  past_moods mood[],
+  scores positive_integer[]
 );

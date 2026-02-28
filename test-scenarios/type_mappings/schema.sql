@@ -14,5 +14,7 @@ CREATE TABLE users (
   age positive_integer,
   current_mood mood NOT NULL,
   metadata jsonb NOT NULL,
-  preferences jsonb NOT NULL
+  preferences jsonb NOT NULL,
+  past_moods mood[],   -- nullable array; same type-level override applies (mood → CustomMood)
+  tag_list jsonb[]     -- nullable array; same type-level override applies (jsonb → JsonData)
 );

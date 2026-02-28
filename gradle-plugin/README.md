@@ -81,7 +81,7 @@ Norm auto-generates adapters for Postgres enum types (→ Kotlin `enum class`) a
 
 #### Type-level overrides
 
-A type-level override applies to **every column** of that Postgres type across all tables. It also **suppresses Norm's auto-generation** of the corresponding enum or domain class — you're taking full ownership of the type.
+A type-level override applies to **every column** of that Postgres type across all tables, including **array columns** of that type. It also **suppresses Norm's auto-generation** of the corresponding enum or domain class — you're taking full ownership of the type.
 
 ```kotlin
 norm {
@@ -94,9 +94,11 @@ norm {
       typeMappings {
         // Map the Postgres "mood" enum to a hand-written Kotlin enum.
         // Norm will NOT generate Mood.kt or MoodAdapter.kt.
+        // Applies to both `mood` columns and `mood[]` array columns.
         type("mood") mapTo "com.example.CustomMood" using "com.example.CustomMoodAdapter"
 
         // Map all jsonb columns to a wrapper type.
+        // Applies to both `jsonb` columns and `jsonb[]` array columns.
         type("jsonb") mapTo "com.example.JsonData" using "com.example.JsonDataAdapter"
       }
     }
@@ -104,14 +106,30 @@ norm {
 }
 ```
 
+For a schema with both scalar and array columns:
+
+```sql
+CREATE TABLE users (
+  current_mood  mood    NOT NULL,  -- scalar: CustomMood
+  past_moods    mood[],            -- array:  Array<CustomMood?>?
+  metadata      jsonb   NOT NULL,  -- scalar: JsonData
+  tag_list      jsonb[]            -- array:  Array<JsonData?>?
+);
+```
+
+No extra configuration is needed for the array columns — the same adapter is applied per element. Array elements are always nullable (`Array<CustomMood?>`) because Postgres arrays can contain `NULL` values regardless of the column's `NOT NULL` constraint. The column-level nullability controls whether the array *itself* is nullable.
+
 #### Column-level overrides
 
-A column-level override applies only to one specific column. It takes **precedence over any type-level override** for the same column. Norm still generates the type-level enum/domain adapter for other columns of that type.
+A column-level override applies only to one specific column. It takes **precedence over any type-level override** for the same column. Norm still generates the type-level enum/domain adapter for other columns of that type. Column-level overrides also work for array columns.
 
 ```kotlin
 typeMappings {
   // users.preferences uses UserPreferences, even though jsonb is mapped to JsonData above.
   column("users", "preferences") mapTo "com.example.UserPreferences" using "com.example.UserPreferencesAdapter"
+
+  // Override a specific array column independently.
+  column("users", "past_moods") mapTo "com.example.LegacyMood" using "com.example.LegacyMoodAdapter"
 }
 ```
 

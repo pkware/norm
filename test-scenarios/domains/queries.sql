@@ -28,3 +28,10 @@ SET
   current_mood = ?,
   previous_mood = ?
 WHERE id = ?;
+
+-- name: updateArrayColumns :exec
+UPDATE users
+SET
+  past_moods = ?,
+  scores = ?
+WHERE id = ?;

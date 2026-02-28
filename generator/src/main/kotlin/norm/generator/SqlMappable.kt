@@ -1,8 +1,10 @@
 package norm.generator
 
+import com.squareup.kotlinpoet.ARRAY
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.MemberName
+import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.asTypeName
 import java.math.BigDecimal
@@ -312,5 +314,79 @@ internal class AdaptedTypeSqlMappable(
           adapterPropertyName,
         )
       }
+    }
+}
+
+/**
+ * [SqlMappable] for an array column whose elements use a [ColumnAdapter][norm.ColumnAdapter].
+ *
+ * Unlike [ArrayTypeDecorator] (which does a direct `UNCHECKED_CAST` from the JDBC array to the
+ * final Kotlin array type), this class generates per-element adapter decode/encode calls because
+ * the JDBC wire type (`String[]` for enums, `Integer[]` for int4 domains) differs from the
+ * application type (`Array<Mood?>`, `Array<PositiveInteger?>`).
+ *
+ * The Kotlin type is always `Array<ApplicationType?>` — elements are nullable because Postgres
+ * arrays can contain `NULL` values regardless of the column's `NOT NULL` constraint. Column-level
+ * nullability controls only whether the array itself is nullable.
+ *
+ * For reads, delegates to the runtime `decodeArray` extension. For writes, delegates to the
+ * runtime `encodeToSqlArray` extension, which calls `connection.createArrayOf(postgresTypeName, ...)`
+ * — required because the Postgres JDBC driver cannot infer the type from a plain `String[]`.
+ *
+ * @param applicationTypeName The element's application type (e.g., `example.Mood`).
+ * @param adapterPropertyName The adapter property name on `PostgresQueries` (e.g., `"moodAdapter"`).
+ * @param columnNotNull Whether the column is `NOT NULL` (controls array-level nullability).
+ * @param postgresTypeName The Postgres type name for `encodeToSqlArray` (e.g., `"mood"`, `"email"`).
+ */
+internal class AdaptedArrayTypeSqlMappable(
+  private val applicationTypeName: ClassName,
+  private val adapterPropertyName: String,
+  private val columnNotNull: Boolean,
+  private val postgresTypeName: String,
+) : SqlMappable {
+
+  private val decodeArrayMember = MemberName("norm", "decodeArray", isExtension = true)
+  private val encodeToSqlArrayMember = MemberName("norm", "encodeToSqlArray", isExtension = true)
+
+  override val klass: KClass<*>
+    get() = throw UnsupportedOperationException(
+      "Generated array type Array<$applicationTypeName?> has no KClass at generator time. Use typeName instead.",
+    )
+
+  override val typeName: TypeName
+    get() = ARRAY.parameterizedBy(applicationTypeName.copy(nullable = true))
+
+  override val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
+    get() = if (columnNotNull) {
+      { index, parameterName ->
+        CodeBlock.of(
+          "setArray(%L, %L.%M(connection, %S, %N))",
+          index,
+          parameterName,
+          encodeToSqlArrayMember,
+          postgresTypeName,
+          adapterPropertyName,
+        )
+      }
+    } else {
+      { index, parameterName ->
+        CodeBlock.of(
+          "%L?.let { setArray(%L, it.%M(connection, %S, %N)) } ?: setNull(%L, %T.ARRAY)",
+          parameterName,
+          index,
+          encodeToSqlArrayMember,
+          postgresTypeName,
+          adapterPropertyName,
+          index,
+          Types::class,
+        )
+      }
+    }
+
+  override val resultSetAction: (index: Int) -> CodeBlock
+    get() = if (columnNotNull) {
+      { index -> CodeBlock.of("getArray(%L).%M(%N)", index, decodeArrayMember, adapterPropertyName) }
+    } else {
+      { index -> CodeBlock.of("getArray(%L)?.%M(%N)", index, decodeArrayMember, adapterPropertyName) }
     }
 }
