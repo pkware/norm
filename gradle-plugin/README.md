@@ -135,14 +135,25 @@ typeMappings {
 
 #### Adapter injection
 
-Each user-configured mapping becomes a **constructor parameter on `PostgresQueries` without a default value**, so you must supply an instance.
+Each user-configured mapping becomes a **constructor parameter on `PostgresQueries` without a default value**, so you must supply an instance. Auto-generated adapters (for enums and domains not overridden by `typeMappings`) have default values and can be omitted.
+
+**Parameter naming convention:**
+
+| Override kind | Naming rule | Example |
+|---|---|---|
+| Type-level | `${postgresType}Adapter` | `type("mood")` → `moodAdapter`, `type("jsonb")` → `jsonbAdapter` |
+| Column-level | `${table}${Column}Adapter` | `column("users", "preferences")` → `usersPreferencesAdapter` |
+| Auto-generated enum | `${enumType}Adapter` | Postgres `mood` enum → `moodAdapter` |
+| Auto-generated domain | `${domainType}Adapter` | Postgres `email` domain → `emailAdapter` |
+
+Names are derived from the **Postgres type/column name** (not the Kotlin class name), converted to camelCase.
 
 ```kotlin
 val queries = PostgresQueries(
   connectionProvider = connectionProvider,
-  jsonDataAdapter = JsonDataAdapter(),
-  customMoodAdapter = CustomMoodAdapter(),
-  usersPreferencesAdapter = UserPreferencesAdapter(),
+  jsonbAdapter = JsonDataAdapter(),        // type("jsonb") → jsonbAdapter
+  moodAdapter = CustomMoodAdapter(),       // type("mood") → moodAdapter
+  usersPreferencesAdapter = UserPreferencesAdapter(), // column("users", "preferences") → usersPreferencesAdapter
   // Auto-generated adapter — has a default, can be omitted
   // emailAdapter = EmailAdapter(),
 )

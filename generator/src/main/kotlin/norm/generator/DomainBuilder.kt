@@ -7,9 +7,7 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
-import com.squareup.kotlinpoet.asTypeName
 import plugin.Domain
-import java.math.BigDecimal
 
 /**
  * Builds a `@JvmInline value class` [TypeSpec] from a Postgres domain type definition.
@@ -125,17 +123,12 @@ internal fun domainAdapterPropertyName(domain: Domain): String = "${domain.name.
 /**
  * Maps a Postgres base type name to the corresponding Kotlin [TypeName].
  *
- * This mapping must stay in sync with [resolveJdbcTypeInfo] — both functions need to
- * agree on which Postgres types are supported as domain bases.
+ * Delegates to [resolveJdbcTypeInfo] as the single source of truth for type mappings.
+ * Only types supported as domain bases are valid here — `jsonb` is intentionally excluded
+ * because it is not a valid base type for a Postgres domain.
  */
-internal fun domainKotlinBaseType(baseTypeName: String): TypeName = when (baseTypeName) {
-  "text", "varchar", "bpchar" -> String::class.asTypeName()
-  "int2" -> Short::class.asTypeName()
-  "int4" -> Int::class.asTypeName()
-  "int8" -> Long::class.asTypeName()
-  "float4" -> Float::class.asTypeName()
-  "float8" -> Double::class.asTypeName()
-  "bool" -> Boolean::class.asTypeName()
-  "numeric" -> BigDecimal::class.asTypeName()
-  else -> error("Unsupported domain base type: $baseTypeName")
+internal fun domainKotlinBaseType(baseTypeName: String): TypeName {
+  val jdbcTypeInfo = resolveJdbcTypeInfo(baseTypeName)
+  if (jdbcTypeInfo != null && !jdbcTypeInfo.useSqlTypeHint) return jdbcTypeInfo.kotlinType
+  error("Unsupported domain base type: $baseTypeName")
 }

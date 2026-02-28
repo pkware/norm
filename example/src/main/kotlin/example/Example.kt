@@ -19,7 +19,7 @@ fun main() {
 // Micronaut AOP requires `open` for @Transactional methods to work (compile-time subclassing).
 @Singleton
 open class Example(
-  private val queries: PostgresQueries,
+  private val queries: Queries,
   private val transactionOperations: TransactionOperations<Connection>,
 ) {
 
@@ -66,7 +66,7 @@ open class Example(
     }
 
     // Any query can be mapped to a custom type. This makes it easy to use existing DTOs, modify mutable models, etc.
-    val authorContacts = queries.listAuthors { id, name, email, revision ->
+    val authorContacts = queries.listAuthors { _, name, email, _, _ ->
       AuthorContact(name, email)
     }.list()
 

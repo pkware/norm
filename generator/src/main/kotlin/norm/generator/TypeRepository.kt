@@ -10,12 +10,14 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
+import com.squareup.kotlinpoet.asTypeName
 import plugin.Catalog
 import plugin.Column
 import plugin.Domain
 import plugin.Enum
 import plugin.Schema
 import plugin.Table
+import java.math.BigDecimal
 
 /**
  * [JdbcTypeInfo] for Postgres enum types.
@@ -24,7 +26,8 @@ import plugin.Table
  * The Postgres JDBC driver rejects `VARCHAR` bindings for enum columns in prepared statements;
  * `Types.OTHER` bypasses driver-side type enforcement and lets Postgres coerce the string.
  */
-private val ENUM_JDBC_TYPE_INFO = JdbcTypeInfo("getString", "setObject", false, "OTHER", useSqlTypeHint = true)
+private val ENUM_JDBC_TYPE_INFO =
+  JdbcTypeInfo("getString", "setObject", false, "OTHER", useSqlTypeHint = true, kotlinType = String::class.asTypeName())
 
 /**
  * Repository for types generated as part of query generation.
@@ -490,17 +493,33 @@ internal class TypeRepository(
  * as a domain base should have an entry here.
  */
 internal fun resolveJdbcTypeInfo(baseTypeName: String): JdbcTypeInfo? = when (baseTypeName) {
-  "text", "varchar", "bpchar" -> JdbcTypeInfo("getString", "setString", false, "VARCHAR")
-  "int2" -> JdbcTypeInfo("getShort", "setShort", true, "SMALLINT")
-  "int4" -> JdbcTypeInfo("getInt", "setInt", true, "INTEGER")
-  "int8" -> JdbcTypeInfo("getLong", "setLong", true, "BIGINT")
-  "float4" -> JdbcTypeInfo("getFloat", "setFloat", true, "REAL")
-  "float8" -> JdbcTypeInfo("getDouble", "setDouble", true, "DOUBLE")
-  "bool" -> JdbcTypeInfo("getBoolean", "setBoolean", true, "BOOLEAN")
-  "numeric" -> JdbcTypeInfo("getBigDecimal", "setBigDecimal", false, "NUMERIC")
+  "text", "varchar", "bpchar" ->
+    JdbcTypeInfo("getString", "setString", false, "VARCHAR", kotlinType = String::class.asTypeName())
+  "int2" ->
+    JdbcTypeInfo("getShort", "setShort", true, "SMALLINT", kotlinType = Short::class.asTypeName())
+  "int4" ->
+    JdbcTypeInfo("getInt", "setInt", true, "INTEGER", kotlinType = Int::class.asTypeName())
+  "int8" ->
+    JdbcTypeInfo("getLong", "setLong", true, "BIGINT", kotlinType = Long::class.asTypeName())
+  "float4" ->
+    JdbcTypeInfo("getFloat", "setFloat", true, "REAL", kotlinType = Float::class.asTypeName())
+  "float8" ->
+    JdbcTypeInfo("getDouble", "setDouble", true, "DOUBLE", kotlinType = Double::class.asTypeName())
+  "bool" ->
+    JdbcTypeInfo("getBoolean", "setBoolean", true, "BOOLEAN", kotlinType = Boolean::class.asTypeName())
+  "numeric" ->
+    JdbcTypeInfo("getBigDecimal", "setBigDecimal", false, "NUMERIC", kotlinType = BigDecimal::class.asTypeName())
   // jsonb requires setObject(..., Types.OTHER): Postgres JDBC rejects setString() for jsonb columns
   // in prepared statements, just as it does for enum columns.
-  "jsonb" -> JdbcTypeInfo("getString", "setObject", false, "OTHER", useSqlTypeHint = true)
+  "jsonb" ->
+    JdbcTypeInfo(
+      "getString",
+      "setObject",
+      false,
+      "OTHER",
+      useSqlTypeHint = true,
+      kotlinType = String::class.asTypeName(),
+    )
   else -> null
 }
 

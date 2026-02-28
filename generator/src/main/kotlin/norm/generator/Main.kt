@@ -325,20 +325,12 @@ private fun resolveWireKotlinType(postgresType: String, catalog: Catalog): TypeN
 /**
  * Maps a Postgres base type name to the Kotlin type that JDBC delivers it as.
  *
- * This is a superset of [domainKotlinBaseType] that also covers types like `jsonb`
+ * Delegates to [resolveJdbcTypeInfo] as the single source of truth for type mappings.
+ * This is a superset of [domainKotlinBaseType] — it also covers types like `jsonb`
  * which are valid adapter wire types but not valid domain bases.
  */
-private fun wireKotlinType(postgresType: String): TypeName = when (postgresType) {
-  "text", "varchar", "bpchar", "jsonb" -> String::class.asTypeName()
-  "int2" -> Short::class.asTypeName()
-  "int4" -> Int::class.asTypeName()
-  "int8" -> Long::class.asTypeName()
-  "float4" -> Float::class.asTypeName()
-  "float8" -> Double::class.asTypeName()
-  "bool" -> Boolean::class.asTypeName()
-  "numeric" -> java.math.BigDecimal::class.asTypeName()
-  else -> error(
+private fun wireKotlinType(postgresType: String): TypeName = resolveJdbcTypeInfo(postgresType)?.kotlinType
+  ?: error(
     "Postgres type '$postgresType' cannot be used as the wire type for a custom adapter. " +
       "Supported wire types: text, varchar, bpchar, jsonb, int2, int4, int8, float4, float8, bool, numeric.",
   )
-}

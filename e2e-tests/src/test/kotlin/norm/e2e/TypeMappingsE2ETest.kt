@@ -1,7 +1,9 @@
 package norm.e2e
 
 import assertk.assertThat
+import assertk.assertions.containsExactly
 import assertk.assertions.isEqualTo
+import assertk.assertions.isNotNull
 import assertk.assertions.isNull
 import com.example.CustomMood
 import com.example.CustomMoodAdapter
@@ -12,6 +14,7 @@ import com.example.UserPreferencesAdapter
 import example.typemappings.PostgresQueries
 import example.typemappings.Queries
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import java.io.File
 import java.sql.Connection
@@ -121,6 +124,88 @@ class TypeMappingsE2ETest : PostgresTestBase() {
     assertThat(mood).isEqualTo(CustomMood.SAD)
     assertThat(metadata).isEqualTo(JsonData("""{"inserted": true}"""))
     assertThat(preferences).isEqualTo(UserPreferences("""{"lang": "en"}"""))
+  }
+
+  @Nested
+  inner class ArraysOfAdaptedTypes {
+
+    @Test
+    fun `write and read back enum array via updatePastMoods`() {
+      insertUser()
+      queries.updatePastMoods(
+        past_moods = arrayOf(CustomMood.HAPPY, CustomMood.SAD),
+        tag_list = null,
+        id = 1,
+      )
+
+      val pastMoods = readPastMoods()
+
+      assertThat(pastMoods).isNotNull()
+      assertThat(pastMoods!!.toList()).containsExactly(CustomMood.HAPPY, CustomMood.SAD)
+    }
+
+    @Test
+    fun `write and read back jsonb array via updatePastMoods`() {
+      insertUser()
+      queries.updatePastMoods(
+        past_moods = null,
+        tag_list = arrayOf(JsonData("""{"a":1}"""), JsonData("""{"b":2}""")),
+        id = 1,
+      )
+
+      val tagList = readTagList()
+
+      assertThat(tagList).isNotNull()
+      // Postgres normalizes jsonb whitespace: {"a":1} → {"a": 1}
+      assertThat(tagList!!.toList()).containsExactly(JsonData("""{"a": 1}"""), JsonData("""{"b": 2}"""))
+    }
+
+    @Test
+    fun `null array column returns null`() {
+      insertUser()
+
+      val pastMoods = readPastMoods()
+
+      assertThat(pastMoods).isNull()
+    }
+
+    @Test
+    fun `array with null elements preserves nulls`() {
+      insertUser()
+      queries.updatePastMoods(
+        past_moods = arrayOf(CustomMood.HAPPY, null, CustomMood.ANGRY),
+        tag_list = null,
+        id = 1,
+      )
+
+      val pastMoods = readPastMoods()
+
+      assertThat(pastMoods).isNotNull()
+      assertThat(pastMoods!!.toList()).containsExactly(CustomMood.HAPPY, null, CustomMood.ANGRY)
+    }
+
+    @Test
+    fun `empty array round-trips correctly`() {
+      insertUser()
+      queries.updatePastMoods(
+        past_moods = emptyArray(),
+        tag_list = emptyArray(),
+        id = 1,
+      )
+
+      val pastMoods = readPastMoods()
+
+      assertThat(pastMoods).isNotNull()
+      assertThat(pastMoods!!.toList()).containsExactly()
+    }
+
+    /** Reads past_moods for user 1, boxing the nullable array in a list to satisfy `T : Any`. */
+    private fun readPastMoods(): Array<CustomMood?>? =
+      queries.getUserById(1) { _, _, _, _, _, _, past_moods, _ -> listOf(past_moods) }.first()
+
+    /** Reads tag_list for user 1, boxing the nullable array in a list to satisfy `T : Any`. */
+    private fun readTagList(): Array<JsonData?>? =
+      queries.getUserById(1) { _, _, _, _, _, _, _, tag_list -> listOf(tag_list) }.first()
   }
 
   private fun insertUser(

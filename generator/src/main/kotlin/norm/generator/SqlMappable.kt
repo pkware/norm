@@ -197,6 +197,9 @@ internal enum class PostgresSupportedTypes(
  *   instead of `setterName(index, value)`. Required for Postgres custom types (enums) where the JDBC driver
  *   refuses to coerce a `VARCHAR` binding — passing `Types.OTHER` bypasses the driver's type enforcement
  *   and lets Postgres perform the coercion itself.
+ * @property kotlinType The KotlinPoet [TypeName] for the Kotlin type that JDBC delivers this value as
+ *   (e.g., `String` for text/varchar, `Int` for int4). This is the wire type used for adapter type parameters
+ *   and domain value class properties.
  */
 internal data class JdbcTypeInfo(
   val getterName: String,
@@ -204,10 +207,11 @@ internal data class JdbcTypeInfo(
   val isPrimitive: Boolean,
   val sqlTypeConstant: String,
   val useSqlTypeHint: Boolean = false,
+  val kotlinType: TypeName,
 )
 
 /**
- * [SqlMappable] for a column that uses a [ColumnAdapter][norm.ColumnAdapter] for encode/decode.
+ * [SqlMappable] for a column that uses a `norm.ColumnAdapter` for encode/decode.
  *
  * Covers auto-generated adapters (enums, domains) and user-configured adapters. The adapter's
  * wire type is described by [jdbcTypeInfo], which determines the JDBC getter/setter methods.
@@ -318,7 +322,7 @@ internal class AdaptedTypeSqlMappable(
 }
 
 /**
- * [SqlMappable] for an array column whose elements use a [ColumnAdapter][norm.ColumnAdapter].
+ * [SqlMappable] for an array column whose elements use a `norm.ColumnAdapter`.
  *
  * Unlike [ArrayTypeDecorator] (which does a direct `UNCHECKED_CAST` from the JDBC array to the
  * final Kotlin array type), this class generates per-element adapter decode/encode calls because
