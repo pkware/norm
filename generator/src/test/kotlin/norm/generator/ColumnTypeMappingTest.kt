@@ -6,6 +6,7 @@ import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isIn
 import assertk.assertions.isTrue
+import com.squareup.kotlinpoet.ANY
 import com.squareup.kotlinpoet.ARRAY
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
@@ -1625,6 +1626,48 @@ class ColumnTypeMappingTest {
       val accessor = repository.resolveMappableType(col).resultSetAction(1)
       // Domain base type is int4 → getInt
       assertThat(accessor.toString()).isEqualTo("positiveIntegerAdapter.decode(getInt(1))")
+    }
+
+    @Test
+    fun `type-level override with generic Kotlin type`() {
+      val mappings = listOf(
+        TypeMapping(
+          "jsonb",
+          null,
+          null,
+          "kotlin.collections.Map<kotlin.String, kotlin.Any?>",
+          "com.example.JsonAdapter",
+        ),
+      )
+      val repository = TypeRepository("test", Catalog(), mappings)
+      val col = column("metadata", type = "jsonb")
+      val kotlinType = repository.resolveColumnType(col)
+      val expectedType = Map::class.asTypeName().parameterizedBy(
+        String::class.asTypeName(),
+        ANY.copy(nullable = true),
+      )
+      assertThat(kotlinType).isEqualTo(expectedType)
+    }
+
+    @Test
+    fun `column-level override with generic Kotlin type`() {
+      val mappings = listOf(
+        TypeMapping(
+          "",
+          "events",
+          "payload",
+          "kotlin.collections.Map<kotlin.String, kotlin.Any?>",
+          "com.example.PayloadAdapter",
+        ),
+      )
+      val repository = TypeRepository("test", Catalog(), mappings)
+      val col = column("payload", type = "jsonb", table = Identifier(name = "events"))
+      val kotlinType = repository.resolveColumnType(col)
+      val expectedType = Map::class.asTypeName().parameterizedBy(
+        String::class.asTypeName(),
+        ANY.copy(nullable = true),
+      )
+      assertThat(kotlinType).isEqualTo(expectedType)
     }
   }
 

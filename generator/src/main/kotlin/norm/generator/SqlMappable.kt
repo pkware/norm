@@ -1,7 +1,6 @@
 package norm.generator
 
 import com.squareup.kotlinpoet.ARRAY
-import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
@@ -222,13 +221,14 @@ internal data class JdbcTypeInfo(
  * `PostgresQueries` class, which is visible inside the `ResultSet`/`PreparedStatement` receiver lambdas
  * via Kotlin closure scoping.
  *
- * @param applicationTypeName The KotlinPoet [ClassName] of the application type (e.g., `example.Email`).
+ * @param applicationTypeName The KotlinPoet [TypeName] of the application type (e.g., `example.Email`,
+ *   or a parameterized type like `kotlin.collections.Map<kotlin.String, kotlin.Any?>`).
  * @param adapterPropertyName The property name on `PostgresQueries` for the adapter (e.g., `"emailAdapter"`).
  * @param notNull Whether the column is `NOT NULL`.
  * @param jdbcTypeInfo JDBC method info for the adapter's wire type.
  */
 internal class AdaptedTypeSqlMappable(
-  private val applicationTypeName: ClassName,
+  private val applicationTypeName: TypeName,
   private val adapterPropertyName: String,
   private val notNull: Boolean,
   private val jdbcTypeInfo: JdbcTypeInfo,
@@ -337,13 +337,14 @@ internal class AdaptedTypeSqlMappable(
  * runtime `encodeToSqlArray` extension, which calls `connection.createArrayOf(postgresTypeName, ...)`
  * — required because the Postgres JDBC driver cannot infer the type from a plain `String[]`.
  *
- * @param applicationTypeName The element's application type (e.g., `example.Mood`).
+ * @param applicationTypeName The element's application type (e.g., `example.Mood`, or a parameterized
+ *   type like `kotlin.collections.Map<kotlin.String, kotlin.Any?>`).
  * @param adapterPropertyName The adapter property name on `PostgresQueries` (e.g., `"moodAdapter"`).
  * @param columnNotNull Whether the column is `NOT NULL` (controls array-level nullability).
  * @param postgresTypeName The Postgres type name for `encodeToSqlArray` (e.g., `"mood"`, `"email"`).
  */
 internal class AdaptedArrayTypeSqlMappable(
-  private val applicationTypeName: ClassName,
+  private val applicationTypeName: TypeName,
   private val adapterPropertyName: String,
   private val columnNotNull: Boolean,
   private val postgresTypeName: String,

@@ -125,11 +125,11 @@ private fun generateQueryImplementation(
 
   // User-configured adapter params (no default value → must come first)
   val userAdapterParams = typeMappings.map { mapping ->
-    val applicationClassName = ClassName.bestGuess(mapping.kotlinType)
+    val applicationTypeName = parseTypeName(mapping.kotlinType)
     val databaseTypeName = resolveWireTypeName(mapping, catalog)
     AdapterParam(
       userAdapterPropertyName(mapping),
-      COLUMN_ADAPTER.parameterizedBy(applicationClassName, databaseTypeName),
+      COLUMN_ADAPTER.parameterizedBy(applicationTypeName, databaseTypeName),
       null,
     )
   }.distinctBy { it.propertyName }.sortedBy { it.propertyName }

@@ -356,7 +356,7 @@ internal class TypeRepository(
     notNull: Boolean,
     isArray: Boolean,
   ): SqlMappable {
-    val applicationClassName = ClassName.bestGuess(mapping.kotlinType)
+    val applicationTypeName = parseTypeName(mapping.kotlinType)
     val adapterPropertyName = userAdapterPropertyName(mapping)
     val jdbcTypeInfo = resolveJdbcTypeInfoForType(postgresType)
       ?: error(
@@ -366,13 +366,13 @@ internal class TypeRepository(
 
     if (isArray) {
       return AdaptedArrayTypeSqlMappable(
-        applicationTypeName = applicationClassName,
+        applicationTypeName = applicationTypeName,
         adapterPropertyName = adapterPropertyName,
         columnNotNull = notNull,
         postgresTypeName = postgresType,
       )
     }
-    return AdaptedTypeSqlMappable(applicationClassName, adapterPropertyName, notNull, jdbcTypeInfo)
+    return AdaptedTypeSqlMappable(applicationTypeName, adapterPropertyName, notNull, jdbcTypeInfo)
   }
 
   /**
