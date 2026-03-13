@@ -129,6 +129,7 @@ class NormPluginTest {
             packageName = "example"
             schemas.addAll("../${projectDir.relativize(scenarioDirectory.resolve("schema.sql"))}")
             queries.addAll("../${projectDir.relativize(scenarioDirectory.resolve("queries.sql"))}")
+            generateCrud = false
           }
         }
       }
@@ -506,7 +507,7 @@ class NormPluginTest {
      * A scenario with a simple `author` table, used by hand-written tests that
      * need a known schema but aren't testing golden-file matching.
      */
-    private val BASIC_EMBEDS_SCENARIO = Path("../test-scenarios/basic_embeds").normalize().toAbsolutePath()
+    private val BASIC_EMBEDS_SCENARIO = Path("../test-scenarios/basic_embeds").toAbsolutePath().normalize()
 
     private val EMBED_SCENARIOS =
       setOf("basic_embeds", "complex_embed_mixing", "consecutive_embeds", "nested_joins_embeds")
@@ -517,7 +518,7 @@ class NormPluginTest {
      * Sorting is required because [Path.listDirectoryEntries] does not guarantee order.
      */
     @JvmStatic
-    fun scenarios() = Path("../test-scenarios/").normalize().toAbsolutePath()
+    fun scenarios() = Path("../test-scenarios/").toAbsolutePath().normalize()
       .listDirectoryEntries()
       .filter(Files::isDirectory)
       .filter { it.fileName.toString() !in EMBED_SCENARIOS }
