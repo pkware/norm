@@ -12,13 +12,8 @@ import java.sql.Connection
 @Requires(missingBeans = [ConnectionProvider::class])
 public class MicronautConnectionProvider(private val connectionOperations: ConnectionOperations<Connection>) :
   ConnectionProvider {
-  override fun <R> withConnection(block: (Connection) -> R): R {
-    val existing = connectionOperations.findConnectionStatus()
-    if (existing.isPresent) {
-      return block(existing.get().connection)
-    }
-    return connectionOperations.execute(ConnectionDefinition.DEFAULT) { status -> block(status.connection) }
-  }
+  override fun <R> withConnection(block: (Connection) -> R): R =
+    connectionOperations.execute(ConnectionDefinition.DEFAULT) { status -> block(status.connection) }
 
   override fun borrowConnection(): BorrowedConnection {
     val existing = connectionOperations.findConnectionStatus()
