@@ -64,9 +64,9 @@ public object CrudQuerySynthesizer {
 
       // PK-dependent methods
       if (primaryKeyColumns.isNotEmpty()) {
-        add(synthesizeFindById(qualifiedTable, methodSuffix, primaryKeyColumns, quoteIdentifier))
-        add(synthesizeExistsById(qualifiedTable, methodSuffix, primaryKeyColumns, quoteIdentifier))
-        add(synthesizeDeleteById(qualifiedTable, methodSuffix, primaryKeyColumns, quoteIdentifier))
+        add(synthesizeFind(qualifiedTable, methodSuffix, primaryKeyColumns, quoteIdentifier))
+        add(synthesizeExists(qualifiedTable, methodSuffix, primaryKeyColumns, quoteIdentifier))
+        add(synthesizeDelete(qualifiedTable, methodSuffix, primaryKeyColumns, quoteIdentifier))
       }
 
       // PK-independent methods
@@ -118,7 +118,7 @@ public object CrudQuerySynthesizer {
     )
   }
 
-  private fun synthesizeFindById(
+  private fun synthesizeFind(
     qualifiedTable: String,
     methodSuffix: String,
     primaryKeyColumns: List<Column>,
@@ -126,14 +126,14 @@ public object CrudQuerySynthesizer {
   ): ParsedQuery {
     val whereClause = primaryKeyColumns.joinToString(" AND ") { "${quoteIdentifier(it.name)} = ?" }
     return ParsedQuery(
-      name = "find${methodSuffix}ById",
+      name = "find${methodSuffix}${primaryKeySuffix(primaryKeyColumns)}",
       command = ":many",
       sql = "SELECT * FROM $qualifiedTable WHERE $whereClause",
       comments = emptyList(),
     )
   }
 
-  private fun synthesizeExistsById(
+  private fun synthesizeExists(
     qualifiedTable: String,
     methodSuffix: String,
     primaryKeyColumns: List<Column>,
@@ -141,7 +141,7 @@ public object CrudQuerySynthesizer {
   ): ParsedQuery {
     val whereClause = primaryKeyColumns.joinToString(" AND ") { "${quoteIdentifier(it.name)} = ?" }
     return ParsedQuery(
-      name = "exists${methodSuffix}ById",
+      name = "exists${methodSuffix}${primaryKeySuffix(primaryKeyColumns)}",
       command = ":one",
       sql = "SELECT EXISTS(SELECT 1 FROM $qualifiedTable WHERE $whereClause)",
       comments = emptyList(),
@@ -162,7 +162,7 @@ public object CrudQuerySynthesizer {
     comments = emptyList(),
   )
 
-  private fun synthesizeDeleteById(
+  private fun synthesizeDelete(
     qualifiedTable: String,
     methodSuffix: String,
     primaryKeyColumns: List<Column>,
@@ -170,7 +170,7 @@ public object CrudQuerySynthesizer {
   ): ParsedQuery {
     val whereClause = primaryKeyColumns.joinToString(" AND ") { "${quoteIdentifier(it.name)} = ?" }
     return ParsedQuery(
-      name = "delete${methodSuffix}ById",
+      name = "delete${methodSuffix}${primaryKeySuffix(primaryKeyColumns)}",
       command = ":execrows",
       sql = "DELETE FROM $qualifiedTable WHERE $whereClause",
       comments = emptyList(),
@@ -197,4 +197,13 @@ public object CrudQuerySynthesizer {
       quoteIdentifier(name)
     }
   }
+
+  /**
+   * Builds a `By` suffix from the primary key column names.
+   *
+   * Single column `id` produces `ById`. Composite key `(order_id, item_id)` produces
+   * `ByOrderIdAndItemId`. Each column name is converted from snake_case to TitleCase.
+   */
+  private fun primaryKeySuffix(primaryKeyColumns: List<Column>): String =
+    "By" + primaryKeyColumns.joinToString("And") { it.name.snakeToCamelCase().titleCase() }
 }

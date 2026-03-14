@@ -63,11 +63,11 @@ norm {
 - **Default:** `true`
 - **Effect:** When `true`, Norm auto-generates repository-style CRUD methods for every non-view table in the schema:
   - `insert<Table>(...)` — inserts a row, excluding auto-increment, server-default, and generated columns from parameters. Returns the excluded columns via `RETURNING` when applicable.
-  - `find<Table>ById(...)` — selects by primary key (requires PK)
-  - `exists<Table>ById(...)` — checks existence by primary key (requires PK)
+  - `find<Table>By<PkColumns>(...)` — selects by primary key (requires PK). The suffix is derived from actual PK column names, e.g. `findAuthorById`, `findSettingByKey`, `findOrderItemByOrderIdAndItemId`.
+  - `exists<Table>By<PkColumns>(...)` — checks existence by primary key (requires PK)
   - `findAll<Table>()` — selects all rows
   - `count<Table>()` — counts all rows
-  - `delete<Table>ById(...)` — deletes by primary key (requires PK)
+  - `delete<Table>By<PkColumns>(...)` — deletes by primary key (requires PK)
   - `deleteAll<Table>()` — deletes all rows
 - **Conflict resolution:** If a user-written query has the same name as a synthesized CRUD method, the user query takes priority and the CRUD method is skipped.
 - **Disabling:** Set `generateCrud = false` to disable CRUD generation entirely.

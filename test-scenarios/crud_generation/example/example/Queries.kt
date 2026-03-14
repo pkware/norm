@@ -325,7 +325,7 @@ public interface Queries {
    * SELECT * FROM order_item WHERE order_id = ? AND item_id = ?
    * ```
    */
-  public fun <T : Any> findOrderItemById(
+  public fun <T : Any> findOrderItemByOrderIdAndItemId(
     order_id: Int,
     item_id: Int,
     mapper: (
@@ -341,7 +341,7 @@ public interface Queries {
    * SELECT * FROM order_item WHERE order_id = ? AND item_id = ?
    * ```
    */
-  public fun findOrderItemById(order_id: Int, item_id: Int): Many<OrderItem> = findOrderItemById(order_id, item_id, ::OrderItem)
+  public fun findOrderItemByOrderIdAndItemId(order_id: Int, item_id: Int): Many<OrderItem> = findOrderItemByOrderIdAndItemId(order_id, item_id, ::OrderItem)
 
   /**
    * ```sql
@@ -349,7 +349,7 @@ public interface Queries {
    * ```
    */
   @Throws(SQLException::class)
-  public fun <T : Any> existsOrderItemById(
+  public fun <T : Any> existsOrderItemByOrderIdAndItemId(
     order_id: Int,
     item_id: Int,
     mapper: (exists: Boolean) -> T,
@@ -361,7 +361,7 @@ public interface Queries {
    * ```
    */
   @Throws(SQLException::class)
-  public fun existsOrderItemById(order_id: Int, item_id: Int): Boolean = existsOrderItemById(order_id, item_id, ::inputValue)
+  public fun existsOrderItemByOrderIdAndItemId(order_id: Int, item_id: Int): Boolean = existsOrderItemByOrderIdAndItemId(order_id, item_id, ::inputValue)
 
   /**
    * ```sql
@@ -379,7 +379,7 @@ public interface Queries {
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
   @Throws(SQLException::class)
-  public fun <Input : Any> deleteOrderItemById(
+  public fun <Input : Any> deleteOrderItemByOrderIdAndItemId(
     stream: Iterable<Input>,
     order_id: Input.() -> Int,
     item_id: Input.() -> Int,
@@ -404,11 +404,11 @@ public interface Queries {
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
   @Throws(SQLException::class)
-  public fun <Input : Any> deleteOrderItemById(
+  public fun <Input : Any> deleteOrderItemByOrderIdAndItemId(
     stream: Iterable<Input>,
     order_id: Input.() -> Int,
     item_id: Input.() -> Int,
-  ): IntArray = deleteOrderItemById(stream, order_id, item_id, 100)
+  ): IntArray = deleteOrderItemByOrderIdAndItemId(stream, order_id, item_id, 100)
 
   /**
    * ```sql
@@ -418,7 +418,7 @@ public interface Queries {
    * @return The number of rows updated.
    */
   @Throws(SQLException::class)
-  public fun deleteOrderItemById(order_id: Int, item_id: Int): Int
+  public fun deleteOrderItemByOrderIdAndItemId(order_id: Int, item_id: Int): Int
 
   /**
    * ```sql

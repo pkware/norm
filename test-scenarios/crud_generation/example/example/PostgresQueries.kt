@@ -271,7 +271,7 @@ public class PostgresQueries(
     }
   }
 
-  private fun <T : Any, R> findOrderItemById(
+  private fun <T : Any, R> findOrderItemByOrderIdAndItemId(
     order_id: Int,
     item_id: Int,
     mapper: (
@@ -294,7 +294,7 @@ public class PostgresQueries(
     return block(sql, rowReader)
   }
 
-  override fun <T : Any> findOrderItemById(
+  override fun <T : Any> findOrderItemByOrderIdAndItemId(
     order_id: Int,
     item_id: Int,
     mapper: (
@@ -303,10 +303,10 @@ public class PostgresQueries(
       quantity: Int,
       price: BigDecimal,
     ) -> T,
-  ): Many<T> = findOrderItemById(order_id, item_id, mapper, driver::queryMany)
+  ): Many<T> = findOrderItemByOrderIdAndItemId(order_id, item_id, mapper, driver::queryMany)
 
   @Throws(SQLException::class)
-  override fun <T : Any> existsOrderItemById(
+  override fun <T : Any> existsOrderItemByOrderIdAndItemId(
     order_id: Int,
     item_id: Int,
     mapper: (exists: Boolean) -> T,
@@ -324,7 +324,7 @@ public class PostgresQueries(
   }
 
   @Throws(SQLException::class)
-  override fun deleteOrderItemById(order_id: Int, item_id: Int): Int {
+  override fun deleteOrderItemByOrderIdAndItemId(order_id: Int, item_id: Int): Int {
     val sql = "DELETE FROM order_item WHERE order_id = ? AND item_id = ?"
     return driver.executeRows(sql) {
       setInt(1, order_id)
@@ -333,7 +333,7 @@ public class PostgresQueries(
   }
 
   @Throws(SQLException::class)
-  override fun <Input : Any> deleteOrderItemById(
+  override fun <Input : Any> deleteOrderItemByOrderIdAndItemId(
     stream: Iterable<Input>,
     order_id: Input.() -> Int,
     item_id: Input.() -> Int,

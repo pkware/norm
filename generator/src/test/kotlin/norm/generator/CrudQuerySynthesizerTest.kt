@@ -97,7 +97,7 @@ class CrudQuerySynthesizerTest {
     )
     val catalog = catalog(table)
 
-    val findById = CrudQuerySynthesizer.synthesize(catalog).first { it.name == "findOrderItemById" }
+    val findById = CrudQuerySynthesizer.synthesize(catalog).first { it.name == "findOrderItemByOrderIdAndItemId" }
 
     assertThat(findById.sql).isEqualTo("SELECT * FROM order_item WHERE order_id = ? AND item_id = ?")
     assertThat(findById.command).isEqualTo(":many")
@@ -248,9 +248,9 @@ class CrudQuerySynthesizerTest {
 
     assertThat(byName.getValue("insertSetting").sql)
       .isEqualTo("""INSERT INTO setting ("key", "value") VALUES (?, ?)""")
-    assertThat(byName.getValue("findSettingById").sql)
+    assertThat(byName.getValue("findSettingByKey").sql)
       .isEqualTo("""SELECT * FROM setting WHERE "key" = ?""")
-    assertThat(byName.getValue("deleteSettingById").sql)
+    assertThat(byName.getValue("deleteSettingByKey").sql)
       .isEqualTo("""DELETE FROM setting WHERE "key" = ?""")
   }
 
@@ -305,6 +305,66 @@ class CrudQuerySynthesizerTest {
 
     assertThat(merged.first { it.name == "findAllUser" }.sql)
       .isEqualTo("""SELECT * FROM "user"""")
+  }
+
+  @Test
+  fun `uses actual PK column name in method suffix`() {
+    val table = table(
+      "setting",
+      column("key", "text", notNull = true, isPrimaryKey = true),
+      column("value", "text", notNull = true),
+    )
+    val catalog = catalog(table)
+
+    val queries = CrudQuerySynthesizer.synthesize(catalog)
+
+    assertThat(queries).extracting(ParsedQuery::name).containsExactly(
+      "insertSetting",
+      "findSettingByKey",
+      "existsSettingByKey",
+      "deleteSettingByKey",
+      "findAllSetting",
+      "countSetting",
+      "deleteAllSetting",
+    )
+  }
+
+  @Test
+  fun `uses all PK column names joined with And for composite keys`() {
+    val table = table(
+      "order_item",
+      column("order_id", "int4", notNull = true, isPrimaryKey = true),
+      column("item_id", "int4", notNull = true, isPrimaryKey = true),
+      column("quantity", "int4", notNull = true),
+    )
+    val catalog = catalog(table)
+
+    val queries = CrudQuerySynthesizer.synthesize(catalog)
+
+    val findByPk = queries.first { it.name.startsWith("findOrderItem") && it.name != "findAllOrderItem" }
+    assertThat(findByPk.name).isEqualTo("findOrderItemByOrderIdAndItemId")
+    assertThat(findByPk.sql).isEqualTo("SELECT * FROM order_item WHERE order_id = ? AND item_id = ?")
+
+    val existsByPk = queries.first { it.name.startsWith("existsOrderItem") }
+    assertThat(existsByPk.name).isEqualTo("existsOrderItemByOrderIdAndItemId")
+
+    val deleteByPk = queries.first { it.name.startsWith("deleteOrderItem") && it.name != "deleteAllOrderItem" }
+    assertThat(deleteByPk.name).isEqualTo("deleteOrderItemByOrderIdAndItemId")
+  }
+
+  @Test
+  fun `converts snake_case PK column name to camelCase in suffix`() {
+    val table = table(
+      "event",
+      column("event_type_id", "int4", notNull = true, isPrimaryKey = true),
+      column("data", "text", notNull = true),
+    )
+    val catalog = catalog(table)
+
+    val findByPk = CrudQuerySynthesizer.synthesize(catalog)
+      .first { it.name.startsWith("findEvent") && it.name != "findAllEvent" }
+
+    assertThat(findByPk.name).isEqualTo("findEventByEventTypeId")
   }
 
   // --- Helpers ---
