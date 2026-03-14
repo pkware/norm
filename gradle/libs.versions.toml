@@ -33,7 +33,7 @@ idea-ext = "org.jetbrains.gradle.plugin.idea-ext:1.1.9"
 ksp = "com.google.devtools.ksp:2.2.21-2.0.5"
 # TODO Use the latest version, and don't use a SNAPSHOT
 norm = "com.pkware.norm:1.0.0-SNAPSHOT"
-shadow = "com.gradleup.shadow:9.3.1"
+shadow = "com.gradleup.shadow:9.3.2"
 spring-boot = "org.springframework.boot:3.4.2"
 spring-dependencyManagement = "io.spring.dependency-management:1.1.7"
 spring-kotlin = "org.jetbrains.kotlin.plugin.spring:2.3.10"
