@@ -492,6 +492,88 @@ public interface Queries {
   public fun updateStringType(p_id: Int, p_new_value: String)
 
   /**
+   * :many with a parameter: verify params flow through the Many code path.
+   *
+   * ```sql
+   * SELECT * FROM type WHERE string_type = ?
+   * ```
+   */
+  public fun <T : Any> filterByStringType(string_type: String, mapper: (
+    smallserial_type: Short,
+    serial2_type: Short,
+    pg_serial2_type: Short,
+    serial_type: Int,
+    serial4_type: Int,
+    pg_serial4_type: Int,
+    bigserial_type: Long,
+    serial8_type: Long,
+    pg_serial8_type: Long,
+    smallint_type: Short?,
+    int2_type: Short,
+    pg_int2_type: Short?,
+    integer_type: Int?,
+    int_type: Int?,
+    int4_type: Int,
+    pg_int4_type: Int?,
+    bigint_type: Long?,
+    int8_type: Long,
+    pg_int8_type: Long?,
+    real_type: Float?,
+    float4_type: Float,
+    pg_float4_type: Float?,
+    float_type: Double?,
+    double_type: Double?,
+    float8_type: Double,
+    pg_float8_type: Double?,
+    numeric_type: BigDecimal?,
+    pg_numeric_type: BigDecimal?,
+    bool_type: Boolean?,
+    pg_bool_type: Boolean?,
+    jsonb_type: String?,
+    blob_type: Blob?,
+    text_type: String?,
+    varchar_type: String?,
+    pg_varchar_type: String?,
+    bpchar_type: String?,
+    pg_bpchar_type: String?,
+    string_type: String,
+    date_type: LocalDate?,
+    date_notnull_type: LocalDate,
+    pg_date_type: LocalDate?,
+    time_type: LocalTime?,
+    time_notnull_type: LocalTime,
+    pg_time_type: LocalTime?,
+    timetz_type: OffsetTime?,
+    timetz_notnull_type: OffsetTime,
+    pg_timetz_type: OffsetTime?,
+    timestamp_type: LocalDateTime?,
+    timestamp_notnull_type: LocalDateTime,
+    pg_timestamp_type: LocalDateTime?,
+    timestamptz_type: OffsetDateTime?,
+    timestamptz_notnull_type: OffsetDateTime,
+    pg_timestamptz_type: OffsetDateTime?,
+    uuid_type: UUID?,
+    uuid_notnull_type: UUID,
+    pg_uuid_type: UUID?,
+    bytea_type: ByteArray?,
+    bytea_notnull_type: ByteArray,
+    pg_bytea_type: ByteArray?,
+    int_array_type: Array<Int?>?,
+    int_array_notnull_type: Array<Int?>,
+    text_array_type: Array<String?>?,
+    text_array_notnull_type: Array<String?>,
+  ) -> T): Many<T>
+
+  /**
+   * :many with a parameter: verify params flow through the Many code path.
+   *
+   * ```sql
+   * SELECT * FROM type WHERE string_type = ?
+   * ```
+   */
+  public fun filterByStringType(string_type: String): Many<Type> = filterByStringType(string_type, ::Type)
+
+  /**
    * Query against a view (pass-through columns preserve nullability from base table).
    *
    * ```sql

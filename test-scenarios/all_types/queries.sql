@@ -29,6 +29,10 @@ CALL reset_type_table();
 -- name: updateStringType :exec
 CALL update_string_type(?, ?);
 
+-- :many with a parameter: verify params flow through the Many code path.
+-- name: filterByStringType :many
+SELECT * FROM type WHERE string_type = ?;
+
 -- Query against a view (pass-through columns preserve nullability from base table).
 -- name: listNotNullView :many
 SELECT * FROM not_null_view;

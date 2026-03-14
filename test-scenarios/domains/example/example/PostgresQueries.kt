@@ -1,5 +1,6 @@
 package example
 
+import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.SQLException
 import java.sql.Types
@@ -8,6 +9,7 @@ import kotlin.Array
 import kotlin.Int
 import kotlin.IntArray
 import kotlin.String
+import kotlin.Unit
 import kotlin.collections.Iterable
 import kotlin.jvm.Throws
 import norm.ColumnAdapter
@@ -69,7 +71,11 @@ public class PostgresQueries(
       past_moods: Array<Mood?>?,
       scores: Array<PositiveInteger?>?,
     ) -> T,
-    block: (String, ResultSet.() -> T) -> R,
+    block: (
+      String,
+      ResultSet.() -> T,
+      (PreparedStatement.() -> Unit)?,
+    ) -> R,
   ): R {
     val sql = "SELECT * FROM users WHERE age > ?"
     val rowReader: ResultSet.() -> T = {
@@ -84,7 +90,10 @@ public class PostgresQueries(
         getArray(8)?.decodeArray(positiveIntegerAdapter),
       )
     }
-    return block(sql, rowReader)
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setInt(1, positiveIntegerAdapter.encode(age))
+    }
+    return block(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> listUsersByAge(age: PositiveInteger, mapper: (
@@ -110,7 +119,11 @@ public class PostgresQueries(
       past_moods: Array<Mood?>?,
       scores: Array<PositiveInteger?>?,
     ) -> T,
-    block: (String, ResultSet.() -> T) -> R,
+    block: (
+      String,
+      ResultSet.() -> T,
+      (PreparedStatement.() -> Unit)?,
+    ) -> R,
   ): R {
     val sql = "SELECT * FROM users WHERE zip_code = ?"
     val rowReader: ResultSet.() -> T = {
@@ -125,7 +138,10 @@ public class PostgresQueries(
         getArray(8)?.decodeArray(positiveIntegerAdapter),
       )
     }
-    return block(sql, rowReader)
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setString(1, usPostalCodeAdapter.encode(zip_code))
+    }
+    return block(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> getUsersByZipCode(zip_code: UsPostalCode, mapper: (
@@ -151,7 +167,11 @@ public class PostgresQueries(
       past_moods: Array<Mood?>?,
       scores: Array<PositiveInteger?>?,
     ) -> T,
-    block: (String, ResultSet.() -> T) -> R,
+    block: (
+      String,
+      ResultSet.() -> T,
+      (PreparedStatement.() -> Unit)?,
+    ) -> R,
   ): R {
     val sql = "SELECT * FROM users WHERE current_mood = ?"
     val rowReader: ResultSet.() -> T = {
@@ -166,7 +186,10 @@ public class PostgresQueries(
         getArray(8)?.decodeArray(positiveIntegerAdapter),
       )
     }
-    return block(sql, rowReader)
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setObject(1, moodAdapter.encode(current_mood), Types.OTHER)
+    }
+    return block(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> getUsersByMood(current_mood: Mood, mapper: (

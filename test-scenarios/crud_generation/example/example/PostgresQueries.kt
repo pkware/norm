@@ -1,6 +1,7 @@
 package example
 
 import java.math.BigDecimal
+import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.SQLException
 import java.time.OffsetDateTime
@@ -10,6 +11,7 @@ import kotlin.Int
 import kotlin.IntArray
 import kotlin.Long
 import kotlin.String
+import kotlin.Unit
 import kotlin.collections.Iterable
 import kotlin.jvm.Throws
 import norm.ConnectionProvider
@@ -23,7 +25,11 @@ public class PostgresQueries(
 ) : Queries {
   private val driver: NormDriver = NormDriver(connectionProvider)
 
-  private fun <T : Any, R> findAllAuthor(mapper: (id: Int, name: String) -> T, block: (String, ResultSet.() -> T) -> R): R {
+  private fun <T : Any, R> findAllAuthor(mapper: (id: Int, name: String) -> T, block: (
+    String,
+    ResultSet.() -> T,
+    (PreparedStatement.() -> Unit)?,
+  ) -> R): R {
     val sql = "SELECT id, name FROM author ORDER BY name"
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -31,12 +37,12 @@ public class PostgresQueries(
         getString(2),
       )
     }
-    return block(sql, rowReader)
+    return block(sql, rowReader, null)
   }
 
   override fun <T : Any> findAllAuthor(mapper: (id: Int, name: String) -> T): Many<T> = findAllAuthor(mapper, driver::queryMany)
 
-  override fun <T : Any> findAllAuthorDynamically(mapper: (id: Int, name: String) -> T): Query<T> = findAllAuthor(mapper, driver::dynamic)
+  override fun <T : Any> findAllAuthorDynamically(mapper: (id: Int, name: String) -> T): Query<T> = findAllAuthor(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
 
   @Throws(SQLException::class)
   override fun <T : Any> getAuthorByName(name: String, mapper: (
@@ -72,7 +78,11 @@ public class PostgresQueries(
     }
   }
 
-  private fun <T : Any, R> findAllAuditLog(mapper: (message: String, logged_at: OffsetDateTime) -> T, block: (String, ResultSet.() -> T) -> R): R {
+  private fun <T : Any, R> findAllAuditLog(mapper: (message: String, logged_at: OffsetDateTime) -> T, block: (
+    String,
+    ResultSet.() -> T,
+    (PreparedStatement.() -> Unit)?,
+  ) -> R): R {
     val sql = "SELECT * FROM audit_log"
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -80,12 +90,12 @@ public class PostgresQueries(
         getObject(2, OffsetDateTime::class.java),
       )
     }
-    return block(sql, rowReader)
+    return block(sql, rowReader, null)
   }
 
   override fun <T : Any> findAllAuditLog(mapper: (message: String, logged_at: OffsetDateTime) -> T): Many<T> = findAllAuditLog(mapper, driver::queryMany)
 
-  override fun <T : Any> findAllAuditLogDynamically(mapper: (message: String, logged_at: OffsetDateTime) -> T): Query<T> = findAllAuditLog(mapper, driver::dynamic)
+  override fun <T : Any> findAllAuditLogDynamically(mapper: (message: String, logged_at: OffsetDateTime) -> T): Query<T> = findAllAuditLog(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
 
   @Throws(SQLException::class)
   override fun <T : Any> countAuditLog(mapper: (count: Long) -> T): T {
@@ -131,7 +141,11 @@ public class PostgresQueries(
       bio: String?,
       created_at: OffsetDateTime,
     ) -> T,
-    block: (String, ResultSet.() -> T) -> R,
+    block: (
+      String,
+      ResultSet.() -> T,
+      (PreparedStatement.() -> Unit)?,
+    ) -> R,
   ): R {
     val sql = "SELECT * FROM author WHERE id = ?"
     val rowReader: ResultSet.() -> T = {
@@ -142,7 +156,10 @@ public class PostgresQueries(
         getObject(4, OffsetDateTime::class.java),
       )
     }
-    return block(sql, rowReader)
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setInt(1, id)
+    }
+    return block(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> findAuthorById(id: Int, mapper: (
@@ -280,7 +297,11 @@ public class PostgresQueries(
       quantity: Int,
       price: BigDecimal,
     ) -> T,
-    block: (String, ResultSet.() -> T) -> R,
+    block: (
+      String,
+      ResultSet.() -> T,
+      (PreparedStatement.() -> Unit)?,
+    ) -> R,
   ): R {
     val sql = "SELECT * FROM order_item WHERE order_id = ? AND item_id = ?"
     val rowReader: ResultSet.() -> T = {
@@ -291,7 +312,11 @@ public class PostgresQueries(
         getBigDecimal(4),
       )
     }
-    return block(sql, rowReader)
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setInt(1, order_id)
+      setInt(2, item_id)
+    }
+    return block(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> findOrderItemByOrderIdAndItemId(
@@ -369,7 +394,11 @@ public class PostgresQueries(
     item_id: Int,
     quantity: Int,
     price: BigDecimal,
-  ) -> T, block: (String, ResultSet.() -> T) -> R): R {
+  ) -> T, block: (
+    String,
+    ResultSet.() -> T,
+    (PreparedStatement.() -> Unit)?,
+  ) -> R): R {
     val sql = "SELECT * FROM order_item"
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -379,7 +408,7 @@ public class PostgresQueries(
         getBigDecimal(4),
       )
     }
-    return block(sql, rowReader)
+    return block(sql, rowReader, null)
   }
 
   override fun <T : Any> findAllOrderItem(mapper: (
@@ -394,7 +423,7 @@ public class PostgresQueries(
     item_id: Int,
     quantity: Int,
     price: BigDecimal,
-  ) -> T): Query<T> = findAllOrderItem(mapper, driver::dynamic)
+  ) -> T): Query<T> = findAllOrderItem(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
 
   @Throws(SQLException::class)
   override fun <T : Any> countOrderItem(mapper: (count: Long) -> T): T {
@@ -443,7 +472,11 @@ public class PostgresQueries(
       tax: BigDecimal,
       total: BigDecimal?,
     ) -> T,
-    block: (String, ResultSet.() -> T) -> R,
+    block: (
+      String,
+      ResultSet.() -> T,
+      (PreparedStatement.() -> Unit)?,
+    ) -> R,
   ): R {
     val sql = "SELECT * FROM product WHERE id = ?"
     val rowReader: ResultSet.() -> T = {
@@ -455,7 +488,10 @@ public class PostgresQueries(
         getBigDecimal(5),
       )
     }
-    return block(sql, rowReader)
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setInt(1, id)
+    }
+    return block(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> findProductById(id: Int, mapper: (
@@ -523,7 +559,11 @@ public class PostgresQueries(
     price: BigDecimal,
     tax: BigDecimal,
     total: BigDecimal?,
-  ) -> T, block: (String, ResultSet.() -> T) -> R): R {
+  ) -> T, block: (
+    String,
+    ResultSet.() -> T,
+    (PreparedStatement.() -> Unit)?,
+  ) -> R): R {
     val sql = "SELECT * FROM product"
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -534,7 +574,7 @@ public class PostgresQueries(
         getBigDecimal(5),
       )
     }
-    return block(sql, rowReader)
+    return block(sql, rowReader, null)
   }
 
   override fun <T : Any> findAllProduct(mapper: (
@@ -551,7 +591,7 @@ public class PostgresQueries(
     price: BigDecimal,
     tax: BigDecimal,
     total: BigDecimal?,
-  ) -> T): Query<T> = findAllProduct(mapper, driver::dynamic)
+  ) -> T): Query<T> = findAllProduct(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
 
   @Throws(SQLException::class)
   override fun <T : Any> countProduct(mapper: (count: Long) -> T): T {

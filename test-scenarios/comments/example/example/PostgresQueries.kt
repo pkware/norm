@@ -1,5 +1,6 @@
 package example
 
+import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.SQLException
 import kotlin.Any
@@ -7,6 +8,7 @@ import kotlin.Int
 import kotlin.IntArray
 import kotlin.Long
 import kotlin.String
+import kotlin.Unit
 import kotlin.collections.Iterable
 import kotlin.jvm.Throws
 import norm.ConnectionProvider
@@ -209,7 +211,11 @@ public class PostgresQueries(
       published_year: Int?,
       isbn: String?,
     ) -> T,
-    block: (String, ResultSet.() -> T) -> R,
+    block: (
+      String,
+      ResultSet.() -> T,
+      (PreparedStatement.() -> Unit)?,
+    ) -> R,
   ): R {
     val sql = "SELECT * FROM book WHERE author_id = ?"
     val rowReader: ResultSet.() -> T = {
@@ -221,7 +227,10 @@ public class PostgresQueries(
         getString(5),
       )
     }
-    return block(sql, rowReader)
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setInt(1, author_id)
+    }
+    return block(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> listBooksByAuthor(author_id: Int, mapper: (
@@ -242,7 +251,11 @@ public class PostgresQueries(
       published_year: Int?,
       isbn: String?,
     ) -> T,
-    block: (String, ResultSet.() -> T) -> R,
+    block: (
+      String,
+      ResultSet.() -> T,
+      (PreparedStatement.() -> Unit)?,
+    ) -> R,
   ): R {
     val sql = "SELECT * FROM book WHERE published_year >= ? AND published_year <= ?"
     val rowReader: ResultSet.() -> T = {
@@ -254,7 +267,11 @@ public class PostgresQueries(
         getString(5),
       )
     }
-    return block(sql, rowReader)
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setInt(1, published_year)
+      setInt(2, published_year2)
+    }
+    return block(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> listBooksByYearRange(

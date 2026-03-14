@@ -1,5 +1,6 @@
 package example
 
+import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.SQLException
 import java.time.OffsetDateTime
@@ -8,6 +9,7 @@ import kotlin.Any
 import kotlin.Int
 import kotlin.IntArray
 import kotlin.String
+import kotlin.Unit
 import kotlin.collections.Iterable
 import kotlin.jvm.Throws
 import norm.ConnectionProvider
@@ -53,7 +55,11 @@ public class PostgresQueries(
       created_at: OffsetDateTime,
       category: String,
     ) -> T,
-    block: (String, ResultSet.() -> T) -> R,
+    block: (
+      String,
+      ResultSet.() -> T,
+      (PreparedStatement.() -> Unit)?,
+    ) -> R,
   ): R {
     val sql = "SELECT id, created_at, category FROM event WHERE category = ? ORDER BY created_at DESC"
     val rowReader: ResultSet.() -> T = {
@@ -63,7 +69,10 @@ public class PostgresQueries(
         getString(3),
       )
     }
-    return block(sql, rowReader)
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setString(1, category)
+    }
+    return block(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> listEventsByCategory(category: String, mapper: (

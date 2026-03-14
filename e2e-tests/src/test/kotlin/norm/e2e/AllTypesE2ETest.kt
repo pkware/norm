@@ -54,6 +54,20 @@ class AllTypesE2ETest : PostgresTestBase() {
     assertThat(results).containsExactly("first", "second", "third")
   }
 
+  @Test
+  fun `parameterized many query filters correctly`() {
+    // Given: Three rows, two matching the filter
+    insertRowWithArrays(stringType = "target")
+    insertRowWithArrays(stringType = "target")
+    insertRowWithArrays(stringType = "other")
+
+    // When: Filter by string_type
+    val results = queries.filterByStringType("target").list()
+
+    // Then: Only the matching rows are returned
+    assertThat(results.map { it.string_type }).containsExactly("target", "target")
+  }
+
   @Nested
   inner class Arrays {
 

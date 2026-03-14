@@ -1,5 +1,6 @@
 package example
 
+import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.SQLException
 import kotlin.Any
@@ -9,6 +10,7 @@ import kotlin.Double
 import kotlin.Int
 import kotlin.IntArray
 import kotlin.String
+import kotlin.Unit
 import kotlin.collections.Iterable
 import kotlin.jvm.Throws
 import norm.ConnectionProvider
@@ -101,7 +103,11 @@ public class PostgresQueries(
   private fun <T : Any, R> getUserSettings(
     user_id: Int,
     mapper: (setting_key: String, setting_value: String?) -> T,
-    block: (String, ResultSet.() -> T) -> R,
+    block: (
+      String,
+      ResultSet.() -> T,
+      (PreparedStatement.() -> Unit)?,
+    ) -> R,
   ): R {
     val sql = """
         |SELECT setting_key, setting_value
@@ -114,7 +120,10 @@ public class PostgresQueries(
         getString(2),
       )
     }
-    return block(sql, rowReader)
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setInt(1, user_id)
+    }
+    return block(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> getUserSettings(user_id: Int, mapper: (setting_key: String, setting_value: String?) -> T): Many<T> = getUserSettings(user_id, mapper, driver::queryMany)
@@ -257,7 +266,11 @@ public class PostgresQueries(
     normal_rand_param2: Double,
     normal_rand_param3: Double,
     mapper: (normal_rand: Double?) -> T,
-    block: (String, ResultSet.() -> T) -> R,
+    block: (
+      String,
+      ResultSet.() -> T,
+      (PreparedStatement.() -> Unit)?,
+    ) -> R,
   ): R {
     val sql = "SELECT * FROM normal_rand(?, ?, ?)"
     val rowReader: ResultSet.() -> T = {
@@ -265,7 +278,12 @@ public class PostgresQueries(
         getDouble(1).takeUnless { wasNull() },
       )
     }
-    return block(sql, rowReader)
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setInt(1, normal_rand_param1)
+      setDouble(2, normal_rand_param2)
+      setDouble(3, normal_rand_param3)
+    }
+    return block(sql, rowReader, queryBinder)
   }
 
   override fun <T> generateRandomNumbers(
@@ -282,7 +300,11 @@ public class PostgresQueries(
       setting1: String?,
       setting2: String?,
     ) -> T,
-    block: (String, ResultSet.() -> T) -> R,
+    block: (
+      String,
+      ResultSet.() -> T,
+      (PreparedStatement.() -> Unit)?,
+    ) -> R,
   ): R {
     val sql = """
         |SELECT user_id, setting1, setting2
@@ -295,7 +317,10 @@ public class PostgresQueries(
         getString(3),
       )
     }
-    return block(sql, rowReader)
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setString(1, crosstab_param1)
+    }
+    return block(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> getUserSettingsPivot(crosstab_param1: String, mapper: (
@@ -313,7 +338,11 @@ public class PostgresQueries(
       category2: Int?,
       category3: Int?,
     ) -> T,
-    block: (String, ResultSet.() -> T) -> R,
+    block: (
+      String,
+      ResultSet.() -> T,
+      (PreparedStatement.() -> Unit)?,
+    ) -> R,
   ): R {
     val sql = """
         |SELECT row_name, category1, category2, category3
@@ -327,7 +356,11 @@ public class PostgresQueries(
         getInt(4).takeUnless { wasNull() },
       )
     }
-    return block(sql, rowReader)
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setString(1, crosstab_param1)
+      setString(2, crosstab_param2)
+    }
+    return block(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> getUserSettingsByCategory(

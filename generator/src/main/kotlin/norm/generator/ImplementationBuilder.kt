@@ -143,6 +143,12 @@ private fun TypeSpec.Builder.addManyImplementation(statement: SqlStatement) {
                 returnType = mapperReturnType,
               ),
             ),
+            ParameterSpec.unnamed(
+              LambdaTypeName.get(
+                receiver = PreparedStatement::class.asTypeName(),
+                returnType = Unit::class.asTypeName(),
+              ).copy(nullable = true),
+            ),
           ),
           returnType = rTypeVariable,
         ),
@@ -154,8 +160,22 @@ private fun TypeSpec.Builder.addManyImplementation(statement: SqlStatement) {
       beginControlFlow("val rowReader: %T.() -> %T = {", RESULT_SET, mapperReturnType)
       addCode("%L\n", mapperInvocation(resultRowShape.builder))
       endControlFlow()
+      if (queryParameters.isNotEmpty()) {
+        beginControlFlow(
+          "val queryBinder: (%T.() -> %T)? = {",
+          PreparedStatement::class.asTypeName(),
+          Unit::class.asTypeName(),
+        )
+        for ((index, parameter) in queryParameters.withIndex()) {
+          val typeInfo = statement.resolveMappableType(parameter)
+          addCode("%L\n", typeInfo.statementAction(index + 1, CodeBlock.of(statement.getParameterName(index))))
+        }
+        endControlFlow()
+        addStatement("return block(sql, rowReader, queryBinder)")
+      } else {
+        addStatement("return block(sql, rowReader, null)")
+      }
     }
-    .addStatement("return block(sql, rowReader)")
     .build()
   addFunction(helperFunction)
   // 2. Public Many variant: override fun <T : Any> queryName(mapper: ...) -> Many<T>
@@ -204,7 +224,11 @@ private fun TypeSpec.Builder.addManyImplementation(statement: SqlStatement) {
         ),
       )
       .returns(Command.NORM_QUERY.parameterizedBy(mapperReturnType))
-      .addStatement("return %N(%N, driver::dynamic)", statement.name, MAPPER_PARAMETER_NAME)
+      .addStatement(
+        "return %N(%N) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }",
+        statement.name,
+        MAPPER_PARAMETER_NAME,
+      )
       .build()
     addFunction(dynamicFunction)
   }
