@@ -46,11 +46,11 @@ import javax.inject.Inject
 internal abstract class NormGenerateTask @Inject constructor(@get:Nested val database: Database) : DefaultTask() {
 
   @get:InputFiles
-  @get:PathSensitive(PathSensitivity.RELATIVE)
+  @get:PathSensitive(PathSensitivity.ABSOLUTE)
   abstract val schemas: ConfigurableFileCollection
 
   @get:InputFiles
-  @get:PathSensitive(PathSensitivity.RELATIVE)
+  @get:PathSensitive(PathSensitivity.ABSOLUTE)
   abstract val queries: ConfigurableFileCollection
 
   /**
@@ -65,8 +65,16 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
   init {
     group = NormPlugin.NORM_GROUP
     description = "Generates Kotlin code from SQL using JDBC analysis."
-    schemas.from(database.schemas.map { it.map(project.projectDir::resolve) })
-    queries.from(database.queries.map { it.map(project.projectDir::resolve) })
+    schemas.from(
+      database.schemas.map {
+        it.map { path -> project.projectDir.toPath().resolve(path).normalize().toFile() }
+      },
+    )
+    queries.from(
+      database.queries.map {
+        it.map { path -> project.projectDir.toPath().resolve(path).normalize().toFile() }
+      },
+    )
     generatedSources.set(project.layout.buildDirectory.dir(NormPlugin.NORM_GENERATED_CODE))
   }
 
