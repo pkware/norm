@@ -17,19 +17,29 @@ import org.jetbrains.kotlin.gradle.plugin.KotlinSourceSet
 internal object IdeIntegration {
 
   /**
-   * Registers the output of [generateTask] as a source directory on [sourceSet] using the best available API.
+   * Registers the output of [generateTask] as a source directory on [sourceSet].
    *
-   * On Kotlin 2.3.0+, uses `KotlinSourceSet.generatedKotlin` which signals to the Kotlin toolchain that these
-   * sources are generated. On older versions, falls back to `KotlinSourceSet.kotlin.srcDir()`.
+   * Always registers via `KotlinSourceSet.kotlin.srcDir()` so that all compilation tasks — including
+   * KSP's `kspKotlin` — receive the generated sources and the correct task dependency is established.
+   * KSP reads from `kotlin.srcDirs`, not from `generatedKotlin`.
+   *
+   * On Kotlin 2.3.0+, also registers via `KotlinSourceSet.generatedKotlin` for IDE integration:
+   * this signals to IntelliJ that it should run [generateTask] during Gradle sync to avoid missing
+   * sources on first project import. IntelliJ deduplicates source roots by path, so the directory
+   * appears once and is marked as a generated source root.
    */
   fun registerGeneratedSources(sourceSet: KotlinSourceSet, generateTask: TaskProvider<NormGenerateTask>) {
+    // Always register for compilation, including KSP's kspKotlin task.
+    sourceSet.kotlin.srcDir(generateTask)
+
+    // Also register with the generatedKotlin API (Kotlin 2.3.0+) for IDE integration.
     try {
       // KotlinSourceSet.getGeneratedKotlin() was added in Kotlin 2.3.0.
       // The return type is SourceDirectorySet, which is a Gradle core type always on the classpath.
       val generatedKotlin = sourceSet.javaClass.getMethod("getGeneratedKotlin").invoke(sourceSet)
       generatedKotlin.javaClass.getMethod("srcDir", Any::class.java).invoke(generatedKotlin, generateTask)
     } catch (_: NoSuchMethodException) {
-      sourceSet.kotlin.srcDir(generateTask)
+      // generatedKotlin not available on this Kotlin version — kotlin.srcDir() above is sufficient.
     }
   }
 
