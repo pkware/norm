@@ -7,9 +7,11 @@ import jakarta.inject.Singleton
 import norm.BorrowedConnection
 import norm.ConnectionProvider
 import java.sql.Connection
+import javax.sql.DataSource
 
 @Singleton
 @Requires(missingBeans = [ConnectionProvider::class])
+@Requires(beans = [DataSource::class])
 public class MicronautConnectionProvider(private val connectionOperations: ConnectionOperations<Connection>) :
   ConnectionProvider {
   override fun <R> withConnection(block: (Connection) -> R): R =

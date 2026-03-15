@@ -6,6 +6,7 @@ import jakarta.inject.Singleton
 import java.sql.ResultSet
 import java.sql.SQLException
 import java.sql.Types
+import javax.sql.DataSource
 import kotlin.Any
 import kotlin.Int
 import kotlin.IntArray
@@ -19,6 +20,7 @@ import norm.combineExecBatchResults
 
 @Singleton
 @Requires(missingBeans = [Queries::class])
+@Requires(beans = [DataSource::class])
 public class PostgresQueries(
   connectionProvider: ConnectionProvider,
   private val jsonbAdapter: ColumnAdapter<JsonData, String>,

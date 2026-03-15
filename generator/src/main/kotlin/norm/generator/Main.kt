@@ -214,6 +214,11 @@ private fun addDependencyInjectionAnnotations(
             .addMember("missingBeans = [%T::class]", missingBeanType)
             .build(),
         )
+        classBuilder.addAnnotation(
+          AnnotationSpec.builder(MICRONAUT_REQUIRES)
+            .addMember("beans = [%T::class]", JAVAX_DATASOURCE)
+            .build(),
+        )
       }
       Framework.SPRING_DATA -> classBuilder.addAnnotation(SPRING_COMPONENT)
     }
