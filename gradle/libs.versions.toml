@@ -36,7 +36,7 @@ norm = "com.pkware.norm:1.0.0-SNAPSHOT"
 shadow = "com.gradleup.shadow:9.4.0"
 spring-boot = "org.springframework.boot:3.4.2"
 spring-dependencyManagement = "io.spring.dependency-management:1.1.7"
-spring-kotlin = "org.jetbrains.kotlin.plugin.spring:2.3.10"
+spring-kotlin = "org.jetbrains.kotlin.plugin.spring:2.3.20"
 wire = { id = "com.squareup.wire", version.ref = "wire" }
 
 [bundles]
