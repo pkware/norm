@@ -4,7 +4,7 @@ import com.google.devtools.ksp.KspExperimental
 import norm.generator.Framework
 
 plugins {
-  kotlin("jvm") version "2.3.10"
+  kotlin("jvm") version "2.3.20"
   alias(libs.plugins.idea.ext)
   alias(libs.plugins.ksp)
   alias(libs.plugins.norm)
