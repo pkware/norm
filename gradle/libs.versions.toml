@@ -4,7 +4,7 @@ ktlint = "1.5.0"
 micronaut = "4.10.21"
 micronautData = "4.14.3"
 testcontainers = "1.21.4"
-wire = "5.5.1"
+wire = "6.2.0"
 
 [libraries]
 assertk = "com.willowtreeapps.assertk:assertk:0.28.1"
