@@ -3,7 +3,7 @@ junit = "6.0.3"
 ktlint = "1.5.0"
 micronaut = "4.10.21"
 micronautData = "4.14.3"
-testcontainers = "1.21.4"
+testcontainers = "2.0.4"
 wire = "6.2.0"
 
 [libraries]
@@ -23,8 +23,8 @@ mockito-kotlin = "org.mockito.kotlin:mockito-kotlin:6.3.0"
 moshi = "com.squareup.moshi:moshi:1.15.2"
 postgresql = "org.postgresql:postgresql:42.7.10"
 testcontainers = { module = "org.testcontainers:testcontainers", version.ref = "testcontainers" }
-testcontainers-junit = { module = "org.testcontainers:junit-jupiter", version.ref = "testcontainers" }
-testcontainers-postgresql = { module = "org.testcontainers:postgresql", version.ref = "testcontainers" }
+testcontainers-junit = { module = "org.testcontainers:testcontainers-junit-jupiter", version.ref = "testcontainers" }
+testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgresql", version.ref = "testcontainers" }
 wire = { module = "com.squareup.wire:wire-runtime", version.ref = "wire" }
 wire-json = { module = "com.squareup.wire:wire-moshi-adapter", version.ref = "wire" }
 
@@ -34,7 +34,7 @@ ksp = "com.google.devtools.ksp:2.2.21-2.0.5"
 # TODO Use the latest version, and don't use a SNAPSHOT
 norm = "com.pkware.norm:1.0.0-SNAPSHOT"
 shadow = "com.gradleup.shadow:9.4.1"
-spring-boot = "org.springframework.boot:3.5.13"
+spring-boot = "org.springframework.boot:4.0.5"
 spring-dependencyManagement = "io.spring.dependency-management:1.1.7"
 spring-kotlin = "org.jetbrains.kotlin.plugin.spring:2.3.20"
 wire = { id = "com.squareup.wire", version.ref = "wire" }
