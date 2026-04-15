@@ -2,6 +2,8 @@ package example
 
 import java.math.BigDecimal
 import java.sql.SQLException
+import java.sql.Statement.EXECUTE_FAILED
+import java.sql.Statement.SUCCESS_NO_INFO
 import java.time.OffsetDateTime
 import kotlin.Any
 import kotlin.Boolean
@@ -188,9 +190,9 @@ public interface Queries {
    *         1. A number greater than or equal to zero -- indicates that the
    *            command was processed successfully and is an update count giving the
    *            number of rows in the database that were affected by the command's execution
-   *         2. A value of [java.sql.Statement.SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
    *            but that the number of rows affected is unknown
-   *         3. A value of [java.sql.Statement.EXECUTE_FAILED] -- indicates that the command failed to execute
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
   @Throws(SQLException::class)
@@ -212,9 +214,9 @@ public interface Queries {
    *         1. A number greater than or equal to zero -- indicates that the
    *            command was processed successfully and is an update count giving the
    *            number of rows in the database that were affected by the command's execution
-   *         2. A value of [java.sql.Statement.SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
    *            but that the number of rows affected is unknown
-   *         3. A value of [java.sql.Statement.EXECUTE_FAILED] -- indicates that the command failed to execute
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
   @Throws(SQLException::class)
@@ -266,9 +268,9 @@ public interface Queries {
    *         1. A number greater than or equal to zero -- indicates that the
    *            command was processed successfully and is an update count giving the
    *            number of rows in the database that were affected by the command's execution
-   *         2. A value of [java.sql.Statement.SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
    *            but that the number of rows affected is unknown
-   *         3. A value of [java.sql.Statement.EXECUTE_FAILED] -- indicates that the command failed to execute
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
   @Throws(SQLException::class)
@@ -293,9 +295,9 @@ public interface Queries {
    *         1. A number greater than or equal to zero -- indicates that the
    *            command was processed successfully and is an update count giving the
    *            number of rows in the database that were affected by the command's execution
-   *         2. A value of [java.sql.Statement.SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
    *            but that the number of rows affected is unknown
-   *         3. A value of [java.sql.Statement.EXECUTE_FAILED] -- indicates that the command failed to execute
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
   @Throws(SQLException::class)
@@ -373,9 +375,9 @@ public interface Queries {
    *         1. A number greater than or equal to zero -- indicates that the
    *            command was processed successfully and is an update count giving the
    *            number of rows in the database that were affected by the command's execution
-   *         2. A value of [java.sql.Statement.SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
    *            but that the number of rows affected is unknown
-   *         3. A value of [java.sql.Statement.EXECUTE_FAILED] -- indicates that the command failed to execute
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
   @Throws(SQLException::class)
@@ -398,9 +400,9 @@ public interface Queries {
    *         1. A number greater than or equal to zero -- indicates that the
    *            command was processed successfully and is an update count giving the
    *            number of rows in the database that were affected by the command's execution
-   *         2. A value of [java.sql.Statement.SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
    *            but that the number of rows affected is unknown
-   *         3. A value of [java.sql.Statement.EXECUTE_FAILED] -- indicates that the command failed to execute
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
   @Throws(SQLException::class)
@@ -545,9 +547,9 @@ public interface Queries {
    *         1. A number greater than or equal to zero -- indicates that the
    *            command was processed successfully and is an update count giving the
    *            number of rows in the database that were affected by the command's execution
-   *         2. A value of [java.sql.Statement.SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
    *            but that the number of rows affected is unknown
-   *         3. A value of [java.sql.Statement.EXECUTE_FAILED] -- indicates that the command failed to execute
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
   @Throws(SQLException::class)
@@ -569,9 +571,9 @@ public interface Queries {
    *         1. A number greater than or equal to zero -- indicates that the
    *            command was processed successfully and is an update count giving the
    *            number of rows in the database that were affected by the command's execution
-   *         2. A value of [java.sql.Statement.SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
    *            but that the number of rows affected is unknown
-   *         3. A value of [java.sql.Statement.EXECUTE_FAILED] -- indicates that the command failed to execute
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
   @Throws(SQLException::class)
