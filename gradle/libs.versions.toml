@@ -8,7 +8,7 @@ wire = "6.2.0"
 
 [libraries]
 assertk = "com.willowtreeapps.assertk:assertk:0.28.1"
-detekt-imports = "com.pkware.detekt:import-extension:1.2.0"
+detekt-imports = "com.pkware.detekt:import-extension:2.0.0"
 junit-params = { module = "org.junit.jupiter:junit-jupiter-params", version.ref = "junit" }
 kotlinPoet = "com.squareup:kotlinpoet:2.3.0"
 micronaut-data-processor = { module = "io.micronaut.data:micronaut-data-processor", version.ref = "micronautData" }
