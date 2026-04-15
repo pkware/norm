@@ -11,6 +11,7 @@ import org.gradle.kotlin.dsl.configure
 import org.gradle.kotlin.dsl.get
 import org.gradle.kotlin.dsl.getByType
 import org.gradle.kotlin.dsl.register
+import org.gradle.kotlin.dsl.withType
 import org.gradle.plugins.signing.SigningExtension
 import org.gradle.plugins.signing.SigningPlugin
 
@@ -43,12 +44,13 @@ class PublishConventionPlugin : Plugin<Project> {
       }
     }
 
-    // Configure POM for all Maven publications after they've been created
+    // Configure POM for all Maven publications after they've been created.
+    // This must cover every publication, including plugin marker POMs auto-created by java-gradle-plugin,
+    // because Maven Central requires full metadata on every artifact.
     afterEvaluate {
-      val publicationName = if (pluginManager.hasPlugin("java-gradle-plugin")) "pluginMaven" else "mavenJava"
       configure<PublishingExtension> {
-        publications {
-          (getByName(publicationName) as MavenPublication).pom {
+        publications.withType<MavenPublication>().configureEach {
+          pom {
             name.set(pomName)
             description.set(pomDescription)
             packaging = pomPackaging
@@ -97,10 +99,9 @@ class PublishConventionPlugin : Plugin<Project> {
           signingPassword,
         )
 
-        // Sign the correct publication based on project type
-        val publicationName = if (pluginManager.hasPlugin("java-gradle-plugin")) "pluginMaven" else "mavenJava"
+        // Sign all publications, including plugin marker POMs auto-created by java-gradle-plugin.
         afterEvaluate {
-          sign(extensions.getByType<PublishingExtension>().publications[publicationName])
+          sign(extensions.getByType<PublishingExtension>().publications)
         }
       }
     }
@@ -149,4 +150,4 @@ val Project.pomName: String
   get() = properties.getOrDefault("POM_NAME", name).toString()
 
 val Project.pomDescription: String
-  get() = properties.getOrDefault("POM_NAME", name).toString()
+  get() = properties.getOrDefault("POM_DESCRIPTION", name).toString()
