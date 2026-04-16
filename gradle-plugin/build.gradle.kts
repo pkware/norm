@@ -43,6 +43,28 @@ kotlin {
   explicitApi()
 }
 
+// Generate a BuildConfig with the project version so the plugin can add the correct runtime
+// dependency version at apply-time, rather than relying on a hardcoded constant.
+val generateBuildConfig by tasks.registering {
+  val outputDir = layout.buildDirectory.dir("generated/buildconfig")
+  val projectVersion = project.version.toString()
+  inputs.property("version", projectVersion)
+  outputs.dir(outputDir)
+  doLast {
+    val dir = outputDir.get().asFile.resolve("norm/gradle")
+    dir.mkdirs()
+    dir.resolve("BuildConfig.kt").writeText(
+      """
+      |package norm.gradle
+      |
+      |internal const val BUILD_VERSION: String = "$projectVersion"
+      |
+      """.trimMargin(),
+    )
+  }
+}
+sourceSets.main { kotlin.srcDir(generateBuildConfig) }
+
 // Shadow relocates Wire, Moshi, Okio, and KotlinPoet to prevent classloader conflicts when the
 // consuming project also has Wire on its build classpath. Wire's ProtoAdapter resolves adapters
 // via Class.forName() using the calling class's classloader, which fails in Gradle's isolated

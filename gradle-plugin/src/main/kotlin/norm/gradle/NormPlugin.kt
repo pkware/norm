@@ -61,7 +61,7 @@ public class NormPlugin : Plugin<Project> {
       extensions.getByType<KotlinSourceSetContainer>().sourceSets.getByName("main").apiConfigurationName
     configurations.getByName(
       sourceSetApiConfigName,
-    ).dependencies.add(project.dependencies.create("com.pkware.norm:runtime:$NORM_VERSION"))
+    ).dependencies.add(project.dependencies.create("com.pkware.norm:runtime:$BUILD_VERSION"))
   }
 
   /**
@@ -73,6 +73,5 @@ public class NormPlugin : Plugin<Project> {
      */
     public const val NORM_GENERATED_CODE: String = "generated/norm"
     internal const val NORM_GROUP: String = "norm"
-    internal const val NORM_VERSION: String = "1.0.0-SNAPSHOT"
   }
 }
