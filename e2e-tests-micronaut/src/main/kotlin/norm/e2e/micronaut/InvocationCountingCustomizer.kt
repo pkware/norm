@@ -28,6 +28,7 @@ class InvocationCountingCustomizer(connectionOperations: AbstractConnectionOpera
     connectionOperations.addConnectionCustomizer(this)
   }
 
+  /** The number of times this customizer has been invoked. */
   val count = AtomicInteger(0)
 
   override fun <R> intercept(

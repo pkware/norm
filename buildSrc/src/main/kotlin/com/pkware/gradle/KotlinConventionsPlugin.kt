@@ -2,9 +2,9 @@ package com.pkware.gradle
 
 import com.diffplug.gradle.spotless.SpotlessExtension
 import com.diffplug.gradle.spotless.SpotlessPlugin
-import io.gitlab.arturbosch.detekt.Detekt
-import io.gitlab.arturbosch.detekt.DetektPlugin
-import io.gitlab.arturbosch.detekt.extensions.DetektExtension
+import dev.detekt.gradle.Detekt
+import dev.detekt.gradle.extensions.DetektExtension
+import dev.detekt.gradle.plugin.DetektPlugin
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.artifacts.VersionCatalogsExtension
@@ -45,8 +45,8 @@ class KotlinConventionsPlugin : Plugin<Project> {
 
     apply<DetektPlugin>()
     configure<DetektExtension> {
-      buildUponDefaultConfig = true
-      parallel = true
+      buildUponDefaultConfig.set(true)
+      parallel.set(true)
       config.from("$rootDir/detekt.yml")
     }
     configurations.named("detektPlugins") {
@@ -57,7 +57,7 @@ class KotlinConventionsPlugin : Plugin<Project> {
     val generatedFilesUnix = "$buildDirectory/generated"
     // configureEach for lazy configuration
     tasks.withType<Detekt>().configureEach {
-      jvmTarget = tasks.named<KotlinCompile>("compileKotlin").get().compilerOptions.jvmTarget.get().target
+      jvmTarget.set(tasks.named<KotlinCompile>("compileKotlin").get().compilerOptions.jvmTarget.get().target)
       exclude {
         // Work around https://github.com/detekt/detekt/issues/4743
         val absolutePath = it.file.absolutePath

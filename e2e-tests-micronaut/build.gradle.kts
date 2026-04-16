@@ -1,7 +1,6 @@
 @file:OptIn(KspExperimental::class)
 
 import com.google.devtools.ksp.KspExperimental
-import io.gitlab.arturbosch.detekt.Detekt
 
 plugins {
   `kotlin-conventions`
@@ -49,10 +48,4 @@ sourceSets {
 
 ksp {
   useKsp2 = false
-}
-
-// Disable detekt for E2E test module - detekt 1.23.8 has compatibility issues with Kotlin 2.2
-// See: https://detekt.dev/docs/introduction/compatibility/
-tasks.withType<Detekt>().configureEach {
-  enabled = false
 }
