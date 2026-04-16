@@ -53,7 +53,13 @@ class PublishConventionPlugin : Plugin<Project> {
           pom {
             name.set(pomName)
             description.set(pomDescription)
-            packaging = pomPackaging
+            // Marker publications created by java-gradle-plugin are POM-only artifacts.
+            // MavenPluginPublishingRule sets their packaging to "pom" automatically;
+            // overriding it here would revert them to "jar", causing Maven Central to
+            // look for a JAR that doesn't exist.
+            if (!this@configureEach.name.endsWith("PluginMarkerMaven")) {
+              packaging = pomPackaging
+            }
             url.set("https://github.com/pkware/norm")
 
             organization {
