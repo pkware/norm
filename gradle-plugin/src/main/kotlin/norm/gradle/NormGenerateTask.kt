@@ -86,6 +86,12 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
       val username = container.username
       val password = container.password
 
+      // Ensure the PostgreSQL driver is registered with DriverManager. In Gradle's classloader
+      // hierarchy, DriverManager's service-loader discovery may not see the driver JAR on the
+      // plugin classpath. Explicitly loading the class triggers its static initializer, which
+      // registers the driver.
+      Class.forName("org.postgresql.Driver")
+
       DriverManager.getConnection(jdbcUrl, username, password).use { connection ->
         applySchemas(connection)
 

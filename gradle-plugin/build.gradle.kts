@@ -31,9 +31,13 @@ dependencies {
   shaded(projects.generator)
   shaded(libs.wire.json)
   shaded(libs.moshi)
+  // Testcontainers and docker-java are shaded to isolate them from Jackson versions that other
+  // Gradle plugins (e.g., Micronaut) place on the buildscript classpath. Testcontainers' shaded
+  // Jackson ObjectMapper fails to see @JsonValue annotations on docker-java model classes when a
+  // non-shaded jackson-databind is also present, producing malformed JSON that Docker rejects.
+  shaded(libs.testcontainers.postgresql)
 
   implementation(kotlin("gradle-plugin"))
-  implementation(libs.testcontainers.postgresql)
   implementation(libs.postgresql)
 
   testImplementation(gradleTestKit())
@@ -75,6 +79,16 @@ tasks.shadowJar {
   relocate("com.squareup.moshi", "com.pkware.norm.shaded.com.squareup.moshi")
   relocate("com.squareup.kotlinpoet", "com.pkware.norm.shaded.com.squareup.kotlinpoet")
   relocate("okio", "com.pkware.norm.shaded.okio")
+  // Testcontainers, docker-java, and Jackson annotations must be relocated together so that
+  // Jackson's annotation introspector and the docker-java model classes share the same relocated
+  // annotation package. Without this, a non-shaded jackson-databind from another Gradle plugin
+  // (e.g., Micronaut) on the buildscript classpath interferes with Testcontainers' shaded
+  // Jackson, causing @JsonValue annotations on docker-java model types to be ignored.
+  relocate("org.testcontainers", "com.pkware.norm.shaded.org.testcontainers")
+  relocate("com.github.dockerjava", "com.pkware.norm.shaded.com.github.dockerjava")
+  relocate("com.fasterxml.jackson", "com.pkware.norm.shaded.com.fasterxml.jackson")
+  relocate("org.apache.commons", "com.pkware.norm.shaded.org.apache.commons")
+  relocate("org.rnorth", "com.pkware.norm.shaded.org.rnorth")
   archiveClassifier = ""
 }
 
