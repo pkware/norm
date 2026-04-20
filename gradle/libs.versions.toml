@@ -3,7 +3,7 @@ junit = "6.0.3"
 ktlint = "1.5.0"
 micronaut = "4.10.21"
 micronautData = "4.14.3"
-testcontainers = "2.0.4"
+testcontainers = "2.0.5"
 wire = "6.2.0"
 
 [libraries]
