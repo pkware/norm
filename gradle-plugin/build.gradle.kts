@@ -89,6 +89,10 @@ tasks.shadowJar {
   relocate("com.fasterxml.jackson", "com.pkware.norm.shaded.com.fasterxml.jackson")
   relocate("org.apache.commons", "com.pkware.norm.shaded.org.apache.commons")
   relocate("org.rnorth", "com.pkware.norm.shaded.org.rnorth")
+  // Rename META-INF/services files based on relocation rules so that ServiceLoader using the
+  // relocated interface class (e.g., DockerClientProviderStrategy) can find its implementations.
+  // Without this, the services file stays at its original name and ServiceLoader gets zero results.
+  mergeServiceFiles()
   archiveClassifier = ""
 }
 
