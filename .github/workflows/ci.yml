@@ -8,43 +8,53 @@ on:
   push:
     branches: [ main, release/* ]
 
+permissions: {}
+
 jobs:
   linux:
     name: Linux
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+      actions: write
 
     steps:
-    - uses: actions/checkout@v6
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
-    - name: Set up JDK
-      uses: actions/setup-java@v5
-      with:
-        java-version: 21
-        distribution: 'temurin'
+      - name: Set up JDK
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5
+        with:
+          java-version: 21
+          distribution: 'temurin'
 
-    - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@v6
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@50e97c2cd7a37755bbfafc9c5b7cafaece252f6e # v6
 
-    - name: Clear Testcontainers cache
-      run: rm -f ~/.testcontainers.properties
+      - name: Clear Testcontainers cache
+        run: rm -f ~/.testcontainers.properties
 
-    - name: Build Norm
-      run: ./gradlew build
+      - name: Build Norm
+        run: ./gradlew build
 
-    - name: Build Example
-      run: ./gradlew build
-      working-directory: example
+      - name: Build Example
+        run: ./gradlew build
+        working-directory: example
 
-    - name: Upload Test Results
-      if: always()
-      uses: actions/upload-artifact@v7
-      with:
-        name: Test Results Linux
-        path: '**/test-results/**/*.xml'
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: Test Results Linux
+          path: '**/test-results/**/*.xml'
 
-    - name: Publish Test Report
-      uses: mikepenz/action-junit-report@v6.4.0
-      if: always()
-      with:
-        report_paths: '**/test-results/**/TEST-*.xml'
+      - name: Publish Test Report
+        uses: mikepenz/action-junit-report@bccf2e31636835cf0874589931c4116687171386 # v6.4.0
+        if: always()
+        with:
+          report_paths: '**/test-results/**/TEST-*.xml'
