@@ -10,7 +10,6 @@ import example.Mood
 import example.PostgresQueries
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest
 import jakarta.inject.Inject
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.sql.Statement
 import javax.sql.DataSource
@@ -36,17 +35,6 @@ class NormMicronautAdapterTest {
 
   @Inject
   lateinit var dataSource: DataSource
-
-  @BeforeEach
-  fun cleanDatabase() {
-    dataSource.connection.use { connection ->
-      connection.createStatement().use { statement ->
-        statement.execute("DELETE FROM person")
-        statement.execute("DELETE FROM book")
-        statement.execute("DELETE FROM author")
-      }
-    }
-  }
 
   @Test
   fun `auto-generated enum adapter decodes through Micronaut DI`() {
@@ -96,9 +84,9 @@ class NormMicronautAdapterTest {
       bio = JsonData("""{"round": "trip"}"""),
     )
 
-    // The id is always 1 here because cleanDatabase() deletes all rows and this is the first insert.
-    // Postgres SERIAL sequences are not reset by DELETE, but since there is only one insert in this
-    // test, we can query the single row.
+    // Each test runs in a rolled-back transaction, so there is always exactly one row here.
+    // Postgres SERIAL sequences are not reset by rollback, but since there is only one insert in
+    // this test, we can query the single row.
     val person = dataSource.connection.use { connection ->
       connection.prepareStatement("SELECT id FROM person LIMIT 1").use { statement ->
         statement.executeQuery().use { resultSet ->

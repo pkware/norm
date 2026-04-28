@@ -7,7 +7,6 @@ import assertk.assertions.isNull
 import example.PostgresQueries
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest
 import jakarta.inject.Inject
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import javax.sql.DataSource
 
@@ -17,7 +16,11 @@ import javax.sql.DataSource
  * These tests verify:
  * - Norm queries execute correctly using Micronaut-managed connections
  * - Norm queries participate in `@Transactional` scopes (rollback on failure)
- * - Norm queries work outside a transaction
+ * - Nullable columns are handled correctly
+ *
+ * Each test runs inside a rolled-back transaction courtesy of `@MicronautTest`'s default
+ * `transactional = true`. All `dataSource.connection` calls return the same transaction-bound
+ * connection, so no explicit cleanup is needed between tests.
  */
 @MicronautTest
 class NormMicronautIntegrationTest {
@@ -30,17 +33,6 @@ class NormMicronautIntegrationTest {
 
   @Inject
   lateinit var dataSource: DataSource
-
-  @BeforeEach
-  fun cleanDatabase() {
-    dataSource.connection.use { connection ->
-      connection.createStatement().use { statement ->
-        statement.execute("DELETE FROM person")
-        statement.execute("DELETE FROM book")
-        statement.execute("DELETE FROM author")
-      }
-    }
-  }
 
   @Test
   fun `can execute Norm query through Micronaut connection management`() {
