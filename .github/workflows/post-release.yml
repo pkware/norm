@@ -1,0 +1,49 @@
+name: Post-release SNAPSHOT Bump
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump-snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: true  # required: this workflow pushes a branch
+
+      - name: Calculate next SNAPSHOT version
+        id: next
+        run: |
+          version=$(grep "^version=" gradle.properties | cut -d'=' -f2)
+          IFS='.' read -r major minor patch <<< "$version"
+          next_patch=$((patch + 1))
+          snapshot="${major}.${minor}.${next_patch}-SNAPSHOT"
+          echo "snapshot=${snapshot}" >> "$GITHUB_OUTPUT"
+
+      - name: Bump version in gradle.properties
+        env:
+          SNAPSHOT: ${{ steps.next.outputs.snapshot }}
+        run: |
+          sed -i "s/^version=.*/version=${SNAPSHOT}/" gradle.properties
+
+      - name: Create pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SNAPSHOT: ${{ steps.next.outputs.snapshot }}
+        run: |
+          branch="chore/next-snapshot-${SNAPSHOT}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "${branch}"
+          git add gradle.properties
+          git commit -m "chore: prepare next development version ${SNAPSHOT}"
+          git push origin "${branch}"
+          gh pr create \
+            --title "chore: prepare next development version ${SNAPSHOT}" \
+            --body "Automated PR to bump version to next development SNAPSHOT after release." \
+            --label release

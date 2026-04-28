@@ -81,12 +81,12 @@ and gaining full control over PostgreSQL type resolution.
 Load the `example` project into Intellij or use it as your Gradle entry point. See the [README](example/README.md) for
 details.
 
-### Releasing
+## Releasing
+Releases are automated via [release-please](https://github.com/googleapis/release-please). As `feat`
+and `fix` commits accumulate on `main`, release-please maintains an open release PR that
+bumps the version in `gradle.properties`. Merging that PR causes release-please to
+push a semver tag, which triggers the publish workflow to sign and publish artifacts to Maven Central
+and create a GitHub Release with auto-generated release notes.
 
-1. Change the relevant version in `gradle.properties` to a non-SNAPSHOT version.
-2. `git commit -am "Release version X.Y.Z."` (where and X.Y.Z is the new version)
-3. Push or merge to the main branch.
-4. Update `gradle.properties` to the next SNAPSHOT version.
-5. `git commit -am "Prepare next development version."`
-6. After the merge, tag the release commit on the main branch. `git tag -a X.Y.Z -m "Version X.Y.Z"` (where X.Y.Z is the new version)
-7. `git push --tags`.
+Every push to `main` also publishes the current `-SNAPSHOT` version to the Maven Central snapshot
+repository at `central.sonatype.com/repository/maven-snapshots/`.

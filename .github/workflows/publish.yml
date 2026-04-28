@@ -41,8 +41,8 @@ jobs:
       - name: Check version
         id: version
         run: |
-          version=$(grep "version" gradle.properties | cut -d'=' -f2 | tr -d ' ')
-          if [[ "$version" != *"SNAPSHOT"* ]]; then
+          version=$(grep "^version=" gradle.properties | cut -d'=' -f2)
+          if [[ "$version" != *"-SNAPSHOT" ]]; then
             echo "is_release=true" >> $GITHUB_OUTPUT
           else
             echo "is_release=false" >> $GITHUB_OUTPUT

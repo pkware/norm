@@ -1,0 +1,23 @@
+name: Conventional Commits
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate commit messages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check commit messages
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: .github/scripts/validate-commits.sh "$BASE_REF"
