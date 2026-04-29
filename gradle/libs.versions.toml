@@ -22,7 +22,7 @@ micronaut-junit = "io.micronaut.test:micronaut-test-junit5:4.10.3"
 mockito-junit = "org.mockito:mockito-junit-jupiter:5.23.0"
 mockito-kotlin = "org.mockito.kotlin:mockito-kotlin:6.3.0"
 moshi = "com.squareup.moshi:moshi:1.15.2"
-postgresql = "org.postgresql:postgresql:42.7.10"
+postgresql = "org.postgresql:postgresql:42.7.11"
 testcontainers = { module = "org.testcontainers:testcontainers", version.ref = "testcontainers" }
 testcontainers-junit = { module = "org.testcontainers:testcontainers-junit-jupiter", version.ref = "testcontainers" }
 testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgresql", version.ref = "testcontainers" }
