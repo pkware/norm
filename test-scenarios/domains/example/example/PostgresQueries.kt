@@ -16,6 +16,7 @@ import norm.ColumnAdapter
 import norm.ConnectionProvider
 import norm.Many
 import norm.NormDriver
+import norm.RealTransactable
 import norm.combineExecBatchResults
 import norm.decodeArray
 import norm.encodeToSqlArray
@@ -27,7 +28,8 @@ public class PostgresQueries(
   private val positiveIntegerAdapter:
       ColumnAdapter<PositiveInteger, Int> = PositiveIntegerAdapter(),
   private val usPostalCodeAdapter: ColumnAdapter<UsPostalCode, String> = UsPostalCodeAdapter(),
-) : Queries {
+) : RealTransactable(connectionProvider),
+    Queries {
   private val driver: NormDriver = NormDriver(connectionProvider)
 
   @Throws(SQLException::class)

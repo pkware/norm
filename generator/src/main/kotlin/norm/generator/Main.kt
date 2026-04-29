@@ -19,6 +19,7 @@ import plugin.Query
 
 private val NORM_DRIVER = ClassName(RUNTIME_PACKAGE, "NormDriver")
 private val CONNECTION_PROVIDER = ClassName(RUNTIME_PACKAGE, "ConnectionProvider")
+private val REAL_TRANSACTABLE = ClassName(RUNTIME_PACKAGE, "RealTransactable")
 
 /**
  * Generates Kotlin models and query files for use with the Norm runtime.
@@ -117,6 +118,13 @@ private fun generateQueryImplementation(
 
   val classBuilder = TypeSpec.classBuilder("PostgresQueries")
     .addSuperinterface(interfaceType)
+
+  if (frameworks.isEmpty()) {
+    // Frameworks provide their own transaction mechanism.
+    // Only generate support for Norm's transaction API if not using a framework.
+    classBuilder.superclass(REAL_TRANSACTABLE)
+    classBuilder.addSuperclassConstructorParameter("connectionProvider")
+  }
 
   // Adapter parameters come in two groups:
   // 1. User-configured adapters (no default) — must come first in the constructor
