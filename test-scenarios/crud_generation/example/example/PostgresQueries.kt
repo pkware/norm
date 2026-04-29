@@ -18,11 +18,13 @@ import norm.ConnectionProvider
 import norm.Many
 import norm.NormDriver
 import norm.Query
+import norm.RealTransactable
 import norm.combineExecBatchResults
 
 public class PostgresQueries(
   connectionProvider: ConnectionProvider,
-) : Queries {
+) : RealTransactable(connectionProvider),
+    Queries {
   private val driver: NormDriver = NormDriver(connectionProvider)
 
   private fun <T : Any, R> findAllAuthor(mapper: (id: Int, name: String) -> T, block: (

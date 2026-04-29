@@ -1,10 +1,13 @@
 package norm.e2e
 
 import norm.ConnectionProvider
+import norm.TransactionalConnectionProvider
 import org.intellij.lang.annotations.Language
+import org.junit.jupiter.api.AutoClose
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
+import org.postgresql.ds.PGSimpleDataSource
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.containers.wait.strategy.Wait
 import org.testcontainers.junit.jupiter.Container
@@ -26,6 +29,8 @@ import javax.sql.DataSource
 abstract class PostgresTestBase {
 
   protected lateinit var connectionProvider: ConnectionProvider
+
+  @AutoClose
   private lateinit var connection: Connection
 
   @BeforeEach
@@ -40,7 +45,7 @@ abstract class PostgresTestBase {
 
     // Wrap connection in a simple DataSource
     val dataSource = SingleConnectionDataSource(connection)
-    connectionProvider = ConnectionProvider(dataSource)
+    connectionProvider = TransactionalConnectionProvider(dataSource)
 
     // Ensure clean state before loading schema
     cleanDatabase(connection)
@@ -93,6 +98,16 @@ abstract class PostgresTestBase {
       .withUsername("test")
       .withPassword("test")
       .waitingFor(Wait.forListeningPort())
+
+    /**
+     * Creates a [DataSource] that returns real connections (not wrapped in [NonClosingConnectionWrapper]).
+     * Needed for transaction tests where connection lifecycle matters — autoCommit changes, close, etc.
+     */
+    fun createRealDataSource(): DataSource = PGSimpleDataSource().apply {
+      setURL(postgres.jdbcUrl)
+      user = postgres.username
+      password = postgres.password
+    }
   }
 
   /**

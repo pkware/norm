@@ -16,6 +16,7 @@ import kotlin.jvm.Throws
 import norm.ColumnAdapter
 import norm.ConnectionProvider
 import norm.NormDriver
+import norm.RealTransactable
 import norm.combineExecBatchResults
 import norm.decodeArray
 import norm.encodeToSqlArray
@@ -28,7 +29,8 @@ public class PostgresQueries(
   private val emailAdapter: ColumnAdapter<Email, String> = EmailAdapter(),
   private val positiveIntegerAdapter:
       ColumnAdapter<PositiveInteger, Int> = PositiveIntegerAdapter(),
-) : Queries {
+) : RealTransactable(connectionProvider),
+    Queries {
   private val driver: NormDriver = NormDriver(connectionProvider)
 
   @Throws(SQLException::class)

@@ -16,11 +16,13 @@ import kotlin.jvm.Throws
 import norm.ConnectionProvider
 import norm.Many
 import norm.NormDriver
+import norm.RealTransactable
 import norm.combineExecBatchResults
 
 public class PostgresQueries(
   connectionProvider: ConnectionProvider,
-) : Queries {
+) : RealTransactable(connectionProvider),
+    Queries {
   private val driver: NormDriver = NormDriver(connectionProvider)
 
   @Throws(SQLException::class)
