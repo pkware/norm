@@ -4,7 +4,7 @@ Norm is Not an ORM. Norm is a SQL-first code generator for Postgres and Kotlin.
 Norm generates Kotlin code from your SQL DDL and DML. This lets you write highly performant code in a great data
 modification language, while getting fully type-safe and compile-time checked mapping code on the JVM.
 
-Norm also provides a thin runtime, optimized for the Postgres JDBC driver, to make working with JDBC less error prone.
+Norm also provides a thin runtime to make working with JDBC less error prone.
 
 Norm strives to:
 1. Be correct

@@ -5,8 +5,6 @@ plugins {
 }
 
 dependencies {
-  compileOnlyApi(libs.postgresql)
-
   testImplementation(libs.bundles.mockito)
 }
 
