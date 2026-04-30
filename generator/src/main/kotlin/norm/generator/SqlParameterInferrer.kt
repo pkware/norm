@@ -116,14 +116,23 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
         }
       }
     } else {
-      // No WHERE clause — all comparisons treated as non-inheriting
+      // No WHERE clause.
+      // For UPDATE statements, all col = ? patterns are SET assignments that inherit nullability from
+      // the target column's schema definition.
+      // For other statements (SELECT, DELETE), col = ? patterns are comparisons; passing null would
+      // never match, so they do not inherit nullability.
+      val setParametersInheritNullability = UPDATE_TABLE.containsMatchIn(sql)
       for (match in COLUMN_COMPARES_PARAM.findAll(sql)) {
         val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::unquoteIdentifier)
         val colName = unquoteIdentifier(match.groupValues[2])
         val paramNum = paramIndex.paramNumberAt(match.range.last)
         if (paramNum !in params) {
           params[paramNum] =
-            InferredParameter(funcNames[paramNum] ?: colName, qualifiedTable ?: tableName, inheritsNullability = false)
+            InferredParameter(
+              funcNames[paramNum] ?: colName,
+              qualifiedTable ?: tableName,
+              inheritsNullability = setParametersInheritNullability,
+            )
         }
       }
     }
