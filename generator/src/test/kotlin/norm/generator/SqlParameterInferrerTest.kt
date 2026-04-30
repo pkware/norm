@@ -103,6 +103,12 @@ class SqlParameterInferrerTest {
     }
 
     @Test
+    fun `SET parameters inherit nullability with no WHERE clause`() {
+      val result = inferrer.inferParameterInfo("UPDATE users SET bio = ?")
+      assertThat(result.getValue(1).inheritsNullability).isTrue()
+    }
+
+    @Test
     fun `infers column names from SET and WHERE`() {
       val result = inferrer.inferParameterInfo("UPDATE users SET email = ?, name = ? WHERE id = ?")
       assertThat(result.getValue(1).name).isEqualTo("email")
