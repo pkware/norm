@@ -94,6 +94,15 @@ class SqlParameterInferrerTest {
     }
 
     @Test
+    fun `SET parameters inherit nullability in multi-line UPDATE`() {
+      val sql = "UPDATE users\nSET\n  name = ?,\n  bio = ?\nWHERE id = ?"
+      val result = inferrer.inferParameterInfo(sql)
+      assertThat(result.getValue(1).inheritsNullability).isTrue()
+      assertThat(result.getValue(2).inheritsNullability).isTrue()
+      assertThat(result.getValue(3).inheritsNullability).isFalse()
+    }
+
+    @Test
     fun `infers column names from SET and WHERE`() {
       val result = inferrer.inferParameterInfo("UPDATE users SET email = ?, name = ? WHERE id = ?")
       assertThat(result.getValue(1).name).isEqualTo("email")

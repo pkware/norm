@@ -353,7 +353,6 @@ internal fun batchFunction(statement: SqlStatement): FunSpec.Builder = sqlFuncti
   for ((index, parameter) in queryParameters.withIndex()) {
     val lambda = LambdaTypeName.get(
       receiver = t,
-      // TODO I suspect there's a bug here. I'm not sure why this is coming through as non-nullable. IDK if it would be more accurate with a real DB and this is a sqlc limitation, or if I have a bug in my code, or what. But it should be nullable.
       returnType = statement.resolveColumnType(parameter),
     )
     addParameter(statement.getParameterName(index), lambda)
@@ -387,7 +386,6 @@ internal fun batchWithReturnFunction(statement: SqlStatement): FunSpec.Builder {
     for ((index, parameter) in queryParameters.withIndex()) {
       val lambda = LambdaTypeName.get(
         receiver = inputType,
-        // TODO I suspect there's a bug here. I'm not sure why this is coming through as non-nullable. IDK if it would be more accurate with a real DB and this is a sqlc limitation, or if I have a bug in my code, or what. But it should be nullable.
         returnType = statement.resolveColumnType(parameter),
       )
       addParameter(statement.getParameterName(index), lambda)
