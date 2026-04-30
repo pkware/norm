@@ -4,6 +4,7 @@
 
 - **Docker** must be installed and running (Testcontainers is used to start a PostgreSQL instance)
 - **JDK 17+**
+- **A PostgreSQL-compatible JDBC driver** on the project's runtime classpath (e.g., `org.postgresql:postgresql` or the [AWS JDBC Driver for PostgreSQL](https://github.com/awslabs/aws-postgresql-jdbc))
 
 ## Development
 
