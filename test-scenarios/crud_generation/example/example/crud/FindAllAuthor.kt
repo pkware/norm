@@ -1,4 +1,4 @@
-package example
+package example.crud
 
 import kotlin.Int
 import kotlin.String

@@ -7,6 +7,7 @@ import com.squareup.kotlinpoet.INT
 import com.squareup.kotlinpoet.INT_ARRAY
 import com.squareup.kotlinpoet.ITERABLE
 import com.squareup.kotlinpoet.KModifier
+import com.squareup.kotlinpoet.LIST
 import com.squareup.kotlinpoet.LambdaTypeName
 import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterSpec
@@ -75,7 +76,12 @@ internal fun mapperFunction(statement: SqlStatement): FunSpec.Builder {
  */
 internal fun TypeSpec.Builder.addSqlStatementImplementationMethod(statement: SqlStatement) {
   when (statement.command) {
-    Command.ONE -> addOneImplementation(statement)
+    Command.ONE -> {
+      addOneImplementation(statement)
+      if (statement.canBeBatchedWithReturn) {
+        addFunction(buildBatchWithReturn(statement))
+      }
+    }
     Command.MANY -> addManyImplementation(statement)
     Command.EXEC_ROWS -> addExecRowsImplementation(statement)
     Command.EXEC -> addExecImplementation(statement)
@@ -357,6 +363,52 @@ internal fun batchFunction(statement: SqlStatement): FunSpec.Builder = sqlFuncti
 }
 
 /**
+ * Produces a function builder with a signature reflecting a SQL statement, a generic return type, a stream to take
+ * multiple inputs, a batch size, a per-column extractor lambda for each insertable column, and a mapper to produce
+ * the return type from the generated keys.
+ *
+ * Populates the throws, parameters, and return type using [statement].
+ */
+internal fun batchWithReturnFunction(statement: SqlStatement): FunSpec.Builder {
+  // Unlike batchFunction (which can delegate to sqlFunction), this function cannot delegate to sqlFunction because
+  // it introduces an additional type variable (the mapper return type T) and changes the return type to List<T>.
+  // Starting from FunSpec.builder directly avoids fighting against the wrong signature.
+  val inputType = TypeVariableName("Input", ANY)
+  val resultRowShape = statement.resultRowShape
+  val mapperReturnType = resultRowShape.mapperReturnType
+
+  return FunSpec.builder(statement.name).apply {
+    throws(SQLException::class)
+    addTypeVariable(inputType)
+    addTypeVariable(mapperReturnType)
+    addParameter("stream", ITERABLE.parameterizedBy(inputType))
+
+    val queryParameters = statement.parameters.mapNotNull(Parameter::column)
+    for ((index, parameter) in queryParameters.withIndex()) {
+      val lambda = LambdaTypeName.get(
+        receiver = inputType,
+        // TODO I suspect there's a bug here. I'm not sure why this is coming through as non-nullable. IDK if it would be more accurate with a real DB and this is a sqlc limitation, or if I have a bug in my code, or what. But it should be nullable.
+        returnType = statement.resolveColumnType(parameter),
+      )
+      addParameter(statement.getParameterName(index), lambda)
+    }
+
+    addParameter(
+      ParameterSpec(
+        MAPPER_PARAMETER_NAME,
+        LambdaTypeName.get(
+          parameters = resultRowShape.creationParameters.toTypedArray(),
+          returnType = mapperReturnType,
+        ),
+      ),
+    )
+
+    addParameter("batchSize", INT)
+    returns(LIST.parameterizedBy(mapperReturnType))
+  }
+}
+
+/**
  * Builds a batch execution function for the given statement.
  *
  * @param trackIntermediateResults When `true`, intermediate `executeBatch()` results are captured into `results`
@@ -429,9 +481,81 @@ private fun buildBatch(statement: SqlStatement, trackIntermediateResults: Boolea
     returns(INT_ARRAY)
   }.build()
 
+/**
+ * Builds a batch-with-return function for the given synthesized INSERT statement.
+ *
+ * Uses [NormDriver.executeBatchWithGeneratedKeys] to prepare the statement with column names so that
+ * [java.sql.PreparedStatement.getGeneratedKeys] is available after each `executeBatch()`. After each
+ * flush (when `batchCount == batchSize`) and after the final partial batch, drains generated keys via
+ * [readGeneratedKeys] into an accumulating `List<T>`.
+ */
+private fun buildBatchWithReturn(statement: SqlStatement): FunSpec = batchWithReturnFunction(statement).apply {
+  addModifiers(KModifier.OVERRIDE)
+  addStatement("val sql = %S", statement.batchSql)
+  addStatement(
+    "val columnNames = arrayOf(%L)",
+    statement.returningColumnNames.joinToString(", ") { "\"$it\"" },
+  )
+
+  beginControlFlow("return driver.executeBatchWithGeneratedKeys(sql, columnNames) {")
+
+  val resultRowShape = statement.resultRowShape
+  beginControlFlow("val rowReader: %T.() -> %T = {", RESULT_SET, resultRowShape.mapperReturnType)
+  addCode("%L\n", mapperInvocation(resultRowShape.builder))
+  endControlFlow()
+
+  addCode(
+    """
+      |val results = mutableListOf<%T>()
+      |var batchCount = 0
+      |
+    """.trimMargin(),
+    resultRowShape.mapperReturnType,
+  )
+
+  beginControlFlow("for (entry in stream) {")
+  for ((index, parameter) in statement.parameters.asSequence().mapNotNull(Parameter::column).withIndex()) {
+    val typeInfo = statement.resolveMappableType(parameter)
+    addStatement(
+      "%L",
+      typeInfo.statementAction(index + 1, CodeBlock.of("entry.${statement.getParameterName(index)}()")),
+    )
+  }
+  addCode(
+    """
+      |addBatch()
+      |batchCount++
+      |if (batchCount == batchSize) {
+      |  executeBatch()
+      |  generatedKeys.use { %M(it, rowReader, results) }
+      |  batchCount = 0
+      |}
+      |
+    """.trimMargin(),
+    READ_GENERATED_KEYS,
+  )
+  endControlFlow()
+
+  addCode(
+    """
+      |if (batchCount > 0) {
+      |  executeBatch()
+      |  generatedKeys.use { %M(it, rowReader, results) }
+      |}
+      |results
+      |
+    """.trimMargin(),
+    READ_GENERATED_KEYS,
+  )
+
+  endControlFlow()
+}.build()
+
 private val RESULT_SET = ResultSet::class.asTypeName()
 
 private val PROCESS_EXEC_RESULTS = MemberName(RUNTIME_PACKAGE, "combineExecBatchResults")
+
+private val READ_GENERATED_KEYS = MemberName(RUNTIME_PACKAGE, "readGeneratedKeys")
 
 /**
  * Name of the parameter representing a query mapper.

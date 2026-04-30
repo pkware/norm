@@ -1,4 +1,4 @@
-package example
+package example.crud
 
 import java.time.OffsetDateTime
 import kotlin.Int

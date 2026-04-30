@@ -125,6 +125,40 @@ public class NormDriver(private val connectionProvider: ConnectionProvider) {
   }
 
   /**
+   * Executes a SQL statement with generated-key retrieval enabled.
+   *
+   * The statement is prepared via [java.sql.Connection.prepareStatement] with [columnNames],
+   * which tells the JDBC driver to populate [PreparedStatement.getGeneratedKeys] after
+   * execution. The [action] lambda receives the prepared statement and is responsible for
+   * calling [PreparedStatement.addBatch], [PreparedStatement.executeBatch], and reading
+   * [PreparedStatement.getGeneratedKeys] as needed.
+   *
+   * The prepared statement is closed automatically via [PreparedStatement.use] after
+   * [action] returns.
+   *
+   * @param sql The SQL statement to execute. Must NOT contain a RETURNING clause — the
+   *   returning columns are specified via [columnNames] instead.
+   * @param columnNames Column names whose generated values should be retrievable via
+   *   [PreparedStatement.getGeneratedKeys] after execution.
+   * @param action Block that executes batch operations on the prepared statement and returns
+   *   the accumulated result.
+   * @param RowType The type returned by [action].
+   *
+   * @throws SQLException if a database access error occurs.
+   * @throws SQLTimeoutException when the driver has determined that the timeout value specified
+   *   by the `setLoginTimeout` method has been exceeded and has at least tried to cancel the
+   *   current database connection attempt.
+   */
+  @Throws(SQLException::class, SQLTimeoutException::class)
+  public fun <RowType> executeBatchWithGeneratedKeys(
+    @Language("PostgreSQL") sql: String,
+    columnNames: Array<String>,
+    action: PreparedStatement.() -> RowType,
+  ): RowType = connectionProvider.withConnection { connection ->
+    connection.prepareStatement(sql, columnNames).use(action)
+  }
+
+  /**
    * Prepares a [Query] for executing a dynamic query.
    *
    * This function _does not_ execute the query.

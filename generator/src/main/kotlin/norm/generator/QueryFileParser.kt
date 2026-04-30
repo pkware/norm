@@ -14,6 +14,8 @@ package norm.generator
  *   (for example, for synthesized CRUD queries).
  * @param sourceFile Path to the SQL file this query was parsed from. Empty string if unknown (for example,
  *   for synthesized CRUD queries).
+ * @param isSynthesizedInsert `true` if this is a CRUD-generated INSERT query (from [CrudQuerySynthesizer.synthesizeInsert]),
+ *   `false` for all other queries including hand-written and other synthesized CRUD queries.
  */
 public data class ParsedQuery(
   val name: String,
@@ -23,6 +25,7 @@ public data class ParsedQuery(
   val namedParameters: Map<Int, String> = emptyMap(),
   val sourceLine: Int = 0,
   val sourceFile: String = "",
+  val isSynthesizedInsert: Boolean = false,
 )
 
 /**

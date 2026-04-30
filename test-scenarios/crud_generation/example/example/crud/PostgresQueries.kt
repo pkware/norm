@@ -1,4 +1,4 @@
-package example
+package example.crud
 
 import java.math.BigDecimal
 import java.sql.PreparedStatement
@@ -13,6 +13,7 @@ import kotlin.Long
 import kotlin.String
 import kotlin.Unit
 import kotlin.collections.Iterable
+import kotlin.collections.List
 import kotlin.jvm.Throws
 import norm.ConnectionProvider
 import norm.Many
@@ -20,6 +21,7 @@ import norm.NormDriver
 import norm.Query
 import norm.RealTransactable
 import norm.combineExecBatchResults
+import norm.readGeneratedKeys
 
 public class PostgresQueries(
   connectionProvider: ConnectionProvider,
@@ -80,6 +82,41 @@ public class PostgresQueries(
     }
   }
 
+  @Throws(SQLException::class)
+  override fun <Input : Any, T : Any> insertAuditLog(
+    stream: Iterable<Input>,
+    message: Input.() -> String,
+    mapper: (logged_at: OffsetDateTime) -> T,
+    batchSize: Int,
+  ): List<T> {
+    val sql = "INSERT INTO audit_log (message) VALUES (?)"
+    val columnNames = arrayOf("logged_at")
+    return driver.executeBatchWithGeneratedKeys(sql, columnNames) {
+      val rowReader: ResultSet.() -> T = {
+        mapper(
+          getObject(1, OffsetDateTime::class.java),
+        )
+      }
+      val results = mutableListOf<T>()
+      var batchCount = 0
+      for (entry in stream) {
+        setString(1, entry.message())
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          executeBatch()
+          generatedKeys.use { readGeneratedKeys(it, rowReader, results) }
+          batchCount = 0
+        }
+      }
+      if (batchCount > 0) {
+        executeBatch()
+        generatedKeys.use { readGeneratedKeys(it, rowReader, results) }
+      }
+      results
+    }
+  }
+
   private fun <T : Any, R> findAllAuditLog(mapper: (message: String, logged_at: OffsetDateTime) -> T, block: (
     String,
     ResultSet.() -> T,
@@ -132,6 +169,44 @@ public class PostgresQueries(
     return driver.queryOne(sql, rowReader) {
       setString(1, name)
       setString(2, bio)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any, T : Any> insertAuthor(
+    stream: Iterable<Input>,
+    name: Input.() -> String,
+    bio: Input.() -> String?,
+    mapper: (id: Int, created_at: OffsetDateTime) -> T,
+    batchSize: Int,
+  ): List<T> {
+    val sql = "INSERT INTO author (name, bio) VALUES (?, ?)"
+    val columnNames = arrayOf("id", "created_at")
+    return driver.executeBatchWithGeneratedKeys(sql, columnNames) {
+      val rowReader: ResultSet.() -> T = {
+        mapper(
+          getInt(1),
+          getObject(2, OffsetDateTime::class.java),
+        )
+      }
+      val results = mutableListOf<T>()
+      var batchCount = 0
+      for (entry in stream) {
+        setString(1, entry.name())
+        setString(2, entry.bio())
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          executeBatch()
+          generatedKeys.use { readGeneratedKeys(it, rowReader, results) }
+          batchCount = 0
+        }
+      }
+      if (batchCount > 0) {
+        executeBatch()
+        generatedKeys.use { readGeneratedKeys(it, rowReader, results) }
+      }
+      results
     }
   }
 
@@ -462,6 +537,46 @@ public class PostgresQueries(
       setString(1, name)
       setBigDecimal(2, price)
       setBigDecimal(3, tax)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any, T : Any> insertProduct(
+    stream: Iterable<Input>,
+    name: Input.() -> String,
+    price: Input.() -> BigDecimal,
+    tax: Input.() -> BigDecimal,
+    mapper: (id: Int, total: BigDecimal?) -> T,
+    batchSize: Int,
+  ): List<T> {
+    val sql = "INSERT INTO product (name, price, tax) VALUES (?, ?, ?)"
+    val columnNames = arrayOf("id", "total")
+    return driver.executeBatchWithGeneratedKeys(sql, columnNames) {
+      val rowReader: ResultSet.() -> T = {
+        mapper(
+          getInt(1),
+          getBigDecimal(2),
+        )
+      }
+      val results = mutableListOf<T>()
+      var batchCount = 0
+      for (entry in stream) {
+        setString(1, entry.name())
+        setBigDecimal(2, entry.price())
+        setBigDecimal(3, entry.tax())
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          executeBatch()
+          generatedKeys.use { readGeneratedKeys(it, rowReader, results) }
+          batchCount = 0
+        }
+      }
+      if (batchCount > 0) {
+        executeBatch()
+        generatedKeys.use { readGeneratedKeys(it, rowReader, results) }
+      }
+      results
     }
   }
 

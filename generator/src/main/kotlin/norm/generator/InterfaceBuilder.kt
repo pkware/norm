@@ -4,6 +4,7 @@ import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier.ABSTRACT
+import com.squareup.kotlinpoet.LIST
 import com.squareup.kotlinpoet.LambdaTypeName
 import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterSpec
@@ -30,6 +31,10 @@ internal fun TypeSpec.Builder.addSqlStatementInterfaceMethod(query: SqlStatement
 
       // The simple function delegates to the mapper function with a constructor reference.
       simpleFunction.addCode(buildMapperDelegationBody(query))
+
+      if (query.canBeBatchedWithReturn) {
+        addBatchWithReturnOverloads(query)
+      }
     }
     Command.EXEC, Command.EXEC_ROWS -> {
       simpleFunction.addModifiers(ABSTRACT)
@@ -99,6 +104,70 @@ private fun TypeSpec.Builder.addBatchOverloads(query: SqlStatement) {
     )
   }
   addFunction(convenienceFunction.build())
+}
+
+/**
+ * Adds the two batch-with-return overloads for a CRUD-synthesized INSERT `:one` query: a full overload with explicit
+ * `mapper` and `batchSize` parameters returning `List<T>`, and a convenience overload that delegates with a default
+ * batch size and a constructor reference (or [COLUMN_VALUE] for single-column results).
+ */
+private fun TypeSpec.Builder.addBatchWithReturnOverloads(query: SqlStatement) {
+  val batchFunction = batchWithReturnFunction(query).build()
+
+  // Full overload: abstract, with all parameters (stream, extractors, mapper, batchSize) → List<T>
+  addFunction(
+    batchFunction.toBuilder()
+      .apply { addBatchWithReturnKdoc(query) }
+      .addModifiers(ABSTRACT)
+      .build(),
+  )
+
+  // Convenience overload: default batchSize + constructor reference mapper, concrete return type
+  val resultRowShape = query.resultRowShape
+  val concreteReturnType = checkNotNull(resultRowShape.kotlinType) {
+    "Expected a non-null kotlinType for batch-with-return query ${query.name}"
+  }
+  val convenienceFunction = batchFunction.toBuilder().apply {
+    parameters.removeLast() // batchSize
+    parameters.removeLast() // mapper
+    // Remove the T type variable — the concrete type is now inferred from the mapper reference below.
+    typeVariables.removeLast()
+    returns(LIST.parameterizedBy(concreteReturnType))
+    addBatchWithReturnKdoc(query, "Uses a batch size of %L.\n\n", BATCH_SIZE)
+    val mapperRef = if (resultRowShape.isComposedOfMultipleColumns) {
+      (concreteReturnType as ClassName).constructorReference()
+    } else {
+      COLUMN_VALUE
+    }
+    addCode(
+      CodeBlock.builder()
+        .add("return %N(", batchFunction)
+        .apply {
+          for (parameter in parameters) {
+            add("%N, ", parameter)
+          }
+        }
+        .add("%L, %L)", mapperRef, BATCH_SIZE)
+        .build(),
+    )
+  }
+  addFunction(convenienceFunction.build())
+}
+
+/**
+ * Adds the standard KDoc block for a batch-with-return function: user comments, SQL code block, optional extra text,
+ * `@param` tags, and a `@return` tag describing the returned list.
+ *
+ * @param extraFormat Optional format string for additional text between the SQL block and the `@param` tags.
+ * @param extraArgs Format arguments for [extraFormat].
+ */
+private fun FunSpec.Builder.addBatchWithReturnKdoc(
+  query: SqlStatement,
+  extraFormat: String? = null,
+  vararg extraArgs: Any,
+) {
+  addStandardKdoc(query, extraFormat, *extraArgs)
+  addKdoc("@return A list containing the generated values for each inserted row, in insertion order.\n")
 }
 
 /**

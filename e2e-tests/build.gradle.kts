@@ -21,9 +21,11 @@ sourceSets {
     kotlin {
       // Include generated code for E2E query tests. Each scenario uses a distinct package to
       // avoid name conflicts between the generated PostgresQueries / Queries classes.
-      // all_types uses package `example`; type_mappings uses `example.typemappings`.
+      // all_types uses package `example`; type_mappings uses `example.typemappings`;
+      // crud_generation uses `example.crud`.
       srcDir(rootProject.file("test-scenarios/all_types/example"))
       srcDir(rootProject.file("test-scenarios/type_mappings/example"))
+      srcDir(rootProject.file("test-scenarios/crud_generation/example"))
       // User-provided adapter source files (CustomMoodAdapter, JsonDataAdapter, etc.)
       // referenced by the generated type_mappings code.
       srcDir(rootProject.file("test-scenarios/type_mappings/src"))
