@@ -334,7 +334,7 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun updateMood(
     current_mood: Mood,
-    previous_mood: Mood,
+    previous_mood: Mood?,
     id: Int,
   ) {
     val sql = """
@@ -346,7 +346,7 @@ public class PostgresQueries(
         """.trimMargin()
     driver.execute(sql) {
       setObject(1, moodAdapter.encode(current_mood), Types.OTHER)
-      setObject(2, moodAdapter.encode(previous_mood), Types.OTHER)
+      previous_mood?.let { setObject(2, moodAdapter.encode(it), Types.OTHER) } ?: setNull(2, Types.OTHER)
       setInt(3, id)
       execute()
     }
@@ -356,7 +356,7 @@ public class PostgresQueries(
   override fun <Input : Any> updateMood(
     stream: Iterable<Input>,
     current_mood: Input.() -> Mood,
-    previous_mood: Input.() -> Mood,
+    previous_mood: Input.() -> Mood?,
     id: Input.() -> Int,
     batchSize: Int,
   ): IntArray {
@@ -373,7 +373,7 @@ public class PostgresQueries(
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
         setObject(1, moodAdapter.encode(entry.current_mood()), Types.OTHER)
-        setObject(2, moodAdapter.encode(entry.previous_mood()), Types.OTHER)
+        entry.previous_mood()?.let { setObject(2, moodAdapter.encode(it), Types.OTHER) } ?: setNull(2, Types.OTHER)
         setInt(3, entry.id())
         addBatch()
         batchCount++
@@ -392,8 +392,8 @@ public class PostgresQueries(
 
   @Throws(SQLException::class)
   override fun updateArrayColumns(
-    past_moods: Array<Mood?>,
-    scores: Array<PositiveInteger?>,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
     id: Int,
   ) {
     val sql = """
@@ -404,8 +404,8 @@ public class PostgresQueries(
         |WHERE id = ?
         """.trimMargin()
     driver.execute(sql) {
-      setArray(1, past_moods.encodeToSqlArray(connection, "mood", moodAdapter))
-      setArray(2, scores.encodeToSqlArray(connection, "positive_integer", positiveIntegerAdapter))
+      past_moods?.let { setArray(1, it.encodeToSqlArray(connection, "mood", moodAdapter)) } ?: setNull(1, Types.ARRAY)
+      scores?.let { setArray(2, it.encodeToSqlArray(connection, "positive_integer", positiveIntegerAdapter)) } ?: setNull(2, Types.ARRAY)
       setInt(3, id)
       execute()
     }
@@ -414,8 +414,8 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> updateArrayColumns(
     stream: Iterable<Input>,
-    past_moods: Input.() -> Array<Mood?>,
-    scores: Input.() -> Array<PositiveInteger?>,
+    past_moods: Input.() -> Array<Mood?>?,
+    scores: Input.() -> Array<PositiveInteger?>?,
     id: Input.() -> Int,
     batchSize: Int,
   ): IntArray {
@@ -431,8 +431,8 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setArray(1, entry.past_moods().encodeToSqlArray(connection, "mood", moodAdapter))
-        setArray(2, entry.scores().encodeToSqlArray(connection, "positive_integer", positiveIntegerAdapter))
+        entry.past_moods()?.let { setArray(1, it.encodeToSqlArray(connection, "mood", moodAdapter)) } ?: setNull(1, Types.ARRAY)
+        entry.scores()?.let { setArray(2, it.encodeToSqlArray(connection, "positive_integer", positiveIntegerAdapter)) } ?: setNull(2, Types.ARRAY)
         setInt(3, entry.id())
         addBatch()
         batchCount++

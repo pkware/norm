@@ -75,7 +75,7 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
     val tableName = UPDATE_TABLE.find(sql)?.groupValues?.get(1)?.let(::tableSimpleName)
       ?: DELETE_FROM.find(sql)?.groupValues?.get(1)?.let(::tableSimpleName)
       ?: FROM_TABLE.find(sql)?.groupValues?.get(1)?.let(::tableSimpleName)
-    val whereIndex = sql.indexOf(" WHERE ", ignoreCase = true)
+    val whereIndex = WHERE_KEYWORD.find(sql)?.range?.first ?: -1
 
     // COALESCE pattern: SET col = coalesce(?, fallback) — always nullable regardless of column constraint.
     // Scoped to the SET clause (before WHERE) so it doesn't affect WHERE conditions.
@@ -323,6 +323,12 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
     private val UPDATE_TABLE = Regex("""UPDATE\s+$QUALIFIED_TABLE\s""", RegexOption.IGNORE_CASE)
     private val DELETE_FROM = Regex("""DELETE\s+FROM\s+$QUALIFIED_TABLE""", RegexOption.IGNORE_CASE)
     private val FROM_TABLE = Regex("""\bFROM\s+$QUALIFIED_TABLE""", RegexOption.IGNORE_CASE)
+
+    /**
+     * Matches the WHERE keyword as a standalone word, handling any surrounding whitespace including newlines.
+     * This supports multi-line SQL where WHERE may appear on its own line preceded by `\n` rather than a space.
+     */
+    private val WHERE_KEYWORD = Regex("""\bWHERE\b""", RegexOption.IGNORE_CASE)
     private val COLUMN_COMPARES_PARAM =
       Regex(
         """(?:($SQL_IDENTIFIER)\.)?($SQL_IDENTIFIER)\s*(?:=|<>|!=|>=|<=|>|<|LIKE|ILIKE)\s*\?""",

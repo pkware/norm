@@ -278,7 +278,7 @@ public interface Queries {
   public fun <Input : Any> updateMood(
     stream: Iterable<Input>,
     current_mood: Input.() -> Mood,
-    previous_mood: Input.() -> Mood,
+    previous_mood: Input.() -> Mood?,
     id: Input.() -> Int,
     batchSize: Int,
   ): IntArray
@@ -308,7 +308,7 @@ public interface Queries {
   public fun <Input : Any> updateMood(
     stream: Iterable<Input>,
     current_mood: Input.() -> Mood,
-    previous_mood: Input.() -> Mood,
+    previous_mood: Input.() -> Mood?,
     id: Input.() -> Int,
   ): IntArray = updateMood(stream, current_mood, previous_mood, id, 100)
 
@@ -324,7 +324,7 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun updateMood(
     current_mood: Mood,
-    previous_mood: Mood,
+    previous_mood: Mood?,
     id: Int,
   )
 
@@ -350,8 +350,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> updateArrayColumns(
     stream: Iterable<Input>,
-    past_moods: Input.() -> Array<Mood?>,
-    scores: Input.() -> Array<PositiveInteger?>,
+    past_moods: Input.() -> Array<Mood?>?,
+    scores: Input.() -> Array<PositiveInteger?>?,
     id: Input.() -> Int,
     batchSize: Int,
   ): IntArray
@@ -380,8 +380,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> updateArrayColumns(
     stream: Iterable<Input>,
-    past_moods: Input.() -> Array<Mood?>,
-    scores: Input.() -> Array<PositiveInteger?>,
+    past_moods: Input.() -> Array<Mood?>?,
+    scores: Input.() -> Array<PositiveInteger?>?,
     id: Input.() -> Int,
   ): IntArray = updateArrayColumns(stream, past_moods, scores, id, 100)
 
@@ -396,8 +396,8 @@ public interface Queries {
    */
   @Throws(SQLException::class)
   public fun updateArrayColumns(
-    past_moods: Array<Mood?>,
-    scores: Array<PositiveInteger?>,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
     id: Int,
   )
 }
