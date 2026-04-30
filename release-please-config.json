@@ -11,5 +11,10 @@
       "search": "version=\\d+\\.\\d+\\.\\d+(-SNAPSHOT)?",
       "replace": "version={{version}}"
     }
-  ]
+  ],
+  "packages": {
+    ".": {
+      "tag-prefix": ""
+    }
+  }
 }
