@@ -1,4 +1,4 @@
-package example
+package example.crud
 
 import java.math.BigDecimal
 import java.sql.SQLException
@@ -12,6 +12,7 @@ import kotlin.IntArray
 import kotlin.Long
 import kotlin.String
 import kotlin.collections.Iterable
+import kotlin.collections.List
 import kotlin.jvm.Throws
 import norm.Many
 import norm.Query
@@ -77,6 +78,33 @@ public interface Queries {
    * ```sql
    * INSERT INTO audit_log (message) VALUES (?) RETURNING logged_at
    * ```
+   *
+   * @return A list containing the generated values for each inserted row, in insertion order.
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any, T : Any> insertAuditLog(
+    stream: Iterable<Input>,
+    message: Input.() -> String,
+    mapper: (logged_at: OffsetDateTime) -> T,
+    batchSize: Int,
+  ): List<T>
+
+  /**
+   * ```sql
+   * INSERT INTO audit_log (message) VALUES (?) RETURNING logged_at
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return A list containing the generated values for each inserted row, in insertion order.
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> insertAuditLog(stream: Iterable<Input>, message: Input.() -> String): List<OffsetDateTime> = insertAuditLog(stream, message, ::inputValue, 100)
+
+  /**
+   * ```sql
+   * INSERT INTO audit_log (message) VALUES (?) RETURNING logged_at
+   * ```
    */
   @Throws(SQLException::class)
   public fun insertAuditLog(message: String): OffsetDateTime = insertAuditLog(message, ::inputValue)
@@ -136,6 +164,38 @@ public interface Queries {
     bio: String?,
     mapper: (id: Int, created_at: OffsetDateTime) -> T,
   ): T
+
+  /**
+   * ```sql
+   * INSERT INTO author (name, bio) VALUES (?, ?) RETURNING id, created_at
+   * ```
+   *
+   * @return A list containing the generated values for each inserted row, in insertion order.
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any, T : Any> insertAuthor(
+    stream: Iterable<Input>,
+    name: Input.() -> String,
+    bio: Input.() -> String?,
+    mapper: (id: Int, created_at: OffsetDateTime) -> T,
+    batchSize: Int,
+  ): List<T>
+
+  /**
+   * ```sql
+   * INSERT INTO author (name, bio) VALUES (?, ?) RETURNING id, created_at
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return A list containing the generated values for each inserted row, in insertion order.
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> insertAuthor(
+    stream: Iterable<Input>,
+    name: Input.() -> String,
+    bio: Input.() -> String?,
+  ): List<InsertAuthor> = insertAuthor(stream, name, bio, ::InsertAuthor, 100)
 
   /**
    * ```sql
@@ -488,6 +548,40 @@ public interface Queries {
     tax: BigDecimal,
     mapper: (id: Int, total: BigDecimal?) -> T,
   ): T
+
+  /**
+   * ```sql
+   * INSERT INTO product (name, price, tax) VALUES (?, ?, ?) RETURNING id, total
+   * ```
+   *
+   * @return A list containing the generated values for each inserted row, in insertion order.
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any, T : Any> insertProduct(
+    stream: Iterable<Input>,
+    name: Input.() -> String,
+    price: Input.() -> BigDecimal,
+    tax: Input.() -> BigDecimal,
+    mapper: (id: Int, total: BigDecimal?) -> T,
+    batchSize: Int,
+  ): List<T>
+
+  /**
+   * ```sql
+   * INSERT INTO product (name, price, tax) VALUES (?, ?, ?) RETURNING id, total
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return A list containing the generated values for each inserted row, in insertion order.
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> insertProduct(
+    stream: Iterable<Input>,
+    name: Input.() -> String,
+    price: Input.() -> BigDecimal,
+    tax: Input.() -> BigDecimal,
+  ): List<InsertProduct> = insertProduct(stream, name, price, tax, ::InsertProduct, 100)
 
   /**
    * ```sql

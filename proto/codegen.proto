@@ -137,6 +137,9 @@ message Query {
   repeated string comments = 6 [json_name = "comments"];
   string filename = 7 [json_name = "filename"];
   Identifier insert_into_table = 8 [json_name = "insert_into_table"];
+  // True when this query was synthesized by CrudQuerySynthesizer.synthesizeInsert.
+  // Used to gate batch-with-returning code generation.
+  bool is_synthesized_insert = 9 [json_name = "is_synthesized_insert"];
 }
 
 message Parameter {

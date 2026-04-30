@@ -1,4 +1,4 @@
-package example
+package example.crud
 
 import java.math.BigDecimal
 import kotlin.Int

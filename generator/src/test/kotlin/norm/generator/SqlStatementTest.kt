@@ -1,8 +1,10 @@
 package norm.generator
 
+import assertk.assertFailure
 import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.containsExactly
+import assertk.assertions.hasMessage
 import assertk.assertions.hasSize
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
@@ -605,6 +607,104 @@ class SqlStatementTest {
   }
 
   @Nested
+  inner class CanBeBatchedWithReturn {
+    @Test
+    fun `synthesized INSERT ONE with params and returning columns`() {
+      val statement = createStatement(
+        "INSERT INTO t (name) VALUES (?) RETURNING id",
+        cmd = ":one",
+        params = listOf(param(1)),
+        columns = listOf(column("id", type = "int4")),
+        isSynthesizedInsert = true,
+      )
+      assertThat(statement.canBeBatchedWithReturn).isTrue()
+    }
+
+    @Test
+    fun `non-synthesized INSERT ONE is not eligible`() {
+      val statement = createStatement(
+        "INSERT INTO t (name) VALUES (?) RETURNING id",
+        cmd = ":one",
+        params = listOf(param(1)),
+        columns = listOf(column("id", type = "int4")),
+        isSynthesizedInsert = false,
+      )
+      assertThat(statement.canBeBatchedWithReturn).isFalse()
+    }
+
+    @Test
+    fun `non-synthesized ONE SELECT is not eligible`() {
+      val statement = createStatement(
+        "SELECT EXISTS(SELECT 1 FROM t WHERE id = ?)",
+        cmd = ":one",
+        params = listOf(param(1)),
+        columns = listOf(column("exists", type = "bool")),
+        isSynthesizedInsert = false,
+      )
+      assertThat(statement.canBeBatchedWithReturn).isFalse()
+    }
+
+    @Test
+    fun `synthesized INSERT with no params is not eligible`() {
+      val statement = createStatement(
+        "INSERT INTO t DEFAULT VALUES RETURNING id",
+        cmd = ":one",
+        columns = listOf(column("id", type = "int4")),
+        isSynthesizedInsert = true,
+      )
+      assertThat(statement.canBeBatchedWithReturn).isFalse()
+    }
+
+    @Test
+    fun `synthesized EXEC INSERT without RETURNING is not eligible`() {
+      val statement = createStatement(
+        "INSERT INTO t (a, b) VALUES (?, ?)",
+        cmd = ":exec",
+        params = listOf(param(1), param(2)),
+        isSynthesizedInsert = true,
+      )
+      assertThat(statement.canBeBatchedWithReturn).isFalse()
+    }
+
+    @Test
+    fun `batchSql strips RETURNING clause`() {
+      val statement = createStatement(
+        "INSERT INTO t (name) VALUES (?) RETURNING id, created_at",
+        cmd = ":one",
+        params = listOf(param(1)),
+        columns = listOf(column("id", type = "int4"), column("created_at", type = "timestamptz")),
+        isSynthesizedInsert = true,
+      )
+      assertThat(statement.batchSql).isEqualTo("INSERT INTO t (name) VALUES (?)")
+    }
+
+    @Test
+    fun `batchSql throws when RETURNING is missing`() {
+      val statement = createStatement(
+        "INSERT INTO t (name) VALUES (?)",
+        cmd = ":exec",
+        params = listOf(param(1)),
+        isSynthesizedInsert = true,
+      )
+      assertFailure {
+        statement.batchSql
+      }.hasMessage("Expected RETURNING clause in synthesized INSERT: INSERT INTO t (name) VALUES (?)")
+    }
+
+    @Test
+    fun `returningColumnNames matches query columns`() {
+      val statement = createStatement(
+        "INSERT INTO t (name) VALUES (?) RETURNING id, created_at",
+        cmd = ":one",
+        params = listOf(param(1)),
+        columns = listOf(column("id", type = "int4"), column("created_at", type = "timestamptz")),
+        isSynthesizedInsert = true,
+      )
+      assertThat(statement.returningColumnNames).containsExactly("id", "created_at")
+    }
+  }
+
+  @Nested
   inner class CanBeDynamic {
 
     @Test
@@ -990,6 +1090,7 @@ class SqlStatementTest {
     params: List<Parameter> = emptyList(),
     catalog: Catalog = Catalog(),
     comments: List<String> = emptyList(),
+    isSynthesizedInsert: Boolean = false,
   ): SqlStatement {
     val repository = TypeRepository("test", catalog)
     return SqlStatement(
@@ -1001,6 +1102,7 @@ class SqlStatementTest {
         columns = columns,
         params = params,
         comments = comments,
+        is_synthesized_insert = isSynthesizedInsert,
       ),
       repository,
     )

@@ -99,6 +99,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
       columns = resultColumns,
       params = parameters,
       comments = parsedQuery.comments,
+      is_synthesized_insert = parsedQuery.isSynthesizedInsert,
     )
   }
 

@@ -56,6 +56,47 @@ internal class SqlStatement(
     }
 
   /**
+   * Whether a batch variant returning generated values can be safely generated.
+   *
+   * JDBC's batch API ([java.sql.PreparedStatement.executeBatch]) does not support SQL `RETURNING`
+   * clauses — batch results are only available via [java.sql.PreparedStatement.getGeneratedKeys].
+   *
+   * Only true for CRUD-synthesized `:one` INSERT queries that have both parameters (insertable
+   * columns) and result columns (RETURNING columns). The RETURNING clause is stripped from [sql]
+   * to produce [batchSql], and the column names are passed to
+   * [java.sql.Connection.prepareStatement] for [java.sql.PreparedStatement.getGeneratedKeys]
+   * retrieval.
+   */
+  val canBeBatchedWithReturn: Boolean
+    get() = query.is_synthesized_insert &&
+      command == Command.ONE &&
+      parameters.isNotEmpty() &&
+      query.columns.isNotEmpty()
+
+  /**
+   * SQL text for the batch variant, with the RETURNING clause stripped.
+   *
+   * Only valid when [canBeBatchedWithReturn] is `true`. The RETURNING clause is stripped by
+   * finding the literal `" RETURNING "` separator, which is safe because
+   * [norm.generator.CrudQuerySynthesizer] produces SQL in a known format.
+   */
+  val batchSql: String
+    get() {
+      val result = sql.substringBefore(" RETURNING ")
+      check(result != sql) { "Expected RETURNING clause in synthesized INSERT: $sql" }
+      return result
+    }
+
+  /**
+   * Column names for [java.sql.Connection.prepareStatement]'s second argument.
+   *
+   * These are the column names that will be retrievable via
+   * [java.sql.PreparedStatement.getGeneratedKeys] after [java.sql.PreparedStatement.executeBatch].
+   */
+  val returningColumnNames: List<String>
+    get() = query.columns.map { it.name }
+
+  /**
    * Whether this SQL statement can have a dynamic variant generated.
    *
    * Dynamic queries return [Query] instead of [Many], allowing callers to append SQL fragments

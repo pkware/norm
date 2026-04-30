@@ -115,6 +115,7 @@ public object CrudQuerySynthesizer {
       command = command,
       sql = sql,
       comments = emptyList(),
+      isSynthesizedInsert = true,
     )
   }
 
