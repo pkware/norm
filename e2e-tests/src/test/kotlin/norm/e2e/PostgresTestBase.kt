@@ -10,11 +10,13 @@ import org.junit.jupiter.api.parallel.ExecutionMode
 import org.postgresql.ds.PGSimpleDataSource
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.containers.wait.strategy.Wait
+import org.testcontainers.containers.wait.strategy.WaitAllStrategy
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import java.io.File
 import java.sql.Connection
 import java.sql.DriverManager
+import java.time.Duration
 import javax.sql.DataSource
 
 /**
@@ -97,7 +99,12 @@ abstract class PostgresTestBase {
       .withDatabaseName("test")
       .withUsername("test")
       .withPassword("test")
-      .waitingFor(Wait.forListeningPort())
+      .waitingFor(
+        WaitAllStrategy()
+          .withStrategy(Wait.forLogMessage(".*database system is ready to accept connections.*\\n", 2))
+          .withStrategy(Wait.forListeningPort())
+          .withStartupTimeout(Duration.ofSeconds(60)),
+      )
 
     /**
      * Creates a [DataSource] that returns real connections (not wrapped in [NonClosingConnectionWrapper]).
