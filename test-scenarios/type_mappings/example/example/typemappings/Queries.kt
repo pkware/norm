@@ -12,6 +12,7 @@ import kotlin.Int
 import kotlin.IntArray
 import kotlin.collections.Iterable
 import kotlin.jvm.Throws
+import norm.Many
 
 public interface Queries {
   /**
@@ -169,4 +170,24 @@ public interface Queries {
     tag_list: Array<JsonData?>?,
     id: Int,
   )
+
+  /**
+   * ```sql
+   * UPDATE users SET preferences = ? WHERE id = ?
+   * RETURNING id, preferences AS old_preferences
+   * ```
+   */
+  public fun <T : Any> updatePreferences(
+    preferences: UserPreferences,
+    id: Int,
+    mapper: (id: Int, old_preferences: UserPreferences) -> T,
+  ): Many<T>
+
+  /**
+   * ```sql
+   * UPDATE users SET preferences = ? WHERE id = ?
+   * RETURNING id, preferences AS old_preferences
+   * ```
+   */
+  public fun updatePreferences(preferences: UserPreferences, id: Int): Many<UpdatePreferences> = updatePreferences(preferences, id, ::UpdatePreferences)
 }
