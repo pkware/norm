@@ -1,5 +1,6 @@
 [versions]
 junit = "6.0.3"
+kotlin = "2.3.21"
 ktlint = "1.5.0"
 micronaut = "4.10.21"
 micronautData = "4.14.3"
@@ -8,7 +9,7 @@ wire = "6.2.0"
 
 [libraries]
 assertk = "com.willowtreeapps.assertk:assertk:0.28.1"
-detekt-imports = "com.pkware.detekt:import-extension:2.0.0"
+detekt-imports = "com.pkware.detekt:import-extension:2.1.0"
 junit-params = { module = "org.junit.jupiter:junit-jupiter-params", version.ref = "junit" }
 kotlinPoet = "com.squareup:kotlinpoet:2.3.0"
 micronaut-data-processor = { module = "io.micronaut.data:micronaut-data-processor", version.ref = "micronautData" }
@@ -36,7 +37,7 @@ norm = "com.pkware.norm:1.0.0-SNAPSHOT"
 shadow = "com.gradleup.shadow:9.4.1"
 spring-boot = "org.springframework.boot:4.0.6"
 spring-dependencyManagement = "io.spring.dependency-management:1.1.7"
-spring-kotlin = "org.jetbrains.kotlin.plugin.spring:2.3.21"
+spring-kotlin = { id = "org.jetbrains.kotlin.plugin.spring", version.ref = "kotlin" }
 wire = { id = "com.squareup.wire", version.ref = "wire" }
 
 [bundles]
