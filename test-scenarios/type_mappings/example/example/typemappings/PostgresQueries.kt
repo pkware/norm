@@ -3,6 +3,7 @@ package example.typemappings
 import com.example.CustomMood
 import com.example.JsonData
 import com.example.UserPreferences
+import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.SQLException
 import java.sql.Types
@@ -11,10 +12,12 @@ import kotlin.Array
 import kotlin.Int
 import kotlin.IntArray
 import kotlin.String
+import kotlin.Unit
 import kotlin.collections.Iterable
 import kotlin.jvm.Throws
 import norm.ColumnAdapter
 import norm.ConnectionProvider
+import norm.Many
 import norm.NormDriver
 import norm.RealTransactable
 import norm.combineExecBatchResults
@@ -169,4 +172,37 @@ public class PostgresQueries(
       combineExecBatchResults(results, totalCount, batchSize)
     }
   }
+
+  private fun <T : Any, R> updatePreferences(
+    preferences: UserPreferences,
+    id: Int,
+    mapper: (id: Int, old_preferences: UserPreferences) -> T,
+    block: (
+      String,
+      ResultSet.() -> T,
+      (PreparedStatement.() -> Unit)?,
+    ) -> R,
+  ): R {
+    val sql = """
+        |UPDATE users SET preferences = ? WHERE id = ?
+        |RETURNING id, preferences AS old_preferences
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        usersPreferencesAdapter.decode(getString(2)),
+      )
+    }
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setObject(1, usersPreferencesAdapter.encode(preferences), Types.OTHER)
+      setInt(2, id)
+    }
+    return block(sql, rowReader, queryBinder)
+  }
+
+  override fun <T : Any> updatePreferences(
+    preferences: UserPreferences,
+    id: Int,
+    mapper: (id: Int, old_preferences: UserPreferences) -> T,
+  ): Many<T> = updatePreferences(preferences, id, mapper, driver::queryMany)
 }

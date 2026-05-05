@@ -77,7 +77,11 @@ internal fun splitAtTopLevel(text: String, delimiter: Char): List<String> {
 internal data class SelectItem(val expression: String, val columnName: String?, val tableName: String?)
 
 /**
- * Parses the SELECT clause of a SQL statement to extract individual select items.
+ * Parses the output clause of a SQL statement to extract individual items.
+ *
+ * Checks for a SELECT clause first, then falls back to a RETURNING clause for DML statements
+ * (INSERT, UPDATE, DELETE). This ensures aliased columns in RETURNING clauses are resolved to
+ * their original column names, which is needed for column-level type mapping lookups.
  *
  * Handles:
  * - Simple columns: `title` → expression=`title`, columnName=`title`
@@ -86,21 +90,32 @@ internal data class SelectItem(val expression: String, val columnName: String?, 
  * - Computed expressions: `COUNT(*) AS book_count` → expression=`COUNT(*)`, columnName=`null`
  * - Star projections: `*` → expression=`*`, columnName=`null`
  *
- * @return A list of [SelectItem]s in the order they appear, or an empty list if the SELECT clause cannot be parsed.
+ * @return A list of [SelectItem]s in the order they appear, or an empty list if neither a SELECT
+ *   nor a RETURNING clause can be parsed.
  */
 internal fun parseSelectItems(sql: String): List<SelectItem> {
   val selectIndex = sql.indexOf("SELECT", ignoreCase = true)
-  if (selectIndex < 0) return emptyList()
-
-  val afterSelect = selectIndex + "SELECT".length
-  val fromIndex = findTopLevelKeyword(sql, "FROM", afterSelect)
-  val selectClause = if (fromIndex >= 0) {
-    sql.substring(afterSelect, fromIndex)
+  val afterKeyword: Int
+  val hasFromClause: Boolean
+  if (selectIndex >= 0) {
+    afterKeyword = selectIndex + "SELECT".length
+    hasFromClause = true
   } else {
-    sql.substring(afterSelect)
+    val returningIndex = sql.indexOf("RETURNING", ignoreCase = true)
+    if (returningIndex < 0) return emptyList()
+    afterKeyword = returningIndex + "RETURNING".length
+    // RETURNING clauses are terminal — no FROM keyword follows
+    hasFromClause = false
   }
 
-  return splitAtTopLevel(selectClause.trim(), ',').map { raw ->
+  val fromIndex = if (hasFromClause) findTopLevelKeyword(sql, "FROM", afterKeyword) else -1
+  val rawClause = if (fromIndex >= 0) {
+    sql.substring(afterKeyword, fromIndex)
+  } else {
+    sql.substring(afterKeyword)
+  }
+
+  return splitAtTopLevel(rawClause.trim().trimEnd(';'), ',').map { raw ->
     val item = raw.trim()
     val (expression, _) = extractAlias(item)
     parseColumnReference(expression)
