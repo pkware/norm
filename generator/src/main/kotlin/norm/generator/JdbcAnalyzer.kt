@@ -131,10 +131,16 @@ public class JdbcAnalyzer(private val connection: Connection) {
     // views carry no constraints. Resolve actual nullability by tracing columns back to their source
     // base table columns via pg_depend, where NOT NULL constraints exist.
     val viewNotNullColumns = catalogLoader.loadViewColumnNullability(schemaName)
+    // For regular views (not materialized views), columns on the nullable side of an outer join inside
+    // the view's definition must remain nullable even when the base table column is NOT NULL. Remove
+    // such columns from the NOT NULL set to prevent false non-null claims.
+    val viewOuterJoinNullableColumns = catalogLoader.loadViewOuterJoinNullableColumns(schemaName)
+    val correctedViewNotNullColumns = viewNotNullColumns - viewOuterJoinNullableColumns
 
     return tableEntries.map { (tableName, tableType) ->
       val primaryKeyColumns = loadPrimaryKeyColumns(dbMeta, schemaName, tableName)
-      val columns = loadColumns(dbMeta, schemaName, tableName, columnComments, viewNotNullColumns, primaryKeyColumns)
+      val columns =
+        loadColumns(dbMeta, schemaName, tableName, columnComments, correctedViewNotNullColumns, primaryKeyColumns)
       Table(
         rel = Identifier(name = tableName, schema = schemaName),
         columns = columns,
@@ -204,6 +210,8 @@ public class JdbcAnalyzer(private val connection: Connection) {
   ): List<Column> {
     if (rsmd == null) return emptyList()
 
+    val outerJoinNullable = catalogLoader.queryColumnNullability(sql)
+
     val nonNullAliases = nullabilityAnalyzer.findNonNullAliases(sql, notNullByParameter)
     val selectItems = parseSelectItems(sql)
 
@@ -221,21 +229,26 @@ public class JdbcAnalyzer(private val connection: Connection) {
       // Look up the catalog column for comment and nullability fallback.
       val catalogColumn = tableName?.let { catalog.findColumn(it, originalColumnName) }
 
-      val notNull = when (rsmd.isNullable(i)) {
-        ResultSetMetaData.columnNoNulls -> true
-        ResultSetMetaData.columnNullable ->
+      // Node tree analysis is the primary source for outer-join-induced nullability.
+      // If the node tree says a column is nullable from an outer join, that overrides
+      // anything JDBC reports. Otherwise, fall through to existing JDBC/catalog/expression logic.
+      val nullableFromOuterJoin = outerJoinNullable.getOrElse(i - 1) { false }
+      val jdbcNullable = rsmd.isNullable(i)
+
+      val notNull = when {
+        nullableFromOuterJoin -> false
+        jdbcNullable == ResultSetMetaData.columnNoNulls -> true
+        jdbcNullable == ResultSetMetaData.columnNullable ->
           // JDBC reports columnNullable for view/matview columns even when the underlying base table column
           // is NOT NULL. The catalog has the corrected nullability (resolved via pg_depend), so trust it.
           catalogColumn?.not_null == true
         // columnNullableUnknown: the driver can't determine nullability from schema metadata.
-        // This happens for computed expressions (EXISTS, COUNT, COALESCE, function calls, crosstab
-        // columns, etc.).
         // Resolution order:
         //   1. SqlNullabilityAnalyzer (aliased): identifies non-null SQL expressions with AS aliases
-        //   2. SqlNullabilityAnalyzer (un-aliased): checks if the raw expression is a known non-null
-        //      construct (EXISTS, COUNT, COALESCE) — handles SELECT EXISTS(...) without AS
-        //   3. Catalog fallback: if the column maps to a known table column, use its NOT NULL constraint
+        //   2. SqlNullabilityAnalyzer (un-aliased): checks if raw expression is known non-null
+        //   3. Catalog fallback: if column maps to a known table column, use its NOT NULL constraint
         //   4. Default to nullable (safest assumption)
+        // Retained until #66 replaces SqlNullabilityAnalyzer with node tree expression analysis.
         else ->
           columnLabel in nonNullAliases ||
             selectItem?.expression?.let { nullabilityAnalyzer.isKnownNonNullExpression(it) } == true ||

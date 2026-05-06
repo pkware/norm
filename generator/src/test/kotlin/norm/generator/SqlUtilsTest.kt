@@ -4,6 +4,7 @@ import assertk.assertThat
 import assertk.assertions.containsExactly
 import assertk.assertions.hasSize
 import assertk.assertions.isEmpty
+import assertk.assertions.isEqualTo
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
@@ -169,5 +170,65 @@ class SqlUtilsTest {
   fun `handles deeply nested parentheses`() {
     val result = splitAtTopLevel("encode(digest(hmac(a, b, c), d), e), f", ',')
     assertThat(result).containsExactly("encode(digest(hmac(a, b, c), d), e)", " f")
+  }
+
+  @Nested
+  inner class ReplaceParameterPlaceholders {
+
+    @Test
+    fun `replaces single placeholder`() {
+      val result = replaceParameterPlaceholders("SELECT * FROM t WHERE id = ?")
+      assertThat(result).isEqualTo("SELECT * FROM t WHERE id = NULL")
+    }
+
+    @Test
+    fun `replaces multiple placeholders`() {
+      val result = replaceParameterPlaceholders("SELECT * FROM t WHERE a = ? AND b = ?")
+      assertThat(result).isEqualTo("SELECT * FROM t WHERE a = NULL AND b = NULL")
+    }
+
+    @Test
+    fun `preserves question mark inside single-quoted string`() {
+      val result = replaceParameterPlaceholders("SELECT * FROM t WHERE note = 'really?' AND id = ?")
+      assertThat(result).isEqualTo("SELECT * FROM t WHERE note = 'really?' AND id = NULL")
+    }
+
+    @Test
+    fun `preserves question mark inside escaped string literal`() {
+      val result = replaceParameterPlaceholders("SELECT * FROM t WHERE note = 'it''s a ? mark' AND id = ?")
+      assertThat(result).isEqualTo("SELECT * FROM t WHERE note = 'it''s a ? mark' AND id = NULL")
+    }
+
+    @Test
+    fun `preserves question mark inside line comment`() {
+      val result = replaceParameterPlaceholders("SELECT * FROM t -- why?\nWHERE id = ?")
+      assertThat(result).isEqualTo("SELECT * FROM t -- why?\nWHERE id = NULL")
+    }
+
+    @Test
+    fun `preserves question mark inside block comment`() {
+      val result = replaceParameterPlaceholders("SELECT * FROM t /* what? */ WHERE id = ?")
+      assertThat(result).isEqualTo("SELECT * FROM t /* what? */ WHERE id = NULL")
+    }
+
+    @Test
+    fun `no placeholders returns unchanged`() {
+      val sql = "SELECT * FROM department"
+      val result = replaceParameterPlaceholders(sql)
+      assertThat(result).isEqualTo(sql)
+    }
+
+    @Test
+    fun `unclosed string literal preserves content without replacing`() {
+      // Valid SQL never has unclosed literals, but the function should not crash
+      val result = replaceParameterPlaceholders("SELECT '?")
+      assertThat(result).isEqualTo("SELECT '?")
+    }
+
+    @Test
+    fun `unclosed block comment preserves content without replacing`() {
+      val result = replaceParameterPlaceholders("SELECT /* ?")
+      assertThat(result).isEqualTo("SELECT /* ?")
+    }
   }
 }

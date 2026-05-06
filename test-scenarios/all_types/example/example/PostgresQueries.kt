@@ -816,4 +816,66 @@ public class PostgresQueries(
       setString(1, string_type)
     }
   }
+
+  private fun <T : Any, R> departmentEmployees(mapper: (
+    id: Int,
+    dept_name: String,
+    employee_name: String?,
+    nickname: String?,
+  ) -> T, block: (
+    String,
+    ResultSet.() -> T,
+    (PreparedStatement.() -> Unit)?,
+  ) -> R): R {
+    val sql = """
+        |SELECT d.id, d.name AS dept_name, e.name AS employee_name, e.nickname
+        |FROM department d
+        |LEFT JOIN employee e ON e.department_id = d.id
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        getString(2),
+        getString(3),
+        getString(4),
+      )
+    }
+    return block(sql, rowReader, null)
+  }
+
+  override fun <T : Any> departmentEmployees(mapper: (
+    id: Int,
+    dept_name: String,
+    employee_name: String?,
+    nickname: String?,
+  ) -> T): Many<T> = departmentEmployees(mapper, driver::queryMany)
+
+  override fun <T : Any> departmentEmployeesDynamically(mapper: (
+    id: Int,
+    dept_name: String,
+    employee_name: String?,
+    nickname: String?,
+  ) -> T): Query<T> = departmentEmployees(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T, R> allNames(mapper: (name: String?) -> T, block: (
+    String,
+    ResultSet.() -> T,
+    (PreparedStatement.() -> Unit)?,
+  ) -> R): R {
+    val sql = """
+        |SELECT name FROM department
+        |UNION ALL
+        |SELECT name FROM employee
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getString(1),
+      )
+    }
+    return block(sql, rowReader, null)
+  }
+
+  override fun <T> allNames(mapper: (name: String?) -> T): Many<T> = allNames(mapper, driver::queryMany)
+
+  override fun <T> allNamesDynamically(mapper: (name: String?) -> T): Query<T> = allNames(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
 }

@@ -100,3 +100,22 @@ LANGUAGE SQL
 AS $$
   UPDATE type SET string_type = p_new_value WHERE serial_type = p_id;
 $$;
+
+-- Tables for JOIN nullability testing.
+CREATE TABLE department (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL
+);
+
+CREATE TABLE employee (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  department_id INT NOT NULL REFERENCES department(id),
+  nickname TEXT
+);
+
+CREATE TABLE project (
+  id SERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  lead_employee_id INT REFERENCES employee(id)
+);

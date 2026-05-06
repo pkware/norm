@@ -6,6 +6,8 @@ import plugin.Enum
 import plugin.Identifier
 import plugin.Parameter
 import java.sql.Connection
+import java.sql.SQLException
+import java.util.UUID
 
 /**
  * Loads schema metadata from PostgreSQL's system catalogs via JDBC.
@@ -16,6 +18,10 @@ import java.sql.Connection
  * @param connection An open JDBC connection to a PostgreSQL database with the schema applied.
  */
 internal class PgCatalogLoader(private val connection: Connection) {
+
+  init {
+    checkPostgresVersion()
+  }
 
   /**
    * Maps function names to their overload metadata from `pg_proc`.
@@ -102,6 +108,63 @@ internal class PgCatalogLoader(private val connection: Connection) {
         while (rs.next()) {
           if (rs.getBoolean("source_not_null")) {
             add("${rs.getString("view_name")}.${rs.getString("view_column")}")
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Returns view columns that are nullable due to outer joins in the view's own definition.
+   *
+   * Reads each (non-materialized) view's query tree from `pg_rewrite.ev_action` and runs
+   * [NodeTreeNullabilityAnalyzer] on it to detect which output columns can be `null` because of a
+   * `LEFT JOIN`, `RIGHT JOIN`, or `FULL OUTER JOIN` inside the view. Outer-join-nullable columns
+   * must remain nullable even if the underlying base table column is `NOT NULL`.
+   *
+   * This corrects a class of false positives from [loadViewColumnNullability]: when two joined tables
+   * both have a column with the same name (e.g., `department.name` and `employee.name`), and one of
+   * those tables is on the nullable side of a `LEFT JOIN`, the view column inherits `NOT NULL` from
+   * the preserved side even though the actual column selected is from the nullable side. The node tree
+   * analysis detects this case and vetoes the incorrect `NOT NULL`.
+   *
+   * Materialized views are excluded because their data is stored at refresh time; the outer-join
+   * structure of the definition does not affect the persisted `NOT NULL` guarantee of a materialized
+   * view's columns (PostgreSQL allows defining `NOT NULL` constraints on matview columns separately).
+   *
+   * @param schemaName The schema to inspect.
+   * @return A set of `"viewName.columnName"` strings for view columns that are nullable from outer joins.
+   */
+  fun loadViewOuterJoinNullableColumns(schemaName: String): Set<String> = buildSet {
+    // For each regular view, read its node tree and cross-reference with its column list.
+    // The node tree's targetList positions correspond to pg_attribute attnum order.
+    connection.createStatement().use { stmt ->
+      stmt.executeQuery(
+        """
+        SELECT
+          c.relname AS view_name,
+          rw.ev_action::text AS node_tree,
+          array_agg(a.attname ORDER BY a.attnum) AS col_names
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_catalog.pg_rewrite rw ON rw.ev_class = c.oid AND rw.ev_type = '1'
+        JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+        WHERE n.nspname = '$schemaName'
+          AND c.relkind = 'v'
+        GROUP BY c.relname, rw.ev_action
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) {
+          val viewName = rs.getString("view_name")
+          val nodeTree = rs.getString("node_tree")
+
+          @Suppress("UNCHECKED_CAST")
+          val columnNames = (rs.getArray("col_names").array as Array<String>).toList()
+          val outerJoinNullable = NodeTreeNullabilityAnalyzer.extractColumnNullability(nodeTree)
+          for ((index, nullable) in outerJoinNullable.withIndex()) {
+            if (nullable && index < columnNames.size) {
+              add("$viewName.${columnNames[index]}")
+            }
           }
         }
       }
@@ -282,6 +345,211 @@ internal class PgCatalogLoader(private val connection: Connection) {
           )
         }
       }
+    }
+  }
+
+  /**
+   * Determines which result columns of a SQL query can be NULL due to outer joins.
+   *
+   * Creates a temporary view wrapping the query, reads the analyzed query tree from
+   * `pg_rewrite.ev_action`, and extracts `varnullingrels` from each output column's `VAR` node.
+   * Columns with non-empty nulling rels can be NULL due to LEFT/RIGHT/FULL OUTER JOINs.
+   *
+   * Parameter placeholders (`?`) are replaced with `NULL` before view creation since views
+   * cannot contain parameters. This does not affect nullability analysis — outer join
+   * nullability is determined by join structure, not parameter values.
+   *
+   * When the SQL contains data-modifying statements (INSERT/UPDATE/DELETE in CTEs or as the
+   * outer statement), PostgreSQL rejects view creation. In that case, the SQL is transformed
+   * into an equivalent SELECT that preserves the join structure:
+   * - CTE bodies are replaced with `SELECT NULL::<type> AS <name>, ... WHERE FALSE` stubs
+   *   whose column metadata is obtained from PostgreSQL via `PreparedStatement.getMetaData()`.
+   * - `UPDATE ... FROM ... RETURNING` and `DELETE ... USING ... RETURNING` are converted to
+   *   equivalent SELECT statements that preserve the FROM/USING join structure.
+   * - DML without join structure (plain INSERT, UPDATE without FROM, DELETE without USING,
+   *   MERGE) returns an empty list since no outer joins are possible.
+   *
+   * @param sql The SQL query or DML statement to analyze.
+   * @return A list of booleans, one per result column in SELECT order. `true` means the
+   *   column can be NULL due to an outer join; `false` means it cannot.
+   */
+  fun queryColumnNullability(sql: String): List<Boolean> {
+    val viewSql = replaceParameterPlaceholders(sql)
+
+    // Fast path: try creating a view directly (works for all SELECT-only SQL).
+    return try {
+      analyzeViaTemporaryView(viewSql)
+    } catch (_: SQLException) {
+      // View creation failed — SQL contains data-modifying statements.
+      // Transform the SQL to remove DML while preserving join structure.
+      val transformedSql = transformForViewCreation(viewSql)
+        ?: return buildAllNonNullable(viewSql) // No outer joins possible → all columns non-nullable
+      analyzeViaTemporaryView(transformedSql)
+    }
+  }
+
+  /**
+   * Creates a temporary view from [viewSql], reads its node tree from `pg_rewrite`,
+   * and returns per-column outer join nullability.
+   */
+  private fun analyzeViaTemporaryView(viewSql: String): List<Boolean> {
+    val viewName = "norm_nullability_${UUID.randomUUID().toString().replace("-", "")}"
+    try {
+      connection.createStatement().use { stmt ->
+        stmt.execute("CREATE TEMPORARY VIEW $viewName AS $viewSql")
+      }
+      val nodeTree = connection.createStatement().use { stmt ->
+        stmt.executeQuery(
+          "SELECT rw.ev_action::text FROM pg_rewrite rw " +
+            "JOIN pg_class c ON c.oid = rw.ev_class " +
+            "WHERE c.relname = '$viewName' AND c.relkind = 'v' AND rw.ev_type = '1'",
+        ).use { rs ->
+          check(rs.next()) { "No rewrite rule found for temporary view $viewName" }
+          rs.getString(1)
+        }
+      }
+      return NodeTreeNullabilityAnalyzer.extractColumnNullability(nodeTree)
+    } finally {
+      connection.createStatement().use { stmt ->
+        stmt.execute("DROP VIEW IF EXISTS $viewName")
+      }
+    }
+  }
+
+  /**
+   * Transforms SQL containing data-modifying statements into an equivalent SELECT
+   * that preserves the join structure for outer join nullability analysis.
+   *
+   * Two transformations are applied:
+   * 1. **CTE bodies** are replaced with `SELECT NULL::<type> AS <name> ... WHERE FALSE` stubs.
+   *    Column metadata is obtained from PostgreSQL via `PreparedStatement.getMetaData()` on
+   *    the original CTE body, so PostgreSQL does the parsing.
+   * 2. **Outer DML** (`UPDATE ... FROM`, `DELETE ... USING`) is converted to an equivalent
+   *    SELECT that preserves the FROM/USING join structure.
+   *
+   * @return The transformed SQL, or `null` if the DML has no join structure (the caller
+   *   should return an empty nullability list).
+   */
+  private fun transformForViewCreation(sql: String): String? {
+    // Phase 1: Replace CTE bodies with SELECT stubs.
+    // We replace ALL CTE bodies unconditionally — the outer query's varnullingrels depend
+    // on the outer join structure, not CTE internals. The stubs have matching column names
+    // and types so the outer query's references resolve correctly.
+    val cteClause = parseCteClause(sql)
+    val result: String
+    val mainQueryStart: Int
+    if (cteClause != null) {
+      // Build the result by concatenating segments: original text between CTE bodies stays,
+      // CTE bodies are replaced with stubs. This avoids index invalidation from length changes.
+      result = buildString {
+        var lastEnd = 0
+        for (cte in cteClause.definitions) {
+          append(sql, lastEnd, cte.bodyOpenParenthesis + 1) // Include the opening '('
+          val body = sql.substring(cte.bodyOpenParenthesis + 1, cte.bodyCloseParenthesis)
+          append(buildSelectStub(body) ?: body) // Keep original body if stub fails
+          lastEnd = cte.bodyCloseParenthesis // Will include the closing ')' next iteration
+        }
+        append(sql, lastEnd, sql.length)
+      }
+      // mainQueryStart is adjusted by the total length change from all replacements.
+      mainQueryStart = cteClause.mainQueryStart + (result.length - sql.length)
+    } else {
+      result = sql
+      mainQueryStart = 0
+    }
+
+    // Phase 2: If the outer statement is DML, convert to an equivalent SELECT.
+    val mainQuery = result.substring(mainQueryStart)
+    val selectEquivalent = convertDmlToSelect(mainQuery)
+
+    return if (selectEquivalent != null) {
+      result.substring(0, mainQueryStart) + selectEquivalent
+    } else if (cteClause != null && cteClause.definitions.isNotEmpty()) {
+      // CTEs were replaced but outer statement is SELECT (or non-transformable DML).
+      // If it's SELECT, the transformed SQL should work as a view.
+      // If it's INSERT/MERGE (no join structure in RETURNING), return null.
+      val afterCte = skipWhitespaceAndComments(mainQuery, 0)
+      if (mainQuery.regionMatches(afterCte, "SELECT", 0, 6, ignoreCase = true) ||
+        mainQuery.regionMatches(afterCte, "TABLE", 0, 5, ignoreCase = true) ||
+        mainQuery.regionMatches(afterCte, "VALUES", 0, 6, ignoreCase = true)
+      ) {
+        result
+      } else {
+        null // Outer DML with no join structure (INSERT, MERGE)
+      }
+    } else {
+      null // No CTEs, outer DML with no join structure
+    }
+  }
+
+  /**
+   * Builds a `SELECT NULL::<type> AS <name>, ... WHERE FALSE` stub that produces the same
+   * result columns as the given SQL body, using PostgreSQL's own parser to determine column
+   * metadata via `PreparedStatement.getMetaData()`.
+   *
+   * @param body A SQL statement (the CTE body text, without surrounding parentheses).
+   * @return The SELECT stub, or `null` if metadata cannot be obtained.
+   */
+  private fun buildSelectStub(body: String): String? {
+    return try {
+      connection.prepareStatement(body).use { preparedStatement ->
+        val metadata = preparedStatement.metaData ?: return null
+        if (metadata.columnCount == 0) return null
+        buildString {
+          append("SELECT ")
+          for (i in 1..metadata.columnCount) {
+            if (i > 1) append(", ")
+            // serial/smallserial/bigserial are pseudo-types (syntactic sugar for sequence + integer).
+            // JDBC returns these as type names but they can't be used in casts. Map to real types.
+            val typeName = when (metadata.getColumnTypeName(i)) {
+              "serial" -> "int4"
+              "smallserial", "serial2" -> "int2"
+              "bigserial", "serial8" -> "int8"
+              else -> metadata.getColumnTypeName(i)
+            }
+            append("NULL::").append(typeName)
+            append(" AS ").append(metadata.getColumnName(i))
+          }
+          append(" WHERE FALSE")
+        }
+      }
+    } catch (_: SQLException) {
+      null
+    }
+  }
+
+  /**
+   * Returns a list of `false` values matching the result column count of [sql].
+   *
+   * Used when the SQL has no join structure that could produce outer-join nullability
+   * (e.g., plain INSERT/DELETE/UPDATE without FROM/USING, or MERGE). The column count is
+   * determined by `PreparedStatement.getMetaData()`, letting PostgreSQL parse the statement.
+   */
+  private fun buildAllNonNullable(sql: String): List<Boolean> {
+    return try {
+      connection.prepareStatement(sql).use { preparedStatement ->
+        val metadata = preparedStatement.metaData ?: return emptyList()
+        List(metadata.columnCount) { false }
+      }
+    } catch (_: SQLException) {
+      emptyList()
+    }
+  }
+
+  /**
+   * Checks that the connected PostgreSQL server is version 16 or later.
+   *
+   * Norm requires PostgreSQL 16+ for `varnullingrels` support in query tree nodes,
+   * used for accurate outer join nullability detection.
+   *
+   * @throws IllegalStateException if the server version is below 16.
+   */
+  fun checkPostgresVersion() {
+    val version = connection.metaData.databaseMajorVersion
+    check(version >= 16) {
+      "Norm requires PostgreSQL 16 or later (connected to version $version). " +
+        "PostgreSQL 16 added varnullingrels to query tree nodes, which Norm uses " +
+        "for accurate outer join nullability detection."
     }
   }
 

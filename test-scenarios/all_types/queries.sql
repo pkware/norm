@@ -40,3 +40,15 @@ SELECT * FROM not_null_view;
 -- Query against a materialized view with computed columns (aggregates are nullable).
 -- name: getTypeSummary :one
 SELECT * FROM type_summary WHERE string_type = ?;
+
+-- LEFT JOIN: right side NOT NULL columns become nullable (#58).
+-- name: departmentEmployees :many
+SELECT d.id, d.name AS dept_name, e.name AS employee_name, e.nickname
+FROM department d
+LEFT JOIN employee e ON e.department_id = d.id;
+
+-- UNION ALL: node tree has no VAR at top level, nullability from JDBC metadata.
+-- name: allNames :many
+SELECT name FROM department
+UNION ALL
+SELECT name FROM employee;
