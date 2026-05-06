@@ -2,7 +2,7 @@
 junit = "6.0.3"
 kotlin = "2.3.21"
 ktlint = "1.5.0"
-micronaut = "4.10.22"
+micronaut = "4.10.23"
 micronautData = "4.14.3"
 testcontainers = "2.0.5"
 wire = "6.2.0"
