@@ -71,7 +71,14 @@ abstract class PostgresTestBase {
    */
   protected open fun cleanDatabase(connection: Connection) {
     connection.createStatement().use { stmt ->
-      stmt.execute("DROP TABLE IF EXISTS type CASCADE")
+      stmt.execute(
+        """
+        DROP TABLE IF EXISTS project CASCADE;
+        DROP TABLE IF EXISTS employee CASCADE;
+        DROP TABLE IF EXISTS department CASCADE;
+        DROP TABLE IF EXISTS type CASCADE
+        """.trimIndent(),
+      )
     }
   }
 

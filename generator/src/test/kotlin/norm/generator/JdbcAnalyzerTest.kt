@@ -425,6 +425,373 @@ class JdbcAnalyzerTest {
       // Arithmetic on a nullable column — JDBC reports columnNullableUnknown, we default to nullable
       assertThat(query.columns[0].not_null).isFalse()
     }
+
+    @Nested
+    inner class OuterJoinNullability {
+
+      @Test
+      fun `LEFT JOIN NOT NULL column from right table is nullable`() {
+        val catalog = analyzer.buildCatalog()
+        val parsed = ParsedQuery(
+          "leftJoinNotNull",
+          ":many",
+          "SELECT d.id, e.name FROM department d LEFT JOIN employee e ON e.department_id = d.id",
+          emptyList(),
+        )
+
+        val query = analyzer.analyzeQuery(parsed, catalog)
+
+        val columnsByName = query.columns.associateBy { it.name }
+        // d.id is from the left (preserved) side — always non-null
+        assertThat(columnsByName.getValue("id").not_null).isTrue()
+        // e.name is NOT NULL in the schema, but LEFT JOIN can produce NULL when no match exists
+        assertThat(columnsByName.getValue("name").not_null).isFalse()
+      }
+
+      @Test
+      fun `LEFT JOIN nullable column from right table is nullable`() {
+        val catalog = analyzer.buildCatalog()
+        val parsed = ParsedQuery(
+          "leftJoinNullable",
+          ":many",
+          "SELECT d.id, e.nickname FROM department d LEFT JOIN employee e ON e.department_id = d.id",
+          emptyList(),
+        )
+
+        val query = analyzer.analyzeQuery(parsed, catalog)
+
+        val columnsByName = query.columns.associateBy { it.name }
+        assertThat(columnsByName.getValue("id").not_null).isTrue()
+        // e.nickname is nullable in schema AND LEFT JOIN can produce NULL — doubly nullable
+        assertThat(columnsByName.getValue("nickname").not_null).isFalse()
+      }
+
+      @Test
+      fun `LEFT JOIN NOT NULL column from left table is non-null`() {
+        val catalog = analyzer.buildCatalog()
+        val parsed = ParsedQuery(
+          "leftJoinLeftSide",
+          ":many",
+          "SELECT d.name, e.name AS employee_name FROM department d LEFT JOIN employee e ON e.department_id = d.id",
+          emptyList(),
+        )
+
+        val query = analyzer.analyzeQuery(parsed, catalog)
+
+        val columnsByName = query.columns.associateBy { it.name }
+        // d.name is from the left (preserved) side — stays non-null
+        assertThat(columnsByName.getValue("name").not_null).isTrue()
+        // e.name is from the right (optional) side — nullable due to LEFT JOIN
+        assertThat(columnsByName.getValue("employee_name").not_null).isFalse()
+      }
+
+      @Test
+      fun `RIGHT JOIN NOT NULL column from left table is nullable`() {
+        val catalog = analyzer.buildCatalog()
+        val parsed = ParsedQuery(
+          "rightJoinNotNull",
+          ":many",
+          "SELECT d.name, e.name AS employee_name FROM department d RIGHT JOIN employee e ON e.department_id = d.id",
+          emptyList(),
+        )
+
+        val query = analyzer.analyzeQuery(parsed, catalog)
+
+        val columnsByName = query.columns.associateBy { it.name }
+        // d.name is from the left (optional) side in a RIGHT JOIN — nullable
+        assertThat(columnsByName.getValue("name").not_null).isFalse()
+        // e.name is from the right (preserved) side — stays non-null
+        assertThat(columnsByName.getValue("employee_name").not_null).isTrue()
+      }
+
+      @Test
+      fun `INNER JOIN preserves NOT NULL from both tables`() {
+        val catalog = analyzer.buildCatalog()
+        val parsed = ParsedQuery(
+          "innerJoinNotNull",
+          ":many",
+          "SELECT d.name, e.name AS employee_name FROM department d JOIN employee e ON e.department_id = d.id",
+          emptyList(),
+        )
+
+        val query = analyzer.analyzeQuery(parsed, catalog)
+
+        val columnsByName = query.columns.associateBy { it.name }
+        // INNER JOIN — both sides always have matching rows, NOT NULL preserved
+        assertThat(columnsByName.getValue("name").not_null).isTrue()
+        assertThat(columnsByName.getValue("employee_name").not_null).isTrue()
+      }
+
+      @Test
+      fun `LEFT JOIN with subquery NOT NULL column is nullable`() {
+        val catalog = analyzer.buildCatalog()
+        val parsed = ParsedQuery(
+          "leftJoinSubquery",
+          ":many",
+          """
+            SELECT d.id, s.name
+            FROM department d
+            LEFT JOIN (SELECT DISTINCT department_id, name FROM employee) s ON s.department_id = d.id
+          """.trimIndent(),
+          emptyList(),
+        )
+
+        val query = analyzer.analyzeQuery(parsed, catalog)
+
+        val columnsByName = query.columns.associateBy { it.name }
+        assertThat(columnsByName.getValue("id").not_null).isTrue()
+        // Subquery column from LEFT JOIN — nullable even though employee.name is NOT NULL
+        assertThat(columnsByName.getValue("name").not_null).isFalse()
+      }
+    }
+
+    @Nested
+    inner class ComplexJoinScenarios {
+
+      @Test
+      fun `CROSS JOIN preserves NOT NULL from both tables`() {
+        val catalog = analyzer.buildCatalog()
+        val parsed = ParsedQuery(
+          "crossJoin",
+          ":many",
+          "SELECT d.name, e.name AS employee_name FROM department d CROSS JOIN employee e",
+          emptyList(),
+        )
+
+        val query = analyzer.analyzeQuery(parsed, catalog)
+
+        val columnsByName = query.columns.associateBy { it.name }
+        // CROSS JOIN never produces NULL — both sides always present
+        assertThat(columnsByName.getValue("name").not_null).isTrue()
+        assertThat(columnsByName.getValue("employee_name").not_null).isTrue()
+      }
+
+      @Test
+      fun `FULL OUTER JOIN makes both sides nullable`() {
+        val catalog = analyzer.buildCatalog()
+        val parsed = ParsedQuery(
+          "fullJoin",
+          ":many",
+          "SELECT d.name, e.name AS employee_name FROM department d FULL OUTER JOIN employee e ON e.department_id = d.id",
+          emptyList(),
+        )
+
+        val query = analyzer.analyzeQuery(parsed, catalog)
+
+        val columnsByName = query.columns.associateBy { it.name }
+        // FULL OUTER JOIN — either side can be NULL when no match
+        assertThat(columnsByName.getValue("name").not_null).isFalse()
+        assertThat(columnsByName.getValue("employee_name").not_null).isFalse()
+      }
+
+      @Test
+      fun `chained LEFT JOINs make all right sides nullable`() {
+        val catalog = analyzer.buildCatalog()
+        val parsed = ParsedQuery(
+          "chainedLeftJoins",
+          ":many",
+          """
+            SELECT d.name, e.name AS employee_name, p.title
+            FROM department d
+            LEFT JOIN employee e ON e.department_id = d.id
+            LEFT JOIN project p ON p.lead_employee_id = e.id
+          """.trimIndent(),
+          emptyList(),
+        )
+
+        val query = analyzer.analyzeQuery(parsed, catalog)
+
+        val columnsByName = query.columns.associateBy { it.name }
+        // d.name: preserved side of both LEFT JOINs — non-null
+        assertThat(columnsByName.getValue("name").not_null).isTrue()
+        // e.name: right side of first LEFT JOIN — nullable
+        assertThat(columnsByName.getValue("employee_name").not_null).isFalse()
+        // p.title: right side of second LEFT JOIN — nullable
+        assertThat(columnsByName.getValue("title").not_null).isFalse()
+      }
+
+      @Test
+      fun `CTE with LEFT JOIN propagates nullability`() {
+        val catalog = analyzer.buildCatalog()
+        val parsed = ParsedQuery(
+          "cteLeftJoin",
+          ":many",
+          """
+            WITH dept_employees AS (
+              SELECT d.id AS dept_id, d.name AS dept_name, e.name AS employee_name
+              FROM department d
+              LEFT JOIN employee e ON e.department_id = d.id
+            )
+            SELECT dept_name, employee_name FROM dept_employees
+          """.trimIndent(),
+          emptyList(),
+        )
+
+        val query = analyzer.analyzeQuery(parsed, catalog)
+
+        val columnsByName = query.columns.associateBy { it.name }
+        // dept_name is from preserved side — non-null
+        assertThat(columnsByName.getValue("dept_name").not_null).isTrue()
+        // employee_name is from nullable side of LEFT JOIN inside CTE — nullable
+        assertThat(columnsByName.getValue("employee_name").not_null).isFalse()
+      }
+
+      @Test
+      fun `self LEFT JOIN same table different nullability per side`() {
+        val catalog = analyzer.buildCatalog()
+        val parsed = ParsedQuery(
+          "selfLeftJoin",
+          ":many",
+          """
+            SELECT e1.name AS manager_name, e2.name AS report_name
+            FROM employee e1
+            LEFT JOIN employee e2 ON e2.department_id = e1.department_id AND e2.id != e1.id
+          """.trimIndent(),
+          emptyList(),
+        )
+
+        val query = analyzer.analyzeQuery(parsed, catalog)
+
+        val columnsByName = query.columns.associateBy { it.name }
+        // e1 is on preserved side — non-null
+        assertThat(columnsByName.getValue("manager_name").not_null).isTrue()
+        // e2 is on nullable side — nullable even though same table
+        assertThat(columnsByName.getValue("report_name").not_null).isFalse()
+      }
+
+      @Test
+      fun `LEFT JOIN inside subquery in FROM does not leak nullability to outer query`() {
+        val catalog = analyzer.buildCatalog()
+        val parsed = ParsedQuery(
+          "subqueryContainment",
+          ":many",
+          """
+            SELECT s.dept_name
+            FROM (
+              SELECT d.name AS dept_name
+              FROM department d
+              LEFT JOIN employee e ON e.department_id = d.id
+            ) s
+          """.trimIndent(),
+          emptyList(),
+        )
+
+        val query = analyzer.analyzeQuery(parsed, catalog)
+
+        // dept_name comes from department (preserved side inside the subquery).
+        // The outer FROM just wraps the subquery — no outer join at the outer level.
+        assertThat(query.columns).hasSize(1)
+        assertThat(query.columns[0].not_null).isTrue()
+      }
+    }
+
+    @Nested
+    inner class SetOperations {
+
+      @Test
+      fun `UNION ALL does not introduce outer join nullability`() {
+        val catalog = analyzer.buildCatalog()
+        val parsed = ParsedQuery(
+          "unionAll",
+          ":many",
+          """
+            SELECT name FROM department
+            UNION ALL
+            SELECT name FROM employee
+          """.trimIndent(),
+          emptyList(),
+        )
+
+        val query = analyzer.analyzeQuery(parsed, catalog)
+
+        // Node tree TARGETENTRY has no VAR at the top level (references set operation output).
+        // Node tree analysis returns false (no outer join). JDBC determines final nullability.
+        assertThat(query.columns).hasSize(1)
+      }
+
+      @Test
+      fun `INTERSECT does not introduce outer join nullability`() {
+        val catalog = analyzer.buildCatalog()
+        val parsed = ParsedQuery(
+          "intersect",
+          ":many",
+          """
+            SELECT name FROM department
+            INTERSECT
+            SELECT name FROM employee
+          """.trimIndent(),
+          emptyList(),
+        )
+
+        val query = analyzer.analyzeQuery(parsed, catalog)
+
+        assertThat(query.columns).hasSize(1)
+      }
+
+      @Test
+      fun `EXCEPT does not introduce outer join nullability`() {
+        val catalog = analyzer.buildCatalog()
+        val parsed = ParsedQuery(
+          "except",
+          ":many",
+          """
+            SELECT name FROM department
+            EXCEPT
+            SELECT name FROM employee
+          """.trimIndent(),
+          emptyList(),
+        )
+
+        val query = analyzer.analyzeQuery(parsed, catalog)
+
+        assertThat(query.columns).hasSize(1)
+      }
+    }
+
+    @Nested
+    inner class ViewNullabilityWithJoins {
+
+      @Test
+      fun `view over LEFT JOIN does not inherit NOT NULL from wrong source table`() {
+        // Both department and employee have a "name" column that is NOT NULL.
+        // A view that selects employee.name (without aliasing) from the nullable side of a LEFT JOIN
+        // should report it as nullable. But loadViewColumnNullability matches by column name, so
+        // "name" in the view matches BOTH department.name (NOT NULL) and employee.name (NOT NULL).
+        // Since department is on the preserved side, the name-match falsely inherits NOT NULL.
+        connection.createStatement().use { stmt ->
+          stmt.execute(
+            """
+            CREATE VIEW issue65_view AS
+            SELECT e.name, e.nickname
+            FROM department d
+            LEFT JOIN employee e ON e.department_id = d.id
+            """.trimIndent(),
+          )
+        }
+
+        try {
+          val catalog = analyzer.buildCatalog()
+          val parsed = ParsedQuery(
+            "issue65",
+            ":many",
+            "SELECT name, nickname FROM issue65_view",
+            emptyList(),
+          )
+
+          val query = analyzer.analyzeQuery(parsed, catalog)
+
+          val columnsByName = query.columns.associateBy { it.name }
+          // e.name: NOT NULL in schema, but on nullable side of LEFT JOIN — should be nullable.
+          assertThat(columnsByName.getValue("name").not_null).isFalse()
+          // e.nickname: nullable in schema — should be nullable regardless.
+          assertThat(columnsByName.getValue("nickname").not_null).isFalse()
+        } finally {
+          connection.createStatement().use { stmt ->
+            stmt.execute("DROP VIEW IF EXISTS issue65_view")
+          }
+        }
+      }
+    }
   }
 
   @Test

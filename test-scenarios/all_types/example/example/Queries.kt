@@ -628,4 +628,66 @@ public interface Queries {
    */
   @Throws(SQLException::class)
   public fun getTypeSummary(string_type: String): TypeSummary = getTypeSummary(string_type, ::TypeSummary)
+
+  /**
+   * LEFT JOIN: right side NOT NULL columns become nullable (#58).
+   *
+   * ```sql
+   * SELECT d.id, d.name AS dept_name, e.name AS employee_name, e.nickname
+   * FROM department d
+   * LEFT JOIN employee e ON e.department_id = d.id
+   * ```
+   */
+  public fun <T : Any> departmentEmployees(mapper: (
+    id: Int,
+    dept_name: String,
+    employee_name: String?,
+    nickname: String?,
+  ) -> T): Many<T>
+
+  /**
+   * LEFT JOIN: right side NOT NULL columns become nullable (#58).
+   *
+   * ```sql
+   * SELECT d.id, d.name AS dept_name, e.name AS employee_name, e.nickname
+   * FROM department d
+   * LEFT JOIN employee e ON e.department_id = d.id
+   * ```
+   */
+  public fun departmentEmployees(): Many<DepartmentEmployees> = departmentEmployees(::DepartmentEmployees)
+
+  public fun <T : Any> departmentEmployeesDynamically(mapper: (
+    id: Int,
+    dept_name: String,
+    employee_name: String?,
+    nickname: String?,
+  ) -> T): Query<T>
+
+  public fun departmentEmployeesDynamically(): Query<DepartmentEmployees> = departmentEmployeesDynamically(::DepartmentEmployees)
+
+  /**
+   * UNION ALL: node tree has no VAR at top level, nullability from JDBC metadata.
+   *
+   * ```sql
+   * SELECT name FROM department
+   * UNION ALL
+   * SELECT name FROM employee
+   * ```
+   */
+  public fun <T> allNames(mapper: (name: String?) -> T): Many<T>
+
+  /**
+   * UNION ALL: node tree has no VAR at top level, nullability from JDBC metadata.
+   *
+   * ```sql
+   * SELECT name FROM department
+   * UNION ALL
+   * SELECT name FROM employee
+   * ```
+   */
+  public fun allNames(): Many<String?> = allNames(::inputValue)
+
+  public fun <T> allNamesDynamically(mapper: (name: String?) -> T): Query<T>
+
+  public fun allNamesDynamically(): Query<String?> = allNamesDynamically(::inputValue)
 }

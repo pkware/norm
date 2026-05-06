@@ -179,7 +179,7 @@ private fun parseColumnReference(expression: String): SelectItem {
  *
  * @return The index of the keyword, or `-1` if not found at the top level.
  */
-private fun findTopLevelKeyword(sql: String, keyword: String, startIndex: Int): Int {
+internal fun findTopLevelKeyword(sql: String, keyword: String, startIndex: Int = 0): Int {
   var depth = 0
   var i = startIndex
   while (i <= sql.length - keyword.length) {
@@ -207,3 +207,313 @@ private fun findTopLevelKeyword(sql: String, keyword: String, startIndex: Int): 
 
 /** Matches `table.column` or just `column` (identifier characters only, no parentheses or operators). */
 private val COLUMN_REFERENCE = Regex("""(?:(?<table>\w+)\.)?(?<column>\w+)""")
+
+/**
+ * A parsed CTE definition from a `WITH` clause.
+ *
+ * @property name The CTE name.
+ * @property bodyOpenParenthesis Index of `(` that opens the CTE body in the original SQL.
+ * @property bodyCloseParenthesis Index of `)` that closes the CTE body.
+ */
+internal data class CteDefinition(val name: String, val bodyOpenParenthesis: Int, val bodyCloseParenthesis: Int)
+
+/**
+ * Result of parsing a SQL `WITH` clause.
+ *
+ * @property definitions The CTEs in declaration order.
+ * @property mainQueryStart Index in the original SQL where the main query (after all CTEs) begins.
+ */
+internal data class ParsedCteClause(val definitions: List<CteDefinition>, val mainQueryStart: Int)
+
+/**
+ * Parses CTE definitions from a SQL `WITH` clause.
+ *
+ * Extracts each CTE's name and the character indices of its body parentheses so callers
+ * can replace CTE bodies by simple string splicing. Handles `WITH RECURSIVE`, optional
+ * column lists (`name(col1, col2) AS (...)`), and `[NOT] MATERIALIZED` hints.
+ *
+ * Skips single-line (`--`) and block (`/* */`) comments between CTE definitions.
+ *
+ * @return The parsed CTE clause, or `null` if the SQL does not start with `WITH`
+ *   (after leading whitespace and comments).
+ */
+internal fun parseCteClause(sql: String): ParsedCteClause? {
+  val withIndex = findTopLevelKeyword(sql, "WITH")
+  if (withIndex < 0) return null
+
+  // Make sure WITH is before any DML/SELECT keyword (it's the leading WITH, not WITH inside a subquery)
+  for (keyword in listOf("SELECT", "INSERT", "UPDATE", "DELETE", "MERGE")) {
+    val keywordIndex = findTopLevelKeyword(sql, keyword)
+    if (keywordIndex in 0 until withIndex) return null
+  }
+
+  var position = withIndex + 4
+  position = skipWhitespaceAndComments(sql, position)
+
+  // Skip optional RECURSIVE keyword (word-boundary check avoids matching CTE names like "recursive_cte")
+  position = skipOptionalKeyword(sql, position, "RECURSIVE")
+
+  val definitions = mutableListOf<CteDefinition>()
+
+  while (position < sql.length) {
+    val parsed = parseSingleCteDefinition(sql, position) ?: break
+    definitions.add(parsed.first)
+    position = skipWhitespaceAndComments(sql, parsed.second)
+    if (position >= sql.length || sql[position] != ',') break
+    position++ // skip the comma
+  }
+
+  return if (definitions.isEmpty()) {
+    null
+  } else {
+    ParsedCteClause(definitions, position)
+  }
+}
+
+/**
+ * Parses a single CTE definition starting at [position].
+ *
+ * Expected syntax: `name [(col_list)] AS [NOT MATERIALIZED | MATERIALIZED] (body)`
+ *
+ * @return A pair of the parsed [CteDefinition] and the position after the closing `)`,
+ *   or `null` if parsing fails at any step.
+ */
+private fun parseSingleCteDefinition(sql: String, startPosition: Int): Pair<CteDefinition, Int>? {
+  var position = skipWhitespaceAndComments(sql, startPosition)
+
+  // Read CTE name (identifier: word chars or double-quoted)
+  val nameStart = position
+  if (position < sql.length && sql[position] == '"') {
+    position++ // skip opening quote
+    while (position < sql.length && sql[position] != '"') position++
+    if (position < sql.length) position++ // skip closing quote
+  } else {
+    while (position < sql.length && (sql[position].isLetterOrDigit() || sql[position] == '_')) position++
+  }
+  if (position == nameStart) return null
+  val name = sql.substring(nameStart, position).trim('"')
+
+  position = skipWhitespaceAndComments(sql, position)
+
+  // Skip optional column list: name(col1, col2)
+  if (position < sql.length && sql[position] == '(') {
+    val closeParenthesis = findMatchingCloseParenthesis(sql, position)
+    if (closeParenthesis < 0) return null
+    position = closeParenthesis + 1
+    position = skipWhitespaceAndComments(sql, position)
+  }
+
+  // Expect AS
+  if (!sql.regionMatches(position, "AS", 0, 2, ignoreCase = true)) return null
+  position += 2
+  position = skipWhitespaceAndComments(sql, position)
+
+  // Skip optional NOT MATERIALIZED or MATERIALIZED
+  position = skipOptionalKeyword(sql, position, "NOT")
+  position = skipOptionalKeyword(sql, position, "MATERIALIZED")
+
+  // Expect ( — start of CTE body
+  if (position >= sql.length || sql[position] != '(') return null
+  val bodyOpen = position
+  val bodyClose = findMatchingCloseParenthesis(sql, position)
+  if (bodyClose < 0) return null
+
+  return CteDefinition(name, bodyOpen, bodyClose) to (bodyClose + 1)
+}
+
+/**
+ * Builds a SELECT statement equivalent to an `UPDATE ... FROM ... RETURNING` or
+ * `DELETE ... USING ... RETURNING` statement, preserving the join structure so that
+ * outer join nullability in the RETURNING columns is detectable via view analysis.
+ *
+ * For `UPDATE target SET ... FROM from_clause WHERE where_clause RETURNING cols`:
+ * produces `SELECT cols FROM target, from_clause WHERE where_clause`.
+ *
+ * For `DELETE FROM target USING using_clause WHERE where_clause RETURNING cols`:
+ * produces `SELECT cols FROM target, using_clause WHERE where_clause`.
+ *
+ * For DML without a FROM/USING clause (no join structure), or for INSERT/MERGE
+ * (where RETURNING can only reference the target table), returns `null` — the caller
+ * should use an empty nullability list since no outer joins are possible.
+ *
+ * @param sql The DML statement (without any CTE prefix).
+ * @return An equivalent SELECT preserving the join structure, or `null` if the DML
+ *   has no join structure that could affect RETURNING column nullability.
+ */
+internal fun convertDmlToSelect(sql: String): String? {
+  val trimmedStart = skipWhitespaceAndComments(sql, 0)
+
+  // UPDATE target SET ... [FROM ...] [WHERE ...] RETURNING ...
+  if (sql.regionMatches(trimmedStart, "UPDATE", 0, 6, ignoreCase = true)) {
+    val setIndex = findTopLevelKeyword(sql, "SET", trimmedStart + 6)
+    if (setIndex < 0) return null
+    val target = sql.substring(trimmedStart + 6, setIndex).trim()
+
+    val fromIndex = findTopLevelKeyword(sql, "FROM", setIndex)
+    if (fromIndex < 0) return null // No FROM clause → no join structure
+
+    val returningIndex = findTopLevelKeyword(sql, "RETURNING", setIndex)
+    if (returningIndex < 0) return null // No RETURNING → no result columns
+
+    return buildSelectFromDml(sql, target, fromIndex + 4, returningIndex)
+  }
+
+  // DELETE FROM target [USING ...] [WHERE ...] RETURNING ...
+  if (sql.regionMatches(trimmedStart, "DELETE", 0, 6, ignoreCase = true)) {
+    val fromIndex = findTopLevelKeyword(sql, "FROM", trimmedStart + 6)
+    if (fromIndex < 0) return null
+
+    val usingIndex = findTopLevelKeyword(sql, "USING", fromIndex)
+    if (usingIndex < 0) return null // No USING clause → no join structure
+
+    val returningIndex = findTopLevelKeyword(sql, "RETURNING", fromIndex)
+    if (returningIndex < 0) return null
+
+    val target = sql.substring(fromIndex + 4, usingIndex).trim()
+    return buildSelectFromDml(sql, target, usingIndex + 5, returningIndex)
+  }
+
+  // INSERT, MERGE, or other DML: no join structure in RETURNING
+  return null
+}
+
+/**
+ * Builds `SELECT <returning> FROM <target>, <joinClause> [WHERE <where>]` from the components
+ * of an UPDATE FROM or DELETE USING statement.
+ *
+ * @param sql The full DML statement.
+ * @param target The target table expression.
+ * @param joinClauseStart Index in [sql] where the join clause text begins (after FROM/USING keyword).
+ * @param returningIndex Index in [sql] where the RETURNING keyword starts.
+ */
+private fun buildSelectFromDml(sql: String, target: String, joinClauseStart: Int, returningIndex: Int): String {
+  val whereIndex = findTopLevelKeyword(sql, "WHERE", joinClauseStart)
+
+  val fromClause: String
+  val whereClause: String?
+  if (whereIndex in 0 until returningIndex) {
+    fromClause = sql.substring(joinClauseStart, whereIndex).trim()
+    whereClause = sql.substring(whereIndex + 5, returningIndex).trim()
+  } else {
+    fromClause = sql.substring(joinClauseStart, returningIndex).trim()
+    whereClause = null
+  }
+  val returningClause = sql.substring(returningIndex + 9).trimEnd().trimEnd(';')
+
+  return buildString {
+    append("SELECT ").append(returningClause)
+    append(" FROM ").append(target).append(", ").append(fromClause)
+    if (whereClause != null) append(" WHERE ").append(whereClause)
+  }
+}
+
+/**
+ * If [keyword] appears at [position] as a complete word (followed by whitespace or end of string),
+ * advances past it and any trailing whitespace/comments. Otherwise returns [position] unchanged.
+ */
+private fun skipOptionalKeyword(sql: String, position: Int, keyword: String): Int {
+  if (!sql.regionMatches(position, keyword, 0, keyword.length, ignoreCase = true)) return position
+  val afterKeyword = position + keyword.length
+  if (afterKeyword < sql.length && !sql[afterKeyword].isWhitespace()) return position
+  return skipWhitespaceAndComments(sql, afterKeyword)
+}
+
+/**
+ * Advances past whitespace, single-line comments (`--`), and block comments (`/* */`).
+ *
+ * @return The index of the first non-whitespace, non-comment character at or after [start].
+ */
+internal fun skipWhitespaceAndComments(sql: String, start: Int): Int {
+  var i = start
+  while (i < sql.length) {
+    when {
+      sql[i].isWhitespace() -> i++
+      sql[i] == '-' && i + 1 < sql.length && sql[i + 1] == '-' -> {
+        val eol = sql.indexOf('\n', i)
+        i = if (eol < 0) sql.length else eol + 1
+      }
+      sql[i] == '/' && i + 1 < sql.length && sql[i + 1] == '*' -> {
+        val close = sql.indexOf("*/", i + 2)
+        i = if (close < 0) sql.length else close + 2
+      }
+      else -> return i
+    }
+  }
+  return i
+}
+
+/**
+ * Replaces `?` parameter placeholders with `NULL` for use in view definitions.
+ *
+ * PostgreSQL views cannot contain parameter placeholders. This function replaces each `?` that
+ * represents a parameter with `NULL`, which allows the query to be used as a view body for
+ * node tree analysis. The replacement value does not affect nullability analysis — outer join
+ * nullability is determined by join structure, not parameter values.
+ *
+ * Correctly skips `?` inside:
+ * - Single-quoted string literals (`'really?'`), including `''` escape sequences
+ * - Line comments (`-- why?`)
+ * - Block comments (`/* what? */`)
+ *
+ * Note: Dollar-quoted string literals (`$$...$$`) are not handled. A `?` inside a dollar-quoted
+ * string would be replaced with `NULL`. This is an acceptable limitation since dollar quoting is
+ * only used in function bodies, not in WHERE clauses or other contexts where Norm analyzes queries.
+ */
+internal fun replaceParameterPlaceholders(sql: String): String {
+  if ('?' !in sql) return sql
+  // +20: NULL is 3 chars longer than ?, so +20 accommodates ~6 replacements before a reallocation.
+  val result = StringBuilder(sql.length + 20)
+  var i = 0
+  while (i < sql.length) {
+    when {
+      sql[i] == '\'' -> {
+        result.append('\'')
+        i++
+        while (i < sql.length) {
+          if (sql[i] == '\'') {
+            result.append('\'')
+            i++
+            if (i < sql.length && sql[i] == '\'') {
+              result.append('\'')
+              i++
+            } else {
+              break
+            }
+          } else {
+            result.append(sql[i])
+            i++
+          }
+        }
+      }
+      sql[i] == '-' && i + 1 < sql.length && sql[i + 1] == '-' -> {
+        val eol = sql.indexOf('\n', i)
+        if (eol < 0) {
+          result.append(sql, i, sql.length)
+          i = sql.length
+        } else {
+          result.append(sql, i, eol + 1)
+          i = eol + 1
+        }
+      }
+      sql[i] == '/' && i + 1 < sql.length && sql[i + 1] == '*' -> {
+        val close = sql.indexOf("*/", i + 2)
+        if (close < 0) {
+          result.append(sql, i, sql.length)
+          i = sql.length
+        } else {
+          result.append(sql, i, close + 2)
+          i = close + 2
+        }
+      }
+      sql[i] == '?' -> {
+        result.append("NULL")
+        i++
+      }
+      else -> {
+        result.append(sql[i])
+        i++
+      }
+    }
+  }
+  return result.toString()
+}
