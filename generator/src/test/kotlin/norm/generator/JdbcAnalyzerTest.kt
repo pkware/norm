@@ -14,6 +14,7 @@ import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestInstance
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.containers.wait.strategy.Wait
 import org.testcontainers.containers.wait.strategy.WaitAllStrategy
@@ -270,12 +271,11 @@ class JdbcAnalyzerTest {
   }
 
   /**
-   * Tests that verify the JDBC driver's nullability metadata is correctly interpreted by
-   * the full pipeline: JDBC metadata -> SqlNullabilityAnalyzer -> Column.not_null.
+   * Tests that verify result column nullability is correctly determined by the full pipeline:
+   * SQL → PostgreSQL node tree analysis → [Column.not_null].
    *
-   * Pure SQL pattern matching (EXISTS/COUNT/COALESCE detection, strict function analysis, etc.)
-   * is covered by [SqlNullabilityAnalyzerTest] without needing a database. The tests below focus
-   * on JDBC-specific behavior: columnNoNulls vs columnNullable vs columnNullableUnknown.
+   * The node tree analyzer is the authoritative source for nullability. These tests cover
+   * NOT NULL columns, nullable columns, expressions, and outer join scenarios.
    */
   @Nested
   inner class ResultColumnNullability {
@@ -343,8 +343,7 @@ class JdbcAnalyzerTest {
 
       assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].name).isEqualTo("uppered")
-      // upper() is strict, but its input is a nullable column reference — not a ? param —
-      // so the expression can't be proven non-null. JDBC reports columnNullableUnknown.
+      // upper() is strict — its result is nullable when the input column is nullable.
       assertThat(query.columns[0].not_null).isFalse()
     }
 
@@ -360,8 +359,7 @@ class JdbcAnalyzerTest {
 
       val query = analyzer.analyzeQuery(parsed, catalog)
 
-      // Verifies that JDBC correctly reports columnNullable for int_type and columnNullableUnknown
-      // for COUNT(*), and the analyzer overrides the unknown to non-null.
+      // COUNT(*) is always non-null (aggregate function). int_type is nullable in the schema.
       val columnsByName = query.columns.associateBy { it.name }
       assertThat(columnsByName.getValue("total").not_null).isTrue()
       assertThat(columnsByName.getValue("int_type").not_null).isFalse()
@@ -381,8 +379,6 @@ class JdbcAnalyzerTest {
 
       val columnsByName = query.columns.associateBy { it.name }
       // These columns are NOT NULL in the underlying "type" table.
-      // JDBC reports columnNullableUnknown for view columns, but the analyzer should
-      // resolve nullability from the catalog.
       assertThat(columnsByName.getValue("serial_type").not_null).isTrue()
       assertThat(columnsByName.getValue("string_type").not_null).isTrue()
       assertThat(columnsByName.getValue("int4_type").not_null).isTrue()
@@ -422,7 +418,7 @@ class JdbcAnalyzerTest {
 
       assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].name).isEqualTo("incremented")
-      // Arithmetic on a nullable column — JDBC reports columnNullableUnknown, we default to nullable
+      // Arithmetic on a nullable column — result is nullable.
       assertThat(query.columns[0].not_null).isFalse()
     }
 
@@ -704,8 +700,8 @@ class JdbcAnalyzerTest {
 
         val query = analyzer.analyzeQuery(parsed, catalog)
 
-        // Node tree TARGETENTRY has no VAR at the top level (references set operation output).
-        // Node tree analysis returns false (no outer join). JDBC determines final nullability.
+        // Node tree TARGETENTRY has no VAR at the top level for set operations.
+        // The node tree reports nullability based on the source columns.
         assertThat(query.columns).hasSize(1)
       }
 
@@ -791,6 +787,246 @@ class JdbcAnalyzerTest {
           }
         }
       }
+    }
+  }
+
+  /**
+   * Integration tests that verify expression nullability is correctly determined by the full pipeline:
+   * SQL expression → PostgreSQL node tree analysis → [Column.not_null].
+   *
+   * These tests use the `department` and `employee` tables from the all_types schema.
+   * `employee.id` and `employee.department_id` are NOT NULL; `employee.nickname` is nullable.
+   */
+  @Nested
+  @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+  inner class ExpressionNullability {
+
+    private lateinit var catalog: plugin.Catalog
+
+    @BeforeAll
+    fun setupCatalog() {
+      catalog = analyzer.buildCatalog()
+    }
+
+    private fun analyzeSimpleQuery(sql: String): plugin.Query {
+      val parsedQuery = ParsedQuery("test", ":one", sql, emptyList())
+      return analyzer.analyzeQuery(parsedQuery, catalog)
+    }
+
+    @Test
+    fun `COUNT star is non-null`() {
+      val query = analyzeSimpleQuery("SELECT COUNT(*) AS total FROM department")
+      assertThat(query.columns.first().not_null).isTrue()
+    }
+
+    @Test
+    fun `SUM is nullable`() {
+      val query = analyzeSimpleQuery("SELECT SUM(id) AS total FROM employee")
+      assertThat(query.columns.first().not_null).isFalse()
+    }
+
+    @Test
+    fun `COALESCE with non-null fallback is non-null`() {
+      val query = analyzeSimpleQuery("SELECT COALESCE(nickname, 'anon') AS display_name FROM employee")
+      assertThat(query.columns.first().not_null).isTrue()
+    }
+
+    @Test
+    fun `strict function with non-null arg is non-null`() {
+      val query = analyzeSimpleQuery("SELECT upper(name) AS upper_name FROM department")
+      assertThat(query.columns.first().not_null).isTrue()
+    }
+
+    @Test
+    fun `strict function with nullable arg is nullable`() {
+      val query = analyzeSimpleQuery("SELECT upper(nickname) AS upper_nick FROM employee")
+      assertThat(query.columns.first().not_null).isFalse()
+    }
+
+    @Test
+    fun `type cast preserves non-null`() {
+      val query = analyzeSimpleQuery("SELECT id::bigint AS big_id FROM department")
+      assertThat(query.columns.first().not_null).isTrue()
+    }
+
+    @Test
+    fun `CURRENT_DATE is non-null`() {
+      val query = analyzeSimpleQuery("SELECT CURRENT_DATE AS today FROM department")
+      assertThat(query.columns.first().not_null).isTrue()
+    }
+
+    @Test
+    fun `IS NOT NULL is non-null`() {
+      val query = analyzeSimpleQuery("SELECT name IS NOT NULL AS has_name FROM employee")
+      assertThat(query.columns.first().not_null).isTrue()
+    }
+
+    @Test
+    fun `EXISTS is non-null`() {
+      val query = analyzeSimpleQuery("SELECT EXISTS(SELECT 1 FROM department) AS has_dept FROM department")
+      assertThat(query.columns.first().not_null).isTrue()
+    }
+
+    @Test
+    fun `CASE with ELSE is non-null when all branches non-null`() {
+      val query = analyzeSimpleQuery("SELECT CASE WHEN id > 0 THEN 'yes' ELSE 'no' END AS flag FROM employee")
+      assertThat(query.columns.first().not_null).isTrue()
+    }
+
+    @Test
+    fun `CASE without ELSE is nullable`() {
+      val query = analyzeSimpleQuery("SELECT CASE WHEN id > 0 THEN 'yes' END AS flag FROM employee")
+      assertThat(query.columns.first().not_null).isFalse()
+    }
+
+    @Test
+    fun `nested — strict wrapping COALESCE`() {
+      val query = analyzeSimpleQuery("SELECT upper(COALESCE(nickname, 'anon')) AS display FROM employee")
+      assertThat(query.columns.first().not_null).isTrue()
+    }
+
+    @Test
+    fun `LEFT JOIN column is nullable`() {
+      val query = analyzeSimpleQuery(
+        "SELECT d.name, e.name AS emp_name FROM department d LEFT JOIN employee e ON e.department_id = d.id",
+      )
+      assertThat(query.columns[0].not_null).isTrue() // d.name — preserved side
+      assertThat(query.columns[1].not_null).isFalse() // e.name — nullable side
+    }
+
+    @Test
+    fun `LEFT JOIN with COALESCE is non-null`() {
+      val query = analyzeSimpleQuery(
+        "SELECT COALESCE(e.name, 'none') AS emp_name FROM department d LEFT JOIN employee e ON e.department_id = d.id",
+      )
+      assertThat(query.columns.first().not_null).isTrue()
+    }
+
+    @Test
+    fun `ROW_NUMBER is non-null`() {
+      val query = analyzeSimpleQuery("SELECT ROW_NUMBER() OVER() AS rn FROM department")
+      assertThat(query.columns.first().not_null).isTrue()
+    }
+
+    @Test
+    fun `NULLIF is nullable`() {
+      val query = analyzeSimpleQuery("SELECT NULLIF(name, 'test') AS val FROM employee")
+      assertThat(query.columns.first().not_null).isFalse()
+    }
+
+    @Test
+    fun `GREATEST with all non-null args is non-null`() {
+      val query = analyzeSimpleQuery("SELECT GREATEST(department_id, 0) AS val FROM employee")
+      assertThat(query.columns.first().not_null).isTrue() // both args NOT NULL
+    }
+
+    @Test
+    fun `IS DISTINCT FROM is non-null`() {
+      val query = analyzeSimpleQuery("SELECT name IS DISTINCT FROM nickname AS val FROM employee")
+      assertThat(query.columns.first().not_null).isTrue()
+    }
+
+    @Test
+    fun `IS TRUE is non-null`() {
+      val query = analyzeSimpleQuery("SELECT (id > 0) IS TRUE AS val FROM employee")
+      assertThat(query.columns.first().not_null).isTrue()
+    }
+
+    @Test
+    fun `string_agg is nullable`() {
+      val query = analyzeSimpleQuery("SELECT string_agg(name, ',') AS val FROM employee")
+      assertThat(query.columns.first().not_null).isFalse()
+    }
+
+    @Test
+    fun `ARRAY constructor is non-null`() {
+      val query = analyzeSimpleQuery("SELECT ARRAY[1, 2, 3] AS val FROM employee")
+      assertThat(query.columns.first().not_null).isTrue()
+    }
+
+    @Test
+    fun `CURRENT_USER is non-null`() {
+      val query = analyzeSimpleQuery("SELECT CURRENT_USER AS val FROM employee")
+      assertThat(query.columns.first().not_null).isTrue()
+    }
+
+    @Test
+    fun `integer addition with non-null args is non-null`() {
+      val query = analyzeSimpleQuery("SELECT id + 1 AS val FROM employee")
+      assertThat(query.columns.first().not_null).isTrue()
+    }
+
+    @Test
+    fun `string concat with non-null args is non-null`() {
+      val query = analyzeSimpleQuery("SELECT name || ' suffix' AS val FROM employee")
+      assertThat(query.columns.first().not_null).isTrue()
+    }
+
+    @Test
+    fun `string concat with nullable arg is nullable`() {
+      val query = analyzeSimpleQuery("SELECT nickname || ' suffix' AS val FROM employee")
+      assertThat(query.columns.first().not_null).isFalse()
+    }
+
+    @Test
+    fun `GROUP BY column retains NOT NULL from base table`() {
+      // GROUP BY creates an *GROUP* RTE (rtekind 9) — must resolve through groupexprs to base table
+      val query = analyzeSimpleQuery(
+        "SELECT name, COUNT(*) AS cnt FROM department GROUP BY name",
+      )
+      assertThat(query.columns[0].not_null).isTrue() // name TEXT NOT NULL
+      assertThat(query.columns[1].not_null).isTrue() // COUNT(*) always non-null
+    }
+
+    @Test
+    fun `GROUP BY with JOIN retains NOT NULL from preserved side`() {
+      val query = analyzeSimpleQuery(
+        "SELECT d.name, COUNT(e.id) AS emp_count FROM department d " +
+          "LEFT JOIN employee e ON e.department_id = d.id GROUP BY d.name",
+      )
+      assertThat(query.columns[0].not_null).isTrue() // d.name — preserved side, NOT NULL
+      assertThat(query.columns[1].not_null).isTrue() // COUNT() always non-null
+    }
+
+    @Test
+    fun `strict function wrapping parameter placeholders is non-null`() {
+      // digest(?, ?) — strict function over non-null parameters. The old SqlNullabilityAnalyzer
+      // correctly returned non-null; the node tree analysis must replicate this by replacing ?
+      // with typed non-null sentinels instead of NULL.
+      val query = analyzeSimpleQuery("SELECT upper(?) AS upper_input FROM department")
+      assertThat(query.columns.first().not_null).isTrue()
+    }
+
+    @Test
+    fun `GROUPING SETS makes GROUP BY columns nullable`() {
+      // With GROUPING SETS, columns not in the current grouping set receive NULL even if NOT NULL.
+      val query = analyzeSimpleQuery(
+        "SELECT d.id, d.name, COUNT(*) AS cnt FROM department d " +
+          "GROUP BY GROUPING SETS ((d.id), (d.name))",
+      )
+      assertThat(query.columns[0].not_null).isFalse() // d.id — NOT NULL but nullable via grouping sets
+      assertThat(query.columns[1].not_null).isFalse() // d.name — NOT NULL but nullable via grouping sets
+      assertThat(query.columns[2].not_null).isTrue() // COUNT(*) — always non-null
+    }
+
+    @Test
+    fun `CUBE makes GROUP BY columns nullable`() {
+      val query = analyzeSimpleQuery(
+        "SELECT d.id, d.name, COUNT(*) AS cnt FROM department d GROUP BY CUBE (d.id, d.name)",
+      )
+      assertThat(query.columns[0].not_null).isFalse() // d.id — nullable via CUBE
+      assertThat(query.columns[1].not_null).isFalse() // d.name — nullable via CUBE
+      assertThat(query.columns[2].not_null).isTrue() // COUNT(*)
+    }
+
+    @Test
+    fun `ROLLUP makes GROUP BY columns nullable`() {
+      val query = analyzeSimpleQuery(
+        "SELECT d.id, d.name, COUNT(*) AS cnt FROM department d GROUP BY ROLLUP (d.id, d.name)",
+      )
+      assertThat(query.columns[0].not_null).isFalse() // d.id — nullable via ROLLUP
+      assertThat(query.columns[1].not_null).isFalse() // d.name — nullable via ROLLUP
+      assertThat(query.columns[2].not_null).isTrue() // COUNT(*)
     }
   }
 

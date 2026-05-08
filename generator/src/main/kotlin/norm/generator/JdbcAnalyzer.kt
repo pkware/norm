@@ -27,7 +27,6 @@ import java.sql.ResultSetMetaData
 public class JdbcAnalyzer(private val connection: Connection) {
 
   private val catalogLoader = PgCatalogLoader(connection)
-  private val nullabilityAnalyzer = SqlNullabilityAnalyzer(catalogLoader.functionOverloads)
   private val parameterInferrer = SqlParameterInferrer(catalogLoader.functionOverloads)
 
   /**
@@ -86,7 +85,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
       parameters = analyzeCallParameters(parsedQuery.sql, jdbcSql)
     } else {
       connection.prepareStatement(jdbcSql).use { ps ->
-        resultColumns = buildResultColumns(ps.metaData, catalog, parsedQuery.sql, notNullByParameter)
+        resultColumns = buildResultColumns(ps.metaData, catalog, parsedQuery.sql)
         parameters =
           buildParameters(ps.parameterMetaData, inferredNames, notNullByParameter, inferredParameters, catalog)
       }
@@ -202,17 +201,10 @@ public class JdbcAnalyzer(private val connection: Connection) {
     }
   }
 
-  private fun buildResultColumns(
-    rsmd: ResultSetMetaData?,
-    catalog: Catalog,
-    sql: String,
-    notNullByParameter: Map<Int, Boolean> = emptyMap(),
-  ): List<Column> {
+  private fun buildResultColumns(rsmd: ResultSetMetaData?, catalog: Catalog, sql: String): List<Column> {
     if (rsmd == null) return emptyList()
 
-    val outerJoinNullable = catalogLoader.queryColumnNullability(sql)
-
-    val nonNullAliases = nullabilityAnalyzer.findNonNullAliases(sql, notNullByParameter)
+    val columnNullability = catalogLoader.queryColumnNullability(sql)
     val selectItems = parseSelectItems(sql)
 
     val columns = mutableListOf<Column>()
@@ -226,34 +218,12 @@ public class JdbcAnalyzer(private val connection: Connection) {
       // Use the parsed SELECT item to resolve the original column name for comment lookup.
       val originalColumnName = selectItem?.columnName ?: rsmd.getColumnName(i)
 
-      // Look up the catalog column for comment and nullability fallback.
+      // Look up the catalog column for comment resolution.
       val catalogColumn = tableName?.let { catalog.findColumn(it, originalColumnName) }
 
-      // Node tree analysis is the primary source for outer-join-induced nullability.
-      // If the node tree says a column is nullable from an outer join, that overrides
-      // anything JDBC reports. Otherwise, fall through to existing JDBC/catalog/expression logic.
-      val nullableFromOuterJoin = outerJoinNullable.getOrElse(i - 1) { false }
-      val jdbcNullable = rsmd.isNullable(i)
-
-      val notNull = when {
-        nullableFromOuterJoin -> false
-        jdbcNullable == ResultSetMetaData.columnNoNulls -> true
-        jdbcNullable == ResultSetMetaData.columnNullable ->
-          // JDBC reports columnNullable for view/matview columns even when the underlying base table column
-          // is NOT NULL. The catalog has the corrected nullability (resolved via pg_depend), so trust it.
-          catalogColumn?.not_null == true
-        // columnNullableUnknown: the driver can't determine nullability from schema metadata.
-        // Resolution order:
-        //   1. SqlNullabilityAnalyzer (aliased): identifies non-null SQL expressions with AS aliases
-        //   2. SqlNullabilityAnalyzer (un-aliased): checks if raw expression is known non-null
-        //   3. Catalog fallback: if column maps to a known table column, use its NOT NULL constraint
-        //   4. Default to nullable (safest assumption)
-        // Retained until #66 replaces SqlNullabilityAnalyzer with node tree expression analysis.
-        else ->
-          columnLabel in nonNullAliases ||
-            selectItem?.expression?.let { nullabilityAnalyzer.isKnownNonNullExpression(it) } == true ||
-            catalogColumn?.not_null == true
-      }
+      // The node tree is the authoritative source for nullability. columnNullability[i-1] is true
+      // when nullable. Default to true (nullable) when the index is out of bounds.
+      val notNull = !(columnNullability.getOrElse(i - 1) { true })
 
       val comment = catalogColumn?.comment.orEmpty()
 
