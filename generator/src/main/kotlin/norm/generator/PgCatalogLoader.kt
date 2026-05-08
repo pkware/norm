@@ -19,6 +19,8 @@ import java.util.UUID
  */
 internal class PgCatalogLoader(private val connection: Connection) {
 
+  private val nodeTreeParser = PgNodeTreeParser()
+
   init {
     checkPostgresVersion()
   }
@@ -33,6 +35,151 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * Loaded lazily on first use and cached for the lifetime of this loader.
    */
   val functionOverloads: Map<String, List<FunctionOverload>> by lazy(::loadFunctionOverloads)
+
+  /**
+   * Maps function OIDs to their strictness flag from `pg_proc.proisstrict`.
+   *
+   * A strict function returns `null` when any argument is `null` — useful for determining
+   * expression nullability from the node tree. Keyed by OID for direct lookup from
+   * FUNCEXPR/OPEXPR/WINDOWFUNC nodes. Includes regular functions (`prokind = 'f'`) and
+   * window functions (`prokind = 'w'`). Excludes aggregates (`prokind = 'a'`) — those
+   * use [aggregateHasNonNullInitialValue] instead.
+   */
+  val functionStrictnessByOid: Map<Int, Boolean> by lazy(::loadFunctionStrictness)
+
+  /**
+   * Maps aggregate function OIDs to whether they have a non-null initial transition value.
+   *
+   * Aggregates with non-null `agginitval` (like COUNT with `agginitval = '0'`) return a
+   * non-null value for empty groups. Aggregates with `null` `agginitval` (SUM, AVG, MIN, MAX)
+   * return `null` for empty groups.
+   *
+   * Returns `null` for absent keys — this can occur if the OID belongs to a non-aggregate function.
+   */
+  val aggregateHasNonNullInitialValue: Map<Int, Boolean> by lazy(::loadAggregateInitialValues)
+
+  /**
+   * Maps `(relid, attnum)` pairs to `pg_attribute.attnotnull`.
+   *
+   * Used by [NodeTreeNullabilityAnalyzer] to determine whether a source column (referenced
+   * by a VAR node) is declared NOT NULL in the schema. Only includes user-visible columns
+   * (`attnum > 0` and `NOT attisdropped`).
+   *
+   * Returns `null` for absent keys — this occurs for columns not present in `pg_attribute`
+   * (e.g., virtual columns, system columns with attnum <= 0).
+   */
+  val columnNotNullByRelidAndAttnum: Map<Pair<Int, Int>, Boolean> by lazy(::loadColumnNotNull)
+
+  /**
+   * Maps `(relid, attnum)` pairs to `true` for view columns that are guaranteed NOT NULL.
+   *
+   * PostgreSQL stores `pg_attribute.attnotnull = false` for all view columns. This map
+   * corrects that by tracing each view column back to its source base table column via
+   * `pg_depend`, then subtracting columns that are nullable due to outer joins within the
+   * view's definition.
+   *
+   * Covers both regular views (`relkind = 'v'`) and materialized views (`relkind = 'm'`).
+   * No schema filter — the node tree can reference views from any schema.
+   *
+   * Returns `false` for absent keys.
+   */
+  val viewColumnNotNullByRelidAndAttnum: Map<Pair<Int, Int>, Boolean> by lazy(::loadViewColumnNotNull)
+
+  private fun loadColumnNotNull(): Map<Pair<Int, Int>, Boolean> = buildMap {
+    connection.createStatement().use { stmt ->
+      // No schema filter — relids come from the query's rtable and may reference tables
+      // from any schema. Filtering by schema here would miss tables in non-default schemas.
+      stmt.executeQuery(
+        """
+        SELECT attrelid::integer, attnum, attnotnull
+        FROM pg_catalog.pg_attribute
+        WHERE attnum > 0 AND NOT attisdropped
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) {
+          put(rs.getInt("attrelid") to rs.getInt("attnum"), rs.getBoolean("attnotnull"))
+        }
+      }
+    }
+  }
+
+  private fun loadViewColumnNotNull(): Map<Pair<Int, Int>, Boolean> {
+    // Step 1: build the initial non-null set from pg_depend (source base table column is NOT NULL).
+    val candidateNotNull = mutableMapOf<Pair<Int, Int>, Boolean>()
+    connection.createStatement().use { stmt ->
+      stmt.executeQuery(
+        """
+        SELECT
+          view_class.oid::integer AS view_relid,
+          view_attr.attnum AS view_attnum,
+          source_attr.attnotnull AS source_not_null
+        FROM pg_catalog.pg_depend d
+        JOIN pg_catalog.pg_rewrite rw ON rw.oid = d.objid
+        JOIN pg_catalog.pg_class view_class ON view_class.oid = rw.ev_class
+        JOIN pg_catalog.pg_attribute source_attr
+          ON source_attr.attrelid = d.refobjid AND source_attr.attnum = d.refobjsubid
+        JOIN pg_catalog.pg_class source_class ON source_class.oid = d.refobjid
+        JOIN pg_catalog.pg_attribute view_attr ON view_attr.attrelid = view_class.oid
+        WHERE view_class.relkind IN ('v', 'm')
+          AND d.classid = 'pg_rewrite'::regclass
+          AND d.refclassid = 'pg_class'::regclass
+          AND d.refobjsubid > 0
+          AND d.deptype = 'n'
+          AND source_class.relkind IN ('r', 'p')
+          AND view_attr.attnum > 0
+          AND view_attr.attname = source_attr.attname
+          AND source_attr.attnum > 0
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) {
+          val key = rs.getInt("view_relid") to rs.getInt("view_attnum")
+          // Mark as non-null only when source is NOT NULL. If multiple source columns are
+          // found for the same view column, keep false (safe default) if any is nullable.
+          if (rs.getBoolean("source_not_null")) {
+            candidateNotNull.putIfAbsent(key, true)
+          } else {
+            candidateNotNull[key] = false
+          }
+        }
+      }
+    }
+
+    // Step 2: subtract columns that are nullable due to outer joins in the view's definition.
+    // For each regular view (not materialized), run node tree analysis to find outer-join-nullable
+    // columns by position and remove them from the non-null set.
+    connection.createStatement().use { stmt ->
+      stmt.executeQuery(
+        """
+        SELECT
+          c.oid::integer AS view_relid,
+          rw.ev_action::text AS node_tree,
+          array_agg(a.attnum ORDER BY a.attnum) AS attnums
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_rewrite rw ON rw.ev_class = c.oid AND rw.ev_type = '1'
+        JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+        WHERE c.relkind = 'v'
+        GROUP BY c.oid, rw.ev_action
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) {
+          val viewRelid = rs.getInt("view_relid")
+          val nodeTree = rs.getString("node_tree")
+
+          @Suppress("UNCHECKED_CAST")
+          val attnums = (rs.getArray("attnums").array as Array<*>).map { (it as Number).toInt() }
+          val outerJoinNullable = NodeTreeNullabilityAnalyzer.extractOuterJoinNullability(nodeTree)
+          for ((index, nullable) in outerJoinNullable.withIndex()) {
+            if (nullable && index < attnums.size) {
+              // This view column is on the nullable side of an outer join — remove it.
+              candidateNotNull[viewRelid to attnums[index]] = false
+            }
+          }
+        }
+      }
+    }
+
+    return candidateNotNull.filterValues { it }
+  }
 
   private fun loadFunctionOverloads(): Map<String, List<FunctionOverload>> =
     buildMap<String, MutableList<FunctionOverload>> {
@@ -61,6 +208,32 @@ internal class PgCatalogLoader(private val connection: Connection) {
         }
       }
     }
+
+  private fun loadFunctionStrictness(): Map<Int, Boolean> = buildMap {
+    connection.createStatement().use { stmt ->
+      // Include regular functions ('f') and window functions ('w') — both appear in node tree expressions.
+      // Excludes procedures ('p') and aggregates ('a') — aggregates use agginitval, not strictness.
+      stmt.executeQuery(
+        "SELECT oid::integer, proisstrict FROM pg_catalog.pg_proc WHERE prokind IN ('f', 'w')",
+      ).use { rs ->
+        while (rs.next()) {
+          put(rs.getInt("oid"), rs.getBoolean("proisstrict"))
+        }
+      }
+    }
+  }
+
+  private fun loadAggregateInitialValues(): Map<Int, Boolean> = buildMap {
+    connection.createStatement().use { stmt ->
+      stmt.executeQuery(
+        "SELECT aggfnoid::integer, agginitval IS NOT NULL AS has_initial_value FROM pg_catalog.pg_aggregate",
+      ).use { rs ->
+        while (rs.next()) {
+          put(rs.getInt("aggfnoid"), rs.getBoolean("has_initial_value"))
+        }
+      }
+    }
+  }
 
   /**
    * Returns NOT NULL column information for views and materialized views by tracing columns back to their
@@ -160,7 +333,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
 
           @Suppress("UNCHECKED_CAST")
           val columnNames = (rs.getArray("col_names").array as Array<String>).toList()
-          val outerJoinNullable = NodeTreeNullabilityAnalyzer.extractColumnNullability(nodeTree)
+          val outerJoinNullable = NodeTreeNullabilityAnalyzer.extractOuterJoinNullability(nodeTree)
           for ((index, nullable) in outerJoinNullable.withIndex()) {
             if (nullable && index < columnNames.size) {
               add("$viewName.${columnNames[index]}")
@@ -349,15 +522,19 @@ internal class PgCatalogLoader(private val connection: Connection) {
   }
 
   /**
-   * Determines which result columns of a SQL query can be NULL due to outer joins.
+   * Determines which result columns of a SQL query can be NULL, using full expression evaluation.
    *
    * Creates a temporary view wrapping the query, reads the analyzed query tree from
-   * `pg_rewrite.ev_action`, and extracts `varnullingrels` from each output column's `VAR` node.
-   * Columns with non-empty nulling rels can be NULL due to LEFT/RIGHT/FULL OUTER JOINs.
+   * `pg_rewrite.ev_action`, and evaluates each output column's expression for nullability.
+   * This covers outer-join-induced nullability, aggregate return values, strict-function
+   * propagation, and more.
    *
-   * Parameter placeholders (`?`) are replaced with `NULL` before view creation since views
-   * cannot contain parameters. This does not affect nullability analysis — outer join
-   * nullability is determined by join structure, not parameter values.
+   * Parameter placeholders (`?`) are replaced with typed non-null sentinel values before view
+   * creation (views cannot contain parameters). The sentinel type is determined via
+   * `PreparedStatement.getParameterMetaData()`. Using non-null sentinels instead of `NULL`
+   * ensures that strict functions wrapping parameters (e.g., `digest(?, ?)`) correctly evaluate
+   * as non-null in the node tree. If parameter metadata is unavailable, `NULL` is used as a
+   * safe fallback (the column becomes conservatively nullable).
    *
    * When the SQL contains data-modifying statements (INSERT/UPDATE/DELETE in CTEs or as the
    * outer statement), PostgreSQL rejects view creation. In that case, the SQL is transformed
@@ -371,10 +548,10 @@ internal class PgCatalogLoader(private val connection: Connection) {
    *
    * @param sql The SQL query or DML statement to analyze.
    * @return A list of booleans, one per result column in SELECT order. `true` means the
-   *   column can be NULL due to an outer join; `false` means it cannot.
+   *   column can be NULL; `false` means it is guaranteed non-null.
    */
   fun queryColumnNullability(sql: String): List<Boolean> {
-    val viewSql = replaceParameterPlaceholders(sql)
+    val viewSql = buildViewSqlWithSentinels(sql) ?: replaceParameterPlaceholders(sql)
 
     // Fast path: try creating a view directly (works for all SELECT-only SQL).
     return try {
@@ -389,8 +566,32 @@ internal class PgCatalogLoader(private val connection: Connection) {
   }
 
   /**
+   * Replaces `?` parameter placeholders in [sql] with typed non-null sentinel values.
+   *
+   * Uses `PreparedStatement.getParameterMetaData()` to determine the PostgreSQL type of each
+   * parameter, then builds a non-null literal of that type (e.g., `0::int4`, `''::text`).
+   *
+   * @return The SQL with `?` replaced by typed sentinels, or `null` if parameter metadata
+   *   cannot be obtained (caller should fall back to NULL replacement).
+   */
+  private fun buildViewSqlWithSentinels(sql: String): String? {
+    if ('?' !in sql) return sql
+    return try {
+      val sentinels = connection.prepareStatement(sql).use { preparedStatement ->
+        val parameterMetaData = preparedStatement.parameterMetaData
+        (1..parameterMetaData.parameterCount).map { index ->
+          nonNullSentinel(parameterMetaData.getParameterTypeName(index))
+        }
+      }
+      replaceParameterPlaceholdersWithSentinels(sql, sentinels)
+    } catch (_: SQLException) {
+      null
+    }
+  }
+
+  /**
    * Creates a temporary view from [viewSql], reads its node tree from `pg_rewrite`,
-   * and returns per-column outer join nullability.
+   * and returns per-column nullability using full expression analysis.
    */
   private fun analyzeViaTemporaryView(viewSql: String): List<Boolean> {
     val viewName = "norm_nullability_${UUID.randomUUID().toString().replace("-", "")}"
@@ -408,10 +609,102 @@ internal class PgCatalogLoader(private val connection: Connection) {
           rs.getString(1)
         }
       }
-      return NodeTreeNullabilityAnalyzer.extractColumnNullability(nodeTree)
+      val rangeTable = nodeTreeParser.parseRangeTable(nodeTree) // varno → relid (base tables only)
+      // GROUP BY queries use an *GROUP* RTE (rtekind 9) whose target list VARs reference the group
+      // entry varno instead of the base table varno directly. Resolve these back to their base table
+      // column so isSourceColumnNotNull can check pg_attribute.attnotnull correctly.
+      //
+      // EXCEPTION: When GROUPING SETS, CUBE, or ROLLUP is used, GROUP BY columns can receive NULL
+      // for rows where the column is not part of the current grouping set. In that case, skip
+      // GROUP RTE resolution so the columns are treated as nullable (safe default).
+      val groupRteMap = if (nodeTreeParser.hasGroupingSets(nodeTree)) {
+        emptyMap()
+      } else {
+        nodeTreeParser.parseGroupRteMap(nodeTree) // (groupVarno, attrPos) → (baseVarno, baseVarattno)
+      }
+      // For subquery RTEs (rtekind 1), the outer VAR's varno is not in rangeTable.
+      // Resolve their nullability by recursively analyzing each subquery's target list.
+      // The map is keyed by (varno, varattno) for direct lookup in isSourceColumnNotNull.
+      val subqueryColumnNotNull = buildSubqueryColumnNotNull(nodeTree)
+      val analyzer = NodeTreeNullabilityAnalyzer(
+        isStrict = { oid -> functionStrictnessByOid[oid] == true },
+        hasNonNullInitialValue = { oid -> aggregateHasNonNullInitialValue[oid] == true },
+        isSourceColumnNotNull = { varno, varattno ->
+          val relid = rangeTable[varno]
+          if (relid != null) {
+            val key = relid to varattno
+            columnNotNullByRelidAndAttnum[key] == true || viewColumnNotNullByRelidAndAttnum[key] == true
+          } else {
+            // Check if this is a GROUP BY RTE reference — resolve through groupexprs to the base column.
+            val baseVar = groupRteMap[varno to varattno]
+            if (baseVar != null) {
+              val baseRelid = rangeTable[baseVar.first]
+              if (baseRelid != null) {
+                val key = baseRelid to baseVar.second
+                columnNotNullByRelidAndAttnum[key] == true || viewColumnNotNullByRelidAndAttnum[key] == true
+              } else {
+                false
+              }
+            } else {
+              // varno is not a base table or GROUP RTE — check subquery column nullability.
+              subqueryColumnNotNull[varno to varattno] == true
+            }
+          }
+        },
+        isOuterJoinNullable = { nullingRelations -> nullingRelations.isNotEmpty() },
+      )
+      return analyzer.extractColumnNullability(nodeTree)
     } finally {
       connection.createStatement().use { stmt ->
         stmt.execute("DROP VIEW IF EXISTS $viewName")
+      }
+    }
+  }
+
+  /**
+   * Builds a map from `(varno, varattno)` to `true` for columns of subquery RTEs that are
+   * guaranteed non-null.
+   *
+   * For each `rtekind 1` (subquery) entry in the outer query's `:rtable`, extracts the embedded
+   * `:subquery {QUERY ...}` block, recursively analyzes it with a fresh [NodeTreeNullabilityAnalyzer]
+   * using the **subquery's own range table**, and maps each output column position to its nullability.
+   *
+   * This allows the outer analyzer's [NodeTreeNullabilityAnalyzer] to correctly evaluate VARs that
+   * reference a subquery derived table (`SELECT s.col FROM (...) s`) rather than a base table.
+   * Without this, `isSourceColumnNotNull` for a subquery VAR would always return `false` (nullable)
+   * because the subquery RTE has no `relid` in the outer range table.
+   *
+   * @param nodeTree the `pg_rewrite.ev_action` text of the outer query's temporary view
+   * @return A map from `(varno, varattno)` pairs to `true` when the subquery column is non-null
+   */
+  private fun buildSubqueryColumnNotNull(nodeTree: String): Map<Pair<Int, Int>, Boolean> {
+    // Set-operation queries (UNION ALL, INTERSECT, EXCEPT) store their branches as rtekind=1
+    // subquery RTEs. Tracing through them would incorrectly report the first branch's nullability
+    // as the result's nullability — the true result is the union across ALL branches, some of which
+    // may introduce nulls (e.g., a branch with LEFT JOIN). Return empty so the analyzer conservatively
+    // treats set-operation output columns as nullable (the correct safe default).
+    if (nodeTreeParser.hasSetOperations(nodeTree)) return emptyMap()
+    val subqueryRangeTable = nodeTreeParser.parseSubqueryRangeTable(nodeTree)
+    if (subqueryRangeTable.isEmpty()) return emptyMap()
+    return buildMap {
+      for ((outerVarno, subqueryBlock) in subqueryRangeTable) {
+        // Parse the subquery's own base-table range table for isSourceColumnNotNull.
+        val subRangeTable = nodeTreeParser.parseRangeTable(subqueryBlock)
+        val subAnalyzer = NodeTreeNullabilityAnalyzer(
+          isStrict = { oid -> functionStrictnessByOid[oid] == true },
+          hasNonNullInitialValue = { oid -> aggregateHasNonNullInitialValue[oid] == true },
+          isSourceColumnNotNull = { subVarno, subVarattno ->
+            val relid = subRangeTable[subVarno] ?: return@NodeTreeNullabilityAnalyzer false
+            val key = relid to subVarattno
+            columnNotNullByRelidAndAttnum[key] == true || viewColumnNotNullByRelidAndAttnum[key] == true
+          },
+          isOuterJoinNullable = { nullingRelations -> nullingRelations.isNotEmpty() },
+        )
+        val subNullabilities = subAnalyzer.extractColumnNullability(subqueryBlock)
+        subNullabilities.forEachIndexed { columnIndex, nullable ->
+          // columnIndex is 0-based; varattno is 1-based
+          put(outerVarno to (columnIndex + 1), !nullable)
+        }
       }
     }
   }

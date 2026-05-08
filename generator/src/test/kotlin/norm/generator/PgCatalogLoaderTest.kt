@@ -5,6 +5,7 @@ import assertk.assertions.contains
 import assertk.assertions.containsExactly
 import assertk.assertions.doesNotContain
 import assertk.assertions.isEmpty
+import assertk.assertions.isEqualTo
 import assertk.assertions.isTrue
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
@@ -69,8 +70,9 @@ class PgCatalogLoaderTest {
           "SELECT d.name, COUNT(*) AS cnt FROM department d " +
             "LEFT JOIN employee e ON e.department_id = d.id GROUP BY d.name",
         )
-        // d.name: preserved side, not nullable from outer join
-        // COUNT(*): aggregate, no VAR → not nullable from outer join
+        // d.name: GROUP BY creates an *GROUP* RTE (rtekind 9) whose groupexprs resolve back
+        // to department.name TEXT NOT NULL — correctly identified as non-null.
+        // COUNT(*): aggregate with non-null initial value (agginitval='0') → not nullable.
         assertThat(result).containsExactly(false, false)
       }
 
@@ -97,6 +99,8 @@ class PgCatalogLoaderTest {
         val result = catalogLoader.queryColumnNullability(
           "SELECT * FROM (SELECT id, name FROM department) sub",
         )
+        // The subquery RTE is resolved by analyzing the subquery's own node tree.
+        // department.id and department.name are both NOT NULL — they are non-null in the result.
         assertThat(result).containsExactly(false, false)
       }
 
@@ -105,7 +109,9 @@ class PgCatalogLoaderTest {
         val result = catalogLoader.queryColumnNullability(
           "SELECT * FROM generate_series(1, 10) AS x",
         )
-        assertThat(result).containsExactly(false)
+        // The VAR references a function RTE (rtekind 3), not a base table.
+        // isSourceColumnNotNull cannot verify NOT NULL, so conservatively returns true (nullable).
+        assertThat(result).containsExactly(true)
       }
 
       @Test
@@ -122,8 +128,10 @@ class PgCatalogLoaderTest {
         val result = catalogLoader.queryColumnNullability(
           "VALUES (1, 'a'), (2, 'b')",
         )
-        // Two columns from VALUES — no outer join
-        assertThat(result).containsExactly(false, false)
+        // The VARs reference a VALUES RTE (rtekind 5), not a base table.
+        // isSourceColumnNotNull cannot verify NOT NULL for VALUES rows, so
+        // the unified analysis conservatively returns true (nullable) for all columns.
+        assertThat(result).containsExactly(true, true)
       }
     }
 
@@ -164,8 +172,10 @@ class PgCatalogLoaderTest {
         val result = catalogLoader.queryColumnNullability(
           "SELECT name FROM department UNION ALL SELECT name FROM employee",
         )
-        // No VAR at top level — node tree analysis returns false
-        assertThat(result).containsExactly(false)
+        // The outer VAR references the set-operation output RTE, not a base table.
+        // isSourceColumnNotNull cannot trace through set operations, so the unified
+        // analysis conservatively returns true (nullable).
+        assertThat(result).containsExactly(true)
       }
 
       @Test
@@ -173,7 +183,10 @@ class PgCatalogLoaderTest {
         val result = catalogLoader.queryColumnNullability(
           "SELECT name FROM department INTERSECT SELECT name FROM employee",
         )
-        assertThat(result).containsExactly(false)
+        // The outer VAR references the set-operation output RTE, not a base table.
+        // isSourceColumnNotNull cannot trace through set operations, so the unified
+        // analysis conservatively returns true (nullable).
+        assertThat(result).containsExactly(true)
       }
 
       @Test
@@ -181,7 +194,10 @@ class PgCatalogLoaderTest {
         val result = catalogLoader.queryColumnNullability(
           "SELECT name FROM department EXCEPT SELECT name FROM employee",
         )
-        assertThat(result).containsExactly(false)
+        // The outer VAR references the set-operation output RTE, not a base table.
+        // isSourceColumnNotNull cannot trace through set operations, so the unified
+        // analysis conservatively returns true (nullable).
+        assertThat(result).containsExactly(true)
       }
 
       @Test
@@ -193,9 +209,11 @@ class PgCatalogLoaderTest {
           SELECT e.name FROM department d LEFT JOIN employee e ON e.department_id = d.id
           """.trimIndent(),
         )
-        // Top-level TARGETENTRY references set operation output, not inner VARs.
-        // Outer join inside a branch is invisible to the outer node tree.
-        assertThat(result).containsExactly(false)
+        // The outer VAR references the set-operation output RTE, not a base table.
+        // isSourceColumnNotNull cannot trace through set operations, so the unified
+        // analysis conservatively returns true (nullable). The outer join inside a
+        // branch is invisible to the outer node tree in any case.
+        assertThat(result).containsExactly(true)
       }
     }
 
@@ -409,7 +427,9 @@ class PgCatalogLoaderTest {
 
       @Test
       fun `UPDATE with FROM clause RETURNING`() {
-        // UPDATE FROM with INNER JOIN: no outer join nullability
+        // UPDATE FROM with INNER JOIN: no outer join nullability.
+        // employee.* = id (NOT NULL), name (NOT NULL), department_id (NOT NULL), nickname (nullable).
+        // The unified analysis correctly reports nickname as nullable since the schema has no NOT NULL.
         val result = catalogLoader.queryColumnNullability(
           """
           UPDATE employee SET nickname = d.name
@@ -417,7 +437,7 @@ class PgCatalogLoaderTest {
           RETURNING employee.*
           """.trimIndent(),
         )
-        assertThat(result).containsExactly(false, false, false, false)
+        assertThat(result).containsExactly(false, false, false, true)
       }
 
       @Test
@@ -439,7 +459,9 @@ class PgCatalogLoaderTest {
 
       @Test
       fun `DELETE USING RETURNING`() {
-        // DELETE USING with INNER JOIN: no outer join nullability
+        // DELETE USING with INNER JOIN: no outer join nullability.
+        // employee.* = id (NOT NULL), name (NOT NULL), department_id (NOT NULL), nickname (nullable).
+        // The unified analysis correctly reports nickname as nullable since the schema has no NOT NULL.
         val result = catalogLoader.queryColumnNullability(
           """
           DELETE FROM employee
@@ -447,7 +469,7 @@ class PgCatalogLoaderTest {
           RETURNING employee.*
           """.trimIndent(),
         )
-        assertThat(result).containsExactly(false, false, false, false)
+        assertThat(result).containsExactly(false, false, false, true)
       }
 
       @Test
@@ -587,6 +609,39 @@ class PgCatalogLoaderTest {
   }
 
   @Nested
+  inner class FunctionStrictness {
+
+    @Test
+    fun `upper is strict`() {
+      val upperOid = lookupFunctionOid("upper")
+      assertThat(catalogLoader.functionStrictnessByOid[upperOid]).isEqualTo(true)
+    }
+
+    @Test
+    fun `concat is not strict`() {
+      // concat(variadic "any") deliberately handles NULL arguments (returns empty string for NULLs)
+      val concatOid = lookupFunctionOid("concat")
+      assertThat(catalogLoader.functionStrictnessByOid[concatOid]).isEqualTo(false)
+    }
+  }
+
+  @Nested
+  inner class AggregateInitialValues {
+
+    @Test
+    fun `count has non-null initial value`() {
+      val countOid = lookupAggregateOid("count")
+      assertThat(catalogLoader.aggregateHasNonNullInitialValue[countOid]).isEqualTo(true)
+    }
+
+    @Test
+    fun `sum has null initial value`() {
+      val sumOid = lookupAggregateOid("sum")
+      assertThat(catalogLoader.aggregateHasNonNullInitialValue[sumOid]).isEqualTo(false)
+    }
+  }
+
+  @Nested
   inner class CheckPostgresVersion {
 
     @Test
@@ -689,6 +744,22 @@ class PgCatalogLoaderTest {
     @AfterAll
     fun teardown() {
       if (::connection.isInitialized) connection.close()
+    }
+
+    private fun lookupFunctionOid(name: String): Int = connection.createStatement().use { stmt ->
+      stmt.executeQuery("SELECT oid::integer FROM pg_proc WHERE proname = '$name' LIMIT 1").use { rs ->
+        check(rs.next()) { "Function $name not found" }
+        rs.getInt(1)
+      }
+    }
+
+    private fun lookupAggregateOid(name: String): Int = connection.createStatement().use { stmt ->
+      stmt.executeQuery(
+        "SELECT p.oid::integer FROM pg_proc p JOIN pg_aggregate a ON a.aggfnoid = p.oid WHERE p.proname = '$name' LIMIT 1",
+      ).use { rs ->
+        check(rs.next()) { "Aggregate $name not found" }
+        rs.getInt(1)
+      }
     }
   }
 }

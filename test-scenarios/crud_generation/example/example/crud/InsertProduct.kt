@@ -15,5 +15,5 @@ import kotlin.jvm.JvmRecord
 @JvmRecord
 public data class InsertProduct(
   public val id: Int,
-  public val total: BigDecimal?,
+  public val total: BigDecimal,
 )
