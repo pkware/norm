@@ -13,6 +13,7 @@ import org.testcontainers.containers.wait.strategy.Wait
 import org.testcontainers.containers.wait.strategy.WaitAllStrategy
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
+import org.testcontainers.utility.DockerImageName
 import java.io.File
 import java.sql.Connection
 import java.sql.DriverManager
@@ -96,13 +97,17 @@ abstract class PostgresTestBase {
     /** Root of the Norm repository, resolved relative to e2e-tests' working directory. */
     val projectRoot: File = File(System.getProperty("user.dir")).parentFile
 
+    private val pgVersion = System.getProperty("norm.test.pgVersion", "18")
+
     /**
      * Shared PostgreSQL container for all tests in this class.
      * Uses alpine variant for smaller image size (~80MB vs ~300MB).
      */
     @Container
     @JvmStatic
-    val postgres: PostgreSQLContainer<*> = PostgreSQLContainer("postgres:18-alpine")
+    val postgres: PostgreSQLContainer<*> = PostgreSQLContainer(
+      DockerImageName.parse("postgres:$pgVersion-alpine").asCompatibleSubstituteFor("postgres"),
+    )
       .withDatabaseName("test")
       .withUsername("test")
       .withPassword("test")

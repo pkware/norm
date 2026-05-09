@@ -45,6 +45,11 @@ class JavaConventionsPlugin : Plugin<Project> {
             // Run tests in parallel
             systemProperty("junit.jupiter.execution.parallel.enabled", "true")
             systemProperty("junit.jupiter.execution.parallel.mode.default", "concurrent")
+
+            systemProperty(
+              "norm.test.pgVersion",
+              project.providers.systemProperty("norm.test.pgVersion").getOrElse("18"),
+            )
           }
         }
       }

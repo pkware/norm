@@ -38,9 +38,9 @@ public abstract class Database(private val name: String) : Named {
   /**
    * PostgreSQL version to use for the database container.
    *
-   * Defaults to `"18"` (latest stable at time of implementation).
+   * Defaults to `"18-alpine"`.
    *
-   * Example values: `"16"`, `"15"`, `"14"`, or specific tags like `"16.1-alpine"`.
+   * Example values: `"17", "16.2"`.
    * The value is used as the Docker image tag for `postgres:<version>`.
    */
   @get:Input

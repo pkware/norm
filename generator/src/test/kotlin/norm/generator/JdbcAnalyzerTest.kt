@@ -1082,10 +1082,12 @@ class JdbcAnalyzerTest {
   }
 
   companion object {
+    private val pgVersion = System.getProperty("norm.test.pgVersion", "18")
+
     @JvmField
     @Container
     val container: PostgreSQLContainer<*> = PostgreSQLContainer(
-      DockerImageName.parse("postgres:18").asCompatibleSubstituteFor("postgres"),
+      DockerImageName.parse("postgres:$pgVersion-alpine").asCompatibleSubstituteFor("postgres"),
     ).apply {
       withDatabaseName("norm_test")
       waitingFor(
