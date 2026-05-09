@@ -12,7 +12,11 @@ permissions: {}
 
 jobs:
   linux:
-    name: Linux
+    name: Linux (PG ${{ matrix.pg-version }})
+    strategy:
+      fail-fast: false
+      matrix:
+        pg-version: [16, 17, 18]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -40,7 +44,7 @@ jobs:
         run: rm -f ~/.testcontainers.properties
 
       - name: Build Norm
-        run: ./gradlew build
+        run: ./gradlew build -Dnorm.test.pgVersion=${{ matrix.pg-version }}
 
       - name: Build Example
         run: ./gradlew build
@@ -50,7 +54,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: Test Results Linux
+          name: Test Results Linux PG ${{ matrix.pg-version }}
           path: '**/test-results/**/*.xml'
 
       - name: Publish Test Report
@@ -58,3 +62,4 @@ jobs:
         if: always()
         with:
           report_paths: '**/test-results/**/TEST-*.xml'
+          check_name: Test Report (PG ${{ matrix.pg-version }})

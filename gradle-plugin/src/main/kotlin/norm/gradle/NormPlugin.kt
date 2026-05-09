@@ -39,7 +39,7 @@ public class NormPlugin : Plugin<Project> {
       .sourceSets.getByName("main")
 
     norm.databases.all {
-      postgresVersion.convention("18")
+      postgresVersion.convention("18-alpine")
       generateCrud.convention(true)
       typeMappings.convention(emptyList())
 

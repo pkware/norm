@@ -15,6 +15,7 @@ import org.testcontainers.containers.wait.strategy.Wait
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import java.sql.DriverManager
+import java.util.concurrent.ConcurrentHashMap
 import javax.sql.DataSource
 
 @Testcontainers
@@ -268,7 +269,7 @@ class TransactionalConnectionProviderTest {
 
     @Test
     fun `transactions work correctly on virtual threads`() {
-      val results = java.util.concurrent.ConcurrentHashMap<String, Int>()
+      val results = ConcurrentHashMap<String, Int>()
 
       val threads = (1..10).map { i ->
         Thread.ofVirtual().start {

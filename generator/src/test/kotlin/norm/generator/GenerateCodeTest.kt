@@ -170,10 +170,12 @@ class GenerateCodeTest {
     private val EMBED_SCENARIOS =
       setOf("basic_embeds", "complex_embed_mixing", "consecutive_embeds", "nested_joins_embeds")
 
+    private val pgVersion = System.getProperty("norm.test.pgVersion", "18")
+
     @JvmField
     @Container
     val container: PostgreSQLContainer<*> = PostgreSQLContainer(
-      DockerImageName.parse("postgres:18").asCompatibleSubstituteFor("postgres"),
+      DockerImageName.parse("postgres:$pgVersion-alpine").asCompatibleSubstituteFor("postgres"),
     ).apply {
       withDatabaseName("norm_generate_test")
       waitingFor(

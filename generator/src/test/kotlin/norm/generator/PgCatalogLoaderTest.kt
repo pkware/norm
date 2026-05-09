@@ -645,7 +645,7 @@ class PgCatalogLoaderTest {
   inner class CheckPostgresVersion {
 
     @Test
-    fun `passes on PostgreSQL 18`() {
+    fun `passes on supported PostgreSQL version`() {
       catalogLoader.checkPostgresVersion()
     }
   }
@@ -714,10 +714,12 @@ class PgCatalogLoaderTest {
   }
 
   companion object {
+    private val pgVersion = System.getProperty("norm.test.pgVersion", "18")
+
     @JvmField
     @Container
     val container: PostgreSQLContainer<*> = PostgreSQLContainer(
-      DockerImageName.parse("postgres:18").asCompatibleSubstituteFor("postgres"),
+      DockerImageName.parse("postgres:$pgVersion-alpine").asCompatibleSubstituteFor("postgres"),
     ).apply {
       withDatabaseName("norm_test")
       waitingFor(
