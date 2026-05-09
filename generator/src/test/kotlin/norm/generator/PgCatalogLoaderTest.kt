@@ -8,6 +8,7 @@ import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isTrue
 import org.junit.jupiter.api.AfterAll
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
@@ -547,7 +548,8 @@ class PgCatalogLoaderTest {
 
       @Test
       fun `MERGE with RETURNING`() {
-        // MERGE RETURNING added in PostgreSQL 17.
+        // MERGE RETURNING added in PostgreSQL 17. Skip on PG 16.
+        assumeTrue(pgVersion.toInt() >= 17, "MERGE RETURNING requires PostgreSQL 17+")
         // MERGE has no outer join structure — USING is always inner.
         // RETURNING * expands to all columns from both target (department: id, name)
         // and source (s: id, name), so 4 columns total.
