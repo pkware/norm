@@ -3,6 +3,7 @@
 package norm.generator
 
 import assertk.assertThat
+import assertk.assertions.containsExactlyInAnyOrder
 import assertk.assertions.hasSize
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
@@ -425,6 +426,45 @@ class PgNodeTreeParserTest {
     @Test
     fun `returns false for malformed input`() {
       assertThat(parser.hasGroupingSets("not valid")).isFalse()
+    }
+  }
+
+  @Nested
+  inner class ParseGroupingKeyVars {
+
+    @Test
+    fun `returns (varno, varattno) for GROUP BY keys on PostgreSQL 16 and 17 (no GROUP RTE)`() {
+      // PostgreSQL 16 and 17 do not produce a *GROUP* RTE for GROUP BY. Target list VARs reference
+      // the base table directly (varno 1). This is the actual pg_rewrite.ev_action text produced by
+      // PostgreSQL 16.13 for: SELECT id, name, COUNT(*) cnt FROM department GROUP BY CUBE (id, name)
+      val nodeTree = """({QUERY :commandType 1 :querySource 0 :canSetTag true :utilityStmt <> :resultRelation 0 :hasAggs true :hasWindowFuncs false :hasTargetSRFs false :hasSubLinks false :hasDistinctOn false :hasRecursive false :hasModifyingCTE false :hasForUpdate false :hasRowSecurity false :isReturn false :cteList <> :rtable ({RANGETBLENTRY :alias <> :eref {ALIAS :aliasname department :colnames ("id" "name")} :rtekind 0 :relid 16384 :relkind r :rellockmode 1 :tablesample <> :perminfoindex 1 :lateral false :inh true :inFromCl true :securityQuals <>}) :rteperminfos ({RTEPERMISSIONINFO :relid 16384 :inh true :requiredPerms 2 :checkAsUser 0 :selectedCols (b 8 9) :insertedCols (b) :updatedCols (b)}) :jointree {FROMEXPR :fromlist ({RANGETBLREF :rtindex 1}) :quals <>} :mergeActionList <> :mergeUseOuterJoin false :targetList ({TARGETENTRY :expr {VAR :varno 1 :varattno 1 :vartype 23 :vartypmod -1 :varcollid 0 :varnullingrels (b) :varlevelsup 0 :varnosyn 1 :varattnosyn 1 :location 96} :resno 1 :resname id :ressortgroupref 1 :resorigtbl 16384 :resorigcol 1 :resjunk false} {TARGETENTRY :expr {VAR :varno 1 :varattno 2 :vartype 25 :vartypmod -1 :varcollid 100 :varnullingrels (b) :varlevelsup 0 :varnosyn 1 :varattnosyn 2 :location 100} :resno 2 :resname name :ressortgroupref 2 :resorigtbl 16384 :resorigcol 2 :resjunk false} {TARGETENTRY :expr {AGGREF :aggfnoid 2803 :aggtype 20 :aggcollid 0 :inputcollid 0 :aggtranstype 0 :aggargtypes <> :aggdirectargs <> :args <> :aggorder <> :aggdistinct <> :aggfilter <> :aggstar true :aggvariadic false :aggkind n :aggpresorted false :agglevelsup 0 :aggsplit 0 :aggno -1 :aggtransno -1 :location 106} :resno 3 :resname cnt :ressortgroupref 0 :resorigtbl 0 :resorigcol 0 :resjunk false}) :override 0 :onConflict <> :returningList <> :groupClause ({SORTGROUPCLAUSE :tleSortGroupRef 1 :eqop 96 :sortop 97 :nulls_first false :hashable true} {SORTGROUPCLAUSE :tleSortGroupRef 2 :eqop 98 :sortop 664 :nulls_first false :hashable true}) :groupDistinct false :groupingSets ({GROUPINGSET :kind 3 :content ({GROUPINGSET :kind 1 :content (i 1) :location 150} {GROUPINGSET :kind 1 :content (i 2) :location 154}) :location 144}) :havingQual <> :windowClause <> :distinctClause <> :sortClause <> :limitOffset <> :limitCount <> :limitOption 0 :rowMarks <> :setOperations <> :constraintDeps <> :withCheckOptions <> :stmt_location 63 :stmt_len 96})"""
+      val result = parser.parseGroupingKeyVars(nodeTree)
+      assertThat(result).containsExactlyInAnyOrder(1 to 1, 1 to 2)
+    }
+
+    @Test
+    fun `returns (varno, varattno) for GROUP BY keys on PostgreSQL 18 (with GROUP RTE)`() {
+      // PostgreSQL 18 introduces a *GROUP* RTE (rtekind 9). Target list VARs reference the GROUP RTE
+      // at varno 2. This is the actual pg_rewrite.ev_action text produced by PostgreSQL 18 beta for
+      // the same query.
+      val nodeTree = """({QUERY :commandType 1 :querySource 0 :canSetTag true :utilityStmt <> :resultRelation 0 :hasAggs true :hasWindowFuncs false :hasTargetSRFs false :hasSubLinks false :hasDistinctOn false :hasRecursive false :hasModifyingCTE false :hasForUpdate false :hasRowSecurity false :hasGroupRTE true :isReturn false :cteList <> :rtable ({RANGETBLENTRY :alias <> :eref {ALIAS :aliasname department :colnames ("id" "name")} :rtekind 0 :relid 16384 :inh true :relkind r :rellockmode 1 :perminfoindex 1 :tablesample <> :lateral false :inFromCl true :securityQuals <>} {RANGETBLENTRY :alias <> :eref {ALIAS :aliasname *GROUP* :colnames ("id" "name")} :rtekind 9 :groupexprs ({VAR :varno 1 :varattno 1 :vartype 23 :vartypmod -1 :varcollid 0 :varnullingrels (b) :varlevelsup 0 :varreturningtype 0 :varnosyn 1 :varattnosyn 1 :location -1} {VAR :varno 1 :varattno 2 :vartype 25 :vartypmod -1 :varcollid 100 :varnullingrels (b) :varlevelsup 0 :varreturningtype 0 :varnosyn 1 :varattnosyn 2 :location -1}) :lateral false :inFromCl false :securityQuals <>}) :rteperminfos ({RTEPERMISSIONINFO :relid 16384 :inh true :requiredPerms 2 :checkAsUser 0 :selectedCols (b 8 9) :insertedCols (b) :updatedCols (b)}) :jointree {FROMEXPR :fromlist ({RANGETBLREF :rtindex 1}) :quals <>} :mergeActionList <> :mergeTargetRelation 0 :mergeJoinCondition <> :targetList ({TARGETENTRY :expr {VAR :varno 2 :varattno 1 :vartype 23 :vartypmod -1 :varcollid 0 :varnullingrels (b 2) :varlevelsup 0 :varreturningtype 0 :varnosyn 2 :varattnosyn 1 :location -1} :resno 1 :resname id :ressortgroupref 1 :resorigtbl 16384 :resorigcol 1 :resjunk false} {TARGETENTRY :expr {VAR :varno 2 :varattno 2 :vartype 25 :vartypmod -1 :varcollid 100 :varnullingrels (b 2) :varlevelsup 0 :varreturningtype 0 :varnosyn 2 :varattnosyn 2 :location -1} :resno 2 :resname name :ressortgroupref 2 :resorigtbl 16384 :resorigcol 2 :resjunk false} {TARGETENTRY :expr {AGGREF :aggfnoid 2803 :aggtype 20 :aggcollid 0 :inputcollid 0 :aggtranstype 0 :aggargtypes <> :aggdirectargs <> :args <> :aggorder <> :aggdistinct <> :aggfilter <> :aggstar true :aggvariadic false :aggkind n :aggpresorted false :agglevelsup 0 :aggsplit 0 :aggno -1 :aggtransno -1 :location -1} :resno 3 :resname cnt :ressortgroupref 0 :resorigtbl 0 :resorigcol 0 :resjunk false}) :override 0 :onConflict <> :returningOldAlias <> :returningNewAlias <> :returningList <> :groupClause ({SORTGROUPCLAUSE :tleSortGroupRef 1 :eqop 96 :sortop 97 :reverse_sort false :nulls_first false :hashable true} {SORTGROUPCLAUSE :tleSortGroupRef 2 :eqop 98 :sortop 664 :reverse_sort false :nulls_first false :hashable true}) :groupDistinct false :groupingSets ({GROUPINGSET :kind 3 :content ({GROUPINGSET :kind 1 :content (i 1) :location -1} {GROUPINGSET :kind 1 :content (i 2) :location -1}) :location -1}) :havingQual <> :windowClause <> :distinctClause <> :sortClause <> :limitOffset <> :limitCount <> :limitOption 0 :rowMarks <> :setOperations <> :constraintDeps <> :withCheckOptions <> :stmt_location -1 :stmt_len -1})"""
+      val result = parser.parseGroupingKeyVars(nodeTree)
+      assertThat(result).containsExactlyInAnyOrder(2 to 1, 2 to 2)
+    }
+
+    @Test
+    fun `excludes aggregate target entries (ressortgroupref 0)`() {
+      // COUNT(*) and other aggregates have ressortgroupref 0 and must not appear in the result.
+      // Use the PG 16 tree and verify only id and name are returned, not cnt (the AGGREF entry).
+      val nodeTree = """({QUERY :commandType 1 :querySource 0 :canSetTag true :utilityStmt <> :resultRelation 0 :hasAggs true :hasWindowFuncs false :hasTargetSRFs false :hasSubLinks false :hasDistinctOn false :hasRecursive false :hasModifyingCTE false :hasForUpdate false :hasRowSecurity false :isReturn false :cteList <> :rtable ({RANGETBLENTRY :alias <> :eref {ALIAS :aliasname department :colnames ("id" "name")} :rtekind 0 :relid 16384 :relkind r :rellockmode 1 :tablesample <> :perminfoindex 1 :lateral false :inh true :inFromCl true :securityQuals <>}) :rteperminfos ({RTEPERMISSIONINFO :relid 16384 :inh true :requiredPerms 2 :checkAsUser 0 :selectedCols (b 8 9) :insertedCols (b) :updatedCols (b)}) :jointree {FROMEXPR :fromlist ({RANGETBLREF :rtindex 1}) :quals <>} :mergeActionList <> :mergeUseOuterJoin false :targetList ({TARGETENTRY :expr {VAR :varno 1 :varattno 1 :vartype 23 :vartypmod -1 :varcollid 0 :varnullingrels (b) :varlevelsup 0 :varnosyn 1 :varattnosyn 1 :location 96} :resno 1 :resname id :ressortgroupref 1 :resorigtbl 16384 :resorigcol 1 :resjunk false} {TARGETENTRY :expr {VAR :varno 1 :varattno 2 :vartype 25 :vartypmod -1 :varcollid 100 :varnullingrels (b) :varlevelsup 0 :varnosyn 1 :varattnosyn 2 :location 100} :resno 2 :resname name :ressortgroupref 2 :resorigtbl 16384 :resorigcol 2 :resjunk false} {TARGETENTRY :expr {AGGREF :aggfnoid 2803 :aggtype 20 :aggcollid 0 :inputcollid 0 :aggtranstype 0 :aggargtypes <> :aggdirectargs <> :args <> :aggorder <> :aggdistinct <> :aggfilter <> :aggstar true :aggvariadic false :aggkind n :aggpresorted false :agglevelsup 0 :aggsplit 0 :aggno -1 :aggtransno -1 :location 106} :resno 3 :resname cnt :ressortgroupref 0 :resorigtbl 0 :resorigcol 0 :resjunk false}) :override 0 :onConflict <> :returningList <> :groupClause ({SORTGROUPCLAUSE :tleSortGroupRef 1 :eqop 96 :sortop 97 :nulls_first false :hashable true} {SORTGROUPCLAUSE :tleSortGroupRef 2 :eqop 98 :sortop 664 :nulls_first false :hashable true}) :groupDistinct false :groupingSets ({GROUPINGSET :kind 3 :content ({GROUPINGSET :kind 1 :content (i 1) :location 150} {GROUPINGSET :kind 1 :content (i 2) :location 154}) :location 144}) :havingQual <> :windowClause <> :distinctClause <> :sortClause <> :limitOffset <> :limitCount <> :limitOption 0 :rowMarks <> :setOperations <> :constraintDeps <> :withCheckOptions <> :stmt_location 63 :stmt_len 96})"""
+      val result = parser.parseGroupingKeyVars(nodeTree)
+      assertThat(result).hasSize(2) // only id and name, not cnt
+      assertThat(result).containsExactlyInAnyOrder(1 to 1, 1 to 2)
+    }
+
+    @Test
+    fun `returns empty for malformed input`() {
+      assertThat(parser.parseGroupingKeyVars("not valid")).isEmpty()
     }
   }
 }

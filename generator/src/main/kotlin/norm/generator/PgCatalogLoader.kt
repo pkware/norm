@@ -617,6 +617,17 @@ internal class PgCatalogLoader(private val connection: Connection) {
       // EXCEPTION: When GROUPING SETS, CUBE, or ROLLUP is used, GROUP BY columns can receive NULL
       // for rows where the column is not part of the current grouping set. In that case, skip
       // GROUP RTE resolution so the columns are treated as nullable (safe default).
+      //
+      // PostgreSQL 18 enforces this via a *GROUP* RTE (rtekind 9): target list VARs reference the
+      // GROUP RTE instead of the base table, so parseRangeTable() can't find them. On PostgreSQL
+      // 16/17 there is no GROUP RTE — VARs reference the base table directly and would be
+      // incorrectly resolved as NOT NULL. parseGroupingKeyVars() identifies those VARs so they can
+      // be overridden to nullable regardless of pg_attribute.attnotnull.
+      val groupingKeyVars = if (nodeTreeParser.hasGroupingSets(nodeTree)) {
+        nodeTreeParser.parseGroupingKeyVars(nodeTree)
+      } else {
+        emptySet()
+      }
       val groupRteMap = if (nodeTreeParser.hasGroupingSets(nodeTree)) {
         emptyMap()
       } else {
@@ -630,24 +641,28 @@ internal class PgCatalogLoader(private val connection: Connection) {
         isStrict = { oid -> functionStrictnessByOid[oid] == true },
         hasNonNullInitialValue = { oid -> aggregateHasNonNullInitialValue[oid] == true },
         isSourceColumnNotNull = { varno, varattno ->
-          val relid = rangeTable[varno]
-          if (relid != null) {
-            val key = relid to varattno
-            columnNotNullByRelidAndAttnum[key] == true || viewColumnNotNullByRelidAndAttnum[key] == true
+          if (groupingKeyVars.contains(varno to varattno)) {
+            false
           } else {
-            // Check if this is a GROUP BY RTE reference — resolve through groupexprs to the base column.
-            val baseVar = groupRteMap[varno to varattno]
-            if (baseVar != null) {
-              val baseRelid = rangeTable[baseVar.first]
-              if (baseRelid != null) {
-                val key = baseRelid to baseVar.second
-                columnNotNullByRelidAndAttnum[key] == true || viewColumnNotNullByRelidAndAttnum[key] == true
-              } else {
-                false
-              }
+            val relid = rangeTable[varno]
+            if (relid != null) {
+              val key = relid to varattno
+              columnNotNullByRelidAndAttnum[key] == true || viewColumnNotNullByRelidAndAttnum[key] == true
             } else {
-              // varno is not a base table or GROUP RTE — check subquery column nullability.
-              subqueryColumnNotNull[varno to varattno] == true
+              // Check if this is a GROUP BY RTE reference — resolve through groupexprs to the base column.
+              val baseVar = groupRteMap[varno to varattno]
+              if (baseVar != null) {
+                val baseRelid = rangeTable[baseVar.first]
+                if (baseRelid != null) {
+                  val key = baseRelid to baseVar.second
+                  columnNotNullByRelidAndAttnum[key] == true || viewColumnNotNullByRelidAndAttnum[key] == true
+                } else {
+                  false
+                }
+              } else {
+                // varno is not a base table or GROUP RTE — check subquery column nullability.
+                subqueryColumnNotNull[varno to varattno] == true
+              }
             }
           }
         },

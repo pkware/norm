@@ -200,6 +200,47 @@ internal class PgNodeTreeParser {
     extractOuterSectionContent(nodeTreeText, ":groupingSets (") != null
 
   /**
+   * Returns the set of `(varno, varattno)` pairs for GROUP BY key columns in a query that uses
+   * GROUPING SETS, CUBE, or ROLLUP.
+   *
+   * PostgreSQL 18 introduced a `*GROUP*` range table entry (rtekind 9) that acts as a nullability
+   * barrier: target list VARs reference the GROUP RTE rather than the base table directly, so they
+   * fall outside [parseRangeTable]'s base-table map and are treated as nullable. PostgreSQL 16 and
+   * 17 do not have this RTE — their target list VARs point straight to the base table, which would
+   * cause [parseRangeTable] to resolve them as NOT NULL even when GROUPING SETS/CUBE/ROLLUP can
+   * produce `null` for any grouping key.
+   *
+   * This method identifies those VARs by correlating `:groupClause` (`tleSortGroupRef` values)
+   * with `:targetList` (`ressortgroupref` values) so the caller can force them to nullable.
+   *
+   * @param nodeTreeText the raw `pg_rewrite.ev_action` text
+   * @return `(varno, varattno)` pairs for GROUP BY key columns; empty if none or if the target
+   *   list entries use non-VAR expressions for GROUP BY keys
+   */
+  fun parseGroupingKeyVars(nodeTreeText: String): Set<Pair<Int, Int>> {
+    val groupClauseContent = extractOuterSectionContent(nodeTreeText, ":groupClause (") ?: return emptySet()
+    val sortGroupRefs = buildSet {
+      splitBraceBlocks(groupClauseContent).forEach { clauseBlock ->
+        extractIntField(clauseBlock, ":tleSortGroupRef")?.let { add(it) }
+      }
+    }
+    if (sortGroupRefs.isEmpty()) return emptySet()
+
+    val targetListContent = extractOuterSectionContent(nodeTreeText, ":targetList (") ?: return emptySet()
+    return buildSet {
+      splitBraceBlocks(targetListContent).forEach { entryBlock ->
+        val sortGroupRef = extractIntField(entryBlock, ":ressortgroupref") ?: return@forEach
+        if (sortGroupRef == 0 || sortGroupRef !in sortGroupRefs) return@forEach
+        val exprBlock = extractFieldExpression(entryBlock, ":expr") ?: return@forEach
+        if (!exprBlock.startsWith("{VAR ")) return@forEach
+        val varno = extractIntField(exprBlock, ":varno") ?: return@forEach
+        val varattno = extractIntField(exprBlock, ":varattno") ?: return@forEach
+        add(varno to varattno)
+      }
+    }
+  }
+
+  /**
    * Parses subquery range table entries from a full `pg_node_tree` text.
    *
    * Extracts the `:rtable` section from [nodeTreeText] at the outermost QUERY level, and for each
