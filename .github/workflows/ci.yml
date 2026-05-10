@@ -46,7 +46,14 @@ jobs:
       - name: Build Norm
         run: ./gradlew build -Dnorm.test.pgVersion=${{ matrix.pg-version }}
 
+      - name: Verify golden files are up to date
+        if: matrix.pg-version == 18
+        run: |
+          ./gradlew :gradle-plugin:generateGoldenFiles
+          git diff --exit-code -- test-scenarios/ test-scenarios-frameworks/
+
       - name: Build Example
+        if: matrix.pg-version == 18
         run: ./gradlew build
         working-directory: example
 
