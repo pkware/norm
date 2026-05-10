@@ -7,6 +7,7 @@ import plugin.Enum
 import plugin.Identifier
 import plugin.Parameter
 import java.sql.Connection
+import java.sql.ResultSetMetaData
 import java.sql.SQLException
 import java.util.UUID
 
@@ -21,6 +22,13 @@ import java.util.UUID
 internal class PgCatalogLoader(private val connection: Connection) {
 
   private val nodeTreeParser = PgNodeTreeParser()
+
+  private val pgMajorVersion = connection.metaData.databaseMajorVersion
+
+  // PG 18 reordered JsonExprOp: EXISTS=0, QUERY=1, VALUE=2 (was VALUE=0, QUERY=1, EXISTS=2 in PG 17).
+  internal val jsonExistsOp: Int = if (pgMajorVersion >= 18) 0 else 2
+  internal val jsonValueOp: Int = if (pgMajorVersion >= 18) 2 else 0
+  internal val jsonSerializeOp: Int = if (pgMajorVersion >= 18) 4 else 4
 
   init {
     checkPostgresVersion()
@@ -58,6 +66,29 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * Returns `null` for absent keys — this can occur if the OID belongs to a non-aggregate function.
    */
   val aggregateHasNonNullInitialValue: Map<Int, Boolean> by lazy(::loadAggregateInitialValues)
+
+  /**
+   * OIDs of non-strict functions that are guaranteed to never return `null`, regardless of argument
+   * nullability. Currently includes `concat` and `concat_ws`, which silently coerce `null` arguments
+   * to empty strings.
+   */
+  val alwaysNonNullFunctionOids: Set<Int> by lazy(::loadAlwaysNonNullFunctions)
+
+  /**
+   * OIDs of functions that are marked STRICT in `pg_proc` but can still return `null` when all
+   * arguments are non-null. JSON path-extraction operators (`->`, `->>`, `#>`, `#>>`) fall into
+   * this category: they return `null` when the requested key or path does not exist in the JSON
+   * value, even though all inputs are non-null.
+   */
+  val strictButNullableFunctionOids: Set<Int> by lazy(::loadStrictButNullableFunctions)
+
+  /**
+   * OIDs of the 3-argument overloads of `lag` and `lead` window functions. These overloads accept
+   * `(value, offset, default)` and return a non-null result when both the value expression and the
+   * default expression are non-null — the default fills in for rows at window boundaries where
+   * 1-arg `lag`/`lead` would return `null`.
+   */
+  val lagLeadWithDefaultOids: Set<Int> by lazy(::loadLagLeadWithDefaultOids)
 
   /**
    * Maps `(relid, attnum)` pairs to `pg_attribute.attnotnull`.
@@ -226,12 +257,60 @@ internal class PgCatalogLoader(private val connection: Connection) {
 
   private fun loadAggregateInitialValues(): Map<Int, Boolean> = buildMap {
     connection.createStatement().use { stmt ->
+      // An aggregate is non-null for empty groups only when it has a non-null initial transition value
+      // AND no final function. Aggregates with a finalfunc (AVG, STDDEV, etc.) can return null even
+      // with a non-null agginitval because the finalfunc may produce null (e.g., AVG divides by zero
+      // count).
       stmt.executeQuery(
-        "SELECT aggfnoid::integer, agginitval IS NOT NULL AS has_initial_value FROM pg_catalog.pg_aggregate",
+        "SELECT aggfnoid::integer, (agginitval IS NOT NULL AND aggfinalfn = 0) AS has_initial_value FROM pg_catalog.pg_aggregate",
       ).use { rs ->
         while (rs.next()) {
           put(rs.getInt("aggfnoid"), rs.getBoolean("has_initial_value"))
         }
+      }
+    }
+  }
+
+  private fun loadAlwaysNonNullFunctions(): Set<Int> = buildSet {
+    connection.createStatement().use { stmt ->
+      stmt.executeQuery(
+        "SELECT oid::integer FROM pg_catalog.pg_proc WHERE proname IN ('concat', 'concat_ws') AND NOT proisstrict",
+      ).use { rs ->
+        while (rs.next()) add(rs.getInt("oid"))
+      }
+    }
+  }
+
+  private fun loadStrictButNullableFunctions(): Set<Int> = buildSet {
+    connection.createStatement().use { stmt ->
+      stmt.executeQuery(
+        """
+        SELECT oid::integer FROM pg_catalog.pg_proc
+        WHERE proisstrict = true AND (
+          proname IN (
+            'jsonb_object_field', 'jsonb_object_field_text',
+            'json_object_field', 'json_object_field_text',
+            'jsonb_extract_path', 'jsonb_extract_path_text',
+            'json_extract_path', 'json_extract_path_text',
+            'jsonb_array_element', 'jsonb_array_element_text',
+            'json_array_element', 'json_array_element_text'
+          )
+          OR (prokind = 'w' AND proname IN ('first_value', 'last_value', 'nth_value'))
+          OR (prokind = 'w' AND proname IN ('lag', 'lead') AND pronargs < 3)
+        )
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) add(rs.getInt("oid"))
+      }
+    }
+  }
+
+  private fun loadLagLeadWithDefaultOids(): Set<Int> = buildSet {
+    connection.createStatement().use { stmt ->
+      stmt.executeQuery(
+        "SELECT oid::integer FROM pg_catalog.pg_proc WHERE proname IN ('lag', 'lead') AND pronargs = 3 AND prokind = 'w'",
+      ).use { rs ->
+        while (rs.next()) add(rs.getInt("oid"))
       }
     }
   }
@@ -597,8 +676,30 @@ internal class PgCatalogLoader(private val connection: Connection) {
   private fun analyzeViaTemporaryView(viewSql: String): List<Boolean> {
     val viewName = "norm_nullability_${UUID.randomUUID().toString().replace("-", "")}"
     try {
-      connection.createStatement().use { stmt ->
-        stmt.execute("CREATE TEMPORARY VIEW $viewName AS $viewSql")
+      try {
+        connection.createStatement().use { stmt ->
+          stmt.execute("CREATE TEMPORARY VIEW $viewName AS $viewSql")
+        }
+      } catch (originalError: SQLException) {
+        // Queries with duplicate column names (e.g., SELECT d.id, e.id FROM d JOIN e ...)
+        // fail view creation. Retry with explicit column aliases to make names unique.
+        val columnCount = try {
+          connection.prepareStatement(viewSql).use { it.metaData?.columnCount ?: 0 }
+        } catch (_: SQLException) {
+          0
+        }
+        if (columnCount > 0) {
+          val columnList = (1..columnCount).joinToString(", ") { "c$it" }
+          try {
+            connection.createStatement().use { stmt ->
+              stmt.execute("CREATE TEMPORARY VIEW $viewName($columnList) AS $viewSql")
+            }
+          } catch (_: SQLException) {
+            throw originalError
+          }
+        } else {
+          throw originalError
+        }
       }
       val nodeTree = connection.createStatement().use { stmt ->
         stmt.executeQuery(
@@ -638,6 +739,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
       // Resolve their nullability by recursively analyzing each subquery's target list.
       // The map is keyed by (varno, varattno) for direct lookup in isSourceColumnNotNull.
       val subqueryColumnNotNull = buildSubqueryColumnNotNull(nodeTree)
+      val cteColumnNotNull = buildCteColumnNotNull(nodeTree)
       val analyzer = NodeTreeNullabilityAnalyzer(
         isStrict = { oid -> functionStrictnessByOid[oid] == true },
         hasNonNullInitialValue = { oid -> aggregateHasNonNullInitialValue[oid] == true },
@@ -648,26 +750,31 @@ internal class PgCatalogLoader(private val connection: Connection) {
             val relid = rangeTable[varno]
             if (relid != null) {
               val key = relid to varattno
-              columnNotNullByRelidAndAttnum[key] == true || viewColumnNotNullByRelidAndAttnum[key] == true
+              isColumnNotNull(key)
             } else {
-              // Check if this is a GROUP BY RTE reference — resolve through groupexprs to the base column.
               val baseVar = groupRteMap[varno to varattno]
               if (baseVar != null) {
                 val baseRelid = rangeTable[baseVar.first]
                 if (baseRelid != null) {
-                  val key = baseRelid to baseVar.second
-                  columnNotNullByRelidAndAttnum[key] == true || viewColumnNotNullByRelidAndAttnum[key] == true
+                  isColumnNotNull(baseRelid to baseVar.second)
                 } else {
                   false
                 }
               } else {
-                // varno is not a base table or GROUP RTE — check subquery column nullability.
-                subqueryColumnNotNull[varno to varattno] == true
+                subqueryColumnNotNull[varno to varattno] == true ||
+                  cteColumnNotNull[varno to varattno] == true
               }
             }
           }
         },
         isOuterJoinNullable = { nullingRelations -> nullingRelations.isNotEmpty() },
+        isAlwaysNonNull = { oid -> oid in alwaysNonNullFunctionOids },
+        isStrictButNullable = { oid -> oid in strictButNullableFunctionOids },
+        isLagLeadWithDefault = { oid -> oid in lagLeadWithDefaultOids },
+        resolveColumnNotNull = { relid, attnum -> isColumnNotNull(relid to attnum) },
+        jsonExistsOp = jsonExistsOp,
+        jsonValueOp = jsonValueOp,
+        jsonSerializeOp = jsonSerializeOp,
       )
       return analyzer.extractColumnNullability(nodeTree)
     } finally {
@@ -675,6 +782,125 @@ internal class PgCatalogLoader(private val connection: Connection) {
         stmt.execute("DROP VIEW IF EXISTS $viewName")
       }
     }
+  }
+
+  private fun isColumnNotNull(key: Pair<Int, Int>): Boolean =
+    columnNotNullByRelidAndAttnum[key] == true || viewColumnNotNullByRelidAndAttnum[key] == true
+
+  /**
+   * Builds a map from `(varno, varattno)` to `true` for CTE result columns that are guaranteed
+   * non-null. Analyzes each CTE body with a sub-analyzer using the CTE's own range table.
+   */
+  private fun buildCteColumnNotNull(nodeTree: String): Map<Pair<Int, Int>, Boolean> {
+    val cteDefinitions = nodeTreeParser.parseCteList(nodeTree)
+    if (cteDefinitions.isEmpty()) return emptyMap()
+    val cteRteMap = nodeTreeParser.parseCteRangeTableEntries(nodeTree)
+    if (cteRteMap.isEmpty()) return emptyMap()
+
+    val resolvedCtes = mutableMapOf<String, List<Boolean>>()
+    for (cte in cteDefinitions) {
+      val nullabilities = analyzeCteBodyNullability(cte, resolvedCtes) ?: continue
+      resolvedCtes[cte.name] = nullabilities
+    }
+
+    return buildMap {
+      for ((varno, cteName) in cteRteMap) {
+        val nullabilities = resolvedCtes[cteName] ?: continue
+        nullabilities.forEachIndexed { columnIndex, nullable ->
+          put(varno to (columnIndex + 1), !nullable)
+        }
+      }
+    }
+  }
+
+  private fun analyzeCteBodyNullability(
+    cte: NodeTreeCteDefinition,
+    previouslyResolved: Map<String, List<Boolean>>,
+  ): List<Boolean>? {
+    if (nodeTreeParser.hasSetOperations(cte.queryBlock)) {
+      return analyzeSetOperationBranches(cte.queryBlock, previouslyResolved, cte.name)
+    }
+    val analyzer = buildCteBodyAnalyzer(cte.queryBlock, previouslyResolved)
+    val result = analyzer.extractColumnNullability(cte.queryBlock)
+    if (result.isNotEmpty()) return result
+    // DML CTEs store RETURNING columns in :returningList, not :targetList.
+    val returningEntries = nodeTreeParser.parseReturningList(cte.queryBlock)
+    if (returningEntries.isEmpty()) return null
+    return returningEntries
+      .filter { !it.isJunk }
+      .sortedBy { it.resultNumber }
+      .map { entry -> !analyzer.isNonNull(entry.expression) }
+  }
+
+  private fun analyzeSetOperationBranches(
+    queryBlock: String,
+    previouslyResolved: Map<String, List<Boolean>>,
+    cteName: String,
+  ): List<Boolean>? {
+    val subqueryRangeTable = nodeTreeParser.parseSubqueryRangeTable(queryBlock)
+    if (subqueryRangeTable.isEmpty()) return null
+    var seedResult: List<Boolean>? = null
+    val branchResults = mutableListOf<List<Boolean>>()
+    for ((_, branchBlock) in subqueryRangeTable) {
+      val resolved = if (seedResult != null) {
+        previouslyResolved + (cteName to seedResult)
+      } else {
+        previouslyResolved
+      }
+      val branchAnalyzer = buildCteBodyAnalyzer(branchBlock, resolved)
+      val result = branchAnalyzer.extractColumnNullability(branchBlock)
+      if (result.isEmpty()) continue
+      branchResults.add(result)
+      if (seedResult == null) seedResult = result
+    }
+    if (branchResults.isEmpty()) return null
+    val columnCount = branchResults.maxOf { it.size }
+    return (0 until columnCount).map { col ->
+      branchResults.any { it.getOrElse(col) { true } }
+    }
+  }
+
+  private fun buildCteBodyAnalyzer(
+    queryBlock: String,
+    previouslyResolved: Map<String, List<Boolean>>,
+  ): NodeTreeNullabilityAnalyzer {
+    val cteRangeTable = nodeTreeParser.parseRangeTable(queryBlock)
+    val groupRteMap = nodeTreeParser.parseGroupRteMap(queryBlock)
+    val innerCteRtes = nodeTreeParser.parseCteRangeTableEntries(queryBlock)
+    val innerCteNotNull = buildMap<Pair<Int, Int>, Boolean> {
+      for ((varno, cteName) in innerCteRtes) {
+        val nullabilities = previouslyResolved[cteName] ?: continue
+        nullabilities.forEachIndexed { columnIndex, nullable ->
+          put(varno to (columnIndex + 1), !nullable)
+        }
+      }
+    }
+    return NodeTreeNullabilityAnalyzer(
+      isStrict = { oid -> functionStrictnessByOid[oid] == true },
+      hasNonNullInitialValue = { oid -> aggregateHasNonNullInitialValue[oid] == true },
+      isSourceColumnNotNull = { varno, varattno ->
+        val relid = cteRangeTable[varno]
+        if (relid != null) {
+          isColumnNotNull(relid to varattno)
+        } else {
+          val baseVar = groupRteMap[varno to varattno]
+          if (baseVar != null) {
+            val baseRelid = cteRangeTable[baseVar.first]
+            baseRelid != null && isColumnNotNull(baseRelid to baseVar.second)
+          } else {
+            innerCteNotNull[varno to varattno] == true
+          }
+        }
+      },
+      isOuterJoinNullable = { nullingRelations -> nullingRelations.isNotEmpty() },
+      isAlwaysNonNull = { oid -> oid in alwaysNonNullFunctionOids },
+      isStrictButNullable = { oid -> oid in strictButNullableFunctionOids },
+      isLagLeadWithDefault = { oid -> oid in lagLeadWithDefaultOids },
+      resolveColumnNotNull = { relid, attnum -> isColumnNotNull(relid to attnum) },
+      jsonExistsOp = jsonExistsOp,
+      jsonValueOp = jsonValueOp,
+      jsonSerializeOp = jsonSerializeOp,
+    )
   }
 
   /**
@@ -711,10 +937,16 @@ internal class PgCatalogLoader(private val connection: Connection) {
           hasNonNullInitialValue = { oid -> aggregateHasNonNullInitialValue[oid] == true },
           isSourceColumnNotNull = { subVarno, subVarattno ->
             val relid = subRangeTable[subVarno] ?: return@NodeTreeNullabilityAnalyzer false
-            val key = relid to subVarattno
-            columnNotNullByRelidAndAttnum[key] == true || viewColumnNotNullByRelidAndAttnum[key] == true
+            isColumnNotNull(relid to subVarattno)
           },
           isOuterJoinNullable = { nullingRelations -> nullingRelations.isNotEmpty() },
+          isAlwaysNonNull = { oid -> oid in alwaysNonNullFunctionOids },
+          isStrictButNullable = { oid -> oid in strictButNullableFunctionOids },
+          isLagLeadWithDefault = { oid -> oid in lagLeadWithDefaultOids },
+          resolveColumnNotNull = { relid, attnum -> isColumnNotNull(relid to attnum) },
+          jsonExistsOp = jsonExistsOp,
+          jsonValueOp = jsonValueOp,
+          jsonSerializeOp = jsonSerializeOp,
         )
         val subNullabilities = subAnalyzer.extractColumnNullability(subqueryBlock)
         subNullabilities.forEachIndexed { columnIndex, nullable ->
@@ -792,9 +1024,12 @@ internal class PgCatalogLoader(private val connection: Connection) {
   }
 
   /**
-   * Builds a `SELECT NULL::<type> AS <name>, ... WHERE FALSE` stub that produces the same
-   * result columns as the given SQL body, using PostgreSQL's own parser to determine column
-   * metadata via `PreparedStatement.getMetaData()`.
+   * Builds a SELECT stub that produces the same result columns as the given SQL body, using
+   * PostgreSQL's own parser to determine column metadata via `PreparedStatement.getMetaData()`.
+   *
+   * NOT NULL columns use non-null sentinels (e.g., `0::int4`) so that CTE body analysis correctly
+   * identifies them as non-null. Nullable columns use `NULL::type` so they evaluate as nullable.
+   * The `WHERE FALSE` ensures no rows are returned (the stub is for type/nullability metadata only).
    *
    * @param body A SQL statement (the CTE body text, without surrounding parentheses).
    * @return The SELECT stub, or `null` if metadata cannot be obtained.
@@ -808,15 +1043,18 @@ internal class PgCatalogLoader(private val connection: Connection) {
           append("SELECT ")
           for (i in 1..metadata.columnCount) {
             if (i > 1) append(", ")
-            // serial/smallserial/bigserial are pseudo-types (syntactic sugar for sequence + integer).
-            // JDBC returns these as type names but they can't be used in casts. Map to real types.
             val typeName = when (metadata.getColumnTypeName(i)) {
               "serial" -> "int4"
               "smallserial", "serial2" -> "int2"
               "bigserial", "serial8" -> "int8"
               else -> metadata.getColumnTypeName(i)
             }
-            append("NULL::").append(typeName)
+            val isNullable = metadata.isNullable(i) != ResultSetMetaData.columnNoNulls
+            if (isNullable) {
+              append("NULL::").append(typeName)
+            } else {
+              append(nonNullSentinel(typeName))
+            }
             append(" AS ").append(metadata.getColumnName(i))
           }
           append(" WHERE FALSE")

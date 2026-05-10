@@ -778,7 +778,7 @@ class QueryAnalysisTest {
   inner class SqlValueFunctions {
 
     @Test
-    fun `CURRENT_DATE`() {
+    fun `current_date is non-null`() {
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT current_date AS result FROM t",
@@ -787,7 +787,7 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `CURRENT_TIMESTAMP`() {
+    fun `current_timestamp is non-null`() {
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT current_timestamp AS result FROM t",
@@ -796,7 +796,7 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `CURRENT_TIME`() {
+    fun `current_time is non-null`() {
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT current_time AS result FROM t",
@@ -805,7 +805,7 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `LOCALTIME`() {
+    fun `localtime is non-null`() {
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT localtime AS result FROM t",
@@ -814,7 +814,7 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `LOCALTIMESTAMP`() {
+    fun `localtimestamp is non-null`() {
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT localtimestamp AS result FROM t",
@@ -823,7 +823,7 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `CURRENT_USER`() {
+    fun `current_user is non-null`() {
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT current_user AS result FROM t",
@@ -832,7 +832,7 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `SESSION_USER`() {
+    fun `session_user is non-null`() {
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT session_user AS result FROM t",
@@ -1458,7 +1458,7 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `CTE with UNION inside`() {
+    fun `CTE with UNION inside — both branches non-null`() {
       val query = analyzeWithSchema(
         "CREATE TABLE t (name TEXT NOT NULL)",
         """
@@ -1468,7 +1468,7 @@ class QueryAnalysisTest {
         SELECT * FROM combined
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].not_null).isTrue()
     }
 
     @Test
@@ -1701,11 +1701,23 @@ class QueryAnalysisTest {
     }
   }
 
+  /**
+   * Set operations (UNION ALL, INTERSECT, EXCEPT) are conservatively treated as nullable even when
+   * every branch selects NOT NULL columns. PostgreSQL represents set operations using subquery RTEs
+   * in the range table, and [PgCatalogLoader.buildSubqueryColumnNotNull] skips set-operation queries
+   * to avoid incorrectly reporting the first branch's nullability as the whole result's nullability.
+   * The target list VARs reference the first subquery RTE, whose varno has no entry in the base-table
+   * range table, so [NodeTreeNullabilityAnalyzer] defaults to nullable.
+   *
+   * CTE-wrapped set operations DO analyze branches (see [CommonTableExpressions]) because the CTE
+   * analysis pipeline can safely iterate all branches. Direct (non-CTE) set operations could be
+   * improved similarly but aren't yet — these tests document the current conservative behavior.
+   */
   @Nested
   inner class SetOperations {
 
     @Test
-    fun `UNION ALL`() {
+    fun `UNION ALL is conservatively nullable`() {
       val query = analyzeWithSchema(
         "CREATE TABLE t (name TEXT NOT NULL)",
         "SELECT name FROM t UNION ALL SELECT name FROM t",
@@ -1714,7 +1726,7 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `INTERSECT`() {
+    fun `INTERSECT is conservatively nullable`() {
       val query = analyzeWithSchema(
         "CREATE TABLE t (name TEXT NOT NULL)",
         "SELECT name FROM t INTERSECT SELECT name FROM t",
@@ -1723,7 +1735,7 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `EXCEPT`() {
+    fun `EXCEPT is conservatively nullable`() {
       val query = analyzeWithSchema(
         "CREATE TABLE t (name TEXT NOT NULL)",
         "SELECT name FROM t EXCEPT SELECT name FROM t",
