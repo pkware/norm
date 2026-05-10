@@ -18,6 +18,10 @@ internal class PgNodeTreeParser {
 
   private val nodeTypePattern = Regex("""^\{(\w+)""")
   private val whitespace = Regex("""\s+""")
+  private val bitmapsetPattern = Regex("""\(([^)]*)\)""")
+  private val intFieldPatterns = mutableMapOf<String, Regex>()
+  private val boolFieldPatterns = mutableMapOf<String, Regex>()
+  private val stringFieldPatterns = mutableMapOf<String, Regex>()
 
   /**
    * Parses a single `{NODE_TYPE :field value ...}` expression block into a typed [PgNodeExpression].
@@ -339,6 +343,17 @@ internal class PgNodeTreeParser {
     }
   }
 
+  /**
+   * Parses the `:returningList` from a DML node tree into [TargetEntry] items.
+   *
+   * DML statements (INSERT/UPDATE/DELETE) with a RETURNING clause store their output columns in
+   * `:returningList` rather than `:targetList`. This method extracts those entries using the same
+   * parsing logic as [parseTargetList].
+   *
+   * @param nodeTreeText the raw `pg_rewrite.ev_action` text or a bare `{QUERY ...}` block
+   * @return the list of returning entries (including junk entries), or an empty list if
+   *   [nodeTreeText] contains no `:returningList`
+   */
   fun parseReturningList(nodeTreeText: String): List<TargetEntry> {
     val content = extractOuterSectionContent(nodeTreeText, ":returningList (") ?: return emptyList()
     return splitTargetEntries(content).mapNotNull { entry -> parseTargetEntry(entry) }
@@ -401,7 +416,9 @@ internal class PgNodeTreeParser {
   private fun parseSubLink(text: String): PgNodeExpression.SubLink {
     val subLinkType = extractIntField(text, ":subLinkType") ?: error("Missing :subLinkType in SUBLINK node")
     // For ANY sublinks (IN operator), extract the outer operand from the testexpr's first argument.
-    val outerOperand = if (subLinkType == 2 || subLinkType == 3) {
+    val outerOperand = if (subLinkType == PgNodeExpression.SUBLINK_TYPE_ANY ||
+      subLinkType == PgNodeExpression.SUBLINK_TYPE_ALL
+    ) {
       extractFieldExpression(text, ":testexpr")?.let { testExpr ->
         extractArgListSection(testExpr, ":args")?.let { splitBraceBlocks(it).firstOrNull()?.let(::parseExpression) }
       }
@@ -599,7 +616,7 @@ internal class PgNodeTreeParser {
     val expression = parseExpression(expressionText)
 
     val resultNumber = extractIntField(text, ":resno") ?: return null
-    val resultName = Regex(""":resname (\S+)""").find(text)?.groupValues?.get(1)
+    val resultName = extractStringField(text, ":resname")
     val isJunk = text.contains(":resjunk true")
     return TargetEntry(
       expression = expression,
@@ -617,7 +634,8 @@ internal class PgNodeTreeParser {
    * @return the integer value, or `null` if the field is absent or unparseable
    */
   private fun extractIntField(text: String, fieldName: String): Int? =
-    Regex("""$fieldName (-?\d+)""").find(text)?.groupValues?.get(1)?.toIntOrNull()
+    intFieldPatterns.getOrPut(fieldName) { Regex("""$fieldName (-?\d+)""") }
+      .find(text)?.groupValues?.get(1)?.toIntOrNull()
 
   /**
    * Extracts a boolean field value from a node block.
@@ -627,7 +645,8 @@ internal class PgNodeTreeParser {
    * @return the boolean value, or `null` if the field is absent
    */
   private fun extractBoolField(text: String, fieldName: String): Boolean? =
-    Regex("""$fieldName (true|false)""").find(text)?.groupValues?.get(1)?.let { it == "true" }
+    boolFieldPatterns.getOrPut(fieldName) { Regex("""$fieldName (true|false)""") }
+      .find(text)?.groupValues?.get(1)?.let { it == "true" }
 
   /**
    * Extracts a non-whitespace string field value from a node block.
@@ -638,7 +657,8 @@ internal class PgNodeTreeParser {
    *   or `null` if the field is absent
    */
   private fun extractStringField(text: String, fieldName: String): String? =
-    Regex("""$fieldName (\S+)""").find(text)?.groupValues?.get(1)
+    stringFieldPatterns.getOrPut(fieldName) { Regex("""$fieldName (\S+)""") }
+      .find(text)?.groupValues?.get(1)
 
   /**
    * Extracts a PostgreSQL bitmapset field value into a [Set] of integers.
@@ -651,7 +671,9 @@ internal class PgNodeTreeParser {
    * @return the set of integer members, or [emptySet] if the field is absent or the set is empty
    */
   private fun extractBitmapset(text: String, fieldName: String): Set<Int> {
-    val content = Regex("""$fieldName \(([^)]*)\)""").find(text)?.groupValues?.get(1) ?: return emptySet()
+    val fieldIndex = text.indexOf(fieldName)
+    if (fieldIndex == -1) return emptySet()
+    val content = bitmapsetPattern.find(text, fieldIndex + fieldName.length)?.groupValues?.get(1) ?: return emptySet()
     return content.trim().split(whitespace).mapNotNull { it.toIntOrNull() }.toSet()
   }
 

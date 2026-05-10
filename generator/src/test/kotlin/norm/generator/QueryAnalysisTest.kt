@@ -1,6 +1,8 @@
 package norm.generator
 
 import assertk.assertThat
+import assertk.assertions.hasSize
+import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isTrue
 import org.intellij.lang.annotations.Language
@@ -40,6 +42,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
         "SELECT id, name FROM t",
       )
+      assertThat(query.columns).hasSize(2)
       assertThat(query.columns[0].not_null).isTrue()
       assertThat(query.columns[1].not_null).isTrue()
     }
@@ -50,6 +53,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL, bio TEXT)",
         "SELECT id, bio FROM t",
       )
+      assertThat(query.columns).hasSize(2)
       assertThat(query.columns[0].not_null).isTrue()
       assertThat(query.columns[1].not_null).isFalse()
     }
@@ -66,6 +70,7 @@ class QueryAnalysisTest {
     @Test
     fun `INNER JOIN preserves schema nullability`() {
       val query = analyzeWithSchema(schema, "SELECT d.id, e.id FROM d JOIN e ON e.d_id = d.id")
+      assertThat(query.columns).hasSize(2)
       assertThat(query.columns[0].not_null).isTrue()
       assertThat(query.columns[1].not_null).isTrue()
     }
@@ -73,6 +78,7 @@ class QueryAnalysisTest {
     @Test
     fun `LEFT JOIN marks right side as nullable`() {
       val query = analyzeWithSchema(schema, "SELECT d.id, e.id FROM d LEFT JOIN e ON e.d_id = d.id")
+      assertThat(query.columns).hasSize(2)
       assertThat(query.columns[0].not_null).isTrue()
       assertThat(query.columns[1].not_null).isFalse()
     }
@@ -80,6 +86,7 @@ class QueryAnalysisTest {
     @Test
     fun `RIGHT JOIN marks left side as nullable`() {
       val query = analyzeWithSchema(schema, "SELECT d.id, e.id FROM d RIGHT JOIN e ON e.d_id = d.id")
+      assertThat(query.columns).hasSize(2)
       assertThat(query.columns[0].not_null).isFalse()
       assertThat(query.columns[1].not_null).isTrue()
     }
@@ -87,6 +94,7 @@ class QueryAnalysisTest {
     @Test
     fun `FULL OUTER JOIN marks both sides as nullable`() {
       val query = analyzeWithSchema(schema, "SELECT d.id, e.id FROM d FULL JOIN e ON e.d_id = d.id")
+      assertThat(query.columns).hasSize(2)
       assertThat(query.columns[0].not_null).isFalse()
       assertThat(query.columns[1].not_null).isFalse()
     }
@@ -94,6 +102,7 @@ class QueryAnalysisTest {
     @Test
     fun `CROSS JOIN preserves schema nullability`() {
       val query = analyzeWithSchema(schema, "SELECT d.id, e.id FROM d CROSS JOIN e")
+      assertThat(query.columns).hasSize(2)
       assertThat(query.columns[0].not_null).isTrue()
       assertThat(query.columns[1].not_null).isTrue()
     }
@@ -104,55 +113,112 @@ class QueryAnalysisTest {
         schema,
         "SELECT d.id, sub.id FROM d, LATERAL (SELECT e.id FROM e WHERE e.d_id = d.id LIMIT 1) sub",
       )
+      assertThat(query.columns).hasSize(2)
       assertThat(query.columns[0].not_null).isTrue()
       assertThat(query.columns[1].not_null).isTrue()
     }
 
     @Test
-    fun `SELECT DISTINCT`() {
+    fun `SELECT DISTINCT preserves schema nullability`() {
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT DISTINCT id FROM t",
       )
+      assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].not_null).isTrue()
     }
 
     @Test
-    fun `ORDER BY and LIMIT`() {
+    fun `ORDER BY and LIMIT preserve schema nullability`() {
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id FROM t ORDER BY id LIMIT 10",
       )
+      assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].not_null).isTrue()
     }
 
     @Test
-    fun `FOR UPDATE`() {
+    fun `FOR UPDATE preserves schema nullability`() {
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id FROM t FOR UPDATE",
       )
+      assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].not_null).isTrue()
     }
 
     @Test
-    fun `TABLE shorthand`() {
+    fun `TABLE shorthand preserves schema nullability`() {
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
         "TABLE t",
       )
+      assertThat(query.columns).hasSize(2)
       assertThat(query.columns[0].not_null).isTrue()
       assertThat(query.columns[1].not_null).isTrue()
     }
 
     @Test
-    fun `VALUES expression`() {
+    fun `VALUES expression is conservatively nullable`() {
       val query = analyzeWithSchema(
         "CREATE TABLE dummy (id INT NOT NULL)",
         "VALUES (1, 'a'), (2, 'b')",
       )
+      assertThat(query.columns).hasSize(2)
       assertThat(query.columns[0].not_null).isFalse()
       assertThat(query.columns[1].not_null).isFalse()
+    }
+  }
+
+  @Nested
+  inner class OuterJoinExpressionComposition {
+
+    private val schema = """
+      CREATE TABLE d (id INT NOT NULL, name TEXT NOT NULL);
+      CREATE TABLE e (id INT NOT NULL, d_id INT NOT NULL, label TEXT NOT NULL)
+    """.trimIndent()
+
+    @Test
+    fun `strict function on LEFT JOIN nullable column is nullable`() {
+      val query = analyzeWithSchema(
+        schema,
+        "SELECT d.id, upper(e.label) AS upper_label FROM d LEFT JOIN e ON e.d_id = d.id",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[1].not_null).isFalse()
+    }
+
+    @Test
+    fun `COALESCE on LEFT JOIN nullable column with non-null fallback is non-null`() {
+      val query = analyzeWithSchema(
+        schema,
+        "SELECT d.id, coalesce(e.label, 'none') AS safe_label FROM d LEFT JOIN e ON e.d_id = d.id",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[1].not_null).isTrue()
+    }
+
+    @Test
+    fun `nested strict function wrapping COALESCE with fallback on outer-join column is non-null`() {
+      val query = analyzeWithSchema(
+        schema,
+        "SELECT upper(coalesce(e.label, 'default')) AS result FROM d LEFT JOIN e ON e.d_id = d.id",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].not_null).isTrue()
+    }
+
+    @Test
+    fun `COALESCE on LEFT JOIN nullable column with all nullable fallbacks is nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE d (id INT NOT NULL); CREATE TABLE e (id INT NOT NULL, d_id INT NOT NULL, a TEXT, b TEXT)",
+        "SELECT coalesce(e.a, e.b) AS result FROM d LEFT JOIN e ON e.d_id = d.id",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].not_null).isFalse()
     }
   }
 
@@ -379,6 +445,17 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a TEXT, b TEXT)",
         "SELECT concat(a, b) AS result FROM t",
       )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].not_null).isTrue()
+    }
+
+    @Test
+    fun `concat_ws with nullable arguments`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT, b TEXT)",
+        "SELECT concat_ws(', ', a, b) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].not_null).isTrue()
     }
 
@@ -1135,6 +1212,16 @@ class QueryAnalysisTest {
     }
 
     @Test
+    fun `LAG with nullable default argument is nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL, fallback INT)",
+        "SELECT id, lag(id, 1, fallback) OVER(ORDER BY id) AS prev FROM t",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[1].not_null).isFalse()
+    }
+
+    @Test
     fun `LEAD without default is nullable`() {
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL)",
@@ -1150,6 +1237,16 @@ class QueryAnalysisTest {
         "SELECT id, lead(id, 1, 0) OVER(ORDER BY id) AS nxt FROM t",
       )
       assertThat(query.columns[1].not_null).isTrue()
+    }
+
+    @Test
+    fun `LEAD with nullable default argument is nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL, fallback INT)",
+        "SELECT id, lead(id, 1, fallback) OVER(ORDER BY id) AS nxt FROM t",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[1].not_null).isFalse()
     }
 
     @Test
@@ -1202,12 +1299,23 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `IN subquery is non-null`() {
+    fun `IN subquery with non-null outer operand is non-null`() {
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL); CREATE TABLE t2 (id INT NOT NULL)",
         "SELECT id IN (SELECT id FROM t2) AS result FROM t",
       )
+      assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].not_null).isTrue()
+    }
+
+    @Test
+    fun `IN subquery with nullable outer operand is nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (category TEXT); CREATE TABLE t2 (category TEXT NOT NULL)",
+        "SELECT category IN (SELECT category FROM t2) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].not_null).isFalse()
     }
 
     @Test
@@ -1974,6 +2082,209 @@ class QueryAnalysisTest {
         "SELECT ROW(a, b) AS result FROM t",
       )
       assertThat(query.columns[0].not_null).isTrue()
+    }
+  }
+
+  @Nested
+  inner class ViewNullability {
+
+    @Test
+    fun `LEFT JOIN view marks right side column as nullable`() {
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          it.execute(
+            """
+            CREATE TABLE d (id INT NOT NULL, name TEXT NOT NULL);
+            CREATE TABLE e (id INT NOT NULL, d_id INT NOT NULL, label TEXT NOT NULL);
+            CREATE VIEW v AS SELECT d.name, e.label FROM d LEFT JOIN e ON e.d_id = d.id
+            """.trimIndent(),
+          )
+        }
+        try {
+          val catalogLoader = PgCatalogLoader(connection)
+          val nonNull = catalogLoader.loadViewColumnNullability(schemaName)
+          val outerJoinNullable = catalogLoader.loadViewOuterJoinNullableColumns(schemaName)
+          assertThat(nonNull.contains("v.name")).isTrue()
+          assertThat(outerJoinNullable.contains("v.label")).isTrue()
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    @Test
+    fun `INNER JOIN view preserves non-null columns`() {
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          it.execute(
+            """
+            CREATE TABLE d (id INT NOT NULL, name TEXT NOT NULL);
+            CREATE TABLE e (id INT NOT NULL, d_id INT NOT NULL, label TEXT NOT NULL);
+            CREATE VIEW v AS SELECT d.name, e.label FROM d JOIN e ON e.d_id = d.id
+            """.trimIndent(),
+          )
+        }
+        try {
+          val catalogLoader = PgCatalogLoader(connection)
+          val nonNull = catalogLoader.loadViewColumnNullability(schemaName)
+          val outerJoinNullable = catalogLoader.loadViewOuterJoinNullableColumns(schemaName)
+          assertThat(nonNull.contains("v.name")).isTrue()
+          assertThat(nonNull.contains("v.label")).isTrue()
+          assertThat(outerJoinNullable.contains("v.name")).isFalse()
+          assertThat(outerJoinNullable.contains("v.label")).isFalse()
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    @Test
+    fun `materialized view excluded from outer join analysis`() {
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          it.execute(
+            """
+            CREATE TABLE d (id INT NOT NULL, name TEXT NOT NULL);
+            CREATE TABLE e (id INT NOT NULL, d_id INT NOT NULL, label TEXT NOT NULL);
+            CREATE MATERIALIZED VIEW mv AS SELECT d.name, e.label FROM d LEFT JOIN e ON e.d_id = d.id
+            """.trimIndent(),
+          )
+        }
+        try {
+          val catalogLoader = PgCatalogLoader(connection)
+          val outerJoinNullable = catalogLoader.loadViewOuterJoinNullableColumns(schemaName)
+          assertThat(outerJoinNullable.contains("mv.label")).isFalse()
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+  }
+
+  @Nested
+  inner class CatalogLoading {
+
+    @Test
+    fun `upper is strict, concat is not strict`() {
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        val catalogLoader = PgCatalogLoader(connection)
+        val strictness = catalogLoader.functionStrictnessByOid
+        val upperOids = strictness.filterValues { it }.keys
+        val alwaysNonNull = catalogLoader.alwaysNonNullFunctionOids
+        assertThat(upperOids.isNotEmpty()).isTrue()
+        assertThat(alwaysNonNull.isNotEmpty()).isTrue()
+      }
+    }
+
+    @Test
+    fun `count has non-null initial value, sum does not`() {
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        val catalogLoader = PgCatalogLoader(connection)
+        val aggValues = catalogLoader.aggregateHasNonNullInitialValue
+        val withInitial = aggValues.filterValues { it }
+        val withoutInitial = aggValues.filterValues { !it }
+        assertThat(withInitial.isNotEmpty()).isTrue()
+        assertThat(withoutInitial.isNotEmpty()).isTrue()
+      }
+    }
+
+    @Test
+    fun `strictButNullable OIDs are loaded for JSON operators`() {
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        val catalogLoader = PgCatalogLoader(connection)
+        assertThat(catalogLoader.strictButNullableFunctionOids.isNotEmpty()).isTrue()
+      }
+    }
+
+    @Test
+    fun `lagLeadWithDefault OIDs are loaded`() {
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        val catalogLoader = PgCatalogLoader(connection)
+        assertThat(catalogLoader.lagLeadWithDefaultOids.isNotEmpty()).isTrue()
+      }
+    }
+
+    @Test
+    fun `alwaysNonNull OIDs include concat and concat_ws`() {
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        val catalogLoader = PgCatalogLoader(connection)
+        assertThat(catalogLoader.alwaysNonNullFunctionOids.size >= 2).isTrue()
+      }
+    }
+
+    @Test
+    fun `checkPostgresVersion succeeds on supported version`() {
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        val catalogLoader = PgCatalogLoader(connection)
+        catalogLoader.checkPostgresVersion()
+      }
+    }
+  }
+
+  @Nested
+  inner class ParserDefensiveBehavior {
+
+    @Test
+    fun `unknown node type produces Unknown expression`() {
+      val parser = PgNodeTreeParser()
+      val result = parser.parseExpression("{WEIRDNODE :field 42}")
+      assertThat(result is PgNodeExpression.Unknown).isTrue()
+      assertThat((result as PgNodeExpression.Unknown).nodeType).isEqualTo("WEIRDNODE")
+    }
+
+    @Test
+    fun `malformed input produces Unknown PARSE_ERROR`() {
+      val parser = PgNodeTreeParser()
+      val result = parser.parseExpression("not a valid node tree")
+      assertThat(result is PgNodeExpression.Unknown).isTrue()
+      assertThat((result as PgNodeExpression.Unknown).nodeType).isEqualTo("PARSE_ERROR")
+    }
+
+    @Test
+    fun `parseTargetList returns empty for malformed input`() {
+      val parser = PgNodeTreeParser()
+      val result = parser.parseTargetList("malformed")
+      assertThat(result).hasSize(0)
+    }
+
+    @Test
+    fun `parseRangeTable returns empty for malformed input`() {
+      val parser = PgNodeTreeParser()
+      val result = parser.parseRangeTable("malformed")
+      assertThat(result).hasSize(0)
+    }
+
+    @Test
+    fun `parseGroupRteMap returns empty for malformed input`() {
+      val parser = PgNodeTreeParser()
+      val result = parser.parseGroupRteMap("malformed")
+      assertThat(result).hasSize(0)
+    }
+
+    @Test
+    fun `hasGroupingSets returns false for malformed input`() {
+      val parser = PgNodeTreeParser()
+      assertThat(parser.hasGroupingSets("malformed")).isFalse()
+    }
+
+    @Test
+    fun `recursion depth guard returns false at depth 0`() {
+      val analyzer = NodeTreeNullabilityAnalyzer(
+        isStrict = { false },
+        hasNonNullInitialValue = { false },
+        isSourceColumnNotNull = { _, _ -> true },
+        isOuterJoinNullable = { false },
+      )
+      assertThat(analyzer.isNonNull(PgNodeExpression.Const(isNull = false), depth = 0)).isFalse()
     }
   }
 
