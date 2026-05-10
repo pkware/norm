@@ -1,5 +1,6 @@
 package norm.generator
 
+import org.intellij.lang.annotations.Language
 import plugin.Column
 import plugin.Domain
 import plugin.Enum
@@ -550,7 +551,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * @return A list of booleans, one per result column in SELECT order. `true` means the
    *   column can be NULL; `false` means it is guaranteed non-null.
    */
-  fun queryColumnNullability(sql: String): List<Boolean> {
+  fun queryColumnNullability(@Language("PostgreSQL") sql: String): List<Boolean> {
     val viewSql = buildViewSqlWithSentinels(sql) ?: replaceParameterPlaceholders(sql)
 
     // Fast path: try creating a view directly (works for all SELECT-only SQL).

@@ -28,6 +28,7 @@ import plugin.Catalog
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.SQLException
+import java.time.Duration
 import javax.inject.Inject
 
 /**
@@ -251,7 +252,7 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
         WaitAllStrategy()
           .withStrategy(Wait.forLogMessage(".*database system is ready to accept connections.*\\n", 2))
           .withStrategy(Wait.forListeningPort())
-          .withStartupTimeout(java.time.Duration.ofSeconds(60)),
+          .withStartupTimeout(Duration.ofSeconds(60)),
       )
 
       start()
