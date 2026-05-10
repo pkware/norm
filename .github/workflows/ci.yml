@@ -12,7 +12,7 @@ permissions: {}
 
 jobs:
   linux:
-    name: Linux (PG ${{ matrix.pg-version }})
+    name: Linux (Postgres ${{ matrix.pg-version }})
     strategy:
       fail-fast: false
       matrix:
