@@ -148,32 +148,32 @@ internal enum class PostgresSupportedTypes(
   UUID(
     java.util.UUID::class,
     { index, parameterName -> CodeBlock.of("setObject(%L, %L)", index, parameterName) },
-    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, java.util.UUID::class.asTypeName()) },
+    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, java.util.UUID::class) },
   ),
   LOCAL_DATE(
     LocalDate::class,
     { index, parameterName -> CodeBlock.of("setObject(%L, %L)", index, parameterName) },
-    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, LocalDate::class.asTypeName()) },
+    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, LocalDate::class) },
   ),
   LOCAL_TIME(
     LocalTime::class,
     { index, parameterName -> CodeBlock.of("setObject(%L, %L)", index, parameterName) },
-    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, LocalTime::class.asTypeName()) },
+    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, LocalTime::class) },
   ),
   OFFSET_TIME(
     OffsetTime::class,
     { index, parameterName -> CodeBlock.of("setObject(%L, %L)", index, parameterName) },
-    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, OffsetTime::class.asTypeName()) },
+    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, OffsetTime::class) },
   ),
   LOCAL_DATE_TIME(
     LocalDateTime::class,
     { index, parameterName -> CodeBlock.of("setObject(%L, %L)", index, parameterName) },
-    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, LocalDateTime::class.asTypeName()) },
+    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, LocalDateTime::class) },
   ),
   OFFSET_DATE_TIME(
     OffsetDateTime::class,
     { index, parameterName -> CodeBlock.of("setObject(%L, %L)", index, parameterName) },
-    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, OffsetDateTime::class.asTypeName()) },
+    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, OffsetDateTime::class) },
   ),
   BYTE_ARRAY(
     ByteArray::class,

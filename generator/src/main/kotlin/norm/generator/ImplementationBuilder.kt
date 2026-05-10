@@ -1,6 +1,7 @@
 package norm.generator
 
 import com.squareup.kotlinpoet.ANY
+import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.INT
@@ -14,7 +15,6 @@ import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.TypeVariableName
-import com.squareup.kotlinpoet.asTypeName
 import com.squareup.kotlinpoet.jvm.throws
 import plugin.Parameter
 import java.sql.PreparedStatement
@@ -115,13 +115,13 @@ private fun TypeSpec.Builder.addOneImplementation(statement: SqlStatement) {
 private fun TypeSpec.Builder.addManyImplementation(statement: SqlStatement) {
   val resultRowShape = statement.resultRowShape
   val mapperReturnType = resultRowShape.mapperReturnType
-  val rTypeVariable = TypeVariableName("R")
+  val returnTypeVariable = TypeVariableName("Return")
   val queryParameters = statement.parameters.mapNotNull(Parameter::column)
   // 1. Private helper function
   val helperFunction = FunSpec.builder(statement.name)
     .addModifiers(KModifier.PRIVATE)
     .addTypeVariable(mapperReturnType)
-    .addTypeVariable(rTypeVariable)
+    .addTypeVariable(returnTypeVariable)
     .apply {
       // Add query parameters first
       for ((index, parameter) in queryParameters.withIndex()) {
@@ -138,48 +138,30 @@ private fun TypeSpec.Builder.addManyImplementation(statement: SqlStatement) {
       ),
     )
     .addParameter(
-      ParameterSpec(
-        "block",
-        LambdaTypeName.get(
-          parameters = listOf(
-            ParameterSpec.unnamed(String::class.asTypeName()),
-            ParameterSpec.unnamed(
-              LambdaTypeName.get(
-                receiver = RESULT_SET,
-                returnType = mapperReturnType,
-              ),
-            ),
-            ParameterSpec.unnamed(
-              LambdaTypeName.get(
-                receiver = PreparedStatement::class.asTypeName(),
-                returnType = Unit::class.asTypeName(),
-              ).copy(nullable = true),
-            ),
-          ),
-          returnType = rTypeVariable,
-        ),
-      ),
+      "processor",
+      ClassName("norm", "ManyProcessor")
+        .parameterizedBy(mapperReturnType, returnTypeVariable),
     )
-    .returns(rTypeVariable)
+    .returns(returnTypeVariable)
     .addStatement("val sql = %S", statement.sql)
     .apply {
-      beginControlFlow("val rowReader: %T.() -> %T = {", RESULT_SET, mapperReturnType)
+      beginControlFlow("val rowReader: %T.() -> %T = {", ResultSet::class, mapperReturnType)
       addCode("%L\n", mapperInvocation(resultRowShape.builder))
       endControlFlow()
       if (queryParameters.isNotEmpty()) {
         beginControlFlow(
           "val queryBinder: (%T.() -> %T)? = {",
-          PreparedStatement::class.asTypeName(),
-          Unit::class.asTypeName(),
+          PreparedStatement::class,
+          Unit::class,
         )
         for ((index, parameter) in queryParameters.withIndex()) {
           val typeInfo = statement.resolveMappableType(parameter)
           addCode("%L\n", typeInfo.statementAction(index + 1, CodeBlock.of(statement.getParameterName(index))))
         }
         endControlFlow()
-        addStatement("return block(sql, rowReader, queryBinder)")
+        addStatement("return processor.invoke(sql, rowReader, queryBinder)")
       } else {
-        addStatement("return block(sql, rowReader, null)")
+        addStatement("return processor.invoke(sql, rowReader, null)")
       }
     }
     .build()
@@ -289,7 +271,7 @@ private fun TypeSpec.Builder.addExecImplementation(statement: SqlStatement) {
  */
 private fun FunSpec.Builder.buildOne(statement: SqlStatement) {
   val resultRowShape = statement.resultRowShape
-  beginControlFlow("val rowReader: %T.() -> %T = {", RESULT_SET, resultRowShape.mapperReturnType)
+  beginControlFlow("val rowReader: %T.() -> %T = {", ResultSet::class, resultRowShape.mapperReturnType)
   addCode("%L\n", mapperInvocation(resultRowShape.builder))
   // Close the rowReader
   endControlFlow()
@@ -332,7 +314,7 @@ private fun FunSpec.Builder.buildExec(statement: SqlStatement) {
     addCode("execute()\n")
     endControlFlow()
   } else {
-    addStatement("driver.execute(sql, %T::execute)", PreparedStatement::class.asTypeName())
+    addStatement("driver.execute(sql, %T::execute)", PreparedStatement::class)
   }
 }
 
@@ -498,7 +480,7 @@ private fun buildBatchWithReturn(statement: SqlStatement): FunSpec = batchWithRe
   beginControlFlow("return driver.executeBatchWithGeneratedKeys(sql, columnNames) {")
 
   val resultRowShape = statement.resultRowShape
-  beginControlFlow("val rowReader: %T.() -> %T = {", RESULT_SET, resultRowShape.mapperReturnType)
+  beginControlFlow("val rowReader: %T.() -> %T = {", ResultSet::class, resultRowShape.mapperReturnType)
   addCode("%L\n", mapperInvocation(resultRowShape.builder))
   endControlFlow()
 
@@ -548,8 +530,6 @@ private fun buildBatchWithReturn(statement: SqlStatement): FunSpec = batchWithRe
 
   endControlFlow()
 }.build()
-
-private val RESULT_SET = ResultSet::class.asTypeName()
 
 private val PROCESS_EXEC_RESULTS = MemberName(RUNTIME_PACKAGE, "combineExecBatchResults")
 

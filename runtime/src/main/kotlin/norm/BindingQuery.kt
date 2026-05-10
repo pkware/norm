@@ -10,7 +10,7 @@ import java.sql.Types
  * A [Query] that binds arguments to the SQL.
  *
  * @param sql to execute.
- * @param rowReader Expression to extract an [RowType] from the [ResultSet].
+ * @param rowReader Expression to extract a [RowType] from the [ResultSet].
  * @param normDriver The underlying driver to use to execute the query.
  * @param RowType Type to return.
  */

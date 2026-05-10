@@ -15,6 +15,7 @@ import kotlin.jvm.Throws
 import norm.ColumnAdapter
 import norm.ConnectionProvider
 import norm.Many
+import norm.ManyProcessor
 import norm.NormDriver
 import norm.RealTransactable
 import norm.combineExecBatchResults
@@ -61,7 +62,7 @@ public class PostgresQueries(
     }
   }
 
-  private fun <T : Any, R> listUsersByAge(
+  private fun <T : Any, Return> listUsersByAge(
     age: PositiveInteger,
     mapper: (
       id: Int,
@@ -73,12 +74,8 @@ public class PostgresQueries(
       past_moods: Array<Mood?>?,
       scores: Array<PositiveInteger?>?,
     ) -> T,
-    block: (
-      String,
-      ResultSet.() -> T,
-      (PreparedStatement.() -> Unit)?,
-    ) -> R,
-  ): R {
+    processor: ManyProcessor<T, Return>,
+  ): Return {
     val sql = "SELECT * FROM users WHERE age > ?"
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -95,7 +92,7 @@ public class PostgresQueries(
     val queryBinder: (PreparedStatement.() -> Unit)? = {
       setInt(1, positiveIntegerAdapter.encode(age))
     }
-    return block(sql, rowReader, queryBinder)
+    return processor.invoke(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> listUsersByAge(age: PositiveInteger, mapper: (
@@ -109,7 +106,7 @@ public class PostgresQueries(
     scores: Array<PositiveInteger?>?,
   ) -> T): Many<T> = listUsersByAge(age, mapper, driver::queryMany)
 
-  private fun <T : Any, R> getUsersByZipCode(
+  private fun <T : Any, Return> getUsersByZipCode(
     zip_code: UsPostalCode,
     mapper: (
       id: Int,
@@ -121,12 +118,8 @@ public class PostgresQueries(
       past_moods: Array<Mood?>?,
       scores: Array<PositiveInteger?>?,
     ) -> T,
-    block: (
-      String,
-      ResultSet.() -> T,
-      (PreparedStatement.() -> Unit)?,
-    ) -> R,
-  ): R {
+    processor: ManyProcessor<T, Return>,
+  ): Return {
     val sql = "SELECT * FROM users WHERE zip_code = ?"
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -143,7 +136,7 @@ public class PostgresQueries(
     val queryBinder: (PreparedStatement.() -> Unit)? = {
       setString(1, usPostalCodeAdapter.encode(zip_code))
     }
-    return block(sql, rowReader, queryBinder)
+    return processor.invoke(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> getUsersByZipCode(zip_code: UsPostalCode, mapper: (
@@ -157,7 +150,7 @@ public class PostgresQueries(
     scores: Array<PositiveInteger?>?,
   ) -> T): Many<T> = getUsersByZipCode(zip_code, mapper, driver::queryMany)
 
-  private fun <T : Any, R> getUsersByMood(
+  private fun <T : Any, Return> getUsersByMood(
     current_mood: Mood,
     mapper: (
       id: Int,
@@ -169,12 +162,8 @@ public class PostgresQueries(
       past_moods: Array<Mood?>?,
       scores: Array<PositiveInteger?>?,
     ) -> T,
-    block: (
-      String,
-      ResultSet.() -> T,
-      (PreparedStatement.() -> Unit)?,
-    ) -> R,
-  ): R {
+    processor: ManyProcessor<T, Return>,
+  ): Return {
     val sql = "SELECT * FROM users WHERE current_mood = ?"
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -191,7 +180,7 @@ public class PostgresQueries(
     val queryBinder: (PreparedStatement.() -> Unit)? = {
       setObject(1, moodAdapter.encode(current_mood), Types.OTHER)
     }
-    return block(sql, rowReader, queryBinder)
+    return processor.invoke(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> getUsersByMood(current_mood: Mood, mapper: (

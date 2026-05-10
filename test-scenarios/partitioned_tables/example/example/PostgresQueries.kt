@@ -14,6 +14,7 @@ import kotlin.collections.Iterable
 import kotlin.jvm.Throws
 import norm.ConnectionProvider
 import norm.Many
+import norm.ManyProcessor
 import norm.NormDriver
 import norm.RealTransactable
 import norm.combineExecBatchResults
@@ -50,19 +51,15 @@ public class PostgresQueries(
     }
   }
 
-  private fun <T : Any, R> listEventsByCategory(
+  private fun <T : Any, Return> listEventsByCategory(
     category: String,
     mapper: (
       id: UUID,
       created_at: OffsetDateTime,
       category: String,
     ) -> T,
-    block: (
-      String,
-      ResultSet.() -> T,
-      (PreparedStatement.() -> Unit)?,
-    ) -> R,
-  ): R {
+    processor: ManyProcessor<T, Return>,
+  ): Return {
     val sql = "SELECT id, created_at, category FROM event WHERE category = ? ORDER BY created_at DESC"
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -74,7 +71,7 @@ public class PostgresQueries(
     val queryBinder: (PreparedStatement.() -> Unit)? = {
       setString(1, category)
     }
-    return block(sql, rowReader, queryBinder)
+    return processor.invoke(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> listEventsByCategory(category: String, mapper: (

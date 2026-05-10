@@ -27,6 +27,7 @@ import kotlin.collections.Iterable
 import kotlin.jvm.Throws
 import norm.ConnectionProvider
 import norm.Many
+import norm.ManyProcessor
 import norm.NormDriver
 import norm.Query
 import norm.RealTransactable
@@ -39,7 +40,7 @@ public class PostgresQueries(
     Queries {
   private val driver: NormDriver = NormDriver(connectionProvider)
 
-  private fun <T : Any, R> all(mapper: (
+  private fun <T : Any, Return> all(mapper: (
     smallserial_type: Short,
     serial2_type: Short,
     pg_serial2_type: Short,
@@ -103,11 +104,7 @@ public class PostgresQueries(
     int_array_notnull_type: Array<Int?>,
     text_array_type: Array<String?>?,
     text_array_notnull_type: Array<String?>,
-  ) -> T, block: (
-    String,
-    ResultSet.() -> T,
-    (PreparedStatement.() -> Unit)?,
-  ) -> R): R {
+  ) -> T, processor: ManyProcessor<T, Return>): Return {
     val sql = "SELECT * FROM type"
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -188,7 +185,7 @@ public class PostgresQueries(
             },
       )
     }
-    return block(sql, rowReader, null)
+    return processor.invoke(sql, rowReader, null)
   }
 
   override fun <T : Any> all(mapper: (
@@ -541,7 +538,7 @@ public class PostgresQueries(
     }
   }
 
-  private fun <T : Any, R> filterByStringType(
+  private fun <T : Any, Return> filterByStringType(
     string_type: String,
     mapper: (
       smallserial_type: Short,
@@ -608,12 +605,8 @@ public class PostgresQueries(
       text_array_type: Array<String?>?,
       text_array_notnull_type: Array<String?>,
     ) -> T,
-    block: (
-      String,
-      ResultSet.() -> T,
-      (PreparedStatement.() -> Unit)?,
-    ) -> R,
-  ): R {
+    processor: ManyProcessor<T, Return>,
+  ): Return {
     val sql = "SELECT * FROM type WHERE string_type = ?"
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -697,7 +690,7 @@ public class PostgresQueries(
     val queryBinder: (PreparedStatement.() -> Unit)? = {
       setString(1, string_type)
     }
-    return block(sql, rowReader, queryBinder)
+    return processor.invoke(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> filterByStringType(string_type: String, mapper: (
@@ -766,15 +759,11 @@ public class PostgresQueries(
     text_array_notnull_type: Array<String?>,
   ) -> T): Many<T> = filterByStringType(string_type, mapper, driver::queryMany)
 
-  private fun <T : Any, R> listNotNullView(mapper: (
+  private fun <T : Any, Return> listNotNullView(mapper: (
     serial_type: Int,
     string_type: String,
     int4_type: Int,
-  ) -> T, block: (
-    String,
-    ResultSet.() -> T,
-    (PreparedStatement.() -> Unit)?,
-  ) -> R): R {
+  ) -> T, processor: ManyProcessor<T, Return>): Return {
     val sql = "SELECT * FROM not_null_view"
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -783,7 +772,7 @@ public class PostgresQueries(
         getInt(3),
       )
     }
-    return block(sql, rowReader, null)
+    return processor.invoke(sql, rowReader, null)
   }
 
   override fun <T : Any> listNotNullView(mapper: (
@@ -817,16 +806,12 @@ public class PostgresQueries(
     }
   }
 
-  private fun <T : Any, R> departmentEmployees(mapper: (
+  private fun <T : Any, Return> departmentEmployees(mapper: (
     id: Int,
     dept_name: String,
     employee_name: String?,
     nickname: String?,
-  ) -> T, block: (
-    String,
-    ResultSet.() -> T,
-    (PreparedStatement.() -> Unit)?,
-  ) -> R): R {
+  ) -> T, processor: ManyProcessor<T, Return>): Return {
     val sql = """
         |SELECT d.id, d.name AS dept_name, e.name AS employee_name, e.nickname
         |FROM department d
@@ -840,7 +825,7 @@ public class PostgresQueries(
         getString(4),
       )
     }
-    return block(sql, rowReader, null)
+    return processor.invoke(sql, rowReader, null)
   }
 
   override fun <T : Any> departmentEmployees(mapper: (
@@ -857,11 +842,7 @@ public class PostgresQueries(
     nickname: String?,
   ) -> T): Query<T> = departmentEmployees(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
 
-  private fun <T, R> allNames(mapper: (name: String?) -> T, block: (
-    String,
-    ResultSet.() -> T,
-    (PreparedStatement.() -> Unit)?,
-  ) -> R): R {
+  private fun <T, Return> allNames(mapper: (name: String?) -> T, processor: ManyProcessor<T, Return>): Return {
     val sql = """
         |SELECT name FROM department
         |UNION ALL
@@ -872,7 +853,7 @@ public class PostgresQueries(
         getString(1),
       )
     }
-    return block(sql, rowReader, null)
+    return processor.invoke(sql, rowReader, null)
   }
 
   override fun <T> allNames(mapper: (name: String?) -> T): Many<T> = allNames(mapper, driver::queryMany)
