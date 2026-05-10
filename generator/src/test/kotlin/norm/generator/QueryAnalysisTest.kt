@@ -1,6 +1,7 @@
 package norm.generator
 
 import assertk.assertThat
+import assertk.assertions.containsExactly
 import assertk.assertions.hasSize
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
@@ -991,6 +992,48 @@ class QueryAnalysisTest {
         "SELECT string_agg(name, ', ') AS result FROM t",
       )
       assertThat(query.columns[0].not_null).isFalse()
+    }
+
+    @Test
+    fun `string_agg DISTINCT with ORDER BY and LEFT JOIN is nullable`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE data_center (
+          id UUID PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
+          name VARCHAR(200) NOT NULL
+        );
+        CREATE TABLE organization (
+          id UUID PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
+          name VARCHAR(255) NOT NULL,
+          salesforce_account_id VARCHAR(255) NOT NULL
+        );
+        CREATE TABLE site (
+          id UUID PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
+          tenant_id UUID NOT NULL REFERENCES organization(id),
+          data_center_id UUID NOT NULL REFERENCES data_center(id),
+          name VARCHAR(200) NOT NULL
+        );
+        """.trimIndent(),
+        """
+        SELECT dc.id, dc.name,
+               COUNT(DISTINCT site.id) AS site_count,
+               string_agg(
+                 DISTINCT organization.name || ' (' || organization.salesforce_account_id || ')',
+                 ', ' ORDER BY organization.name || ' (' || organization.salesforce_account_id || ')'
+               ) AS tenants
+        FROM data_center dc
+        LEFT JOIN site ON site.data_center_id = dc.id
+        LEFT JOIN organization ON organization.id = site.tenant_id
+        GROUP BY dc.id
+        ORDER BY dc.name
+        """.trimIndent(),
+      )
+      assertThat(query.columns.map { "${it.name}: not_null=${it.not_null}" }).containsExactly(
+        "id: not_null=true",
+        "name: not_null=true",
+        "site_count: not_null=true",
+        "tenants: not_null=false",
+      )
     }
 
     @Test
