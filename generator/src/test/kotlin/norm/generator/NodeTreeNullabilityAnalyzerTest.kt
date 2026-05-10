@@ -68,6 +68,7 @@ class NodeTreeNullabilityAnalyzerTest {
   inner class IsNonNull {
 
     private val strictFunctions = mutableSetOf<Int>()
+    private val strictButNullableFunctions = mutableSetOf<Int>()
     private val nonNullAggregates = mutableSetOf<Int>()
     private val notNullColumns = mutableSetOf<Pair<Int, Int>>() // (varno, varattno) NOT NULL columns
 
@@ -76,6 +77,7 @@ class NodeTreeNullabilityAnalyzerTest {
       hasNonNullInitialValue = { oid -> oid in nonNullAggregates },
       isSourceColumnNotNull = { varno, varattno -> (varno to varattno) in notNullColumns },
       isOuterJoinNullable = { nullingRelations -> nullingRelations.isNotEmpty() },
+      isStrictButNullable = { oid -> oid in strictButNullableFunctions },
     )
 
     private fun isNonNull(expression: PgNodeExpression): Boolean = analyzer.isNonNull(expression)
@@ -251,6 +253,7 @@ class NodeTreeNullabilityAnalyzerTest {
     @Test
     fun `WindowFunc with arguments is nullable — LAG and LEAD return null at window boundaries`() {
       strictFunctions.add(3111)
+      strictButNullableFunctions.add(3111)
       val expr = PgNodeExpression.WindowFunc(3111, listOf(PgNodeExpression.Const(isNull = false)))
       assertThat(isNonNull(expr)).isFalse()
     }

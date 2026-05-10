@@ -21,12 +21,27 @@ package norm.generator
  *   `varattno` has a `NOT NULL` constraint. Used for [isNonNull] evaluation of [PgNodeExpression.Var].
  * @param isOuterJoinNullable Returns `true` if the given `nullingRelations` set indicates the column
  *   can be nulled by an outer join. Typically `true` when the set is non-empty.
+ * @param isAlwaysNonNull Returns `true` for function OIDs that never return `null` regardless of
+ *   argument nullability (e.g., `concat`).
+ * @param isStrictButNullable Returns `true` for function OIDs that are marked STRICT but can still
+ *   return `null` from non-null inputs (e.g., JSON path-extraction operators like `->>` and `->`).
+ * @param isLagLeadWithDefault Returns `true` for the 3-argument overloads of `lag` and `lead` window
+ *   functions, which return non-null when both the value and default arguments are non-null.
+ * @param resolveColumnNotNull Resolves `(relid, attnum)` to whether the column is `NOT NULL` in
+ *   `pg_attribute`. Used by CTE body analysis to build sub-analyzers with CTE-local range tables.
  */
 internal class NodeTreeNullabilityAnalyzer(
   private val isStrict: (Int) -> Boolean,
   private val hasNonNullInitialValue: (Int) -> Boolean,
   private val isSourceColumnNotNull: (varno: Int, varattno: Int) -> Boolean,
   private val isOuterJoinNullable: (nullingRelations: Set<Int>) -> Boolean,
+  private val isAlwaysNonNull: (Int) -> Boolean = { false },
+  private val isStrictButNullable: (Int) -> Boolean = { false },
+  private val isLagLeadWithDefault: (Int) -> Boolean = { false },
+  private val resolveColumnNotNull: (relid: Int, attnum: Int) -> Boolean = { _, _ -> false },
+  private val jsonExistsOp: Int = PgNodeExpression.JSON_EXISTS_OP,
+  private val jsonValueOp: Int = PgNodeExpression.JSON_VALUE_OP,
+  private val jsonSerializeOp: Int = PgNodeExpression.JSON_SERIALIZE_OP,
 ) {
 
   private val parser = PgNodeTreeParser()
@@ -107,21 +122,33 @@ internal class NodeTreeNullabilityAnalyzer(
       is PgNodeExpression.Var -> !isOuterJoinNullable(expression.nullingRelations) &&
         isSourceColumnNotNull(expression.varno, expression.varattno)
       is PgNodeExpression.Const -> !expression.isNull
-      is PgNodeExpression.FuncExpr -> isStrict(expression.functionOid) && expression.arguments.all(recurse)
-      is PgNodeExpression.OpExpr -> isStrict(expression.operatorFunctionOid) && expression.arguments.all(recurse)
-      is PgNodeExpression.ScalarArrayOpExpr -> isStrict(expression.operatorFunctionOid) &&
-        expression.arguments.all(recurse)
+      is PgNodeExpression.FuncExpr ->
+        isAlwaysNonNull(expression.functionOid) ||
+          (
+            isStrict(expression.functionOid) &&
+              !isStrictButNullable(expression.functionOid) &&
+              expression.arguments.all(recurse)
+            )
+      is PgNodeExpression.OpExpr ->
+        isStrict(expression.operatorFunctionOid) &&
+          !isStrictButNullable(expression.operatorFunctionOid) &&
+          expression.arguments.all(recurse)
+      is PgNodeExpression.ScalarArrayOpExpr ->
+        isStrict(expression.operatorFunctionOid) &&
+          !isStrictButNullable(expression.operatorFunctionOid) &&
+          expression.arguments.all(recurse)
       is PgNodeExpression.CoalesceExpr -> expression.arguments.any(recurse)
       is PgNodeExpression.NullIfExpr -> false // can always return null
       is PgNodeExpression.MinMaxExpr -> expression.arguments.all(recurse)
       is PgNodeExpression.Aggref -> hasNonNullInitialValue(expression.aggregateFunctionOid)
-      // Only empty-argument window functions (ROW_NUMBER, RANK, DENSE_RANK, etc.) are guaranteed
-      // non-null. Window functions with arguments (LAG, LEAD, NTH_VALUE, aggregate-as-window like
-      // SUM OVER) can return null due to window boundary conditions or empty partitions.
-      is PgNodeExpression.WindowFunc -> expression.arguments.isEmpty()
+      is PgNodeExpression.WindowFunc -> evaluateWindowFunc(expression, recurse)
       is PgNodeExpression.SubLink ->
         expression.subLinkType == PgNodeExpression.SUBLINK_TYPE_EXISTS ||
-          expression.subLinkType == PgNodeExpression.SUBLINK_TYPE_ARRAY
+          expression.subLinkType == PgNodeExpression.SUBLINK_TYPE_ARRAY ||
+          (
+            expression.subLinkType == PgNodeExpression.SUBLINK_TYPE_ANY &&
+              expression.outerOperand?.let(recurse) == true
+            )
       is PgNodeExpression.CaseExpr ->
         expression.defaultResult != null &&
           (expression.resultExpressions + expression.defaultResult).all(recurse)
@@ -148,13 +175,34 @@ internal class NodeTreeNullabilityAnalyzer(
     }
   }
 
+  private fun evaluateWindowFunc(
+    expression: PgNodeExpression.WindowFunc,
+    recurse: (PgNodeExpression) -> Boolean,
+  ): Boolean {
+    if (expression.arguments.isEmpty()) return true
+    // LAG/LEAD with 3 args (value, offset, default): non-null when value and default are non-null.
+    if (isLagLeadWithDefault(expression.windowFunctionOid) && expression.arguments.size >= 3) {
+      return recurse(expression.arguments[0]) && recurse(expression.arguments[2])
+    }
+    // NTILE is strict and always returns non-null from non-null input. Other strict window functions
+    // (FIRST_VALUE, LAST_VALUE, NTH_VALUE, LAG/LEAD 1-2 arg) can return null at frame boundaries
+    // and are excluded via isStrictButNullable.
+    if (isStrict(expression.windowFunctionOid) &&
+      !isStrictButNullable(expression.windowFunctionOid) &&
+      expression.arguments.all(recurse)
+    ) {
+      return true
+    }
+    return false
+  }
+
   private fun evaluateJsonExpr(
     expression: PgNodeExpression.JsonExpr,
     recurse: (PgNodeExpression) -> Boolean,
   ): Boolean = when (expression.op) {
-    PgNodeExpression.JSON_EXISTS_OP -> true
-    PgNodeExpression.JSON_SERIALIZE_OP -> recurse(expression.argument)
-    PgNodeExpression.JSON_VALUE_OP, PgNodeExpression.JSON_QUERY_OP -> {
+    jsonExistsOp -> true
+    jsonSerializeOp -> recurse(expression.argument)
+    jsonValueOp, PgNodeExpression.JSON_QUERY_OP -> {
       val emptyOk = expression.onEmpty != PgNodeExpression.JSON_BEHAVIOR_NULL &&
         expression.onEmptyDefault?.let(recurse) != false
       val errorOk = expression.onError != PgNodeExpression.JSON_BEHAVIOR_NULL &&
@@ -226,11 +274,12 @@ internal class NodeTreeNullabilityAnalyzer(
   }
 
   /**
-   * Computes per-column nullability for a single CTE body.
+   * Computes per-column nullability for a single CTE body using full expression evaluation.
    *
-   * Parses the CTE body's target list and evaluates each column for outer-join nullability.
-   * Only VAR nodes are checked — for outer-join detection, non-VAR expressions (aggregates,
-   * function calls, etc.) are not affected by outer joins and return `false` (non-nullable).
+   * Builds a sub-analyzer with the CTE body's own range table so that VAR nodes inside the CTE
+   * resolve against the CTE's tables, not the outer query's. For CTE bodies with set operations
+   * (UNION ALL, INTERSECT, EXCEPT), analyzes each branch and combines results: a column is
+   * nullable if ANY branch produces a nullable value.
    *
    * @param cte The CTE definition containing the name and query block.
    * @param previouslyResolvedCtes CTE nullabilities resolved from earlier declarations in the same
@@ -241,67 +290,93 @@ internal class NodeTreeNullabilityAnalyzer(
     cte: NodeTreeCteDefinition,
     previouslyResolvedCtes: Map<String, List<Boolean>>,
   ): List<Boolean>? {
-    // Build inner CTE map: for CTE bodies that reference previously declared CTEs.
-    val innerCteMap = buildInnerCteMap(cte.queryBlock, previouslyResolvedCtes)
-
-    // Parse the CTE body's target list using PgNodeTreeParser.
-    val entries = parser.parseTargetList(cte.queryBlock)
-    if (entries.isEmpty()) return null
-
-    return entries
+    if (parser.hasSetOperations(cte.queryBlock)) {
+      return analyzeSetOperationCteBody(cte.queryBlock, previouslyResolvedCtes, cte.name)
+    }
+    val subAnalyzer = buildCteSubAnalyzer(cte.queryBlock, previouslyResolvedCtes)
+    val result = subAnalyzer.extractColumnNullability(cte.queryBlock)
+    if (result.isNotEmpty()) return result
+    // DML CTEs (INSERT/UPDATE/DELETE ... RETURNING) store output columns in :returningList,
+    // not :targetList. Fall back to analyzing the returning list.
+    val returningEntries = parser.parseReturningList(cte.queryBlock)
+    if (returningEntries.isEmpty()) return null
+    return returningEntries
       .filter { !it.isJunk }
       .sortedBy { it.resultNumber }
-      .map { entry -> evaluateCteColumnNullability(entry.expression, innerCteMap) }
+      .map { entry -> !subAnalyzer.isNonNull(entry.expression) }
   }
 
-  /**
-   * Evaluates outer-join nullability for a single CTE body column expression.
-   *
-   * For VAR nodes, checks `varnullingrels` and inner CTE references (for cascading CTEs).
-   * For non-VAR expressions, returns `false` (non-nullable from outer joins) — aggregates,
-   * function calls, and other computed expressions are not directly affected by outer joins.
-   *
-   * @param expression The parsed expression for this target entry.
-   * @param innerCteMap Map from `varno` to per-column CTE nullabilities for inner CTE references.
-   * @return `true` if the column may be `null` due to outer joins, `false` otherwise.
-   */
-  private fun evaluateCteColumnNullability(
-    expression: PgNodeExpression,
-    innerCteMap: Map<Int, List<Boolean>>,
-  ): Boolean {
-    if (expression !is PgNodeExpression.Var) return false
-
-    // Check if this VAR references an inner CTE (a previously declared CTE in the same WITH clause).
-    if (innerCteMap.isNotEmpty()) {
-      val cteNullabilities = innerCteMap[expression.varno]
-      if (cteNullabilities != null) {
-        if (isOuterJoinNullable(expression.nullingRelations)) return true
-        return cteNullabilities.getOrElse(expression.varattno - 1) { false }
-      }
-    }
-
-    return isOuterJoinNullable(expression.nullingRelations)
-  }
-
-  /**
-   * Builds a varno → CTE nullability map for a CTE body's own range table.
-   *
-   * Scans the CTE body's `:rtable` for entries with `rtekind 6` (CTE references) and maps them
-   * to the column nullabilities from [previouslyResolvedCtes].
-   */
-  private fun buildInnerCteMap(
-    cteQueryBlock: String,
+  private fun analyzeSetOperationCteBody(
+    queryBlock: String,
     previouslyResolvedCtes: Map<String, List<Boolean>>,
-  ): Map<Int, List<Boolean>> {
-    if (previouslyResolvedCtes.isEmpty()) return emptyMap()
-    val cteRteMap = parser.parseCteRangeTableEntries(cteQueryBlock)
-    if (cteRteMap.isEmpty()) return emptyMap()
-    return buildMap {
-      for ((varno, cteName) in cteRteMap) {
+    cteName: String,
+  ): List<Boolean>? {
+    val subqueryRangeTable = parser.parseSubqueryRangeTable(queryBlock)
+    if (subqueryRangeTable.isEmpty()) return null
+    var seedResult: List<Boolean>? = null
+    val branchResults = mutableListOf<List<Boolean>>()
+    for ((_, branchBlock) in subqueryRangeTable) {
+      // For recursive CTEs, the recursive branch references the CTE itself. Use the seed's
+      // nullabilities so the self-reference resolves correctly instead of defaulting to nullable.
+      val resolved = if (seedResult != null) {
+        previouslyResolvedCtes + (cteName to seedResult)
+      } else {
+        previouslyResolvedCtes
+      }
+      val branchAnalyzer = buildCteSubAnalyzer(branchBlock, resolved)
+      val result = branchAnalyzer.extractColumnNullability(branchBlock)
+      if (result.isEmpty()) continue
+      branchResults.add(result)
+      if (seedResult == null) seedResult = result
+    }
+    if (branchResults.isEmpty()) return null
+    val columnCount = branchResults.maxOf { it.size }
+    return (0 until columnCount).map { col ->
+      branchResults.any { it.getOrElse(col) { true } }
+    }
+  }
+
+  private fun buildCteSubAnalyzer(
+    queryBlock: String,
+    previouslyResolvedCtes: Map<String, List<Boolean>>,
+  ): NodeTreeNullabilityAnalyzer {
+    val cteRangeTable = parser.parseRangeTable(queryBlock)
+    val groupRteMap = parser.parseGroupRteMap(queryBlock)
+    val innerCteRtes = parser.parseCteRangeTableEntries(queryBlock)
+    val innerCteNotNull = buildMap<Pair<Int, Int>, Boolean> {
+      for ((varno, cteName) in innerCteRtes) {
         val nullabilities = previouslyResolvedCtes[cteName] ?: continue
-        put(varno, nullabilities)
+        nullabilities.forEachIndexed { columnIndex, nullable ->
+          put(varno to (columnIndex + 1), !nullable)
+        }
       }
     }
+    return NodeTreeNullabilityAnalyzer(
+      isStrict = isStrict,
+      hasNonNullInitialValue = hasNonNullInitialValue,
+      isSourceColumnNotNull = { varno, varattno ->
+        val relid = cteRangeTable[varno]
+        if (relid != null) {
+          resolveColumnNotNull(relid, varattno)
+        } else {
+          val baseVar = groupRteMap[varno to varattno]
+          if (baseVar != null) {
+            val baseRelid = cteRangeTable[baseVar.first]
+            baseRelid != null && resolveColumnNotNull(baseRelid, baseVar.second)
+          } else {
+            innerCteNotNull[varno to varattno] == true
+          }
+        }
+      },
+      isOuterJoinNullable = isOuterJoinNullable,
+      isAlwaysNonNull = isAlwaysNonNull,
+      isStrictButNullable = isStrictButNullable,
+      isLagLeadWithDefault = isLagLeadWithDefault,
+      resolveColumnNotNull = resolveColumnNotNull,
+      jsonExistsOp = jsonExistsOp,
+      jsonValueOp = jsonValueOp,
+      jsonSerializeOp = jsonSerializeOp,
+    )
   }
 
   internal companion object {

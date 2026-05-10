@@ -339,6 +339,11 @@ internal class PgNodeTreeParser {
     }
   }
 
+  fun parseReturningList(nodeTreeText: String): List<TargetEntry> {
+    val content = extractOuterSectionContent(nodeTreeText, ":returningList (") ?: return emptyList()
+    return splitTargetEntries(content).mapNotNull { entry -> parseTargetEntry(entry) }
+  }
+
   private fun parseVar(text: String): PgNodeExpression.Var {
     val varno = extractIntField(text, ":varno")
       ?: error("Missing :varno in VAR node")
@@ -395,7 +400,15 @@ internal class PgNodeTreeParser {
 
   private fun parseSubLink(text: String): PgNodeExpression.SubLink {
     val subLinkType = extractIntField(text, ":subLinkType") ?: error("Missing :subLinkType in SUBLINK node")
-    return PgNodeExpression.SubLink(subLinkType = subLinkType)
+    // For ANY sublinks (IN operator), extract the outer operand from the testexpr's first argument.
+    val outerOperand = if (subLinkType == 2 || subLinkType == 3) {
+      extractFieldExpression(text, ":testexpr")?.let { testExpr ->
+        extractArgListSection(testExpr, ":args")?.let { splitBraceBlocks(it).firstOrNull()?.let(::parseExpression) }
+      }
+    } else {
+      null
+    }
+    return PgNodeExpression.SubLink(subLinkType = subLinkType, outerOperand = outerOperand)
   }
 
   private fun parseCaseExpr(text: String): PgNodeExpression.CaseExpr {
@@ -490,10 +503,20 @@ internal class PgNodeTreeParser {
   private fun parseJsonExpr(text: String): PgNodeExpression.JsonExpr {
     val op = extractIntField(text, ":op") ?: error("Missing :op in JSONEXPR node")
     val argument = extractFieldExpression(text, ":formatted_expr") ?: error("Missing :formatted_expr in JSONEXPR node")
-    val onEmpty = extractJsonBehaviorType(text, ":on_empty_behavior")
-    val onEmptyDefault = extractFieldExpression(text, ":on_empty_default")?.let { parseExpression(it) }
-    val onError = extractJsonBehaviorType(text, ":on_error_behavior")
-    val onErrorDefault = extractFieldExpression(text, ":on_error_default")?.let { parseExpression(it) }
+    val onEmptyBlock = extractFieldExpression(text, ":on_empty")
+    val onEmpty = if (onEmptyBlock != null) {
+      extractIntField(onEmptyBlock, ":btype") ?: PgNodeExpression.JSON_BEHAVIOR_NULL
+    } else {
+      PgNodeExpression.JSON_BEHAVIOR_NULL
+    }
+    val onEmptyDefault = onEmptyBlock?.let { extractFieldExpression(it, ":expr")?.let(::parseExpression) }
+    val onErrorBlock = extractFieldExpression(text, ":on_error")
+    val onError = if (onErrorBlock != null) {
+      extractIntField(onErrorBlock, ":btype") ?: PgNodeExpression.JSON_BEHAVIOR_NULL
+    } else {
+      PgNodeExpression.JSON_BEHAVIOR_NULL
+    }
+    val onErrorDefault = onErrorBlock?.let { extractFieldExpression(it, ":expr")?.let(::parseExpression) }
     return PgNodeExpression.JsonExpr(
       op = op,
       argument = parseExpression(argument),
@@ -509,11 +532,6 @@ internal class PgNodeTreeParser {
     val namedArguments = parseArgList(text, ":named_args")
     val arguments = parseArgList(text, ":args")
     return PgNodeExpression.XmlExpr(op = op, arguments = namedArguments + arguments)
-  }
-
-  private fun extractJsonBehaviorType(text: String, fieldName: String): Int {
-    val behaviorBlock = extractFieldExpression(text, fieldName) ?: return PgNodeExpression.JSON_BEHAVIOR_NULL
-    return extractIntField(behaviorBlock, ":btype") ?: PgNodeExpression.JSON_BEHAVIOR_NULL
   }
 
   /**

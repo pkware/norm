@@ -28,7 +28,7 @@ internal sealed interface PgNodeExpression {
 
   data class WindowFunc(val windowFunctionOid: Int, val arguments: List<PgNodeExpression>) : PgNodeExpression
 
-  data class SubLink(val subLinkType: Int) : PgNodeExpression
+  data class SubLink(val subLinkType: Int, val outerOperand: PgNodeExpression? = null) : PgNodeExpression
 
   data class CaseExpr(val resultExpressions: List<PgNodeExpression>, val defaultResult: PgNodeExpression?) :
     PgNodeExpression
@@ -71,6 +71,7 @@ internal sealed interface PgNodeExpression {
   companion object {
     // SubLinkType (primnodes.h)
     const val SUBLINK_TYPE_EXISTS: Int = 0
+    const val SUBLINK_TYPE_ANY: Int = 2
     const val SUBLINK_TYPE_ARRAY: Int = 6
 
     // JsonExprOp (primnodes.h)
