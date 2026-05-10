@@ -615,9 +615,14 @@ internal class PgNodeTreeParser {
     val expressionText = extractBalancedBraces(text, braceIndex) ?: return null
     val expression = parseExpression(expressionText)
 
-    val resultNumber = extractIntField(text, ":resno") ?: return null
-    val resultName = extractStringField(text, ":resname")
-    val isJunk = text.contains(":resjunk true")
+    // Extract fields from the text AFTER the balanced :expr block. The :expr may contain nested
+    // TARGETENTRY nodes (e.g., AGGREF :args) whose :resno/:resname/:resjunk fields would shadow
+    // the outer TARGETENTRY's fields if we searched the full text.
+    val suffixStart = braceIndex + expressionText.length
+    val suffix = if (suffixStart < text.length) text.substring(suffixStart) else ""
+    val resultNumber = extractIntField(suffix, ":resno") ?: return null
+    val resultName = extractStringField(suffix, ":resname")
+    val isJunk = suffix.contains(":resjunk true")
     return TargetEntry(
       expression = expression,
       resultName = resultName,
