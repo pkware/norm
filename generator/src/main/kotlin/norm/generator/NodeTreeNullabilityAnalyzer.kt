@@ -1,5 +1,8 @@
 package norm.generator
 
+import norm.generator.NodeTreeNullabilityAnalyzer.Companion.MAX_EXPRESSION_DEPTH
+import norm.generator.NodeTreeNullabilityAnalyzer.Companion.extractOuterJoinNullability
+
 /**
  * Evaluates nullability of result columns from a PostgreSQL `pg_node_tree` text
  * (from `pg_rewrite.ev_action`).
@@ -27,8 +30,6 @@ package norm.generator
  *   return `null` from non-null inputs (e.g., JSON path-extraction operators like `->>` and `->`).
  * @param isLagLeadWithDefault Returns `true` for the 3-argument overloads of `lag` and `lead` window
  *   functions, which return non-null when both the value and default arguments are non-null.
- * @param resolveColumnNotNull Resolves `(relid, attnum)` to whether the column is `NOT NULL` in
- *   `pg_attribute`. Used by CTE body analysis to build sub-analyzers with CTE-local range tables.
  */
 internal class NodeTreeNullabilityAnalyzer(
   private val isStrict: (Int) -> Boolean,
@@ -38,10 +39,6 @@ internal class NodeTreeNullabilityAnalyzer(
   private val isAlwaysNonNull: (Int) -> Boolean = { false },
   private val isStrictButNullable: (Int) -> Boolean = { false },
   private val isLagLeadWithDefault: (Int) -> Boolean = { false },
-  private val resolveColumnNotNull: (relid: Int, attnum: Int) -> Boolean = { _, _ -> false },
-  private val jsonExistsOp: Int = PgNodeExpression.JSON_EXISTS_OP,
-  private val jsonValueOp: Int = PgNodeExpression.JSON_VALUE_OP,
-  private val jsonSerializeOp: Int = PgNodeExpression.JSON_SERIALIZE_OP,
 ) {
 
   private val parser = PgNodeTreeParser()
@@ -53,10 +50,9 @@ internal class NodeTreeNullabilityAnalyzer(
    * [isNonNull] for accurate expression-level nullability. Returns `true` (nullable) when
    * `isNonNull` returns `false`.
    *
-   * For CTEs, when a VAR references a CTE range table entry (`rtekind 6`), the nullability is
-   * resolved from the CTE body's own targetList column (which carries the correct `varnullingrels`
-   * from the join inside the CTE). CTE outer-join nullability (when the CTE itself is on the
-   * nullable side of an outer join) is also combined.
+   * CTE column resolution is handled by the caller through the [isSourceColumnNotNull] callback.
+   * The caller must include CTE column not-null information in this callback so that VAR nodes
+   * referencing CTE RTEs resolve correctly via the standard [isNonNull] Var evaluation path.
    *
    * @param nodeTreeText the raw text value of `pg_rewrite.ev_action`
    * @return one `Boolean` per result column (in column order), where `true` means the column may
@@ -66,42 +62,10 @@ internal class NodeTreeNullabilityAnalyzer(
     val entries = parser.parseTargetList(nodeTreeText)
     if (entries.isEmpty()) return emptyList()
 
-    // Build a map from varno → CTE column nullabilities for CTE RTE references.
-    // This allows resolving nullability when the outer query references a CTE (rtekind 6).
-    val varnoToCteNullability = buildVarnoToCteNullabilityMap(nodeTreeText)
-
     return entries
       .filter { !it.isJunk }
       .sortedBy { it.resultNumber }
-      .map { entry -> isNullableEntry(entry, varnoToCteNullability) }
-  }
-
-  /**
-   * Determines nullability for a single [TargetEntry].
-   *
-   * For VAR nodes that reference a CTE range table entry, combines:
-   * 1. Whether the outer VAR's own `varnullingrels` indicates an outer-join nullable CTE reference.
-   * 2. The CTE body's internal column nullability at the corresponding column position.
-   *
-   * For all other expression types, delegates to [isNonNull] and inverts the result.
-   *
-   * @param entry the target list entry to evaluate
-   * @param varnoToCteNullability map from `varno` to per-column CTE nullabilities for CTE RTEs
-   * @return `true` if the column may be `null`, `false` if it is guaranteed non-null
-   */
-  private fun isNullableEntry(entry: TargetEntry, varnoToCteNullability: Map<Int, List<Boolean>>): Boolean {
-    val expression = entry.expression
-    if (expression is PgNodeExpression.Var && varnoToCteNullability.isNotEmpty()) {
-      val cteNullabilities = varnoToCteNullability[expression.varno]
-      if (cteNullabilities != null) {
-        // Check the outer VAR's varnullingrels first — if the CTE is on the nullable side
-        // of an outer join, the column is nullable regardless of the CTE's internal structure.
-        if (isOuterJoinNullable(expression.nullingRelations)) return true
-        // Otherwise, check the CTE body's internal column nullability.
-        return cteNullabilities.getOrElse(expression.varattno - 1) { false }
-      }
-    }
-    return !isNonNull(expression)
+      .map { entry -> !isNonNull(entry.expression) }
   }
 
   /**
@@ -121,6 +85,7 @@ internal class NodeTreeNullabilityAnalyzer(
     return when (expression) {
       is PgNodeExpression.Var -> !isOuterJoinNullable(expression.nullingRelations) &&
         isSourceColumnNotNull(expression.varno, expression.varattno)
+
       is PgNodeExpression.Const -> !expression.isNull
       is PgNodeExpression.FuncExpr ->
         isAlwaysNonNull(expression.functionOid) ||
@@ -129,14 +94,17 @@ internal class NodeTreeNullabilityAnalyzer(
               !isStrictButNullable(expression.functionOid) &&
               expression.arguments.all(recurse)
             )
+
       is PgNodeExpression.OpExpr ->
         isStrict(expression.operatorFunctionOid) &&
           !isStrictButNullable(expression.operatorFunctionOid) &&
           expression.arguments.all(recurse)
+
       is PgNodeExpression.ScalarArrayOpExpr ->
         isStrict(expression.operatorFunctionOid) &&
           !isStrictButNullable(expression.operatorFunctionOid) &&
           expression.arguments.all(recurse)
+
       is PgNodeExpression.CoalesceExpr -> expression.arguments.any(recurse)
       is PgNodeExpression.NullIfExpr -> false // can always return null
       is PgNodeExpression.MinMaxExpr -> expression.arguments.all(recurse)
@@ -149,9 +117,11 @@ internal class NodeTreeNullabilityAnalyzer(
             expression.subLinkType == PgNodeExpression.SUBLINK_TYPE_ANY &&
               expression.outerOperand?.let(recurse) == true
             )
+
       is PgNodeExpression.CaseExpr ->
         expression.defaultResult != null &&
           (expression.resultExpressions + expression.defaultResult).all(recurse)
+
       is PgNodeExpression.BoolExpr -> expression.arguments.all(recurse)
       is PgNodeExpression.RelabelType -> recurse(expression.argument)
       is PgNodeExpression.CoerceViaIo -> recurse(expression.argument)
@@ -200,15 +170,16 @@ internal class NodeTreeNullabilityAnalyzer(
     expression: PgNodeExpression.JsonExpr,
     recurse: (PgNodeExpression) -> Boolean,
   ): Boolean = when (expression.op) {
-    jsonExistsOp -> true
-    jsonSerializeOp -> recurse(expression.argument)
-    jsonValueOp, PgNodeExpression.JSON_QUERY_OP -> {
+    PgNodeExpression.JSON_EXISTS_OP -> true
+    PgNodeExpression.JSON_SERIALIZE_OP -> recurse(expression.argument)
+    PgNodeExpression.JSON_VALUE_OP, PgNodeExpression.JSON_QUERY_OP -> {
       val emptyOk = expression.onEmpty != PgNodeExpression.JSON_BEHAVIOR_NULL &&
         expression.onEmptyDefault?.let(recurse) != false
       val errorOk = expression.onError != PgNodeExpression.JSON_BEHAVIOR_NULL &&
         expression.onErrorDefault?.let(recurse) != false
       emptyOk && errorOk
     }
+
     else -> false
   }
 
@@ -218,166 +189,15 @@ internal class NodeTreeNullabilityAnalyzer(
       PgNodeExpression.XML_IS_XMLFOREST,
       PgNodeExpression.XML_IS_XMLPI,
       -> true
+
       PgNodeExpression.XML_IS_XMLCONCAT,
       PgNodeExpression.XML_IS_XMLROOT,
       PgNodeExpression.XML_IS_XMLPARSE,
       PgNodeExpression.XML_IS_XMLSERIALIZE,
       -> expression.arguments.all(recurse)
+
       else -> false
     }
-
-  /**
-   * Builds a map from `varno` (1-based RTE index) to CTE column nullabilities for CTE RTEs.
-   *
-   * Reads `:cteList` and `:rtable` entries at the outer QUERY level. For each CTE definition,
-   * computes column nullabilities from the CTE body. Then maps each `rtekind 6` range table
-   * entry to the corresponding CTE's nullabilities by name.
-   *
-   * @return A map from `varno` to the CTE's per-column nullable flags. Only
-   *   contains entries for CTE RTEs; other RTE types are absent from the map.
-   */
-  private fun buildVarnoToCteNullabilityMap(nodeTreeText: String): Map<Int, List<Boolean>> {
-    val cteDefinitions = parser.parseCteList(nodeTreeText)
-    if (cteDefinitions.isEmpty()) return emptyMap()
-
-    val cteRteMap = parser.parseCteRangeTableEntries(nodeTreeText)
-    if (cteRteMap.isEmpty()) return emptyMap()
-
-    val cteNullabilities = parseCteNullabilities(cteDefinitions)
-    if (cteNullabilities.isEmpty()) return emptyMap()
-
-    return buildMap {
-      for ((varno, cteName) in cteRteMap) {
-        val nullabilities = cteNullabilities[cteName] ?: continue
-        put(varno, nullabilities)
-      }
-    }
-  }
-
-  /**
-   * Parses CTE body nullabilities from a list of [NodeTreeCteDefinition]s.
-   *
-   * CTEs are processed in declaration order so that each CTE body can resolve references to
-   * previously declared CTEs. This handles cases like `WITH a AS (SELECT ... LEFT JOIN ...),
-   * b AS (SELECT ... FROM a) SELECT ... FROM b` where nullability from `a`'s LEFT JOIN must
-   * propagate through `b` to the outer query.
-   *
-   * @return A map from CTE name to per-column nullable flags for the CTE's output columns.
-   */
-  private fun parseCteNullabilities(cteDefinitions: List<NodeTreeCteDefinition>): Map<String, List<Boolean>> {
-    val resolvedCtes = mutableMapOf<String, List<Boolean>>()
-    for (cte in cteDefinitions) {
-      val nullabilities = parseSingleCteNullability(cte, resolvedCtes) ?: continue
-      resolvedCtes[cte.name] = nullabilities
-    }
-    return resolvedCtes
-  }
-
-  /**
-   * Computes per-column nullability for a single CTE body using full expression evaluation.
-   *
-   * Builds a sub-analyzer with the CTE body's own range table so that VAR nodes inside the CTE
-   * resolve against the CTE's tables, not the outer query's. For CTE bodies with set operations
-   * (UNION ALL, INTERSECT, EXCEPT), analyzes each branch and combines results: a column is
-   * nullable if ANY branch produces a nullable value.
-   *
-   * @param cte The CTE definition containing the name and query block.
-   * @param previouslyResolvedCtes CTE nullabilities resolved from earlier declarations in the same
-   *   WITH clause, used when this CTE's body references another CTE.
-   * @return Per-column nullable flags, or `null` if the CTE body cannot be parsed.
-   */
-  private fun parseSingleCteNullability(
-    cte: NodeTreeCteDefinition,
-    previouslyResolvedCtes: Map<String, List<Boolean>>,
-  ): List<Boolean>? {
-    if (parser.hasSetOperations(cte.queryBlock)) {
-      return analyzeSetOperationCteBody(cte.queryBlock, previouslyResolvedCtes, cte.name)
-    }
-    val subAnalyzer = buildCteSubAnalyzer(cte.queryBlock, previouslyResolvedCtes)
-    val result = subAnalyzer.extractColumnNullability(cte.queryBlock)
-    if (result.isNotEmpty()) return result
-    // DML CTEs (INSERT/UPDATE/DELETE ... RETURNING) store output columns in :returningList,
-    // not :targetList. Fall back to analyzing the returning list.
-    val returningEntries = parser.parseReturningList(cte.queryBlock)
-    if (returningEntries.isEmpty()) return null
-    return returningEntries
-      .filter { !it.isJunk }
-      .sortedBy { it.resultNumber }
-      .map { entry -> !subAnalyzer.isNonNull(entry.expression) }
-  }
-
-  private fun analyzeSetOperationCteBody(
-    queryBlock: String,
-    previouslyResolvedCtes: Map<String, List<Boolean>>,
-    cteName: String,
-  ): List<Boolean>? {
-    val subqueryRangeTable = parser.parseSubqueryRangeTable(queryBlock)
-    if (subqueryRangeTable.isEmpty()) return null
-    var seedResult: List<Boolean>? = null
-    val branchResults = mutableListOf<List<Boolean>>()
-    for ((_, branchBlock) in subqueryRangeTable) {
-      // For recursive CTEs, the recursive branch references the CTE itself. Use the seed's
-      // nullabilities so the self-reference resolves correctly instead of defaulting to nullable.
-      val resolved = if (seedResult != null) {
-        previouslyResolvedCtes + (cteName to seedResult)
-      } else {
-        previouslyResolvedCtes
-      }
-      val branchAnalyzer = buildCteSubAnalyzer(branchBlock, resolved)
-      val result = branchAnalyzer.extractColumnNullability(branchBlock)
-      if (result.isEmpty()) continue
-      branchResults.add(result)
-      if (seedResult == null) seedResult = result
-    }
-    if (branchResults.isEmpty()) return null
-    val columnCount = branchResults.maxOf { it.size }
-    return (0 until columnCount).map { col ->
-      branchResults.any { it.getOrElse(col) { true } }
-    }
-  }
-
-  private fun buildCteSubAnalyzer(
-    queryBlock: String,
-    previouslyResolvedCtes: Map<String, List<Boolean>>,
-  ): NodeTreeNullabilityAnalyzer {
-    val cteRangeTable = parser.parseRangeTable(queryBlock)
-    val groupRteMap = parser.parseGroupRteMap(queryBlock)
-    val innerCteRtes = parser.parseCteRangeTableEntries(queryBlock)
-    val innerCteNotNull = buildMap<Pair<Int, Int>, Boolean> {
-      for ((varno, cteName) in innerCteRtes) {
-        val nullabilities = previouslyResolvedCtes[cteName] ?: continue
-        nullabilities.forEachIndexed { columnIndex, nullable ->
-          put(varno to (columnIndex + 1), !nullable)
-        }
-      }
-    }
-    return NodeTreeNullabilityAnalyzer(
-      isStrict = isStrict,
-      hasNonNullInitialValue = hasNonNullInitialValue,
-      isSourceColumnNotNull = { varno, varattno ->
-        val relid = cteRangeTable[varno]
-        if (relid != null) {
-          resolveColumnNotNull(relid, varattno)
-        } else {
-          val baseVar = groupRteMap[varno to varattno]
-          if (baseVar != null) {
-            val baseRelid = cteRangeTable[baseVar.first]
-            baseRelid != null && resolveColumnNotNull(baseRelid, baseVar.second)
-          } else {
-            innerCteNotNull[varno to varattno] == true
-          }
-        }
-      },
-      isOuterJoinNullable = isOuterJoinNullable,
-      isAlwaysNonNull = isAlwaysNonNull,
-      isStrictButNullable = isStrictButNullable,
-      isLagLeadWithDefault = isLagLeadWithDefault,
-      resolveColumnNotNull = resolveColumnNotNull,
-      jsonExistsOp = jsonExistsOp,
-      jsonValueOp = jsonValueOp,
-      jsonSerializeOp = jsonSerializeOp,
-    )
-  }
 
   internal companion object {
     internal const val MAX_EXPRESSION_DEPTH = 100

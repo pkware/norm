@@ -72,12 +72,13 @@ internal sealed interface PgNodeExpression {
     // SubLinkType (primnodes.h)
     const val SUBLINK_TYPE_EXISTS: Int = 0
     const val SUBLINK_TYPE_ANY: Int = 2
+    const val SUBLINK_TYPE_ALL: Int = 3
     const val SUBLINK_TYPE_ARRAY: Int = 6
 
-    // JsonExprOp (primnodes.h)
-    const val JSON_VALUE_OP: Int = 0
+    // JsonExprOp (primnodes.h) — introduced in PG 17
+    const val JSON_EXISTS_OP: Int = 0
     const val JSON_QUERY_OP: Int = 1
-    const val JSON_EXISTS_OP: Int = 2
+    const val JSON_VALUE_OP: Int = 2
     const val JSON_SERIALIZE_OP: Int = 4
 
     // JsonBehaviorType (primnodes.h)

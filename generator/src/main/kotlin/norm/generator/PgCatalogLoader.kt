@@ -25,11 +25,6 @@ internal class PgCatalogLoader(private val connection: Connection) {
 
   private val pgMajorVersion = connection.metaData.databaseMajorVersion
 
-  // PG 18 reordered JsonExprOp: EXISTS=0, QUERY=1, VALUE=2 (was VALUE=0, QUERY=1, EXISTS=2 in PG 17).
-  internal val jsonExistsOp: Int = if (pgMajorVersion >= 18) 0 else 2
-  internal val jsonValueOp: Int = if (pgMajorVersion >= 18) 2 else 0
-  internal val jsonSerializeOp: Int = if (pgMajorVersion >= 18) 4 else 4
-
   init {
     checkPostgresVersion()
   }
@@ -725,12 +720,13 @@ internal class PgCatalogLoader(private val connection: Connection) {
       // 16/17 there is no GROUP RTE — VARs reference the base table directly and would be
       // incorrectly resolved as NOT NULL. parseGroupingKeyVars() identifies those VARs so they can
       // be overridden to nullable regardless of pg_attribute.attnotnull.
-      val groupingKeyVars = if (nodeTreeParser.hasGroupingSets(nodeTree)) {
+      val hasGroupingSets = nodeTreeParser.hasGroupingSets(nodeTree)
+      val groupingKeyVars = if (hasGroupingSets) {
         nodeTreeParser.parseGroupingKeyVars(nodeTree)
       } else {
         emptySet()
       }
-      val groupRteMap = if (nodeTreeParser.hasGroupingSets(nodeTree)) {
+      val groupRteMap = if (hasGroupingSets) {
         emptyMap()
       } else {
         nodeTreeParser.parseGroupRteMap(nodeTree) // (groupVarno, attrPos) → (baseVarno, baseVarattno)
@@ -740,42 +736,25 @@ internal class PgCatalogLoader(private val connection: Connection) {
       // The map is keyed by (varno, varattno) for direct lookup in isSourceColumnNotNull.
       val subqueryColumnNotNull = buildSubqueryColumnNotNull(nodeTree)
       val cteColumnNotNull = buildCteColumnNotNull(nodeTree)
-      val analyzer = NodeTreeNullabilityAnalyzer(
-        isStrict = { oid -> functionStrictnessByOid[oid] == true },
-        hasNonNullInitialValue = { oid -> aggregateHasNonNullInitialValue[oid] == true },
-        isSourceColumnNotNull = { varno, varattno ->
-          if (groupingKeyVars.contains(varno to varattno)) {
-            false
+      val analyzer = buildAnalyzer { varno, varattno ->
+        if (groupingKeyVars.contains(varno to varattno)) {
+          false
+        } else {
+          val relid = rangeTable[varno]
+          if (relid != null) {
+            isColumnNotNull(relid to varattno)
           } else {
-            val relid = rangeTable[varno]
-            if (relid != null) {
-              val key = relid to varattno
-              isColumnNotNull(key)
+            val baseVar = groupRteMap[varno to varattno]
+            if (baseVar != null) {
+              val baseRelid = rangeTable[baseVar.first]
+              baseRelid != null && isColumnNotNull(baseRelid to baseVar.second)
             } else {
-              val baseVar = groupRteMap[varno to varattno]
-              if (baseVar != null) {
-                val baseRelid = rangeTable[baseVar.first]
-                if (baseRelid != null) {
-                  isColumnNotNull(baseRelid to baseVar.second)
-                } else {
-                  false
-                }
-              } else {
-                subqueryColumnNotNull[varno to varattno] == true ||
-                  cteColumnNotNull[varno to varattno] == true
-              }
+              subqueryColumnNotNull[varno to varattno] == true ||
+                cteColumnNotNull[varno to varattno] == true
             }
           }
-        },
-        isOuterJoinNullable = { nullingRelations -> nullingRelations.isNotEmpty() },
-        isAlwaysNonNull = { oid -> oid in alwaysNonNullFunctionOids },
-        isStrictButNullable = { oid -> oid in strictButNullableFunctionOids },
-        isLagLeadWithDefault = { oid -> oid in lagLeadWithDefaultOids },
-        resolveColumnNotNull = { relid, attnum -> isColumnNotNull(relid to attnum) },
-        jsonExistsOp = jsonExistsOp,
-        jsonValueOp = jsonValueOp,
-        jsonSerializeOp = jsonSerializeOp,
-      )
+        }
+      }
       return analyzer.extractColumnNullability(nodeTree)
     } finally {
       connection.createStatement().use { stmt ->
@@ -786,6 +765,26 @@ internal class PgCatalogLoader(private val connection: Connection) {
 
   private fun isColumnNotNull(key: Pair<Int, Int>): Boolean =
     columnNotNullByRelidAndAttnum[key] == true || viewColumnNotNullByRelidAndAttnum[key] == true
+
+  /**
+   * Creates a [NodeTreeNullabilityAnalyzer] pre-configured with this loader's catalog lookups.
+   *
+   * All constructor arguments except [isSourceColumnNotNull] are identical across every call site
+   * in this class. This method captures the common configuration so callers only need to supply
+   * the source-column resolution strategy, which varies by context (outer query, CTE body,
+   * subquery).
+   */
+  private fun buildAnalyzer(
+    isSourceColumnNotNull: (varno: Int, varattno: Int) -> Boolean,
+  ): NodeTreeNullabilityAnalyzer = NodeTreeNullabilityAnalyzer(
+    isStrict = { oid -> functionStrictnessByOid[oid] == true },
+    hasNonNullInitialValue = { oid -> aggregateHasNonNullInitialValue[oid] == true },
+    isSourceColumnNotNull = isSourceColumnNotNull,
+    isOuterJoinNullable = { nullingRelations -> nullingRelations.isNotEmpty() },
+    isAlwaysNonNull = { oid -> oid in alwaysNonNullFunctionOids },
+    isStrictButNullable = { oid -> oid in strictButNullableFunctionOids },
+    isLagLeadWithDefault = { oid -> oid in lagLeadWithDefaultOids },
+  )
 
   /**
    * Builds a map from `(varno, varattno)` to `true` for CTE result columns that are guaranteed
@@ -860,14 +859,16 @@ internal class PgCatalogLoader(private val connection: Connection) {
     }
   }
 
-  private fun buildCteBodyAnalyzer(
+  /**
+   * Builds a map from `(varno, varattno)` to `true` for CTE RTE columns that are non-null,
+   * based on previously resolved CTE nullabilities.
+   */
+  private fun buildInnerCteNotNull(
     queryBlock: String,
     previouslyResolved: Map<String, List<Boolean>>,
-  ): NodeTreeNullabilityAnalyzer {
-    val cteRangeTable = nodeTreeParser.parseRangeTable(queryBlock)
-    val groupRteMap = nodeTreeParser.parseGroupRteMap(queryBlock)
+  ): Map<Pair<Int, Int>, Boolean> {
     val innerCteRtes = nodeTreeParser.parseCteRangeTableEntries(queryBlock)
-    val innerCteNotNull = buildMap<Pair<Int, Int>, Boolean> {
+    return buildMap {
       for ((varno, cteName) in innerCteRtes) {
         val nullabilities = previouslyResolved[cteName] ?: continue
         nullabilities.forEachIndexed { columnIndex, nullable ->
@@ -875,32 +876,31 @@ internal class PgCatalogLoader(private val connection: Connection) {
         }
       }
     }
-    return NodeTreeNullabilityAnalyzer(
-      isStrict = { oid -> functionStrictnessByOid[oid] == true },
-      hasNonNullInitialValue = { oid -> aggregateHasNonNullInitialValue[oid] == true },
-      isSourceColumnNotNull = { varno, varattno ->
-        val relid = cteRangeTable[varno]
-        if (relid != null) {
-          isColumnNotNull(relid to varattno)
+  }
+
+  private fun buildCteBodyAnalyzer(
+    queryBlock: String,
+    previouslyResolved: Map<String, List<Boolean>>,
+  ): NodeTreeNullabilityAnalyzer {
+    val cteRangeTable = nodeTreeParser.parseRangeTable(queryBlock)
+    val groupRteMap = nodeTreeParser.parseGroupRteMap(queryBlock)
+    val innerCteNotNull = buildInnerCteNotNull(queryBlock, previouslyResolved)
+    val subqueryColumnNotNull = buildSubqueryColumnNotNull(queryBlock)
+    return buildAnalyzer { varno, varattno ->
+      val relid = cteRangeTable[varno]
+      if (relid != null) {
+        isColumnNotNull(relid to varattno)
+      } else {
+        val baseVar = groupRteMap[varno to varattno]
+        if (baseVar != null) {
+          val baseRelid = cteRangeTable[baseVar.first]
+          baseRelid != null && isColumnNotNull(baseRelid to baseVar.second)
         } else {
-          val baseVar = groupRteMap[varno to varattno]
-          if (baseVar != null) {
-            val baseRelid = cteRangeTable[baseVar.first]
-            baseRelid != null && isColumnNotNull(baseRelid to baseVar.second)
-          } else {
+          subqueryColumnNotNull[varno to varattno] == true ||
             innerCteNotNull[varno to varattno] == true
-          }
         }
-      },
-      isOuterJoinNullable = { nullingRelations -> nullingRelations.isNotEmpty() },
-      isAlwaysNonNull = { oid -> oid in alwaysNonNullFunctionOids },
-      isStrictButNullable = { oid -> oid in strictButNullableFunctionOids },
-      isLagLeadWithDefault = { oid -> oid in lagLeadWithDefaultOids },
-      resolveColumnNotNull = { relid, attnum -> isColumnNotNull(relid to attnum) },
-      jsonExistsOp = jsonExistsOp,
-      jsonValueOp = jsonValueOp,
-      jsonSerializeOp = jsonSerializeOp,
-    )
+      }
+    }
   }
 
   /**
@@ -932,22 +932,10 @@ internal class PgCatalogLoader(private val connection: Connection) {
       for ((outerVarno, subqueryBlock) in subqueryRangeTable) {
         // Parse the subquery's own base-table range table for isSourceColumnNotNull.
         val subRangeTable = nodeTreeParser.parseRangeTable(subqueryBlock)
-        val subAnalyzer = NodeTreeNullabilityAnalyzer(
-          isStrict = { oid -> functionStrictnessByOid[oid] == true },
-          hasNonNullInitialValue = { oid -> aggregateHasNonNullInitialValue[oid] == true },
-          isSourceColumnNotNull = { subVarno, subVarattno ->
-            val relid = subRangeTable[subVarno] ?: return@NodeTreeNullabilityAnalyzer false
-            isColumnNotNull(relid to subVarattno)
-          },
-          isOuterJoinNullable = { nullingRelations -> nullingRelations.isNotEmpty() },
-          isAlwaysNonNull = { oid -> oid in alwaysNonNullFunctionOids },
-          isStrictButNullable = { oid -> oid in strictButNullableFunctionOids },
-          isLagLeadWithDefault = { oid -> oid in lagLeadWithDefaultOids },
-          resolveColumnNotNull = { relid, attnum -> isColumnNotNull(relid to attnum) },
-          jsonExistsOp = jsonExistsOp,
-          jsonValueOp = jsonValueOp,
-          jsonSerializeOp = jsonSerializeOp,
-        )
+        val subAnalyzer = buildAnalyzer { subVarno, subVarattno ->
+          val relid = subRangeTable[subVarno] ?: return@buildAnalyzer false
+          isColumnNotNull(relid to subVarattno)
+        }
         val subNullabilities = subAnalyzer.extractColumnNullability(subqueryBlock)
         subNullabilities.forEachIndexed { columnIndex, nullable ->
           // columnIndex is 0-based; varattno is 1-based
@@ -1092,9 +1080,8 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * @throws IllegalStateException if the server version is below 16.
    */
   fun checkPostgresVersion() {
-    val version = connection.metaData.databaseMajorVersion
-    check(version >= 16) {
-      "Norm requires PostgreSQL 16 or later (connected to version $version). " +
+    check(pgMajorVersion >= 16) {
+      "Norm requires PostgreSQL 16 or later (connected to version $pgMajorVersion). " +
         "PostgreSQL 16 added varnullingrels to query tree nodes, which Norm uses " +
         "for accurate outer join nullability detection."
     }
