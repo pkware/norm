@@ -18,6 +18,7 @@ import kotlin.jvm.Throws
 import norm.ColumnAdapter
 import norm.ConnectionProvider
 import norm.Many
+import norm.ManyProcessor
 import norm.NormDriver
 import norm.RealTransactable
 import norm.combineExecBatchResults
@@ -173,16 +174,12 @@ public class PostgresQueries(
     }
   }
 
-  private fun <T : Any, R> updatePreferences(
+  private fun <T : Any, Return> updatePreferences(
     preferences: UserPreferences,
     id: Int,
     mapper: (id: Int, old_preferences: UserPreferences) -> T,
-    block: (
-      String,
-      ResultSet.() -> T,
-      (PreparedStatement.() -> Unit)?,
-    ) -> R,
-  ): R {
+    processor: ManyProcessor<T, Return>,
+  ): Return {
     val sql = """
         |UPDATE users SET preferences = ? WHERE id = ?
         |RETURNING id, preferences AS old_preferences
@@ -197,7 +194,7 @@ public class PostgresQueries(
       setObject(1, usersPreferencesAdapter.encode(preferences), Types.OTHER)
       setInt(2, id)
     }
-    return block(sql, rowReader, queryBinder)
+    return processor.invoke(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> updatePreferences(

@@ -15,6 +15,7 @@ import kotlin.collections.Iterable
 import kotlin.jvm.Throws
 import norm.ConnectionProvider
 import norm.Many
+import norm.ManyProcessor
 import norm.NormDriver
 import norm.RealTransactable
 import norm.combineExecBatchResults
@@ -102,15 +103,11 @@ public class PostgresQueries(
     }
   }
 
-  private fun <T : Any, R> getUserSettings(
+  private fun <T : Any, Return> getUserSettings(
     user_id: Int,
     mapper: (setting_key: String, setting_value: String?) -> T,
-    block: (
-      String,
-      ResultSet.() -> T,
-      (PreparedStatement.() -> Unit)?,
-    ) -> R,
-  ): R {
+    processor: ManyProcessor<T, Return>,
+  ): Return {
     val sql = """
         |SELECT setting_key, setting_value
         |FROM user_settings
@@ -125,7 +122,7 @@ public class PostgresQueries(
     val queryBinder: (PreparedStatement.() -> Unit)? = {
       setInt(1, user_id)
     }
-    return block(sql, rowReader, queryBinder)
+    return processor.invoke(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> getUserSettings(user_id: Int, mapper: (setting_key: String, setting_value: String?) -> T): Many<T> = getUserSettings(user_id, mapper, driver::queryMany)
@@ -263,17 +260,13 @@ public class PostgresQueries(
     }
   }
 
-  private fun <T, R> generateRandomNumbers(
+  private fun <T, Return> generateRandomNumbers(
     normal_rand_param1: Int,
     normal_rand_param2: Double,
     normal_rand_param3: Double,
     mapper: (normal_rand: Double?) -> T,
-    block: (
-      String,
-      ResultSet.() -> T,
-      (PreparedStatement.() -> Unit)?,
-    ) -> R,
-  ): R {
+    processor: ManyProcessor<T, Return>,
+  ): Return {
     val sql = "SELECT * FROM normal_rand(?, ?, ?)"
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -285,7 +278,7 @@ public class PostgresQueries(
       setDouble(2, normal_rand_param2)
       setDouble(3, normal_rand_param3)
     }
-    return block(sql, rowReader, queryBinder)
+    return processor.invoke(sql, rowReader, queryBinder)
   }
 
   override fun <T> generateRandomNumbers(
@@ -295,19 +288,15 @@ public class PostgresQueries(
     mapper: (normal_rand: Double?) -> T,
   ): Many<T> = generateRandomNumbers(normal_rand_param1, normal_rand_param2, normal_rand_param3, mapper, driver::queryMany)
 
-  private fun <T : Any, R> getUserSettingsPivot(
+  private fun <T : Any, Return> getUserSettingsPivot(
     crosstab_param1: String,
     mapper: (
       user_id: Int?,
       setting1: String?,
       setting2: String?,
     ) -> T,
-    block: (
-      String,
-      ResultSet.() -> T,
-      (PreparedStatement.() -> Unit)?,
-    ) -> R,
-  ): R {
+    processor: ManyProcessor<T, Return>,
+  ): Return {
     val sql = """
         |SELECT user_id, setting1, setting2
         |FROM crosstab(?) AS ct(user_id int, setting1 text, setting2 text)
@@ -322,7 +311,7 @@ public class PostgresQueries(
     val queryBinder: (PreparedStatement.() -> Unit)? = {
       setString(1, crosstab_param1)
     }
-    return block(sql, rowReader, queryBinder)
+    return processor.invoke(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> getUserSettingsPivot(crosstab_param1: String, mapper: (
@@ -331,7 +320,7 @@ public class PostgresQueries(
     setting2: String?,
   ) -> T): Many<T> = getUserSettingsPivot(crosstab_param1, mapper, driver::queryMany)
 
-  private fun <T : Any, R> getUserSettingsByCategory(
+  private fun <T : Any, Return> getUserSettingsByCategory(
     crosstab_param1: String,
     crosstab_param2: String,
     mapper: (
@@ -340,12 +329,8 @@ public class PostgresQueries(
       category2: Int?,
       category3: Int?,
     ) -> T,
-    block: (
-      String,
-      ResultSet.() -> T,
-      (PreparedStatement.() -> Unit)?,
-    ) -> R,
-  ): R {
+    processor: ManyProcessor<T, Return>,
+  ): Return {
     val sql = """
         |SELECT row_name, category1, category2, category3
         |FROM crosstab(?, ?) AS ct(row_name text, category1 int, category2 int, category3 int)
@@ -362,7 +347,7 @@ public class PostgresQueries(
       setString(1, crosstab_param1)
       setString(2, crosstab_param2)
     }
-    return block(sql, rowReader, queryBinder)
+    return processor.invoke(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> getUserSettingsByCategory(

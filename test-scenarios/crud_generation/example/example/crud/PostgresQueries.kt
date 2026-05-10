@@ -17,6 +17,7 @@ import kotlin.collections.List
 import kotlin.jvm.Throws
 import norm.ConnectionProvider
 import norm.Many
+import norm.ManyProcessor
 import norm.NormDriver
 import norm.Query
 import norm.RealTransactable
@@ -29,11 +30,7 @@ public class PostgresQueries(
     Queries {
   private val driver: NormDriver = NormDriver(connectionProvider)
 
-  private fun <T : Any, R> findAllAuthor(mapper: (id: Int, name: String) -> T, block: (
-    String,
-    ResultSet.() -> T,
-    (PreparedStatement.() -> Unit)?,
-  ) -> R): R {
+  private fun <T : Any, Return> findAllAuthor(mapper: (id: Int, name: String) -> T, processor: ManyProcessor<T, Return>): Return {
     val sql = "SELECT id, name FROM author ORDER BY name"
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -41,7 +38,7 @@ public class PostgresQueries(
         getString(2),
       )
     }
-    return block(sql, rowReader, null)
+    return processor.invoke(sql, rowReader, null)
   }
 
   override fun <T : Any> findAllAuthor(mapper: (id: Int, name: String) -> T): Many<T> = findAllAuthor(mapper, driver::queryMany)
@@ -117,11 +114,7 @@ public class PostgresQueries(
     }
   }
 
-  private fun <T : Any, R> findAllAuditLog(mapper: (message: String, logged_at: OffsetDateTime) -> T, block: (
-    String,
-    ResultSet.() -> T,
-    (PreparedStatement.() -> Unit)?,
-  ) -> R): R {
+  private fun <T : Any, Return> findAllAuditLog(mapper: (message: String, logged_at: OffsetDateTime) -> T, processor: ManyProcessor<T, Return>): Return {
     val sql = "SELECT * FROM audit_log"
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -129,7 +122,7 @@ public class PostgresQueries(
         getObject(2, OffsetDateTime::class.java),
       )
     }
-    return block(sql, rowReader, null)
+    return processor.invoke(sql, rowReader, null)
   }
 
   override fun <T : Any> findAllAuditLog(mapper: (message: String, logged_at: OffsetDateTime) -> T): Many<T> = findAllAuditLog(mapper, driver::queryMany)
@@ -210,7 +203,7 @@ public class PostgresQueries(
     }
   }
 
-  private fun <T : Any, R> findAuthorById(
+  private fun <T : Any, Return> findAuthorById(
     id: Int,
     mapper: (
       id: Int,
@@ -218,12 +211,8 @@ public class PostgresQueries(
       bio: String?,
       created_at: OffsetDateTime,
     ) -> T,
-    block: (
-      String,
-      ResultSet.() -> T,
-      (PreparedStatement.() -> Unit)?,
-    ) -> R,
-  ): R {
+    processor: ManyProcessor<T, Return>,
+  ): Return {
     val sql = "SELECT * FROM author WHERE id = ?"
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -236,7 +225,7 @@ public class PostgresQueries(
     val queryBinder: (PreparedStatement.() -> Unit)? = {
       setInt(1, id)
     }
-    return block(sql, rowReader, queryBinder)
+    return processor.invoke(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> findAuthorById(id: Int, mapper: (
@@ -365,7 +354,7 @@ public class PostgresQueries(
     }
   }
 
-  private fun <T : Any, R> findOrderItemByOrderIdAndItemId(
+  private fun <T : Any, Return> findOrderItemByOrderIdAndItemId(
     order_id: Int,
     item_id: Int,
     mapper: (
@@ -374,12 +363,8 @@ public class PostgresQueries(
       quantity: Int,
       price: BigDecimal,
     ) -> T,
-    block: (
-      String,
-      ResultSet.() -> T,
-      (PreparedStatement.() -> Unit)?,
-    ) -> R,
-  ): R {
+    processor: ManyProcessor<T, Return>,
+  ): Return {
     val sql = "SELECT * FROM order_item WHERE order_id = ? AND item_id = ?"
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -393,7 +378,7 @@ public class PostgresQueries(
       setInt(1, order_id)
       setInt(2, item_id)
     }
-    return block(sql, rowReader, queryBinder)
+    return processor.invoke(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> findOrderItemByOrderIdAndItemId(
@@ -466,16 +451,12 @@ public class PostgresQueries(
     }
   }
 
-  private fun <T : Any, R> findAllOrderItem(mapper: (
+  private fun <T : Any, Return> findAllOrderItem(mapper: (
     order_id: Int,
     item_id: Int,
     quantity: Int,
     price: BigDecimal,
-  ) -> T, block: (
-    String,
-    ResultSet.() -> T,
-    (PreparedStatement.() -> Unit)?,
-  ) -> R): R {
+  ) -> T, processor: ManyProcessor<T, Return>): Return {
     val sql = "SELECT * FROM order_item"
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -485,7 +466,7 @@ public class PostgresQueries(
         getBigDecimal(4),
       )
     }
-    return block(sql, rowReader, null)
+    return processor.invoke(sql, rowReader, null)
   }
 
   override fun <T : Any> findAllOrderItem(mapper: (
@@ -580,7 +561,7 @@ public class PostgresQueries(
     }
   }
 
-  private fun <T : Any, R> findProductById(
+  private fun <T : Any, Return> findProductById(
     id: Int,
     mapper: (
       id: Int,
@@ -589,12 +570,8 @@ public class PostgresQueries(
       tax: BigDecimal,
       total: BigDecimal?,
     ) -> T,
-    block: (
-      String,
-      ResultSet.() -> T,
-      (PreparedStatement.() -> Unit)?,
-    ) -> R,
-  ): R {
+    processor: ManyProcessor<T, Return>,
+  ): Return {
     val sql = "SELECT * FROM product WHERE id = ?"
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -608,7 +585,7 @@ public class PostgresQueries(
     val queryBinder: (PreparedStatement.() -> Unit)? = {
       setInt(1, id)
     }
-    return block(sql, rowReader, queryBinder)
+    return processor.invoke(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> findProductById(id: Int, mapper: (
@@ -670,17 +647,13 @@ public class PostgresQueries(
     }
   }
 
-  private fun <T : Any, R> findAllProduct(mapper: (
+  private fun <T : Any, Return> findAllProduct(mapper: (
     id: Int,
     name: String,
     price: BigDecimal,
     tax: BigDecimal,
     total: BigDecimal?,
-  ) -> T, block: (
-    String,
-    ResultSet.() -> T,
-    (PreparedStatement.() -> Unit)?,
-  ) -> R): R {
+  ) -> T, processor: ManyProcessor<T, Return>): Return {
     val sql = "SELECT * FROM product"
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -691,7 +664,7 @@ public class PostgresQueries(
         getBigDecimal(5),
       )
     }
-    return block(sql, rowReader, null)
+    return processor.invoke(sql, rowReader, null)
   }
 
   override fun <T : Any> findAllProduct(mapper: (

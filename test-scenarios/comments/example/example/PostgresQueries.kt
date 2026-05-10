@@ -13,6 +13,7 @@ import kotlin.collections.Iterable
 import kotlin.jvm.Throws
 import norm.ConnectionProvider
 import norm.Many
+import norm.ManyProcessor
 import norm.NormDriver
 import norm.RealTransactable
 import norm.combineExecBatchResults
@@ -204,7 +205,7 @@ public class PostgresQueries(
     }
   }
 
-  private fun <T : Any, R> listBooksByAuthor(
+  private fun <T : Any, Return> listBooksByAuthor(
     author_id: Int,
     mapper: (
       id: Int,
@@ -213,12 +214,8 @@ public class PostgresQueries(
       published_year: Int?,
       isbn: String?,
     ) -> T,
-    block: (
-      String,
-      ResultSet.() -> T,
-      (PreparedStatement.() -> Unit)?,
-    ) -> R,
-  ): R {
+    processor: ManyProcessor<T, Return>,
+  ): Return {
     val sql = "SELECT * FROM book WHERE author_id = ?"
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -232,7 +229,7 @@ public class PostgresQueries(
     val queryBinder: (PreparedStatement.() -> Unit)? = {
       setInt(1, author_id)
     }
-    return block(sql, rowReader, queryBinder)
+    return processor.invoke(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> listBooksByAuthor(author_id: Int, mapper: (
@@ -243,7 +240,7 @@ public class PostgresQueries(
     isbn: String?,
   ) -> T): Many<T> = listBooksByAuthor(author_id, mapper, driver::queryMany)
 
-  private fun <T : Any, R> listBooksByYearRange(
+  private fun <T : Any, Return> listBooksByYearRange(
     published_year: Int,
     published_year2: Int,
     mapper: (
@@ -253,12 +250,8 @@ public class PostgresQueries(
       published_year: Int?,
       isbn: String?,
     ) -> T,
-    block: (
-      String,
-      ResultSet.() -> T,
-      (PreparedStatement.() -> Unit)?,
-    ) -> R,
-  ): R {
+    processor: ManyProcessor<T, Return>,
+  ): Return {
     val sql = "SELECT * FROM book WHERE published_year >= ? AND published_year <= ?"
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -273,7 +266,7 @@ public class PostgresQueries(
       setInt(1, published_year)
       setInt(2, published_year2)
     }
-    return block(sql, rowReader, queryBinder)
+    return processor.invoke(sql, rowReader, queryBinder)
   }
 
   override fun <T : Any> listBooksByYearRange(

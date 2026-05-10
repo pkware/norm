@@ -55,7 +55,7 @@ public class NormDriver(private val connectionProvider: ConnectionProvider) {
    * Executes a query that returns exactly 1 row.
    *
    * @param sql to execute.
-   * @param rowReader Expression to extract an [RowType] from the [ResultSet].
+   * @param rowReader Expression to extract a [RowType] from the [ResultSet].
    * @param queryBinder Expression to populate and prepare the [PreparedStatement]. `null` if no changes need to be made
    * to the [PreparedStatement], such as when not providing query arguments.
    * @param RowType Type to return.
@@ -90,7 +90,7 @@ public class NormDriver(private val connectionProvider: ConnectionProvider) {
    * This function _does not_ execute the query.
    *
    * @param sql to execute.
-   * @param rowReader Expression to extract an [RowType] from the [ResultSet].
+   * @param rowReader Expression to extract a [RowType] from the [ResultSet].
    * @param queryBinder Expression to populate and prepare the [PreparedStatement].
    * @param RowType Type to return.
    * @return the deferred execution of the [sql] query.
@@ -169,7 +169,7 @@ public class NormDriver(private val connectionProvider: ConnectionProvider) {
    * Queries that are intended for dynamic use should define only the `SELECT` clause.
    *
    * @param sql to execute.
-   * @param rowReader Expression to extract an [RowType] from the [ResultSet].
+   * @param rowReader Expression to extract a [RowType] from the [ResultSet].
    * @param RowType Type to return.
    * @return the deferred execution of the [sql] query.
    */
@@ -180,7 +180,7 @@ public class NormDriver(private val connectionProvider: ConnectionProvider) {
 
   /**
    * @param sql to execute.
-   * @param rowReader Expression to extract an [RowType] from the [ResultSet].
+   * @param rowReader Expression to extract a [RowType] from the [ResultSet].
    * @param queryBinder Expression to populate and prepare the [PreparedStatement].
    * @param RowType Type to return.
    */
