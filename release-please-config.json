@@ -4,17 +4,17 @@
   "include-component-in-tag": false,
   "tag-separator": "",
   "bump-patch-for-minor-pre-major": false,
-  "extra-files": [
-    {
-      "type": "generic",
-      "path": "gradle.properties",
-      "search": "version=\\d+\\.\\d+\\.\\d+(-SNAPSHOT)?",
-      "replace": "version={{version}}"
-    }
-  ],
   "packages": {
     ".": {
-      "tag-prefix": ""
+      "tag-prefix": "",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "gradle.properties",
+          "search": "version=\\d+\\.\\d+\\.\\d+(-SNAPSHOT)?",
+          "replace": "version={{version}}"
+        }
+      ]
     }
   }
 }
