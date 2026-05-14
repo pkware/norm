@@ -88,5 +88,8 @@ bumps the version in `gradle.properties`. Merging that PR causes release-please 
 push a semver tag, which triggers the publish workflow to sign and publish artifacts to Maven Central
 and create a GitHub Release with auto-generated release notes.
 
+After the release tag is pushed, the release-please workflow automatically opens a PR bumping
+`gradle.properties` to the next patch `-SNAPSHOT` version (e.g. `0.2.0` → `0.2.1-SNAPSHOT`).
+
 Every push to `main` also publishes the current `-SNAPSHOT` version to the Maven Central snapshot
 repository at `central.sonatype.com/repository/maven-snapshots/`.
