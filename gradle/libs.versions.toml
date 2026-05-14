@@ -17,7 +17,7 @@ micronaut-hikari = "io.micronaut.sql:micronaut-jdbc-hikari:7.0.0"
 micronaut-inject = { module = "io.micronaut:micronaut-inject", version.ref = "micronaut" }
 micronaut-inject-kotlin = { module = "io.micronaut:micronaut-inject-kotlin", version.ref = "micronaut" }
 micronaut-runtime = { module = "io.micronaut:micronaut-runtime", version.ref = "micronaut" }
-micronaut-junit = "io.micronaut.test:micronaut-test-junit5:4.10.3"
+micronaut-junit = { module = "io.micronaut.test:micronaut-test-junit5", version.ref = "micronaut" }
 mockito-junit = "org.mockito:mockito-junit-jupiter:5.23.0"
 mockito-kotlin = "org.mockito.kotlin:mockito-kotlin:6.3.0"
 postgresql = "org.postgresql:postgresql:42.7.11"
