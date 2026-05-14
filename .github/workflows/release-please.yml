@@ -43,7 +43,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "${branch}"
-          sed -i "s/^version=.*/version=${SNAPSHOT}/" gradle.properties
+          sed -i "s/^version=[^ ]*/version=${SNAPSHOT}/" gradle.properties
           git add gradle.properties
           git commit -m "chore: prepare next development version ${SNAPSHOT}"
           git push origin "${branch}"

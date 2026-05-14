@@ -10,9 +10,7 @@
       "extra-files": [
         {
           "type": "generic",
-          "path": "gradle.properties",
-          "search": "version=\\d+\\.\\d+\\.\\d+(-SNAPSHOT)?",
-          "replace": "version={{version}}"
+          "path": "gradle.properties"
         }
       ]
     }
