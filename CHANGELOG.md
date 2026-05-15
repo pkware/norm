@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/pkware/norm/compare/v0.2.0...v0.2.1) (2026-05-15)
+
+
+### Bug Fixes
+
+* **ci:** use block annotation for gradle.properties version; inline comments not valid in .properties ([041a575](https://github.com/pkware/norm/commit/041a575bf708677a6fc5ceb6dc03d3273b8ece41))
+
 ## [0.2.0](https://github.com/pkware/norm/compare/v0.1.4...v0.2.0) (2026-05-15)
 
 
