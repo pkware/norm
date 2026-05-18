@@ -51,7 +51,3 @@ norm {
     }
   }
 }
-
-ksp {
-  useKsp2 = false
-}

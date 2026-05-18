@@ -46,10 +46,6 @@ sourceSets {
   }
 }
 
-ksp {
-  useKsp2 = false
-}
-
 // @MicronautTest's AbstractMicronautExtension uses a non-thread-safe HashMap for test
 // properties, and PropagatedContext (ThreadLocal) connection scopes corrupt under ForkJoinPool
 // work-stealing. Known open bugs:
