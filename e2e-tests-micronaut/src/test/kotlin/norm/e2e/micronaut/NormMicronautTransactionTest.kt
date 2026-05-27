@@ -3,15 +3,15 @@ package norm.e2e.micronaut
 import assertk.assertThat
 import assertk.assertions.isEqualTo
 import example.PostgresQueries
+import io.micronaut.data.connection.ConnectionDefinition
+import io.micronaut.data.connection.ConnectionOperations
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest
 import io.micronaut.transaction.TransactionDefinition
 import io.micronaut.transaction.TransactionOperations
 import jakarta.inject.Inject
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import java.sql.Connection
-import javax.sql.DataSource
 
 /**
  * Demonstrates programmatic transaction patterns using Micronaut's [TransactionOperations] API.
@@ -35,21 +35,10 @@ class NormMicronautTransactionTest {
   lateinit var transactionOperations: TransactionOperations<Connection>
 
   @Inject
-  lateinit var dataSource: DataSource
+  lateinit var connectionOperations: ConnectionOperations<Connection>
 
   private val nested = TransactionDefinition.of(TransactionDefinition.Propagation.NESTED)
   private val requiresNew = TransactionDefinition.of(TransactionDefinition.Propagation.REQUIRES_NEW)
-
-  @BeforeEach
-  fun cleanDatabase() {
-    dataSource.connection.use { connection ->
-      connection.createStatement().use { statement ->
-        statement.execute("DELETE FROM person")
-        statement.execute("DELETE FROM book")
-        statement.execute("DELETE FROM author")
-      }
-    }
-  }
 
   /**
    * [TransactionOperations.executeWrite] scopes a transaction — all Norm queries inside the block
@@ -134,8 +123,8 @@ class NormMicronautTransactionTest {
     assertThat(countAuthorsByName("Author 3")).isEqualTo(0L)
   }
 
-  private fun countAuthors(): Long = dataSource.connection.use { connection ->
-    connection.prepareStatement("SELECT COUNT(*) FROM author").use { statement ->
+  private fun countAuthors(): Long = connectionOperations.execute(ConnectionDefinition.DEFAULT) { status ->
+    status.connection.prepareStatement("SELECT COUNT(*) FROM author").use { statement ->
       statement.executeQuery().use { resultSet ->
         resultSet.next()
         resultSet.getLong(1)
@@ -143,13 +132,14 @@ class NormMicronautTransactionTest {
     }
   }
 
-  private fun countAuthorsByName(name: String): Long = dataSource.connection.use { connection ->
-    connection.prepareStatement("SELECT COUNT(*) FROM author WHERE name = ?").use { statement ->
-      statement.setString(1, name)
-      statement.executeQuery().use { resultSet ->
-        resultSet.next()
-        resultSet.getLong(1)
+  private fun countAuthorsByName(name: String): Long =
+    connectionOperations.execute(ConnectionDefinition.DEFAULT) { status ->
+      status.connection.prepareStatement("SELECT COUNT(*) FROM author WHERE name = ?").use { statement ->
+        statement.setString(1, name)
+        statement.executeQuery().use { resultSet ->
+          resultSet.next()
+          resultSet.getLong(1)
+        }
       }
     }
-  }
 }

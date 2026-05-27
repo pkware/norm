@@ -5,10 +5,12 @@ import assertk.assertThat
 import assertk.assertions.isEqualTo
 import assertk.assertions.isNull
 import example.PostgresQueries
+import io.micronaut.data.connection.ConnectionDefinition
+import io.micronaut.data.connection.ConnectionOperations
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest
 import jakarta.inject.Inject
 import org.junit.jupiter.api.Test
-import javax.sql.DataSource
+import java.sql.Connection
 
 /**
  * Integration tests proving Norm queries work through Micronaut's connection management.
@@ -19,8 +21,8 @@ import javax.sql.DataSource
  * - Nullable columns are handled correctly
  *
  * Each test runs inside a rolled-back transaction courtesy of `@MicronautTest`'s default
- * `transactional = true`. All `dataSource.connection` calls return the same transaction-bound
- * connection, so no explicit cleanup is needed between tests.
+ * `transactional = true`. All SQL goes through [ConnectionOperations] to stay on the same
+ * transaction-bound connection, so no explicit cleanup is needed between tests.
  */
 @MicronautTest
 class NormMicronautIntegrationTest {
@@ -32,20 +34,21 @@ class NormMicronautIntegrationTest {
   lateinit var authorService: AuthorService
 
   @Inject
-  lateinit var dataSource: DataSource
+  lateinit var connectionOperations: ConnectionOperations<Connection>
 
   @Test
   fun `can execute Norm query through Micronaut connection management`() {
     // Insert test data via raw SQL so we have a known ID
-    val authorId = dataSource.connection.use { connection ->
-      connection.prepareStatement("INSERT INTO author (name, email) VALUES (?, ?) RETURNING id").use { statement ->
-        statement.setString(1, "Jane Austen")
-        statement.setString(2, "jane@example.com")
-        statement.executeQuery().use { resultSet ->
-          resultSet.next()
-          resultSet.getInt(1)
+    val authorId = connectionOperations.execute(ConnectionDefinition.DEFAULT) { status ->
+      status.connection.prepareStatement("INSERT INTO author (name, email) VALUES (?, ?) RETURNING id")
+        .use { statement ->
+          statement.setString(1, "Jane Austen")
+          statement.setString(2, "jane@example.com")
+          statement.executeQuery().use { resultSet ->
+            resultSet.next()
+            resultSet.getInt(1)
+          }
         }
-      }
     }
 
     // Execute Norm query through Micronaut's connection management
@@ -62,8 +65,8 @@ class NormMicronautIntegrationTest {
     queries.addAuthor("Charles Dickens", "charles@example.com")
 
     // Verify via raw SQL that the insert worked
-    val name = dataSource.connection.use { connection ->
-      connection.prepareStatement("SELECT name FROM author WHERE name = ?").use { statement ->
+    val name = connectionOperations.execute(ConnectionDefinition.DEFAULT) { status ->
+      status.connection.prepareStatement("SELECT name FROM author WHERE name = ?").use { statement ->
         statement.setString(1, "Charles Dickens")
         statement.executeQuery().use { resultSet ->
           resultSet.next()
@@ -87,8 +90,8 @@ class NormMicronautIntegrationTest {
 
     // The insert should have been rolled back. The verification query runs on the
     // test's wrapping transaction, which never saw the insert (it was in a separate tx).
-    val count = dataSource.connection.use { connection ->
-      connection.prepareStatement("SELECT COUNT(*) FROM author WHERE name = ?").use { statement ->
+    val count = connectionOperations.execute(ConnectionDefinition.DEFAULT) { status ->
+      status.connection.prepareStatement("SELECT COUNT(*) FROM author WHERE name = ?").use { statement ->
         statement.setString(1, "Ghost Author")
         statement.executeQuery().use { resultSet ->
           resultSet.next()
@@ -104,8 +107,8 @@ class NormMicronautIntegrationTest {
   fun `nullable columns are handled correctly`() {
     queries.addAuthor("No Email Author", null)
 
-    val authorId = dataSource.connection.use { connection ->
-      connection.prepareStatement("SELECT id FROM author WHERE name = ?").use { statement ->
+    val authorId = connectionOperations.execute(ConnectionDefinition.DEFAULT) { status ->
+      status.connection.prepareStatement("SELECT id FROM author WHERE name = ?").use { statement ->
         statement.setString(1, "No Email Author")
         statement.executeQuery().use { resultSet ->
           resultSet.next()

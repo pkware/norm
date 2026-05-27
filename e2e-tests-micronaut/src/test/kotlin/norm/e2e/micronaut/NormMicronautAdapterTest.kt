@@ -8,11 +8,13 @@ import com.example.JsonData
 import example.EmailAddress
 import example.Mood
 import example.PostgresQueries
+import io.micronaut.data.connection.ConnectionDefinition
+import io.micronaut.data.connection.ConnectionOperations
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest
 import jakarta.inject.Inject
 import org.junit.jupiter.api.Test
+import java.sql.Connection
 import java.sql.Statement
-import javax.sql.DataSource
 
 /**
  * Integration tests proving that Norm's adapter injection works through Micronaut's DI.
@@ -34,7 +36,7 @@ class NormMicronautAdapterTest {
   lateinit var personService: PersonService
 
   @Inject
-  lateinit var dataSource: DataSource
+  lateinit var connectionOperations: ConnectionOperations<Connection>
 
   @Test
   fun `auto-generated enum adapter decodes through Micronaut DI`() {
@@ -87,8 +89,8 @@ class NormMicronautAdapterTest {
     // Each test runs in a rolled-back transaction, so there is always exactly one row here.
     // Postgres SERIAL sequences are not reset by rollback, but since there is only one insert in
     // this test, we can query the single row.
-    val person = dataSource.connection.use { connection ->
-      connection.prepareStatement("SELECT id FROM person LIMIT 1").use { statement ->
+    val person = connectionOperations.execute(ConnectionDefinition.DEFAULT) { status ->
+      status.connection.prepareStatement("SELECT id FROM person LIMIT 1").use { statement ->
         statement.executeQuery().use { resultSet ->
           resultSet.next()
           resultSet.getInt(1)
@@ -117,8 +119,8 @@ class NormMicronautAdapterTest {
       )
     }
 
-    val count = dataSource.connection.use { connection ->
-      connection.prepareStatement("SELECT COUNT(*) FROM person").use { statement ->
+    val count = connectionOperations.execute(ConnectionDefinition.DEFAULT) { status ->
+      status.connection.prepareStatement("SELECT COUNT(*) FROM person").use { statement ->
         statement.executeQuery().use { resultSet ->
           resultSet.next()
           resultSet.getLong(1)
@@ -141,8 +143,8 @@ class NormMicronautAdapterTest {
     email: String = "person@example.com",
     mood: String = "happy",
     bio: String? = null,
-  ): Int = dataSource.connection.use { connection ->
-    connection.prepareStatement(
+  ): Int = connectionOperations.execute(ConnectionDefinition.DEFAULT) { status ->
+    status.connection.prepareStatement(
       """
         INSERT INTO person (name, contact_email, current_mood, bio)
         VALUES (?, ?, ?::mood, ?::jsonb)
