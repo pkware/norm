@@ -304,7 +304,7 @@ private fun resolveWireTypeName(mapping: TypeMapping, catalog: Catalog): TypeNam
  */
 private fun resolveColumnPostgresType(catalog: Catalog, table: String, column: String): String =
   catalog.schemas.flatMap { it.tables }
-    .firstOrNull { it.rel?.name == table }
+    .firstOrNull { it.rel.name == table }
     ?.columns?.firstOrNull { it.name == column }
     ?.type?.name
     ?: error("Column '$table.$column' not found in catalog")

@@ -13,7 +13,46 @@ public data class Catalog(
   val defaultSchema: String = "",
   val name: String = "",
   val schemas: List<Schema> = emptyList(),
-)
+) {
+
+  /**
+   * Finds a [Table] matching the given [Identifier] in the [Catalog].
+   */
+  internal fun resolveTable(table: Identifier): Table {
+    val candidateTables = schemas.asSequence()
+      .filter { table.schema.isEmpty() || it.name == table.schema }
+      .flatMap(Schema::tables)
+      .filter { it.rel == table }
+      .toList()
+
+    check(candidateTables.size == 1) {
+      if (candidateTables.isEmpty()) {
+        "No catalog table found matching $table"
+      } else {
+        "Found multiple catalog tables matching $table: ${candidateTables.map { it.rel }}"
+      }
+    }
+    return candidateTables.first()
+  }
+
+  /**
+   * Finds a [Table] by its unqualified name, or `null` if not found.
+   */
+  internal fun findTable(tableName: String): Table? = schemas.asSequence()
+    .flatMap(Schema::tables)
+    .firstOrNull { it.rel.name == tableName }
+
+  /**
+   * Finds a [Column] by table and column name, or `null` if not found.
+   *
+   * When [tableName] is `null`, searches all tables and returns the first match.
+   */
+  internal fun findColumn(tableName: String?, columnName: String): Column? = schemas.asSequence()
+    .flatMap(Schema::tables)
+    .filter { tableName == null || it.rel.name == tableName }
+    .flatMap(Table::columns)
+    .firstOrNull { it.name == columnName }
+}
 
 /**
  * A database schema containing tables, enums, composite types, and domains.
@@ -65,13 +104,13 @@ public data class Enum(val name: String = "", val vals: List<String> = emptyList
 /**
  * A database table or view.
  *
- * @property rel Qualified table identifier. `null` when not available.
+ * @property rel Qualified table identifier.
  * @property columns Columns belonging to this table.
  * @property comment Table-level comment. Empty when absent.
  * @property isView `true` for VIEWs and MATERIALIZED VIEWs.
  */
 public data class Table(
-  val rel: Identifier? = null,
+  val rel: Identifier,
   val columns: List<Column> = emptyList(),
   val comment: String = "",
   val isView: Boolean = false,
@@ -99,7 +138,7 @@ public data class Identifier(val catalog: String = "", val schema: String = "", 
  * @property scope Scope qualifier for dotted references (e.g. `foo` in `foo.id`).
  * @property table Identifier of the table this column belongs to. `null` for computed columns.
  * @property tableAlias Alias used for the table in the query. Empty when not aliased.
- * @property type Identifier of the column's data type. `null` when the type is unknown.
+ * @property type Identifier of the column's data type.
  * @property isSqlcSlice Sqlc-specific: `true` for slice parameters.
  * @property embedTable Sqlc-specific: table to embed. `null` when not embedding.
  * @property originalName Original column name before any aliasing.
@@ -121,7 +160,7 @@ public data class Column(
   val scope: String = "",
   val table: Identifier? = null,
   val tableAlias: String = "",
-  val type: Identifier? = null,
+  val type: Identifier,
   val isSqlcSlice: Boolean = false,
   val embedTable: Identifier? = null,
   val originalName: String = "",
@@ -131,7 +170,14 @@ public data class Column(
   val isAutoIncrement: Boolean = false,
   val hasDefault: Boolean = false,
   val isGenerated: Boolean = false,
-)
+) {
+
+  internal val fullyQualifiedName: String
+    get() {
+      val tableName = table?.name?.let { "$it." }.orEmpty()
+      return tableName + name
+    }
+}
 
 /**
  * An analyzed SQL query with its result columns, parameters, and metadata.
