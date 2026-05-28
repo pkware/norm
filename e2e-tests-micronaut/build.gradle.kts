@@ -49,3 +49,13 @@ sourceSets {
 ksp {
   useKsp2 = false
 }
+
+// @MicronautTest's AbstractMicronautExtension uses a non-thread-safe HashMap for test
+// properties, and PropagatedContext (ThreadLocal) connection scopes corrupt under ForkJoinPool
+// work-stealing. Known open bugs:
+//   https://github.com/micronaut-projects/micronaut-test/issues/322
+//   https://github.com/micronaut-projects/micronaut-test/issues/625
+//   https://github.com/micronaut-projects/micronaut-data/issues/792
+tasks.test {
+  systemProperty("junit.jupiter.execution.parallel.enabled", "false")
+}
