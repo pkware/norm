@@ -4,11 +4,9 @@ import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.isEqualTo
 import com.squareup.kotlinpoet.FileSpec
-import okio.Buffer
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
-import plugin.Domain
 
 /**
  * Tests for Kotlin code generation from PostgreSQL domain types.
@@ -22,7 +20,7 @@ class DomainBuilderTest {
 
     @Test
     fun `TEXT domain generates correct value class`() {
-      val domain = Domain(name = "email", base_type = "text", comment = "")
+      val domain = Domain(name = "email", baseType = "text", comment = "")
       val output = generateValueClassCode(domain, "example")
 
       val expected =
@@ -48,7 +46,7 @@ class DomainBuilderTest {
 
     @Test
     fun `INTEGER domain generates correct value class`() {
-      val domain = Domain(name = "positive_integer", base_type = "int4", comment = "")
+      val domain = Domain(name = "positive_integer", baseType = "int4", comment = "")
       val output = generateValueClassCode(domain, "example")
 
       val expected =
@@ -74,7 +72,7 @@ class DomainBuilderTest {
 
     @Test
     fun `SMALLINT domain generates correct value class`() {
-      val domain = Domain(name = "small_count", base_type = "int2", comment = "")
+      val domain = Domain(name = "small_count", baseType = "int2", comment = "")
       val output = generateValueClassCode(domain, "example")
       assertThat(output).contains("import kotlin.Short")
       assertThat(output).contains("public value class SmallCount")
@@ -83,7 +81,7 @@ class DomainBuilderTest {
 
     @Test
     fun `BIGINT domain generates correct value class`() {
-      val domain = Domain(name = "big_count", base_type = "int8", comment = "")
+      val domain = Domain(name = "big_count", baseType = "int8", comment = "")
       val output = generateValueClassCode(domain, "example")
       assertThat(output).contains("import kotlin.Long")
       assertThat(output).contains("public val `value`: Long")
@@ -91,7 +89,7 @@ class DomainBuilderTest {
 
     @Test
     fun `FLOAT domain generates correct value class`() {
-      val domain = Domain(name = "latitude", base_type = "float4", comment = "")
+      val domain = Domain(name = "latitude", baseType = "float4", comment = "")
       val output = generateValueClassCode(domain, "example")
       assertThat(output).contains("import kotlin.Float")
       assertThat(output).contains("public val `value`: Float")
@@ -99,7 +97,7 @@ class DomainBuilderTest {
 
     @Test
     fun `DOUBLE domain generates correct value class`() {
-      val domain = Domain(name = "longitude", base_type = "float8", comment = "")
+      val domain = Domain(name = "longitude", baseType = "float8", comment = "")
       val output = generateValueClassCode(domain, "example")
       assertThat(output).contains("import kotlin.Double")
       assertThat(output).contains("public val `value`: Double")
@@ -107,7 +105,7 @@ class DomainBuilderTest {
 
     @Test
     fun `BOOLEAN domain generates correct value class`() {
-      val domain = Domain(name = "active_flag", base_type = "bool", comment = "")
+      val domain = Domain(name = "active_flag", baseType = "bool", comment = "")
       val output = generateValueClassCode(domain, "example")
       assertThat(output).contains("import kotlin.Boolean")
       assertThat(output).contains("public val `value`: Boolean")
@@ -115,7 +113,7 @@ class DomainBuilderTest {
 
     @Test
     fun `NUMERIC domain generates correct value class`() {
-      val domain = Domain(name = "currency_amount", base_type = "numeric", comment = "")
+      val domain = Domain(name = "currency_amount", baseType = "numeric", comment = "")
       val output = generateValueClassCode(domain, "example")
       assertThat(output).contains("import java.math.BigDecimal")
       assertThat(output).contains("public val `value`: BigDecimal")
@@ -134,7 +132,7 @@ class DomainBuilderTest {
     fun `domain with single-line comment generates KDoc`() {
       val domain = Domain(
         name = "email",
-        base_type = "text",
+        baseType = "text",
         comment = "A valid email address conforming to RFC 5322.",
       )
       val output = generateValueClassCode(domain, "example")
@@ -165,7 +163,7 @@ class DomainBuilderTest {
     @Test
     fun `domain with multiline comment generates correct KDoc`() {
       val comment = "A valid email address conforming to RFC 5322.\n\nUsed for user contact information."
-      val domain = Domain(name = "email", base_type = "text", comment = comment)
+      val domain = Domain(name = "email", baseType = "text", comment = comment)
       val output = generateValueClassCode(domain, "example")
 
       val expected =
@@ -199,7 +197,7 @@ class DomainBuilderTest {
 
     @Test
     fun `TEXT domain adapter generates correct output`() {
-      val domain = Domain(name = "email", base_type = "text", comment = "")
+      val domain = Domain(name = "email", baseType = "text", comment = "")
       val output = generateAdapterCode(domain, "example", emptySet())
 
       val expected =
@@ -223,7 +221,7 @@ class DomainBuilderTest {
 
     @Test
     fun `INTEGER domain adapter generates correct output`() {
-      val domain = Domain(name = "positive_integer", base_type = "int4", comment = "")
+      val domain = Domain(name = "positive_integer", baseType = "int4", comment = "")
       val output = generateAdapterCode(domain, "example", emptySet())
 
       val expected =
@@ -247,7 +245,7 @@ class DomainBuilderTest {
 
     @Test
     fun `Micronaut framework generates @Singleton annotation`() {
-      val domain = Domain(name = "email", base_type = "text", comment = "")
+      val domain = Domain(name = "email", baseType = "text", comment = "")
       val output = generateAdapterCode(domain, "example", setOf(Framework.MICRONAUT_DATA))
       assertThat(output).contains("@Singleton")
       assertThat(output).contains("import jakarta.inject.Singleton")
@@ -255,7 +253,7 @@ class DomainBuilderTest {
 
     @Test
     fun `Spring framework generates @Component annotation`() {
-      val domain = Domain(name = "email", base_type = "text", comment = "")
+      val domain = Domain(name = "email", baseType = "text", comment = "")
       val output = generateAdapterCode(domain, "example", setOf(Framework.SPRING_DATA))
       assertThat(output).contains("@Component")
       assertThat(output).contains("import org.springframework.stereotype.Component")
@@ -265,17 +263,12 @@ class DomainBuilderTest {
   private fun generateValueClassCode(domain: Domain, packageName: String): String {
     val typeSpec = buildDomainValueClassTypeSpec(domain, packageName)
     val fileSpec = FileSpec.builder(packageName, "${typeSpec.name}.kt").addType(typeSpec).build()
-    val output = Buffer()
-    output.outputStream().writer().use(fileSpec::writeTo)
-    return output.readUtf8()
+    return buildString { fileSpec.writeTo(this) }
   }
 
   private fun generateAdapterCode(domain: Domain, packageName: String, frameworks: Set<Framework>): String {
     val typeSpec = buildDomainAdapterTypeSpec(domain, packageName, frameworks)
     val fileSpec = FileSpec.builder(packageName, "${typeSpec.name}.kt").addType(typeSpec).build()
-    Buffer().use { output ->
-      output.outputStream().writer().use(fileSpec::writeTo)
-      return output.readUtf8()
-    }
+    return buildString { fileSpec.writeTo(this) }
   }
 }

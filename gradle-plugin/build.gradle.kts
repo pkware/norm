@@ -29,8 +29,6 @@ configurations.testRuntimeClasspath { extendsFrom(shaded) }
 
 dependencies {
   shaded(projects.generator)
-  shaded(libs.wire.json)
-  shaded(libs.moshi)
   // Testcontainers and docker-java are shaded to isolate them from Jackson versions that other
   // Gradle plugins (e.g., Micronaut) place on the buildscript classpath. Testcontainers' shaded
   // Jackson ObjectMapper fails to see @JsonValue annotations on docker-java model classes when a
@@ -69,16 +67,11 @@ val generateBuildConfig by tasks.registering {
 }
 sourceSets.main { kotlin.srcDir(generateBuildConfig) }
 
-// Shadow relocates Wire, Moshi, Okio, and KotlinPoet to prevent classloader conflicts when the
-// consuming project also has Wire on its build classpath. Wire's ProtoAdapter resolves adapters
-// via Class.forName() using the calling class's classloader, which fails in Gradle's isolated
-// plugin classloader hierarchy without relocation.
+// Shadow relocates KotlinPoet and Testcontainers to prevent classloader conflicts in Gradle's
+// isolated plugin classloader hierarchy.
 tasks.shadowJar {
   configurations = listOf(shaded)
-  relocate("com.squareup.wire", "com.pkware.norm.shaded.com.squareup.wire")
-  relocate("com.squareup.moshi", "com.pkware.norm.shaded.com.squareup.moshi")
   relocate("com.squareup.kotlinpoet", "com.pkware.norm.shaded.com.squareup.kotlinpoet")
-  relocate("okio", "com.pkware.norm.shaded.okio")
   // Testcontainers, docker-java, and Jackson annotations must be relocated together so that
   // Jackson's annotation introspector and the docker-java model classes share the same relocated
   // annotation package. Without this, a non-shaded jackson-databind from another Gradle plugin

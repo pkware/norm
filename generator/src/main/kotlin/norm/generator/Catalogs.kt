@@ -1,11 +1,5 @@
 package norm.generator
 
-import plugin.Catalog
-import plugin.Column
-import plugin.Identifier
-import plugin.Schema
-import plugin.Table
-
 /**
  * Finds a [Table] matching the given [Identifier] in the [Catalog].
  */

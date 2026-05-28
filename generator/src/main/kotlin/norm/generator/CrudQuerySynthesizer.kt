@@ -1,9 +1,5 @@
 package norm.generator
 
-import plugin.Catalog
-import plugin.Column
-import plugin.Table
-
 /**
  * Synthesizes CRUD [ParsedQuery] objects from a [Catalog].
  *
@@ -44,7 +40,7 @@ public object CrudQuerySynthesizer {
   public fun synthesize(catalog: Catalog, quoteIdentifier: (String) -> String = { it }): List<ParsedQuery> = buildList {
     for (schema in catalog.schemas) {
       for (table in schema.tables) {
-        if (table.is_view) continue
+        if (table.isView) continue
         addAll(synthesizeForTable(table, quoteIdentifier))
       }
     }
@@ -54,7 +50,7 @@ public object CrudQuerySynthesizer {
     val tableName = table.rel?.name ?: return emptyList()
     val methodSuffix = tableName.snakeToCamelCase().titleCase()
     val qualifiedTable = qualifiedTableName(table, quoteIdentifier)
-    val primaryKeyColumns = table.columns.filter(Column::is_primary_key)
+    val primaryKeyColumns = table.columns.filter(Column::isPrimaryKey)
     val allColumns = table.columns
     val sourceFile = "<synthesized CRUD for table '$qualifiedTable'>"
 
@@ -91,10 +87,10 @@ public object CrudQuerySynthesizer {
     allColumns: List<Column>,
     quoteIdentifier: (String) -> String,
   ): ParsedQuery? {
-    val insertableColumns = allColumns.filter { !it.is_auto_increment && !it.has_default && !it.is_generated }
+    val insertableColumns = allColumns.filter { !it.isAutoIncrement && !it.hasDefault && !it.isGenerated }
     if (insertableColumns.isEmpty()) return null
 
-    val returningColumns = allColumns.filter { it.is_auto_increment || it.has_default || it.is_generated }
+    val returningColumns = allColumns.filter { it.isAutoIncrement || it.hasDefault || it.isGenerated }
 
     val columnNames = insertableColumns.joinToString(", ") { quoteIdentifier(it.name) }
     val placeholders = insertableColumns.joinToString(", ") { "?" }

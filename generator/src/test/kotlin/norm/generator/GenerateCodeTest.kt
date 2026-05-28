@@ -149,7 +149,7 @@ class GenerateCodeTest {
     val effectivePackageName = scenarioProperties.getProperty("packageName") ?: packageName
     val result = generateCode(catalog, analyzedQueries, effectivePackageName, frameworks, typeMappings)
     val createdFiles = result.associate { spec ->
-      Pair(spec.name, spec.contents.utf8())
+      Pair(spec.name, spec.contents)
     }.toMutableMap()
 
     // Compare generated code with golden files

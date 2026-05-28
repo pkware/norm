@@ -3,9 +3,7 @@ package norm.generator
 import assertk.assertThat
 import assertk.assertions.isEqualTo
 import com.squareup.kotlinpoet.FileSpec
-import okio.Buffer
 import org.junit.jupiter.api.Test
-import plugin.Enum
 
 /**
  * Tests for Kotlin code generation from PostgreSQL enum types.
@@ -164,17 +162,12 @@ class EnumBuilderTest {
   private fun generateEnumCode(enumDefinition: Enum, packageName: String): String {
     val typeSpec = buildEnumTypeSpec(enumDefinition, packageName)
     val fileSpec = FileSpec.builder(packageName, "Mood.kt").addType(typeSpec).build()
-    val output = Buffer()
-    output.outputStream().writer().use(fileSpec::writeTo)
-    return output.readUtf8()
+    return buildString { fileSpec.writeTo(this) }
   }
 
   private fun generateAdapterCode(enumDefinition: Enum, packageName: String, frameworks: Set<Framework>): String {
     val typeSpec = buildAdapterTypeSpec(enumDefinition, packageName, frameworks)
     val fileSpec = FileSpec.builder(packageName, "MoodAdapter.kt").addType(typeSpec).build()
-    Buffer().use { output ->
-      output.outputStream().writer().use(fileSpec::writeTo)
-      return output.readUtf8()
-    }
+    return buildString { fileSpec.writeTo(this) }
   }
 }

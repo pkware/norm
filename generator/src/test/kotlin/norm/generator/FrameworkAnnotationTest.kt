@@ -9,12 +9,6 @@ import assertk.assertions.support.show
 import com.squareup.kotlinpoet.FileSpec
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
-import plugin.Catalog
-import plugin.Column
-import plugin.Identifier
-import plugin.Query
-import plugin.Schema
-import plugin.Table
 
 /**
  * Tests for framework-specific code generation.
@@ -36,8 +30,8 @@ class FrameworkAnnotationTest {
       columns = listOf(
         Column(
           name = "id",
-          not_null = true,
-          is_primary_key = true,
+          notNull = true,
+          isPrimaryKey = true,
           type = Identifier(name = "serial"),
           table = Identifier(name = tableName),
         ),
@@ -48,7 +42,7 @@ class FrameworkAnnotationTest {
      * Creates a catalog with the given tables in the public schema.
      */
     private fun createCatalog(vararg tables: Table): Catalog = Catalog(
-      default_schema = "public",
+      defaultSchema = "public",
       schemas = listOf(
         Schema(
           name = "public",
@@ -80,7 +74,7 @@ class FrameworkAnnotationTest {
         listOf(
           Column(
             name = "id",
-            not_null = true,
+            notNull = true,
             type = Identifier(name = "serial"),
             table = Identifier(name = "author"),
           ),
@@ -88,7 +82,7 @@ class FrameworkAnnotationTest {
       )
       val files = generateCode(catalog, listOf(query), TEST_PACKAGE, frameworks)
       val postgresQueriesFile = files.first { it.name.endsWith("PostgresQueries.kt") }
-      return postgresQueriesFile.contents.utf8()
+      return postgresQueriesFile.contents
     }
 
     /**
@@ -99,7 +93,7 @@ class FrameworkAnnotationTest {
         "user_account",
         Column(
           name = "username",
-          not_null = true,
+          notNull = true,
           type = Identifier(name = "text"),
           table = Identifier(name = "user_account"),
         ),
@@ -111,7 +105,7 @@ class FrameworkAnnotationTest {
         table.columns,
       )
       val files = generateCode(catalog, listOf(query), TEST_PACKAGE, frameworks)
-      return files.map { it.contents.utf8() }.joinToString("\n")
+      return files.map { it.contents }.joinToString("\n")
     }
 
     private fun typeSpecToString(typeSpec: com.squareup.kotlinpoet.TypeSpec): String {
@@ -185,7 +179,7 @@ class FrameworkAnnotationTest {
         "user_account",
         Column(
           name = "first_name",
-          not_null = true,
+          notNull = true,
           type = Identifier(name = "text"),
           table = Identifier(name = "user_account"),
         ),

@@ -16,13 +16,6 @@ import com.squareup.kotlinpoet.asTypeName
 import norm.generator.ParameterBinding
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
-import plugin.Catalog
-import plugin.Column
-import plugin.Identifier
-import plugin.Parameter
-import plugin.Query
-import plugin.Schema
-import plugin.Table
 
 class SqlStatementTest {
 
@@ -179,7 +172,7 @@ class SqlStatementTest {
         "SELECT sqlc.embed(author) FROM author;",
         name = "AuthorWithEmbed",
         columns = listOf(
-          // embed_table indicates this column represents the embedded table
+          // embedTable indicates this column represents the embedded table
           column("author", embedTable = Identifier(name = "author")),
         ),
         catalog = catalog,
@@ -1222,8 +1215,8 @@ class SqlStatementTest {
         columns = columns,
         params = params,
         comments = comments,
-        is_synthesized_insert = isSynthesizedInsert,
-        named_parameters = namedParameters,
+        isSynthesizedInsert = isSynthesizedInsert,
+        namedParameters = namedParameters,
       ),
       repository,
     )
@@ -1239,11 +1232,11 @@ class SqlStatementTest {
     embedTable: Identifier? = null,
   ) = Column(
     name = name,
-    not_null = notNull,
+    notNull = notNull,
     type = Identifier(name = type),
-    is_array = isArray,
+    isArray = isArray,
     table = table,
-    embed_table = embedTable,
+    embedTable = embedTable,
   )
 
   // Helper to create a parameter

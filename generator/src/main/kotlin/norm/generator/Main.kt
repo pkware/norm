@@ -11,11 +11,6 @@ import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.asTypeName
-import okio.Buffer
-import okio.ByteString.Companion.encodeUtf8
-import plugin.Catalog
-import plugin.File
-import plugin.Query
 
 private val NORM_DRIVER = ClassName(RUNTIME_PACKAGE, "NormDriver")
 private val CONNECTION_PROVIDER = ClassName(RUNTIME_PACKAGE, "ConnectionProvider")
@@ -38,7 +33,7 @@ public fun generateCode(
   packageName: String,
   frameworks: Set<Framework>,
   typeMappings: List<TypeMapping> = emptyList(),
-): List<File> {
+): List<GeneratedFile> {
   val generator = TypeRepository(packageName, catalog, typeMappings)
 
   val resolvedQueries = queries.map { SqlStatement(catalog, it, generator) }
@@ -94,9 +89,8 @@ public fun generateCode(
     val fileSpec = FileSpec.builder(packageName, "${it.name}.kt")
       .addType(it)
       .build()
-    val result = Buffer()
-    result.outputStream().writer().use(fileSpec::writeTo)
-    File(packageName.replace('.', '/') + "/" + fileSpec.name, result.readByteString())
+    val contents = buildString { fileSpec.writeTo(this) }
+    GeneratedFile(packageName.replace('.', '/') + "/" + fileSpec.name, contents)
   }
     .toList()
   return typeSpecFiles + connectionProviders
@@ -106,8 +100,8 @@ private fun generateQueryImplementation(
   queries: List<SqlStatement>,
   interfaceType: ClassName,
   frameworks: Set<Framework>,
-  discoveredEnums: Set<plugin.Enum>,
-  discoveredDomains: Set<plugin.Domain>,
+  discoveredEnums: Set<Enum>,
+  discoveredDomains: Set<Domain>,
   packageName: String,
   typeMappings: List<TypeMapping>,
   typeOverridePostgresTypes: Set<String>,
@@ -158,7 +152,7 @@ private fun generateQueryImplementation(
     for (domain in discoveredDomains) {
       if (domain.name in typeOverridePostgresTypes) continue
       val valueClassName = domainValueClassName(domain, packageName)
-      val baseKotlinType = domainKotlinBaseType(domain.base_type)
+      val baseKotlinType = domainKotlinBaseType(domain.baseType)
       add(
         AdapterParam(
           domainAdapterPropertyName(domain),
@@ -255,9 +249,9 @@ private const val PACKAGE_PLACEHOLDER = "packages.placeholder"
  * - Micronaut: Uses `ConnectionOperations<Connection>` to participate in `@Transactional` scopes.
  * - Spring: Uses `DataSourceUtils` to participate in `@Transactional` scopes.
  *
- * @return A list of [File]s to include in the generated output. Empty when no DI frameworks are configured.
+ * @return A list of [GeneratedFile]s to include in the generated output. Empty when no DI frameworks are configured.
  */
-private fun generateConnectionProviders(packageName: String, frameworks: Set<Framework>): List<File> =
+private fun generateConnectionProviders(packageName: String, frameworks: Set<Framework>): List<GeneratedFile> =
   frameworks.map { framework ->
     when (framework) {
       Framework.MICRONAUT_DATA -> loadTemplate(packageName, "MicronautConnectionProvider")
@@ -266,16 +260,16 @@ private fun generateConnectionProviders(packageName: String, frameworks: Set<Fra
   }
 
 /**
- * Loads a `.kt.template` resource, substitutes the package name, and returns it as a [File].
+ * Loads a `.kt.template` resource, substitutes the package name, and returns it as a [GeneratedFile].
  */
-private fun loadTemplate(packageName: String, className: String): File {
+private fun loadTemplate(packageName: String, className: String): GeneratedFile {
   val resourcePath = "/norm/generator/$className.kt"
   val template = object {}.javaClass.getResourceAsStream(resourcePath)
     ?.bufferedReader()?.readText()
     ?: error("Template resource not found: $resourcePath")
   val contents = template.replace(PACKAGE_PLACEHOLDER, packageName)
   val path = packageName.replace('.', '/') + "/$className.kt"
-  return File(path, contents.encodeUtf8())
+  return GeneratedFile(path, contents)
 }
 
 /**
@@ -329,7 +323,7 @@ private fun resolveWireKotlinType(postgresType: String, catalog: Catalog): TypeN
 
   // Check if it's a domain — chain to base type
   val domain = catalog.schemas.flatMap { it.domains }.firstOrNull { it.name == postgresType }
-  if (domain != null) return resolveWireKotlinType(domain.base_type, catalog)
+  if (domain != null) return resolveWireKotlinType(domain.baseType, catalog)
 
   // Standard type
   return wireKotlinType(postgresType)

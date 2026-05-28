@@ -1,11 +1,6 @@
 package norm.generator
 
 import org.intellij.lang.annotations.Language
-import plugin.Column
-import plugin.Domain
-import plugin.Enum
-import plugin.Identifier
-import plugin.Parameter
 import java.sql.Connection
 import java.sql.ResultSetMetaData
 import java.sql.SQLException
@@ -139,7 +134,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
         SELECT
           view_class.oid::integer AS view_relid,
           view_attr.attnum AS view_attnum,
-          source_attr.attnotnull AS source_not_null
+          source_attr.attnotnull AS source_notNull
         FROM pg_catalog.pg_depend d
         JOIN pg_catalog.pg_rewrite rw ON rw.oid = d.objid
         JOIN pg_catalog.pg_class view_class ON view_class.oid = rw.ev_class
@@ -162,7 +157,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
           val key = rs.getInt("view_relid") to rs.getInt("view_attnum")
           // Mark as non-null only when source is NOT NULL. If multiple source columns are
           // found for the same view column, keep false (safe default) if any is nullable.
-          if (rs.getBoolean("source_not_null")) {
+          if (rs.getBoolean("source_notNull")) {
             candidateNotNull.putIfAbsent(key, true)
           } else {
             candidateNotNull[key] = false
@@ -332,7 +327,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
         SELECT
           view_class.relname AS view_name,
           view_attr.attname AS view_column,
-          source_attr.attnotnull AS source_not_null
+          source_attr.attnotnull AS source_notNull
         FROM pg_catalog.pg_depend d
         JOIN pg_catalog.pg_rewrite rw ON rw.oid = d.objid
         JOIN pg_catalog.pg_class view_class ON view_class.oid = rw.ev_class
@@ -354,7 +349,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
         """.trimIndent(),
       ).use { rs ->
         while (rs.next()) {
-          if (rs.getBoolean("source_not_null")) {
+          if (rs.getBoolean("source_notNull")) {
             add("${rs.getString("view_name")}.${rs.getString("view_column")}")
           }
         }
@@ -567,14 +562,14 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * base type with optional constraints. Comments are set with `COMMENT ON DOMAIN name IS '...'`.
    *
    * @param schemaName The schema to introspect.
-   * @return One [Domain] per domain type, with [Domain.base_type] as the Postgres base type name
+   * @return One [Domain] per domain type, with [Domain.baseType] as the Postgres base type name
    *   and [Domain.comment] if present.
    */
   fun introspectDomains(schemaName: String): List<Domain> = buildList {
     connection.createStatement().use { stmt ->
       stmt.executeQuery(
         """
-        SELECT t.typname AS domain_name, bt.typname AS base_type, d.description
+        SELECT t.typname AS domain_name, bt.typname AS baseType, d.description
         FROM pg_catalog.pg_type t
         JOIN pg_catalog.pg_type bt ON t.typbasetype = bt.oid
         JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
@@ -587,7 +582,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
           add(
             Domain(
               name = rs.getString("domain_name"),
-              base_type = rs.getString("base_type"),
+              baseType = rs.getString("baseType"),
               comment = rs.getString("description").orEmpty(),
             ),
           )
@@ -1128,7 +1123,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
                 number = index + 1,
                 column = Column(
                   name = argNames.getOrElse(index) { "p${index + 1}" },
-                  not_null = true,
+                  notNull = true,
                   type = Identifier(name = typeName),
                 ),
               ),

@@ -9,11 +9,6 @@ import assertk.assertions.isTrue
 import assertk.assertions.key
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
-import plugin.Catalog
-import plugin.Column
-import plugin.Identifier
-import plugin.Schema
-import plugin.Table
 
 class SqlParameterInferrerTest {
 
@@ -197,7 +192,7 @@ class SqlParameterInferrerTest {
   inner class ResolveNullability {
 
     private val catalog = Catalog(
-      default_schema = "public",
+      defaultSchema = "public",
       schemas = listOf(
         Schema(
           name = "public",
@@ -205,9 +200,9 @@ class SqlParameterInferrerTest {
             Table(
               rel = Identifier(name = "users"),
               columns = listOf(
-                Column(name = "id", not_null = true, type = Identifier(name = "int4")),
-                Column(name = "name", not_null = true, type = Identifier(name = "text")),
-                Column(name = "bio", not_null = false, type = Identifier(name = "text")),
+                Column(name = "id", notNull = true, type = Identifier(name = "int4")),
+                Column(name = "name", notNull = true, type = Identifier(name = "text")),
+                Column(name = "bio", notNull = false, type = Identifier(name = "text")),
               ),
             ),
           ),
@@ -219,7 +214,7 @@ class SqlParameterInferrerTest {
     fun `WHERE parameter is always non-nullable`() {
       val inferredParams = mapOf(1 to InferredParameter("id", "users", inheritsNullability = false))
       val result = inferrer.resolveParameterNotNull(inferredParams, catalog)
-      assertThat(result.getValue(1)).isTrue() // not_null = true
+      assertThat(result.getValue(1)).isTrue() // notNull = true
     }
 
     @Test
@@ -233,7 +228,7 @@ class SqlParameterInferrerTest {
     fun `INSERT parameter for nullable column is nullable`() {
       val inferredParams = mapOf(1 to InferredParameter("bio", "users", inheritsNullability = true))
       val result = inferrer.resolveParameterNotNull(inferredParams, catalog)
-      assertThat(result.getValue(1)).isFalse() // not_null = false → parameter is nullable
+      assertThat(result.getValue(1)).isFalse() // notNull = false → parameter is nullable
     }
 
     @Test

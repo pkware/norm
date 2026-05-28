@@ -5,11 +5,6 @@ import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeVariableName
-import plugin.Catalog
-import plugin.Column
-import plugin.Parameter
-import plugin.Query
-import plugin.Table
 import java.sql.ResultSet
 
 /**
@@ -74,7 +69,7 @@ internal class SqlStatement(
    * retrieval.
    */
   val canBeBatchedWithReturn: Boolean
-    get() = query.is_synthesized_insert &&
+    get() = query.isSynthesizedInsert &&
       command == Command.ONE &&
       parameters.isNotEmpty() &&
       query.columns.isNotEmpty()
@@ -175,7 +170,7 @@ internal class SqlStatement(
       checkNotNull(param.column) { "Parameter at position ${param.number} in query '${query.name}' has no column" }
     }
 
-    if (query.named_parameters.isEmpty()) {
+    if (query.namedParameters.isEmpty()) {
       parameters = allParams
       parameterBindings = allParams.mapIndexed { index, param ->
         ParameterBinding(param.number, index, param.column!!)
@@ -185,7 +180,7 @@ internal class SqlStatement(
       val unique = mutableListOf<Parameter>()
       val bindings = mutableListOf<ParameterBinding>()
       for (param in allParams) {
-        val name = query.named_parameters[param.number]
+        val name = query.namedParameters[param.number]
         val parameterIndex = if (name != null && name in seen) {
           seen.getValue(name)
         } else {
@@ -239,7 +234,7 @@ internal class SqlStatement(
     return if (queryResults.isEmpty()) {
       // The query doesn't return anything
       ReturnType(null, emptyList())
-    } else if (queryResults.size == 1 && queryResults.first().embed_table == null) {
+    } else if (queryResults.size == 1 && queryResults.first().embedTable == null) {
       // The query returns a single column, so no wrapper is needed
       val column = queryResults.first()
       val columnType = generator.resolveColumnType(column)
