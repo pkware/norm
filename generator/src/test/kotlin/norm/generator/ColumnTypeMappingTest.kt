@@ -16,14 +16,6 @@ import com.squareup.kotlinpoet.asTypeName
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
-import plugin.Catalog
-import plugin.Column
-import plugin.Domain
-import plugin.Enum
-import plugin.Identifier
-import plugin.Parameter
-import plugin.Query
-import plugin.Schema
 import java.sql.Blob
 import java.time.Instant
 import java.time.LocalDate
@@ -912,8 +904,8 @@ class ColumnTypeMappingTest {
   @Nested
   inner class DomainTypes {
 
-    private val emailDomain = Domain(name = "email", base_type = "text")
-    private val positiveIntDomain = Domain(name = "positive_integer", base_type = "int4")
+    private val emailDomain = Domain(name = "email", baseType = "text")
+    private val positiveIntDomain = Domain(name = "positive_integer", baseType = "int4")
     private val domainCatalog = Catalog(
       schemas = listOf(Schema(name = "public", domains = listOf(emailDomain, positiveIntDomain))),
     )
@@ -1007,7 +999,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `domain with unsupported base type throws error with helpful message`() {
-      val xmlDomain = Domain(name = "xml_doc", base_type = "xml")
+      val xmlDomain = Domain(name = "xml_doc", baseType = "xml")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(xmlDomain))))
       val repository = TypeRepository("test", catalog)
 
@@ -1098,7 +1090,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `SMALLINT domain resolves to Short value class`() {
-      val domain = Domain(name = "small_count", base_type = "int2")
+      val domain = Domain(name = "small_count", baseType = "int2")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("count", type = "small_count")
@@ -1108,7 +1100,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `nullable SMALLINT domain resultSetAction uses wasNull check`() {
-      val domain = Domain(name = "small_count", base_type = "int2")
+      val domain = Domain(name = "small_count", baseType = "int2")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("count", type = "small_count", notNull = false)
@@ -1119,7 +1111,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `non-null SMALLINT domain statementAction uses setShort`() {
-      val domain = Domain(name = "small_count", base_type = "int2")
+      val domain = Domain(name = "small_count", baseType = "int2")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("count", type = "small_count")
@@ -1129,7 +1121,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `BIGINT domain resolves to Long value class`() {
-      val domain = Domain(name = "big_count", base_type = "int8")
+      val domain = Domain(name = "big_count", baseType = "int8")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("count", type = "big_count")
@@ -1139,7 +1131,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `nullable BIGINT domain resultSetAction uses wasNull check`() {
-      val domain = Domain(name = "big_count", base_type = "int8")
+      val domain = Domain(name = "big_count", baseType = "int8")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("count", type = "big_count", notNull = false)
@@ -1150,7 +1142,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `non-null BIGINT domain statementAction uses setLong`() {
-      val domain = Domain(name = "big_count", base_type = "int8")
+      val domain = Domain(name = "big_count", baseType = "int8")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("count", type = "big_count")
@@ -1160,7 +1152,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `FLOAT domain resolves to Float value class`() {
-      val domain = Domain(name = "latitude", base_type = "float4")
+      val domain = Domain(name = "latitude", baseType = "float4")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("lat", type = "latitude")
@@ -1170,7 +1162,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `nullable FLOAT domain resultSetAction uses wasNull check`() {
-      val domain = Domain(name = "latitude", base_type = "float4")
+      val domain = Domain(name = "latitude", baseType = "float4")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("lat", type = "latitude", notNull = false)
@@ -1181,7 +1173,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `nullable FLOAT domain statementAction uses setNull with REAL`() {
-      val domain = Domain(name = "latitude", base_type = "float4")
+      val domain = Domain(name = "latitude", baseType = "float4")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("lat", type = "latitude", notNull = false)
@@ -1192,7 +1184,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `DOUBLE domain resolves to Double value class`() {
-      val domain = Domain(name = "longitude", base_type = "float8")
+      val domain = Domain(name = "longitude", baseType = "float8")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("lng", type = "longitude")
@@ -1202,7 +1194,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `nullable DOUBLE domain resultSetAction uses wasNull check`() {
-      val domain = Domain(name = "longitude", base_type = "float8")
+      val domain = Domain(name = "longitude", baseType = "float8")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("lng", type = "longitude", notNull = false)
@@ -1213,7 +1205,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `nullable DOUBLE domain statementAction uses setNull with DOUBLE`() {
-      val domain = Domain(name = "longitude", base_type = "float8")
+      val domain = Domain(name = "longitude", baseType = "float8")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("lng", type = "longitude", notNull = false)
@@ -1224,7 +1216,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `BOOLEAN domain resolves to Boolean value class`() {
-      val domain = Domain(name = "active_flag", base_type = "bool")
+      val domain = Domain(name = "active_flag", baseType = "bool")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("active", type = "active_flag")
@@ -1234,7 +1226,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `nullable BOOLEAN domain resultSetAction uses wasNull check`() {
-      val domain = Domain(name = "active_flag", base_type = "bool")
+      val domain = Domain(name = "active_flag", baseType = "bool")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("active", type = "active_flag", notNull = false)
@@ -1245,7 +1237,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `nullable BOOLEAN domain statementAction uses setNull with BOOLEAN`() {
-      val domain = Domain(name = "active_flag", base_type = "bool")
+      val domain = Domain(name = "active_flag", baseType = "bool")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("active", type = "active_flag", notNull = false)
@@ -1256,7 +1248,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `NUMERIC domain resolves to BigDecimal-backed value class`() {
-      val domain = Domain(name = "currency_amount", base_type = "numeric")
+      val domain = Domain(name = "currency_amount", baseType = "numeric")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("amount", type = "currency_amount")
@@ -1266,7 +1258,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `nullable NUMERIC domain resultSetAction uses safe call without wasNull`() {
-      val domain = Domain(name = "currency_amount", base_type = "numeric")
+      val domain = Domain(name = "currency_amount", baseType = "numeric")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("amount", type = "currency_amount", notNull = false)
@@ -1278,7 +1270,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `nullable NUMERIC domain statementAction uses setNull with NUMERIC`() {
-      val domain = Domain(name = "currency_amount", base_type = "numeric")
+      val domain = Domain(name = "currency_amount", baseType = "numeric")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("amount", type = "currency_amount", notNull = false)
@@ -1289,7 +1281,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `VARCHAR domain resolves same as TEXT domain`() {
-      val domain = Domain(name = "username", base_type = "varchar")
+      val domain = Domain(name = "username", baseType = "varchar")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("name", type = "username")
@@ -1299,7 +1291,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `BPCHAR domain resolves same as TEXT domain`() {
-      val domain = Domain(name = "country_code", base_type = "bpchar")
+      val domain = Domain(name = "country_code", baseType = "bpchar")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("code", type = "country_code")
@@ -1429,8 +1421,8 @@ class ColumnTypeMappingTest {
   inner class UserTypeMappings {
 
     private val moodEnum = Enum(name = "mood", vals = listOf("happy", "sad", "angry"))
-    private val emailDomain = Domain(name = "email", base_type = "text")
-    private val positiveIntDomain = Domain(name = "positive_integer", base_type = "int4")
+    private val emailDomain = Domain(name = "email", baseType = "text")
+    private val positiveIntDomain = Domain(name = "positive_integer", baseType = "int4")
 
     @Test
     fun `type-level override on enum type`() {
@@ -1743,10 +1735,10 @@ class ColumnTypeMappingTest {
     embedTable: Identifier? = null,
   ) = Column(
     name = name,
-    not_null = notNull,
+    notNull = notNull,
     type = Identifier(name = type),
-    is_array = isArray,
+    isArray = isArray,
     table = table,
-    embed_table = embedTable,
+    embedTable = embedTable,
   )
 }

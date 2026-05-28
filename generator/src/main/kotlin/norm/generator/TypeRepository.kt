@@ -11,12 +11,6 @@ import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.asTypeName
-import plugin.Catalog
-import plugin.Column
-import plugin.Domain
-import plugin.Enum
-import plugin.Schema
-import plugin.Table
 import java.math.BigDecimal
 
 /**
@@ -196,16 +190,16 @@ internal class TypeRepository(
     val primaryConstructor = FunSpec.constructorBuilder()
 
     // null indicates a secondary constructor won't be needed.
-    val secondaryConstructor = if (queryResults.any { it.embed_table != null }) FunSpec.constructorBuilder() else null
+    val secondaryConstructor = if (queryResults.any { it.embedTable != null }) FunSpec.constructorBuilder() else null
     val secondaryToPrimaryConstructorInputs = mutableListOf<CodeBlock>()
 
     // Parameters required to invoke the mapper
     val mapperParameters = mutableListOf<ParameterSpec>()
     var index = 1
     for (column in queryResults) {
-      val columnType = if (column.embed_table != null) {
+      val columnType = if (column.embedTable != null) {
         // sqlc.embed() column. Ensure the embedded type is registered, then build inline constructor.
-        val table = catalog.resolveTable(column.embed_table)
+        val table = catalog.resolveTable(column.embedTable)
 
         // Register the embedded type itself (with default offset) so it gets generated
         getTypeProjectionForTable(table, columnOffset = 1)
@@ -276,7 +270,7 @@ internal class TypeRepository(
           propertyName = column.name,
           comment = column.comment,
           sourceTable = column.table?.name,
-          sourceColumn = column.original_name.ifEmpty { null },
+          sourceColumn = column.originalName.ifEmpty { null },
           expression = if (isComputedExpression) selectItem.expression else "",
         )
       },
@@ -306,7 +300,7 @@ internal class TypeRepository(
    * whose [SqlMappable.typeName] is already the correct parameterized array type.
    */
   fun resolveColumnType(column: Column): TypeName =
-    resolveMappableType(column).typeName.copy(nullable = !column.not_null)
+    resolveMappableType(column).typeName.copy(nullable = !column.notNull)
 
   /**
    * Resolves the [SqlMappable] for a column.
@@ -318,10 +312,10 @@ internal class TypeRepository(
       ?: error("Column ${column.fullyQualifiedName} has no type")
 
     return tryResolveColumnOverride(column)
-      ?: tryResolveTypeOverride(typeName, column.not_null, column.is_array)
-      ?: tryResolveStandardType(typeName, column.not_null, column.is_array)
-      ?: tryResolveEnumType(typeName, column.not_null, column.is_array)
-      ?: tryResolveDomainType(typeName, column.not_null, column.is_array)
+      ?: tryResolveTypeOverride(typeName, column.notNull, column.isArray)
+      ?: tryResolveStandardType(typeName, column.notNull, column.isArray)
+      ?: tryResolveEnumType(typeName, column.notNull, column.isArray)
+      ?: tryResolveDomainType(typeName, column.notNull, column.isArray)
       ?: error("Postgres type $typeName for column ${column.fullyQualifiedName} is not mapped to a Kotlin type")
   }
 
@@ -330,9 +324,9 @@ internal class TypeRepository(
    */
   private fun tryResolveColumnOverride(column: Column): SqlMappable? {
     val tableName = column.table?.name ?: return null
-    val columnName = column.original_name.ifEmpty { column.name }
+    val columnName = column.originalName.ifEmpty { column.name }
     val mapping = columnLevelOverrides[tableName to columnName] ?: return null
-    return buildUserConfiguredMappable(mapping, column.type!!.name, column.not_null, column.is_array)
+    return buildUserConfiguredMappable(mapping, column.type!!.name, column.notNull, column.isArray)
   }
 
   /**
@@ -385,7 +379,7 @@ internal class TypeRepository(
   private fun resolveJdbcTypeInfoForType(postgresType: String): JdbcTypeInfo? {
     if (postgresType in enumsByName) return ENUM_JDBC_TYPE_INFO
     val domain = domainsByName[postgresType]
-    if (domain != null) return resolveJdbcTypeInfoForType(domain.base_type)
+    if (domain != null) return resolveJdbcTypeInfoForType(domain.baseType)
     return resolveJdbcTypeInfo(postgresType)
   }
 
@@ -436,8 +430,8 @@ internal class TypeRepository(
 
     val domainClassName = ClassName(packageName, domain.name.snakeToCamelCase().titleCase())
     val propertyName = domainAdapterPropertyName(domain)
-    val jdbcTypeInfo = resolveJdbcTypeInfo(domain.base_type)
-      ?: error("Domain ${domain.name} has unsupported base type: ${domain.base_type}")
+    val jdbcTypeInfo = resolveJdbcTypeInfo(domain.baseType)
+      ?: error("Domain ${domain.name} has unsupported base type: ${domain.baseType}")
 
     if (isArray) {
       return AdaptedArrayTypeSqlMappable(

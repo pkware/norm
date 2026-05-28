@@ -1,12 +1,5 @@
 package norm.generator
 
-import plugin.Catalog
-import plugin.Column
-import plugin.Identifier
-import plugin.Parameter
-import plugin.Query
-import plugin.Schema
-import plugin.Table
 import java.sql.Connection
 import java.sql.DatabaseMetaData
 import java.sql.ResultSetMetaData
@@ -52,7 +45,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
     }
 
     return Catalog(
-      default_schema = schemas.first(),
+      defaultSchema = schemas.first(),
       schemas = schemaObjects,
     )
   }
@@ -98,8 +91,8 @@ public class JdbcAnalyzer(private val connection: Connection) {
       columns = resultColumns,
       params = parameters,
       comments = parsedQuery.comments,
-      is_synthesized_insert = parsedQuery.isSynthesizedInsert,
-      named_parameters = parsedQuery.namedParameters,
+      isSynthesizedInsert = parsedQuery.isSynthesizedInsert,
+      namedParameters = parsedQuery.namedParameters,
     )
   }
 
@@ -145,7 +138,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
         rel = Identifier(name = tableName, schema = schemaName),
         columns = columns,
         comment = tableComments[tableName].orEmpty(),
-        is_view = tableType == "VIEW" || tableType == "MATERIALIZED VIEW",
+        isView = tableType == "VIEW" || tableType == "MATERIALIZED VIEW",
       )
     }
   }
@@ -185,17 +178,17 @@ public class JdbcAnalyzer(private val connection: Connection) {
         add(
           Column(
             name = columnName,
-            not_null = notNull,
-            is_array = isArray,
-            array_dims = if (isArray) 1 else 0,
+            notNull = notNull,
+            isArray = isArray,
+            arrayDims = if (isArray) 1 else 0,
             comment = comment.orEmpty(),
             type = Identifier(name = baseName),
             table = Identifier(name = tableName, schema = schemaName),
-            original_name = columnName,
-            is_primary_key = columnName in primaryKeyColumns,
-            is_auto_increment = isAutoIncrement,
-            has_default = hasDefault,
-            is_generated = isGenerated,
+            originalName = columnName,
+            isPrimaryKey = columnName in primaryKeyColumns,
+            isAutoIncrement = isAutoIncrement,
+            hasDefault = hasDefault,
+            isGenerated = isGenerated,
           ),
         )
       }
@@ -231,13 +224,13 @@ public class JdbcAnalyzer(private val connection: Connection) {
       columns.add(
         Column(
           name = columnLabel,
-          not_null = notNull,
-          is_array = isArray,
-          array_dims = if (isArray) 1 else 0,
+          notNull = notNull,
+          isArray = isArray,
+          arrayDims = if (isArray) 1 else 0,
           comment = comment,
           type = Identifier(name = baseName),
           table = tableName?.let { resolveTableIdentifier(it, catalog) },
-          original_name = originalColumnName,
+          originalName = originalColumnName,
         ),
       )
     }
@@ -301,13 +294,13 @@ public class JdbcAnalyzer(private val connection: Connection) {
           number = i,
           column = Column(
             name = inferredNames[i] ?: "p$i",
-            not_null = notNullByParameter[i] ?: true,
-            is_array = isArray,
-            array_dims = if (isArray) 1 else 0,
+            notNull = notNullByParameter[i] ?: true,
+            isArray = isArray,
+            arrayDims = if (isArray) 1 else 0,
             comment = comment,
             type = Identifier(name = typeName),
             table = if (catalog != null && tableName != null) resolveTableIdentifier(tableName, catalog) else null,
-            original_name = columnName.orEmpty(),
+            originalName = columnName.orEmpty(),
           ),
         ),
       )

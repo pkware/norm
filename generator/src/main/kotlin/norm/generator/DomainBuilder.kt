@@ -7,7 +7,6 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
-import plugin.Domain
 
 /**
  * Builds a `@JvmInline value class` [TypeSpec] from a Postgres domain type definition.
@@ -29,11 +28,11 @@ internal fun buildDomainValueClassTypeSpec(domain: Domain, packageName: String):
     .addAnnotation(JvmInline::class)
     .primaryConstructor(
       FunSpec.constructorBuilder()
-        .addParameter("value", domainKotlinBaseType(domain.base_type))
+        .addParameter("value", domainKotlinBaseType(domain.baseType))
         .build(),
     )
     .addProperty(
-      PropertySpec.builder("value", domainKotlinBaseType(domain.base_type))
+      PropertySpec.builder("value", domainKotlinBaseType(domain.baseType))
         .initializer("value")
         .build(),
     )
@@ -68,7 +67,7 @@ internal fun buildDomainValueClassTypeSpec(domain: Domain, packageName: String):
 internal fun buildDomainAdapterTypeSpec(domain: Domain, packageName: String, frameworks: Set<Framework>): TypeSpec {
   val valueClassName = domainValueClassName(domain, packageName)
   val adapterClass = domainAdapterClassName(domain, packageName)
-  val baseKotlinType = domainKotlinBaseType(domain.base_type)
+  val baseKotlinType = domainKotlinBaseType(domain.baseType)
   val adapterSupertype = COLUMN_ADAPTER.parameterizedBy(valueClassName, baseKotlinType)
 
   val decodeFunction = FunSpec.builder("decode")

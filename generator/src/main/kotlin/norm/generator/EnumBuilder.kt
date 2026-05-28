@@ -7,7 +7,6 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.asTypeName
-import plugin.Enum
 
 /**
  * Builds a Kotlin enum class [TypeSpec] from a Postgres enum type definition.

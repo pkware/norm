@@ -1,8 +1,5 @@
 package norm.generator
 
-import plugin.Catalog
-import plugin.Column
-
 /**
  * Infers parameter names and nullability from SQL patterns.
  *
@@ -168,7 +165,7 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
         continue
       }
       val column = findColumnInCatalog(inferred.columnName ?: inferred.name, inferred.tableName, catalog)
-      notNullMap[paramNum] = column?.not_null ?: true
+      notNullMap[paramNum] = column?.notNull ?: true
     }
     return notNullMap
   }

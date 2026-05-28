@@ -32,7 +32,7 @@ class JdbcAnalyzerTest {
   fun `buildCatalog discovers tables`() {
     val catalog = analyzer.buildCatalog()
 
-    assertThat(catalog.default_schema).isEqualTo("public")
+    assertThat(catalog.defaultSchema).isEqualTo("public")
     assertThat(catalog.schemas).hasSize(1)
 
     val tables = catalog.schemas.first().tables
@@ -50,15 +50,15 @@ class JdbcAnalyzerTest {
     // Both resolve to the same Kotlin type in the generator.
     assertThat(columnsByName.getValue("serial_type").type!!.name).isEqualTo("serial")
     assertThat(columnsByName.getValue("int4_type").type!!.name).isEqualTo("int4")
-    assertThat(columnsByName.getValue("int4_type").not_null).isTrue()
+    assertThat(columnsByName.getValue("int4_type").notNull).isTrue()
 
     // Verify smallint types
     assertThat(columnsByName.getValue("int2_type").type!!.name).isEqualTo("int2")
-    assertThat(columnsByName.getValue("int2_type").not_null).isTrue()
+    assertThat(columnsByName.getValue("int2_type").notNull).isTrue()
 
     // Verify bigint types
     assertThat(columnsByName.getValue("int8_type").type!!.name).isEqualTo("int8")
-    assertThat(columnsByName.getValue("int8_type").not_null).isTrue()
+    assertThat(columnsByName.getValue("int8_type").notNull).isTrue()
 
     // Verify float types
     assertThat(columnsByName.getValue("float4_type").type!!.name).isEqualTo("float4")
@@ -66,7 +66,7 @@ class JdbcAnalyzerTest {
 
     // Verify text types
     assertThat(columnsByName.getValue("string_type").type!!.name).isEqualTo("text")
-    assertThat(columnsByName.getValue("string_type").not_null).isTrue()
+    assertThat(columnsByName.getValue("string_type").notNull).isTrue()
     assertThat(columnsByName.getValue("varchar_type").type!!.name).isEqualTo("varchar")
     assertThat(columnsByName.getValue("bpchar_type").type!!.name).isEqualTo("bpchar")
 
@@ -103,12 +103,12 @@ class JdbcAnalyzerTest {
     val columnsByName = typeTable.columns.associateBy { it.name }
 
     val intArray = columnsByName.getValue("int_array_type")
-    assertThat(intArray.is_array).isTrue()
-    assertThat(intArray.array_dims).isEqualTo(1)
+    assertThat(intArray.isArray).isTrue()
+    assertThat(intArray.arrayDims).isEqualTo(1)
     assertThat(intArray.type!!.name).isEqualTo("int4")
 
     val textArray = columnsByName.getValue("text_array_type")
-    assertThat(textArray.is_array).isTrue()
+    assertThat(textArray.isArray).isTrue()
     assertThat(textArray.type!!.name).isEqualTo("text")
   }
 
@@ -119,14 +119,14 @@ class JdbcAnalyzerTest {
     val columnsByName = typeTable.columns.associateBy { it.name }
 
     // NOT NULL columns
-    assertThat(columnsByName.getValue("string_type").not_null).isTrue()
-    assertThat(columnsByName.getValue("int4_type").not_null).isTrue()
-    assertThat(columnsByName.getValue("date_notnull_type").not_null).isTrue()
+    assertThat(columnsByName.getValue("string_type").notNull).isTrue()
+    assertThat(columnsByName.getValue("int4_type").notNull).isTrue()
+    assertThat(columnsByName.getValue("date_notnull_type").notNull).isTrue()
 
     // Nullable columns
-    assertThat(columnsByName.getValue("text_type").not_null).isFalse()
-    assertThat(columnsByName.getValue("integer_type").not_null).isFalse()
-    assertThat(columnsByName.getValue("date_type").not_null).isFalse()
+    assertThat(columnsByName.getValue("text_type").notNull).isFalse()
+    assertThat(columnsByName.getValue("integer_type").notNull).isFalse()
+    assertThat(columnsByName.getValue("date_type").notNull).isFalse()
   }
 
   @Test
@@ -146,7 +146,7 @@ class JdbcAnalyzerTest {
     // Verify a few column types
     val columnsByName = query.columns.associateBy { it.name }
     assertThat(columnsByName.getValue("string_type").type!!.name).isEqualTo("text")
-    assertThat(columnsByName.getValue("string_type").not_null).isTrue()
+    assertThat(columnsByName.getValue("string_type").notNull).isTrue()
     assertThat(columnsByName.getValue("int4_type").type!!.name).isEqualTo("int4")
   }
 
@@ -272,7 +272,7 @@ class JdbcAnalyzerTest {
 
   /**
    * Tests that verify result column nullability is correctly determined by the full pipeline:
-   * SQL → PostgreSQL node tree analysis → [Column.not_null].
+   * SQL → PostgreSQL node tree analysis → [Column.notNull].
    *
    * The node tree analyzer is the authoritative source for nullability. These tests cover
    * NOT NULL columns, nullable columns, expressions, and outer join scenarios.
@@ -294,7 +294,7 @@ class JdbcAnalyzerTest {
       assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].name).isEqualTo("found")
       assertThat(query.columns[0].type!!.name).isEqualTo("bool")
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -310,7 +310,7 @@ class JdbcAnalyzerTest {
       val query = analyzer.analyzeQuery(parsed, catalog)
 
       assertThat(query.columns).hasSize(1)
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -326,7 +326,7 @@ class JdbcAnalyzerTest {
       val query = analyzer.analyzeQuery(parsed, catalog)
 
       assertThat(query.columns).hasSize(1)
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -344,7 +344,7 @@ class JdbcAnalyzerTest {
       assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].name).isEqualTo("uppered")
       // upper() is strict — its result is nullable when the input column is nullable.
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -361,8 +361,8 @@ class JdbcAnalyzerTest {
 
       // COUNT(*) is always non-null (aggregate function). int_type is nullable in the schema.
       val columnsByName = query.columns.associateBy { it.name }
-      assertThat(columnsByName.getValue("total").not_null).isTrue()
-      assertThat(columnsByName.getValue("int_type").not_null).isFalse()
+      assertThat(columnsByName.getValue("total").notNull).isTrue()
+      assertThat(columnsByName.getValue("int_type").notNull).isFalse()
     }
 
     @Test
@@ -379,9 +379,9 @@ class JdbcAnalyzerTest {
 
       val columnsByName = query.columns.associateBy { it.name }
       // These columns are NOT NULL in the underlying "type" table.
-      assertThat(columnsByName.getValue("serial_type").not_null).isTrue()
-      assertThat(columnsByName.getValue("string_type").not_null).isTrue()
-      assertThat(columnsByName.getValue("int4_type").not_null).isTrue()
+      assertThat(columnsByName.getValue("serial_type").notNull).isTrue()
+      assertThat(columnsByName.getValue("string_type").notNull).isTrue()
+      assertThat(columnsByName.getValue("int4_type").notNull).isTrue()
     }
 
     @Test
@@ -398,10 +398,10 @@ class JdbcAnalyzerTest {
 
       val columnsByName = query.columns.associateBy { it.name }
       // serial_type and string_type are NOT NULL in the underlying table.
-      assertThat(columnsByName.getValue("serial_type").not_null).isTrue()
-      assertThat(columnsByName.getValue("string_type").not_null).isTrue()
+      assertThat(columnsByName.getValue("serial_type").notNull).isTrue()
+      assertThat(columnsByName.getValue("string_type").notNull).isTrue()
       // text_type is nullable in the underlying table — should remain nullable.
-      assertThat(columnsByName.getValue("text_type").not_null).isFalse()
+      assertThat(columnsByName.getValue("text_type").notNull).isFalse()
     }
 
     @Test
@@ -419,7 +419,7 @@ class JdbcAnalyzerTest {
       assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].name).isEqualTo("incremented")
       // Arithmetic on a nullable column — result is nullable.
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Nested
@@ -439,9 +439,9 @@ class JdbcAnalyzerTest {
 
         val columnsByName = query.columns.associateBy { it.name }
         // d.id is from the left (preserved) side — always non-null
-        assertThat(columnsByName.getValue("id").not_null).isTrue()
+        assertThat(columnsByName.getValue("id").notNull).isTrue()
         // e.name is NOT NULL in the schema, but LEFT JOIN can produce NULL when no match exists
-        assertThat(columnsByName.getValue("name").not_null).isFalse()
+        assertThat(columnsByName.getValue("name").notNull).isFalse()
       }
 
       @Test
@@ -457,9 +457,9 @@ class JdbcAnalyzerTest {
         val query = analyzer.analyzeQuery(parsed, catalog)
 
         val columnsByName = query.columns.associateBy { it.name }
-        assertThat(columnsByName.getValue("id").not_null).isTrue()
+        assertThat(columnsByName.getValue("id").notNull).isTrue()
         // e.nickname is nullable in schema AND LEFT JOIN can produce NULL — doubly nullable
-        assertThat(columnsByName.getValue("nickname").not_null).isFalse()
+        assertThat(columnsByName.getValue("nickname").notNull).isFalse()
       }
 
       @Test
@@ -476,9 +476,9 @@ class JdbcAnalyzerTest {
 
         val columnsByName = query.columns.associateBy { it.name }
         // d.name is from the left (preserved) side — stays non-null
-        assertThat(columnsByName.getValue("name").not_null).isTrue()
+        assertThat(columnsByName.getValue("name").notNull).isTrue()
         // e.name is from the right (optional) side — nullable due to LEFT JOIN
-        assertThat(columnsByName.getValue("employee_name").not_null).isFalse()
+        assertThat(columnsByName.getValue("employee_name").notNull).isFalse()
       }
 
       @Test
@@ -495,9 +495,9 @@ class JdbcAnalyzerTest {
 
         val columnsByName = query.columns.associateBy { it.name }
         // d.name is from the left (optional) side in a RIGHT JOIN — nullable
-        assertThat(columnsByName.getValue("name").not_null).isFalse()
+        assertThat(columnsByName.getValue("name").notNull).isFalse()
         // e.name is from the right (preserved) side — stays non-null
-        assertThat(columnsByName.getValue("employee_name").not_null).isTrue()
+        assertThat(columnsByName.getValue("employee_name").notNull).isTrue()
       }
 
       @Test
@@ -514,8 +514,8 @@ class JdbcAnalyzerTest {
 
         val columnsByName = query.columns.associateBy { it.name }
         // INNER JOIN — both sides always have matching rows, NOT NULL preserved
-        assertThat(columnsByName.getValue("name").not_null).isTrue()
-        assertThat(columnsByName.getValue("employee_name").not_null).isTrue()
+        assertThat(columnsByName.getValue("name").notNull).isTrue()
+        assertThat(columnsByName.getValue("employee_name").notNull).isTrue()
       }
 
       @Test
@@ -535,9 +535,9 @@ class JdbcAnalyzerTest {
         val query = analyzer.analyzeQuery(parsed, catalog)
 
         val columnsByName = query.columns.associateBy { it.name }
-        assertThat(columnsByName.getValue("id").not_null).isTrue()
+        assertThat(columnsByName.getValue("id").notNull).isTrue()
         // Subquery column from LEFT JOIN — nullable even though employee.name is NOT NULL
-        assertThat(columnsByName.getValue("name").not_null).isFalse()
+        assertThat(columnsByName.getValue("name").notNull).isFalse()
       }
     }
 
@@ -558,8 +558,8 @@ class JdbcAnalyzerTest {
 
         val columnsByName = query.columns.associateBy { it.name }
         // CROSS JOIN never produces NULL — both sides always present
-        assertThat(columnsByName.getValue("name").not_null).isTrue()
-        assertThat(columnsByName.getValue("employee_name").not_null).isTrue()
+        assertThat(columnsByName.getValue("name").notNull).isTrue()
+        assertThat(columnsByName.getValue("employee_name").notNull).isTrue()
       }
 
       @Test
@@ -576,8 +576,8 @@ class JdbcAnalyzerTest {
 
         val columnsByName = query.columns.associateBy { it.name }
         // FULL OUTER JOIN — either side can be NULL when no match
-        assertThat(columnsByName.getValue("name").not_null).isFalse()
-        assertThat(columnsByName.getValue("employee_name").not_null).isFalse()
+        assertThat(columnsByName.getValue("name").notNull).isFalse()
+        assertThat(columnsByName.getValue("employee_name").notNull).isFalse()
       }
 
       @Test
@@ -599,11 +599,11 @@ class JdbcAnalyzerTest {
 
         val columnsByName = query.columns.associateBy { it.name }
         // d.name: preserved side of both LEFT JOINs — non-null
-        assertThat(columnsByName.getValue("name").not_null).isTrue()
+        assertThat(columnsByName.getValue("name").notNull).isTrue()
         // e.name: right side of first LEFT JOIN — nullable
-        assertThat(columnsByName.getValue("employee_name").not_null).isFalse()
+        assertThat(columnsByName.getValue("employee_name").notNull).isFalse()
         // p.title: right side of second LEFT JOIN — nullable
-        assertThat(columnsByName.getValue("title").not_null).isFalse()
+        assertThat(columnsByName.getValue("title").notNull).isFalse()
       }
 
       @Test
@@ -627,9 +627,9 @@ class JdbcAnalyzerTest {
 
         val columnsByName = query.columns.associateBy { it.name }
         // dept_name is from preserved side — non-null
-        assertThat(columnsByName.getValue("dept_name").not_null).isTrue()
+        assertThat(columnsByName.getValue("dept_name").notNull).isTrue()
         // employee_name is from nullable side of LEFT JOIN inside CTE — nullable
-        assertThat(columnsByName.getValue("employee_name").not_null).isFalse()
+        assertThat(columnsByName.getValue("employee_name").notNull).isFalse()
       }
 
       @Test
@@ -650,9 +650,9 @@ class JdbcAnalyzerTest {
 
         val columnsByName = query.columns.associateBy { it.name }
         // e1 is on preserved side — non-null
-        assertThat(columnsByName.getValue("manager_name").not_null).isTrue()
+        assertThat(columnsByName.getValue("manager_name").notNull).isTrue()
         // e2 is on nullable side — nullable even though same table
-        assertThat(columnsByName.getValue("report_name").not_null).isFalse()
+        assertThat(columnsByName.getValue("report_name").notNull).isFalse()
       }
 
       @Test
@@ -677,7 +677,7 @@ class JdbcAnalyzerTest {
         // dept_name comes from department (preserved side inside the subquery).
         // The outer FROM just wraps the subquery — no outer join at the outer level.
         assertThat(query.columns).hasSize(1)
-        assertThat(query.columns[0].not_null).isTrue()
+        assertThat(query.columns[0].notNull).isTrue()
       }
     }
 
@@ -778,9 +778,9 @@ class JdbcAnalyzerTest {
 
           val columnsByName = query.columns.associateBy { it.name }
           // e.name: NOT NULL in schema, but on nullable side of LEFT JOIN — should be nullable.
-          assertThat(columnsByName.getValue("name").not_null).isFalse()
+          assertThat(columnsByName.getValue("name").notNull).isFalse()
           // e.nickname: nullable in schema — should be nullable regardless.
-          assertThat(columnsByName.getValue("nickname").not_null).isFalse()
+          assertThat(columnsByName.getValue("nickname").notNull).isFalse()
         } finally {
           connection.createStatement().use { stmt ->
             stmt.execute("DROP VIEW IF EXISTS issue65_view")
@@ -792,7 +792,7 @@ class JdbcAnalyzerTest {
 
   /**
    * Integration tests that verify expression nullability is correctly determined by the full pipeline:
-   * SQL expression → PostgreSQL node tree analysis → [Column.not_null].
+   * SQL expression → PostgreSQL node tree analysis → [Column.notNull].
    *
    * These tests use the `department` and `employee` tables from the all_types schema.
    * `employee.id` and `employee.department_id` are NOT NULL; `employee.nickname` is nullable.
@@ -801,14 +801,14 @@ class JdbcAnalyzerTest {
   @TestInstance(TestInstance.Lifecycle.PER_CLASS)
   inner class ExpressionNullability {
 
-    private lateinit var catalog: plugin.Catalog
+    private lateinit var catalog: Catalog
 
     @BeforeAll
     fun setupCatalog() {
       catalog = analyzer.buildCatalog()
     }
 
-    private fun analyzeSimpleQuery(sql: String): plugin.Query {
+    private fun analyzeSimpleQuery(sql: String): Query {
       val parsedQuery = ParsedQuery("test", ":one", sql, emptyList())
       return analyzer.analyzeQuery(parsedQuery, catalog)
     }
@@ -816,73 +816,73 @@ class JdbcAnalyzerTest {
     @Test
     fun `COUNT star is non-null`() {
       val query = analyzeSimpleQuery("SELECT COUNT(*) AS total FROM department")
-      assertThat(query.columns.first().not_null).isTrue()
+      assertThat(query.columns.first().notNull).isTrue()
     }
 
     @Test
     fun `SUM is nullable`() {
       val query = analyzeSimpleQuery("SELECT SUM(id) AS total FROM employee")
-      assertThat(query.columns.first().not_null).isFalse()
+      assertThat(query.columns.first().notNull).isFalse()
     }
 
     @Test
     fun `COALESCE with non-null fallback is non-null`() {
       val query = analyzeSimpleQuery("SELECT COALESCE(nickname, 'anon') AS display_name FROM employee")
-      assertThat(query.columns.first().not_null).isTrue()
+      assertThat(query.columns.first().notNull).isTrue()
     }
 
     @Test
     fun `strict function with non-null arg is non-null`() {
       val query = analyzeSimpleQuery("SELECT upper(name) AS upper_name FROM department")
-      assertThat(query.columns.first().not_null).isTrue()
+      assertThat(query.columns.first().notNull).isTrue()
     }
 
     @Test
     fun `strict function with nullable arg is nullable`() {
       val query = analyzeSimpleQuery("SELECT upper(nickname) AS upper_nick FROM employee")
-      assertThat(query.columns.first().not_null).isFalse()
+      assertThat(query.columns.first().notNull).isFalse()
     }
 
     @Test
     fun `type cast preserves non-null`() {
       val query = analyzeSimpleQuery("SELECT id::bigint AS big_id FROM department")
-      assertThat(query.columns.first().not_null).isTrue()
+      assertThat(query.columns.first().notNull).isTrue()
     }
 
     @Test
     fun `CURRENT_DATE is non-null`() {
       val query = analyzeSimpleQuery("SELECT CURRENT_DATE AS today FROM department")
-      assertThat(query.columns.first().not_null).isTrue()
+      assertThat(query.columns.first().notNull).isTrue()
     }
 
     @Test
     fun `IS NOT NULL is non-null`() {
       val query = analyzeSimpleQuery("SELECT name IS NOT NULL AS has_name FROM employee")
-      assertThat(query.columns.first().not_null).isTrue()
+      assertThat(query.columns.first().notNull).isTrue()
     }
 
     @Test
     fun `EXISTS is non-null`() {
       val query = analyzeSimpleQuery("SELECT EXISTS(SELECT 1 FROM department) AS has_dept FROM department")
-      assertThat(query.columns.first().not_null).isTrue()
+      assertThat(query.columns.first().notNull).isTrue()
     }
 
     @Test
     fun `CASE with ELSE is non-null when all branches non-null`() {
       val query = analyzeSimpleQuery("SELECT CASE WHEN id > 0 THEN 'yes' ELSE 'no' END AS flag FROM employee")
-      assertThat(query.columns.first().not_null).isTrue()
+      assertThat(query.columns.first().notNull).isTrue()
     }
 
     @Test
     fun `CASE without ELSE is nullable`() {
       val query = analyzeSimpleQuery("SELECT CASE WHEN id > 0 THEN 'yes' END AS flag FROM employee")
-      assertThat(query.columns.first().not_null).isFalse()
+      assertThat(query.columns.first().notNull).isFalse()
     }
 
     @Test
     fun `nested — strict wrapping COALESCE`() {
       val query = analyzeSimpleQuery("SELECT upper(COALESCE(nickname, 'anon')) AS display FROM employee")
-      assertThat(query.columns.first().not_null).isTrue()
+      assertThat(query.columns.first().notNull).isTrue()
     }
 
     @Test
@@ -890,8 +890,8 @@ class JdbcAnalyzerTest {
       val query = analyzeSimpleQuery(
         "SELECT d.name, e.name AS emp_name FROM department d LEFT JOIN employee e ON e.department_id = d.id",
       )
-      assertThat(query.columns[0].not_null).isTrue() // d.name — preserved side
-      assertThat(query.columns[1].not_null).isFalse() // e.name — nullable side
+      assertThat(query.columns[0].notNull).isTrue() // d.name — preserved side
+      assertThat(query.columns[1].notNull).isFalse() // e.name — nullable side
     }
 
     @Test
@@ -899,73 +899,73 @@ class JdbcAnalyzerTest {
       val query = analyzeSimpleQuery(
         "SELECT COALESCE(e.name, 'none') AS emp_name FROM department d LEFT JOIN employee e ON e.department_id = d.id",
       )
-      assertThat(query.columns.first().not_null).isTrue()
+      assertThat(query.columns.first().notNull).isTrue()
     }
 
     @Test
     fun `ROW_NUMBER is non-null`() {
       val query = analyzeSimpleQuery("SELECT ROW_NUMBER() OVER() AS rn FROM department")
-      assertThat(query.columns.first().not_null).isTrue()
+      assertThat(query.columns.first().notNull).isTrue()
     }
 
     @Test
     fun `NULLIF is nullable`() {
       val query = analyzeSimpleQuery("SELECT NULLIF(name, 'test') AS val FROM employee")
-      assertThat(query.columns.first().not_null).isFalse()
+      assertThat(query.columns.first().notNull).isFalse()
     }
 
     @Test
     fun `GREATEST with all non-null args is non-null`() {
       val query = analyzeSimpleQuery("SELECT GREATEST(department_id, 0) AS val FROM employee")
-      assertThat(query.columns.first().not_null).isTrue() // both args NOT NULL
+      assertThat(query.columns.first().notNull).isTrue() // both args NOT NULL
     }
 
     @Test
     fun `IS DISTINCT FROM is non-null`() {
       val query = analyzeSimpleQuery("SELECT name IS DISTINCT FROM nickname AS val FROM employee")
-      assertThat(query.columns.first().not_null).isTrue()
+      assertThat(query.columns.first().notNull).isTrue()
     }
 
     @Test
     fun `IS TRUE is non-null`() {
       val query = analyzeSimpleQuery("SELECT (id > 0) IS TRUE AS val FROM employee")
-      assertThat(query.columns.first().not_null).isTrue()
+      assertThat(query.columns.first().notNull).isTrue()
     }
 
     @Test
     fun `string_agg is nullable`() {
       val query = analyzeSimpleQuery("SELECT string_agg(name, ',') AS val FROM employee")
-      assertThat(query.columns.first().not_null).isFalse()
+      assertThat(query.columns.first().notNull).isFalse()
     }
 
     @Test
     fun `ARRAY constructor is non-null`() {
       val query = analyzeSimpleQuery("SELECT ARRAY[1, 2, 3] AS val FROM employee")
-      assertThat(query.columns.first().not_null).isTrue()
+      assertThat(query.columns.first().notNull).isTrue()
     }
 
     @Test
     fun `CURRENT_USER is non-null`() {
       val query = analyzeSimpleQuery("SELECT CURRENT_USER AS val FROM employee")
-      assertThat(query.columns.first().not_null).isTrue()
+      assertThat(query.columns.first().notNull).isTrue()
     }
 
     @Test
     fun `integer addition with non-null args is non-null`() {
       val query = analyzeSimpleQuery("SELECT id + 1 AS val FROM employee")
-      assertThat(query.columns.first().not_null).isTrue()
+      assertThat(query.columns.first().notNull).isTrue()
     }
 
     @Test
     fun `string concat with non-null args is non-null`() {
       val query = analyzeSimpleQuery("SELECT name || ' suffix' AS val FROM employee")
-      assertThat(query.columns.first().not_null).isTrue()
+      assertThat(query.columns.first().notNull).isTrue()
     }
 
     @Test
     fun `string concat with nullable arg is nullable`() {
       val query = analyzeSimpleQuery("SELECT nickname || ' suffix' AS val FROM employee")
-      assertThat(query.columns.first().not_null).isFalse()
+      assertThat(query.columns.first().notNull).isFalse()
     }
 
     @Test
@@ -974,8 +974,8 @@ class JdbcAnalyzerTest {
       val query = analyzeSimpleQuery(
         "SELECT name, COUNT(*) AS cnt FROM department GROUP BY name",
       )
-      assertThat(query.columns[0].not_null).isTrue() // name TEXT NOT NULL
-      assertThat(query.columns[1].not_null).isTrue() // COUNT(*) always non-null
+      assertThat(query.columns[0].notNull).isTrue() // name TEXT NOT NULL
+      assertThat(query.columns[1].notNull).isTrue() // COUNT(*) always non-null
     }
 
     @Test
@@ -984,8 +984,8 @@ class JdbcAnalyzerTest {
         "SELECT d.name, COUNT(e.id) AS emp_count FROM department d " +
           "LEFT JOIN employee e ON e.department_id = d.id GROUP BY d.name",
       )
-      assertThat(query.columns[0].not_null).isTrue() // d.name — preserved side, NOT NULL
-      assertThat(query.columns[1].not_null).isTrue() // COUNT() always non-null
+      assertThat(query.columns[0].notNull).isTrue() // d.name — preserved side, NOT NULL
+      assertThat(query.columns[1].notNull).isTrue() // COUNT() always non-null
     }
 
     @Test
@@ -994,7 +994,7 @@ class JdbcAnalyzerTest {
       // correctly returned non-null; the node tree analysis must replicate this by replacing ?
       // with typed non-null sentinels instead of NULL.
       val query = analyzeSimpleQuery("SELECT upper(?) AS upper_input FROM department")
-      assertThat(query.columns.first().not_null).isTrue()
+      assertThat(query.columns.first().notNull).isTrue()
     }
 
     @Test
@@ -1004,9 +1004,9 @@ class JdbcAnalyzerTest {
         "SELECT d.id, d.name, COUNT(*) AS cnt FROM department d " +
           "GROUP BY GROUPING SETS ((d.id), (d.name))",
       )
-      assertThat(query.columns[0].not_null).isFalse() // d.id — NOT NULL but nullable via grouping sets
-      assertThat(query.columns[1].not_null).isFalse() // d.name — NOT NULL but nullable via grouping sets
-      assertThat(query.columns[2].not_null).isTrue() // COUNT(*) — always non-null
+      assertThat(query.columns[0].notNull).isFalse() // d.id — NOT NULL but nullable via grouping sets
+      assertThat(query.columns[1].notNull).isFalse() // d.name — NOT NULL but nullable via grouping sets
+      assertThat(query.columns[2].notNull).isTrue() // COUNT(*) — always non-null
     }
 
     @Test
@@ -1014,9 +1014,9 @@ class JdbcAnalyzerTest {
       val query = analyzeSimpleQuery(
         "SELECT d.id, d.name, COUNT(*) AS cnt FROM department d GROUP BY CUBE (d.id, d.name)",
       )
-      assertThat(query.columns[0].not_null).isFalse() // d.id — nullable via CUBE
-      assertThat(query.columns[1].not_null).isFalse() // d.name — nullable via CUBE
-      assertThat(query.columns[2].not_null).isTrue() // COUNT(*)
+      assertThat(query.columns[0].notNull).isFalse() // d.id — nullable via CUBE
+      assertThat(query.columns[1].notNull).isFalse() // d.name — nullable via CUBE
+      assertThat(query.columns[2].notNull).isTrue() // COUNT(*)
     }
 
     @Test
@@ -1024,9 +1024,9 @@ class JdbcAnalyzerTest {
       val query = analyzeSimpleQuery(
         "SELECT d.id, d.name, COUNT(*) AS cnt FROM department d GROUP BY ROLLUP (d.id, d.name)",
       )
-      assertThat(query.columns[0].not_null).isFalse() // d.id — nullable via ROLLUP
-      assertThat(query.columns[1].not_null).isFalse() // d.name — nullable via ROLLUP
-      assertThat(query.columns[2].not_null).isTrue() // COUNT(*)
+      assertThat(query.columns[0].notNull).isFalse() // d.id — nullable via ROLLUP
+      assertThat(query.columns[1].notNull).isFalse() // d.name — nullable via ROLLUP
+      assertThat(query.columns[2].notNull).isTrue() // COUNT(*)
     }
   }
 

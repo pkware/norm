@@ -16,7 +16,6 @@ import org.testcontainers.containers.wait.strategy.WaitAllStrategy
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.utility.DockerImageName
-import plugin.Query
 import java.sql.DriverManager
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicInteger
@@ -44,8 +43,8 @@ class QueryAnalysisTest {
         "SELECT id, name FROM t",
       )
       assertThat(query.columns).hasSize(2)
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -55,8 +54,8 @@ class QueryAnalysisTest {
         "SELECT id, bio FROM t",
       )
       assertThat(query.columns).hasSize(2)
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
     }
   }
 
@@ -72,40 +71,40 @@ class QueryAnalysisTest {
     fun `INNER JOIN preserves schema nullability`() {
       val query = analyzeWithSchema(schema, "SELECT d.id, e.id FROM d JOIN e ON e.d_id = d.id")
       assertThat(query.columns).hasSize(2)
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
     fun `LEFT JOIN marks right side as nullable`() {
       val query = analyzeWithSchema(schema, "SELECT d.id, e.id FROM d LEFT JOIN e ON e.d_id = d.id")
       assertThat(query.columns).hasSize(2)
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
     }
 
     @Test
     fun `RIGHT JOIN marks left side as nullable`() {
       val query = analyzeWithSchema(schema, "SELECT d.id, e.id FROM d RIGHT JOIN e ON e.d_id = d.id")
       assertThat(query.columns).hasSize(2)
-      assertThat(query.columns[0].not_null).isFalse()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
     fun `FULL OUTER JOIN marks both sides as nullable`() {
       val query = analyzeWithSchema(schema, "SELECT d.id, e.id FROM d FULL JOIN e ON e.d_id = d.id")
       assertThat(query.columns).hasSize(2)
-      assertThat(query.columns[0].not_null).isFalse()
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
     }
 
     @Test
     fun `CROSS JOIN preserves schema nullability`() {
       val query = analyzeWithSchema(schema, "SELECT d.id, e.id FROM d CROSS JOIN e")
       assertThat(query.columns).hasSize(2)
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -115,8 +114,8 @@ class QueryAnalysisTest {
         "SELECT d.id, sub.id FROM d, LATERAL (SELECT e.id FROM e WHERE e.d_id = d.id LIMIT 1) sub",
       )
       assertThat(query.columns).hasSize(2)
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -126,7 +125,7 @@ class QueryAnalysisTest {
         "SELECT DISTINCT id FROM t",
       )
       assertThat(query.columns).hasSize(1)
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -136,7 +135,7 @@ class QueryAnalysisTest {
         "SELECT id FROM t ORDER BY id LIMIT 10",
       )
       assertThat(query.columns).hasSize(1)
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -146,7 +145,7 @@ class QueryAnalysisTest {
         "SELECT id FROM t FOR UPDATE",
       )
       assertThat(query.columns).hasSize(1)
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -156,8 +155,8 @@ class QueryAnalysisTest {
         "TABLE t",
       )
       assertThat(query.columns).hasSize(2)
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -167,8 +166,8 @@ class QueryAnalysisTest {
         "VALUES (1, 'a'), (2, 'b')",
       )
       assertThat(query.columns).hasSize(2)
-      assertThat(query.columns[0].not_null).isFalse()
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
     }
   }
 
@@ -187,8 +186,8 @@ class QueryAnalysisTest {
         "SELECT d.id, upper(e.label) AS upper_label FROM d LEFT JOIN e ON e.d_id = d.id",
       )
       assertThat(query.columns).hasSize(2)
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
     }
 
     @Test
@@ -198,8 +197,8 @@ class QueryAnalysisTest {
         "SELECT d.id, coalesce(e.label, 'none') AS safe_label FROM d LEFT JOIN e ON e.d_id = d.id",
       )
       assertThat(query.columns).hasSize(2)
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -209,7 +208,7 @@ class QueryAnalysisTest {
         "SELECT upper(coalesce(e.label, 'default')) AS result FROM d LEFT JOIN e ON e.d_id = d.id",
       )
       assertThat(query.columns).hasSize(1)
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -219,7 +218,7 @@ class QueryAnalysisTest {
         "SELECT coalesce(e.a, e.b) AS result FROM d LEFT JOIN e ON e.d_id = d.id",
       )
       assertThat(query.columns).hasSize(1)
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
   }
 
@@ -232,7 +231,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT CASE WHEN id > 0 THEN 'yes' END AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -241,7 +240,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT CASE WHEN id > 0 THEN 'yes' ELSE 'no' END AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -250,7 +249,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT CASE WHEN id > 0 THEN 'yes' ELSE NULL END AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -259,7 +258,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL, bio TEXT)",
         "SELECT CASE WHEN id > 0 THEN bio WHEN id = 0 THEN 'zero' ELSE 'neg' END AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -268,7 +267,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT CASE WHEN id > 10 THEN 'big' WHEN id > 0 THEN 'small' ELSE 'none' END AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -277,7 +276,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT CASE id WHEN 1 THEN 'one' WHEN 2 THEN 'two' END AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -286,7 +285,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT CASE id WHEN 1 THEN 'one' ELSE 'other' END AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -295,7 +294,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT CASE WHEN id > 0 THEN (CASE WHEN id > 10 THEN 'big' END) ELSE 'neg' END AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -304,7 +303,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (status TEXT)",
         "SELECT CASE status WHEN 'active' THEN 1 WHEN 'inactive' THEN 2 ELSE 0 END AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
   }
 
@@ -317,7 +316,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (name TEXT NOT NULL)",
         "SELECT coalesce(name, 'default') AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -326,7 +325,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (bio TEXT)",
         "SELECT coalesce(bio, 'none') AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -335,7 +334,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a TEXT, b TEXT)",
         "SELECT coalesce(a, b) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -344,7 +343,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a TEXT, b TEXT, c TEXT NOT NULL)",
         "SELECT coalesce(a, b, c) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -353,7 +352,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a TEXT)",
         "SELECT coalesce(a) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
   }
 
@@ -366,7 +365,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT nullif(id, 0) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -375,7 +374,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (val INT)",
         "SELECT nullif(val, 0) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
   }
 
@@ -388,7 +387,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a INT NOT NULL, b INT NOT NULL)",
         "SELECT greatest(a, b) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -397,7 +396,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a INT NOT NULL, b INT)",
         "SELECT greatest(a, b) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -406,7 +405,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a INT NOT NULL, b INT NOT NULL)",
         "SELECT least(a, b) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -415,7 +414,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a INT NOT NULL, b INT, c INT NOT NULL)",
         "SELECT greatest(a, b, c) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
   }
 
@@ -428,7 +427,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (name TEXT NOT NULL)",
         "SELECT upper(name) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -437,7 +436,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (name TEXT)",
         "SELECT upper(name) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -447,7 +446,7 @@ class QueryAnalysisTest {
         "SELECT concat(a, b) AS result FROM t",
       )
       assertThat(query.columns).hasSize(1)
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -457,7 +456,7 @@ class QueryAnalysisTest {
         "SELECT concat_ws(', ', a, b) AS result FROM t",
       )
       assertThat(query.columns).hasSize(1)
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -466,7 +465,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (s TEXT)",
         "SELECT substring(s, 1, 3) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -475,7 +474,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT now() AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -484,7 +483,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (name TEXT NOT NULL)",
         "SELECT upper(lower(name)) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -493,7 +492,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (name TEXT)",
         "SELECT upper(lower(name)) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -502,7 +501,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (name TEXT NOT NULL)",
         "SELECT length(name) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -511,7 +510,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (val INT NOT NULL)",
         "SELECT abs(val) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -520,7 +519,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (ts TIMESTAMP NOT NULL)",
         "SELECT date_trunc('day', ts) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -529,7 +528,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (ts TIMESTAMP NOT NULL)",
         "SELECT extract(YEAR FROM ts) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
   }
 
@@ -542,7 +541,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a INT NOT NULL, b INT NOT NULL)",
         "SELECT a + b AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -551,7 +550,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a INT NOT NULL, b INT)",
         "SELECT a + b AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -560,7 +559,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a INT NOT NULL, b INT NOT NULL)",
         "SELECT a > b AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -569,7 +568,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a INT NOT NULL, b INT)",
         "SELECT a > b AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -578,7 +577,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (name TEXT NOT NULL)",
         "SELECT name LIKE '%test%' AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -587,7 +586,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (name TEXT NOT NULL)",
         "SELECT name ILIKE '%test%' AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -596,7 +595,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (val INT NOT NULL)",
         "SELECT val BETWEEN 1 AND 10 AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -605,7 +604,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a TEXT NOT NULL, b TEXT NOT NULL)",
         "SELECT a || b AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -614,7 +613,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a TEXT NOT NULL, b TEXT)",
         "SELECT a || b AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -623,7 +622,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (val INT NOT NULL)",
         "SELECT -val AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -632,7 +631,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (flag BOOLEAN NOT NULL)",
         "SELECT NOT flag AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -641,7 +640,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (flag BOOLEAN)",
         "SELECT NOT flag AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     /**
@@ -653,7 +652,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (data jsonb NOT NULL)",
         "SELECT data->>'key' AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     /**
@@ -665,7 +664,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (data jsonb NOT NULL)",
         "SELECT data->'key' AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
   }
 
@@ -678,7 +677,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id::BIGINT AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -687,7 +686,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (val INT)",
         "SELECT val::TEXT AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -696,7 +695,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (data TEXT NOT NULL)",
         "SELECT data::json AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -705,7 +704,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT '2024-01-01'::DATE AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
   }
 
@@ -718,7 +717,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id IS NULL AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -727,7 +726,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id IS NOT NULL AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -736,7 +735,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (flag BOOLEAN NOT NULL)",
         "SELECT flag IS TRUE AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -745,7 +744,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (flag BOOLEAN NOT NULL)",
         "SELECT flag IS FALSE AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -754,7 +753,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (flag BOOLEAN)",
         "SELECT flag IS UNKNOWN AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -763,7 +762,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a INT, b INT)",
         "SELECT a IS DISTINCT FROM b AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -772,7 +771,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a INT, b INT)",
         "SELECT a IS NOT DISTINCT FROM b AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -781,7 +780,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id = ANY(ARRAY[1, 2, 3]) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -790,7 +789,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a BOOLEAN NOT NULL, b BOOLEAN NOT NULL)",
         "SELECT a AND b AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -799,7 +798,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a BOOLEAN NOT NULL, b BOOLEAN NOT NULL)",
         "SELECT a OR b AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -808,7 +807,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a BOOLEAN, b BOOLEAN NOT NULL)",
         "SELECT a AND b AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -817,7 +816,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a BOOLEAN, b BOOLEAN NOT NULL)",
         "SELECT a OR b AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
   }
 
@@ -830,7 +829,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT NULL AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -839,7 +838,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT 42 AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -848,7 +847,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT 'hello' AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
   }
 
@@ -861,7 +860,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT current_date AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -870,7 +869,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT current_timestamp AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -879,7 +878,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT current_time AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -888,7 +887,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT localtime AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -897,7 +896,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT localtimestamp AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -906,7 +905,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT current_user AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -915,7 +914,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT session_user AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
   }
 
@@ -928,7 +927,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT count(*) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -937,7 +936,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT count(id) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -946,7 +945,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT count(DISTINCT id) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -955,7 +954,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (val INT NOT NULL)",
         "SELECT sum(val) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -964,7 +963,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (val INT NOT NULL)",
         "SELECT avg(val) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -973,7 +972,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (val INT NOT NULL)",
         "SELECT max(val) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -982,7 +981,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (val INT NOT NULL)",
         "SELECT min(val) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -991,7 +990,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (name TEXT NOT NULL)",
         "SELECT string_agg(name, ', ') AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -1028,11 +1027,11 @@ class QueryAnalysisTest {
         ORDER BY dc.name
         """.trimIndent(),
       )
-      assertThat(query.columns.map { "${it.name}: not_null=${it.not_null}" }).containsExactly(
-        "id: not_null=true",
-        "name: not_null=true",
-        "site_count: not_null=true",
-        "tenants: not_null=false",
+      assertThat(query.columns.map { "${it.name}: notNull=${it.notNull}" }).containsExactly(
+        "id: notNull=true",
+        "name: notNull=true",
+        "site_count: notNull=true",
+        "tenants: notNull=false",
       )
     }
 
@@ -1042,7 +1041,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (flag BOOLEAN NOT NULL)",
         "SELECT bool_and(flag) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -1051,7 +1050,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (flag BOOLEAN NOT NULL)",
         "SELECT bool_or(flag) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -1060,7 +1059,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT array_agg(id) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -1069,7 +1068,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL, active BOOLEAN NOT NULL)",
         "SELECT count(*) FILTER (WHERE active) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -1078,7 +1077,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (val INT NOT NULL, active BOOLEAN NOT NULL)",
         "SELECT sum(val) FILTER (WHERE active) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
   }
 
@@ -1091,8 +1090,8 @@ class QueryAnalysisTest {
         "CREATE TABLE t (name TEXT NOT NULL)",
         "SELECT name, count(*) AS cnt FROM t GROUP BY name",
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1101,8 +1100,8 @@ class QueryAnalysisTest {
         "CREATE TABLE t (category TEXT)",
         "SELECT category, count(*) AS cnt FROM t GROUP BY category",
       )
-      assertThat(query.columns[0].not_null).isFalse()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1111,8 +1110,8 @@ class QueryAnalysisTest {
         "CREATE TABLE t (name TEXT NOT NULL)",
         "SELECT upper(name) AS uname, count(*) AS cnt FROM t GROUP BY upper(name)",
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1121,9 +1120,9 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a TEXT NOT NULL, b TEXT NOT NULL)",
         "SELECT a, b, count(*) AS cnt FROM t GROUP BY CUBE(a, b)",
       )
-      assertThat(query.columns[0].not_null).isFalse()
-      assertThat(query.columns[1].not_null).isFalse()
-      assertThat(query.columns[2].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isTrue()
     }
 
     @Test
@@ -1132,9 +1131,9 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a TEXT NOT NULL, b TEXT NOT NULL)",
         "SELECT a, b, count(*) AS cnt FROM t GROUP BY ROLLUP(a, b)",
       )
-      assertThat(query.columns[0].not_null).isFalse()
-      assertThat(query.columns[1].not_null).isFalse()
-      assertThat(query.columns[2].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isTrue()
     }
 
     @Test
@@ -1143,9 +1142,9 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a TEXT NOT NULL, b TEXT NOT NULL)",
         "SELECT a, b, count(*) AS cnt FROM t GROUP BY GROUPING SETS((a), (b), ())",
       )
-      assertThat(query.columns[0].not_null).isFalse()
-      assertThat(query.columns[1].not_null).isFalse()
-      assertThat(query.columns[2].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isTrue()
     }
 
     @Test
@@ -1154,9 +1153,9 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a TEXT NOT NULL)",
         "SELECT a, grouping(a) AS grp, count(*) AS cnt FROM t GROUP BY ROLLUP(a)",
       )
-      assertThat(query.columns[0].not_null).isFalse()
-      assertThat(query.columns[1].not_null).isTrue()
-      assertThat(query.columns[2].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+      assertThat(query.columns[2].notNull).isTrue()
     }
   }
 
@@ -1169,8 +1168,8 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id, row_number() OVER() AS rn FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1179,7 +1178,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id, rank() OVER(ORDER BY id) AS rnk FROM t",
       )
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1188,7 +1187,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id, dense_rank() OVER(ORDER BY id) AS drnk FROM t",
       )
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1197,7 +1196,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id, ntile(4) OVER(ORDER BY id) AS bucket FROM t",
       )
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1206,7 +1205,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id, percent_rank() OVER(ORDER BY id) AS pr FROM t",
       )
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1215,7 +1214,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id, cume_dist() OVER(ORDER BY id) AS cd FROM t",
       )
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1224,7 +1223,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id, count(*) OVER() AS cnt FROM t",
       )
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1233,7 +1232,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id, sum(id) OVER() AS total FROM t",
       )
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
     }
 
     @Test
@@ -1242,7 +1241,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id, lag(id) OVER(ORDER BY id) AS prev FROM t",
       )
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
     }
 
     @Test
@@ -1251,7 +1250,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id, lag(id, 1, 0) OVER(ORDER BY id) AS prev FROM t",
       )
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1261,7 +1260,7 @@ class QueryAnalysisTest {
         "SELECT id, lag(id, 1, fallback) OVER(ORDER BY id) AS prev FROM t",
       )
       assertThat(query.columns).hasSize(2)
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
     }
 
     @Test
@@ -1270,7 +1269,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id, lead(id) OVER(ORDER BY id) AS nxt FROM t",
       )
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
     }
 
     @Test
@@ -1279,7 +1278,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id, lead(id, 1, 0) OVER(ORDER BY id) AS nxt FROM t",
       )
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1289,7 +1288,7 @@ class QueryAnalysisTest {
         "SELECT id, lead(id, 1, fallback) OVER(ORDER BY id) AS nxt FROM t",
       )
       assertThat(query.columns).hasSize(2)
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
     }
 
     @Test
@@ -1298,7 +1297,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id, first_value(id) OVER(ORDER BY id) AS fv FROM t",
       )
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
     }
 
     @Test
@@ -1307,7 +1306,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id, last_value(id) OVER(ORDER BY id) AS lv FROM t",
       )
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
     }
 
     @Test
@@ -1316,7 +1315,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id, nth_value(id, 2) OVER(ORDER BY id) AS nv FROM t",
       )
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
     }
   }
 
@@ -1329,7 +1328,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT exists(SELECT 1 FROM t) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -1338,7 +1337,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT (SELECT max(id) FROM t) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -1348,7 +1347,7 @@ class QueryAnalysisTest {
         "SELECT id IN (SELECT id FROM t2) AS result FROM t",
       )
       assertThat(query.columns).hasSize(1)
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -1358,7 +1357,7 @@ class QueryAnalysisTest {
         "SELECT category IN (SELECT category FROM t2) AS result FROM t",
       )
       assertThat(query.columns).hasSize(1)
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -1367,8 +1366,8 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
         "SELECT * FROM (SELECT id, name FROM t) sub",
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1377,7 +1376,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT * FROM generate_series(1, 10) AS x",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -1386,8 +1385,8 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL); CREATE TABLE t2 (id INT NOT NULL, t_id INT NOT NULL, val INT NOT NULL)",
         "SELECT id, (SELECT sum(val) FROM t2 WHERE t2.t_id = t.id) AS total FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
     }
   }
 
@@ -1400,8 +1399,8 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
         "WITH c AS (SELECT id, name FROM t) SELECT * FROM c",
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1415,8 +1414,8 @@ class QueryAnalysisTest {
         SELECT * FROM c
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
     }
 
     @Test
@@ -1432,7 +1431,7 @@ class QueryAnalysisTest {
         SELECT n FROM counter
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -1447,8 +1446,8 @@ class QueryAnalysisTest {
         FROM dept LEFT JOIN emp ON emp.d_id = dept.id
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
     }
 
     @Test
@@ -1465,8 +1464,8 @@ class QueryAnalysisTest {
         SELECT d_name, e_name FROM filtered
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
     }
 
     @Test
@@ -1480,8 +1479,8 @@ class QueryAnalysisTest {
         SELECT * FROM deleted
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1495,8 +1494,8 @@ class QueryAnalysisTest {
         SELECT * FROM inserted
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1509,8 +1508,8 @@ class QueryAnalysisTest {
         FROM d LEFT JOIN emp ON emp.d_id = d.id
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
     }
 
     @Test
@@ -1524,8 +1523,8 @@ class QueryAnalysisTest {
         SELECT * FROM updated
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1540,8 +1539,8 @@ class QueryAnalysisTest {
         FROM d LEFT JOIN deleted del ON del.d_id = d.id
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
     }
 
     @Test
@@ -1553,8 +1552,8 @@ class QueryAnalysisTest {
         INSERT INTO t(name) SELECT name FROM source RETURNING *
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1566,8 +1565,8 @@ class QueryAnalysisTest {
         UPDATE t SET name = 'x' WHERE id IN (SELECT id FROM target_ids) RETURNING *
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1579,8 +1578,8 @@ class QueryAnalysisTest {
         DELETE FROM t WHERE id IN (SELECT id FROM target_ids) RETURNING *
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1594,8 +1593,8 @@ class QueryAnalysisTest {
         INSERT INTO t2(name) SELECT name FROM removed RETURNING *
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1604,8 +1603,8 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
         "WITH recursive_cte AS (SELECT id, name FROM t) SELECT * FROM recursive_cte",
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1619,7 +1618,7 @@ class QueryAnalysisTest {
         SELECT * FROM combined
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -1633,8 +1632,8 @@ class QueryAnalysisTest {
         SELECT * FROM stats
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
     }
 
     @Test
@@ -1650,8 +1649,8 @@ class QueryAnalysisTest {
         SELECT * FROM enriched
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
     }
 
     @Test
@@ -1667,8 +1666,8 @@ class QueryAnalysisTest {
         SELECT * FROM tree
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
     }
 
     @Test
@@ -1683,8 +1682,8 @@ class QueryAnalysisTest {
         FROM t LEFT JOIN removed ON removed.t_id = t.id
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
     }
   }
 
@@ -1697,8 +1696,8 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL)",
         "INSERT INTO t(name) VALUES ('test') RETURNING *",
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1707,8 +1706,8 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
         "UPDATE t SET name = 'x' WHERE id = -1 RETURNING *",
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1717,8 +1716,8 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
         "DELETE FROM t WHERE id = -1 RETURNING *",
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1727,8 +1726,8 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL)",
         "INSERT INTO t(name) VALUES ('test') RETURNING id, name",
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1741,8 +1740,8 @@ class QueryAnalysisTest {
         RETURNING *
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1751,8 +1750,8 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL)",
         "INSERT INTO t(name) SELECT name FROM t WHERE FALSE RETURNING *",
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1770,9 +1769,9 @@ class QueryAnalysisTest {
         RETURNING t.id, t.name, s.label
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
-      assertThat(query.columns[2].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+      assertThat(query.columns[2].notNull).isFalse()
     }
 
     @Test
@@ -1790,9 +1789,9 @@ class QueryAnalysisTest {
         RETURNING t.id, t.name, s.label
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
-      assertThat(query.columns[2].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+      assertThat(query.columns[2].notNull).isFalse()
     }
 
     @Test
@@ -1805,9 +1804,9 @@ class QueryAnalysisTest {
         RETURNING t.*
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
-      assertThat(query.columns[2].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+      assertThat(query.columns[2].notNull).isFalse()
     }
 
     @Test
@@ -1820,9 +1819,9 @@ class QueryAnalysisTest {
         RETURNING t.*
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
-      assertThat(query.columns[2].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+      assertThat(query.columns[2].notNull).isFalse()
     }
 
     @Test
@@ -1831,8 +1830,8 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL DEFAULT 'unnamed')",
         "INSERT INTO t DEFAULT VALUES RETURNING *",
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1847,8 +1846,8 @@ class QueryAnalysisTest {
         RETURNING *
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
   }
 
@@ -1873,7 +1872,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (name TEXT NOT NULL)",
         "SELECT name FROM t UNION ALL SELECT name FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -1882,7 +1881,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (name TEXT NOT NULL)",
         "SELECT name FROM t INTERSECT SELECT name FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -1891,7 +1890,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (name TEXT NOT NULL)",
         "SELECT name FROM t EXCEPT SELECT name FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -1904,7 +1903,7 @@ class QueryAnalysisTest {
         SELECT e.name FROM d LEFT JOIN e ON e.d_id = d.id
         """.trimIndent(),
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
   }
 
@@ -1917,8 +1916,8 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
         "SELECT id, name FROM t WHERE id = ?",
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1927,7 +1926,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
         "SELECT id FROM t WHERE name = 'what?' OR id = ?",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -1936,7 +1935,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
         "SELECT id FROM t -- why?\nWHERE id = ?",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
   }
 
@@ -1949,7 +1948,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "-- comment\nSELECT id FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -1958,7 +1957,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "/* block comment */ SELECT id FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -1967,7 +1966,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "-- line 1\n-- line 2\n/* block */\nSELECT id FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -1976,8 +1975,8 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
         "-- setup\nWITH cte AS (SELECT id, name FROM t) SELECT * FROM cte",
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test
@@ -1986,8 +1985,8 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL)",
         "-- cleanup\nINSERT INTO t(name) VALUES ('test') RETURNING *",
       )
-      assertThat(query.columns[0].not_null).isTrue()
-      assertThat(query.columns[1].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
     }
   }
 
@@ -2001,7 +2000,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (data jsonb NOT NULL)",
         "SELECT JSON_VALUE(data, '\$.name') AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -2011,7 +2010,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (data jsonb NOT NULL)",
         "SELECT JSON_VALUE(data, '\$.name' RETURNING TEXT DEFAULT 'N/A' ON EMPTY DEFAULT 'ERR' ON ERROR) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -2021,7 +2020,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (data jsonb NOT NULL)",
         "SELECT JSON_EXISTS(data, '\$.name') AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -2031,7 +2030,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (data jsonb NOT NULL)",
         "SELECT JSON_QUERY(data, '\$.items') AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
   }
 
@@ -2044,7 +2043,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (name TEXT NOT NULL)",
         "SELECT xmlelement(NAME e, name) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -2053,7 +2052,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (name TEXT NOT NULL, val INT NOT NULL)",
         "SELECT xmlforest(name, val) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -2062,7 +2061,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a xml NOT NULL, b xml NOT NULL)",
         "SELECT xmlconcat(a, b) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
   }
 
@@ -2075,7 +2074,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT ARRAY[1, 2, 3] AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -2084,7 +2083,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (arr INT[] NOT NULL)",
         "SELECT arr[1] AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -2093,7 +2092,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (arr INT[] NOT NULL)",
         "SELECT * FROM unnest(ARRAY[1, 2, 3]) AS x",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -2102,7 +2101,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT array(SELECT id FROM t) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
   }
 
@@ -2115,7 +2114,7 @@ class QueryAnalysisTest {
         "CREATE TYPE point_t AS (x INT, y INT); CREATE TABLE t (p point_t NOT NULL)",
         "SELECT (p).x AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isFalse()
+      assertThat(query.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -2124,7 +2123,7 @@ class QueryAnalysisTest {
         "CREATE TABLE t (a INT NOT NULL, b INT NOT NULL)",
         "SELECT ROW(a, b) AS result FROM t",
       )
-      assertThat(query.columns[0].not_null).isTrue()
+      assertThat(query.columns[0].notNull).isTrue()
     }
   }
 

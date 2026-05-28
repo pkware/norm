@@ -8,11 +8,6 @@ import assertk.assertions.isEqualTo
 import assertk.assertions.isNotEmpty
 import assertk.assertions.none
 import org.junit.jupiter.api.Test
-import plugin.Catalog
-import plugin.Column
-import plugin.Identifier
-import plugin.Schema
-import plugin.Table
 
 class CrudQuerySynthesizerTest {
 
@@ -127,7 +122,7 @@ class CrudQuerySynthesizerTest {
     val view = Table(
       rel = Identifier(name = "author_names", schema = "public"),
       columns = listOf(column("id", "int4", notNull = true, isPrimaryKey = true)),
-      is_view = true,
+      isView = true,
     )
     val catalog = catalog(view)
 
@@ -162,7 +157,7 @@ class CrudQuerySynthesizerTest {
       ),
     )
     val catalog = Catalog(
-      default_schema = "analytics",
+      defaultSchema = "analytics",
       schemas = listOf(Schema(name = "analytics", tables = listOf(table))),
     )
 
@@ -281,7 +276,7 @@ class CrudQuerySynthesizerTest {
       ),
     )
     val catalog = Catalog(
-      default_schema = "select",
+      defaultSchema = "select",
       schemas = listOf(Schema(name = "select", tables = listOf(table))),
     )
     val quoter = quoteOnly("select", "order")
@@ -389,14 +384,14 @@ class CrudQuerySynthesizerTest {
     isGenerated: Boolean = false,
   ) = Column(
     name = name,
-    not_null = notNull,
+    notNull = notNull,
     type = Identifier(name = typeName),
     table = Identifier(name = ""),
-    original_name = name,
-    is_primary_key = isPrimaryKey,
-    is_auto_increment = isAutoIncrement,
-    has_default = hasDefault,
-    is_generated = isGenerated,
+    originalName = name,
+    isPrimaryKey = isPrimaryKey,
+    isAutoIncrement = isAutoIncrement,
+    hasDefault = hasDefault,
+    isGenerated = isGenerated,
   )
 
   private fun table(name: String, vararg columns: Column) = Table(
@@ -405,7 +400,7 @@ class CrudQuerySynthesizerTest {
   )
 
   private fun catalog(vararg tables: Table) = Catalog(
-    default_schema = "public",
+    defaultSchema = "public",
     schemas = listOf(Schema(name = "public", tables = tables.toList())),
   )
 }

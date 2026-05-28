@@ -1,12 +1,11 @@
 package norm.gradle
 
+import norm.generator.Catalog
 import norm.generator.CrudQuerySynthesizer
 import norm.generator.JdbcAnalyzer
 import norm.generator.ParsedQuery
 import norm.generator.QueryFileParser
 import norm.generator.generateCode
-import okio.buffer
-import okio.sink
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
@@ -24,7 +23,6 @@ import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.containers.wait.strategy.Wait
 import org.testcontainers.containers.wait.strategy.WaitAllStrategy
 import org.testcontainers.utility.DockerImageName
-import plugin.Catalog
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.SQLException
@@ -133,7 +131,7 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
         for (fileContent in files) {
           val file = directory.resolve(fileContent.name)
           file.parentFile.mkdirs()
-          file.sink().buffer().use { it.write(fileContent.contents) }
+          file.writeText(fileContent.contents)
         }
 
         logger.lifecycle("Norm: Generated ${files.size} files")
