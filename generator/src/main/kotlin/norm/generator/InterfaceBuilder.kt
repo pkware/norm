@@ -11,7 +11,6 @@ import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.TypeSpec
 import com.squareup.kotlinpoet.asClassName
-import plugin.Parameter
 import java.sql.Statement
 
 /**
@@ -61,7 +60,7 @@ internal fun TypeSpec.Builder.addSqlStatementInterfaceMethod(query: SqlStatement
  */
 private fun buildMapperDelegationBody(query: SqlStatement): CodeBlock {
   val body = CodeBlock.builder().add("return %N(", query.name)
-  for ((index, _) in query.parameters.asSequence().mapNotNull(Parameter::column).withIndex()) {
+  for (index in query.parameters.indices) {
     body.add("%N, ", query.getParameterName(index))
   }
   if (query.resultRowShape.isComposedOfMultipleColumns) {
@@ -227,8 +226,8 @@ private fun FunSpec.Builder.addStandardKdoc(query: SqlStatement, extraFormat: St
   if (extraFormat != null) {
     addKdoc(extraFormat, *extraArgs)
   }
-  for ((index, parameter) in query.parameters.asSequence().mapNotNull(Parameter::column).withIndex()) {
-    val comment = parameter.comment
+  for ((index, parameter) in query.parameters.withIndex()) {
+    val comment = parameter.column!!.comment
     if (comment.isNotEmpty()) {
       addKdoc("@param %L %L\n", query.getParameterName(index), comment)
     }

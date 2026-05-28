@@ -140,6 +140,17 @@ message Query {
   // True when this query was synthesized by CrudQuerySynthesizer.synthesizeInsert.
   // Used to gate batch-with-returning code generation.
   bool is_synthesized_insert = 9 [json_name = "is_synthesized_insert"];
+
+  // Maps each 1-based JDBC parameter position to the named parameter that produced it.
+  //
+  // Populated when the SQL query uses `:paramName` syntax (see QueryFileParser). Each
+  // occurrence of a named parameter gets its own `?` placeholder and its own entry here.
+  // When the same name appears at multiple positions (e.g., `:scannedAt` used twice),
+  // those positions map to the same name — this is how SqlStatement detects reuse and
+  // collapses them into a single function parameter.
+  //
+  // Empty for queries using positional `?` parameters or synthesized CRUD queries.
+  map<int32, string> named_parameters = 10 [json_name = "named_parameters"];
 }
 
 message Parameter {

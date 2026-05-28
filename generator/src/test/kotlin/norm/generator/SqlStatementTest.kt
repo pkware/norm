@@ -13,6 +13,7 @@ import assertk.assertions.isNull
 import assertk.assertions.isTrue
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.asTypeName
+import norm.generator.ParameterBinding
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import plugin.Catalog
@@ -1081,6 +1082,124 @@ class SqlStatementTest {
     }
   }
 
+  @Nested
+  inner class ReusedNamedParameters {
+
+    @Test
+    fun `no named parameters means no reuse`() {
+      val statement = createStatement(
+        "INSERT INTO t (a, b) VALUES (?, ?);",
+        cmd = ":execrows",
+        params = listOf(
+          param(1, "a", "text"),
+          param(2, "b", "text"),
+        ),
+      )
+
+      assertThat(statement.parameters).hasSize(2)
+      assertThat(statement.parameterBindings).hasSize(2)
+      assertThat(statement.getParameterName(0)).isEqualTo("a")
+      assertThat(statement.getParameterName(1)).isEqualTo("b")
+    }
+
+    @Test
+    fun `reused named parameter collapses to single parameter`() {
+      val statement = createStatement(
+        "INSERT INTO t (a, b) VALUES (?, ?);",
+        cmd = ":execrows",
+        params = listOf(
+          param(1, "scannedAt", "timestamptz"),
+          param(2, "scannedAt", "timestamptz"),
+        ),
+        namedParameters = mapOf(1 to "scannedAt", 2 to "scannedAt"),
+      )
+
+      assertThat(statement.parameters).hasSize(1)
+      assertThat(statement.getParameterName(0)).isEqualTo("scannedAt")
+      assertThat(statement.parameterBindings).hasSize(2)
+      assertThat(statement.parameterBindings[0]).isEqualTo(ParameterBinding(1, 0, statement.parameters[0].column!!))
+      assertThat(statement.parameterBindings[1]).isEqualTo(ParameterBinding(2, 0, statement.parameters[0].column!!))
+    }
+
+    @Test
+    fun `mixed unique and reused named parameters`() {
+      val statement = createStatement(
+        "INSERT INTO t (a, b, c) VALUES (?, ?, ?);",
+        cmd = ":execrows",
+        params = listOf(
+          param(1, "dataCenterId", "uuid"),
+          param(2, "scannedAt", "timestamptz"),
+          param(3, "scannedAt", "timestamptz"),
+        ),
+        namedParameters = mapOf(1 to "dataCenterId", 2 to "scannedAt", 3 to "scannedAt"),
+      )
+
+      assertThat(statement.parameters).hasSize(2)
+      assertThat(statement.getParameterName(0)).isEqualTo("dataCenterId")
+      assertThat(statement.getParameterName(1)).isEqualTo("scannedAt")
+      assertThat(statement.parameterBindings).hasSize(3)
+      assertThat(statement.parameterBindings[0].parameterIndex).isEqualTo(0)
+      assertThat(statement.parameterBindings[1].parameterIndex).isEqualTo(1)
+      assertThat(statement.parameterBindings[2].parameterIndex).isEqualTo(1)
+    }
+
+    @Test
+    fun `inferred duplicate names are NOT collapsed without namedParameters`() {
+      val statement = createStatement(
+        "SELECT * FROM crosstab(?, ?);",
+        cmd = ":many",
+        params = listOf(
+          param(1, "crosstab", "text"),
+          param(2, "crosstab", "text"),
+        ),
+        columns = listOf(column("id", type = "int4")),
+      )
+
+      assertThat(statement.parameters).hasSize(2)
+      assertThat(statement.getParameterName(0)).isEqualTo("crosstab")
+      assertThat(statement.getParameterName(1)).isEqualTo("crosstab2")
+    }
+
+    @Test
+    fun `three positions sharing same named parameter`() {
+      val statement = createStatement(
+        "INSERT INTO t (a, b, c) VALUES (?, ?, ?);",
+        cmd = ":execrows",
+        params = listOf(
+          param(1, "value", "text"),
+          param(2, "value", "text"),
+          param(3, "value", "text"),
+        ),
+        namedParameters = mapOf(1 to "value", 2 to "value", 3 to "value"),
+      )
+
+      assertThat(statement.parameters).hasSize(1)
+      assertThat(statement.parameterBindings).hasSize(3)
+      assertThat(statement.parameterBindings.map { it.parameterIndex }).containsExactly(0, 0, 0)
+    }
+
+    @Test
+    fun `multiple distinct named parameters each reused`() {
+      val statement = createStatement(
+        "INSERT INTO t (a, b, c, d) VALUES (?, ?, ?, ?);",
+        cmd = ":execrows",
+        params = listOf(
+          param(1, "x", "text"),
+          param(2, "y", "int4"),
+          param(3, "x", "text"),
+          param(4, "y", "int4"),
+        ),
+        namedParameters = mapOf(1 to "x", 2 to "y", 3 to "x", 4 to "y"),
+      )
+
+      assertThat(statement.parameters).hasSize(2)
+      assertThat(statement.getParameterName(0)).isEqualTo("x")
+      assertThat(statement.getParameterName(1)).isEqualTo("y")
+      assertThat(statement.parameterBindings.map { it.parameterIndex }).containsExactly(0, 1, 0, 1)
+      assertThat(statement.parameterBindings.map { it.jdbcPosition }).containsExactly(1, 2, 3, 4)
+    }
+  }
+
   // Helper to create SqlStatement with common defaults
   private fun createStatement(
     sql: String,
@@ -1091,6 +1210,7 @@ class SqlStatementTest {
     catalog: Catalog = Catalog(),
     comments: List<String> = emptyList(),
     isSynthesizedInsert: Boolean = false,
+    namedParameters: Map<Int, String> = emptyMap(),
   ): SqlStatement {
     val repository = TypeRepository("test", catalog)
     return SqlStatement(
@@ -1103,6 +1223,7 @@ class SqlStatementTest {
         params = params,
         comments = comments,
         is_synthesized_insert = isSynthesizedInsert,
+        named_parameters = namedParameters,
       ),
       repository,
     )

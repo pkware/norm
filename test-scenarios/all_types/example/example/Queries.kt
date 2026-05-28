@@ -690,4 +690,233 @@ public interface Queries {
   public fun <T> allNamesDynamically(mapper: (name: String?) -> T): Query<T>
 
   public fun allNamesDynamically(): Query<String?> = allNamesDynamically(::inputValue)
+
+  /**
+   * Reused named parameter in :execrows — exercises batch body codegen.
+   *
+   * ```sql
+   * UPDATE type SET string_type = ?, text_type = ? WHERE serial_type = ?
+   * ```
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateBothStrings(
+    stream: Iterable<Input>,
+    string_type: Input.() -> String,
+    serial_type: Input.() -> Int,
+    batchSize: Int,
+  ): IntArray
+
+  /**
+   * Reused named parameter in :execrows — exercises batch body codegen.
+   *
+   * ```sql
+   * UPDATE type SET string_type = ?, text_type = ? WHERE serial_type = ?
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateBothStrings(
+    stream: Iterable<Input>,
+    string_type: Input.() -> String,
+    serial_type: Input.() -> Int,
+  ): IntArray = updateBothStrings(stream, string_type, serial_type, 100)
+
+  /**
+   * Reused named parameter in :execrows — exercises batch body codegen.
+   *
+   * ```sql
+   * UPDATE type SET string_type = ?, text_type = ? WHERE serial_type = ?
+   * ```
+   *
+   * @return The number of rows updated.
+   */
+  @Throws(SQLException::class)
+  public fun updateBothStrings(string_type: String, serial_type: Int): Int
+
+  /**
+   * Reused named parameter in :one — exercises buildOne body codegen.
+   *
+   * ```sql
+   * SELECT * FROM type WHERE string_type = ? AND text_type = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> findByMatchingStrings(`value`: String, mapper: (
+    smallserial_type: Short,
+    serial2_type: Short,
+    pg_serial2_type: Short,
+    serial_type: Int,
+    serial4_type: Int,
+    pg_serial4_type: Int,
+    bigserial_type: Long,
+    serial8_type: Long,
+    pg_serial8_type: Long,
+    smallint_type: Short?,
+    int2_type: Short,
+    pg_int2_type: Short?,
+    integer_type: Int?,
+    int_type: Int?,
+    int4_type: Int,
+    pg_int4_type: Int?,
+    bigint_type: Long?,
+    int8_type: Long,
+    pg_int8_type: Long?,
+    real_type: Float?,
+    float4_type: Float,
+    pg_float4_type: Float?,
+    float_type: Double?,
+    double_type: Double?,
+    float8_type: Double,
+    pg_float8_type: Double?,
+    numeric_type: BigDecimal?,
+    pg_numeric_type: BigDecimal?,
+    bool_type: Boolean?,
+    pg_bool_type: Boolean?,
+    jsonb_type: String?,
+    blob_type: Blob?,
+    text_type: String?,
+    varchar_type: String?,
+    pg_varchar_type: String?,
+    bpchar_type: String?,
+    pg_bpchar_type: String?,
+    string_type: String,
+    date_type: LocalDate?,
+    date_notnull_type: LocalDate,
+    pg_date_type: LocalDate?,
+    time_type: LocalTime?,
+    time_notnull_type: LocalTime,
+    pg_time_type: LocalTime?,
+    timetz_type: OffsetTime?,
+    timetz_notnull_type: OffsetTime,
+    pg_timetz_type: OffsetTime?,
+    timestamp_type: LocalDateTime?,
+    timestamp_notnull_type: LocalDateTime,
+    pg_timestamp_type: LocalDateTime?,
+    timestamptz_type: Instant?,
+    timestamptz_notnull_type: Instant,
+    pg_timestamptz_type: Instant?,
+    uuid_type: UUID?,
+    uuid_notnull_type: UUID,
+    pg_uuid_type: UUID?,
+    bytea_type: ByteArray?,
+    bytea_notnull_type: ByteArray,
+    pg_bytea_type: ByteArray?,
+    int_array_type: Array<Int?>?,
+    int_array_notnull_type: Array<Int?>,
+    text_array_type: Array<String?>?,
+    text_array_notnull_type: Array<String?>,
+  ) -> T): T
+
+  /**
+   * Reused named parameter in :one — exercises buildOne body codegen.
+   *
+   * ```sql
+   * SELECT * FROM type WHERE string_type = ? AND text_type = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun findByMatchingStrings(`value`: String): Type = findByMatchingStrings(`value`, ::Type)
+
+  /**
+   * Reused named parameter in :many — exercises queryBinder body codegen.
+   *
+   * ```sql
+   * SELECT * FROM type WHERE string_type = ? AND text_type = ?
+   * ```
+   */
+  public fun <T : Any> filterByMatchingStrings(`value`: String, mapper: (
+    smallserial_type: Short,
+    serial2_type: Short,
+    pg_serial2_type: Short,
+    serial_type: Int,
+    serial4_type: Int,
+    pg_serial4_type: Int,
+    bigserial_type: Long,
+    serial8_type: Long,
+    pg_serial8_type: Long,
+    smallint_type: Short?,
+    int2_type: Short,
+    pg_int2_type: Short?,
+    integer_type: Int?,
+    int_type: Int?,
+    int4_type: Int,
+    pg_int4_type: Int?,
+    bigint_type: Long?,
+    int8_type: Long,
+    pg_int8_type: Long?,
+    real_type: Float?,
+    float4_type: Float,
+    pg_float4_type: Float?,
+    float_type: Double?,
+    double_type: Double?,
+    float8_type: Double,
+    pg_float8_type: Double?,
+    numeric_type: BigDecimal?,
+    pg_numeric_type: BigDecimal?,
+    bool_type: Boolean?,
+    pg_bool_type: Boolean?,
+    jsonb_type: String?,
+    blob_type: Blob?,
+    text_type: String?,
+    varchar_type: String?,
+    pg_varchar_type: String?,
+    bpchar_type: String?,
+    pg_bpchar_type: String?,
+    string_type: String,
+    date_type: LocalDate?,
+    date_notnull_type: LocalDate,
+    pg_date_type: LocalDate?,
+    time_type: LocalTime?,
+    time_notnull_type: LocalTime,
+    pg_time_type: LocalTime?,
+    timetz_type: OffsetTime?,
+    timetz_notnull_type: OffsetTime,
+    pg_timetz_type: OffsetTime?,
+    timestamp_type: LocalDateTime?,
+    timestamp_notnull_type: LocalDateTime,
+    pg_timestamp_type: LocalDateTime?,
+    timestamptz_type: Instant?,
+    timestamptz_notnull_type: Instant,
+    pg_timestamptz_type: Instant?,
+    uuid_type: UUID?,
+    uuid_notnull_type: UUID,
+    pg_uuid_type: UUID?,
+    bytea_type: ByteArray?,
+    bytea_notnull_type: ByteArray,
+    pg_bytea_type: ByteArray?,
+    int_array_type: Array<Int?>?,
+    int_array_notnull_type: Array<Int?>,
+    text_array_type: Array<String?>?,
+    text_array_notnull_type: Array<String?>,
+  ) -> T): Many<T>
+
+  /**
+   * Reused named parameter in :many — exercises queryBinder body codegen.
+   *
+   * ```sql
+   * SELECT * FROM type WHERE string_type = ? AND text_type = ?
+   * ```
+   */
+  public fun filterByMatchingStrings(`value`: String): Many<Type> = filterByMatchingStrings(`value`, ::Type)
 }

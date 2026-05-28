@@ -52,3 +52,15 @@ LEFT JOIN employee e ON e.department_id = d.id;
 SELECT name FROM department
 UNION ALL
 SELECT name FROM employee;
+
+-- Reused named parameter in :execrows — exercises batch body codegen.
+-- name: updateBothStrings :execrows
+UPDATE type SET string_type = :string_type, text_type = :string_type WHERE serial_type = :serial_type;
+
+-- Reused named parameter in :one — exercises buildOne body codegen.
+-- name: findByMatchingStrings :one
+SELECT * FROM type WHERE string_type = :value AND text_type = :value;
+
+-- Reused named parameter in :many — exercises queryBinder body codegen.
+-- name: filterByMatchingStrings :many
+SELECT * FROM type WHERE string_type = :value AND text_type = :value;
