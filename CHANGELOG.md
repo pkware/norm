@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.3.0](https://github.com/pkware/norm/compare/v0.2.1...v0.3.0) (2026-05-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* Generated code for timestamptz columns now uses java.time.Instant instead of java.time.OffsetDateTime.
+
+### Features
+
+* map timestamptz to Instant instead of OffsetDateTime ([a62b221](https://github.com/pkware/norm/commit/a62b221ca10f6ac571dff27141c660080e67d3e2))
+* support directories for schema and query paths ([84c910a](https://github.com/pkware/norm/commit/84c910a85eb662206414303bb08e73b54aa385c8))
+
+
+### Bug Fixes
+
+* deduplicate reused named parameters in generated code ([379cb75](https://github.com/pkware/norm/commit/379cb75c4966c91c56fd20290abc3ae13ee97d75)), closes [#102](https://github.com/pkware/norm/issues/102)
+* **deps:** update dependency com.diffplug.spotless:spotless-plugin-gradle to v8.5.1 ([94bcf86](https://github.com/pkware/norm/commit/94bcf86501295a39eb3fc7d32ad73a6ab2fc7675))
+* **deps:** update dependency com.diffplug.spotless:spotless-plugin-gradle to v8.6.0 ([9ca4508](https://github.com/pkware/norm/commit/9ca45082d80546b36ed5fdef066ca726bedf9998))
+* **deps:** update dependency org.junit.jupiter:junit-jupiter-params to v6.1.0 ([98bcc37](https://github.com/pkware/norm/commit/98bcc375921a3d68cabd1d6d3d037ea00384d8a9))
+* disable parallel test execution for Micronaut e2e tests ([02573b1](https://github.com/pkware/norm/commit/02573b1e12115125463e6f5b7b95ee0f280eb07e))
+* resolve compiler warning ([12b0be0](https://github.com/pkware/norm/commit/12b0be0f59aec6aaec085613b1635f37067a60fe))
+* stop closing transaction-bound connection in Micronaut e2e tests ([4a934c1](https://github.com/pkware/norm/commit/4a934c196af5188541d6271d760655f95c07e18c))
+* stop dumping raw pg_node_tree text to Gradle output ([bc5d3c7](https://github.com/pkware/norm/commit/bc5d3c7a6f88e04cc8a8767549957498b7dd0449)), closes [#74](https://github.com/pkware/norm/issues/74)
+* use a fixed version of Norm ([2a98340](https://github.com/pkware/norm/commit/2a983402914887354541572471fd7c8ee40bdf57))
+* use regular function types instead of extension functions in batch extractors ([c66517c](https://github.com/pkware/norm/commit/c66517ce7c6bc6198c3a12ff58b1e771283a7e42))
+
 ## [0.2.1](https://github.com/pkware/norm/compare/v0.2.0...v0.2.1) (2026-05-15)
 
 
