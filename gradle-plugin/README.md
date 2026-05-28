@@ -41,6 +41,31 @@ norm {
 }
 ```
 
+### Directory-based Configuration
+
+When a path points to a directory, Norm includes all `*.sql` files directly inside it
+(non-recursive), applied in lexicographic order by filename. This works well with migration
+tools like Flyway or Liquibase where schemas are a folder of ordered migration files.
+
+```kotlin
+norm {
+  databases {
+    register("example") {
+      packageName.set("example")
+      schemas.add("src/main/resources/db/migration") // all *.sql files in this directory
+      queries.add("src/main/sql/queries.sql")
+    }
+  }
+}
+```
+
+You can mix individual files and directories:
+
+```kotlin
+schemas.add("src/main/sql/base-schema.sql")
+schemas.add("src/main/resources/db/migration") // additional migrations from a directory
+```
+
 ### Configuration Properties
 
 **Property: `postgresVersion`**

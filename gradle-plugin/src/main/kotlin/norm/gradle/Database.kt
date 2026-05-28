@@ -14,17 +14,24 @@ import org.gradle.api.tasks.Input
 public abstract class Database(private val name: String) : Named {
 
   /**
-   * Paths to files containing the SQL schema.
+   * Paths to files or directories containing the SQL schema.
    *
-   * Relative paths will be resolved against the project directory.
+   * When a path points to a directory, all `*.sql` files directly inside it are included
+   * (non-recursive). Files are applied in lexicographic order by absolute path, regardless of
+   * whether they come from individual file entries or directory entries.
+   *
+   * Relative paths are resolved against the project directory.
    */
   @get:Input
   public abstract val schemas: ListProperty<String>
 
   /**
-   * Paths to files containing the queries for which to generate code.
+   * Paths to files or directories containing the queries for which to generate code.
    *
-   * Relative paths will be resolved against the project directory.
+   * When a path points to a directory, all `*.sql` files directly inside it are included
+   * (non-recursive). Files are parsed in lexicographic order by absolute path.
+   *
+   * Relative paths are resolved against the project directory.
    */
   @get:Input
   public abstract val queries: ListProperty<String>
