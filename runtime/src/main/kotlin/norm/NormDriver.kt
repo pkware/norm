@@ -185,7 +185,7 @@ public class NormDriver(private val connectionProvider: ConnectionProvider) {
    * @param RowType Type to return.
    */
   private inner class JdbcMany<RowType>(
-    @Language("PostgreSQL") private val sql: String,
+    @param:Language("PostgreSQL") private val sql: String,
     private val rowReader: ResultSet.() -> RowType,
     private val queryBinder: (PreparedStatement.() -> Unit)? = null,
   ) : Many<RowType> {
