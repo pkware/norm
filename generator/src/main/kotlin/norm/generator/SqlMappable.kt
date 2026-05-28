@@ -11,11 +11,13 @@ import java.sql.Blob
 import java.sql.ResultSet
 import java.sql.Statement
 import java.sql.Types
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.OffsetDateTime
 import java.time.OffsetTime
+import java.time.ZoneOffset
 import kotlin.reflect.KClass
 
 /**
@@ -170,16 +172,74 @@ internal enum class PostgresSupportedTypes(
     { index, parameterName -> CodeBlock.of("setObject(%L, %L)", index, parameterName) },
     { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, LocalDateTime::class) },
   ),
-  OFFSET_DATE_TIME(
-    OffsetDateTime::class,
-    { index, parameterName -> CodeBlock.of("setObject(%L, %L)", index, parameterName) },
-    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, OffsetDateTime::class) },
-  ),
   BYTE_ARRAY(
     ByteArray::class,
     { index, parameterName -> CodeBlock.of("setBytes(%L, %L)", index, parameterName) },
     { index -> CodeBlock.of("getBytes(%L)", index) },
   ),
+}
+
+/**
+ * [SqlMappable] for `timestamptz` columns mapped to [Instant].
+ *
+ * pgjdbc does not support `getObject(i, Instant::class.java)`, so reads go through
+ * [OffsetDateTime] and convert via `toInstant()`. Writes convert via
+ * `OffsetDateTime.ofInstant(value, ZoneOffset.UTC)`.
+ *
+ * Unlike [PostgresSupportedTypes] entries, this requires nullable awareness because the
+ * `.toInstant()` chain on a null [OffsetDateTime] would NPE. Other [PostgresSupportedTypes]
+ * entries return Java platform types directly, so null propagates naturally.
+ */
+internal class InstantSqlMappable(private val notNull: Boolean) : SqlMappable {
+
+  override val klass: KClass<*> = Instant::class
+
+  override val typeName: TypeName
+    get() = klass.asTypeName().copy(nullable = !notNull)
+
+  override val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
+    get() = if (notNull) {
+      { index, parameterName ->
+        CodeBlock.of(
+          "setObject(%L, %T.ofInstant(%L, %T.UTC))",
+          index,
+          OffsetDateTime::class,
+          parameterName,
+          ZoneOffset::class,
+        )
+      }
+    } else {
+      { index, parameterName ->
+        CodeBlock.of(
+          "%L?.let { setObject(%L, %T.ofInstant(it, %T.UTC)) } ?: setNull(%L, %T.TIMESTAMP_WITH_TIMEZONE)",
+          parameterName,
+          index,
+          OffsetDateTime::class,
+          ZoneOffset::class,
+          index,
+          Types::class,
+        )
+      }
+    }
+
+  override val resultSetAction: (index: Int) -> CodeBlock
+    get() = if (notNull) {
+      { index ->
+        CodeBlock.of(
+          "getObject(%L, %T::class.java).toInstant()",
+          index,
+          OffsetDateTime::class,
+        )
+      }
+    } else {
+      { index ->
+        CodeBlock.of(
+          "getObject(%L, %T::class.java)?.toInstant()",
+          index,
+          OffsetDateTime::class,
+        )
+      }
+    }
 }
 
 /**

@@ -2,10 +2,10 @@ package example
 
 import java.math.BigDecimal
 import java.sql.Blob
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
-import java.time.OffsetDateTime
 import java.time.OffsetTime
 import java.util.UUID
 import kotlin.Array
@@ -74,9 +74,9 @@ public data class Type(
   public val timestamp_type: LocalDateTime?,
   public val timestamp_notnull_type: LocalDateTime,
   public val pg_timestamp_type: LocalDateTime?,
-  public val timestamptz_type: OffsetDateTime?,
-  public val timestamptz_notnull_type: OffsetDateTime,
-  public val pg_timestamptz_type: OffsetDateTime?,
+  public val timestamptz_type: Instant?,
+  public val timestamptz_notnull_type: Instant,
+  public val pg_timestamptz_type: Instant?,
   public val uuid_type: UUID?,
   public val uuid_notnull_type: UUID,
   public val pg_uuid_type: UUID?,

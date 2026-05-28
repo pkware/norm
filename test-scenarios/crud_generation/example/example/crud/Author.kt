@@ -1,6 +1,6 @@
 package example.crud
 
-import java.time.OffsetDateTime
+import java.time.Instant
 import kotlin.Int
 import kotlin.String
 import kotlin.jvm.JvmRecord
@@ -13,5 +13,5 @@ public data class Author(
   public val id: Int,
   public val name: String,
   public val bio: String?,
-  public val created_at: OffsetDateTime,
+  public val created_at: Instant,
 )

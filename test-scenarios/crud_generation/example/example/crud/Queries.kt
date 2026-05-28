@@ -4,7 +4,7 @@ import java.math.BigDecimal
 import java.sql.SQLException
 import java.sql.Statement.EXECUTE_FAILED
 import java.sql.Statement.SUCCESS_NO_INFO
-import java.time.OffsetDateTime
+import java.time.Instant
 import kotlin.Any
 import kotlin.Boolean
 import kotlin.Int
@@ -53,7 +53,7 @@ public interface Queries {
     id: Int,
     name: String,
     bio: String?,
-    created_at: OffsetDateTime,
+    created_at: Instant,
   ) -> T): T
 
   /**
@@ -72,7 +72,7 @@ public interface Queries {
    * ```
    */
   @Throws(SQLException::class)
-  public fun <T : Any> insertAuditLog(message: String, mapper: (logged_at: OffsetDateTime) -> T): T
+  public fun <T : Any> insertAuditLog(message: String, mapper: (logged_at: Instant) -> T): T
 
   /**
    * ```sql
@@ -85,7 +85,7 @@ public interface Queries {
   public fun <Input : Any, T : Any> insertAuditLog(
     stream: Iterable<Input>,
     message: Input.() -> String,
-    mapper: (logged_at: OffsetDateTime) -> T,
+    mapper: (logged_at: Instant) -> T,
     batchSize: Int,
   ): List<T>
 
@@ -99,7 +99,7 @@ public interface Queries {
    * @return A list containing the generated values for each inserted row, in insertion order.
    */
   @Throws(SQLException::class)
-  public fun <Input : Any> insertAuditLog(stream: Iterable<Input>, message: Input.() -> String): List<OffsetDateTime> = insertAuditLog(stream, message, ::inputValue, 100)
+  public fun <Input : Any> insertAuditLog(stream: Iterable<Input>, message: Input.() -> String): List<Instant> = insertAuditLog(stream, message, ::inputValue, 100)
 
   /**
    * ```sql
@@ -107,14 +107,14 @@ public interface Queries {
    * ```
    */
   @Throws(SQLException::class)
-  public fun insertAuditLog(message: String): OffsetDateTime = insertAuditLog(message, ::inputValue)
+  public fun insertAuditLog(message: String): Instant = insertAuditLog(message, ::inputValue)
 
   /**
    * ```sql
    * SELECT * FROM audit_log
    * ```
    */
-  public fun <T : Any> findAllAuditLog(mapper: (message: String, logged_at: OffsetDateTime) -> T): Many<T>
+  public fun <T : Any> findAllAuditLog(mapper: (message: String, logged_at: Instant) -> T): Many<T>
 
   /**
    * ```sql
@@ -123,7 +123,7 @@ public interface Queries {
    */
   public fun findAllAuditLog(): Many<AuditLog> = findAllAuditLog(::AuditLog)
 
-  public fun <T : Any> findAllAuditLogDynamically(mapper: (message: String, logged_at: OffsetDateTime) -> T): Query<T>
+  public fun <T : Any> findAllAuditLogDynamically(mapper: (message: String, logged_at: Instant) -> T): Query<T>
 
   public fun findAllAuditLogDynamically(): Query<AuditLog> = findAllAuditLogDynamically(::AuditLog)
 
@@ -162,7 +162,7 @@ public interface Queries {
   public fun <T : Any> insertAuthor(
     name: String,
     bio: String?,
-    mapper: (id: Int, created_at: OffsetDateTime) -> T,
+    mapper: (id: Int, created_at: Instant) -> T,
   ): T
 
   /**
@@ -177,7 +177,7 @@ public interface Queries {
     stream: Iterable<Input>,
     name: Input.() -> String,
     bio: Input.() -> String?,
-    mapper: (id: Int, created_at: OffsetDateTime) -> T,
+    mapper: (id: Int, created_at: Instant) -> T,
     batchSize: Int,
   ): List<T>
 
@@ -214,7 +214,7 @@ public interface Queries {
     id: Int,
     name: String,
     bio: String?,
-    created_at: OffsetDateTime,
+    created_at: Instant,
   ) -> T): Many<T>
 
   /**

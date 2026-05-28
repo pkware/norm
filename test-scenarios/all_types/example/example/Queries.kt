@@ -5,10 +5,10 @@ import java.sql.Blob
 import java.sql.SQLException
 import java.sql.Statement.EXECUTE_FAILED
 import java.sql.Statement.SUCCESS_NO_INFO
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
-import java.time.OffsetDateTime
 import java.time.OffsetTime
 import java.util.UUID
 import kotlin.Any
@@ -85,9 +85,9 @@ public interface Queries {
     timestamp_type: LocalDateTime?,
     timestamp_notnull_type: LocalDateTime,
     pg_timestamp_type: LocalDateTime?,
-    timestamptz_type: OffsetDateTime?,
-    timestamptz_notnull_type: OffsetDateTime,
-    pg_timestamptz_type: OffsetDateTime?,
+    timestamptz_type: Instant?,
+    timestamptz_notnull_type: Instant,
+    pg_timestamptz_type: Instant?,
     uuid_type: UUID?,
     uuid_notnull_type: UUID,
     pg_uuid_type: UUID?,
@@ -158,9 +158,9 @@ public interface Queries {
     timestamp_type: LocalDateTime?,
     timestamp_notnull_type: LocalDateTime,
     pg_timestamp_type: LocalDateTime?,
-    timestamptz_type: OffsetDateTime?,
-    timestamptz_notnull_type: OffsetDateTime,
-    pg_timestamptz_type: OffsetDateTime?,
+    timestamptz_type: Instant?,
+    timestamptz_notnull_type: Instant,
+    pg_timestamptz_type: Instant?,
     uuid_type: UUID?,
     uuid_notnull_type: UUID,
     pg_uuid_type: UUID?,
@@ -551,9 +551,9 @@ public interface Queries {
     timestamp_type: LocalDateTime?,
     timestamp_notnull_type: LocalDateTime,
     pg_timestamp_type: LocalDateTime?,
-    timestamptz_type: OffsetDateTime?,
-    timestamptz_notnull_type: OffsetDateTime,
-    pg_timestamptz_type: OffsetDateTime?,
+    timestamptz_type: Instant?,
+    timestamptz_notnull_type: Instant,
+    pg_timestamptz_type: Instant?,
     uuid_type: UUID?,
     uuid_notnull_type: UUID,
     pg_uuid_type: UUID?,

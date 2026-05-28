@@ -6,6 +6,7 @@ import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isGreaterThan
 import assertk.assertions.isNotNull
+import assertk.assertions.isNotZero
 import assertk.assertions.startsWith
 import example.crud.PostgresQueries
 import norm.TransactionalConnectionProvider
@@ -176,7 +177,7 @@ class BatchInsertReturningE2ETest : PostgresTestBase() {
 
       assertThat(results).hasSize(3)
       for (result in results) {
-        assertThat(result.year).isGreaterThan(2000)
+        assertThat(result.epochSecond).isNotZero()
       }
     }
   }

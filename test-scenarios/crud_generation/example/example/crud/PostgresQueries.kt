@@ -4,6 +4,7 @@ import java.math.BigDecimal
 import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.SQLException
+import java.time.Instant
 import java.time.OffsetDateTime
 import kotlin.Any
 import kotlin.Boolean
@@ -50,7 +51,7 @@ public class PostgresQueries(
     id: Int,
     name: String,
     bio: String?,
-    created_at: OffsetDateTime,
+    created_at: Instant,
   ) -> T): T {
     val sql = "SELECT * FROM author WHERE name = ?"
     val rowReader: ResultSet.() -> T = {
@@ -58,7 +59,7 @@ public class PostgresQueries(
         getInt(1),
         getString(2),
         getString(3),
-        getObject(4, OffsetDateTime::class.java),
+        getObject(4, OffsetDateTime::class.java).toInstant(),
       )
     }
     return driver.queryOne(sql, rowReader) {
@@ -67,11 +68,11 @@ public class PostgresQueries(
   }
 
   @Throws(SQLException::class)
-  override fun <T : Any> insertAuditLog(message: String, mapper: (logged_at: OffsetDateTime) -> T): T {
+  override fun <T : Any> insertAuditLog(message: String, mapper: (logged_at: Instant) -> T): T {
     val sql = "INSERT INTO audit_log (message) VALUES (?) RETURNING logged_at"
     val rowReader: ResultSet.() -> T = {
       mapper(
-        getObject(1, OffsetDateTime::class.java),
+        getObject(1, OffsetDateTime::class.java).toInstant(),
       )
     }
     return driver.queryOne(sql, rowReader) {
@@ -83,7 +84,7 @@ public class PostgresQueries(
   override fun <Input : Any, T : Any> insertAuditLog(
     stream: Iterable<Input>,
     message: Input.() -> String,
-    mapper: (logged_at: OffsetDateTime) -> T,
+    mapper: (logged_at: Instant) -> T,
     batchSize: Int,
   ): List<T> {
     val sql = "INSERT INTO audit_log (message) VALUES (?)"
@@ -91,7 +92,7 @@ public class PostgresQueries(
     return driver.executeBatchWithGeneratedKeys(sql, columnNames) {
       val rowReader: ResultSet.() -> T = {
         mapper(
-          getObject(1, OffsetDateTime::class.java),
+          getObject(1, OffsetDateTime::class.java).toInstant(),
         )
       }
       val results = mutableListOf<T>()
@@ -114,20 +115,20 @@ public class PostgresQueries(
     }
   }
 
-  private fun <T : Any, Return> findAllAuditLog(mapper: (message: String, logged_at: OffsetDateTime) -> T, processor: ManyProcessor<T, Return>): Return {
+  private fun <T : Any, Return> findAllAuditLog(mapper: (message: String, logged_at: Instant) -> T, processor: ManyProcessor<T, Return>): Return {
     val sql = "SELECT * FROM audit_log"
     val rowReader: ResultSet.() -> T = {
       mapper(
         getString(1),
-        getObject(2, OffsetDateTime::class.java),
+        getObject(2, OffsetDateTime::class.java).toInstant(),
       )
     }
     return processor.invoke(sql, rowReader, null)
   }
 
-  override fun <T : Any> findAllAuditLog(mapper: (message: String, logged_at: OffsetDateTime) -> T): Many<T> = findAllAuditLog(mapper, driver::queryMany)
+  override fun <T : Any> findAllAuditLog(mapper: (message: String, logged_at: Instant) -> T): Many<T> = findAllAuditLog(mapper, driver::queryMany)
 
-  override fun <T : Any> findAllAuditLogDynamically(mapper: (message: String, logged_at: OffsetDateTime) -> T): Query<T> = findAllAuditLog(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+  override fun <T : Any> findAllAuditLogDynamically(mapper: (message: String, logged_at: Instant) -> T): Query<T> = findAllAuditLog(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
 
   @Throws(SQLException::class)
   override fun <T : Any> countAuditLog(mapper: (count: Long) -> T): T {
@@ -150,13 +151,13 @@ public class PostgresQueries(
   override fun <T : Any> insertAuthor(
     name: String,
     bio: String?,
-    mapper: (id: Int, created_at: OffsetDateTime) -> T,
+    mapper: (id: Int, created_at: Instant) -> T,
   ): T {
     val sql = "INSERT INTO author (name, bio) VALUES (?, ?) RETURNING id, created_at"
     val rowReader: ResultSet.() -> T = {
       mapper(
         getInt(1),
-        getObject(2, OffsetDateTime::class.java),
+        getObject(2, OffsetDateTime::class.java).toInstant(),
       )
     }
     return driver.queryOne(sql, rowReader) {
@@ -170,7 +171,7 @@ public class PostgresQueries(
     stream: Iterable<Input>,
     name: Input.() -> String,
     bio: Input.() -> String?,
-    mapper: (id: Int, created_at: OffsetDateTime) -> T,
+    mapper: (id: Int, created_at: Instant) -> T,
     batchSize: Int,
   ): List<T> {
     val sql = "INSERT INTO author (name, bio) VALUES (?, ?)"
@@ -179,7 +180,7 @@ public class PostgresQueries(
       val rowReader: ResultSet.() -> T = {
         mapper(
           getInt(1),
-          getObject(2, OffsetDateTime::class.java),
+          getObject(2, OffsetDateTime::class.java).toInstant(),
         )
       }
       val results = mutableListOf<T>()
@@ -209,7 +210,7 @@ public class PostgresQueries(
       id: Int,
       name: String,
       bio: String?,
-      created_at: OffsetDateTime,
+      created_at: Instant,
     ) -> T,
     processor: ManyProcessor<T, Return>,
   ): Return {
@@ -219,7 +220,7 @@ public class PostgresQueries(
         getInt(1),
         getString(2),
         getString(3),
-        getObject(4, OffsetDateTime::class.java),
+        getObject(4, OffsetDateTime::class.java).toInstant(),
       )
     }
     val queryBinder: (PreparedStatement.() -> Unit)? = {
@@ -232,7 +233,7 @@ public class PostgresQueries(
     id: Int,
     name: String,
     bio: String?,
-    created_at: OffsetDateTime,
+    created_at: Instant,
   ) -> T): Many<T> = findAuthorById(id, mapper, driver::queryMany)
 
   @Throws(SQLException::class)

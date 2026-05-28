@@ -3,7 +3,7 @@ package example
 import java.sql.SQLException
 import java.sql.Statement.EXECUTE_FAILED
 import java.sql.Statement.SUCCESS_NO_INFO
-import java.time.OffsetDateTime
+import java.time.Instant
 import java.util.UUID
 import kotlin.Any
 import kotlin.Int
@@ -27,10 +27,10 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <T : Any> getEventById(
     id: UUID,
-    created_at: OffsetDateTime,
+    created_at: Instant,
     mapper: (
       id: UUID,
-      created_at: OffsetDateTime,
+      created_at: Instant,
       category: String,
       payload: String?,
     ) -> T,
@@ -47,7 +47,7 @@ public interface Queries {
    * @param created_at When the event occurred. Used as partition key.
    */
   @Throws(SQLException::class)
-  public fun getEventById(id: UUID, created_at: OffsetDateTime): Event = getEventById(id, created_at, ::Event)
+  public fun getEventById(id: UUID, created_at: Instant): Event = getEventById(id, created_at, ::Event)
 
   /**
    * ```sql
@@ -58,7 +58,7 @@ public interface Queries {
    */
   public fun <T : Any> listEventsByCategory(category: String, mapper: (
     id: UUID,
-    created_at: OffsetDateTime,
+    created_at: Instant,
     category: String,
   ) -> T): Many<T>
 
