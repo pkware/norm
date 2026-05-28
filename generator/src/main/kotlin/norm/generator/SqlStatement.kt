@@ -24,7 +24,13 @@ internal class SqlStatement(
 ) {
 
   /**
-   * Inputs required by the SQL statement.
+   * Unique input parameters for this statement's function signature.
+   *
+   * When a SQL query reuses the same named parameter (e.g., `:scannedAt` at two positions),
+   * those positions are collapsed into a single entry here. For queries without named parameter
+   * reuse, this contains one entry per `?` placeholder — identical to [Query.params].
+   *
+   * Use [parameterBindings] for JDBC `?`-position iteration in implementation bodies.
    */
   val parameters: List<Parameter>
 
@@ -147,35 +153,74 @@ internal class SqlStatement(
       return tableColumnNames == queryColumnNames
     }
 
+  /**
+   * How each JDBC `?` placeholder maps to a parameter in [parameters].
+   *
+   * One entry per `?` in the SQL. Each binding carries the 1-based JDBC position,
+   * the index into [parameters] that provides the value, and the column metadata
+   * for type resolution.
+   *
+   * When named parameters are reused (e.g., `:scannedAt` at positions 1 and 2), multiple
+   * bindings share the same [ParameterBinding.parameterIndex]. When all parameters are
+   * distinct, this is 1:1 with [parameters].
+   */
+  val parameterBindings: List<ParameterBinding>
+
   init {
     resultRowShape = computeReturnType()
-
-    // SQL already uses JDBC ? placeholders. Parameters are ordered by number, matching placeholder order.
-    parameters = query.params.sortedBy { it.number }
     sql = query.text
+
+    val allParams = query.params.sortedBy { it.number }
+    for (param in allParams) {
+      checkNotNull(param.column) { "Parameter at position ${param.number} in query '${query.name}' has no column" }
+    }
+
+    if (query.named_parameters.isEmpty()) {
+      parameters = allParams
+      parameterBindings = allParams.mapIndexed { index, param ->
+        ParameterBinding(param.number, index, param.column!!)
+      }
+    } else {
+      val seen = linkedMapOf<String, Int>()
+      val unique = mutableListOf<Parameter>()
+      val bindings = mutableListOf<ParameterBinding>()
+      for (param in allParams) {
+        val name = query.named_parameters[param.number]
+        val parameterIndex = if (name != null && name in seen) {
+          seen.getValue(name)
+        } else {
+          val index = unique.size
+          unique.add(param)
+          if (name != null) seen[name] = index
+          index
+        }
+        bindings.add(ParameterBinding(param.number, parameterIndex, param.column!!))
+      }
+      parameters = unique
+      parameterBindings = bindings
+    }
   }
 
   /**
-   * List of deduplicated parameter names, indexed by position in the parameters list.
+   * Deduplicated parameter names, one per entry in [parameters].
    *
-   * When the analyzer cannot infer meaningful parameter names (e.g., for extension function parameters),
-   * it may assign the same name to multiple parameters. This list ensures each parameter gets a unique name
-   * by appending numeric suffixes (name, name2, name3, ...).
+   * When the analyzer infers the same name for multiple parameters (e.g., all parameters of
+   * `crosstab(?, ?)` get named "crosstab"), suffixes ensure uniqueness: "crosstab", "crosstab2".
+   *
+   * Reused named parameters (`:scannedAt` at two positions) are already collapsed in [parameters],
+   * so they don't produce suffixes here.
    */
   private val deduplicatedParameterNames: List<String> by lazy {
     val nameCount = mutableMapOf<String, Int>()
-    parameters.mapNotNull(Parameter::column).map { column ->
-      val baseName = column.name
+    parameters.map { parameter ->
+      val baseName = parameter.column!!.name
       val count = nameCount.compute(baseName) { _, v -> (v ?: 0) + 1 }!!
       if (count == 1) baseName else "$baseName$count"
     }
   }
 
   /**
-   * Returns the deduplicated parameter name at the given index.
-   *
-   * Handles cases where the analyzer assigns duplicate names to parameters by appending numeric suffixes.
-   * Returns a fallback name if the index is out of bounds.
+   * Returns the deduplicated parameter name at the given index in [parameters].
    */
   fun getParameterName(index: Int): String = deduplicatedParameterNames.getOrElse(index) { "param$index" }
 
@@ -250,3 +295,12 @@ internal data class ReturnType(
    */
   val isComposedOfMultipleColumns get() = creationParameters.size > 1
 }
+
+/**
+ * Maps a single JDBC `?` placeholder to the [SqlStatement] parameter that provides its value.
+ *
+ * @param jdbcPosition 1-based position of the `?` in the prepared statement.
+ * @param parameterIndex Index into [SqlStatement.parameters] (and [SqlStatement.getParameterName]).
+ * @param column Column metadata for type resolution (always non-null; validated in [SqlStatement.init]).
+ */
+internal data class ParameterBinding(val jdbcPosition: Int, val parameterIndex: Int, val column: Column)
