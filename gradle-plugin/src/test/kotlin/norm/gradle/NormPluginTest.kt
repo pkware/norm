@@ -466,6 +466,189 @@ class NormPluginTest {
   }
 
   @Test
+  fun `schemas can be specified as a directory`() {
+    val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
+    project.setupSettingsOnly()
+
+    val schemaDir = projectDir.resolve("migrations")
+    Files.createDirectories(schemaDir)
+    schemaDir.resolve("V001__create_author.sql").writeText(
+      "CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);",
+    )
+
+    val queries = projectDir.resolve("queries.sql")
+    queries.writeText(
+      """
+      -- name: getAll :many
+      SELECT * FROM author;
+      """.trimIndent(),
+    )
+
+    project.buildFile.writeText(
+      """
+      plugins {
+        kotlin("jvm")
+        id("com.pkware.norm")
+      }
+
+      norm {
+        databases {
+          create("Test") {
+            packageName = "example"
+            schemas.addAll("$schemaDir")
+            queries.addAll("$queries")
+            generateCrud = false
+          }
+        }
+      }
+      """.trimIndent(),
+    )
+
+    val result = project.gradle("normGenerateTest").build()
+    assertThat(result.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+  }
+
+  @Test
+  fun `schemas can mix individual files and directories`() {
+    val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
+    project.setupSettingsOnly()
+
+    val baseSchema = projectDir.resolve("base.sql")
+    baseSchema.writeText("CREATE TABLE base_table (id serial PRIMARY KEY);")
+
+    val migrationDir = projectDir.resolve("migrations")
+    Files.createDirectories(migrationDir)
+    migrationDir.resolve("V001__author.sql").writeText(
+      "CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);",
+    )
+
+    val queries = projectDir.resolve("queries.sql")
+    queries.writeText(
+      """
+      -- name: getAllAuthors :many
+      SELECT * FROM author;
+
+      -- name: getAllBase :many
+      SELECT * FROM base_table;
+      """.trimIndent(),
+    )
+
+    project.buildFile.writeText(
+      """
+      plugins {
+        kotlin("jvm")
+        id("com.pkware.norm")
+      }
+
+      norm {
+        databases {
+          create("Test") {
+            packageName = "example"
+            schemas.addAll("$baseSchema", "$migrationDir")
+            queries.addAll("$queries")
+            generateCrud = false
+          }
+        }
+      }
+      """.trimIndent(),
+    )
+
+    val result = project.gradle("normGenerateTest").build()
+    assertThat(result.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+  }
+
+  @Test
+  fun `configuration cache works with directory-based schemas`() {
+    val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
+    project.setupSettingsOnly()
+
+    val schemaDir = projectDir.resolve("migrations")
+    Files.createDirectories(schemaDir)
+    schemaDir.resolve("V001__create_author.sql").writeText(
+      "CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);",
+    )
+
+    val queries = projectDir.resolve("queries.sql")
+    queries.writeText(
+      """
+      -- name: getAll :many
+      SELECT * FROM author;
+      """.trimIndent(),
+    )
+
+    project.buildFile.writeText(
+      """
+      plugins {
+        kotlin("jvm")
+        id("com.pkware.norm")
+      }
+
+      norm {
+        databases {
+          create("Test") {
+            packageName = "example"
+            schemas.addAll("$schemaDir")
+            queries.addAll("$queries")
+            generateCrud = false
+          }
+        }
+      }
+      """.trimIndent(),
+    )
+
+    val firstResult = project.gradle("normGenerateTest", "--configuration-cache").build()
+    assertThat(firstResult.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+    assertThat(firstResult.output).contains("Configuration cache entry stored")
+
+    val secondResult = project.gradle("normGenerateTest", "--configuration-cache").build()
+    assertThat(secondResult.output).contains("Configuration cache entry reused")
+  }
+
+  @Test
+  fun `non-sql files in schema directory are ignored`() {
+    val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
+    project.setupSettingsOnly()
+
+    val schemaDir = projectDir.resolve("migrations")
+    Files.createDirectories(schemaDir)
+    schemaDir.resolve("V001__create_author.sql").writeText(
+      "CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);",
+    )
+    schemaDir.resolve("README.md").writeText("This directory contains migrations.")
+
+    val queries = projectDir.resolve("queries.sql")
+    queries.writeText(
+      """
+      -- name: getAll :many
+      SELECT * FROM author;
+      """.trimIndent(),
+    )
+
+    project.buildFile.writeText(
+      """
+      plugins {
+        kotlin("jvm")
+        id("com.pkware.norm")
+      }
+
+      norm {
+        databases {
+          create("Test") {
+            packageName = "example"
+            schemas.addAll("$schemaDir")
+            queries.addAll("$queries")
+            generateCrud = false
+          }
+        }
+      }
+      """.trimIndent(),
+    )
+
+    val result = project.gradle("normGenerateTest").build()
+    assertThat(result.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+  }
+
+  @Test
   fun `CRUD generation succeeds for tables with reserved keyword names`() {
     val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
     project.setupSettingsOnly()

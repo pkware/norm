@@ -9,6 +9,7 @@ import norm.generator.generateCode
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.Input
@@ -64,17 +65,25 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
   init {
     group = NormPlugin.NORM_GROUP
     description = "Generates Kotlin code from SQL using JDBC analysis."
-    schemas.from(
-      database.schemas.map {
-        it.map { path -> project.projectDir.toPath().resolve(path).normalize().toFile() }
-      },
-    )
-    queries.from(
-      database.queries.map {
-        it.map { path -> project.projectDir.toPath().resolve(path).normalize().toFile() }
-      },
-    )
+    schemas.from(resolveSqlInputs(database.schemas))
+    queries.from(resolveSqlInputs(database.queries))
     generatedSources.set(project.layout.buildDirectory.dir(NormPlugin.NORM_GENERATED_CODE))
+  }
+
+  /**
+   * Resolves a list of user-specified paths to files or file trees. Paths that point to a directory
+   * are expanded to all `*.sql` files directly inside (non-recursive). Paths that point to a regular
+   * file are included as-is.
+   */
+  private fun resolveSqlInputs(paths: ListProperty<String>) = paths.map { list ->
+    list.map { path ->
+      val resolved = project.projectDir.toPath().resolve(path).normalize().toFile()
+      if (resolved.isDirectory) {
+        project.fileTree(resolved) { include("*.sql") }
+      } else {
+        resolved
+      }
+    }
   }
 
   @TaskAction
