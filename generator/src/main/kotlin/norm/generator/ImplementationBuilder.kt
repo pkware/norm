@@ -381,10 +381,10 @@ private fun buildBatch(statement: SqlStatement, trackIntermediateResults: Boolea
     beginControlFlow("return driver.execute(sql) {")
     addCode(
       """
-			|var totalCount = 0
-			|var batchCount = 0
-			|val results = mutableListOf<IntArray>()
-			|
+      |var totalCount = 0
+      |var batchCount = 0
+      |val results = mutableListOf<IntArray>()
+      |
       """.trimMargin(),
     )
     beginControlFlow("for (entry in stream) {")
@@ -392,27 +392,27 @@ private fun buildBatch(statement: SqlStatement, trackIntermediateResults: Boolea
     if (trackIntermediateResults) {
       addCode(
         """
-				|addBatch()
-				|batchCount++
-				|if (batchCount == batchSize) {
-				|  results.add(executeBatch())
-				|  batchCount = 0
-				|  // Performance optimization to reduce register updates per loop iteration
-				|  totalCount += batchSize
-				|}
-				|
+        |addBatch()
+        |batchCount++
+        |if (batchCount == batchSize) {
+        |  results.add(executeBatch())
+        |  batchCount = 0
+        |  // Performance optimization to reduce register updates per loop iteration
+        |  totalCount += batchSize
+        |}
+        |
         """.trimMargin(),
       )
     } else {
       addCode(
         """
-				|addBatch()
-				|batchCount++
-				|if (batchCount == batchSize) {
-				|  executeBatch()
-				|  batchCount = 0
-				|}
-				|
+        |addBatch()
+        |batchCount++
+        |if (batchCount == batchSize) {
+        |  executeBatch()
+        |  batchCount = 0
+        |}
+        |
         """.trimMargin(),
       )
     }
@@ -420,12 +420,12 @@ private fun buildBatch(statement: SqlStatement, trackIntermediateResults: Boolea
 
     addCode(
       """
-			|if (batchCount > 0) {
-			|  results.add(executeBatch())
-			|  totalCount += batchCount
-			|}
-			|%M(results, totalCount, batchSize)
-			|
+      |if (batchCount > 0) {
+      |  results.add(executeBatch())
+      |  totalCount += batchCount
+      |}
+      |%M(results, totalCount, batchSize)
+      |
       """.trimMargin(),
       PROCESS_EXEC_RESULTS,
     )
