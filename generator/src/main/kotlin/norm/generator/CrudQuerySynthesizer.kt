@@ -47,7 +47,7 @@ public object CrudQuerySynthesizer {
   }
 
   private fun synthesizeForTable(table: Table, quoteIdentifier: (String) -> String): List<ParsedQuery> {
-    val tableName = table.rel?.name ?: return emptyList()
+    val tableName = table.rel.name
     val methodSuffix = tableName.snakeToCamelCase().titleCase()
     val qualifiedTable = qualifiedTableName(table, quoteIdentifier)
     val primaryKeyColumns = table.columns.filter(Column::isPrimaryKey)
@@ -186,9 +186,9 @@ public object CrudQuerySynthesizer {
    * Each part (schema, name) is independently passed through [quoteIdentifier].
    */
   private fun qualifiedTableName(table: Table, quoteIdentifier: (String) -> String): String {
-    val schema = table.rel?.schema
-    val name = table.rel?.name ?: error("qualifiedTableName called with null table name")
-    return if (schema != null && schema != "public") {
+    val schema = table.rel.schema
+    val name = table.rel.name
+    return if (schema.isNotEmpty() && schema != "public") {
       "${quoteIdentifier(schema)}.${quoteIdentifier(name)}"
     } else {
       quoteIdentifier(name)

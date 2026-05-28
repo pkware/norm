@@ -36,86 +36,86 @@ class JdbcAnalyzerTest {
     assertThat(catalog.schemas).hasSize(1)
 
     val tables = catalog.schemas.first().tables
-    val tableNames = tables.map { it.rel!!.name }
+    val tableNames = tables.map { it.rel.name }
     assertThat(tableNames).contains("type")
   }
 
   @Test
   fun `buildCatalog discovers columns with correct types`() {
     val catalog = analyzer.buildCatalog()
-    val typeTable = catalog.schemas.first().tables.first { it.rel!!.name == "type" }
+    val typeTable = catalog.schemas.first().tables.first { it.rel.name == "type" }
     val columnsByName = typeTable.columns.associateBy { it.name }
 
     // Serial types: JDBC reports the DDL type name ("serial"), not storage type ("int4").
     // Both resolve to the same Kotlin type in the generator.
-    assertThat(columnsByName.getValue("serial_type").type!!.name).isEqualTo("serial")
-    assertThat(columnsByName.getValue("int4_type").type!!.name).isEqualTo("int4")
+    assertThat(columnsByName.getValue("serial_type").type.name).isEqualTo("serial")
+    assertThat(columnsByName.getValue("int4_type").type.name).isEqualTo("int4")
     assertThat(columnsByName.getValue("int4_type").notNull).isTrue()
 
     // Verify smallint types
-    assertThat(columnsByName.getValue("int2_type").type!!.name).isEqualTo("int2")
+    assertThat(columnsByName.getValue("int2_type").type.name).isEqualTo("int2")
     assertThat(columnsByName.getValue("int2_type").notNull).isTrue()
 
     // Verify bigint types
-    assertThat(columnsByName.getValue("int8_type").type!!.name).isEqualTo("int8")
+    assertThat(columnsByName.getValue("int8_type").type.name).isEqualTo("int8")
     assertThat(columnsByName.getValue("int8_type").notNull).isTrue()
 
     // Verify float types
-    assertThat(columnsByName.getValue("float4_type").type!!.name).isEqualTo("float4")
-    assertThat(columnsByName.getValue("float8_type").type!!.name).isEqualTo("float8")
+    assertThat(columnsByName.getValue("float4_type").type.name).isEqualTo("float4")
+    assertThat(columnsByName.getValue("float8_type").type.name).isEqualTo("float8")
 
     // Verify text types
-    assertThat(columnsByName.getValue("string_type").type!!.name).isEqualTo("text")
+    assertThat(columnsByName.getValue("string_type").type.name).isEqualTo("text")
     assertThat(columnsByName.getValue("string_type").notNull).isTrue()
-    assertThat(columnsByName.getValue("varchar_type").type!!.name).isEqualTo("varchar")
-    assertThat(columnsByName.getValue("bpchar_type").type!!.name).isEqualTo("bpchar")
+    assertThat(columnsByName.getValue("varchar_type").type.name).isEqualTo("varchar")
+    assertThat(columnsByName.getValue("bpchar_type").type.name).isEqualTo("bpchar")
 
     // Verify boolean
-    assertThat(columnsByName.getValue("bool_type").type!!.name).isEqualTo("bool")
+    assertThat(columnsByName.getValue("bool_type").type.name).isEqualTo("bool")
 
     // Verify temporal types
-    assertThat(columnsByName.getValue("date_type").type!!.name).isEqualTo("date")
-    assertThat(columnsByName.getValue("time_type").type!!.name).isEqualTo("time")
-    assertThat(columnsByName.getValue("timetz_type").type!!.name).isEqualTo("timetz")
-    assertThat(columnsByName.getValue("timestamp_type").type!!.name).isEqualTo("timestamp")
-    assertThat(columnsByName.getValue("timestamptz_type").type!!.name).isEqualTo("timestamptz")
+    assertThat(columnsByName.getValue("date_type").type.name).isEqualTo("date")
+    assertThat(columnsByName.getValue("time_type").type.name).isEqualTo("time")
+    assertThat(columnsByName.getValue("timetz_type").type.name).isEqualTo("timetz")
+    assertThat(columnsByName.getValue("timestamp_type").type.name).isEqualTo("timestamp")
+    assertThat(columnsByName.getValue("timestamptz_type").type.name).isEqualTo("timestamptz")
 
     // Verify UUID
-    assertThat(columnsByName.getValue("uuid_type").type!!.name).isEqualTo("uuid")
+    assertThat(columnsByName.getValue("uuid_type").type.name).isEqualTo("uuid")
 
     // Verify bytea
-    assertThat(columnsByName.getValue("bytea_type").type!!.name).isEqualTo("bytea")
+    assertThat(columnsByName.getValue("bytea_type").type.name).isEqualTo("bytea")
 
     // Verify numeric
-    assertThat(columnsByName.getValue("numeric_type").type!!.name).isEqualTo("numeric")
+    assertThat(columnsByName.getValue("numeric_type").type.name).isEqualTo("numeric")
 
     // Verify jsonb
-    assertThat(columnsByName.getValue("jsonb_type").type!!.name).isEqualTo("jsonb")
+    assertThat(columnsByName.getValue("jsonb_type").type.name).isEqualTo("jsonb")
 
     // Verify oid
-    assertThat(columnsByName.getValue("blob_type").type!!.name).isEqualTo("oid")
+    assertThat(columnsByName.getValue("blob_type").type.name).isEqualTo("oid")
   }
 
   @Test
   fun `buildCatalog detects array types`() {
     val catalog = analyzer.buildCatalog()
-    val typeTable = catalog.schemas.first().tables.first { it.rel!!.name == "type" }
+    val typeTable = catalog.schemas.first().tables.first { it.rel.name == "type" }
     val columnsByName = typeTable.columns.associateBy { it.name }
 
     val intArray = columnsByName.getValue("int_array_type")
     assertThat(intArray.isArray).isTrue()
     assertThat(intArray.arrayDims).isEqualTo(1)
-    assertThat(intArray.type!!.name).isEqualTo("int4")
+    assertThat(intArray.type.name).isEqualTo("int4")
 
     val textArray = columnsByName.getValue("text_array_type")
     assertThat(textArray.isArray).isTrue()
-    assertThat(textArray.type!!.name).isEqualTo("text")
+    assertThat(textArray.type.name).isEqualTo("text")
   }
 
   @Test
   fun `buildCatalog detects nullability`() {
     val catalog = analyzer.buildCatalog()
-    val typeTable = catalog.schemas.first().tables.first { it.rel!!.name == "type" }
+    val typeTable = catalog.schemas.first().tables.first { it.rel.name == "type" }
     val columnsByName = typeTable.columns.associateBy { it.name }
 
     // NOT NULL columns
@@ -140,14 +140,14 @@ class JdbcAnalyzerTest {
     assertThat(query.cmd).isEqualTo(":many")
     assertThat(query.text).isEqualTo("SELECT * FROM type")
     assertThat(query.columns.size).isEqualTo(
-      catalog.schemas.first().tables.first { it.rel!!.name == "type" }.columns.size,
+      catalog.schemas.first().tables.first { it.rel.name == "type" }.columns.size,
     )
 
     // Verify a few column types
     val columnsByName = query.columns.associateBy { it.name }
-    assertThat(columnsByName.getValue("string_type").type!!.name).isEqualTo("text")
+    assertThat(columnsByName.getValue("string_type").type.name).isEqualTo("text")
     assertThat(columnsByName.getValue("string_type").notNull).isTrue()
-    assertThat(columnsByName.getValue("int4_type").type!!.name).isEqualTo("int4")
+    assertThat(columnsByName.getValue("int4_type").type.name).isEqualTo("int4")
   }
 
   @Test
@@ -159,7 +159,7 @@ class JdbcAnalyzerTest {
 
     assertThat(query.columns).hasSize(1)
     assertThat(query.columns[0].name).isEqualTo("string_type")
-    assertThat(query.columns[0].type!!.name).isEqualTo("text")
+    assertThat(query.columns[0].type.name).isEqualTo("text")
   }
 
   @Test
@@ -176,7 +176,7 @@ class JdbcAnalyzerTest {
 
     assertThat(query.params).hasSize(1)
     assertThat(query.params[0].number).isEqualTo(1)
-    assertThat(query.params[0].column!!.type!!.name).isEqualTo("text")
+    assertThat(query.params[0].column!!.type.name).isEqualTo("text")
   }
 
   @Test
@@ -192,8 +192,8 @@ class JdbcAnalyzerTest {
     val query = analyzer.analyzeQuery(parsed, catalog)
 
     assertThat(query.params).hasSize(2)
-    assertThat(query.params[0].column!!.type!!.name).isEqualTo("text")
-    assertThat(query.params[1].column!!.type!!.name).isEqualTo("int4")
+    assertThat(query.params[0].column!!.type.name).isEqualTo("text")
+    assertThat(query.params[1].column!!.type.name).isEqualTo("int4")
   }
 
   @Test
@@ -242,8 +242,8 @@ class JdbcAnalyzerTest {
 
     assertThat(query.columns).isEmpty()
     assertThat(query.params).hasSize(2)
-    assertThat(query.params[0].column!!.type!!.name).isEqualTo("int4")
-    assertThat(query.params[1].column!!.type!!.name).isEqualTo("text")
+    assertThat(query.params[0].column!!.type.name).isEqualTo("int4")
+    assertThat(query.params[1].column!!.type.name).isEqualTo("text")
   }
 
   @Test
@@ -293,7 +293,7 @@ class JdbcAnalyzerTest {
 
       assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].name).isEqualTo("found")
-      assertThat(query.columns[0].type!!.name).isEqualTo("bool")
+      assertThat(query.columns[0].type.name).isEqualTo("bool")
       assertThat(query.columns[0].notNull).isTrue()
     }
 

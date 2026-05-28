@@ -133,7 +133,7 @@ internal class TypeRepository(
    */
   // TODO Does the columnOffset result in a bug if the same table is sometimes standalone and sometimes embedded?
   fun getTypeProjectionForTable(table: Table, columnOffset: Int = 1): ReturnType = tableModels.computeIfAbsent(table) {
-    val tableName = table.rel!!.name
+    val tableName = table.rel.name
       .snakeToCamelCase()
       .titleCase()
     val nameOfTypeBeingDefined = ClassName(packageName, tableName)
@@ -206,7 +206,7 @@ internal class TypeRepository(
 
         val embeddedTypeClassName = ClassName(
           packageName,
-          table.rel!!.name.snakeToCamelCase().titleCase(),
+          table.rel.name.snakeToCamelCase().titleCase(),
         )
 
         val embeddedTypeConstructorInvocation = CodeBlock.builder()
@@ -308,8 +308,7 @@ internal class TypeRepository(
    * Resolution precedence: column override → type override → standard → enum → domain → error.
    */
   fun resolveMappableType(column: Column): SqlMappable {
-    val typeName = column.type?.name
-      ?: error("Column ${column.fullyQualifiedName} has no type")
+    val typeName = column.type.name
 
     return tryResolveColumnOverride(column)
       ?: tryResolveTypeOverride(typeName, column.notNull, column.isArray)
@@ -326,7 +325,7 @@ internal class TypeRepository(
     val tableName = column.table?.name ?: return null
     val columnName = column.originalName.ifEmpty { column.name }
     val mapping = columnLevelOverrides[tableName to columnName] ?: return null
-    return buildUserConfiguredMappable(mapping, column.type!!.name, column.notNull, column.isArray)
+    return buildUserConfiguredMappable(mapping, column.type.name, column.notNull, column.isArray)
   }
 
   /**
