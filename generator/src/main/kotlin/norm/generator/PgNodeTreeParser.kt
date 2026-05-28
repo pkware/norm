@@ -1,5 +1,6 @@
 package norm.generator
 
+import java.util.logging.Level
 import java.util.logging.Logger
 
 /**
@@ -10,7 +11,7 @@ import java.util.logging.Logger
  *
  * This class is stateless. Call [parseExpression] with any `{NODE_TYPE ...}` text to get a typed
  * node. Unrecognized node types become [PgNodeExpression.Unknown] and malformed input becomes
- * `Unknown("PARSE_ERROR")` with a warning logged — this class never throws.
+ * `Unknown("PARSE_ERROR")` — this class never throws.
  */
 internal class PgNodeTreeParser {
 
@@ -32,7 +33,7 @@ internal class PgNodeTreeParser {
   fun parseExpression(text: String): PgNodeExpression = try {
     val nodeType = nodeTypePattern.find(text)?.groupValues?.get(1)
       ?: return PgNodeExpression.Unknown("PARSE_ERROR").also {
-        logger.warning("Could not determine node type from: $text")
+        logger.log(Level.FINE, "Could not determine node type from: $text")
       }
     when (nodeType) {
       "VAR" -> parseVar(text)
@@ -69,7 +70,7 @@ internal class PgNodeTreeParser {
       else -> PgNodeExpression.Unknown(nodeType)
     }
   } catch (cause: RuntimeException) {
-    logger.warning("Failed to parse node tree expression: ${cause.message}\nInput: $text")
+    logger.log(Level.FINE, "Failed to parse node tree expression: ${cause.message}\nInput: $text")
     PgNodeExpression.Unknown("PARSE_ERROR")
   }
 
@@ -433,11 +434,10 @@ internal class PgNodeTreeParser {
     val resultExpressions = if (caseWhenBlocks == null) {
       emptyList()
     } else {
-      splitBraceBlocks(caseWhenBlocks).mapNotNull { block ->
-        val result = extractFieldExpression(block, ":result")
-        if (result == null) logger.warning("CASEWHEN block missing :result field, skipping: $block")
-        result
-      }.map { parseExpression(it) }
+      splitBraceBlocks(caseWhenBlocks)
+        .filter { it.startsWith("{CASEWHEN") }
+        .mapNotNull { block -> extractFieldExpression(block, ":result") }
+        .map { parseExpression(it) }
     }
     val defaultResult = extractFieldExpression(text, ":defresult")?.let { parseExpression(it) }
     return PgNodeExpression.CaseExpr(resultExpressions = resultExpressions, defaultResult = defaultResult)
