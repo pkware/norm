@@ -95,8 +95,8 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> addEvent(
     stream: Iterable<Input>,
-    category: Input.() -> String,
-    payload: Input.() -> String?,
+    category: (Input) -> String,
+    payload: (Input) -> String?,
     batchSize: Int,
   ): IntArray {
     val sql = "INSERT INTO event (category, payload) VALUES (?, ?::jsonb)"
@@ -105,8 +105,8 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setString(1, entry.category())
-        setString(2, entry.payload())
+        setString(1, category(entry))
+        setString(2, payload(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {

@@ -209,7 +209,7 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> insertOne(
     stream: Iterable<Input>,
-    string_type: Input.() -> String,
+    string_type: (Input) -> String,
     batchSize: Int,
   ): IntArray
 
@@ -231,7 +231,7 @@ public interface Queries {
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
   @Throws(SQLException::class)
-  public fun <Input : Any> insertOne(stream: Iterable<Input>, string_type: Input.() -> String): IntArray = insertOne(stream, string_type, 100)
+  public fun <Input : Any> insertOne(stream: Iterable<Input>, string_type: (Input) -> String): IntArray = insertOne(stream, string_type, 100)
 
   /**
    * ```sql
@@ -261,8 +261,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> insertMultiple(
     stream: Iterable<Input>,
-    string_type: Input.() -> String,
-    int_type: Input.() -> Int?,
+    string_type: (Input) -> String,
+    int_type: (Input) -> Int?,
     batchSize: Int,
   ): IntArray
 
@@ -286,8 +286,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> insertMultiple(
     stream: Iterable<Input>,
-    string_type: Input.() -> String,
-    int_type: Input.() -> Int?,
+    string_type: (Input) -> String,
+    int_type: (Input) -> Int?,
   ): IntArray = insertMultiple(stream, string_type, int_type, 100)
 
   /**
@@ -318,7 +318,7 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> updateAllStrings(
     stream: Iterable<Input>,
-    string_type: Input.() -> String,
+    string_type: (Input) -> String,
     batchSize: Int,
   ): IntArray
 
@@ -340,7 +340,7 @@ public interface Queries {
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
   @Throws(SQLException::class)
-  public fun <Input : Any> updateAllStrings(stream: Iterable<Input>, string_type: Input.() -> String): IntArray = updateAllStrings(stream, string_type, 100)
+  public fun <Input : Any> updateAllStrings(stream: Iterable<Input>, string_type: (Input) -> String): IntArray = updateAllStrings(stream, string_type, 100)
 
   /**
    * ```sql
@@ -384,7 +384,7 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> deleteById(
     stream: Iterable<Input>,
-    serial_type: Input.() -> Int,
+    serial_type: (Input) -> Int,
     batchSize: Int,
   ): IntArray
 
@@ -408,7 +408,7 @@ public interface Queries {
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
   @Throws(SQLException::class)
-  public fun <Input : Any> deleteById(stream: Iterable<Input>, serial_type: Input.() -> Int): IntArray = deleteById(stream, serial_type, 100)
+  public fun <Input : Any> deleteById(stream: Iterable<Input>, serial_type: (Input) -> Int): IntArray = deleteById(stream, serial_type, 100)
 
   /**
    * Execrows with 1 parameter.
@@ -452,8 +452,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> updateStringType(
     stream: Iterable<Input>,
-    p_id: Input.() -> Int,
-    p_new_value: Input.() -> String,
+    p_id: (Input) -> Int,
+    p_new_value: (Input) -> String,
     batchSize: Int,
   ): IntArray
 
@@ -479,8 +479,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> updateStringType(
     stream: Iterable<Input>,
-    p_id: Input.() -> Int,
-    p_new_value: Input.() -> String,
+    p_id: (Input) -> Int,
+    p_new_value: (Input) -> String,
   ): IntArray = updateStringType(stream, p_id, p_new_value, 100)
 
   /**
@@ -711,8 +711,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> updateBothStrings(
     stream: Iterable<Input>,
-    string_type: Input.() -> String,
-    serial_type: Input.() -> Int,
+    string_type: (Input) -> String,
+    serial_type: (Input) -> Int,
     batchSize: Int,
   ): IntArray
 
@@ -738,8 +738,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> updateBothStrings(
     stream: Iterable<Input>,
-    string_type: Input.() -> String,
-    serial_type: Input.() -> Int,
+    string_type: (Input) -> String,
+    serial_type: (Input) -> Int,
   ): IntArray = updateBothStrings(stream, string_type, serial_type, 100)
 
   /**

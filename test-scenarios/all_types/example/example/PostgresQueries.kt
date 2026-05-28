@@ -343,7 +343,7 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> insertOne(
     stream: Iterable<Input>,
-    string_type: Input.() -> String,
+    string_type: (Input) -> String,
     batchSize: Int,
   ): IntArray {
     val sql = "INSERT INTO type(string_type) VALUES (?)"
@@ -352,7 +352,7 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setString(1, entry.string_type())
+        setString(1, string_type(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
@@ -382,8 +382,8 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> insertMultiple(
     stream: Iterable<Input>,
-    string_type: Input.() -> String,
-    int_type: Input.() -> Int?,
+    string_type: (Input) -> String,
+    int_type: (Input) -> Int?,
     batchSize: Int,
   ): IntArray {
     val sql = "INSERT INTO type(string_type, int_type) VALUES (?, ?)"
@@ -392,8 +392,8 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setString(1, entry.string_type())
-        setInt(2, entry.int_type())
+        setString(1, string_type(entry))
+        setInt(2, int_type(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
@@ -422,7 +422,7 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> updateAllStrings(
     stream: Iterable<Input>,
-    string_type: Input.() -> String,
+    string_type: (Input) -> String,
     batchSize: Int,
   ): IntArray {
     val sql = "UPDATE type SET string_type = ? WHERE string_type IS NOT NULL"
@@ -431,7 +431,7 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setString(1, entry.string_type())
+        setString(1, string_type(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
@@ -466,7 +466,7 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> deleteById(
     stream: Iterable<Input>,
-    serial_type: Input.() -> Int,
+    serial_type: (Input) -> Int,
     batchSize: Int,
   ): IntArray {
     val sql = "DELETE FROM type WHERE serial_type = ?"
@@ -475,7 +475,7 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setInt(1, entry.serial_type())
+        setInt(1, serial_type(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
@@ -512,8 +512,8 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> updateStringType(
     stream: Iterable<Input>,
-    p_id: Input.() -> Int,
-    p_new_value: Input.() -> String,
+    p_id: (Input) -> Int,
+    p_new_value: (Input) -> String,
     batchSize: Int,
   ): IntArray {
     val sql = "CALL update_string_type(?, ?)"
@@ -522,8 +522,8 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setInt(1, entry.p_id())
-        setString(2, entry.p_new_value())
+        setInt(1, p_id(entry))
+        setString(2, p_new_value(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
@@ -874,8 +874,8 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> updateBothStrings(
     stream: Iterable<Input>,
-    string_type: Input.() -> String,
-    serial_type: Input.() -> Int,
+    string_type: (Input) -> String,
+    serial_type: (Input) -> Int,
     batchSize: Int,
   ): IntArray {
     val sql = "UPDATE type SET string_type = ?, text_type = ? WHERE serial_type = ?"
@@ -884,9 +884,9 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setString(1, entry.string_type())
-        setString(2, entry.string_type())
-        setInt(3, entry.serial_type())
+        setString(1, string_type(entry))
+        setString(2, string_type(entry))
+        setInt(3, serial_type(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {

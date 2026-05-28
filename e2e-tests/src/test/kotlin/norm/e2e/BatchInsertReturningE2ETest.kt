@@ -111,7 +111,7 @@ class BatchInsertReturningE2ETest : PostgresTestBase() {
 
     @Test
     fun `empty input returns empty list`() {
-      val results = queries.insertAuthor(emptyList<AuthorInput>(), AuthorInput::name, AuthorInput::bio)
+      val results = queries.insertAuthor(emptyList(), AuthorInput::name, AuthorInput::bio)
 
       assertThat(results).isEmpty()
     }
@@ -173,7 +173,7 @@ class BatchInsertReturningE2ETest : PostgresTestBase() {
     fun `single returning column returns List of timestamps directly`() {
       val inputs = listOf("event1", "event2", "event3")
 
-      val results = queries.insertAuditLog(inputs) { this }
+      val results = queries.insertAuditLog(inputs) { it }
 
       assertThat(results).hasSize(3)
       for (result in results) {

@@ -76,8 +76,8 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> addAuthor(
     stream: Iterable<Input>,
-    name: Input.() -> String,
-    email: Input.() -> String?,
+    name: (Input) -> String,
+    email: (Input) -> String?,
     batchSize: Int,
   ): IntArray {
     val sql = "INSERT INTO author(name, email) VALUES (?, ?)"
@@ -86,8 +86,8 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setString(1, entry.name())
-        setString(2, entry.email())
+        setString(1, name(entry))
+        setString(2, email(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
@@ -146,10 +146,10 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> createPerson(
     stream: Iterable<Input>,
-    name: Input.() -> String,
-    contact_email: Input.() -> EmailAddress,
-    current_mood: Input.() -> Mood,
-    bio: Input.() -> JsonData?,
+    name: (Input) -> String,
+    contact_email: (Input) -> EmailAddress,
+    current_mood: (Input) -> Mood,
+    bio: (Input) -> JsonData?,
     batchSize: Int,
   ): IntArray {
     val sql = "INSERT INTO person (name, contact_email, current_mood, bio) VALUES (?, ?, ?, ?)"
@@ -158,10 +158,10 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setString(1, entry.name())
-        setString(2, emailAddressAdapter.encode(entry.contact_email()))
-        setObject(3, moodAdapter.encode(entry.current_mood()), Types.OTHER)
-        entry.bio()?.let { setObject(4, jsonbAdapter.encode(it), Types.OTHER) } ?: setNull(4, Types.OTHER)
+        setString(1, name(entry))
+        setString(2, emailAddressAdapter.encode(contact_email(entry)))
+        setObject(3, moodAdapter.encode(current_mood(entry)), Types.OTHER)
+        bio(entry)?.let { setObject(4, jsonbAdapter.encode(it), Types.OTHER) } ?: setNull(4, Types.OTHER)
         addBatch()
         batchCount++
         if (batchCount == batchSize) {

@@ -37,9 +37,9 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> createUser(
     stream: Iterable<Input>,
-    username: Input.() -> String,
-    crypt_param1: Input.() -> String,
-    crypt2_param1: Input.() -> String?,
+    username: (Input) -> String,
+    crypt_param1: (Input) -> String,
+    crypt2_param1: (Input) -> String?,
     batchSize: Int,
   ): IntArray
 
@@ -66,9 +66,9 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> createUser(
     stream: Iterable<Input>,
-    username: Input.() -> String,
-    crypt_param1: Input.() -> String,
-    crypt2_param1: Input.() -> String?,
+    username: (Input) -> String,
+    crypt_param1: (Input) -> String,
+    crypt2_param1: (Input) -> String?,
   ): IntArray = createUser(stream, username, crypt_param1, crypt2_param1, 100)
 
   /**
@@ -161,9 +161,9 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> setSetting(
     stream: Iterable<Input>,
-    user_id: Input.() -> Int,
-    setting_key: Input.() -> String,
-    setting_value: Input.() -> String?,
+    user_id: (Input) -> Int,
+    setting_key: (Input) -> String,
+    setting_value: (Input) -> String?,
     batchSize: Int,
   ): IntArray
 
@@ -190,9 +190,9 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> setSetting(
     stream: Iterable<Input>,
-    user_id: Input.() -> Int,
-    setting_key: Input.() -> String,
-    setting_value: Input.() -> String?,
+    user_id: (Input) -> Int,
+    setting_key: (Input) -> String,
+    setting_value: (Input) -> String?,
   ): IntArray = setSetting(stream, user_id, setting_key, setting_value, 100)
 
   /**

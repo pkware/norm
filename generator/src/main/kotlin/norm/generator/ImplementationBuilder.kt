@@ -314,7 +314,7 @@ internal fun batchFunction(statement: SqlStatement): FunSpec.Builder = sqlFuncti
 
   for ((index, parameter) in statement.parameters.withIndex()) {
     val lambda = LambdaTypeName.get(
-      receiver = t,
+      parameters = arrayOf(ParameterSpec.unnamed(t)),
       returnType = statement.resolveColumnType(parameter.column!!),
     )
     addParameter(statement.getParameterName(index), lambda)
@@ -346,7 +346,7 @@ internal fun batchWithReturnFunction(statement: SqlStatement): FunSpec.Builder {
 
     for ((index, parameter) in statement.parameters.withIndex()) {
       val lambda = LambdaTypeName.get(
-        receiver = inputType,
+        parameters = arrayOf(ParameterSpec.unnamed(inputType)),
         returnType = statement.resolveColumnType(parameter.column!!),
       )
       addParameter(statement.getParameterName(index), lambda)
@@ -388,7 +388,7 @@ private fun buildBatch(statement: SqlStatement, trackIntermediateResults: Boolea
       """.trimMargin(),
     )
     beginControlFlow("for (entry in stream) {")
-    for (block in bindStatements(statement) { "entry.$it()" }) addStatement("%L", block)
+    for (block in bindStatements(statement) { "$it(entry)" }) addStatement("%L", block)
     if (trackIntermediateResults) {
       addCode(
         """
@@ -467,7 +467,7 @@ private fun buildBatchWithReturn(statement: SqlStatement): FunSpec = batchWithRe
   )
 
   beginControlFlow("for (entry in stream) {")
-  for (block in bindStatements(statement) { "entry.$it()" }) addStatement("%L", block)
+  for (block in bindStatements(statement) { "$it(entry)" }) addStatement("%L", block)
   addCode(
     """
       |addBatch()

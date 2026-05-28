@@ -125,11 +125,11 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> createUser(
     stream: Iterable<Input>,
-    email: Input.() -> Email,
-    age: Input.() -> PositiveInteger?,
-    zip_code: Input.() -> UsPostalCode?,
-    current_mood: Input.() -> Mood,
-    previous_mood: Input.() -> Mood?,
+    email: (Input) -> Email,
+    age: (Input) -> PositiveInteger?,
+    zip_code: (Input) -> UsPostalCode?,
+    current_mood: (Input) -> Mood,
+    previous_mood: (Input) -> Mood?,
     batchSize: Int,
   ): IntArray
 
@@ -154,11 +154,11 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> createUser(
     stream: Iterable<Input>,
-    email: Input.() -> Email,
-    age: Input.() -> PositiveInteger?,
-    zip_code: Input.() -> UsPostalCode?,
-    current_mood: Input.() -> Mood,
-    previous_mood: Input.() -> Mood?,
+    email: (Input) -> Email,
+    age: (Input) -> PositiveInteger?,
+    zip_code: (Input) -> UsPostalCode?,
+    current_mood: (Input) -> Mood,
+    previous_mood: (Input) -> Mood?,
   ): IntArray = createUser(stream, email, age, zip_code, current_mood, previous_mood, 100)
 
   /**
@@ -199,10 +199,10 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> updateUser(
     stream: Iterable<Input>,
-    email: Input.() -> Email?,
-    age: Input.() -> PositiveInteger?,
-    zipCode: Input.() -> UsPostalCode?,
-    id: Input.() -> Int,
+    email: (Input) -> Email?,
+    age: (Input) -> PositiveInteger?,
+    zipCode: (Input) -> UsPostalCode?,
+    id: (Input) -> Int,
     batchSize: Int,
   ): IntArray
 
@@ -231,10 +231,10 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> updateUser(
     stream: Iterable<Input>,
-    email: Input.() -> Email?,
-    age: Input.() -> PositiveInteger?,
-    zipCode: Input.() -> UsPostalCode?,
-    id: Input.() -> Int,
+    email: (Input) -> Email?,
+    age: (Input) -> PositiveInteger?,
+    zipCode: (Input) -> UsPostalCode?,
+    id: (Input) -> Int,
   ): IntArray = updateUser(stream, email, age, zipCode, id, 100)
 
   /**
@@ -277,9 +277,9 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> updateMood(
     stream: Iterable<Input>,
-    current_mood: Input.() -> Mood,
-    previous_mood: Input.() -> Mood?,
-    id: Input.() -> Int,
+    current_mood: (Input) -> Mood,
+    previous_mood: (Input) -> Mood?,
+    id: (Input) -> Int,
     batchSize: Int,
   ): IntArray
 
@@ -307,9 +307,9 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> updateMood(
     stream: Iterable<Input>,
-    current_mood: Input.() -> Mood,
-    previous_mood: Input.() -> Mood?,
-    id: Input.() -> Int,
+    current_mood: (Input) -> Mood,
+    previous_mood: (Input) -> Mood?,
+    id: (Input) -> Int,
   ): IntArray = updateMood(stream, current_mood, previous_mood, id, 100)
 
   /**
@@ -350,9 +350,9 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> updateArrayColumns(
     stream: Iterable<Input>,
-    past_moods: Input.() -> Array<Mood?>?,
-    scores: Input.() -> Array<PositiveInteger?>?,
-    id: Input.() -> Int,
+    past_moods: (Input) -> Array<Mood?>?,
+    scores: (Input) -> Array<PositiveInteger?>?,
+    id: (Input) -> Int,
     batchSize: Int,
   ): IntArray
 
@@ -380,9 +380,9 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> updateArrayColumns(
     stream: Iterable<Input>,
-    past_moods: Input.() -> Array<Mood?>?,
-    scores: Input.() -> Array<PositiveInteger?>?,
-    id: Input.() -> Int,
+    past_moods: (Input) -> Array<Mood?>?,
+    scores: (Input) -> Array<PositiveInteger?>?,
+    id: (Input) -> Int,
   ): IntArray = updateArrayColumns(stream, past_moods, scores, id, 100)
 
   /**

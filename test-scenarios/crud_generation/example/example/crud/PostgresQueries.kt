@@ -83,7 +83,7 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any, T : Any> insertAuditLog(
     stream: Iterable<Input>,
-    message: Input.() -> String,
+    message: (Input) -> String,
     mapper: (logged_at: Instant) -> T,
     batchSize: Int,
   ): List<T> {
@@ -98,7 +98,7 @@ public class PostgresQueries(
       val results = mutableListOf<T>()
       var batchCount = 0
       for (entry in stream) {
-        setString(1, entry.message())
+        setString(1, message(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
@@ -169,8 +169,8 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any, T : Any> insertAuthor(
     stream: Iterable<Input>,
-    name: Input.() -> String,
-    bio: Input.() -> String?,
+    name: (Input) -> String,
+    bio: (Input) -> String?,
     mapper: (id: Int, created_at: Instant) -> T,
     batchSize: Int,
   ): List<T> {
@@ -186,8 +186,8 @@ public class PostgresQueries(
       val results = mutableListOf<T>()
       var batchCount = 0
       for (entry in stream) {
-        setString(1, entry.name())
-        setString(2, entry.bio())
+        setString(1, name(entry))
+        setString(2, bio(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
@@ -260,7 +260,7 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> deleteAuthorById(
     stream: Iterable<Input>,
-    id: Input.() -> Int,
+    id: (Input) -> Int,
     batchSize: Int,
   ): IntArray {
     val sql = "DELETE FROM author WHERE id = ?"
@@ -269,7 +269,7 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setInt(1, entry.id())
+        setInt(1, id(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
@@ -324,10 +324,10 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> insertOrderItem(
     stream: Iterable<Input>,
-    order_id: Input.() -> Int,
-    item_id: Input.() -> Int,
-    quantity: Input.() -> Int,
-    price: Input.() -> BigDecimal,
+    order_id: (Input) -> Int,
+    item_id: (Input) -> Int,
+    quantity: (Input) -> Int,
+    price: (Input) -> BigDecimal,
     batchSize: Int,
   ): IntArray {
     val sql = "INSERT INTO order_item (order_id, item_id, quantity, price) VALUES (?, ?, ?, ?)"
@@ -336,10 +336,10 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setInt(1, entry.order_id())
-        setInt(2, entry.item_id())
-        setInt(3, entry.quantity())
-        setBigDecimal(4, entry.price())
+        setInt(1, order_id(entry))
+        setInt(2, item_id(entry))
+        setInt(3, quantity(entry))
+        setBigDecimal(4, price(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
@@ -423,8 +423,8 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> deleteOrderItemByOrderIdAndItemId(
     stream: Iterable<Input>,
-    order_id: Input.() -> Int,
-    item_id: Input.() -> Int,
+    order_id: (Input) -> Int,
+    item_id: (Input) -> Int,
     batchSize: Int,
   ): IntArray {
     val sql = "DELETE FROM order_item WHERE order_id = ? AND item_id = ?"
@@ -433,8 +433,8 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setInt(1, entry.order_id())
-        setInt(2, entry.item_id())
+        setInt(1, order_id(entry))
+        setInt(2, item_id(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
@@ -525,9 +525,9 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any, T : Any> insertProduct(
     stream: Iterable<Input>,
-    name: Input.() -> String,
-    price: Input.() -> BigDecimal,
-    tax: Input.() -> BigDecimal,
+    name: (Input) -> String,
+    price: (Input) -> BigDecimal,
+    tax: (Input) -> BigDecimal,
     mapper: (id: Int, total: BigDecimal) -> T,
     batchSize: Int,
   ): List<T> {
@@ -543,9 +543,9 @@ public class PostgresQueries(
       val results = mutableListOf<T>()
       var batchCount = 0
       for (entry in stream) {
-        setString(1, entry.name())
-        setBigDecimal(2, entry.price())
-        setBigDecimal(3, entry.tax())
+        setString(1, name(entry))
+        setBigDecimal(2, price(entry))
+        setBigDecimal(3, tax(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
@@ -621,7 +621,7 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> deleteProductById(
     stream: Iterable<Input>,
-    id: Input.() -> Int,
+    id: (Input) -> Int,
     batchSize: Int,
   ): IntArray {
     val sql = "DELETE FROM product WHERE id = ?"
@@ -630,7 +630,7 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setInt(1, entry.id())
+        setInt(1, id(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {

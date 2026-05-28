@@ -91,8 +91,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> addEvent(
     stream: Iterable<Input>,
-    category: Input.() -> String,
-    payload: Input.() -> String?,
+    category: (Input) -> String,
+    payload: (Input) -> String?,
     batchSize: Int,
   ): IntArray
 
@@ -118,8 +118,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> addEvent(
     stream: Iterable<Input>,
-    category: Input.() -> String,
-    payload: Input.() -> String?,
+    category: (Input) -> String,
+    payload: (Input) -> String?,
   ): IntArray = addEvent(stream, category, payload, 100)
 
   /**

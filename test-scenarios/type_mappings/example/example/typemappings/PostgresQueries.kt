@@ -91,11 +91,11 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> createUser(
     stream: Iterable<Input>,
-    email: Input.() -> Email,
-    age: Input.() -> PositiveInteger?,
-    current_mood: Input.() -> CustomMood,
-    metadata: Input.() -> JsonData,
-    preferences: Input.() -> UserPreferences,
+    email: (Input) -> Email,
+    age: (Input) -> PositiveInteger?,
+    current_mood: (Input) -> CustomMood,
+    metadata: (Input) -> JsonData,
+    preferences: (Input) -> UserPreferences,
     batchSize: Int,
   ): IntArray {
     val sql = """
@@ -107,11 +107,11 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setString(1, emailAdapter.encode(entry.email()))
-        entry.age()?.let { setInt(2, positiveIntegerAdapter.encode(it)) } ?: setNull(2, Types.INTEGER)
-        setObject(3, moodAdapter.encode(entry.current_mood()), Types.OTHER)
-        setObject(4, jsonbAdapter.encode(entry.metadata()), Types.OTHER)
-        setObject(5, usersPreferencesAdapter.encode(entry.preferences()), Types.OTHER)
+        setString(1, emailAdapter.encode(email(entry)))
+        age(entry)?.let { setInt(2, positiveIntegerAdapter.encode(it)) } ?: setNull(2, Types.INTEGER)
+        setObject(3, moodAdapter.encode(current_mood(entry)), Types.OTHER)
+        setObject(4, jsonbAdapter.encode(metadata(entry)), Types.OTHER)
+        setObject(5, usersPreferencesAdapter.encode(preferences(entry)), Types.OTHER)
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
@@ -145,9 +145,9 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> updatePastMoods(
     stream: Iterable<Input>,
-    past_moods: Input.() -> Array<CustomMood?>?,
-    tag_list: Input.() -> Array<JsonData?>?,
-    id: Input.() -> Int,
+    past_moods: (Input) -> Array<CustomMood?>?,
+    tag_list: (Input) -> Array<JsonData?>?,
+    id: (Input) -> Int,
     batchSize: Int,
   ): IntArray {
     val sql = "UPDATE users SET past_moods = ?, tag_list = ? WHERE id = ?"
@@ -156,9 +156,9 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        entry.past_moods()?.let { setArray(1, it.encodeToSqlArray(connection, "mood", moodAdapter)) } ?: setNull(1, Types.ARRAY)
-        entry.tag_list()?.let { setArray(2, it.encodeToSqlArray(connection, "jsonb", jsonbAdapter)) } ?: setNull(2, Types.ARRAY)
-        setInt(3, entry.id())
+        past_moods(entry)?.let { setArray(1, it.encodeToSqlArray(connection, "mood", moodAdapter)) } ?: setNull(1, Types.ARRAY)
+        tag_list(entry)?.let { setArray(2, it.encodeToSqlArray(connection, "jsonb", jsonbAdapter)) } ?: setNull(2, Types.ARRAY)
+        setInt(3, id(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
