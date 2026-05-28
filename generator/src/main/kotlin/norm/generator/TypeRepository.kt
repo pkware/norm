@@ -475,7 +475,7 @@ internal class TypeRepository(
     "time", "pg_catalog.time" -> PostgresSupportedTypes.LOCAL_TIME
     "timetz", "pg_catalog.timetz" -> PostgresSupportedTypes.OFFSET_TIME
     "timestamp", "pg_catalog.timestamp" -> PostgresSupportedTypes.LOCAL_DATE_TIME
-    "timestamptz", "pg_catalog.timestamptz" -> PostgresSupportedTypes.OFFSET_DATE_TIME
+    "timestamptz", "pg_catalog.timestamptz" -> InstantSqlMappable(notNull)
 
     "text", "varchar", "pg_catalog.varchar", "bpchar", "pg_catalog.bpchar", "string" -> JdbcTypes.STRING
 

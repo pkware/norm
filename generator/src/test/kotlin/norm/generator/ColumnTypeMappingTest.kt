@@ -25,10 +25,10 @@ import plugin.Parameter
 import plugin.Query
 import plugin.Schema
 import java.sql.Blob
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
-import java.time.OffsetDateTime
 import java.time.OffsetTime
 import java.util.UUID
 
@@ -307,23 +307,23 @@ class ColumnTypeMappingTest {
   @Nested
   inner class TimestampWithTimezoneTypes {
     @Test
-    fun `timestamptz maps to OffsetDateTime`() {
+    fun `timestamptz maps to Instant`() {
       val statement = createStatement(
         "SELECT updated_at FROM records;",
         columns = listOf(column("updated_at", type = "timestamptz")),
       )
       assertThat(statement.resultRowShape.kotlinType)
-        .isEqualTo(OffsetDateTime::class.asTypeName())
+        .isEqualTo(Instant::class.asTypeName())
     }
 
     @Test
-    fun `pg_catalog timestamptz maps to OffsetDateTime`() {
+    fun `pg_catalog timestamptz maps to Instant`() {
       val statement = createStatement(
         "SELECT updated_at FROM records;",
         columns = listOf(column("updated_at", type = "pg_catalog.timestamptz")),
       )
       assertThat(statement.resultRowShape.kotlinType)
-        .isEqualTo(OffsetDateTime::class.asTypeName())
+        .isEqualTo(Instant::class.asTypeName())
     }
 
     @Test
@@ -334,7 +334,7 @@ class ColumnTypeMappingTest {
       )
       val kotlinType = statement.resultRowShape.kotlinType!!
       assertThat(kotlinType.isNullable).isTrue()
-      assertThat(kotlinType).isEqualTo(OffsetDateTime::class.asTypeName().copy(nullable = true))
+      assertThat(kotlinType).isEqualTo(Instant::class.asTypeName().copy(nullable = true))
     }
 
     @Test
@@ -345,7 +345,7 @@ class ColumnTypeMappingTest {
       )
       val kotlinType = statement.resultRowShape.kotlinType!!
       assertThat(kotlinType.isNullable).isFalse()
-      assertThat(kotlinType).isEqualTo(OffsetDateTime::class.asTypeName())
+      assertThat(kotlinType).isEqualTo(Instant::class.asTypeName())
     }
   }
 
@@ -623,13 +623,13 @@ class ColumnTypeMappingTest {
       }
 
       @Test
-      fun `timestamptz array maps to Array of OffsetDateTime`() {
+      fun `timestamptz array maps to Array of Instant`() {
         val statement = createStatement(
           "SELECT updated_dates FROM audit;",
           columns = listOf(column("updated_dates", type = "timestamptz", isArray = true)),
         )
         assertThat(statement.resultRowShape.kotlinType)
-          .isEqualTo(ARRAY.parameterizedBy(OffsetDateTime::class.asTypeName().copy(nullable = true)))
+          .isEqualTo(ARRAY.parameterizedBy(Instant::class.asTypeName().copy(nullable = true)))
       }
     }
 
@@ -724,6 +724,43 @@ class ColumnTypeMappingTest {
 
       assertThat(accessorString).contains("getArray(1)")
       assertThat(accessorString).contains("as kotlin.Array<java.util.UUID?>")
+    }
+  }
+
+  @Nested
+  inner class TimestamptzAccessors {
+
+    @Test
+    fun `non-null timestamptz reads via OffsetDateTime and converts to Instant`() {
+      val col = column("updated_at", type = "timestamptz")
+      val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString())
+        .isEqualTo("getObject(1, java.time.OffsetDateTime::class.java).toInstant()")
+    }
+
+    @Test
+    fun `nullable timestamptz reads via OffsetDateTime with safe call`() {
+      val col = column("updated_at", type = "timestamptz", notNull = false)
+      val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString())
+        .isEqualTo("getObject(1, java.time.OffsetDateTime::class.java)?.toInstant()")
+    }
+
+    @Test
+    fun `non-null timestamptz writes via OffsetDateTime ofInstant`() {
+      val col = column("updated_at", type = "timestamptz")
+      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("updated_at"))
+      assertThat(setter.toString())
+        .isEqualTo("setObject(1, java.time.OffsetDateTime.ofInstant(updated_at, java.time.ZoneOffset.UTC))")
+    }
+
+    @Test
+    fun `nullable timestamptz writes via OffsetDateTime with setNull fallback`() {
+      val col = column("updated_at", type = "timestamptz", notNull = false)
+      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("updated_at"))
+      val setterString = setter.toString()
+      assertThat(setterString).contains("OffsetDateTime.ofInstant(it, java.time.ZoneOffset.UTC)")
+      assertThat(setterString).contains("setNull(1,")
     }
   }
 

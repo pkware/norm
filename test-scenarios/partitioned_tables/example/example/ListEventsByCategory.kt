@@ -1,6 +1,6 @@
 package example
 
-import java.time.OffsetDateTime
+import java.time.Instant
 import java.util.UUID
 import kotlin.String
 import kotlin.jvm.JvmRecord
@@ -17,6 +17,6 @@ import kotlin.jvm.JvmRecord
 @JvmRecord
 public data class ListEventsByCategory(
   public val id: UUID,
-  public val created_at: OffsetDateTime,
+  public val created_at: Instant,
   public val category: String,
 )

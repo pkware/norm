@@ -3,7 +3,9 @@ package example
 import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.SQLException
+import java.time.Instant
 import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import java.util.UUID
 import kotlin.Any
 import kotlin.Int
@@ -28,10 +30,10 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <T : Any> getEventById(
     id: UUID,
-    created_at: OffsetDateTime,
+    created_at: Instant,
     mapper: (
       id: UUID,
-      created_at: OffsetDateTime,
+      created_at: Instant,
       category: String,
       payload: String?,
     ) -> T,
@@ -40,14 +42,14 @@ public class PostgresQueries(
     val rowReader: ResultSet.() -> T = {
       mapper(
         getObject(1, UUID::class.java),
-        getObject(2, OffsetDateTime::class.java),
+        getObject(2, OffsetDateTime::class.java).toInstant(),
         getString(3),
         getString(4),
       )
     }
     return driver.queryOne(sql, rowReader) {
       setObject(1, id)
-      setObject(2, created_at)
+      setObject(2, OffsetDateTime.ofInstant(created_at, ZoneOffset.UTC))
     }
   }
 
@@ -55,7 +57,7 @@ public class PostgresQueries(
     category: String,
     mapper: (
       id: UUID,
-      created_at: OffsetDateTime,
+      created_at: Instant,
       category: String,
     ) -> T,
     processor: ManyProcessor<T, Return>,
@@ -64,7 +66,7 @@ public class PostgresQueries(
     val rowReader: ResultSet.() -> T = {
       mapper(
         getObject(1, UUID::class.java),
-        getObject(2, OffsetDateTime::class.java),
+        getObject(2, OffsetDateTime::class.java).toInstant(),
         getString(3),
       )
     }
@@ -76,7 +78,7 @@ public class PostgresQueries(
 
   override fun <T : Any> listEventsByCategory(category: String, mapper: (
     id: UUID,
-    created_at: OffsetDateTime,
+    created_at: Instant,
     category: String,
   ) -> T): Many<T> = listEventsByCategory(category, mapper, driver::queryMany)
 
