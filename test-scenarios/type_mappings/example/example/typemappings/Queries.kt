@@ -59,11 +59,11 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> createUser(
     stream: Iterable<Input>,
-    email: Input.() -> Email,
-    age: Input.() -> PositiveInteger?,
-    current_mood: Input.() -> CustomMood,
-    metadata: Input.() -> JsonData,
-    preferences: Input.() -> UserPreferences,
+    email: (Input) -> Email,
+    age: (Input) -> PositiveInteger?,
+    current_mood: (Input) -> CustomMood,
+    metadata: (Input) -> JsonData,
+    preferences: (Input) -> UserPreferences,
     batchSize: Int,
   ): IntArray
 
@@ -88,11 +88,11 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> createUser(
     stream: Iterable<Input>,
-    email: Input.() -> Email,
-    age: Input.() -> PositiveInteger?,
-    current_mood: Input.() -> CustomMood,
-    metadata: Input.() -> JsonData,
-    preferences: Input.() -> UserPreferences,
+    email: (Input) -> Email,
+    age: (Input) -> PositiveInteger?,
+    current_mood: (Input) -> CustomMood,
+    metadata: (Input) -> JsonData,
+    preferences: (Input) -> UserPreferences,
   ): IntArray = createUser(stream, email, age, current_mood, metadata, preferences, 100)
 
   /**
@@ -128,9 +128,9 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> updatePastMoods(
     stream: Iterable<Input>,
-    past_moods: Input.() -> Array<CustomMood?>?,
-    tag_list: Input.() -> Array<JsonData?>?,
-    id: Input.() -> Int,
+    past_moods: (Input) -> Array<CustomMood?>?,
+    tag_list: (Input) -> Array<JsonData?>?,
+    id: (Input) -> Int,
     batchSize: Int,
   ): IntArray
 
@@ -154,9 +154,9 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> updatePastMoods(
     stream: Iterable<Input>,
-    past_moods: Input.() -> Array<CustomMood?>?,
-    tag_list: Input.() -> Array<JsonData?>?,
-    id: Input.() -> Int,
+    past_moods: (Input) -> Array<CustomMood?>?,
+    tag_list: (Input) -> Array<JsonData?>?,
+    id: (Input) -> Int,
   ): IntArray = updatePastMoods(stream, past_moods, tag_list, id, 100)
 
   /**

@@ -47,9 +47,9 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> createUser(
     stream: Iterable<Input>,
-    username: Input.() -> String,
-    crypt_param1: Input.() -> String,
-    crypt2_param1: Input.() -> String?,
+    username: (Input) -> String,
+    crypt_param1: (Input) -> String,
+    crypt2_param1: (Input) -> String?,
     batchSize: Int,
   ): IntArray {
     val sql = """
@@ -61,9 +61,9 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setString(1, entry.username())
-        setString(2, entry.crypt_param1())
-        setString(3, entry.crypt2_param1())
+        setString(1, username(entry))
+        setString(2, crypt_param1(entry))
+        setString(3, crypt2_param1(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
@@ -150,9 +150,9 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> setSetting(
     stream: Iterable<Input>,
-    user_id: Input.() -> Int,
-    setting_key: Input.() -> String,
-    setting_value: Input.() -> String?,
+    user_id: (Input) -> Int,
+    setting_key: (Input) -> String,
+    setting_value: (Input) -> String?,
     batchSize: Int,
   ): IntArray {
     val sql = """
@@ -166,9 +166,9 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setInt(1, entry.user_id())
-        setString(2, entry.setting_key())
-        setString(3, entry.setting_value())
+        setInt(1, user_id(entry))
+        setString(2, setting_key(entry))
+        setString(3, setting_value(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {

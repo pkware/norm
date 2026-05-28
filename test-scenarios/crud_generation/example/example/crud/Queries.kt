@@ -84,7 +84,7 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any, T : Any> insertAuditLog(
     stream: Iterable<Input>,
-    message: Input.() -> String,
+    message: (Input) -> String,
     mapper: (logged_at: Instant) -> T,
     batchSize: Int,
   ): List<T>
@@ -99,7 +99,7 @@ public interface Queries {
    * @return A list containing the generated values for each inserted row, in insertion order.
    */
   @Throws(SQLException::class)
-  public fun <Input : Any> insertAuditLog(stream: Iterable<Input>, message: Input.() -> String): List<Instant> = insertAuditLog(stream, message, ::inputValue, 100)
+  public fun <Input : Any> insertAuditLog(stream: Iterable<Input>, message: (Input) -> String): List<Instant> = insertAuditLog(stream, message, ::inputValue, 100)
 
   /**
    * ```sql
@@ -175,8 +175,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any, T : Any> insertAuthor(
     stream: Iterable<Input>,
-    name: Input.() -> String,
-    bio: Input.() -> String?,
+    name: (Input) -> String,
+    bio: (Input) -> String?,
     mapper: (id: Int, created_at: Instant) -> T,
     batchSize: Int,
   ): List<T>
@@ -193,8 +193,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> insertAuthor(
     stream: Iterable<Input>,
-    name: Input.() -> String,
-    bio: Input.() -> String?,
+    name: (Input) -> String,
+    bio: (Input) -> String?,
   ): List<InsertAuthor> = insertAuthor(stream, name, bio, ::InsertAuthor, 100)
 
   /**
@@ -258,7 +258,7 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> deleteAuthorById(
     stream: Iterable<Input>,
-    id: Input.() -> Int,
+    id: (Input) -> Int,
     batchSize: Int,
   ): IntArray
 
@@ -280,7 +280,7 @@ public interface Queries {
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
   @Throws(SQLException::class)
-  public fun <Input : Any> deleteAuthorById(stream: Iterable<Input>, id: Input.() -> Int): IntArray = deleteAuthorById(stream, id, 100)
+  public fun <Input : Any> deleteAuthorById(stream: Iterable<Input>, id: (Input) -> Int): IntArray = deleteAuthorById(stream, id, 100)
 
   /**
    * ```sql
@@ -336,10 +336,10 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> insertOrderItem(
     stream: Iterable<Input>,
-    order_id: Input.() -> Int,
-    item_id: Input.() -> Int,
-    quantity: Input.() -> Int,
-    price: Input.() -> BigDecimal,
+    order_id: (Input) -> Int,
+    item_id: (Input) -> Int,
+    quantity: (Input) -> Int,
+    price: (Input) -> BigDecimal,
     batchSize: Int,
   ): IntArray
 
@@ -363,10 +363,10 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> insertOrderItem(
     stream: Iterable<Input>,
-    order_id: Input.() -> Int,
-    item_id: Input.() -> Int,
-    quantity: Input.() -> Int,
-    price: Input.() -> BigDecimal,
+    order_id: (Input) -> Int,
+    item_id: (Input) -> Int,
+    quantity: (Input) -> Int,
+    price: (Input) -> BigDecimal,
   ): IntArray = insertOrderItem(stream, order_id, item_id, quantity, price, 100)
 
   /**
@@ -443,8 +443,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> deleteOrderItemByOrderIdAndItemId(
     stream: Iterable<Input>,
-    order_id: Input.() -> Int,
-    item_id: Input.() -> Int,
+    order_id: (Input) -> Int,
+    item_id: (Input) -> Int,
     batchSize: Int,
   ): IntArray
 
@@ -468,8 +468,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> deleteOrderItemByOrderIdAndItemId(
     stream: Iterable<Input>,
-    order_id: Input.() -> Int,
-    item_id: Input.() -> Int,
+    order_id: (Input) -> Int,
+    item_id: (Input) -> Int,
   ): IntArray = deleteOrderItemByOrderIdAndItemId(stream, order_id, item_id, 100)
 
   /**
@@ -559,9 +559,9 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any, T : Any> insertProduct(
     stream: Iterable<Input>,
-    name: Input.() -> String,
-    price: Input.() -> BigDecimal,
-    tax: Input.() -> BigDecimal,
+    name: (Input) -> String,
+    price: (Input) -> BigDecimal,
+    tax: (Input) -> BigDecimal,
     mapper: (id: Int, total: BigDecimal) -> T,
     batchSize: Int,
   ): List<T>
@@ -578,9 +578,9 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> insertProduct(
     stream: Iterable<Input>,
-    name: Input.() -> String,
-    price: Input.() -> BigDecimal,
-    tax: Input.() -> BigDecimal,
+    name: (Input) -> String,
+    price: (Input) -> BigDecimal,
+    tax: (Input) -> BigDecimal,
   ): List<InsertProduct> = insertProduct(stream, name, price, tax, ::InsertProduct, 100)
 
   /**
@@ -649,7 +649,7 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> deleteProductById(
     stream: Iterable<Input>,
-    id: Input.() -> Int,
+    id: (Input) -> Int,
     batchSize: Int,
   ): IntArray
 
@@ -671,7 +671,7 @@ public interface Queries {
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
   @Throws(SQLException::class)
-  public fun <Input : Any> deleteProductById(stream: Iterable<Input>, id: Input.() -> Int): IntArray = deleteProductById(stream, id, 100)
+  public fun <Input : Any> deleteProductById(stream: Iterable<Input>, id: (Input) -> Int): IntArray = deleteProductById(stream, id, 100)
 
   /**
    * ```sql

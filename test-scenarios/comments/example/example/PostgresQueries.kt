@@ -70,8 +70,8 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> addAuthor(
     stream: Iterable<Input>,
-    name: Input.() -> String,
-    bio: Input.() -> String?,
+    name: (Input) -> String,
+    bio: (Input) -> String?,
     batchSize: Int,
   ): IntArray {
     val sql = "INSERT INTO author (name, bio) VALUES (?, ?)"
@@ -80,8 +80,8 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setString(1, entry.name())
-        setString(2, entry.bio())
+        setString(1, name(entry))
+        setString(2, bio(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
@@ -153,8 +153,8 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> updateBookTitle(
     stream: Iterable<Input>,
-    title: Input.() -> String,
-    id: Input.() -> Int,
+    title: (Input) -> String,
+    id: (Input) -> Int,
     batchSize: Int,
   ): IntArray {
     val sql = "UPDATE book SET title = ? WHERE id = ?"
@@ -163,8 +163,8 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setString(1, entry.title())
-        setInt(2, entry.id())
+        setString(1, title(entry))
+        setInt(2, id(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
@@ -294,8 +294,8 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <Input : Any> createAccount(
     stream: Iterable<Input>,
-    username: Input.() -> String,
-    crypt_param1: Input.() -> String,
+    username: (Input) -> String,
+    crypt_param1: (Input) -> String,
     batchSize: Int,
   ): IntArray {
     val sql = "INSERT INTO account (username, password) VALUES (?, crypt(?, gen_salt('bf')))"
@@ -304,8 +304,8 @@ public class PostgresQueries(
       var batchCount = 0
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
-        setString(1, entry.username())
-        setString(2, entry.crypt_param1())
+        setString(1, username(entry))
+        setString(2, crypt_param1(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {

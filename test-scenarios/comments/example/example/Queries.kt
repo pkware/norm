@@ -81,8 +81,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> addAuthor(
     stream: Iterable<Input>,
-    name: Input.() -> String,
-    bio: Input.() -> String?,
+    name: (Input) -> String,
+    bio: (Input) -> String?,
     batchSize: Int,
   ): IntArray
 
@@ -108,8 +108,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> addAuthor(
     stream: Iterable<Input>,
-    name: Input.() -> String,
-    bio: Input.() -> String?,
+    name: (Input) -> String,
+    bio: (Input) -> String?,
   ): IntArray = addAuthor(stream, name, bio, 100)
 
   /**
@@ -211,8 +211,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> updateBookTitle(
     stream: Iterable<Input>,
-    title: Input.() -> String,
-    id: Input.() -> Int,
+    title: (Input) -> String,
+    id: (Input) -> Int,
     batchSize: Int,
   ): IntArray
 
@@ -240,8 +240,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> updateBookTitle(
     stream: Iterable<Input>,
-    title: Input.() -> String,
-    id: Input.() -> Int,
+    title: (Input) -> String,
+    id: (Input) -> Int,
   ): IntArray = updateBookTitle(stream, title, id, 100)
 
   /**
@@ -367,8 +367,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> createAccount(
     stream: Iterable<Input>,
-    username: Input.() -> String,
-    crypt_param1: Input.() -> String,
+    username: (Input) -> String,
+    crypt_param1: (Input) -> String,
     batchSize: Int,
   ): IntArray
 
@@ -395,8 +395,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> createAccount(
     stream: Iterable<Input>,
-    username: Input.() -> String,
-    crypt_param1: Input.() -> String,
+    username: (Input) -> String,
+    crypt_param1: (Input) -> String,
   ): IntArray = createAccount(stream, username, crypt_param1, 100)
 
   /**

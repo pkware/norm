@@ -70,8 +70,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> addAuthor(
     stream: Iterable<Input>,
-    name: Input.() -> String,
-    email: Input.() -> String?,
+    name: (Input) -> String,
+    email: (Input) -> String?,
     batchSize: Int,
   ): IntArray
 
@@ -95,8 +95,8 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> addAuthor(
     stream: Iterable<Input>,
-    name: Input.() -> String,
-    email: Input.() -> String?,
+    name: (Input) -> String,
+    email: (Input) -> String?,
   ): IntArray = addAuthor(stream, name, email, 100)
 
   /**
@@ -151,10 +151,10 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> createPerson(
     stream: Iterable<Input>,
-    name: Input.() -> String,
-    contact_email: Input.() -> EmailAddress,
-    current_mood: Input.() -> Mood,
-    bio: Input.() -> JsonData?,
+    name: (Input) -> String,
+    contact_email: (Input) -> EmailAddress,
+    current_mood: (Input) -> Mood,
+    bio: (Input) -> JsonData?,
     batchSize: Int,
   ): IntArray
 
@@ -178,10 +178,10 @@ public interface Queries {
   @Throws(SQLException::class)
   public fun <Input : Any> createPerson(
     stream: Iterable<Input>,
-    name: Input.() -> String,
-    contact_email: Input.() -> EmailAddress,
-    current_mood: Input.() -> Mood,
-    bio: Input.() -> JsonData?,
+    name: (Input) -> String,
+    contact_email: (Input) -> EmailAddress,
+    current_mood: (Input) -> Mood,
+    bio: (Input) -> JsonData?,
   ): IntArray = createPerson(stream, name, contact_email, current_mood, bio, 100)
 
   /**
