@@ -30,7 +30,7 @@ idea-ext = "org.jetbrains.gradle.plugin.idea-ext:1.4.1"
 ksp = "com.google.devtools.ksp:2.2.21-2.0.5"
 norm = "com.pkware.norm:0.3.0"
 shadow = "com.gradleup.shadow:9.4.2"
-spring-boot = "org.springframework.boot:4.0.6"
+spring-boot = "org.springframework.boot:4.1.0"
 spring-dependencyManagement = "io.spring.dependency-management:1.1.7"
 spring-kotlin = { id = "org.jetbrains.kotlin.plugin.spring", version.ref = "kotlin" }
 
