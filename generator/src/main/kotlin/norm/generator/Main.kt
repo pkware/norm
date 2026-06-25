@@ -114,9 +114,9 @@ private fun generateQueryImplementation(
   val classBuilder = TypeSpec.classBuilder("PostgresQueries")
     .addSuperinterface(interfaceType)
 
-  if (frameworks.isEmpty()) {
-    // Frameworks provide their own transaction mechanism.
-    // Only generate support for Norm's transaction API if not using a framework.
+  if (usesNormManagedTransactions(frameworks)) {
+    // Norm-managed transactions: the concrete PostgresQueries extends RealTransactable so callers can
+    // run transaction { } directly. Data-integration frameworks instead delegate to @Transactional.
     classBuilder.superclass(REAL_TRANSACTABLE)
     classBuilder.addSuperclassConstructorParameter("connectionProvider")
   }
@@ -210,7 +210,7 @@ private fun addDependencyInjectionAnnotations(
 ) {
   for (framework in frameworks) {
     when (framework) {
-      Framework.MICRONAUT_DATA -> {
+      Framework.MICRONAUT_DATA, Framework.MICRONAUT -> {
         classBuilder.addAnnotation(JAKARTA_SINGLETON)
         classBuilder.addAnnotation(
           AnnotationSpec.builder(MICRONAUT_REQUIRES)
@@ -228,6 +228,17 @@ private fun addDependencyInjectionAnnotations(
   }
 }
 
+/**
+ * Whether transactions are managed by Norm's own `norm.Transactable` API (backed by a
+ * `norm.TransactionalConnectionProvider`) rather than delegated to a framework's `@Transactional`.
+ *
+ * True with no framework and with the DI-only [Framework.MICRONAUT] mode. [Framework.MICRONAUT_DATA] and
+ * [Framework.SPRING_DATA] delegate transactions to the framework, so Norm does not expose its own
+ * transaction API in those modes.
+ */
+private fun usesNormManagedTransactions(frameworks: Set<Framework>): Boolean =
+  Framework.MICRONAUT_DATA !in frameworks && Framework.SPRING_DATA !in frameworks
+
 private fun generateQueryInterface(
   queries: List<SqlStatement>,
   interfaceName: String,
@@ -235,11 +246,11 @@ private fun generateQueryInterface(
 ): TypeSpec {
   val interfaceBuilder = TypeSpec.interfaceBuilder(interfaceName)
 
-  if (frameworks.isEmpty()) {
-    // No framework: the concrete PostgresQueries extends RealTransactable, so the interface can
-    // expose Norm-managed transactions directly. With a framework, transactions go through the
-    // framework's @Transactional and the concrete class has no transaction methods — declaring
-    // them here would break the implements relationship.
+  if (usesNormManagedTransactions(frameworks)) {
+    // Norm-managed transactions: the concrete PostgresQueries extends RealTransactable, so the interface
+    // can expose Norm-managed transactions directly. Data-integration frameworks route transactions
+    // through @Transactional and the concrete class has no transaction methods, so declaring them here
+    // would break the implements relationship.
     interfaceBuilder.addSuperinterface(TRANSACTABLE)
   }
 
@@ -259,8 +270,11 @@ private const val PACKAGE_PLACEHOLDER = "packages.placeholder"
  * These implementations are static (no per-schema variation), so they're shipped as plain `.kt` template
  * files with a package placeholder, rather than using KotlinPoet.
  *
- * - Micronaut: Uses `ConnectionOperations<Connection>` to participate in `@Transactional` scopes.
- * - Spring: Uses `DataSourceUtils` to participate in `@Transactional` scopes.
+ * - Micronaut Data (`MICRONAUT_DATA`): Uses `ConnectionOperations<Connection>` to participate in
+ *   `@Transactional` scopes.
+ * - Micronaut DI-only (`MICRONAUT`): A `@Factory` produces a `TransactionalConnectionProvider` from the
+ *   `DataSource`; transactions are Norm-managed.
+ * - Spring (`SPRING_DATA`): Uses `DataSourceUtils` to participate in `@Transactional` scopes.
  *
  * @return A list of [GeneratedFile]s to include in the generated output. Empty when no DI frameworks are configured.
  */
@@ -268,6 +282,7 @@ private fun generateConnectionProviders(packageName: String, frameworks: Set<Fra
   frameworks.map { framework ->
     when (framework) {
       Framework.MICRONAUT_DATA -> loadTemplate(packageName, "MicronautConnectionProvider")
+      Framework.MICRONAUT -> loadTemplate(packageName, "NormConnectionProviderFactory")
       Framework.SPRING_DATA -> loadTemplate(packageName, "SpringConnectionProvider")
     }
   }

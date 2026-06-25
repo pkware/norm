@@ -254,6 +254,7 @@ class GenerateCodeTest {
         .flatMap { scenarioDir ->
           listOf(
             FrameworkScenario(scenarioDir, setOf(Framework.MICRONAUT_DATA), "micronaut"),
+            FrameworkScenario(scenarioDir, setOf(Framework.MICRONAUT), "micronaut-di"),
             FrameworkScenario(scenarioDir, setOf(Framework.SPRING_DATA), "spring"),
           )
         }

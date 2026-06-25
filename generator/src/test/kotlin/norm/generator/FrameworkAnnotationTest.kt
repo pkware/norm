@@ -153,6 +153,42 @@ class FrameworkAnnotationTest {
       val code = generatePostgresQueriesCode(setOf(Framework.MICRONAUT_DATA))
       assertThat(code).containsMatch(Regex("""@Requires\(missingBeans\s*=\s*\[Queries::class]"""))
     }
+
+    @Test
+    fun `MICRONAUT_DATA does not make PostgresQueries extend RealTransactable`() {
+      val code = generatePostgresQueriesCode(setOf(Framework.MICRONAUT_DATA))
+      assertThat(code).doesNotContain("RealTransactable")
+    }
+  }
+
+  @Nested
+  inner class MicronautDiOnly {
+
+    @Test
+    fun `MICRONAUT adds @Singleton to PostgresQueries`() {
+      val code = generatePostgresQueriesCode(setOf(Framework.MICRONAUT))
+      assertThat(code).containsMatch(Regex("""@Singleton"""))
+    }
+
+    @Test
+    fun `MICRONAUT adds @Requires(missingBeans) to PostgresQueries`() {
+      val code = generatePostgresQueriesCode(setOf(Framework.MICRONAUT))
+      assertThat(code).containsMatch(Regex("""@Requires\(missingBeans\s*=\s*\[Queries::class]"""))
+    }
+
+    @Test
+    fun `MICRONAUT makes PostgresQueries extend RealTransactable`() {
+      val code = generatePostgresQueriesCode(setOf(Framework.MICRONAUT))
+      assertThat(code).containsMatch(Regex("RealTransactable"))
+    }
+
+    @Test
+    fun `MICRONAUT emits no Micronaut Data references`() {
+      val allCode = generateEntityCode(setOf(Framework.MICRONAUT))
+      assertThat(allCode).doesNotContain("MicronautConnectionProvider")
+      assertThat(allCode).doesNotContain("ConnectionOperations")
+      assertThat(allCode).doesNotContain("io.micronaut.data")
+    }
   }
 
   @Nested
@@ -239,6 +275,12 @@ class FrameworkAnnotationTest {
     fun `SPRING_DATA does not make Queries interface extend Transactable`() {
       val code = generateQueriesInterfaceCode(setOf(Framework.SPRING_DATA))
       assertThat(code).doesNotContain("Transactable")
+    }
+
+    @Test
+    fun `MICRONAUT makes Queries interface extend Transactable`() {
+      val code = generateQueriesInterfaceCode(setOf(Framework.MICRONAUT))
+      assertThat(code).containsMatch(Regex("interface Queries : Transactable"))
     }
   }
 }

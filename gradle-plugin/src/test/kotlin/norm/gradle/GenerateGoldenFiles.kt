@@ -120,6 +120,7 @@ class GenerateGoldenFiles {
         .flatMap { scenarioDir ->
           listOf(
             FrameworkGoldenScenario(scenarioDir, setOf("MICRONAUT_DATA"), "micronaut"),
+            FrameworkGoldenScenario(scenarioDir, setOf("MICRONAUT"), "micronaut-di"),
             FrameworkGoldenScenario(scenarioDir, setOf("SPRING_DATA"), "spring"),
           )
         }
