@@ -108,6 +108,29 @@ class FrameworkAnnotationTest {
       return files.map { it.contents }.joinToString("\n")
     }
 
+    /**
+     * Generates code with the given frameworks and returns the content of the `Queries` interface file.
+     */
+    private fun generateQueriesInterfaceCode(frameworks: Set<Framework>): String {
+      val table = createTable("author")
+      val catalog = createCatalog(table)
+      val query = createQuery(
+        "listAuthors",
+        "author",
+        listOf(
+          Column(
+            name = "id",
+            notNull = true,
+            type = Identifier(name = "serial"),
+            table = Identifier(name = "author"),
+          ),
+        ),
+      )
+      val files = generateCode(catalog, listOf(query), TEST_PACKAGE, frameworks)
+      val queriesInterfaceFile = files.first { it.name.endsWith("/Queries.kt") }
+      return queriesInterfaceFile.contents
+    }
+
     private fun typeSpecToString(typeSpec: com.squareup.kotlinpoet.TypeSpec): String {
       val fileSpec = FileSpec.builder(TEST_PACKAGE, "${typeSpec.name}.kt")
         .addType(typeSpec)
@@ -194,6 +217,28 @@ class FrameworkAnnotationTest {
       // Properties should use original snake_case column names, not camelCase
       assertThat(generatedCode).containsMatch(Regex("""val first_name:"""))
       assertThat(generatedCode).doesNotContainMatch(Regex("""val firstName:"""))
+    }
+  }
+
+  @Nested
+  inner class TransactableSupertype {
+
+    @Test
+    fun `no framework makes Queries interface extend Transactable`() {
+      val code = generateQueriesInterfaceCode(emptySet())
+      assertThat(code).containsMatch(Regex("interface Queries : Transactable"))
+    }
+
+    @Test
+    fun `MICRONAUT_DATA does not make Queries interface extend Transactable`() {
+      val code = generateQueriesInterfaceCode(setOf(Framework.MICRONAUT_DATA))
+      assertThat(code).doesNotContain("Transactable")
+    }
+
+    @Test
+    fun `SPRING_DATA does not make Queries interface extend Transactable`() {
+      val code = generateQueriesInterfaceCode(setOf(Framework.SPRING_DATA))
+      assertThat(code).doesNotContain("Transactable")
     }
   }
 }

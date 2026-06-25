@@ -12,8 +12,9 @@ import kotlin.String
 import kotlin.collections.Iterable
 import kotlin.jvm.Throws
 import norm.Many
+import norm.Transactable
 
-public interface Queries {
+public interface Queries : Transactable {
   /**
    * Star projection against a partitioned table.
    *

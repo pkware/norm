@@ -13,9 +13,10 @@ import kotlin.String
 import kotlin.collections.Iterable
 import kotlin.jvm.Throws
 import norm.Many
+import norm.Transactable
 import norm.inputValue
 
-public interface Queries {
+public interface Queries : Transactable {
   /**
    * Query using pgcrypto for password hashing
    *
