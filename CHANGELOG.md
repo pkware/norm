@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.4.0](https://github.com/pkware/norm/compare/v0.3.0...v0.4.0) (2026-06-25)
+
+
+### Features
+
+* add Framework.MICRONAUT DI-only mode ([8dde298](https://github.com/pkware/norm/commit/8dde298f4c745a399cd0f7257f7754330a4ad9e7)), closes [#137](https://github.com/pkware/norm/issues/137)
+* Queries interface extends Transactable in no-framework mode ([e082428](https://github.com/pkware/norm/commit/e082428025cde06e51b33400d651071b49b5d6af)), closes [#136](https://github.com/pkware/norm/issues/136)
+* Switch to targeting Java 25 ([fa935db](https://github.com/pkware/norm/commit/fa935db989aa91e1bd07a69bae5c10b38540de88))
+
+
+### Bug Fixes
+
+* **deps:** split micronautTest version from micronaut core ([9e38fe7](https://github.com/pkware/norm/commit/9e38fe70da4c64cbdfbbf0fa8cf3a29e9c0cb9d2))
+* **deps:** update dependency com.diffplug.spotless:spotless-plugin-gradle to v8.7.0 ([717e9ee](https://github.com/pkware/norm/commit/717e9ee9bdcbfe6c61d818a5eb8752e61a4a4553))
+* **deps:** update dependency io.micronaut.sql:micronaut-jdbc-hikari to v7.0.1 ([fa67872](https://github.com/pkware/norm/commit/fa67872c392dc0ad7b002ac93f1f3e74eb533ed0))
+* **deps:** update dependency io.micronaut.test:micronaut-test-junit5 to v5 ([3197dab](https://github.com/pkware/norm/commit/3197dabcecfe06f421557aee0ee9b222d2f648bb))
+* **deps:** update micronaut ([6ed664e](https://github.com/pkware/norm/commit/6ed664efb7f2ee9953b811ff515266f8b444b560))
+* **deps:** update micronaut to v4.10.24 ([d2c6c65](https://github.com/pkware/norm/commit/d2c6c650706ecd311de4465bc1019d3724099b5d))
+* **deps:** update micronaut to v4.10.25 ([df7470c](https://github.com/pkware/norm/commit/df7470c71b0050c1047c6dafcf479b7bad4d9b63))
+* **deps:** update micronaut to v5 ([e108b66](https://github.com/pkware/norm/commit/e108b662b677effeda9fe5f125adcc24ea866885))
+* **deps:** update micronaut to v5.1.0 ([e8b6281](https://github.com/pkware/norm/commit/e8b6281e14eaaa3774a2a014dc79422283ae80dc))
+* **deps:** update micronaut to v5.1.1 ([5f46b7d](https://github.com/pkware/norm/commit/5f46b7dab1f394ecec13e9786965d4b65767230d))
+* **deps:** update micronaut to v5.1.2 ([454ffe0](https://github.com/pkware/norm/commit/454ffe01b18a9b293a50117c21f5ac9acac1da53))
+* **deps:** update micronautdata to v5 ([bdc0fbd](https://github.com/pkware/norm/commit/bdc0fbd9ca9d8c60bc65b5dd2e4824947c252b06))
+
 ## [0.3.0](https://github.com/pkware/norm/compare/v0.2.1...v0.3.0) (2026-05-28)
 
 
