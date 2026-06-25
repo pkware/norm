@@ -20,7 +20,7 @@ internal val SPRING_COMPONENT = ClassName("org.springframework.stereotype", "Com
 internal fun addAdapterDependencyInjectionAnnotations(classBuilder: TypeSpec.Builder, frameworks: Set<Framework>) {
   for (framework in frameworks) {
     when (framework) {
-      Framework.MICRONAUT_DATA -> classBuilder.addAnnotation(JAKARTA_SINGLETON)
+      Framework.MICRONAUT_DATA, Framework.MICRONAUT -> classBuilder.addAnnotation(JAKARTA_SINGLETON)
       Framework.SPRING_DATA -> classBuilder.addAnnotation(SPRING_COMPONENT)
     }
   }
