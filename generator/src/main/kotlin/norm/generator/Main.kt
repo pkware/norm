@@ -15,6 +15,7 @@ import com.squareup.kotlinpoet.asTypeName
 private val NORM_DRIVER = ClassName(RUNTIME_PACKAGE, "NormDriver")
 private val CONNECTION_PROVIDER = ClassName(RUNTIME_PACKAGE, "ConnectionProvider")
 private val REAL_TRANSACTABLE = ClassName(RUNTIME_PACKAGE, "RealTransactable")
+private val TRANSACTABLE = ClassName(RUNTIME_PACKAGE, "Transactable")
 
 /**
  * Generates Kotlin models and query files for use with the Norm runtime.
@@ -38,7 +39,7 @@ public fun generateCode(
 
   val resolvedQueries = queries.map { SqlStatement(catalog, it, generator) }
   val queriesInterface = ClassName(packageName, "Queries")
-  val interfaceCode = generateQueryInterface(resolvedQueries, "Queries")
+  val interfaceCode = generateQueryInterface(resolvedQueries, "Queries", frameworks)
 
   // Type-level overrides suppress auto-generation for the overridden type.
   val typeOverridePostgresTypes = typeMappings.filter { it.isTypeLevel }.map { it.postgresType }.toSet()
@@ -227,8 +228,20 @@ private fun addDependencyInjectionAnnotations(
   }
 }
 
-private fun generateQueryInterface(queries: List<SqlStatement>, interfaceName: String): TypeSpec {
+private fun generateQueryInterface(
+  queries: List<SqlStatement>,
+  interfaceName: String,
+  frameworks: Set<Framework>,
+): TypeSpec {
   val interfaceBuilder = TypeSpec.interfaceBuilder(interfaceName)
+
+  if (frameworks.isEmpty()) {
+    // No framework: the concrete PostgresQueries extends RealTransactable, so the interface can
+    // expose Norm-managed transactions directly. With a framework, transactions go through the
+    // framework's @Transactional and the concrete class has no transaction methods — declaring
+    // them here would break the implements relationship.
+    interfaceBuilder.addSuperinterface(TRANSACTABLE)
+  }
 
   queries.forEach(interfaceBuilder::addSqlStatementInterfaceMethod)
 

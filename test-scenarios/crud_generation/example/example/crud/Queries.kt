@@ -16,9 +16,10 @@ import kotlin.collections.List
 import kotlin.jvm.Throws
 import norm.Many
 import norm.Query
+import norm.Transactable
 import norm.inputValue
 
-public interface Queries {
+public interface Queries : Transactable {
   /**
    * User-defined query with the same name as a synthetic one (should take priority)
    *

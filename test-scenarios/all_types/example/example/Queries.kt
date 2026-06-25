@@ -26,9 +26,10 @@ import kotlin.collections.Iterable
 import kotlin.jvm.Throws
 import norm.Many
 import norm.Query
+import norm.Transactable
 import norm.inputValue
 
-public interface Queries {
+public interface Queries : Transactable {
   /**
    * ```sql
    * SELECT * FROM type

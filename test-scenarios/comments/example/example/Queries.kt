@@ -11,8 +11,9 @@ import kotlin.String
 import kotlin.collections.Iterable
 import kotlin.jvm.Throws
 import norm.Many
+import norm.Transactable
 
-public interface Queries {
+public interface Queries : Transactable {
   /**
    * ```sql
    * SELECT * FROM author WHERE id = ?

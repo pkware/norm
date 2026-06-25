@@ -3,13 +3,14 @@ package norm.e2e
 import assertk.assertThat
 import assertk.assertions.isEqualTo
 import example.PostgresQueries
+import example.Queries
 import norm.TransactionalConnectionProvider
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 class TransactionE2ETest : PostgresTestBase() {
 
-  private lateinit var queries: PostgresQueries
+  private lateinit var queries: Queries
 
   @BeforeEach
   fun setupQueries() {

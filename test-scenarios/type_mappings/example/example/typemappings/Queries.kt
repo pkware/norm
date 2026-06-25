@@ -13,8 +13,9 @@ import kotlin.IntArray
 import kotlin.collections.Iterable
 import kotlin.jvm.Throws
 import norm.Many
+import norm.Transactable
 
-public interface Queries {
+public interface Queries : Transactable {
   /**
    * ```sql
    * SELECT * FROM users WHERE id = ?
