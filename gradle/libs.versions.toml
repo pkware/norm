@@ -13,7 +13,7 @@ junit-params = { module = "org.junit.jupiter:junit-jupiter-params", version.ref 
 kotlinPoet = "com.squareup:kotlinpoet:2.3.0"
 micronaut-data-processor = { module = "io.micronaut.data:micronaut-data-processor", version.ref = "micronautData" }
 micronaut-data-tx-jdbc = { module = "io.micronaut.data:micronaut-data-tx-jdbc", version.ref = "micronautData" }
-micronaut-hikari = "io.micronaut.sql:micronaut-jdbc-hikari:7.0.1"
+micronaut-hikari = "io.micronaut.sql:micronaut-jdbc-hikari:7.0.2"
 micronaut-inject = { module = "io.micronaut:micronaut-inject", version.ref = "micronaut" }
 micronaut-inject-kotlin = { module = "io.micronaut:micronaut-inject-kotlin", version.ref = "micronaut" }
 micronaut-runtime = { module = "io.micronaut:micronaut-runtime", version.ref = "micronaut" }
