@@ -28,7 +28,7 @@ testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgr
 [plugins]
 idea-ext = "org.jetbrains.gradle.plugin.idea-ext:1.4.1"
 ksp = "com.google.devtools.ksp:2.3.9"
-norm = "com.pkware.norm:0.3.0"
+norm = "com.pkware.norm:0.4.0"
 shadow = "com.gradleup.shadow:9.4.3"
 spring-boot = "org.springframework.boot:4.1.0"
 spring-dependencyManagement = "io.spring.dependency-management:1.1.7"
