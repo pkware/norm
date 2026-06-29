@@ -1,159 +1,33 @@
 package com.pkware.gradle
 
+import com.vanniktech.maven.publish.GradlePlugin
+import com.vanniktech.maven.publish.JavaLibrary
+import com.vanniktech.maven.publish.JavadocJar
+import com.vanniktech.maven.publish.MavenPublishBaseExtension
+import com.vanniktech.maven.publish.SourcesJar
 import org.gradle.api.Plugin
 import org.gradle.api.Project
-import org.gradle.api.plugins.JavaPluginExtension
-import org.gradle.api.publish.PublishingExtension
-import org.gradle.api.publish.maven.MavenPublication
-import org.gradle.api.publish.maven.plugins.MavenPublishPlugin
 import org.gradle.kotlin.dsl.apply
 import org.gradle.kotlin.dsl.configure
-import org.gradle.kotlin.dsl.get
-import org.gradle.kotlin.dsl.getByType
-import org.gradle.kotlin.dsl.register
-import org.gradle.kotlin.dsl.withType
-import org.gradle.plugins.signing.SigningExtension
-import org.gradle.plugins.signing.SigningPlugin
 
 /**
- * Plugin for projects that publish.
+ * Configures a module to publish to Maven Central via the vanniktech maven-publish plugin.
+ *
+ * Plain Kotlin libraries publish an empty javadoc jar (their public API is Kotlin). The
+ * `java-gradle-plugin` module publishes via the [GradlePlugin] platform, which covers both the
+ * plugin artifact and its auto-generated plugin-marker publication. Signing is applied only on CI.
  */
 class PublishConventionPlugin : Plugin<Project> {
   override fun apply(target: Project): Unit = target.run {
-    apply<MavenPublishPlugin>()
+    apply(plugin = "com.vanniktech.maven.publish.base")
 
-    configure<PublishingExtension> {
-      publications {
-        // For non-plugin projects, manually create the publication
-        // For plugin projects, java-gradle-plugin auto-creates "pluginMaven"
-        if (!pluginManager.hasPlugin("java-gradle-plugin")) {
-          register<MavenPublication>("mavenJava") {
-            from(components["java"])
-          }
-        }
+    configure<MavenPublishBaseExtension> {
+      if (plugins.hasPlugin("java-gradle-plugin")) {
+        configure(GradlePlugin(javadocJar = JavadocJar.Empty(), sourcesJar = SourcesJar.Sources()))
+      } else {
+        configure(JavaLibrary(javadocJar = JavadocJar.Empty(), sourcesJar = SourcesJar.Sources()))
       }
-      repositories {
-        maven {
-          name = "MavenCentral"
-          url = uri(if (version.toString().isReleaseBuild) releaseRepositoryUrl else snapshotRepositoryUrl)
-          credentials {
-            username = repositoryUsername
-            password = repositoryPassword
-          }
-        }
-      }
-    }
-
-    // Configure POM for all Maven publications after they've been created.
-    // This must cover every publication, including plugin marker POMs auto-created by java-gradle-plugin,
-    // because Maven Central requires full metadata on every artifact.
-    afterEvaluate {
-      configure<PublishingExtension> {
-        publications.withType<MavenPublication>().configureEach {
-          pom {
-            name.set(pomName)
-            description.set(pomDescription)
-            // Marker publications created by java-gradle-plugin are POM-only artifacts.
-            // MavenPluginPublishingRule sets their packaging to "pom" automatically;
-            // overriding it here would revert them to "jar", causing Maven Central to
-            // look for a JAR that doesn't exist.
-            if (!this@configureEach.name.endsWith("PluginMarkerMaven")) {
-              packaging = pomPackaging
-            }
-            url.set("https://github.com/pkware/norm")
-
-            organization {
-              name.convention("PKWARE, Inc.")
-              url.convention("https://www.pkware.com")
-            }
-
-            developers {
-              developer {
-                id.set("all")
-                name.set("PKWARE, Inc.")
-              }
-            }
-
-            scm {
-              connection.set("scm:git:git://github.com/pkware/norm.git")
-              developerConnection.set("scm:git:ssh://github.com/pkware/norm.git")
-              url.set("https://github.com/pkware/norm")
-            }
-
-            licenses {
-              license {
-                name.set("MIT License")
-                distribution.set("repo")
-                url.set("https://github.com/pkware/norm/blob/main/LICENSE")
-              }
-            }
-          }
-        }
-      }
-    }
-
-    val isCiServer = System.getenv().containsKey("CI")
-    if (isCiServer) {
-      pluginManager.apply(SigningPlugin::class.java)
-      configure<SigningExtension> {
-        // Signing credentials are stored as secrets in GitHub.
-        // See https://docs.gradle.org/current/userguide/signing_plugin.html#sec:signatory_credentials for more information.
-
-        useInMemoryPgpKeys(
-          signingKeyId,
-          signingKey,
-          signingPassword,
-        )
-
-        // Sign all publications, including plugin marker POMs auto-created by java-gradle-plugin.
-        afterEvaluate {
-          sign(extensions.getByType<PublishingExtension>().publications)
-        }
-      }
-    }
-
-    extensions.configure<JavaPluginExtension> {
-      withJavadocJar()
-      withSourcesJar()
+      configureCommonPublishing(this@run)
     }
   }
 }
-
-val String.isReleaseBuild
-  get() = !contains("SNAPSHOT")
-
-val Project.releaseRepositoryUrl: String
-  get() = properties.getOrDefault(
-    "RELEASE_REPOSITORY_URL",
-    "https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2",
-  ).toString()
-
-val Project.snapshotRepositoryUrl: String
-  get() = properties.getOrDefault(
-    "SNAPSHOT_REPOSITORY_URL",
-    "https://central.sonatype.com/repository/maven-snapshots/",
-  ).toString()
-
-val Project.repositoryUsername: String
-  get() = properties.getOrDefault("NEXUS_USERNAME", "").toString()
-
-val Project.repositoryPassword: String
-  get() = properties.getOrDefault("NEXUS_PASSWORD", "").toString()
-
-val Project.signingKeyId: String
-  get() = properties.getOrDefault("SIGNING_KEY_ID", "").toString()
-
-val Project.signingKey: String
-  get() = properties.getOrDefault("SIGNING_KEY", "").toString()
-
-val Project.signingPassword: String
-  get() = properties.getOrDefault("SIGNING_PASSWORD", "").toString()
-
-val Project.pomPackaging: String
-  get() = properties.getOrDefault("POM_PACKAGING", "jar").toString()
-
-val Project.pomName: String
-  get() = properties.getOrDefault("POM_NAME", name).toString()
-
-val Project.pomDescription: String
-  get() = properties.getOrDefault("POM_DESCRIPTION", name).toString()
