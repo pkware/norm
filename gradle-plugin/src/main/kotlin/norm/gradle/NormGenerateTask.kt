@@ -28,6 +28,7 @@ import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.SQLException
 import java.time.Duration
+import java.util.TimeZone
 import javax.inject.Inject
 
 /**
@@ -94,13 +95,7 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
       val username = container.username
       val password = container.password
 
-      // Ensure the PostgreSQL driver is registered with DriverManager. In Gradle's classloader
-      // hierarchy, DriverManager's service-loader discovery may not see the driver JAR on the
-      // plugin classpath. Explicitly loading the class triggers its static initializer, which
-      // registers the driver.
-      Class.forName("org.postgresql.Driver")
-
-      DriverManager.getConnection(jdbcUrl, username, password).use { connection ->
+      openConnectionWithUtcSessionTimeZone(jdbcUrl, username, password).use { connection ->
         applySchemas(connection)
 
         // Build catalog from database metadata
@@ -265,5 +260,34 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
       start()
       logger.lifecycle("Norm: PostgreSQL container ready at $host:$firstMappedPort")
     }
+  }
+}
+
+/**
+ * Opens a JDBC connection whose session time zone is pinned to UTC, independent of the host's zone.
+ *
+ * pgjdbc forwards [TimeZone.getDefault] as the session `TimeZone` in the startup packet and exposes no
+ * property to override it. Hosts whose default zone resolves to a legacy alias (e.g. `Asia/Calcutta`
+ * on some Linux distributions) are rejected at connect by postgres:18.3+ Debian-based images, which
+ * moved legacy aliases to the uninstalled `tzdata-legacy` package — the server fails with
+ * `invalid value for parameter "TimeZone"`.
+ *
+ * The JVM default is pinned to UTC only for the duration of the connect and then restored, so this
+ * never leaks a UTC default into — or races — other work sharing the long-lived Gradle daemon JVM.
+ *
+ * @throws java.sql.SQLException if the connection cannot be established.
+ */
+internal fun openConnectionWithUtcSessionTimeZone(jdbcUrl: String, username: String, password: String): Connection {
+  // Ensure the PostgreSQL driver is registered with DriverManager. In Gradle's classloader hierarchy,
+  // DriverManager's service-loader discovery may not see the driver JAR on the plugin classpath.
+  // Explicitly loading the class triggers its static initializer, which registers the driver.
+  Class.forName("org.postgresql.Driver")
+
+  val previousDefault = TimeZone.getDefault()
+  TimeZone.setDefault(TimeZone.getTimeZone("UTC"))
+  return try {
+    DriverManager.getConnection(jdbcUrl, username, password)
+  } finally {
+    TimeZone.setDefault(previousDefault)
   }
 }
