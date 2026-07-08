@@ -27,6 +27,6 @@ repositories {
 dependencies {
   implementation(kotlin("gradle-plugin", libs.versions.kotlin.get()))
   implementation("com.diffplug.spotless:spotless-plugin-gradle:8.8.0")
-  implementation("dev.detekt:dev.detekt.gradle.plugin:2.0.0-alpha.3")
+  implementation("dev.detekt:dev.detekt.gradle.plugin:2.0.0-alpha.5")
   implementation("com.vanniktech:gradle-maven-publish-plugin:0.37.0")
 }
