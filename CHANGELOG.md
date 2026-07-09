@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.1](https://github.com/pkware/norm/compare/v0.4.0...v0.4.1) (2026-07-09)
+
+
+### Bug Fixes
+
+* **deps:** update dependency com.diffplug.spotless:spotless-plugin-gradle to v8.8.0 ([6494b3d](https://github.com/pkware/norm/commit/6494b3df20aadbf762e7c4f794fa2fea317eaf14))
+* **deps:** update dependency io.micronaut.sql:micronaut-jdbc-hikari to v7.0.2 ([f0b2e87](https://github.com/pkware/norm/commit/f0b2e877e466193f8c118e134be2fea27b05f7bb))
+* **deps:** update dependency io.micronaut.sql:micronaut-jdbc-hikari to v7.1.0 ([b35c1f9](https://github.com/pkware/norm/commit/b35c1f94d5f2870cddd782933d456206df249069))
+* **deps:** update dependency org.junit.jupiter:junit-jupiter-params to v6.1.1 ([c43f3ad](https://github.com/pkware/norm/commit/c43f3adf01885ba3191b20e1b0fa72ed83c5ce1f))
+* **deps:** update dependency org.postgresql:postgresql to v42.7.12 ([cb4bcd4](https://github.com/pkware/norm/commit/cb4bcd4fc356a8d458ab0af49b7798c63702d42d))
+* **deps:** update dependency org.postgresql:postgresql to v42.7.13 ([c887ea3](https://github.com/pkware/norm/commit/c887ea3d10f93da4f6e2bbda71d03ac4d6042d87))
+* **deps:** update micronaut to v5.1.3 ([9e7aae9](https://github.com/pkware/norm/commit/9e7aae90ed3aa3ad2e52b52f74fee94a3e5476aa))
+* **deps:** update micronaut to v5.1.5 ([9f8b69a](https://github.com/pkware/norm/commit/9f8b69a22a6a8b625118efe27d52bc13c1d9400b))
+* **deps:** update micronautdata to v5.0.5 ([d6297ff](https://github.com/pkware/norm/commit/d6297ffc51c5ab5b84c6042bd322dba88bf468e1))
+* pin codegen session zone to UTC instead of inheriting the host zone ([6a62c0c](https://github.com/pkware/norm/commit/6a62c0c61b184669d2af9695810b505ba008bcf3))
+
 ## [0.4.0](https://github.com/pkware/norm/compare/v0.3.0...v0.4.0) (2026-06-25)
 
 
