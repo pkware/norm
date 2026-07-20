@@ -27,6 +27,7 @@ dependencies {
   // KSP annotation processors - generate DI and @Transactional AOP proxy implementations at compile time
   ksp(libs.micronaut.inject.kotlin)
   ksp(libs.micronaut.data.processor)
+  kspTest(libs.micronaut.inject.kotlin)
 
   // Micronaut test framework
   testImplementation(libs.micronaut.junit)
