@@ -1,6 +1,6 @@
 [versions]
 junit = "6.1.2"
-kotlin = "2.4.0"
+kotlin = "2.4.10"
 ktlint = "1.5.0"
 micronaut = "5.1.5"
 micronautData = "5.0.5"
