@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.2](https://github.com/pkware/norm/compare/v0.4.1...v0.4.2) (2026-07-23)
+
+
+### Bug Fixes
+
+* **deps:** update dependency io.micronaut.test:micronaut-test-junit5 to v5.1.0 ([3930c77](https://github.com/pkware/norm/commit/3930c77d33b70847a34ce352349b846fcbb70acd))
+* **deps:** update dependency org.junit.jupiter:junit-jupiter-params to v6.1.2 ([917f597](https://github.com/pkware/norm/commit/917f5978c7994c4e26f559f88f01208c34ef06d3))
+* **deps:** update micronaut to v5.1.10 ([170349e](https://github.com/pkware/norm/commit/170349e190457e3218931e349425246789b882f7))
+* **deps:** update micronaut to v5.1.8 ([a82d811](https://github.com/pkware/norm/commit/a82d8112a64f286f8de8dacd765f2bf873744a85))
+* **deps:** update micronaut to v5.1.9 ([1ee3cc4](https://github.com/pkware/norm/commit/1ee3cc4ec7b551e11398e8732c974beea1f1e651))
+* **deps:** update micronautdata to v5.1.0 ([c3cf86c](https://github.com/pkware/norm/commit/c3cf86cb4730b3c91064710df19a63804acee304))
+* **deps:** update micronautdata to v5.1.1 ([ef93391](https://github.com/pkware/norm/commit/ef933911bdcfde697f04caedcc4e2b1a70402b0f))
+* **e2e-tests-micronaut:** declare kspTest so @MicronautTest bean definitions generate ([b13b6ec](https://github.com/pkware/norm/commit/b13b6ecd27a4b929adff4bf283e835628297ff0b))
+
 ## [0.4.1](https://github.com/pkware/norm/compare/v0.4.0...v0.4.1) (2026-07-09)
 
 
