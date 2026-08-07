@@ -33,3 +33,10 @@ CREATE TABLE product (
 -- View — should be skipped entirely
 CREATE VIEW author_names AS
   SELECT id, name FROM author;
+
+-- Table with a nullable jsonb column: pins jsonb binding in the synthesized CRUD insert (#187).
+CREATE TABLE document (
+  id SERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  metadata JSONB
+);

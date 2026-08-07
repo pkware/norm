@@ -321,6 +321,196 @@ public interface Queries : Transactable {
 
   /**
    * ```sql
+   * INSERT INTO document (title, metadata) VALUES (?, ?) RETURNING id
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> insertDocument(
+    title: String,
+    metadata: String?,
+    mapper: (id: Int) -> T,
+  ): T
+
+  /**
+   * ```sql
+   * INSERT INTO document (title, metadata) VALUES (?, ?) RETURNING id
+   * ```
+   *
+   * @return A list containing the generated values for each inserted row, in insertion order.
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any, T : Any> insertDocument(
+    stream: Iterable<Input>,
+    title: (Input) -> String,
+    metadata: (Input) -> String?,
+    mapper: (id: Int) -> T,
+    batchSize: Int,
+  ): List<T>
+
+  /**
+   * ```sql
+   * INSERT INTO document (title, metadata) VALUES (?, ?) RETURNING id
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return A list containing the generated values for each inserted row, in insertion order.
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> insertDocument(
+    stream: Iterable<Input>,
+    title: (Input) -> String,
+    metadata: (Input) -> String?,
+  ): List<Int> = insertDocument(stream, title, metadata, ::inputValue, 100)
+
+  /**
+   * ```sql
+   * INSERT INTO document (title, metadata) VALUES (?, ?) RETURNING id
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun insertDocument(title: String, metadata: String?): Int = insertDocument(title, metadata, ::inputValue)
+
+  /**
+   * ```sql
+   * SELECT * FROM document WHERE id = ?
+   * ```
+   */
+  public fun <T : Any> findDocumentById(id: Int, mapper: (
+    id: Int,
+    title: String,
+    metadata: String?,
+  ) -> T): Many<T>
+
+  /**
+   * ```sql
+   * SELECT * FROM document WHERE id = ?
+   * ```
+   */
+  public fun findDocumentById(id: Int): Many<Document> = findDocumentById(id, ::Document)
+
+  /**
+   * ```sql
+   * SELECT EXISTS(SELECT 1 FROM document WHERE id = ?)
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> existsDocumentById(id: Int, mapper: (exists: Boolean) -> T): T
+
+  /**
+   * ```sql
+   * SELECT EXISTS(SELECT 1 FROM document WHERE id = ?)
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun existsDocumentById(id: Int): Boolean = existsDocumentById(id, ::inputValue)
+
+  /**
+   * ```sql
+   * DELETE FROM document WHERE id = ?
+   * ```
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> deleteDocumentById(
+    stream: Iterable<Input>,
+    id: (Input) -> Int,
+    batchSize: Int,
+  ): IntArray
+
+  /**
+   * ```sql
+   * DELETE FROM document WHERE id = ?
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> deleteDocumentById(stream: Iterable<Input>, id: (Input) -> Int): IntArray = deleteDocumentById(stream, id, 100)
+
+  /**
+   * ```sql
+   * DELETE FROM document WHERE id = ?
+   * ```
+   *
+   * @return The number of rows updated.
+   */
+  @Throws(SQLException::class)
+  public fun deleteDocumentById(id: Int): Int
+
+  /**
+   * ```sql
+   * SELECT * FROM document
+   * ```
+   */
+  public fun <T : Any> findAllDocument(mapper: (
+    id: Int,
+    title: String,
+    metadata: String?,
+  ) -> T): Many<T>
+
+  /**
+   * ```sql
+   * SELECT * FROM document
+   * ```
+   */
+  public fun findAllDocument(): Many<Document> = findAllDocument(::Document)
+
+  public fun <T : Any> findAllDocumentDynamically(mapper: (
+    id: Int,
+    title: String,
+    metadata: String?,
+  ) -> T): Query<T>
+
+  public fun findAllDocumentDynamically(): Query<Document> = findAllDocumentDynamically(::Document)
+
+  /**
+   * ```sql
+   * SELECT COUNT(*) FROM document
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> countDocument(mapper: (count: Long) -> T): T
+
+  /**
+   * ```sql
+   * SELECT COUNT(*) FROM document
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun countDocument(): Long = countDocument(::inputValue)
+
+  /**
+   * ```sql
+   * DELETE FROM document
+   * ```
+   *
+   * @return The number of rows updated.
+   */
+  @Throws(SQLException::class)
+  public fun deleteAllDocument(): Int
+
+  /**
+   * ```sql
    * INSERT INTO order_item (order_id, item_id, quantity, price) VALUES (?, ?, ?, ?)
    * ```
    *

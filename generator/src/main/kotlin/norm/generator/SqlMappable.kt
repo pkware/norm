@@ -243,6 +243,41 @@ internal class InstantSqlMappable(private val notNull: Boolean) : SqlMappable {
 }
 
 /**
+ * [SqlMappable] for plain (adapterless) `jsonb` columns.
+ *
+ * The Postgres JDBC driver rejects `setString()` for `jsonb` columns in prepared statements
+ * (`column "..." is of type jsonb but expression is of type character varying`), exactly as it does
+ * for enum columns. Binding with `setObject(index, value, Types.OTHER)` sends the value with an
+ * unspecified OID and lets Postgres perform the coercion.
+ *
+ * Unlike [InstantSqlMappable], the write path does not branch on nullability: pgjdbc's
+ * `setObject(index, null, targetSqlType)` delegates to `setNull(index, targetSqlType)`, so one
+ * code path covers both cases.
+ *
+ * Reads use `getString`, which works for `jsonb` and returns `null` for SQL `NULL`.
+ *
+ * Keep in sync with the `"jsonb"` entry in [resolveJdbcTypeInfo], which defines the same binding
+ * for the adapter path (user-configured `jsonb` type mappings and `jsonb`-based domains).
+ *
+ * @param notNull Whether the column is `NOT NULL`. Affects [typeName] nullability only.
+ */
+internal class JsonbSqlMappable(private val notNull: Boolean) : SqlMappable {
+
+  override val klass: KClass<*> = String::class
+
+  override val typeName: TypeName
+    get() = klass.asTypeName().copy(nullable = !notNull)
+
+  override val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
+    get() = { index, parameterName ->
+      CodeBlock.of("setObject(%L, %L, %T.OTHER)", index, parameterName, Types::class)
+    }
+
+  override val resultSetAction: (index: Int) -> CodeBlock
+    get() = { index -> CodeBlock.of("getString(%L)", index) }
+}
+
+/**
  * JDBC method metadata for a type's wire representation, used to generate the correct
  * `ResultSet` and `PreparedStatement` calls for reading and writing values through an adapter.
  *

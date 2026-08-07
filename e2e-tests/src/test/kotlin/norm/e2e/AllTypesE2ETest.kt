@@ -136,6 +136,32 @@ class AllTypesE2ETest : PostgresTestBase() {
     }
   }
 
+  @Nested
+  inner class Jsonb {
+
+    @Test
+    fun `jsonb parameter binds without a type mismatch error`() {
+      insertRowWithArrays(stringType = "json-target")
+
+      val updated = queries.updateJsonb("""{"a":1}""", "json-target")
+
+      assertThat(updated).isEqualTo(1)
+      // Postgres normalizes jsonb whitespace: {"a":1} → {"a": 1}
+      assertThat(queries.all().list().single().jsonb_type).isEqualTo("""{"a": 1}""")
+    }
+
+    @Test
+    fun `null jsonb parameter binds as SQL NULL`() {
+      insertRowWithArrays(stringType = "json-target")
+      queries.updateJsonb("""{"a":1}""", "json-target")
+
+      val updated = queries.updateJsonb(null, "json-target")
+
+      assertThat(updated).isEqualTo(1)
+      assertThat(queries.all().list().single().jsonb_type).isNull()
+    }
+  }
+
   /**
    * Inserts a row with configurable array values for testing array type handling.
    *

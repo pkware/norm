@@ -920,4 +920,67 @@ public interface Queries : Transactable {
    * ```
    */
   public fun filterByMatchingStrings(`value`: String): Many<Type> = filterByMatchingStrings(`value`, ::Type)
+
+  /**
+   * Plain (adapterless) jsonb bound as a parameter: pins setObject(index, value, Types.OTHER) (#187).
+   *
+   * ```sql
+   * UPDATE type SET jsonb_type = ? WHERE string_type = ?
+   * ```
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateJsonb(
+    stream: Iterable<Input>,
+    jsonb_type: (Input) -> String?,
+    string_type: (Input) -> String,
+    batchSize: Int,
+  ): IntArray
+
+  /**
+   * Plain (adapterless) jsonb bound as a parameter: pins setObject(index, value, Types.OTHER) (#187).
+   *
+   * ```sql
+   * UPDATE type SET jsonb_type = ? WHERE string_type = ?
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateJsonb(
+    stream: Iterable<Input>,
+    jsonb_type: (Input) -> String?,
+    string_type: (Input) -> String,
+  ): IntArray = updateJsonb(stream, jsonb_type, string_type, 100)
+
+  /**
+   * Plain (adapterless) jsonb bound as a parameter: pins setObject(index, value, Types.OTHER) (#187).
+   *
+   * ```sql
+   * UPDATE type SET jsonb_type = ? WHERE string_type = ?
+   * ```
+   *
+   * @return The number of rows updated.
+   */
+  @Throws(SQLException::class)
+  public fun updateJsonb(jsonb_type: String?, string_type: String): Int
 }

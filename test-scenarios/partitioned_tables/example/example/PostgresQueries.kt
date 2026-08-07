@@ -3,6 +3,7 @@ package example
 import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.SQLException
+import java.sql.Types
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
@@ -87,7 +88,7 @@ public class PostgresQueries(
     val sql = "INSERT INTO event (category, payload) VALUES (?, ?::jsonb)"
     driver.execute(sql) {
       setString(1, category)
-      setString(2, payload)
+      setObject(2, payload, Types.OTHER)
       execute()
     }
   }
@@ -106,7 +107,7 @@ public class PostgresQueries(
       val results = mutableListOf<IntArray>()
       for (entry in stream) {
         setString(1, category(entry))
-        setString(2, payload(entry))
+        setObject(2, payload(entry), Types.OTHER)
         addBatch()
         batchCount++
         if (batchCount == batchSize) {

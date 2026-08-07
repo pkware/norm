@@ -4,6 +4,7 @@ import java.math.BigDecimal
 import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.SQLException
+import java.sql.Types
 import java.time.Instant
 import java.time.OffsetDateTime
 import kotlin.Any
@@ -301,6 +302,186 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun deleteAllAuthor(): Int {
     val sql = "DELETE FROM author"
+    return driver.executeRows(sql)
+  }
+
+  @Throws(SQLException::class)
+  override fun <T : Any> insertDocument(
+    title: String,
+    metadata: String?,
+    mapper: (id: Int) -> T,
+  ): T {
+    val sql = "INSERT INTO document (title, metadata) VALUES (?, ?) RETURNING id"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+      )
+    }
+    return driver.queryOne(sql, rowReader) {
+      setString(1, title)
+      setObject(2, metadata, Types.OTHER)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any, T : Any> insertDocument(
+    stream: Iterable<Input>,
+    title: (Input) -> String,
+    metadata: (Input) -> String?,
+    mapper: (id: Int) -> T,
+    batchSize: Int,
+  ): List<T> {
+    val sql = "INSERT INTO document (title, metadata) VALUES (?, ?)"
+    val columnNames = arrayOf("id")
+    return driver.executeBatchWithGeneratedKeys(sql, columnNames) {
+      val rowReader: ResultSet.() -> T = {
+        mapper(
+          getInt(1),
+        )
+      }
+      val results = mutableListOf<T>()
+      var batchCount = 0
+      for (entry in stream) {
+        setString(1, title(entry))
+        setObject(2, metadata(entry), Types.OTHER)
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          executeBatch()
+          generatedKeys.use { readGeneratedKeys(it, rowReader, results) }
+          batchCount = 0
+        }
+      }
+      if (batchCount > 0) {
+        executeBatch()
+        generatedKeys.use { readGeneratedKeys(it, rowReader, results) }
+      }
+      results
+    }
+  }
+
+  private fun <T : Any, Return> findDocumentById(
+    id: Int,
+    mapper: (
+      id: Int,
+      title: String,
+      metadata: String?,
+    ) -> T,
+    processor: ManyProcessor<T, Return>,
+  ): Return {
+    val sql = "SELECT * FROM document WHERE id = ?"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        getString(2),
+        getString(3),
+      )
+    }
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setInt(1, id)
+    }
+    return processor.invoke(sql, rowReader, queryBinder)
+  }
+
+  override fun <T : Any> findDocumentById(id: Int, mapper: (
+    id: Int,
+    title: String,
+    metadata: String?,
+  ) -> T): Many<T> = findDocumentById(id, mapper, driver::queryMany)
+
+  @Throws(SQLException::class)
+  override fun <T : Any> existsDocumentById(id: Int, mapper: (exists: Boolean) -> T): T {
+    val sql = "SELECT EXISTS(SELECT 1 FROM document WHERE id = ?)"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getBoolean(1),
+      )
+    }
+    return driver.queryOne(sql, rowReader) {
+      setInt(1, id)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun deleteDocumentById(id: Int): Int {
+    val sql = "DELETE FROM document WHERE id = ?"
+    return driver.executeRows(sql) {
+      setInt(1, id)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any> deleteDocumentById(
+    stream: Iterable<Input>,
+    id: (Input) -> Int,
+    batchSize: Int,
+  ): IntArray {
+    val sql = "DELETE FROM document WHERE id = ?"
+    return driver.execute(sql) {
+      var totalCount = 0
+      var batchCount = 0
+      val results = mutableListOf<IntArray>()
+      for (entry in stream) {
+        setInt(1, id(entry))
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          results.add(executeBatch())
+          batchCount = 0
+          // Performance optimization to reduce register updates per loop iteration
+          totalCount += batchSize
+        }
+      }
+      if (batchCount > 0) {
+        results.add(executeBatch())
+        totalCount += batchCount
+      }
+      combineExecBatchResults(results, totalCount, batchSize)
+    }
+  }
+
+  private fun <T : Any, Return> findAllDocument(mapper: (
+    id: Int,
+    title: String,
+    metadata: String?,
+  ) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = "SELECT * FROM document"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        getString(2),
+        getString(3),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> findAllDocument(mapper: (
+    id: Int,
+    title: String,
+    metadata: String?,
+  ) -> T): Many<T> = findAllDocument(mapper, driver::queryMany)
+
+  override fun <T : Any> findAllDocumentDynamically(mapper: (
+    id: Int,
+    title: String,
+    metadata: String?,
+  ) -> T): Query<T> = findAllDocument(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  @Throws(SQLException::class)
+  override fun <T : Any> countDocument(mapper: (count: Long) -> T): T {
+    val sql = "SELECT COUNT(*) FROM document"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getLong(1),
+      )
+    }
+    return driver.queryOne(sql, rowReader)
+  }
+
+  @Throws(SQLException::class)
+  override fun deleteAllDocument(): Int {
+    val sql = "DELETE FROM document"
     return driver.executeRows(sql)
   }
 
