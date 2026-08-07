@@ -757,6 +757,53 @@ class ColumnTypeMappingTest {
   }
 
   @Nested
+  inner class JsonbAccessors {
+
+    @Test
+    fun `non-null jsonb writes via setObject with Types OTHER`() {
+      val col = column("metadata", type = "jsonb")
+      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("metadata"))
+      assertThat(setter.toString()).isEqualTo("setObject(1, metadata, java.sql.Types.OTHER)")
+    }
+
+    @Test
+    fun `nullable jsonb writes via setObject with Types OTHER`() {
+      // pgjdbc's setObject(index, null, targetSqlType) delegates to setNull(index, targetSqlType),
+      // so the nullable case needs no separate branch.
+      val col = column("metadata", type = "jsonb", notNull = false)
+      val setter = typeRepository.resolveMappableType(col).statementAction(2, CodeBlock.of("metadata"))
+      assertThat(setter.toString()).isEqualTo("setObject(2, metadata, java.sql.Types.OTHER)")
+    }
+
+    @Test
+    fun `jsonb reads via getString`() {
+      val col = column("metadata", type = "jsonb", notNull = false)
+      val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).isEqualTo("getString(1)")
+    }
+
+    @Test
+    fun `non-null jsonb column resolves to String`() {
+      val col = column("metadata", type = "jsonb")
+      assertThat(typeRepository.resolveColumnType(col)).isEqualTo(String::class.asTypeName())
+    }
+
+    @Test
+    fun `nullable jsonb column resolves to nullable String`() {
+      val col = column("metadata", type = "jsonb", notNull = false)
+      assertThat(typeRepository.resolveColumnType(col))
+        .isEqualTo(String::class.asTypeName().copy(nullable = true))
+    }
+
+    @Test
+    fun `jsonb array column still resolves to Array of nullable String`() {
+      val col = column("tags", type = "jsonb", notNull = false, isArray = true)
+      assertThat(typeRepository.resolveColumnType(col))
+        .isEqualTo(ARRAY.parameterizedBy(String::class.asTypeName().copy(nullable = true)).copy(nullable = true))
+    }
+  }
+
+  @Nested
   inner class EnumTypes {
 
     private val moodEnum = Enum(name = "mood", vals = listOf("happy", "sad", "angry"))

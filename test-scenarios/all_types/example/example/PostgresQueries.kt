@@ -5,6 +5,7 @@ import java.sql.Blob
 import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.SQLException
+import java.sql.Types
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -1277,4 +1278,45 @@ public class PostgresQueries(
     text_array_type: Array<String?>?,
     text_array_notnull_type: Array<String?>,
   ) -> T): Many<T> = filterByMatchingStrings(`value`, mapper, driver::queryMany)
+
+  @Throws(SQLException::class)
+  override fun updateJsonb(jsonb_type: String?, string_type: String): Int {
+    val sql = "UPDATE type SET jsonb_type = ? WHERE string_type = ?"
+    return driver.executeRows(sql) {
+      setObject(1, jsonb_type, Types.OTHER)
+      setString(2, string_type)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any> updateJsonb(
+    stream: Iterable<Input>,
+    jsonb_type: (Input) -> String?,
+    string_type: (Input) -> String,
+    batchSize: Int,
+  ): IntArray {
+    val sql = "UPDATE type SET jsonb_type = ? WHERE string_type = ?"
+    return driver.execute(sql) {
+      var totalCount = 0
+      var batchCount = 0
+      val results = mutableListOf<IntArray>()
+      for (entry in stream) {
+        setObject(1, jsonb_type(entry), Types.OTHER)
+        setString(2, string_type(entry))
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          results.add(executeBatch())
+          batchCount = 0
+          // Performance optimization to reduce register updates per loop iteration
+          totalCount += batchSize
+        }
+      }
+      if (batchCount > 0) {
+        results.add(executeBatch())
+        totalCount += batchCount
+      }
+      combineExecBatchResults(results, totalCount, batchSize)
+    }
+  }
 }

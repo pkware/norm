@@ -7,6 +7,7 @@ import assertk.assertions.isEqualTo
 import assertk.assertions.isGreaterThan
 import assertk.assertions.isNotNull
 import assertk.assertions.isNotZero
+import assertk.assertions.isNull
 import assertk.assertions.startsWith
 import example.crud.PostgresQueries
 import norm.TransactionalConnectionProvider
@@ -30,6 +31,7 @@ class BatchInsertReturningE2ETest : PostgresTestBase() {
       stmt.execute(
         """
         DROP VIEW IF EXISTS author_names CASCADE;
+        DROP TABLE IF EXISTS document CASCADE;
         DROP TABLE IF EXISTS product CASCADE;
         DROP TABLE IF EXISTS order_item CASCADE;
         DROP TABLE IF EXISTS audit_log CASCADE;
@@ -179,6 +181,44 @@ class BatchInsertReturningE2ETest : PostgresTestBase() {
       for (result in results) {
         assertThat(result.epochSecond).isNotZero()
       }
+    }
+  }
+
+  @Nested
+  inner class DocumentJsonbInsert {
+
+    @Test
+    fun `synthesized insert binds a jsonb column`() {
+      val id = queries.insertDocument("with-metadata", """{"a":1}""")
+
+      val stored = queries.findDocumentById(id).list().single()
+      // Postgres normalizes jsonb whitespace: {"a":1} → {"a": 1}
+      assertThat(stored.metadata).isEqualTo("""{"a": 1}""")
+    }
+
+    @Test
+    fun `synthesized insert binds a null jsonb column`() {
+      val id = queries.insertDocument("no-metadata", null)
+
+      val stored = queries.findDocumentById(id).list().single()
+      assertThat(stored.metadata).isNull()
+    }
+
+    @Test
+    fun `batch insert binds jsonb columns`() {
+      data class DocumentInput(val title: String, val metadata: String?)
+
+      val inputs = listOf(
+        DocumentInput("first", """{"n":1}"""),
+        DocumentInput("second", null),
+        DocumentInput("third", """{"n":3}"""),
+      )
+
+      val ids = queries.insertDocument(inputs, DocumentInput::title, DocumentInput::metadata)
+
+      assertThat(ids).hasSize(3)
+      val stored = queries.findAllDocument().list().sortedBy { it.id }
+      assertThat(stored.map { it.metadata }).isEqualTo(listOf("""{"n": 1}""", null, """{"n": 3}"""))
     }
   }
 

@@ -64,3 +64,7 @@ SELECT * FROM type WHERE string_type = :value AND text_type = :value;
 -- Reused named parameter in :many — exercises queryBinder body codegen.
 -- name: filterByMatchingStrings :many
 SELECT * FROM type WHERE string_type = :value AND text_type = :value;
+
+-- Plain (adapterless) jsonb bound as a parameter: pins setObject(index, value, Types.OTHER) (#187).
+-- name: updateJsonb :execrows
+UPDATE type SET jsonb_type = ? WHERE string_type = ?;
