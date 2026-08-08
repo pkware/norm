@@ -97,8 +97,10 @@ public class PostgresQueries(
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
-          executeBatch()
+          results.add(executeBatch())
           batchCount = 0
+          // Performance optimization to reduce register updates per loop iteration
+          totalCount += batchSize
         }
       }
       if (batchCount > 0) {
@@ -171,8 +173,10 @@ public class PostgresQueries(
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
-          executeBatch()
+          results.add(executeBatch())
           batchCount = 0
+          // Performance optimization to reduce register updates per loop iteration
+          totalCount += batchSize
         }
       }
       if (batchCount > 0) {

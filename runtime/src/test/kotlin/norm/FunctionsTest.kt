@@ -2,6 +2,7 @@ package norm
 
 import assertk.assertThat
 import assertk.assertions.containsExactly
+import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isSameInstanceAs
 import org.junit.jupiter.api.Nested
@@ -11,6 +12,17 @@ class FunctionsTest {
 
   @Nested
   inner class CombineExecBatchResults {
+
+    @Test
+    fun `no results returns an empty array`() {
+      val combined = combineExecBatchResults(
+        results = emptyList(),
+        totalCount = 0,
+        batchSize = 100,
+      )
+
+      assertThat(combined.toList()).isEmpty()
+    }
 
     @Test
     fun `single result returns the same array`() {
