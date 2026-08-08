@@ -278,25 +278,28 @@ internal class InstantSqlMappable(private val notNull: Boolean) : SqlMappable {
 }
 
 /**
- * [SqlMappable] for plain (adapterless) `jsonb` columns.
+ * [SqlMappable] for plain (adapterless) `json` and `jsonb` columns.
  *
- * The Postgres JDBC driver rejects `setString()` for `jsonb` columns in prepared statements
+ * The Postgres JDBC driver rejects `setString()` for both types in prepared statements
  * (`column "..." is of type jsonb but expression is of type character varying`), exactly as it does
  * for enum columns. Binding with `setObject(index, value, Types.OTHER)` sends the value with an
- * unspecified OID and lets Postgres perform the coercion.
+ * unspecified OID and lets Postgres perform the coercion. `json` and `jsonb` differ only in storage
+ * and in what Postgres preserves on the way in, not in how a parameter is bound or read, so both
+ * share this mapping.
  *
  * Unlike [InstantSqlMappable], the write path does not branch on nullability: pgjdbc's
  * `setObject(index, null, targetSqlType)` delegates to `setNull(index, targetSqlType)`, so one
  * code path covers both cases.
  *
- * Reads use `getString`, which works for `jsonb` and returns `null` for SQL `NULL`.
+ * Reads use `getString`, which works for both types and returns `null` for SQL `NULL`.
  *
- * Keep in sync with the `"jsonb"` entry in [resolveJdbcTypeInfo], which defines the same binding
- * for the adapter path (user-configured `jsonb` type mappings and `jsonb`-based domains).
+ * Keep in sync with the `"json"` and `"jsonb"` entries in [resolveJdbcTypeInfo], which define the
+ * same binding for the adapter path (user-configured `json`/`jsonb` type mappings and domains built
+ * on them).
  *
  * @param notNull Whether the column is `NOT NULL`. Affects [typeName] nullability only.
  */
-internal class JsonbSqlMappable(private val notNull: Boolean) : SqlMappable {
+internal class JsonSqlMappable(private val notNull: Boolean) : SqlMappable {
 
   override val klass: KClass<*> = String::class
 

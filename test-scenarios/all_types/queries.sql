@@ -69,6 +69,11 @@ SELECT * FROM type WHERE string_type = :value AND text_type = :value;
 -- name: updateJsonb :execrows
 UPDATE type SET jsonb_type = ? WHERE string_type = ?;
 
+-- Plain (adapterless) json bound as a parameter: json takes the same binding as jsonb, so this pins
+-- setObject(index, value, Types.OTHER) rather than setString (#191).
+-- name: updateJson :execrows
+UPDATE type SET json_type = ? WHERE string_type = ?;
+
 -- Plain (adapterless) arrays bound as parameters: pins setArray(index, value.toSqlArray(connection,
 -- "<element type>")) for every element type, and the element-wise reads on the way back out through
 -- `all` (#190, #192). Each group binds a nullable column and its NOT NULL sibling so both the
@@ -113,6 +118,8 @@ WHERE string_type = ?;
 UPDATE type SET
   bool_array_type = ?,
   bool_array_notnull_type = ?,
+  json_array_type = ?,
+  json_array_notnull_type = ?,
   jsonb_array_type = ?,
   jsonb_array_notnull_type = ?,
   bytea_array_type = ?,

@@ -122,12 +122,11 @@ internal fun domainAdapterPropertyName(domain: Domain): String = "${domain.name.
 /**
  * Maps a Postgres base type name to the corresponding Kotlin [TypeName].
  *
- * Delegates to [resolveJdbcTypeInfo] as the single source of truth for type mappings.
- * Only types supported as domain bases are valid here — `jsonb` is intentionally excluded
- * because it is not a valid base type for a Postgres domain.
+ * Delegates to [resolveJdbcTypeInfo] as the single source of truth for type mappings. Every type
+ * with an entry there is usable as a domain base, including `json` and `jsonb`: the value class
+ * wraps the same Kotlin type the plain column would produce, and the binding difference
+ * (`setObject(..., Types.OTHER)` rather than `setString`) is carried by the [JdbcTypeInfo] that
+ * [TypeRepository] hands to [AdaptedTypeSqlMappable], not by the wrapped Kotlin type.
  */
-internal fun domainKotlinBaseType(baseTypeName: String): TypeName {
-  val jdbcTypeInfo = resolveJdbcTypeInfo(baseTypeName)
-  if (jdbcTypeInfo != null && !jdbcTypeInfo.useSqlTypeHint) return jdbcTypeInfo.kotlinType
-  error("Unsupported domain base type: $baseTypeName")
-}
+internal fun domainKotlinBaseType(baseTypeName: String): TypeName =
+  resolveJdbcTypeInfo(baseTypeName)?.kotlinType ?: error("Unsupported domain base type: $baseTypeName")
