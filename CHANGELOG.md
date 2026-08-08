@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.4.2](https://github.com/pkware/norm/compare/v0.4.1...v0.4.2) (2026-08-08)
+
+
+### Bug Fixes
+
+* bind and read plain array columns correctly ([#190](https://github.com/pkware/norm/issues/190), [#192](https://github.com/pkware/norm/issues/192)) ([af98e41](https://github.com/pkware/norm/commit/af98e4104fc416c7b5f5ce6a123edfa41949a478))
+* bind plain jsonb parameters with setObject(Types.OTHER) ([0de21d2](https://github.com/pkware/norm/commit/0de21d25c4f301c28715a2ca9f0d7e395a6b832f)), closes [#187](https://github.com/pkware/norm/issues/187)
+* **deps:** update dependency com.diffplug.spotless:spotless-plugin-gradle to v8.9.0 ([81b32c2](https://github.com/pkware/norm/commit/81b32c22ebae5f7a57d9090503bd0722b50d637f))
+* **deps:** update dependency dev.detekt:dev.detekt.gradle.plugin to v2.0.0-alpha.6 ([350a1b4](https://github.com/pkware/norm/commit/350a1b4355902c82de4d0fd033ec9aa5c9001734))
+* **deps:** update dependency io.micronaut.test:micronaut-test-junit5 to v5.1.0 ([3930c77](https://github.com/pkware/norm/commit/3930c77d33b70847a34ce352349b846fcbb70acd))
+* **deps:** update dependency org.junit.jupiter:junit-jupiter-params to v6.1.2 ([917f597](https://github.com/pkware/norm/commit/917f5978c7994c4e26f559f88f01208c34ef06d3))
+* **deps:** update dependency org.junit.jupiter:junit-jupiter-params to v6.1.3 ([437e632](https://github.com/pkware/norm/commit/437e63247d8a4d53b92e34416830a2decc0b0893))
+* **deps:** update kotlin monorepo to v2.4.10 ([f1675bb](https://github.com/pkware/norm/commit/f1675bb0024e6bccb290d9be7b0539b73799fc9e))
+* **deps:** update micronaut to v5.1.10 ([170349e](https://github.com/pkware/norm/commit/170349e190457e3218931e349425246789b882f7))
+* **deps:** update micronaut to v5.1.8 ([a82d811](https://github.com/pkware/norm/commit/a82d8112a64f286f8de8dacd765f2bf873744a85))
+* **deps:** update micronaut to v5.1.9 ([1ee3cc4](https://github.com/pkware/norm/commit/1ee3cc4ec7b551e11398e8732c974beea1f1e651))
+* **deps:** update micronautdata to v5.1.0 ([c3cf86c](https://github.com/pkware/norm/commit/c3cf86cb4730b3c91064710df19a63804acee304))
+* **deps:** update micronautdata to v5.1.1 ([ef93391](https://github.com/pkware/norm/commit/ef933911bdcfde697f04caedcc4e2b1a70402b0f))
+* **e2e-tests-micronaut:** declare kspTest so @MicronautTest bean definitions generate ([b13b6ec](https://github.com/pkware/norm/commit/b13b6ecd27a4b929adff4bf283e835628297ff0b))
+* map Postgres json alongside jsonb ([#191](https://github.com/pkware/norm/issues/191)) ([941d89a](https://github.com/pkware/norm/commit/941d89aa1c6f55383bf55fffc727c16a4dc9f215))
+* return a correctly sized array from batch overloads ([#189](https://github.com/pkware/norm/issues/189)) ([db3d420](https://github.com/pkware/norm/commit/db3d420f72814e41bc58e4f8f9dc135bba552b86))
+
 ## [0.4.1](https://github.com/pkware/norm/compare/v0.4.0...v0.4.1) (2026-07-09)
 
 
