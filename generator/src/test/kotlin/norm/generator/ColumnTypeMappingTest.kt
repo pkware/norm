@@ -541,6 +541,26 @@ class ColumnTypeMappingTest {
         assertThat(statement.resultRowShape.kotlinType)
           .isEqualTo(ARRAY.parameterizedBy(Double::class.asTypeName().copy(nullable = true)))
       }
+
+      @Test
+      fun `oid array maps to Array of Long`() {
+        val statement = createStatement(
+          "SELECT owner_ids FROM object;",
+          columns = listOf(column("owner_ids", type = "oid", isArray = true)),
+        )
+        assertThat(statement.resultRowShape.kotlinType)
+          .isEqualTo(ARRAY.parameterizedBy(Long::class.asTypeName().copy(nullable = true)))
+      }
+
+      @Test
+      fun `pg_catalog oid array maps to Array of Long`() {
+        val statement = createStatement(
+          "SELECT owner_ids FROM object;",
+          columns = listOf(column("owner_ids", type = "pg_catalog.oid", isArray = true)),
+        )
+        assertThat(statement.resultRowShape.kotlinType)
+          .isEqualTo(ARRAY.parameterizedBy(Long::class.asTypeName().copy(nullable = true)))
+      }
     }
 
     @Nested
@@ -673,6 +693,29 @@ class ColumnTypeMappingTest {
         assertThat(kotlinType.isNullable).isFalse()
         assertThat(kotlinType).isEqualTo(ARRAY.parameterizedBy(String::class.asTypeName().copy(nullable = true)))
       }
+
+      @Test
+      fun `nullable oid array`() {
+        val statement = createStatement(
+          "SELECT owner_ids FROM object;",
+          columns = listOf(column("owner_ids", type = "oid", notNull = false, isArray = true)),
+        )
+        val kotlinType = statement.resultRowShape.kotlinType!!
+        assertThat(kotlinType.isNullable).isTrue()
+        assertThat(kotlinType)
+          .isEqualTo(ARRAY.parameterizedBy(Long::class.asTypeName().copy(nullable = true)).copy(nullable = true))
+      }
+
+      @Test
+      fun `non-null oid array`() {
+        val statement = createStatement(
+          "SELECT owner_ids FROM object;",
+          columns = listOf(column("owner_ids", type = "oid", notNull = true, isArray = true)),
+        )
+        val kotlinType = statement.resultRowShape.kotlinType!!
+        assertThat(kotlinType.isNullable).isFalse()
+        assertThat(kotlinType).isEqualTo(ARRAY.parameterizedBy(Long::class.asTypeName().copy(nullable = true)))
+      }
     }
   }
 
@@ -775,6 +818,15 @@ class ColumnTypeMappingTest {
       val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
       assertThat(accessor.toString()).doesNotContain("UNCHECKED_CAST")
     }
+
+    @Test
+    fun `oid array reads elements with getLong and a wasNull check`() {
+      // oid is an unsigned 32-bit integer; getInt throws on values above Int.MAX_VALUE, so the
+      // element read must go through getLong, unlike the scalar oid column's Blob mapping.
+      val col = column("owner_ids", type = "oid", isArray = true, notNull = true)
+      val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).contains("norm.mapElements { getLong(2).takeUnless { wasNull() } }")
+    }
   }
 
   @Nested
@@ -842,6 +894,13 @@ class ColumnTypeMappingTest {
       val col = column("blobs", type = "bytea", isArray = true, notNull = true)
       val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("blobs"))
       assertThat(setter.toString()).contains("""norm.toSqlArray(connection, "bytea")""")
+    }
+
+    @Test
+    fun `oid array writes with the oid element type name`() {
+      val col = column("owner_ids", type = "oid", isArray = true, notNull = true)
+      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("owner_ids"))
+      assertThat(setter.toString()).contains("""norm.toSqlArray(connection, "oid")""")
     }
   }
 
