@@ -13,19 +13,22 @@ public fun <T> inputValue(input: T): T = input
 /**
  * Combines the results of multiple [java.sql.Statement.executeBatch] calls.
  *
- * @param results The batch results
+ * @param results The batch results. Empty when the batched input was empty, in which case an empty
+ *   array is returned.
  * @param totalCount Total number of results.
  * @param batchSize Size of the query batch.
  */
 public fun combineExecBatchResults(results: List<IntArray>, totalCount: Int, batchSize: Int): IntArray =
-  if (results.size > 1) {
-    val result = results[0].copyOf(totalCount)
-    for (i in 1 until results.size) {
-      results[i].copyInto(result, batchSize * i)
+  when (results.size) {
+    0 -> IntArray(0)
+    1 -> results[0]
+    else -> {
+      val result = results[0].copyOf(totalCount)
+      for (i in 1 until results.size) {
+        results[i].copyInto(result, batchSize * i)
+      }
+      result
     }
-    result
-  } else {
-    results[0]
   }
 
 /**

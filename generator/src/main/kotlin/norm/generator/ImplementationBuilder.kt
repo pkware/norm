@@ -232,7 +232,7 @@ private fun TypeSpec.Builder.addExecRowsImplementation(statement: SqlStatement) 
   addFunction(function.build())
 
   if (statement.canBeBatched) {
-    addFunction(buildBatch(statement, trackIntermediateResults = true))
+    addFunction(buildBatch(statement))
   }
 }
 
@@ -251,7 +251,7 @@ private fun TypeSpec.Builder.addExecImplementation(statement: SqlStatement) {
   addFunction(function.build())
 
   if (statement.canBeBatched) {
-    addFunction(buildBatch(statement, trackIntermediateResults = false))
+    addFunction(buildBatch(statement))
   }
 }
 
@@ -370,69 +370,55 @@ internal fun batchWithReturnFunction(statement: SqlStatement): FunSpec.Builder {
 /**
  * Builds a batch execution function for the given statement.
  *
- * @param trackIntermediateResults When `true`, intermediate `executeBatch()` results are captured into `results`
- *   and `totalCount` is tracked per flush. Used by `:execrows` where the per-batch counts matter.
- *   When `false`, intermediate flushes call `executeBatch()` without capturing. Used by `:exec`.
+ * Every `executeBatch()` result is captured into `results`, including intermediate flushes. Both `:exec` and
+ * `:execrows` batch overloads return an `IntArray` with one entry per element of `stream`, so discarding an
+ * intermediate flush drops entries from the returned array. When the element count is a nonzero exact multiple
+ * of `batchSize` it leaves `results` empty altogether, because the trailing partial batch never runs.
  */
-private fun buildBatch(statement: SqlStatement, trackIntermediateResults: Boolean): FunSpec =
-  batchFunction(statement).apply {
-    addModifiers(KModifier.OVERRIDE)
-    addStatement("val sql = %S", statement.sql)
-    beginControlFlow("return driver.execute(sql) {")
-    addCode(
-      """
+private fun buildBatch(statement: SqlStatement): FunSpec = batchFunction(statement).apply {
+  addModifiers(KModifier.OVERRIDE)
+  addStatement("val sql = %S", statement.sql)
+  beginControlFlow("return driver.execute(sql) {")
+  addCode(
+    """
       |var totalCount = 0
       |var batchCount = 0
       |val results = mutableListOf<IntArray>()
       |
-      """.trimMargin(),
-    )
-    beginControlFlow("for (entry in stream) {")
-    for (block in bindStatements(statement) { "$it(entry)" }) addStatement("%L", block)
-    if (trackIntermediateResults) {
-      addCode(
-        """
-        |addBatch()
-        |batchCount++
-        |if (batchCount == batchSize) {
-        |  results.add(executeBatch())
-        |  batchCount = 0
-        |  // Performance optimization to reduce register updates per loop iteration
-        |  totalCount += batchSize
-        |}
-        |
-        """.trimMargin(),
-      )
-    } else {
-      addCode(
-        """
-        |addBatch()
-        |batchCount++
-        |if (batchCount == batchSize) {
-        |  executeBatch()
-        |  batchCount = 0
-        |}
-        |
-        """.trimMargin(),
-      )
-    }
-    endControlFlow()
+    """.trimMargin(),
+  )
+  beginControlFlow("for (entry in stream) {")
+  for (block in bindStatements(statement) { "$it(entry)" }) addStatement("%L", block)
+  addCode(
+    """
+      |addBatch()
+      |batchCount++
+      |if (batchCount == batchSize) {
+      |  results.add(executeBatch())
+      |  batchCount = 0
+      |  // Performance optimization to reduce register updates per loop iteration
+      |  totalCount += batchSize
+      |}
+      |
+    """.trimMargin(),
+  )
+  endControlFlow()
 
-    addCode(
-      """
+  addCode(
+    """
       |if (batchCount > 0) {
       |  results.add(executeBatch())
       |  totalCount += batchCount
       |}
       |%M(results, totalCount, batchSize)
       |
-      """.trimMargin(),
-      PROCESS_EXEC_RESULTS,
-    )
+    """.trimMargin(),
+    PROCESS_EXEC_RESULTS,
+  )
 
-    endControlFlow()
-    returns(INT_ARRAY)
-  }.build()
+  endControlFlow()
+  returns(INT_ARRAY)
+}.build()
 
 /**
  * Builds a batch-with-return function for the given synthesized INSERT statement.
