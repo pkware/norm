@@ -99,6 +99,34 @@ public interface Queries : Transactable {
     int_array_notnull_type: Array<Int?>,
     text_array_type: Array<String?>?,
     text_array_notnull_type: Array<String?>,
+    int2_array_type: Array<Short?>?,
+    int2_array_notnull_type: Array<Short?>,
+    int8_array_type: Array<Long?>?,
+    int8_array_notnull_type: Array<Long?>,
+    float4_array_type: Array<Float?>?,
+    float4_array_notnull_type: Array<Float?>,
+    float8_array_type: Array<Double?>?,
+    float8_array_notnull_type: Array<Double?>,
+    numeric_array_type: Array<BigDecimal?>?,
+    numeric_array_notnull_type: Array<BigDecimal?>,
+    bool_array_type: Array<Boolean?>?,
+    bool_array_notnull_type: Array<Boolean?>,
+    jsonb_array_type: Array<String?>?,
+    jsonb_array_notnull_type: Array<String?>,
+    bytea_array_type: Array<ByteArray?>?,
+    bytea_array_notnull_type: Array<ByteArray?>,
+    uuid_array_type: Array<UUID?>?,
+    uuid_array_notnull_type: Array<UUID?>,
+    date_array_type: Array<LocalDate?>?,
+    date_array_notnull_type: Array<LocalDate?>,
+    time_array_type: Array<LocalTime?>?,
+    time_array_notnull_type: Array<LocalTime?>,
+    timetz_array_type: Array<OffsetTime?>?,
+    timetz_array_notnull_type: Array<OffsetTime?>,
+    timestamp_array_type: Array<LocalDateTime?>?,
+    timestamp_array_notnull_type: Array<LocalDateTime?>,
+    timestamptz_array_type: Array<Instant?>?,
+    timestamptz_array_notnull_type: Array<Instant?>,
   ) -> T): Many<T>
 
   /**
@@ -172,6 +200,34 @@ public interface Queries : Transactable {
     int_array_notnull_type: Array<Int?>,
     text_array_type: Array<String?>?,
     text_array_notnull_type: Array<String?>,
+    int2_array_type: Array<Short?>?,
+    int2_array_notnull_type: Array<Short?>,
+    int8_array_type: Array<Long?>?,
+    int8_array_notnull_type: Array<Long?>,
+    float4_array_type: Array<Float?>?,
+    float4_array_notnull_type: Array<Float?>,
+    float8_array_type: Array<Double?>?,
+    float8_array_notnull_type: Array<Double?>,
+    numeric_array_type: Array<BigDecimal?>?,
+    numeric_array_notnull_type: Array<BigDecimal?>,
+    bool_array_type: Array<Boolean?>?,
+    bool_array_notnull_type: Array<Boolean?>,
+    jsonb_array_type: Array<String?>?,
+    jsonb_array_notnull_type: Array<String?>,
+    bytea_array_type: Array<ByteArray?>?,
+    bytea_array_notnull_type: Array<ByteArray?>,
+    uuid_array_type: Array<UUID?>?,
+    uuid_array_notnull_type: Array<UUID?>,
+    date_array_type: Array<LocalDate?>?,
+    date_array_notnull_type: Array<LocalDate?>,
+    time_array_type: Array<LocalTime?>?,
+    time_array_notnull_type: Array<LocalTime?>,
+    timetz_array_type: Array<OffsetTime?>?,
+    timetz_array_notnull_type: Array<OffsetTime?>,
+    timestamp_array_type: Array<LocalDateTime?>?,
+    timestamp_array_notnull_type: Array<LocalDateTime?>,
+    timestamptz_array_type: Array<Instant?>?,
+    timestamptz_array_notnull_type: Array<Instant?>,
   ) -> T): Query<T>
 
   public fun allDynamically(): Query<Type> = allDynamically(::Type)
@@ -565,6 +621,34 @@ public interface Queries : Transactable {
     int_array_notnull_type: Array<Int?>,
     text_array_type: Array<String?>?,
     text_array_notnull_type: Array<String?>,
+    int2_array_type: Array<Short?>?,
+    int2_array_notnull_type: Array<Short?>,
+    int8_array_type: Array<Long?>?,
+    int8_array_notnull_type: Array<Long?>,
+    float4_array_type: Array<Float?>?,
+    float4_array_notnull_type: Array<Float?>,
+    float8_array_type: Array<Double?>?,
+    float8_array_notnull_type: Array<Double?>,
+    numeric_array_type: Array<BigDecimal?>?,
+    numeric_array_notnull_type: Array<BigDecimal?>,
+    bool_array_type: Array<Boolean?>?,
+    bool_array_notnull_type: Array<Boolean?>,
+    jsonb_array_type: Array<String?>?,
+    jsonb_array_notnull_type: Array<String?>,
+    bytea_array_type: Array<ByteArray?>?,
+    bytea_array_notnull_type: Array<ByteArray?>,
+    uuid_array_type: Array<UUID?>?,
+    uuid_array_notnull_type: Array<UUID?>,
+    date_array_type: Array<LocalDate?>?,
+    date_array_notnull_type: Array<LocalDate?>,
+    time_array_type: Array<LocalTime?>?,
+    time_array_notnull_type: Array<LocalTime?>,
+    timetz_array_type: Array<OffsetTime?>?,
+    timetz_array_notnull_type: Array<OffsetTime?>,
+    timestamp_array_type: Array<LocalDateTime?>?,
+    timestamp_array_notnull_type: Array<LocalDateTime?>,
+    timestamptz_array_type: Array<Instant?>?,
+    timestamptz_array_notnull_type: Array<Instant?>,
   ) -> T): Many<T>
 
   /**
@@ -827,6 +911,34 @@ public interface Queries : Transactable {
     int_array_notnull_type: Array<Int?>,
     text_array_type: Array<String?>?,
     text_array_notnull_type: Array<String?>,
+    int2_array_type: Array<Short?>?,
+    int2_array_notnull_type: Array<Short?>,
+    int8_array_type: Array<Long?>?,
+    int8_array_notnull_type: Array<Long?>,
+    float4_array_type: Array<Float?>?,
+    float4_array_notnull_type: Array<Float?>,
+    float8_array_type: Array<Double?>?,
+    float8_array_notnull_type: Array<Double?>,
+    numeric_array_type: Array<BigDecimal?>?,
+    numeric_array_notnull_type: Array<BigDecimal?>,
+    bool_array_type: Array<Boolean?>?,
+    bool_array_notnull_type: Array<Boolean?>,
+    jsonb_array_type: Array<String?>?,
+    jsonb_array_notnull_type: Array<String?>,
+    bytea_array_type: Array<ByteArray?>?,
+    bytea_array_notnull_type: Array<ByteArray?>,
+    uuid_array_type: Array<UUID?>?,
+    uuid_array_notnull_type: Array<UUID?>,
+    date_array_type: Array<LocalDate?>?,
+    date_array_notnull_type: Array<LocalDate?>,
+    time_array_type: Array<LocalTime?>?,
+    time_array_notnull_type: Array<LocalTime?>,
+    timetz_array_type: Array<OffsetTime?>?,
+    timetz_array_notnull_type: Array<OffsetTime?>,
+    timestamp_array_type: Array<LocalDateTime?>?,
+    timestamp_array_notnull_type: Array<LocalDateTime?>,
+    timestamptz_array_type: Array<Instant?>?,
+    timestamptz_array_notnull_type: Array<Instant?>,
   ) -> T): T
 
   /**
@@ -910,6 +1022,34 @@ public interface Queries : Transactable {
     int_array_notnull_type: Array<Int?>,
     text_array_type: Array<String?>?,
     text_array_notnull_type: Array<String?>,
+    int2_array_type: Array<Short?>?,
+    int2_array_notnull_type: Array<Short?>,
+    int8_array_type: Array<Long?>?,
+    int8_array_notnull_type: Array<Long?>,
+    float4_array_type: Array<Float?>?,
+    float4_array_notnull_type: Array<Float?>,
+    float8_array_type: Array<Double?>?,
+    float8_array_notnull_type: Array<Double?>,
+    numeric_array_type: Array<BigDecimal?>?,
+    numeric_array_notnull_type: Array<BigDecimal?>,
+    bool_array_type: Array<Boolean?>?,
+    bool_array_notnull_type: Array<Boolean?>,
+    jsonb_array_type: Array<String?>?,
+    jsonb_array_notnull_type: Array<String?>,
+    bytea_array_type: Array<ByteArray?>?,
+    bytea_array_notnull_type: Array<ByteArray?>,
+    uuid_array_type: Array<UUID?>?,
+    uuid_array_notnull_type: Array<UUID?>,
+    date_array_type: Array<LocalDate?>?,
+    date_array_notnull_type: Array<LocalDate?>,
+    time_array_type: Array<LocalTime?>?,
+    time_array_notnull_type: Array<LocalTime?>,
+    timetz_array_type: Array<OffsetTime?>?,
+    timetz_array_notnull_type: Array<OffsetTime?>,
+    timestamp_array_type: Array<LocalDateTime?>?,
+    timestamp_array_notnull_type: Array<LocalDateTime?>,
+    timestamptz_array_type: Array<Instant?>?,
+    timestamptz_array_notnull_type: Array<Instant?>,
   ) -> T): Many<T>
 
   /**
@@ -983,4 +1123,451 @@ public interface Queries : Transactable {
    */
   @Throws(SQLException::class)
   public fun updateJsonb(jsonb_type: String?, string_type: String): Int
+
+  /**
+   * Plain (adapterless) arrays bound as parameters: pins setArray(index, value.toSqlArray(connection,
+   * "<element type>")) for every element type, and the element-wise reads on the way back out through
+   * `all` (#190, #192). Each group binds a nullable column and its NOT NULL sibling so both the
+   * setArray and the setNull-fallback branches are pinned.
+   *
+   * ```sql
+   * UPDATE type SET
+   *   int_array_type = ?,
+   *   int_array_notnull_type = ?,
+   *   text_array_type = ?,
+   *   text_array_notnull_type = ?
+   * WHERE string_type = ?
+   * ```
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateIntTextArrays(
+    stream: Iterable<Input>,
+    int_array_type: (Input) -> Array<Int?>?,
+    int_array_notnull_type: (Input) -> Array<Int?>,
+    text_array_type: (Input) -> Array<String?>?,
+    text_array_notnull_type: (Input) -> Array<String?>,
+    string_type: (Input) -> String,
+    batchSize: Int,
+  ): IntArray
+
+  /**
+   * Plain (adapterless) arrays bound as parameters: pins setArray(index, value.toSqlArray(connection,
+   * "<element type>")) for every element type, and the element-wise reads on the way back out through
+   * `all` (#190, #192). Each group binds a nullable column and its NOT NULL sibling so both the
+   * setArray and the setNull-fallback branches are pinned.
+   *
+   * ```sql
+   * UPDATE type SET
+   *   int_array_type = ?,
+   *   int_array_notnull_type = ?,
+   *   text_array_type = ?,
+   *   text_array_notnull_type = ?
+   * WHERE string_type = ?
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateIntTextArrays(
+    stream: Iterable<Input>,
+    int_array_type: (Input) -> Array<Int?>?,
+    int_array_notnull_type: (Input) -> Array<Int?>,
+    text_array_type: (Input) -> Array<String?>?,
+    text_array_notnull_type: (Input) -> Array<String?>,
+    string_type: (Input) -> String,
+  ): IntArray = updateIntTextArrays(stream, int_array_type, int_array_notnull_type, text_array_type, text_array_notnull_type, string_type, 100)
+
+  /**
+   * Plain (adapterless) arrays bound as parameters: pins setArray(index, value.toSqlArray(connection,
+   * "<element type>")) for every element type, and the element-wise reads on the way back out through
+   * `all` (#190, #192). Each group binds a nullable column and its NOT NULL sibling so both the
+   * setArray and the setNull-fallback branches are pinned.
+   *
+   * ```sql
+   * UPDATE type SET
+   *   int_array_type = ?,
+   *   int_array_notnull_type = ?,
+   *   text_array_type = ?,
+   *   text_array_notnull_type = ?
+   * WHERE string_type = ?
+   * ```
+   *
+   * @return The number of rows updated.
+   */
+  @Throws(SQLException::class)
+  public fun updateIntTextArrays(
+    int_array_type: Array<Int?>?,
+    int_array_notnull_type: Array<Int?>,
+    text_array_type: Array<String?>?,
+    text_array_notnull_type: Array<String?>,
+    string_type: String,
+  ): Int
+
+  /**
+   * ```sql
+   * UPDATE type SET
+   *   int2_array_type = ?,
+   *   int2_array_notnull_type = ?,
+   *   int8_array_type = ?,
+   *   int8_array_notnull_type = ?,
+   *   float4_array_type = ?,
+   *   float4_array_notnull_type = ?,
+   *   float8_array_type = ?,
+   *   float8_array_notnull_type = ?,
+   *   numeric_array_type = ?,
+   *   numeric_array_notnull_type = ?
+   * WHERE string_type = ?
+   * ```
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateNumericArrays(
+    stream: Iterable<Input>,
+    int2_array_type: (Input) -> Array<Short?>?,
+    int2_array_notnull_type: (Input) -> Array<Short?>,
+    int8_array_type: (Input) -> Array<Long?>?,
+    int8_array_notnull_type: (Input) -> Array<Long?>,
+    float4_array_type: (Input) -> Array<Float?>?,
+    float4_array_notnull_type: (Input) -> Array<Float?>,
+    float8_array_type: (Input) -> Array<Double?>?,
+    float8_array_notnull_type: (Input) -> Array<Double?>,
+    numeric_array_type: (Input) -> Array<BigDecimal?>?,
+    numeric_array_notnull_type: (Input) -> Array<BigDecimal?>,
+    string_type: (Input) -> String,
+    batchSize: Int,
+  ): IntArray
+
+  /**
+   * ```sql
+   * UPDATE type SET
+   *   int2_array_type = ?,
+   *   int2_array_notnull_type = ?,
+   *   int8_array_type = ?,
+   *   int8_array_notnull_type = ?,
+   *   float4_array_type = ?,
+   *   float4_array_notnull_type = ?,
+   *   float8_array_type = ?,
+   *   float8_array_notnull_type = ?,
+   *   numeric_array_type = ?,
+   *   numeric_array_notnull_type = ?
+   * WHERE string_type = ?
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateNumericArrays(
+    stream: Iterable<Input>,
+    int2_array_type: (Input) -> Array<Short?>?,
+    int2_array_notnull_type: (Input) -> Array<Short?>,
+    int8_array_type: (Input) -> Array<Long?>?,
+    int8_array_notnull_type: (Input) -> Array<Long?>,
+    float4_array_type: (Input) -> Array<Float?>?,
+    float4_array_notnull_type: (Input) -> Array<Float?>,
+    float8_array_type: (Input) -> Array<Double?>?,
+    float8_array_notnull_type: (Input) -> Array<Double?>,
+    numeric_array_type: (Input) -> Array<BigDecimal?>?,
+    numeric_array_notnull_type: (Input) -> Array<BigDecimal?>,
+    string_type: (Input) -> String,
+  ): IntArray = updateNumericArrays(stream, int2_array_type, int2_array_notnull_type, int8_array_type, int8_array_notnull_type, float4_array_type, float4_array_notnull_type, float8_array_type, float8_array_notnull_type, numeric_array_type, numeric_array_notnull_type, string_type, 100)
+
+  /**
+   * ```sql
+   * UPDATE type SET
+   *   int2_array_type = ?,
+   *   int2_array_notnull_type = ?,
+   *   int8_array_type = ?,
+   *   int8_array_notnull_type = ?,
+   *   float4_array_type = ?,
+   *   float4_array_notnull_type = ?,
+   *   float8_array_type = ?,
+   *   float8_array_notnull_type = ?,
+   *   numeric_array_type = ?,
+   *   numeric_array_notnull_type = ?
+   * WHERE string_type = ?
+   * ```
+   *
+   * @return The number of rows updated.
+   */
+  @Throws(SQLException::class)
+  public fun updateNumericArrays(
+    int2_array_type: Array<Short?>?,
+    int2_array_notnull_type: Array<Short?>,
+    int8_array_type: Array<Long?>?,
+    int8_array_notnull_type: Array<Long?>,
+    float4_array_type: Array<Float?>?,
+    float4_array_notnull_type: Array<Float?>,
+    float8_array_type: Array<Double?>?,
+    float8_array_notnull_type: Array<Double?>,
+    numeric_array_type: Array<BigDecimal?>?,
+    numeric_array_notnull_type: Array<BigDecimal?>,
+    string_type: String,
+  ): Int
+
+  /**
+   * ```sql
+   * UPDATE type SET
+   *   date_array_type = ?,
+   *   date_array_notnull_type = ?,
+   *   time_array_type = ?,
+   *   time_array_notnull_type = ?,
+   *   timetz_array_type = ?,
+   *   timetz_array_notnull_type = ?,
+   *   timestamp_array_type = ?,
+   *   timestamp_array_notnull_type = ?,
+   *   timestamptz_array_type = ?,
+   *   timestamptz_array_notnull_type = ?
+   * WHERE string_type = ?
+   * ```
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateDateTimeArrays(
+    stream: Iterable<Input>,
+    date_array_type: (Input) -> Array<LocalDate?>?,
+    date_array_notnull_type: (Input) -> Array<LocalDate?>,
+    time_array_type: (Input) -> Array<LocalTime?>?,
+    time_array_notnull_type: (Input) -> Array<LocalTime?>,
+    timetz_array_type: (Input) -> Array<OffsetTime?>?,
+    timetz_array_notnull_type: (Input) -> Array<OffsetTime?>,
+    timestamp_array_type: (Input) -> Array<LocalDateTime?>?,
+    timestamp_array_notnull_type: (Input) -> Array<LocalDateTime?>,
+    timestamptz_array_type: (Input) -> Array<Instant?>?,
+    timestamptz_array_notnull_type: (Input) -> Array<Instant?>,
+    string_type: (Input) -> String,
+    batchSize: Int,
+  ): IntArray
+
+  /**
+   * ```sql
+   * UPDATE type SET
+   *   date_array_type = ?,
+   *   date_array_notnull_type = ?,
+   *   time_array_type = ?,
+   *   time_array_notnull_type = ?,
+   *   timetz_array_type = ?,
+   *   timetz_array_notnull_type = ?,
+   *   timestamp_array_type = ?,
+   *   timestamp_array_notnull_type = ?,
+   *   timestamptz_array_type = ?,
+   *   timestamptz_array_notnull_type = ?
+   * WHERE string_type = ?
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateDateTimeArrays(
+    stream: Iterable<Input>,
+    date_array_type: (Input) -> Array<LocalDate?>?,
+    date_array_notnull_type: (Input) -> Array<LocalDate?>,
+    time_array_type: (Input) -> Array<LocalTime?>?,
+    time_array_notnull_type: (Input) -> Array<LocalTime?>,
+    timetz_array_type: (Input) -> Array<OffsetTime?>?,
+    timetz_array_notnull_type: (Input) -> Array<OffsetTime?>,
+    timestamp_array_type: (Input) -> Array<LocalDateTime?>?,
+    timestamp_array_notnull_type: (Input) -> Array<LocalDateTime?>,
+    timestamptz_array_type: (Input) -> Array<Instant?>?,
+    timestamptz_array_notnull_type: (Input) -> Array<Instant?>,
+    string_type: (Input) -> String,
+  ): IntArray = updateDateTimeArrays(stream, date_array_type, date_array_notnull_type, time_array_type, time_array_notnull_type, timetz_array_type, timetz_array_notnull_type, timestamp_array_type, timestamp_array_notnull_type, timestamptz_array_type, timestamptz_array_notnull_type, string_type, 100)
+
+  /**
+   * ```sql
+   * UPDATE type SET
+   *   date_array_type = ?,
+   *   date_array_notnull_type = ?,
+   *   time_array_type = ?,
+   *   time_array_notnull_type = ?,
+   *   timetz_array_type = ?,
+   *   timetz_array_notnull_type = ?,
+   *   timestamp_array_type = ?,
+   *   timestamp_array_notnull_type = ?,
+   *   timestamptz_array_type = ?,
+   *   timestamptz_array_notnull_type = ?
+   * WHERE string_type = ?
+   * ```
+   *
+   * @return The number of rows updated.
+   */
+  @Throws(SQLException::class)
+  public fun updateDateTimeArrays(
+    date_array_type: Array<LocalDate?>?,
+    date_array_notnull_type: Array<LocalDate?>,
+    time_array_type: Array<LocalTime?>?,
+    time_array_notnull_type: Array<LocalTime?>,
+    timetz_array_type: Array<OffsetTime?>?,
+    timetz_array_notnull_type: Array<OffsetTime?>,
+    timestamp_array_type: Array<LocalDateTime?>?,
+    timestamp_array_notnull_type: Array<LocalDateTime?>,
+    timestamptz_array_type: Array<Instant?>?,
+    timestamptz_array_notnull_type: Array<Instant?>,
+    string_type: String,
+  ): Int
+
+  /**
+   * ```sql
+   * UPDATE type SET
+   *   bool_array_type = ?,
+   *   bool_array_notnull_type = ?,
+   *   jsonb_array_type = ?,
+   *   jsonb_array_notnull_type = ?,
+   *   bytea_array_type = ?,
+   *   bytea_array_notnull_type = ?,
+   *   uuid_array_type = ?,
+   *   uuid_array_notnull_type = ?
+   * WHERE string_type = ?
+   * ```
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateOtherArrays(
+    stream: Iterable<Input>,
+    bool_array_type: (Input) -> Array<Boolean?>?,
+    bool_array_notnull_type: (Input) -> Array<Boolean?>,
+    jsonb_array_type: (Input) -> Array<String?>?,
+    jsonb_array_notnull_type: (Input) -> Array<String?>,
+    bytea_array_type: (Input) -> Array<ByteArray?>?,
+    bytea_array_notnull_type: (Input) -> Array<ByteArray?>,
+    uuid_array_type: (Input) -> Array<UUID?>?,
+    uuid_array_notnull_type: (Input) -> Array<UUID?>,
+    string_type: (Input) -> String,
+    batchSize: Int,
+  ): IntArray
+
+  /**
+   * ```sql
+   * UPDATE type SET
+   *   bool_array_type = ?,
+   *   bool_array_notnull_type = ?,
+   *   jsonb_array_type = ?,
+   *   jsonb_array_notnull_type = ?,
+   *   bytea_array_type = ?,
+   *   bytea_array_notnull_type = ?,
+   *   uuid_array_type = ?,
+   *   uuid_array_notnull_type = ?
+   * WHERE string_type = ?
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateOtherArrays(
+    stream: Iterable<Input>,
+    bool_array_type: (Input) -> Array<Boolean?>?,
+    bool_array_notnull_type: (Input) -> Array<Boolean?>,
+    jsonb_array_type: (Input) -> Array<String?>?,
+    jsonb_array_notnull_type: (Input) -> Array<String?>,
+    bytea_array_type: (Input) -> Array<ByteArray?>?,
+    bytea_array_notnull_type: (Input) -> Array<ByteArray?>,
+    uuid_array_type: (Input) -> Array<UUID?>?,
+    uuid_array_notnull_type: (Input) -> Array<UUID?>,
+    string_type: (Input) -> String,
+  ): IntArray = updateOtherArrays(stream, bool_array_type, bool_array_notnull_type, jsonb_array_type, jsonb_array_notnull_type, bytea_array_type, bytea_array_notnull_type, uuid_array_type, uuid_array_notnull_type, string_type, 100)
+
+  /**
+   * ```sql
+   * UPDATE type SET
+   *   bool_array_type = ?,
+   *   bool_array_notnull_type = ?,
+   *   jsonb_array_type = ?,
+   *   jsonb_array_notnull_type = ?,
+   *   bytea_array_type = ?,
+   *   bytea_array_notnull_type = ?,
+   *   uuid_array_type = ?,
+   *   uuid_array_notnull_type = ?
+   * WHERE string_type = ?
+   * ```
+   *
+   * @return The number of rows updated.
+   */
+  @Throws(SQLException::class)
+  public fun updateOtherArrays(
+    bool_array_type: Array<Boolean?>?,
+    bool_array_notnull_type: Array<Boolean?>,
+    jsonb_array_type: Array<String?>?,
+    jsonb_array_notnull_type: Array<String?>,
+    bytea_array_type: Array<ByteArray?>?,
+    bytea_array_notnull_type: Array<ByteArray?>,
+    uuid_array_type: Array<UUID?>?,
+    uuid_array_notnull_type: Array<UUID?>,
+    string_type: String,
+  ): Int
 }

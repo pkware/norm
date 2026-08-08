@@ -21,6 +21,12 @@ import java.time.ZoneOffset
 import kotlin.reflect.KClass
 
 /**
+ * Column index of the `VALUE` column in the element `ResultSet` returned by
+ * [java.sql.Array.getResultSet]. Column `1` is `INDEX`.
+ */
+private const val ELEMENT_VALUE_COLUMN_INDEX = 2
+
+/**
  * Data type that can be mapped between Java and SQL using JDBC.
  */
 internal interface SqlMappable {
@@ -93,14 +99,27 @@ internal class NullablePrimitiveDecorator(private val delegate: JdbcTypes) : Sql
 /**
  * Decorates a [SqlMappable] to handle PostgreSQL array types.
  *
- * Arrays in PostgreSQL are accessed via JDBC's getArray() method, which returns
- * a [java.sql.Array] object. The .array property provides the actual Kotlin array.
+ * Writes bind through [norm.toSqlArray], which names the Postgres element type explicitly. A bare
+ * `setObject(index, array)` leaves the element OID to the driver's inference, which produces
+ * `character varying[]` for `jsonb[]` (rejected by Postgres) and fails outright for every
+ * `java.time` element type.
  *
- * @param delegate The base type mapper for the array element type
- * @param arrayTypeName The Kotlin array type (e.g., [IntArray], `Array<String>`)
+ * @param delegate The base type mapper for the array element type. Supplies the element read via
+ *   [SqlMappable.resultSetAction]; its [SqlMappable.statementAction] is unused, because element
+ *   values are rendered into a Postgres array literal by the driver rather than bound individually.
+ * @param arrayTypeName The Kotlin array type (e.g. `Array<String?>`). Its nullability is the
+ *   column's: elements are always nullable, the array itself only when the column is.
+ * @param postgresElementTypeName The canonical Postgres element type name passed to
+ *   [norm.toSqlArray] (e.g. `"jsonb"`, `"timestamptz"`). See [postgresArrayElementTypeName].
  */
-internal class ArrayTypeDecorator(private val delegate: SqlMappable, private val arrayTypeName: TypeName) :
-  SqlMappable {
+internal class ArrayTypeDecorator(
+  private val delegate: SqlMappable,
+  private val arrayTypeName: TypeName,
+  private val postgresElementTypeName: String,
+) : SqlMappable {
+
+  private val toSqlArrayMember = MemberName("norm", "toSqlArray", isExtension = true)
+  private val mapElementsMember = MemberName("norm", "mapElements", isExtension = true)
 
   override val klass: KClass<*>
     get() = delegate.klass
@@ -109,33 +128,49 @@ internal class ArrayTypeDecorator(private val delegate: SqlMappable, private val
     get() = arrayTypeName
 
   override val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
-    get() = { index, parameterName ->
-      // For arrays, use setObject which works with both primitive and object arrays
-      CodeBlock.of("setObject(%L, %L)", index, parameterName)
+    get() = if (arrayTypeName.isNullable) {
+      { index, parameterName ->
+        CodeBlock.of(
+          "%L?.let { setArray(%L, it.%M(connection, %S)) } ?: setNull(%L, %T.ARRAY)",
+          parameterName,
+          index,
+          toSqlArrayMember,
+          postgresElementTypeName,
+          index,
+          Types::class,
+        )
+      }
+    } else {
+      { index, parameterName ->
+        CodeBlock.of(
+          "setArray(%L, %L.%M(connection, %S))",
+          index,
+          parameterName,
+          toSqlArrayMember,
+          postgresElementTypeName,
+        )
+      }
     }
 
   override val resultSetAction: (index: Int) -> CodeBlock
-    get() = { index ->
-      // JDBC arrays: getArray(i) returns java.sql.Array or null
-      // getArray(i).array returns Object (the actual array)
-      // Cast to the appropriate Kotlin array type
-      val getArray = if (arrayTypeName.isNullable) {
-        // For nullable arrays, use safe calls to handle NULL values
-        // getArray() returns null when the column value is NULL
-        "getArray(%L)?.array?"
-      } else {
-        "getArray(%L).array"
+    get() = if (arrayTypeName.isNullable) {
+      { index ->
+        CodeBlock.of(
+          "getArray(%L)?.%M { %L }",
+          index,
+          mapElementsMember,
+          delegate.resultSetAction(ELEMENT_VALUE_COLUMN_INDEX),
+        )
       }
-      CodeBlock.of(
-        """
-        $getArray.let {
-          @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
-          it as %T
-        }
-        """.trimIndent(),
-        index,
-        arrayTypeName.copy(nullable = false),
-      )
+    } else {
+      { index ->
+        CodeBlock.of(
+          "getArray(%L).%M { %L }",
+          index,
+          mapElementsMember,
+          delegate.resultSetAction(ELEMENT_VALUE_COLUMN_INDEX),
+        )
+      }
     }
 }
 
@@ -419,10 +454,10 @@ internal class AdaptedTypeSqlMappable(
 /**
  * [SqlMappable] for an array column whose elements use a `norm.ColumnAdapter`.
  *
- * Unlike [ArrayTypeDecorator] (which does a direct `UNCHECKED_CAST` from the JDBC array to the
- * final Kotlin array type), this class generates per-element adapter decode/encode calls because
- * the JDBC wire type (`String[]` for enums, `Integer[]` for int4 domains) differs from the
- * application type (`Array<Mood?>`, `Array<PositiveInteger?>`).
+ * Like [ArrayTypeDecorator], this class reads and writes elements one at a time rather than
+ * casting the bulk JDBC array. It differs in that each element is routed through a
+ * `norm.ColumnAdapter`, because the JDBC wire type (`String[]` for enums, `Integer[]` for int4
+ * domains) differs from the application type (`Array<Mood?>`, `Array<PositiveInteger?>`).
  *
  * The Kotlin type is always `Array<ApplicationType?>` — elements are nullable because Postgres
  * arrays can contain `NULL` values regardless of the column's `NOT NULL` constraint. Column-level

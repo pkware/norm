@@ -2,6 +2,7 @@ package norm.generator
 
 import assertk.assertThat
 import assertk.assertions.contains
+import assertk.assertions.doesNotContain
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isIn
@@ -679,43 +680,199 @@ class ColumnTypeMappingTest {
   inner class ArrayResultSetAccessors {
 
     @Test
-    fun `int array generates getArray accessor`() {
-      val col = column("tags", type = "int4", isArray = true)
+    fun `non-null int array reads element-wise with a wasNull check`() {
+      val col = column("tags", type = "int4", isArray = true, notNull = true)
       val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
       val accessorString = accessor.toString()
 
-      assertThat(accessorString).contains("getArray(1)")
-      assertThat(accessorString).contains("as kotlin.Array<kotlin.Int?>")
+      assertThat(accessorString).contains("getArray(1).")
+      assertThat(accessorString).contains("norm.mapElements { getInt(2).takeUnless { wasNull() } }")
     }
 
     @Test
-    fun `nullable int array uses safe call operators`() {
+    fun `nullable int array uses a safe call before mapElements`() {
       val col = column("tags", type = "int4", isArray = true, notNull = false)
       val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
       val accessorString = accessor.toString()
 
-      assertThat(accessorString).contains("getArray(1)")
-      assertThat(accessorString).contains("?.")
+      assertThat(accessorString).contains("getArray(1)?.")
+      assertThat(accessorString).contains("norm.mapElements { getInt(2).takeUnless { wasNull() } }")
     }
 
     @Test
-    fun `text array generates getArray accessor with Array cast`() {
-      val col = column("labels", type = "text", isArray = true)
+    fun `text array reads elements with getString`() {
+      val col = column("labels", type = "text", isArray = true, notNull = true)
       val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
-      val accessorString = accessor.toString()
-
-      assertThat(accessorString).contains("getArray(1)")
-      assertThat(accessorString).contains("as kotlin.Array<kotlin.String?>")
+      assertThat(accessor.toString()).contains("norm.mapElements { getString(2) }")
     }
 
     @Test
-    fun `UUID array generates getArray accessor`() {
-      val col = column("user_ids", type = "uuid", isArray = true)
+    fun `UUID array reads elements with getObject`() {
+      val col = column("user_ids", type = "uuid", isArray = true, notNull = true)
       val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
-      val accessorString = accessor.toString()
+      assertThat(accessor.toString())
+        .contains("norm.mapElements { getObject(2, java.util.UUID::class.java) }")
+    }
 
-      assertThat(accessorString).contains("getArray(1)")
-      assertThat(accessorString).contains("as kotlin.Array<java.util.UUID?>")
+    @Test
+    fun `jsonb array reads elements with getString`() {
+      val col = column("tags", type = "jsonb", isArray = true, notNull = true)
+      val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).contains("norm.mapElements { getString(2) }")
+    }
+
+    @Test
+    fun `date array reads elements as LocalDate`() {
+      val col = column("holidays", type = "date", isArray = true, notNull = true)
+      val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString())
+        .contains("norm.mapElements { getObject(2, java.time.LocalDate::class.java) }")
+    }
+
+    @Test
+    fun `timetz array reads elements as OffsetTime, preserving the offset`() {
+      val col = column("event_times", type = "timetz", isArray = true, notNull = true)
+      val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString())
+        .contains("norm.mapElements { getObject(2, java.time.OffsetTime::class.java) }")
+    }
+
+    @Test
+    fun `bytea array reads elements with getBytes`() {
+      val col = column("blobs", type = "bytea", isArray = true, notNull = true)
+      val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).contains("norm.mapElements { getBytes(2) }")
+    }
+
+    @Test
+    fun `non-null timestamptz array element read is null-safe`() {
+      // A NOT NULL timestamptz[] column can still contain NULL elements, so the element read must
+      // use the nullable InstantSqlMappable form. The non-null form would NPE on a NULL element.
+      val col = column("moments", type = "timestamptz", isArray = true, notNull = true)
+      val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString())
+        .contains("norm.mapElements { getObject(2, java.time.OffsetDateTime::class.java)?.toInstant() }")
+    }
+
+    @Test
+    fun `non-null int array element read uses a wasNull check`() {
+      // Same reason as the timestamptz case: getInt on a NULL element returns 0, not null.
+      val col = column("tags", type = "int4", isArray = true, notNull = true)
+      val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).contains("getInt(2).takeUnless { wasNull() }")
+    }
+
+    @Test
+    fun `array reads emit no unchecked cast`() {
+      val col = column("tags", type = "int4", isArray = true, notNull = true)
+      val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).doesNotContain("UNCHECKED_CAST")
+    }
+  }
+
+  @Nested
+  inner class PlainArrayStatementActions {
+
+    @Test
+    fun `non-null jsonb array writes via setArray and toSqlArray`() {
+      val col = column("tags", type = "jsonb", isArray = true, notNull = true)
+      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("tags"))
+      val setterString = setter.toString()
+
+      assertThat(setterString).contains("setArray(1, ")
+      assertThat(setterString).contains("""norm.toSqlArray(connection, "jsonb")""")
+    }
+
+    @Test
+    fun `nullable jsonb array writes via setArray with setNull fallback`() {
+      val col = column("tags", type = "jsonb", isArray = true, notNull = false)
+      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("tags"))
+      val setterString = setter.toString()
+
+      assertThat(setterString).contains("tags?.let { setArray(1, it.")
+      assertThat(setterString).contains("""norm.toSqlArray(connection, "jsonb")""")
+      assertThat(setterString).contains("?: setNull(1, java.sql.Types.ARRAY)")
+    }
+
+    @Test
+    fun `date array writes with the date element type name`() {
+      val col = column("holidays", type = "date", isArray = true, notNull = true)
+      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("holidays"))
+      assertThat(setter.toString()).contains("""norm.toSqlArray(connection, "date")""")
+    }
+
+    @Test
+    fun `timestamptz array writes with the timestamptz element type name`() {
+      val col = column("moments", type = "timestamptz", isArray = true, notNull = true)
+      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("moments"))
+      assertThat(setter.toString()).contains("""norm.toSqlArray(connection, "timestamptz")""")
+    }
+
+    @Test
+    fun `int array writes with the canonical int4 element type name`() {
+      val col = column("counts", type = "integer", isArray = true, notNull = true)
+      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("counts"))
+      assertThat(setter.toString()).contains("""norm.toSqlArray(connection, "int4")""")
+    }
+
+    @Test
+    fun `pg_catalog prefixed element type is canonicalized`() {
+      val col = column("counts", type = "pg_catalog.int4", isArray = true, notNull = true)
+      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("counts"))
+      assertThat(setter.toString()).contains("""norm.toSqlArray(connection, "int4")""")
+    }
+
+    @Test
+    fun `bytea array writes with the bytea element type name`() {
+      val col = column("blobs", type = "bytea", isArray = true, notNull = true)
+      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("blobs"))
+      assertThat(setter.toString()).contains("""norm.toSqlArray(connection, "bytea")""")
+    }
+  }
+
+  @Nested
+  inner class PostgresArrayElementTypeNames {
+
+    @Test
+    fun `strips the pg_catalog prefix`() {
+      assertThat(postgresArrayElementTypeName("pg_catalog.timestamptz")).isEqualTo("timestamptz")
+    }
+
+    @Test
+    fun `folds integer spellings to int4`() {
+      assertThat(postgresArrayElementTypeName("integer")).isEqualTo("int4")
+      assertThat(postgresArrayElementTypeName("int")).isEqualTo("int4")
+      assertThat(postgresArrayElementTypeName("pg_catalog.int4")).isEqualTo("int4")
+    }
+
+    @Test
+    fun `folds smallint and bigint`() {
+      assertThat(postgresArrayElementTypeName("smallint")).isEqualTo("int2")
+      assertThat(postgresArrayElementTypeName("bigint")).isEqualTo("int8")
+    }
+
+    @Test
+    fun `folds float spellings`() {
+      assertThat(postgresArrayElementTypeName("real")).isEqualTo("float4")
+      assertThat(postgresArrayElementTypeName("double precision")).isEqualTo("float8")
+      assertThat(postgresArrayElementTypeName("float")).isEqualTo("float8")
+    }
+
+    @Test
+    fun `folds boolean and string`() {
+      assertThat(postgresArrayElementTypeName("boolean")).isEqualTo("bool")
+      assertThat(postgresArrayElementTypeName("string")).isEqualTo("text")
+    }
+
+    @Test
+    fun `passes canonical names through unchanged`() {
+      assertThat(postgresArrayElementTypeName("jsonb")).isEqualTo("jsonb")
+      assertThat(postgresArrayElementTypeName("timetz")).isEqualTo("timetz")
+      assertThat(postgresArrayElementTypeName("uuid")).isEqualTo("uuid")
+      assertThat(postgresArrayElementTypeName("bytea")).isEqualTo("bytea")
+      assertThat(postgresArrayElementTypeName("numeric")).isEqualTo("numeric")
+      assertThat(postgresArrayElementTypeName("text")).isEqualTo("text")
+      assertThat(postgresArrayElementTypeName("varchar")).isEqualTo("varchar")
     }
   }
 

@@ -34,7 +34,9 @@ import norm.NormDriver
 import norm.Query
 import norm.RealTransactable
 import norm.combineExecBatchResults
+import norm.mapElements
 import norm.setInt
+import norm.toSqlArray
 
 public class PostgresQueries(
   connectionProvider: ConnectionProvider,
@@ -106,6 +108,34 @@ public class PostgresQueries(
     int_array_notnull_type: Array<Int?>,
     text_array_type: Array<String?>?,
     text_array_notnull_type: Array<String?>,
+    int2_array_type: Array<Short?>?,
+    int2_array_notnull_type: Array<Short?>,
+    int8_array_type: Array<Long?>?,
+    int8_array_notnull_type: Array<Long?>,
+    float4_array_type: Array<Float?>?,
+    float4_array_notnull_type: Array<Float?>,
+    float8_array_type: Array<Double?>?,
+    float8_array_notnull_type: Array<Double?>,
+    numeric_array_type: Array<BigDecimal?>?,
+    numeric_array_notnull_type: Array<BigDecimal?>,
+    bool_array_type: Array<Boolean?>?,
+    bool_array_notnull_type: Array<Boolean?>,
+    jsonb_array_type: Array<String?>?,
+    jsonb_array_notnull_type: Array<String?>,
+    bytea_array_type: Array<ByteArray?>?,
+    bytea_array_notnull_type: Array<ByteArray?>,
+    uuid_array_type: Array<UUID?>?,
+    uuid_array_notnull_type: Array<UUID?>,
+    date_array_type: Array<LocalDate?>?,
+    date_array_notnull_type: Array<LocalDate?>,
+    time_array_type: Array<LocalTime?>?,
+    time_array_notnull_type: Array<LocalTime?>,
+    timetz_array_type: Array<OffsetTime?>?,
+    timetz_array_notnull_type: Array<OffsetTime?>,
+    timestamp_array_type: Array<LocalDateTime?>?,
+    timestamp_array_notnull_type: Array<LocalDateTime?>,
+    timestamptz_array_type: Array<Instant?>?,
+    timestamptz_array_notnull_type: Array<Instant?>,
   ) -> T, processor: ManyProcessor<T, Return>): Return {
     val sql = "SELECT * FROM type"
     val rowReader: ResultSet.() -> T = {
@@ -169,22 +199,38 @@ public class PostgresQueries(
         getBytes(57),
         getBytes(58),
         getBytes(59),
-        getArray(60)?.array?.let {
-              @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
-              it as Array<Int?>
-            },
-        getArray(61).array.let {
-              @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
-              it as Array<Int?>
-            },
-        getArray(62)?.array?.let {
-              @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
-              it as Array<String?>
-            },
-        getArray(63).array.let {
-              @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
-              it as Array<String?>
-            },
+        getArray(60)?.mapElements { getInt(2).takeUnless { wasNull() } },
+        getArray(61).mapElements { getInt(2).takeUnless { wasNull() } },
+        getArray(62)?.mapElements { getString(2) },
+        getArray(63).mapElements { getString(2) },
+        getArray(64)?.mapElements { getShort(2).takeUnless { wasNull() } },
+        getArray(65).mapElements { getShort(2).takeUnless { wasNull() } },
+        getArray(66)?.mapElements { getLong(2).takeUnless { wasNull() } },
+        getArray(67).mapElements { getLong(2).takeUnless { wasNull() } },
+        getArray(68)?.mapElements { getFloat(2).takeUnless { wasNull() } },
+        getArray(69).mapElements { getFloat(2).takeUnless { wasNull() } },
+        getArray(70)?.mapElements { getDouble(2).takeUnless { wasNull() } },
+        getArray(71).mapElements { getDouble(2).takeUnless { wasNull() } },
+        getArray(72)?.mapElements { getBigDecimal(2) },
+        getArray(73).mapElements { getBigDecimal(2) },
+        getArray(74)?.mapElements { getBoolean(2).takeUnless { wasNull() } },
+        getArray(75).mapElements { getBoolean(2).takeUnless { wasNull() } },
+        getArray(76)?.mapElements { getString(2) },
+        getArray(77).mapElements { getString(2) },
+        getArray(78)?.mapElements { getBytes(2) },
+        getArray(79).mapElements { getBytes(2) },
+        getArray(80)?.mapElements { getObject(2, UUID::class.java) },
+        getArray(81).mapElements { getObject(2, UUID::class.java) },
+        getArray(82)?.mapElements { getObject(2, LocalDate::class.java) },
+        getArray(83).mapElements { getObject(2, LocalDate::class.java) },
+        getArray(84)?.mapElements { getObject(2, LocalTime::class.java) },
+        getArray(85).mapElements { getObject(2, LocalTime::class.java) },
+        getArray(86)?.mapElements { getObject(2, OffsetTime::class.java) },
+        getArray(87).mapElements { getObject(2, OffsetTime::class.java) },
+        getArray(88)?.mapElements { getObject(2, LocalDateTime::class.java) },
+        getArray(89).mapElements { getObject(2, LocalDateTime::class.java) },
+        getArray(90)?.mapElements { getObject(2, OffsetDateTime::class.java)?.toInstant() },
+        getArray(91).mapElements { getObject(2, OffsetDateTime::class.java)?.toInstant() },
       )
     }
     return processor.invoke(sql, rowReader, null)
@@ -254,6 +300,34 @@ public class PostgresQueries(
     int_array_notnull_type: Array<Int?>,
     text_array_type: Array<String?>?,
     text_array_notnull_type: Array<String?>,
+    int2_array_type: Array<Short?>?,
+    int2_array_notnull_type: Array<Short?>,
+    int8_array_type: Array<Long?>?,
+    int8_array_notnull_type: Array<Long?>,
+    float4_array_type: Array<Float?>?,
+    float4_array_notnull_type: Array<Float?>,
+    float8_array_type: Array<Double?>?,
+    float8_array_notnull_type: Array<Double?>,
+    numeric_array_type: Array<BigDecimal?>?,
+    numeric_array_notnull_type: Array<BigDecimal?>,
+    bool_array_type: Array<Boolean?>?,
+    bool_array_notnull_type: Array<Boolean?>,
+    jsonb_array_type: Array<String?>?,
+    jsonb_array_notnull_type: Array<String?>,
+    bytea_array_type: Array<ByteArray?>?,
+    bytea_array_notnull_type: Array<ByteArray?>,
+    uuid_array_type: Array<UUID?>?,
+    uuid_array_notnull_type: Array<UUID?>,
+    date_array_type: Array<LocalDate?>?,
+    date_array_notnull_type: Array<LocalDate?>,
+    time_array_type: Array<LocalTime?>?,
+    time_array_notnull_type: Array<LocalTime?>,
+    timetz_array_type: Array<OffsetTime?>?,
+    timetz_array_notnull_type: Array<OffsetTime?>,
+    timestamp_array_type: Array<LocalDateTime?>?,
+    timestamp_array_notnull_type: Array<LocalDateTime?>,
+    timestamptz_array_type: Array<Instant?>?,
+    timestamptz_array_notnull_type: Array<Instant?>,
   ) -> T): Many<T> = all(mapper, driver::queryMany)
 
   override fun <T : Any> allDynamically(mapper: (
@@ -320,6 +394,34 @@ public class PostgresQueries(
     int_array_notnull_type: Array<Int?>,
     text_array_type: Array<String?>?,
     text_array_notnull_type: Array<String?>,
+    int2_array_type: Array<Short?>?,
+    int2_array_notnull_type: Array<Short?>,
+    int8_array_type: Array<Long?>?,
+    int8_array_notnull_type: Array<Long?>,
+    float4_array_type: Array<Float?>?,
+    float4_array_notnull_type: Array<Float?>,
+    float8_array_type: Array<Double?>?,
+    float8_array_notnull_type: Array<Double?>,
+    numeric_array_type: Array<BigDecimal?>?,
+    numeric_array_notnull_type: Array<BigDecimal?>,
+    bool_array_type: Array<Boolean?>?,
+    bool_array_notnull_type: Array<Boolean?>,
+    jsonb_array_type: Array<String?>?,
+    jsonb_array_notnull_type: Array<String?>,
+    bytea_array_type: Array<ByteArray?>?,
+    bytea_array_notnull_type: Array<ByteArray?>,
+    uuid_array_type: Array<UUID?>?,
+    uuid_array_notnull_type: Array<UUID?>,
+    date_array_type: Array<LocalDate?>?,
+    date_array_notnull_type: Array<LocalDate?>,
+    time_array_type: Array<LocalTime?>?,
+    time_array_notnull_type: Array<LocalTime?>,
+    timetz_array_type: Array<OffsetTime?>?,
+    timetz_array_notnull_type: Array<OffsetTime?>,
+    timestamp_array_type: Array<LocalDateTime?>?,
+    timestamp_array_notnull_type: Array<LocalDateTime?>,
+    timestamptz_array_type: Array<Instant?>?,
+    timestamptz_array_notnull_type: Array<Instant?>,
   ) -> T): Query<T> = all(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
 
   @Throws(SQLException::class)
@@ -606,6 +708,34 @@ public class PostgresQueries(
       int_array_notnull_type: Array<Int?>,
       text_array_type: Array<String?>?,
       text_array_notnull_type: Array<String?>,
+      int2_array_type: Array<Short?>?,
+      int2_array_notnull_type: Array<Short?>,
+      int8_array_type: Array<Long?>?,
+      int8_array_notnull_type: Array<Long?>,
+      float4_array_type: Array<Float?>?,
+      float4_array_notnull_type: Array<Float?>,
+      float8_array_type: Array<Double?>?,
+      float8_array_notnull_type: Array<Double?>,
+      numeric_array_type: Array<BigDecimal?>?,
+      numeric_array_notnull_type: Array<BigDecimal?>,
+      bool_array_type: Array<Boolean?>?,
+      bool_array_notnull_type: Array<Boolean?>,
+      jsonb_array_type: Array<String?>?,
+      jsonb_array_notnull_type: Array<String?>,
+      bytea_array_type: Array<ByteArray?>?,
+      bytea_array_notnull_type: Array<ByteArray?>,
+      uuid_array_type: Array<UUID?>?,
+      uuid_array_notnull_type: Array<UUID?>,
+      date_array_type: Array<LocalDate?>?,
+      date_array_notnull_type: Array<LocalDate?>,
+      time_array_type: Array<LocalTime?>?,
+      time_array_notnull_type: Array<LocalTime?>,
+      timetz_array_type: Array<OffsetTime?>?,
+      timetz_array_notnull_type: Array<OffsetTime?>,
+      timestamp_array_type: Array<LocalDateTime?>?,
+      timestamp_array_notnull_type: Array<LocalDateTime?>,
+      timestamptz_array_type: Array<Instant?>?,
+      timestamptz_array_notnull_type: Array<Instant?>,
     ) -> T,
     processor: ManyProcessor<T, Return>,
   ): Return {
@@ -671,22 +801,38 @@ public class PostgresQueries(
         getBytes(57),
         getBytes(58),
         getBytes(59),
-        getArray(60)?.array?.let {
-              @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
-              it as Array<Int?>
-            },
-        getArray(61).array.let {
-              @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
-              it as Array<Int?>
-            },
-        getArray(62)?.array?.let {
-              @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
-              it as Array<String?>
-            },
-        getArray(63).array.let {
-              @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
-              it as Array<String?>
-            },
+        getArray(60)?.mapElements { getInt(2).takeUnless { wasNull() } },
+        getArray(61).mapElements { getInt(2).takeUnless { wasNull() } },
+        getArray(62)?.mapElements { getString(2) },
+        getArray(63).mapElements { getString(2) },
+        getArray(64)?.mapElements { getShort(2).takeUnless { wasNull() } },
+        getArray(65).mapElements { getShort(2).takeUnless { wasNull() } },
+        getArray(66)?.mapElements { getLong(2).takeUnless { wasNull() } },
+        getArray(67).mapElements { getLong(2).takeUnless { wasNull() } },
+        getArray(68)?.mapElements { getFloat(2).takeUnless { wasNull() } },
+        getArray(69).mapElements { getFloat(2).takeUnless { wasNull() } },
+        getArray(70)?.mapElements { getDouble(2).takeUnless { wasNull() } },
+        getArray(71).mapElements { getDouble(2).takeUnless { wasNull() } },
+        getArray(72)?.mapElements { getBigDecimal(2) },
+        getArray(73).mapElements { getBigDecimal(2) },
+        getArray(74)?.mapElements { getBoolean(2).takeUnless { wasNull() } },
+        getArray(75).mapElements { getBoolean(2).takeUnless { wasNull() } },
+        getArray(76)?.mapElements { getString(2) },
+        getArray(77).mapElements { getString(2) },
+        getArray(78)?.mapElements { getBytes(2) },
+        getArray(79).mapElements { getBytes(2) },
+        getArray(80)?.mapElements { getObject(2, UUID::class.java) },
+        getArray(81).mapElements { getObject(2, UUID::class.java) },
+        getArray(82)?.mapElements { getObject(2, LocalDate::class.java) },
+        getArray(83).mapElements { getObject(2, LocalDate::class.java) },
+        getArray(84)?.mapElements { getObject(2, LocalTime::class.java) },
+        getArray(85).mapElements { getObject(2, LocalTime::class.java) },
+        getArray(86)?.mapElements { getObject(2, OffsetTime::class.java) },
+        getArray(87).mapElements { getObject(2, OffsetTime::class.java) },
+        getArray(88)?.mapElements { getObject(2, LocalDateTime::class.java) },
+        getArray(89).mapElements { getObject(2, LocalDateTime::class.java) },
+        getArray(90)?.mapElements { getObject(2, OffsetDateTime::class.java)?.toInstant() },
+        getArray(91).mapElements { getObject(2, OffsetDateTime::class.java)?.toInstant() },
       )
     }
     val queryBinder: (PreparedStatement.() -> Unit)? = {
@@ -759,6 +905,34 @@ public class PostgresQueries(
     int_array_notnull_type: Array<Int?>,
     text_array_type: Array<String?>?,
     text_array_notnull_type: Array<String?>,
+    int2_array_type: Array<Short?>?,
+    int2_array_notnull_type: Array<Short?>,
+    int8_array_type: Array<Long?>?,
+    int8_array_notnull_type: Array<Long?>,
+    float4_array_type: Array<Float?>?,
+    float4_array_notnull_type: Array<Float?>,
+    float8_array_type: Array<Double?>?,
+    float8_array_notnull_type: Array<Double?>,
+    numeric_array_type: Array<BigDecimal?>?,
+    numeric_array_notnull_type: Array<BigDecimal?>,
+    bool_array_type: Array<Boolean?>?,
+    bool_array_notnull_type: Array<Boolean?>,
+    jsonb_array_type: Array<String?>?,
+    jsonb_array_notnull_type: Array<String?>,
+    bytea_array_type: Array<ByteArray?>?,
+    bytea_array_notnull_type: Array<ByteArray?>,
+    uuid_array_type: Array<UUID?>?,
+    uuid_array_notnull_type: Array<UUID?>,
+    date_array_type: Array<LocalDate?>?,
+    date_array_notnull_type: Array<LocalDate?>,
+    time_array_type: Array<LocalTime?>?,
+    time_array_notnull_type: Array<LocalTime?>,
+    timetz_array_type: Array<OffsetTime?>?,
+    timetz_array_notnull_type: Array<OffsetTime?>,
+    timestamp_array_type: Array<LocalDateTime?>?,
+    timestamp_array_notnull_type: Array<LocalDateTime?>,
+    timestamptz_array_type: Array<Instant?>?,
+    timestamptz_array_notnull_type: Array<Instant?>,
   ) -> T): Many<T> = filterByStringType(string_type, mapper, driver::queryMany)
 
   private fun <T : Any, Return> listNotNullView(mapper: (
@@ -970,6 +1144,34 @@ public class PostgresQueries(
     int_array_notnull_type: Array<Int?>,
     text_array_type: Array<String?>?,
     text_array_notnull_type: Array<String?>,
+    int2_array_type: Array<Short?>?,
+    int2_array_notnull_type: Array<Short?>,
+    int8_array_type: Array<Long?>?,
+    int8_array_notnull_type: Array<Long?>,
+    float4_array_type: Array<Float?>?,
+    float4_array_notnull_type: Array<Float?>,
+    float8_array_type: Array<Double?>?,
+    float8_array_notnull_type: Array<Double?>,
+    numeric_array_type: Array<BigDecimal?>?,
+    numeric_array_notnull_type: Array<BigDecimal?>,
+    bool_array_type: Array<Boolean?>?,
+    bool_array_notnull_type: Array<Boolean?>,
+    jsonb_array_type: Array<String?>?,
+    jsonb_array_notnull_type: Array<String?>,
+    bytea_array_type: Array<ByteArray?>?,
+    bytea_array_notnull_type: Array<ByteArray?>,
+    uuid_array_type: Array<UUID?>?,
+    uuid_array_notnull_type: Array<UUID?>,
+    date_array_type: Array<LocalDate?>?,
+    date_array_notnull_type: Array<LocalDate?>,
+    time_array_type: Array<LocalTime?>?,
+    time_array_notnull_type: Array<LocalTime?>,
+    timetz_array_type: Array<OffsetTime?>?,
+    timetz_array_notnull_type: Array<OffsetTime?>,
+    timestamp_array_type: Array<LocalDateTime?>?,
+    timestamp_array_notnull_type: Array<LocalDateTime?>,
+    timestamptz_array_type: Array<Instant?>?,
+    timestamptz_array_notnull_type: Array<Instant?>,
   ) -> T): T {
     val sql = "SELECT * FROM type WHERE string_type = ? AND text_type = ?"
     val rowReader: ResultSet.() -> T = {
@@ -1033,22 +1235,38 @@ public class PostgresQueries(
         getBytes(57),
         getBytes(58),
         getBytes(59),
-        getArray(60)?.array?.let {
-              @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
-              it as Array<Int?>
-            },
-        getArray(61).array.let {
-              @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
-              it as Array<Int?>
-            },
-        getArray(62)?.array?.let {
-              @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
-              it as Array<String?>
-            },
-        getArray(63).array.let {
-              @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
-              it as Array<String?>
-            },
+        getArray(60)?.mapElements { getInt(2).takeUnless { wasNull() } },
+        getArray(61).mapElements { getInt(2).takeUnless { wasNull() } },
+        getArray(62)?.mapElements { getString(2) },
+        getArray(63).mapElements { getString(2) },
+        getArray(64)?.mapElements { getShort(2).takeUnless { wasNull() } },
+        getArray(65).mapElements { getShort(2).takeUnless { wasNull() } },
+        getArray(66)?.mapElements { getLong(2).takeUnless { wasNull() } },
+        getArray(67).mapElements { getLong(2).takeUnless { wasNull() } },
+        getArray(68)?.mapElements { getFloat(2).takeUnless { wasNull() } },
+        getArray(69).mapElements { getFloat(2).takeUnless { wasNull() } },
+        getArray(70)?.mapElements { getDouble(2).takeUnless { wasNull() } },
+        getArray(71).mapElements { getDouble(2).takeUnless { wasNull() } },
+        getArray(72)?.mapElements { getBigDecimal(2) },
+        getArray(73).mapElements { getBigDecimal(2) },
+        getArray(74)?.mapElements { getBoolean(2).takeUnless { wasNull() } },
+        getArray(75).mapElements { getBoolean(2).takeUnless { wasNull() } },
+        getArray(76)?.mapElements { getString(2) },
+        getArray(77).mapElements { getString(2) },
+        getArray(78)?.mapElements { getBytes(2) },
+        getArray(79).mapElements { getBytes(2) },
+        getArray(80)?.mapElements { getObject(2, UUID::class.java) },
+        getArray(81).mapElements { getObject(2, UUID::class.java) },
+        getArray(82)?.mapElements { getObject(2, LocalDate::class.java) },
+        getArray(83).mapElements { getObject(2, LocalDate::class.java) },
+        getArray(84)?.mapElements { getObject(2, LocalTime::class.java) },
+        getArray(85).mapElements { getObject(2, LocalTime::class.java) },
+        getArray(86)?.mapElements { getObject(2, OffsetTime::class.java) },
+        getArray(87).mapElements { getObject(2, OffsetTime::class.java) },
+        getArray(88)?.mapElements { getObject(2, LocalDateTime::class.java) },
+        getArray(89).mapElements { getObject(2, LocalDateTime::class.java) },
+        getArray(90)?.mapElements { getObject(2, OffsetDateTime::class.java)?.toInstant() },
+        getArray(91).mapElements { getObject(2, OffsetDateTime::class.java)?.toInstant() },
       )
     }
     return driver.queryOne(sql, rowReader) {
@@ -1123,6 +1341,34 @@ public class PostgresQueries(
       int_array_notnull_type: Array<Int?>,
       text_array_type: Array<String?>?,
       text_array_notnull_type: Array<String?>,
+      int2_array_type: Array<Short?>?,
+      int2_array_notnull_type: Array<Short?>,
+      int8_array_type: Array<Long?>?,
+      int8_array_notnull_type: Array<Long?>,
+      float4_array_type: Array<Float?>?,
+      float4_array_notnull_type: Array<Float?>,
+      float8_array_type: Array<Double?>?,
+      float8_array_notnull_type: Array<Double?>,
+      numeric_array_type: Array<BigDecimal?>?,
+      numeric_array_notnull_type: Array<BigDecimal?>,
+      bool_array_type: Array<Boolean?>?,
+      bool_array_notnull_type: Array<Boolean?>,
+      jsonb_array_type: Array<String?>?,
+      jsonb_array_notnull_type: Array<String?>,
+      bytea_array_type: Array<ByteArray?>?,
+      bytea_array_notnull_type: Array<ByteArray?>,
+      uuid_array_type: Array<UUID?>?,
+      uuid_array_notnull_type: Array<UUID?>,
+      date_array_type: Array<LocalDate?>?,
+      date_array_notnull_type: Array<LocalDate?>,
+      time_array_type: Array<LocalTime?>?,
+      time_array_notnull_type: Array<LocalTime?>,
+      timetz_array_type: Array<OffsetTime?>?,
+      timetz_array_notnull_type: Array<OffsetTime?>,
+      timestamp_array_type: Array<LocalDateTime?>?,
+      timestamp_array_notnull_type: Array<LocalDateTime?>,
+      timestamptz_array_type: Array<Instant?>?,
+      timestamptz_array_notnull_type: Array<Instant?>,
     ) -> T,
     processor: ManyProcessor<T, Return>,
   ): Return {
@@ -1188,22 +1434,38 @@ public class PostgresQueries(
         getBytes(57),
         getBytes(58),
         getBytes(59),
-        getArray(60)?.array?.let {
-              @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
-              it as Array<Int?>
-            },
-        getArray(61).array.let {
-              @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
-              it as Array<Int?>
-            },
-        getArray(62)?.array?.let {
-              @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
-              it as Array<String?>
-            },
-        getArray(63).array.let {
-              @Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
-              it as Array<String?>
-            },
+        getArray(60)?.mapElements { getInt(2).takeUnless { wasNull() } },
+        getArray(61).mapElements { getInt(2).takeUnless { wasNull() } },
+        getArray(62)?.mapElements { getString(2) },
+        getArray(63).mapElements { getString(2) },
+        getArray(64)?.mapElements { getShort(2).takeUnless { wasNull() } },
+        getArray(65).mapElements { getShort(2).takeUnless { wasNull() } },
+        getArray(66)?.mapElements { getLong(2).takeUnless { wasNull() } },
+        getArray(67).mapElements { getLong(2).takeUnless { wasNull() } },
+        getArray(68)?.mapElements { getFloat(2).takeUnless { wasNull() } },
+        getArray(69).mapElements { getFloat(2).takeUnless { wasNull() } },
+        getArray(70)?.mapElements { getDouble(2).takeUnless { wasNull() } },
+        getArray(71).mapElements { getDouble(2).takeUnless { wasNull() } },
+        getArray(72)?.mapElements { getBigDecimal(2) },
+        getArray(73).mapElements { getBigDecimal(2) },
+        getArray(74)?.mapElements { getBoolean(2).takeUnless { wasNull() } },
+        getArray(75).mapElements { getBoolean(2).takeUnless { wasNull() } },
+        getArray(76)?.mapElements { getString(2) },
+        getArray(77).mapElements { getString(2) },
+        getArray(78)?.mapElements { getBytes(2) },
+        getArray(79).mapElements { getBytes(2) },
+        getArray(80)?.mapElements { getObject(2, UUID::class.java) },
+        getArray(81).mapElements { getObject(2, UUID::class.java) },
+        getArray(82)?.mapElements { getObject(2, LocalDate::class.java) },
+        getArray(83).mapElements { getObject(2, LocalDate::class.java) },
+        getArray(84)?.mapElements { getObject(2, LocalTime::class.java) },
+        getArray(85).mapElements { getObject(2, LocalTime::class.java) },
+        getArray(86)?.mapElements { getObject(2, OffsetTime::class.java) },
+        getArray(87).mapElements { getObject(2, OffsetTime::class.java) },
+        getArray(88)?.mapElements { getObject(2, LocalDateTime::class.java) },
+        getArray(89).mapElements { getObject(2, LocalDateTime::class.java) },
+        getArray(90)?.mapElements { getObject(2, OffsetDateTime::class.java)?.toInstant() },
+        getArray(91).mapElements { getObject(2, OffsetDateTime::class.java)?.toInstant() },
       )
     }
     val queryBinder: (PreparedStatement.() -> Unit)? = {
@@ -1277,6 +1539,34 @@ public class PostgresQueries(
     int_array_notnull_type: Array<Int?>,
     text_array_type: Array<String?>?,
     text_array_notnull_type: Array<String?>,
+    int2_array_type: Array<Short?>?,
+    int2_array_notnull_type: Array<Short?>,
+    int8_array_type: Array<Long?>?,
+    int8_array_notnull_type: Array<Long?>,
+    float4_array_type: Array<Float?>?,
+    float4_array_notnull_type: Array<Float?>,
+    float8_array_type: Array<Double?>?,
+    float8_array_notnull_type: Array<Double?>,
+    numeric_array_type: Array<BigDecimal?>?,
+    numeric_array_notnull_type: Array<BigDecimal?>,
+    bool_array_type: Array<Boolean?>?,
+    bool_array_notnull_type: Array<Boolean?>,
+    jsonb_array_type: Array<String?>?,
+    jsonb_array_notnull_type: Array<String?>,
+    bytea_array_type: Array<ByteArray?>?,
+    bytea_array_notnull_type: Array<ByteArray?>,
+    uuid_array_type: Array<UUID?>?,
+    uuid_array_notnull_type: Array<UUID?>,
+    date_array_type: Array<LocalDate?>?,
+    date_array_notnull_type: Array<LocalDate?>,
+    time_array_type: Array<LocalTime?>?,
+    time_array_notnull_type: Array<LocalTime?>,
+    timetz_array_type: Array<OffsetTime?>?,
+    timetz_array_notnull_type: Array<OffsetTime?>,
+    timestamp_array_type: Array<LocalDateTime?>?,
+    timestamp_array_notnull_type: Array<LocalDateTime?>,
+    timestamptz_array_type: Array<Instant?>?,
+    timestamptz_array_notnull_type: Array<Instant?>,
   ) -> T): Many<T> = filterByMatchingStrings(`value`, mapper, driver::queryMany)
 
   @Throws(SQLException::class)
@@ -1303,6 +1593,382 @@ public class PostgresQueries(
       for (entry in stream) {
         setObject(1, jsonb_type(entry), Types.OTHER)
         setString(2, string_type(entry))
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          results.add(executeBatch())
+          batchCount = 0
+          // Performance optimization to reduce register updates per loop iteration
+          totalCount += batchSize
+        }
+      }
+      if (batchCount > 0) {
+        results.add(executeBatch())
+        totalCount += batchCount
+      }
+      combineExecBatchResults(results, totalCount, batchSize)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun updateIntTextArrays(
+    int_array_type: Array<Int?>?,
+    int_array_notnull_type: Array<Int?>,
+    text_array_type: Array<String?>?,
+    text_array_notnull_type: Array<String?>,
+    string_type: String,
+  ): Int {
+    val sql = """
+        |UPDATE type SET
+        |  int_array_type = ?,
+        |  int_array_notnull_type = ?,
+        |  text_array_type = ?,
+        |  text_array_notnull_type = ?
+        |WHERE string_type = ?
+        """.trimMargin()
+    return driver.executeRows(sql) {
+      int_array_type?.let { setArray(1, it.toSqlArray(connection, "int4")) } ?: setNull(1, Types.ARRAY)
+      setArray(2, int_array_notnull_type.toSqlArray(connection, "int4"))
+      text_array_type?.let { setArray(3, it.toSqlArray(connection, "text")) } ?: setNull(3, Types.ARRAY)
+      setArray(4, text_array_notnull_type.toSqlArray(connection, "text"))
+      setString(5, string_type)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any> updateIntTextArrays(
+    stream: Iterable<Input>,
+    int_array_type: (Input) -> Array<Int?>?,
+    int_array_notnull_type: (Input) -> Array<Int?>,
+    text_array_type: (Input) -> Array<String?>?,
+    text_array_notnull_type: (Input) -> Array<String?>,
+    string_type: (Input) -> String,
+    batchSize: Int,
+  ): IntArray {
+    val sql = """
+        |UPDATE type SET
+        |  int_array_type = ?,
+        |  int_array_notnull_type = ?,
+        |  text_array_type = ?,
+        |  text_array_notnull_type = ?
+        |WHERE string_type = ?
+        """.trimMargin()
+    return driver.execute(sql) {
+      var totalCount = 0
+      var batchCount = 0
+      val results = mutableListOf<IntArray>()
+      for (entry in stream) {
+        int_array_type(entry)?.let { setArray(1, it.toSqlArray(connection, "int4")) } ?: setNull(1, Types.ARRAY)
+        setArray(2, int_array_notnull_type(entry).toSqlArray(connection, "int4"))
+        text_array_type(entry)?.let { setArray(3, it.toSqlArray(connection, "text")) } ?: setNull(3, Types.ARRAY)
+        setArray(4, text_array_notnull_type(entry).toSqlArray(connection, "text"))
+        setString(5, string_type(entry))
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          results.add(executeBatch())
+          batchCount = 0
+          // Performance optimization to reduce register updates per loop iteration
+          totalCount += batchSize
+        }
+      }
+      if (batchCount > 0) {
+        results.add(executeBatch())
+        totalCount += batchCount
+      }
+      combineExecBatchResults(results, totalCount, batchSize)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun updateNumericArrays(
+    int2_array_type: Array<Short?>?,
+    int2_array_notnull_type: Array<Short?>,
+    int8_array_type: Array<Long?>?,
+    int8_array_notnull_type: Array<Long?>,
+    float4_array_type: Array<Float?>?,
+    float4_array_notnull_type: Array<Float?>,
+    float8_array_type: Array<Double?>?,
+    float8_array_notnull_type: Array<Double?>,
+    numeric_array_type: Array<BigDecimal?>?,
+    numeric_array_notnull_type: Array<BigDecimal?>,
+    string_type: String,
+  ): Int {
+    val sql = """
+        |UPDATE type SET
+        |  int2_array_type = ?,
+        |  int2_array_notnull_type = ?,
+        |  int8_array_type = ?,
+        |  int8_array_notnull_type = ?,
+        |  float4_array_type = ?,
+        |  float4_array_notnull_type = ?,
+        |  float8_array_type = ?,
+        |  float8_array_notnull_type = ?,
+        |  numeric_array_type = ?,
+        |  numeric_array_notnull_type = ?
+        |WHERE string_type = ?
+        """.trimMargin()
+    return driver.executeRows(sql) {
+      int2_array_type?.let { setArray(1, it.toSqlArray(connection, "int2")) } ?: setNull(1, Types.ARRAY)
+      setArray(2, int2_array_notnull_type.toSqlArray(connection, "int2"))
+      int8_array_type?.let { setArray(3, it.toSqlArray(connection, "int8")) } ?: setNull(3, Types.ARRAY)
+      setArray(4, int8_array_notnull_type.toSqlArray(connection, "int8"))
+      float4_array_type?.let { setArray(5, it.toSqlArray(connection, "float4")) } ?: setNull(5, Types.ARRAY)
+      setArray(6, float4_array_notnull_type.toSqlArray(connection, "float4"))
+      float8_array_type?.let { setArray(7, it.toSqlArray(connection, "float8")) } ?: setNull(7, Types.ARRAY)
+      setArray(8, float8_array_notnull_type.toSqlArray(connection, "float8"))
+      numeric_array_type?.let { setArray(9, it.toSqlArray(connection, "numeric")) } ?: setNull(9, Types.ARRAY)
+      setArray(10, numeric_array_notnull_type.toSqlArray(connection, "numeric"))
+      setString(11, string_type)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any> updateNumericArrays(
+    stream: Iterable<Input>,
+    int2_array_type: (Input) -> Array<Short?>?,
+    int2_array_notnull_type: (Input) -> Array<Short?>,
+    int8_array_type: (Input) -> Array<Long?>?,
+    int8_array_notnull_type: (Input) -> Array<Long?>,
+    float4_array_type: (Input) -> Array<Float?>?,
+    float4_array_notnull_type: (Input) -> Array<Float?>,
+    float8_array_type: (Input) -> Array<Double?>?,
+    float8_array_notnull_type: (Input) -> Array<Double?>,
+    numeric_array_type: (Input) -> Array<BigDecimal?>?,
+    numeric_array_notnull_type: (Input) -> Array<BigDecimal?>,
+    string_type: (Input) -> String,
+    batchSize: Int,
+  ): IntArray {
+    val sql = """
+        |UPDATE type SET
+        |  int2_array_type = ?,
+        |  int2_array_notnull_type = ?,
+        |  int8_array_type = ?,
+        |  int8_array_notnull_type = ?,
+        |  float4_array_type = ?,
+        |  float4_array_notnull_type = ?,
+        |  float8_array_type = ?,
+        |  float8_array_notnull_type = ?,
+        |  numeric_array_type = ?,
+        |  numeric_array_notnull_type = ?
+        |WHERE string_type = ?
+        """.trimMargin()
+    return driver.execute(sql) {
+      var totalCount = 0
+      var batchCount = 0
+      val results = mutableListOf<IntArray>()
+      for (entry in stream) {
+        int2_array_type(entry)?.let { setArray(1, it.toSqlArray(connection, "int2")) } ?: setNull(1, Types.ARRAY)
+        setArray(2, int2_array_notnull_type(entry).toSqlArray(connection, "int2"))
+        int8_array_type(entry)?.let { setArray(3, it.toSqlArray(connection, "int8")) } ?: setNull(3, Types.ARRAY)
+        setArray(4, int8_array_notnull_type(entry).toSqlArray(connection, "int8"))
+        float4_array_type(entry)?.let { setArray(5, it.toSqlArray(connection, "float4")) } ?: setNull(5, Types.ARRAY)
+        setArray(6, float4_array_notnull_type(entry).toSqlArray(connection, "float4"))
+        float8_array_type(entry)?.let { setArray(7, it.toSqlArray(connection, "float8")) } ?: setNull(7, Types.ARRAY)
+        setArray(8, float8_array_notnull_type(entry).toSqlArray(connection, "float8"))
+        numeric_array_type(entry)?.let { setArray(9, it.toSqlArray(connection, "numeric")) } ?: setNull(9, Types.ARRAY)
+        setArray(10, numeric_array_notnull_type(entry).toSqlArray(connection, "numeric"))
+        setString(11, string_type(entry))
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          results.add(executeBatch())
+          batchCount = 0
+          // Performance optimization to reduce register updates per loop iteration
+          totalCount += batchSize
+        }
+      }
+      if (batchCount > 0) {
+        results.add(executeBatch())
+        totalCount += batchCount
+      }
+      combineExecBatchResults(results, totalCount, batchSize)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun updateDateTimeArrays(
+    date_array_type: Array<LocalDate?>?,
+    date_array_notnull_type: Array<LocalDate?>,
+    time_array_type: Array<LocalTime?>?,
+    time_array_notnull_type: Array<LocalTime?>,
+    timetz_array_type: Array<OffsetTime?>?,
+    timetz_array_notnull_type: Array<OffsetTime?>,
+    timestamp_array_type: Array<LocalDateTime?>?,
+    timestamp_array_notnull_type: Array<LocalDateTime?>,
+    timestamptz_array_type: Array<Instant?>?,
+    timestamptz_array_notnull_type: Array<Instant?>,
+    string_type: String,
+  ): Int {
+    val sql = """
+        |UPDATE type SET
+        |  date_array_type = ?,
+        |  date_array_notnull_type = ?,
+        |  time_array_type = ?,
+        |  time_array_notnull_type = ?,
+        |  timetz_array_type = ?,
+        |  timetz_array_notnull_type = ?,
+        |  timestamp_array_type = ?,
+        |  timestamp_array_notnull_type = ?,
+        |  timestamptz_array_type = ?,
+        |  timestamptz_array_notnull_type = ?
+        |WHERE string_type = ?
+        """.trimMargin()
+    return driver.executeRows(sql) {
+      date_array_type?.let { setArray(1, it.toSqlArray(connection, "date")) } ?: setNull(1, Types.ARRAY)
+      setArray(2, date_array_notnull_type.toSqlArray(connection, "date"))
+      time_array_type?.let { setArray(3, it.toSqlArray(connection, "time")) } ?: setNull(3, Types.ARRAY)
+      setArray(4, time_array_notnull_type.toSqlArray(connection, "time"))
+      timetz_array_type?.let { setArray(5, it.toSqlArray(connection, "timetz")) } ?: setNull(5, Types.ARRAY)
+      setArray(6, timetz_array_notnull_type.toSqlArray(connection, "timetz"))
+      timestamp_array_type?.let { setArray(7, it.toSqlArray(connection, "timestamp")) } ?: setNull(7, Types.ARRAY)
+      setArray(8, timestamp_array_notnull_type.toSqlArray(connection, "timestamp"))
+      timestamptz_array_type?.let { setArray(9, it.toSqlArray(connection, "timestamptz")) } ?: setNull(9, Types.ARRAY)
+      setArray(10, timestamptz_array_notnull_type.toSqlArray(connection, "timestamptz"))
+      setString(11, string_type)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any> updateDateTimeArrays(
+    stream: Iterable<Input>,
+    date_array_type: (Input) -> Array<LocalDate?>?,
+    date_array_notnull_type: (Input) -> Array<LocalDate?>,
+    time_array_type: (Input) -> Array<LocalTime?>?,
+    time_array_notnull_type: (Input) -> Array<LocalTime?>,
+    timetz_array_type: (Input) -> Array<OffsetTime?>?,
+    timetz_array_notnull_type: (Input) -> Array<OffsetTime?>,
+    timestamp_array_type: (Input) -> Array<LocalDateTime?>?,
+    timestamp_array_notnull_type: (Input) -> Array<LocalDateTime?>,
+    timestamptz_array_type: (Input) -> Array<Instant?>?,
+    timestamptz_array_notnull_type: (Input) -> Array<Instant?>,
+    string_type: (Input) -> String,
+    batchSize: Int,
+  ): IntArray {
+    val sql = """
+        |UPDATE type SET
+        |  date_array_type = ?,
+        |  date_array_notnull_type = ?,
+        |  time_array_type = ?,
+        |  time_array_notnull_type = ?,
+        |  timetz_array_type = ?,
+        |  timetz_array_notnull_type = ?,
+        |  timestamp_array_type = ?,
+        |  timestamp_array_notnull_type = ?,
+        |  timestamptz_array_type = ?,
+        |  timestamptz_array_notnull_type = ?
+        |WHERE string_type = ?
+        """.trimMargin()
+    return driver.execute(sql) {
+      var totalCount = 0
+      var batchCount = 0
+      val results = mutableListOf<IntArray>()
+      for (entry in stream) {
+        date_array_type(entry)?.let { setArray(1, it.toSqlArray(connection, "date")) } ?: setNull(1, Types.ARRAY)
+        setArray(2, date_array_notnull_type(entry).toSqlArray(connection, "date"))
+        time_array_type(entry)?.let { setArray(3, it.toSqlArray(connection, "time")) } ?: setNull(3, Types.ARRAY)
+        setArray(4, time_array_notnull_type(entry).toSqlArray(connection, "time"))
+        timetz_array_type(entry)?.let { setArray(5, it.toSqlArray(connection, "timetz")) } ?: setNull(5, Types.ARRAY)
+        setArray(6, timetz_array_notnull_type(entry).toSqlArray(connection, "timetz"))
+        timestamp_array_type(entry)?.let { setArray(7, it.toSqlArray(connection, "timestamp")) } ?: setNull(7, Types.ARRAY)
+        setArray(8, timestamp_array_notnull_type(entry).toSqlArray(connection, "timestamp"))
+        timestamptz_array_type(entry)?.let { setArray(9, it.toSqlArray(connection, "timestamptz")) } ?: setNull(9, Types.ARRAY)
+        setArray(10, timestamptz_array_notnull_type(entry).toSqlArray(connection, "timestamptz"))
+        setString(11, string_type(entry))
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          results.add(executeBatch())
+          batchCount = 0
+          // Performance optimization to reduce register updates per loop iteration
+          totalCount += batchSize
+        }
+      }
+      if (batchCount > 0) {
+        results.add(executeBatch())
+        totalCount += batchCount
+      }
+      combineExecBatchResults(results, totalCount, batchSize)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun updateOtherArrays(
+    bool_array_type: Array<Boolean?>?,
+    bool_array_notnull_type: Array<Boolean?>,
+    jsonb_array_type: Array<String?>?,
+    jsonb_array_notnull_type: Array<String?>,
+    bytea_array_type: Array<ByteArray?>?,
+    bytea_array_notnull_type: Array<ByteArray?>,
+    uuid_array_type: Array<UUID?>?,
+    uuid_array_notnull_type: Array<UUID?>,
+    string_type: String,
+  ): Int {
+    val sql = """
+        |UPDATE type SET
+        |  bool_array_type = ?,
+        |  bool_array_notnull_type = ?,
+        |  jsonb_array_type = ?,
+        |  jsonb_array_notnull_type = ?,
+        |  bytea_array_type = ?,
+        |  bytea_array_notnull_type = ?,
+        |  uuid_array_type = ?,
+        |  uuid_array_notnull_type = ?
+        |WHERE string_type = ?
+        """.trimMargin()
+    return driver.executeRows(sql) {
+      bool_array_type?.let { setArray(1, it.toSqlArray(connection, "bool")) } ?: setNull(1, Types.ARRAY)
+      setArray(2, bool_array_notnull_type.toSqlArray(connection, "bool"))
+      jsonb_array_type?.let { setArray(3, it.toSqlArray(connection, "jsonb")) } ?: setNull(3, Types.ARRAY)
+      setArray(4, jsonb_array_notnull_type.toSqlArray(connection, "jsonb"))
+      bytea_array_type?.let { setArray(5, it.toSqlArray(connection, "bytea")) } ?: setNull(5, Types.ARRAY)
+      setArray(6, bytea_array_notnull_type.toSqlArray(connection, "bytea"))
+      uuid_array_type?.let { setArray(7, it.toSqlArray(connection, "uuid")) } ?: setNull(7, Types.ARRAY)
+      setArray(8, uuid_array_notnull_type.toSqlArray(connection, "uuid"))
+      setString(9, string_type)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any> updateOtherArrays(
+    stream: Iterable<Input>,
+    bool_array_type: (Input) -> Array<Boolean?>?,
+    bool_array_notnull_type: (Input) -> Array<Boolean?>,
+    jsonb_array_type: (Input) -> Array<String?>?,
+    jsonb_array_notnull_type: (Input) -> Array<String?>,
+    bytea_array_type: (Input) -> Array<ByteArray?>?,
+    bytea_array_notnull_type: (Input) -> Array<ByteArray?>,
+    uuid_array_type: (Input) -> Array<UUID?>?,
+    uuid_array_notnull_type: (Input) -> Array<UUID?>,
+    string_type: (Input) -> String,
+    batchSize: Int,
+  ): IntArray {
+    val sql = """
+        |UPDATE type SET
+        |  bool_array_type = ?,
+        |  bool_array_notnull_type = ?,
+        |  jsonb_array_type = ?,
+        |  jsonb_array_notnull_type = ?,
+        |  bytea_array_type = ?,
+        |  bytea_array_notnull_type = ?,
+        |  uuid_array_type = ?,
+        |  uuid_array_notnull_type = ?
+        |WHERE string_type = ?
+        """.trimMargin()
+    return driver.execute(sql) {
+      var totalCount = 0
+      var batchCount = 0
+      val results = mutableListOf<IntArray>()
+      for (entry in stream) {
+        bool_array_type(entry)?.let { setArray(1, it.toSqlArray(connection, "bool")) } ?: setNull(1, Types.ARRAY)
+        setArray(2, bool_array_notnull_type(entry).toSqlArray(connection, "bool"))
+        jsonb_array_type(entry)?.let { setArray(3, it.toSqlArray(connection, "jsonb")) } ?: setNull(3, Types.ARRAY)
+        setArray(4, jsonb_array_notnull_type(entry).toSqlArray(connection, "jsonb"))
+        bytea_array_type(entry)?.let { setArray(5, it.toSqlArray(connection, "bytea")) } ?: setNull(5, Types.ARRAY)
+        setArray(6, bytea_array_notnull_type(entry).toSqlArray(connection, "bytea"))
+        uuid_array_type(entry)?.let { setArray(7, it.toSqlArray(connection, "uuid")) } ?: setNull(7, Types.ARRAY)
+        setArray(8, uuid_array_notnull_type(entry).toSqlArray(connection, "uuid"))
+        setString(9, string_type(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
