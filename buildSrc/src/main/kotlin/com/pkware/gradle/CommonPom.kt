@@ -41,8 +41,8 @@ internal fun MavenPom.configureCommonPom(project: Project) {
 
 /** POM artifact name; defaults to the project name, overridable via the `POM_NAME` property. */
 internal val Project.pomName: String
-  get() = properties.getOrDefault("POM_NAME", name).toString()
+  get() = providers.gradleProperty("POM_NAME").getOrElse(name)
 
 /** POM description; defaults to the project name, overridable via the `POM_DESCRIPTION` property. */
 internal val Project.pomDescription: String
-  get() = properties.getOrDefault("POM_DESCRIPTION", name).toString()
+  get() = providers.gradleProperty("POM_DESCRIPTION").getOrElse(name)

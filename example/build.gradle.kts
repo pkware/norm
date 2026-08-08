@@ -5,7 +5,6 @@ import norm.generator.Framework
 
 plugins {
   kotlin("jvm") version "2.4.10"
-  alias(libs.plugins.idea.ext)
   alias(libs.plugins.ksp)
   alias(libs.plugins.norm)
 }

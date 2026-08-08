@@ -3,7 +3,12 @@
 ## Requirements
 
 - **Docker** must be installed and running (Testcontainers is used to start a PostgreSQL instance)
-- **JDK 17+**
+- **JDK 25+** — the plugin's classes are compiled to Java 25 bytecode (class file major version 69), so an
+  older JDK rejects them with `UnsupportedClassVersionError` when Gradle loads the plugin
+- **Gradle 9.1** — the only supported version, verified by `GradleVersionCompatibilityTest` in
+  `gradle-plugin/src/test`. Older versions are expected to fail with `Unsupported class file major version
+  69`, because this module's classes are compiled to Java 25 bytecode and older Gradle releases cannot
+  process class files that new.
 - **A PostgreSQL-compatible JDBC driver** on the project's runtime classpath (e.g., `org.postgresql:postgresql` or the [AWS JDBC Driver for PostgreSQL](https://github.com/awslabs/aws-postgresql-jdbc))
 
 ## Development
@@ -262,32 +267,47 @@ norm {
 ## IntelliJ IDEA Integration
 
 When you first import a Norm-enabled project into IntelliJ IDEA, generated sources don't exist yet.
-This causes unresolved-reference errors (red squiggles) until you run a build. Norm provides two
-mechanisms to improve this experience.
+This causes unresolved-reference errors (red squiggles) until you run a build. Norm avoids this by
+generating automatically on every IntelliJ Gradle sync, including first import.
 
-### Automatic Generation on Sync (`gradle-idea-ext`)
+### Automatic Generation on Sync
 
-Apply the [gradle-idea-ext](https://github.com/JetBrains/gradle-idea-ext) plugin to your **root**
-project. Norm will automatically register its generation tasks to run after every IntelliJ Gradle
-sync, including first import.
+Norm registers its own `prepareKotlinIdeaImportNorm` task and wires each `normGenerate<Name>` task as a
+dependency of it. No configuration is needed, and no changes to your project structure are required —
+this works whether Norm is applied to the root project or to a subproject, including under Gradle's
+[Isolated Projects](https://docs.gradle.org/current/userguide/isolated_projects.html) feature, because the
+wiring only ever touches the project Norm is applied to.
+
+**How IntelliJ finds this task:** IntelliJ IDEA discovers sync-time tasks by scanning for any task whose
+name *starts with* `prepareKotlinIdeaImport` and running all of them — an undocumented, internal
+IntelliJ/Kotlin Gradle Plugin behavior, not a public contract. It's why Norm's task is named
+`prepareKotlinIdeaImportNorm` rather than something unrelated: the prefix match is the only thing that
+makes IntelliJ find it. This has been stable since IDEA 2022.1, but if a future IDE version stops
+honoring it, the failure mode is a silent no-op — generated sources simply won't be refreshed on sync —
+rather than a build failure; running a `normGenerate<Name>` task (or `build`) manually always still works.
+
+Norm registers `prepareKotlinIdeaImportNorm` under a name it owns outright, so it never collides with a
+task a consumer (or Kotlin Gradle Plugin) may register under the unrelated exact name
+`prepareKotlinIdeaImport`, regardless of when that registration happens.
+
+### Opting Out (`generateOnIdeSync`)
+
+Generation starts a PostgreSQL container via Testcontainers, so a sync on a machine where Docker isn't
+running would otherwise fail the sync. Set `generateOnIdeSync = false` on the `norm` extension to skip
+the `prepareKotlinIdeaImportNorm` dependency wiring entirely:
 
 ```kotlin
-// settings.gradle.kts
-plugins {
-  id("org.jetbrains.gradle.plugin.idea-ext") version "1.1.9" apply false
-}
-
-// build.gradle.kts (root project)
-plugins {
-  id("org.jetbrains.gradle.plugin.idea-ext")
+norm {
+  generateOnIdeSync = false
 }
 ```
 
-No additional configuration is needed — Norm detects the plugin and wires `afterSync` automatically.
+With this set, generation only happens when a `normGenerate<Name>` task is run explicitly, for example
+as part of `build`.
 
 ### Kotlin 2.3.0+ `generatedKotlin` API
 
 When your project uses Kotlin 2.3.0 or later, Norm registers its output via the `generatedKotlin`
-source directory API. This tells the Kotlin toolchain that Norm's output is generated code, enabling
-future IntelliJ support for triggering generation during sync. No configuration is needed; Norm
-detects the API automatically.
+source directory API. As of IntelliJ 2026.1, this marks the directory as a generated source root. It
+does not, by itself, trigger generation on sync — that is handled separately by the
+`prepareKotlinIdeaImportNorm` wiring above. No configuration is needed; Norm detects the API automatically.

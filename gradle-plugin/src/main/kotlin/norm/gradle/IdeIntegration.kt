@@ -1,20 +1,41 @@
 package norm.gradle
 
 import org.gradle.api.Project
-import org.gradle.api.plugins.ExtensionAware
+import org.gradle.api.provider.Provider
 import org.gradle.api.tasks.TaskProvider
 import org.jetbrains.kotlin.gradle.plugin.KotlinSourceSet
 
 /**
  * IDE integration utilities for improving the developer experience when using Norm with IntelliJ IDEA.
  *
- * Provides two opt-in mechanisms:
- * 1. Registers generated sources via Kotlin's `generatedKotlin` API (Kotlin 2.3.0+) when available,
- *    which enables future IntelliJ support for triggering generation during sync.
- * 2. Hooks into `gradle-idea-ext`'s `afterSync` trigger (if the user has applied the plugin),
- *    which runs the generation task after every Gradle sync — including first import.
+ * Provides two mechanisms:
+ * 1. Registers generated sources via Kotlin's `generatedKotlin` API (Kotlin 2.3.0+) when available. As of
+ *    IntelliJ 2026.1, this marks the directory as a generated source root (YouTrack KTIJ-35910, Fixed). It
+ *    does NOT, by itself, cause IntelliJ to run generation during sync — that is tracked separately as
+ *    KTIJ-31282, which is Planned with no fix version at time of writing.
+ * 2. Wires Norm's generation tasks as dependencies of [PREPARE_KOTLIN_IDEA_IMPORT_TASK_NAME], a task Norm
+ *    registers under its own name and that IntelliJ runs on every Gradle sync (including first import), so
+ *    generated sources exist by the time the IDE reads them.
  */
 internal object IdeIntegration {
+
+  /**
+   * Name of the task Norm registers so IntelliJ IDEA runs Norm's generation tasks on every Gradle sync.
+   *
+   * IMPORTANT: IntelliJ's `PrepareKotlinIdeaImportTaskModelBuilder` (Kotlin Gradle Plugin's IDE tooling,
+   * bundled with the IDE) discovers sync tasks by scanning `project.tasks.getNames()` for any name that
+   * STARTS WITH `prepareKotlinIdeaImport`, and requests every match — a prefix match, not an exact-name
+   * match (verified by decompiling the IDE's own `kotlin-gradle-tooling.jar`). This name is therefore
+   * load-bearing: it must keep the `prepareKotlinIdeaImport` prefix, or IntelliJ silently stops finding it
+   * — generated sources simply stop being refreshed on sync, with no build failure and no warning. Do NOT
+   * rename this constant to a value that does not start with `prepareKotlinIdeaImport`.
+   *
+   * The name deliberately does not equal Kotlin Gradle Plugin's own `prepareKotlinIdeaImport` task name:
+   * Norm always registers this task under a name it owns outright, so it can never collide with a task a
+   * consumer, or Kotlin Gradle Plugin itself, registers under that exact name, regardless of when they do
+   * so (including from their own `afterEvaluate` block, which runs after Norm's plugin has applied).
+   */
+  internal const val PREPARE_KOTLIN_IDEA_IMPORT_TASK_NAME = "prepareKotlinIdeaImportNorm"
 
   /**
    * Registers the output of [generateTask] as a source directory on [sourceSet].
@@ -23,10 +44,11 @@ internal object IdeIntegration {
    * KSP's `kspKotlin` — receive the generated sources and the correct task dependency is established.
    * KSP reads from `kotlin.srcDirs`, not from `generatedKotlin`.
    *
-   * On Kotlin 2.3.0+, also registers via `KotlinSourceSet.generatedKotlin` for IDE integration:
-   * this signals to IntelliJ that it should run [generateTask] during Gradle sync to avoid missing
-   * sources on first project import. IntelliJ deduplicates source roots by path, so the directory
-   * appears once and is marked as a generated source root.
+   * On Kotlin 2.3.0+, also registers via `KotlinSourceSet.generatedKotlin` so IntelliJ 2026.1+ marks the
+   * directory as a generated source root (YouTrack KTIJ-35910). This does not, by itself, trigger
+   * generation during sync — see the class KDoc — that is handled separately by
+   * [configureGenerationOnIdeSync]. IntelliJ deduplicates source roots by path, so the directory appears
+   * once either way.
    */
   fun registerGeneratedSources(sourceSet: KotlinSourceSet, generateTask: TaskProvider<NormGenerateTask>) {
     // Always register for compilation, including KSP's kspKotlin task.
@@ -44,19 +66,36 @@ internal object IdeIntegration {
   }
 
   /**
-   * If the user has applied `org.jetbrains.gradle.plugin.idea-ext`, configures [generateTask] to run
-   * after every IntelliJ Gradle sync. This ensures generated sources exist on first project import.
+   * Registers [PREPARE_KOTLIN_IDEA_IMPORT_TASK_NAME] on [project], the task IntelliJ IDEA discovers and
+   * runs on every Gradle sync (see that constant's KDoc for why the name matters). The task depends on
+   * [generateTasks] whenever [generateOnIdeSync] resolves to `true`, so generated sources exist before the
+   * IDE reads them.
    *
-   * All access to `idea-ext` types is via reflection to avoid a compile-time dependency.
+   * This function only ever reads or mutates [project]'s own `tasks` container: it never reaches into
+   * `project.rootProject` or any other project, so it is unconditionally safe under Gradle's Isolated
+   * Projects, including when [project] is a subproject.
+   *
+   * The task is always registered, even when [generateOnIdeSync] resolves to `false` — with a name Norm
+   * owns outright, registering an empty placeholder task is harmless, and it keeps this function's
+   * behavior independent of when, in the build script, `generateOnIdeSync` is set. The dependency itself
+   * is computed from [generateOnIdeSync] via [Provider.map], so it is resolved lazily at task-graph time,
+   * after the whole build script — including a `norm { databases { } }` block appearing either before or
+   * after `generateOnIdeSync` is set — has finished configuring. No `afterEvaluate` is needed.
    */
-  fun configureIdeaExtAfterSync(project: Project, generateTask: TaskProvider<NormGenerateTask>) {
-    project.rootProject.pluginManager.withPlugin("org.jetbrains.gradle.plugin.idea-ext") {
-      val ideaModel = project.rootProject.extensions.findByName("idea") ?: return@withPlugin
-      val ideaProject = ideaModel.javaClass.getMethod("getProject").invoke(ideaModel) ?: return@withPlugin
-      val settings = (ideaProject as ExtensionAware).extensions.findByName("settings") ?: return@withPlugin
-      val taskTriggers = (settings as ExtensionAware).extensions.findByName("taskTriggers") ?: return@withPlugin
-      taskTriggers.javaClass.getMethod("afterSync", Array<Any>::class.java)
-        .invoke(taskTriggers, arrayOf(generateTask))
+  fun configureGenerationOnIdeSync(
+    project: Project,
+    generateOnIdeSync: Provider<Boolean>,
+    generateTasks: List<TaskProvider<NormGenerateTask>>,
+  ) {
+    project.tasks.register(PREPARE_KOTLIN_IDEA_IMPORT_TASK_NAME) {
+      description = "Runs Norm's generation tasks so generated sources exist before IntelliJ IDEA reads " +
+        "them. IntelliJ IDEA runs this task, and any other task whose name starts with " +
+        "`prepareKotlinIdeaImport`, on every Gradle sync, including first import."
+      dependsOn(
+        generateOnIdeSync.map { enabled ->
+          if (enabled) generateTasks else emptyList()
+        },
+      )
     }
   }
 }
