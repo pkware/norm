@@ -174,6 +174,81 @@ public interface Queries : Transactable {
 
   /**
    * ```sql
+   * SELECT * FROM documents WHERE id = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> getDocumentById(id: Int, mapper: (
+    id: Int,
+    payload: JsonData,
+    doc: JsonDocument?,
+  ) -> T): T
+
+  /**
+   * ```sql
+   * SELECT * FROM documents WHERE id = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun getDocumentById(id: Int): Documents = getDocumentById(id, ::Documents)
+
+  /**
+   * ```sql
+   * INSERT INTO documents (payload, doc) VALUES (?, ?)
+   * ```
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> createDocument(
+    stream: Iterable<Input>,
+    payload: (Input) -> JsonData,
+    doc: (Input) -> JsonDocument?,
+    batchSize: Int,
+  ): IntArray
+
+  /**
+   * ```sql
+   * INSERT INTO documents (payload, doc) VALUES (?, ?)
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> createDocument(
+    stream: Iterable<Input>,
+    payload: (Input) -> JsonData,
+    doc: (Input) -> JsonDocument?,
+  ): IntArray = createDocument(stream, payload, doc, 100)
+
+  /**
+   * ```sql
+   * INSERT INTO documents (payload, doc) VALUES (?, ?)
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun createDocument(payload: JsonData, doc: JsonDocument?)
+
+  /**
+   * ```sql
    * UPDATE users SET preferences = ? WHERE id = ?
    * RETURNING id, preferences AS old_preferences
    * ```

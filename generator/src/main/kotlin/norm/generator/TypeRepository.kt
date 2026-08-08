@@ -462,8 +462,8 @@ internal class TypeRepository(
 
     "bool", "boolean", "pg_catalog.bool" -> JdbcTypes.BOOLEAN.decorateForNullable(notNull)
 
-    // Not JdbcTypes.STRING: pgjdbc rejects setString() for jsonb columns.
-    "jsonb" -> JsonbSqlMappable(notNull)
+    // Not JdbcTypes.STRING: pgjdbc rejects setString() for json and jsonb columns.
+    "json", "jsonb" -> JsonSqlMappable(notNull)
 
     "oid", "pg_catalog.oid" -> JdbcTypes.BLOB
     "bytea", "pg_catalog.bytea" -> PostgresSupportedTypes.BYTE_ARRAY
@@ -531,10 +531,10 @@ internal fun resolveJdbcTypeInfo(baseTypeName: String): JdbcTypeInfo? = when (ba
     JdbcTypeInfo("getBoolean", "setBoolean", true, "BOOLEAN", kotlinType = Boolean::class.asTypeName())
   "numeric" ->
     JdbcTypeInfo("getBigDecimal", "setBigDecimal", false, "NUMERIC", kotlinType = BigDecimal::class.asTypeName())
-  // jsonb requires setObject(..., Types.OTHER): Postgres JDBC rejects setString() for jsonb columns
-  // in prepared statements, just as it does for enum columns. Keep in sync with JsonbSqlMappable,
-  // which defines the same binding for plain (adapterless) jsonb columns.
-  "jsonb" ->
+  // json and jsonb require setObject(..., Types.OTHER): Postgres JDBC rejects setString() for both
+  // in prepared statements, just as it does for enum columns. Keep in sync with JsonSqlMappable,
+  // which defines the same binding for plain (adapterless) json and jsonb columns.
+  "json", "jsonb" ->
     JdbcTypeInfo(
       "getString",
       "setObject",

@@ -120,6 +120,23 @@ class DomainBuilderTest {
     }
 
     @Test
+    fun `json domain generates a String value class`() {
+      // Postgres accepts CREATE DOMAIN d AS json, so json must be usable as a domain base. The
+      // Types.OTHER binding lives in the JdbcTypeInfo, not in the wrapped Kotlin type.
+      val domain = Domain(name = "json_doc", baseType = "json", comment = "")
+      val output = generateValueClassCode(domain, "example")
+      assertThat(output).contains("import kotlin.String")
+      assertThat(output).contains("public val `value`: String")
+    }
+
+    @Test
+    fun `jsonb domain generates a String value class`() {
+      val domain = Domain(name = "jsonb_doc", baseType = "jsonb", comment = "")
+      val output = generateValueClassCode(domain, "example")
+      assertThat(output).contains("public val `value`: String")
+    }
+
+    @Test
     fun `unsupported base type throws error`() {
       val exception = assertThrows<IllegalStateException> {
         domainKotlinBaseType("xml")

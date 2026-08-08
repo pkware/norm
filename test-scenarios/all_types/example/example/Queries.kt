@@ -66,6 +66,7 @@ public interface Queries : Transactable {
     pg_numeric_type: BigDecimal?,
     bool_type: Boolean?,
     pg_bool_type: Boolean?,
+    json_type: String?,
     jsonb_type: String?,
     blob_type: Blob?,
     text_type: String?,
@@ -111,6 +112,8 @@ public interface Queries : Transactable {
     numeric_array_notnull_type: Array<BigDecimal?>,
     bool_array_type: Array<Boolean?>?,
     bool_array_notnull_type: Array<Boolean?>,
+    json_array_type: Array<String?>?,
+    json_array_notnull_type: Array<String?>,
     jsonb_array_type: Array<String?>?,
     jsonb_array_notnull_type: Array<String?>,
     bytea_array_type: Array<ByteArray?>?,
@@ -167,6 +170,7 @@ public interface Queries : Transactable {
     pg_numeric_type: BigDecimal?,
     bool_type: Boolean?,
     pg_bool_type: Boolean?,
+    json_type: String?,
     jsonb_type: String?,
     blob_type: Blob?,
     text_type: String?,
@@ -212,6 +216,8 @@ public interface Queries : Transactable {
     numeric_array_notnull_type: Array<BigDecimal?>,
     bool_array_type: Array<Boolean?>?,
     bool_array_notnull_type: Array<Boolean?>,
+    json_array_type: Array<String?>?,
+    json_array_notnull_type: Array<String?>,
     jsonb_array_type: Array<String?>?,
     jsonb_array_notnull_type: Array<String?>,
     bytea_array_type: Array<ByteArray?>?,
@@ -588,6 +594,7 @@ public interface Queries : Transactable {
     pg_numeric_type: BigDecimal?,
     bool_type: Boolean?,
     pg_bool_type: Boolean?,
+    json_type: String?,
     jsonb_type: String?,
     blob_type: Blob?,
     text_type: String?,
@@ -633,6 +640,8 @@ public interface Queries : Transactable {
     numeric_array_notnull_type: Array<BigDecimal?>,
     bool_array_type: Array<Boolean?>?,
     bool_array_notnull_type: Array<Boolean?>,
+    json_array_type: Array<String?>?,
+    json_array_notnull_type: Array<String?>,
     jsonb_array_type: Array<String?>?,
     jsonb_array_notnull_type: Array<String?>,
     bytea_array_type: Array<ByteArray?>?,
@@ -878,6 +887,7 @@ public interface Queries : Transactable {
     pg_numeric_type: BigDecimal?,
     bool_type: Boolean?,
     pg_bool_type: Boolean?,
+    json_type: String?,
     jsonb_type: String?,
     blob_type: Blob?,
     text_type: String?,
@@ -923,6 +933,8 @@ public interface Queries : Transactable {
     numeric_array_notnull_type: Array<BigDecimal?>,
     bool_array_type: Array<Boolean?>?,
     bool_array_notnull_type: Array<Boolean?>,
+    json_array_type: Array<String?>?,
+    json_array_notnull_type: Array<String?>,
     jsonb_array_type: Array<String?>?,
     jsonb_array_notnull_type: Array<String?>,
     bytea_array_type: Array<ByteArray?>?,
@@ -989,6 +1001,7 @@ public interface Queries : Transactable {
     pg_numeric_type: BigDecimal?,
     bool_type: Boolean?,
     pg_bool_type: Boolean?,
+    json_type: String?,
     jsonb_type: String?,
     blob_type: Blob?,
     text_type: String?,
@@ -1034,6 +1047,8 @@ public interface Queries : Transactable {
     numeric_array_notnull_type: Array<BigDecimal?>,
     bool_array_type: Array<Boolean?>?,
     bool_array_notnull_type: Array<Boolean?>,
+    json_array_type: Array<String?>?,
+    json_array_notnull_type: Array<String?>,
     jsonb_array_type: Array<String?>?,
     jsonb_array_notnull_type: Array<String?>,
     bytea_array_type: Array<ByteArray?>?,
@@ -1123,6 +1138,72 @@ public interface Queries : Transactable {
    */
   @Throws(SQLException::class)
   public fun updateJsonb(jsonb_type: String?, string_type: String): Int
+
+  /**
+   * Plain (adapterless) json bound as a parameter: json takes the same binding as jsonb, so this pins
+   * setObject(index, value, Types.OTHER) rather than setString (#191).
+   *
+   * ```sql
+   * UPDATE type SET json_type = ? WHERE string_type = ?
+   * ```
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateJson(
+    stream: Iterable<Input>,
+    json_type: (Input) -> String?,
+    string_type: (Input) -> String,
+    batchSize: Int,
+  ): IntArray
+
+  /**
+   * Plain (adapterless) json bound as a parameter: json takes the same binding as jsonb, so this pins
+   * setObject(index, value, Types.OTHER) rather than setString (#191).
+   *
+   * ```sql
+   * UPDATE type SET json_type = ? WHERE string_type = ?
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateJson(
+    stream: Iterable<Input>,
+    json_type: (Input) -> String?,
+    string_type: (Input) -> String,
+  ): IntArray = updateJson(stream, json_type, string_type, 100)
+
+  /**
+   * Plain (adapterless) json bound as a parameter: json takes the same binding as jsonb, so this pins
+   * setObject(index, value, Types.OTHER) rather than setString (#191).
+   *
+   * ```sql
+   * UPDATE type SET json_type = ? WHERE string_type = ?
+   * ```
+   *
+   * @return The number of rows updated.
+   */
+  @Throws(SQLException::class)
+  public fun updateJson(json_type: String?, string_type: String): Int
 
   /**
    * Plain (adapterless) arrays bound as parameters: pins setArray(index, value.toSqlArray(connection,
@@ -1468,6 +1549,8 @@ public interface Queries : Transactable {
    * UPDATE type SET
    *   bool_array_type = ?,
    *   bool_array_notnull_type = ?,
+   *   json_array_type = ?,
+   *   json_array_notnull_type = ?,
    *   jsonb_array_type = ?,
    *   jsonb_array_notnull_type = ?,
    *   bytea_array_type = ?,
@@ -1492,6 +1575,8 @@ public interface Queries : Transactable {
     stream: Iterable<Input>,
     bool_array_type: (Input) -> Array<Boolean?>?,
     bool_array_notnull_type: (Input) -> Array<Boolean?>,
+    json_array_type: (Input) -> Array<String?>?,
+    json_array_notnull_type: (Input) -> Array<String?>,
     jsonb_array_type: (Input) -> Array<String?>?,
     jsonb_array_notnull_type: (Input) -> Array<String?>,
     bytea_array_type: (Input) -> Array<ByteArray?>?,
@@ -1507,6 +1592,8 @@ public interface Queries : Transactable {
    * UPDATE type SET
    *   bool_array_type = ?,
    *   bool_array_notnull_type = ?,
+   *   json_array_type = ?,
+   *   json_array_notnull_type = ?,
    *   jsonb_array_type = ?,
    *   jsonb_array_notnull_type = ?,
    *   bytea_array_type = ?,
@@ -1533,6 +1620,8 @@ public interface Queries : Transactable {
     stream: Iterable<Input>,
     bool_array_type: (Input) -> Array<Boolean?>?,
     bool_array_notnull_type: (Input) -> Array<Boolean?>,
+    json_array_type: (Input) -> Array<String?>?,
+    json_array_notnull_type: (Input) -> Array<String?>,
     jsonb_array_type: (Input) -> Array<String?>?,
     jsonb_array_notnull_type: (Input) -> Array<String?>,
     bytea_array_type: (Input) -> Array<ByteArray?>?,
@@ -1540,13 +1629,15 @@ public interface Queries : Transactable {
     uuid_array_type: (Input) -> Array<UUID?>?,
     uuid_array_notnull_type: (Input) -> Array<UUID?>,
     string_type: (Input) -> String,
-  ): IntArray = updateOtherArrays(stream, bool_array_type, bool_array_notnull_type, jsonb_array_type, jsonb_array_notnull_type, bytea_array_type, bytea_array_notnull_type, uuid_array_type, uuid_array_notnull_type, string_type, 100)
+  ): IntArray = updateOtherArrays(stream, bool_array_type, bool_array_notnull_type, json_array_type, json_array_notnull_type, jsonb_array_type, jsonb_array_notnull_type, bytea_array_type, bytea_array_notnull_type, uuid_array_type, uuid_array_notnull_type, string_type, 100)
 
   /**
    * ```sql
    * UPDATE type SET
    *   bool_array_type = ?,
    *   bool_array_notnull_type = ?,
+   *   json_array_type = ?,
+   *   json_array_notnull_type = ?,
    *   jsonb_array_type = ?,
    *   jsonb_array_notnull_type = ?,
    *   bytea_array_type = ?,
@@ -1562,6 +1653,8 @@ public interface Queries : Transactable {
   public fun updateOtherArrays(
     bool_array_type: Array<Boolean?>?,
     bool_array_notnull_type: Array<Boolean?>,
+    json_array_type: Array<String?>?,
+    json_array_notnull_type: Array<String?>,
     jsonb_array_type: Array<String?>?,
     jsonb_array_notnull_type: Array<String?>,
     bytea_array_type: Array<ByteArray?>?,

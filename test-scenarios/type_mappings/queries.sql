@@ -8,6 +8,12 @@ VALUES (?, ?, ?, ?, ?);
 -- name: updatePastMoods :exec
 UPDATE users SET past_moods = ?, tag_list = ? WHERE id = ?;
 
+-- name: getDocumentById :one
+SELECT * FROM documents WHERE id = ?;
+
+-- name: createDocument :exec
+INSERT INTO documents (payload, doc) VALUES (?, ?);
+
 -- name: updatePreferences :many
 UPDATE users SET preferences = ? WHERE id = ?
 RETURNING id, preferences AS old_preferences;

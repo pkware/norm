@@ -722,6 +722,13 @@ class ColumnTypeMappingTest {
     }
 
     @Test
+    fun `json array reads elements with getString`() {
+      val col = column("payloads", type = "json", isArray = true, notNull = true)
+      val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).contains("norm.mapElements { getString(2) }")
+    }
+
+    @Test
     fun `date array reads elements as LocalDate`() {
       val col = column("holidays", type = "date", isArray = true, notNull = true)
       val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
@@ -792,6 +799,14 @@ class ColumnTypeMappingTest {
       assertThat(setterString).contains("tags?.let { setArray(1, it.")
       assertThat(setterString).contains("""norm.toSqlArray(connection, "jsonb")""")
       assertThat(setterString).contains("?: setNull(1, java.sql.Types.ARRAY)")
+    }
+
+    @Test
+    fun `json array writes with the json element type name`() {
+      // A bare setObject would send character varying[], which Postgres rejects for json[].
+      val col = column("payloads", type = "json", isArray = true, notNull = true)
+      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("payloads"))
+      assertThat(setter.toString()).contains("""norm.toSqlArray(connection, "json")""")
     }
 
     @Test
@@ -866,6 +881,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `passes canonical names through unchanged`() {
+      assertThat(postgresArrayElementTypeName("json")).isEqualTo("json")
       assertThat(postgresArrayElementTypeName("jsonb")).isEqualTo("jsonb")
       assertThat(postgresArrayElementTypeName("timetz")).isEqualTo("timetz")
       assertThat(postgresArrayElementTypeName("uuid")).isEqualTo("uuid")
@@ -914,7 +930,7 @@ class ColumnTypeMappingTest {
   }
 
   @Nested
-  inner class JsonbAccessors {
+  inner class JsonAccessors {
 
     @Test
     fun `non-null jsonb writes via setObject with Types OTHER`() {
@@ -955,6 +971,49 @@ class ColumnTypeMappingTest {
     @Test
     fun `jsonb array column still resolves to Array of nullable String`() {
       val col = column("tags", type = "jsonb", notNull = false, isArray = true)
+      assertThat(typeRepository.resolveColumnType(col))
+        .isEqualTo(ARRAY.parameterizedBy(String::class.asTypeName().copy(nullable = true)).copy(nullable = true))
+    }
+
+    @Test
+    fun `non-null json writes via setObject with Types OTHER`() {
+      // Postgres rejects setString() for json exactly as it does for jsonb: the parameter arrives as
+      // character varying and there is no implicit cast to json.
+      val col = column("payload", type = "json")
+      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("payload"))
+      assertThat(setter.toString()).isEqualTo("setObject(1, payload, java.sql.Types.OTHER)")
+    }
+
+    @Test
+    fun `nullable json writes via setObject with Types OTHER`() {
+      val col = column("payload", type = "json", notNull = false)
+      val setter = typeRepository.resolveMappableType(col).statementAction(2, CodeBlock.of("payload"))
+      assertThat(setter.toString()).isEqualTo("setObject(2, payload, java.sql.Types.OTHER)")
+    }
+
+    @Test
+    fun `json reads via getString`() {
+      val col = column("payload", type = "json", notNull = false)
+      val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).isEqualTo("getString(1)")
+    }
+
+    @Test
+    fun `non-null json column resolves to String`() {
+      val col = column("payload", type = "json")
+      assertThat(typeRepository.resolveColumnType(col)).isEqualTo(String::class.asTypeName())
+    }
+
+    @Test
+    fun `nullable json column resolves to nullable String`() {
+      val col = column("payload", type = "json", notNull = false)
+      assertThat(typeRepository.resolveColumnType(col))
+        .isEqualTo(String::class.asTypeName().copy(nullable = true))
+    }
+
+    @Test
+    fun `json array column resolves to Array of nullable String`() {
+      val col = column("payloads", type = "json", notNull = false, isArray = true)
       assertThat(typeRepository.resolveColumnType(col))
         .isEqualTo(ARRAY.parameterizedBy(String::class.asTypeName().copy(nullable = true)).copy(nullable = true))
     }
@@ -1324,6 +1383,29 @@ class ColumnTypeMappingTest {
     }
 
     @Test
+    fun `json domain resolves to a value class bound with Types OTHER`() {
+      val domain = Domain(name = "json_doc", baseType = "json")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("payload", type = "json_doc")
+
+      assertThat(repository.resolveColumnType(col)).isEqualTo(ClassName("test", "JsonDoc"))
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("payload"))
+      assertThat(action.toString())
+        .isEqualTo("setObject(1, jsonDocAdapter.encode(payload), java.sql.Types.OTHER)")
+    }
+
+    @Test
+    fun `nullable json domain reads through getString`() {
+      val domain = Domain(name = "json_doc", baseType = "json")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("payload", type = "json_doc", notNull = false)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).isEqualTo("getString(1)?.let { jsonDocAdapter.decode(it) }")
+    }
+
+    @Test
     fun `BIGINT domain resolves to Long value class`() {
       val domain = Domain(name = "big_count", baseType = "int8")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
@@ -1608,6 +1690,16 @@ class ColumnTypeMappingTest {
       val info = resolveJdbcTypeInfo("jsonb")!!
       assertThat(info.getterName).isEqualTo("getString")
       // setObject(..., Types.OTHER) is required — Postgres JDBC rejects setString() for jsonb columns
+      assertThat(info.setterName).isEqualTo("setObject")
+      assertThat(info.isPrimitive).isFalse()
+      assertThat(info.sqlTypeConstant).isEqualTo("OTHER")
+      assertThat(info.useSqlTypeHint).isTrue()
+    }
+
+    @Test
+    fun `json resolves to getString and setObject with Types OTHER`() {
+      val info = resolveJdbcTypeInfo("json")!!
+      assertThat(info.getterName).isEqualTo("getString")
       assertThat(info.setterName).isEqualTo("setObject")
       assertThat(info.isPrimitive).isFalse()
       assertThat(info.sqlTypeConstant).isEqualTo("OTHER")

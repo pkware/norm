@@ -11,6 +11,7 @@ import com.example.JsonData
 import com.example.JsonDataAdapter
 import com.example.UserPreferences
 import com.example.UserPreferencesAdapter
+import example.typemappings.JsonDocument
 import example.typemappings.PostgresQueries
 import example.typemappings.Queries
 import org.junit.jupiter.api.BeforeEach
@@ -39,6 +40,7 @@ class TypeMappingsE2ETest : PostgresTestBase() {
   fun setupQueries() {
     queries = PostgresQueries(
       connectionProvider,
+      jsonAdapter = JsonDataAdapter(),
       jsonbAdapter = JsonDataAdapter(),
       moodAdapter = CustomMoodAdapter(),
       usersPreferencesAdapter = UserPreferencesAdapter(),
@@ -52,9 +54,11 @@ class TypeMappingsE2ETest : PostgresTestBase() {
       stmt.execute(
         """
         DROP TABLE IF EXISTS users CASCADE;
+        DROP TABLE IF EXISTS documents CASCADE;
         DROP TYPE IF EXISTS mood;
         DROP DOMAIN IF EXISTS positive_integer;
         DROP DOMAIN IF EXISTS email;
+        DROP DOMAIN IF EXISTS json_document;
         """.trimIndent(),
       )
     }
@@ -124,6 +128,42 @@ class TypeMappingsE2ETest : PostgresTestBase() {
     assertThat(mood).isEqualTo(CustomMood.SAD)
     assertThat(metadata).isEqualTo(JsonData("""{"inserted": true}"""))
     assertThat(preferences).isEqualTo(UserPreferences("""{"lang": "en"}"""))
+  }
+
+  @Nested
+  inner class JsonWireType {
+
+    @Test
+    fun `type-level json mapping round-trips through a json column`() {
+      queries.createDocument(payload = JsonData("""{"kind":"plain"}"""), doc = null)
+
+      val payload = queries.getDocumentById(1) { _, payload, _ -> payload }
+
+      // json stores the text verbatim, so the value comes back exactly as written. A setString
+      // binding would have failed the insert outright with a type mismatch.
+      assertThat(payload).isEqualTo(JsonData("""{"kind":"plain"}"""))
+    }
+
+    @Test
+    fun `domain over json round-trips through its auto-generated adapter`() {
+      queries.createDocument(
+        payload = JsonData("{}"),
+        doc = JsonDocument("""{"kind":"domain"}"""),
+      )
+
+      val doc = queries.getDocumentById(1) { _, _, doc -> listOf(doc) }.first()
+
+      assertThat(doc).isEqualTo(JsonDocument("""{"kind":"domain"}"""))
+    }
+
+    @Test
+    fun `null domain over json binds as SQL NULL`() {
+      queries.createDocument(payload = JsonData("{}"), doc = null)
+
+      val doc = queries.getDocumentById(1) { _, _, doc -> listOf(doc) }.first()
+
+      assertThat(doc).isNull()
+    }
   }
 
   @Nested

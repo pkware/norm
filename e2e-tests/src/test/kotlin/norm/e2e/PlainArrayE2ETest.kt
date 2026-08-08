@@ -281,6 +281,8 @@ class PlainArrayE2ETest : PostgresTestBase() {
         arrayOf(true),
         arrayOf("""{"n":1}""", null),
         arrayOf("""{"n":2}"""),
+        arrayOf("""{"n":1}""", null),
+        arrayOf("""{"n":2}"""),
         arrayOf(byteArrayOf(1, 2, 3), null),
         arrayOf(byteArrayOf(4)),
         arrayOf(first, null),
@@ -295,10 +297,37 @@ class PlainArrayE2ETest : PostgresTestBase() {
     }
 
     @Test
+    fun `json array elements bind as json, not character varying`() {
+      // Postgres rejects a character varying[] parameter for a json[] column, so a successful update
+      // is itself the evidence the element OID was named. json preserves input text verbatim, so the
+      // values come back unnormalized — the one observable difference from jsonb[].
+      val updated = queries.updateOtherArrays(
+        arrayOf(true),
+        arrayOf(true),
+        arrayOf("""{"n":1}""", null),
+        arrayOf("""{"n":2}"""),
+        arrayOf("""{"n":1}"""),
+        arrayOf("""{"n":2}"""),
+        arrayOf(byteArrayOf(1)),
+        arrayOf(byteArrayOf(4)),
+        arrayOf(first),
+        arrayOf(second),
+        "array-target",
+      )
+
+      assertThat(updated).isEqualTo(1)
+      val row = row()
+      assertThat(row.json_array_type!!.toList()).containsExactly("""{"n":1}""", null)
+      assertThat(row.json_array_notnull_type.toList()).containsExactly("""{"n":2}""")
+    }
+
+    @Test
     fun `bool bytea and uuid arrays round-trip`() {
       queries.updateOtherArrays(
         arrayOf(true, null, false),
         arrayOf(false),
+        arrayOf("""{"n":1}"""),
+        arrayOf("""{"n":2}"""),
         arrayOf("""{"n":1}"""),
         arrayOf("""{"n":2}"""),
         arrayOf(byteArrayOf(1, 2, 3), null),
@@ -326,6 +355,8 @@ class PlainArrayE2ETest : PostgresTestBase() {
         null,
         arrayOf("""{"n":1}"""),
         null,
+        arrayOf("""{"n":1}"""),
+        null,
         arrayOf(byteArrayOf(1)),
         null,
         arrayOf(first),
@@ -335,6 +366,7 @@ class PlainArrayE2ETest : PostgresTestBase() {
       assertThat(updated).isEqualTo(1)
       val row = row()
       assertThat(row.bool_array_type).isNull()
+      assertThat(row.json_array_type).isNull()
       assertThat(row.jsonb_array_type).isNull()
       assertThat(row.bytea_array_type).isNull()
       assertThat(row.uuid_array_type).isNull()

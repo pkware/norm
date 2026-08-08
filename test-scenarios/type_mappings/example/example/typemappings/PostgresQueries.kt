@@ -27,10 +27,12 @@ import norm.encodeToSqlArray
 
 public class PostgresQueries(
   connectionProvider: ConnectionProvider,
+  private val jsonAdapter: ColumnAdapter<JsonData, String>,
   private val jsonbAdapter: ColumnAdapter<JsonData, String>,
   private val moodAdapter: ColumnAdapter<CustomMood, String>,
   private val usersPreferencesAdapter: ColumnAdapter<UserPreferences, String>,
   private val emailAdapter: ColumnAdapter<Email, String> = EmailAdapter(),
+  private val jsonDocumentAdapter: ColumnAdapter<JsonDocument, String> = JsonDocumentAdapter(),
   private val positiveIntegerAdapter:
       ColumnAdapter<PositiveInteger, Int> = PositiveIntegerAdapter(),
 ) : RealTransactable(connectionProvider),
@@ -159,6 +161,65 @@ public class PostgresQueries(
         past_moods(entry)?.let { setArray(1, it.encodeToSqlArray(connection, "mood", moodAdapter)) } ?: setNull(1, Types.ARRAY)
         tag_list(entry)?.let { setArray(2, it.encodeToSqlArray(connection, "jsonb", jsonbAdapter)) } ?: setNull(2, Types.ARRAY)
         setInt(3, id(entry))
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          executeBatch()
+          batchCount = 0
+        }
+      }
+      if (batchCount > 0) {
+        results.add(executeBatch())
+        totalCount += batchCount
+      }
+      combineExecBatchResults(results, totalCount, batchSize)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <T : Any> getDocumentById(id: Int, mapper: (
+    id: Int,
+    payload: JsonData,
+    doc: JsonDocument?,
+  ) -> T): T {
+    val sql = "SELECT * FROM documents WHERE id = ?"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        jsonAdapter.decode(getString(2)),
+        getString(3)?.let { jsonDocumentAdapter.decode(it) },
+      )
+    }
+    return driver.queryOne(sql, rowReader) {
+      setInt(1, id)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun createDocument(payload: JsonData, doc: JsonDocument?) {
+    val sql = "INSERT INTO documents (payload, doc) VALUES (?, ?)"
+    driver.execute(sql) {
+      setObject(1, jsonAdapter.encode(payload), Types.OTHER)
+      doc?.let { setObject(2, jsonDocumentAdapter.encode(it), Types.OTHER) } ?: setNull(2, Types.OTHER)
+      execute()
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any> createDocument(
+    stream: Iterable<Input>,
+    payload: (Input) -> JsonData,
+    doc: (Input) -> JsonDocument?,
+    batchSize: Int,
+  ): IntArray {
+    val sql = "INSERT INTO documents (payload, doc) VALUES (?, ?)"
+    return driver.execute(sql) {
+      var totalCount = 0
+      var batchCount = 0
+      val results = mutableListOf<IntArray>()
+      for (entry in stream) {
+        setObject(1, jsonAdapter.encode(payload(entry)), Types.OTHER)
+        doc(entry)?.let { setObject(2, jsonDocumentAdapter.encode(it), Types.OTHER) } ?: setNull(2, Types.OTHER)
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
