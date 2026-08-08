@@ -68,3 +68,55 @@ SELECT * FROM type WHERE string_type = :value AND text_type = :value;
 -- Plain (adapterless) jsonb bound as a parameter: pins setObject(index, value, Types.OTHER) (#187).
 -- name: updateJsonb :execrows
 UPDATE type SET jsonb_type = ? WHERE string_type = ?;
+
+-- Plain (adapterless) arrays bound as parameters: pins setArray(index, value.toSqlArray(connection,
+-- "<element type>")) for every element type, and the element-wise reads on the way back out through
+-- `all` (#190, #192). Each group binds a nullable column and its NOT NULL sibling so both the
+-- setArray and the setNull-fallback branches are pinned.
+-- name: updateIntTextArrays :execrows
+UPDATE type SET
+  int_array_type = ?,
+  int_array_notnull_type = ?,
+  text_array_type = ?,
+  text_array_notnull_type = ?
+WHERE string_type = ?;
+
+-- name: updateNumericArrays :execrows
+UPDATE type SET
+  int2_array_type = ?,
+  int2_array_notnull_type = ?,
+  int8_array_type = ?,
+  int8_array_notnull_type = ?,
+  float4_array_type = ?,
+  float4_array_notnull_type = ?,
+  float8_array_type = ?,
+  float8_array_notnull_type = ?,
+  numeric_array_type = ?,
+  numeric_array_notnull_type = ?
+WHERE string_type = ?;
+
+-- name: updateDateTimeArrays :execrows
+UPDATE type SET
+  date_array_type = ?,
+  date_array_notnull_type = ?,
+  time_array_type = ?,
+  time_array_notnull_type = ?,
+  timetz_array_type = ?,
+  timetz_array_notnull_type = ?,
+  timestamp_array_type = ?,
+  timestamp_array_notnull_type = ?,
+  timestamptz_array_type = ?,
+  timestamptz_array_notnull_type = ?
+WHERE string_type = ?;
+
+-- name: updateOtherArrays :execrows
+UPDATE type SET
+  bool_array_type = ?,
+  bool_array_notnull_type = ?,
+  jsonb_array_type = ?,
+  jsonb_array_notnull_type = ?,
+  bytea_array_type = ?,
+  bytea_array_notnull_type = ?,
+  uuid_array_type = ?,
+  uuid_array_notnull_type = ?
+WHERE string_type = ?;

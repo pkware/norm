@@ -408,13 +408,16 @@ internal class TypeRepository(
 
   /** Returns the [SqlMappable] for a standard Postgres type, or `null` if not recognized. */
   private fun tryResolveStandardType(typeName: String, notNull: Boolean, isArray: Boolean): SqlMappable? {
-    val baseType = resolveBaseType(typeName, notNull) ?: return null
+    if (!isArray) return resolveBaseType(typeName, notNull)
 
-    if (!isArray) return baseType
+    // Postgres array elements are always nullable regardless of the column's NOT NULL constraint,
+    // so the element read must be the nullable form: getInt would turn a NULL element into 0, and
+    // InstantSqlMappable's non-null read would throw NullPointerException on one.
+    val elementType = resolveBaseType(typeName, notNull = false) ?: return null
 
-    val arrayTypeName = ARRAY.parameterizedBy(baseType.typeName.copy(nullable = true))
+    val arrayTypeName = ARRAY.parameterizedBy(elementType.typeName.copy(nullable = true))
       .copy(nullable = !notNull)
-    return ArrayTypeDecorator(baseType, arrayTypeName)
+    return ArrayTypeDecorator(elementType, arrayTypeName, postgresArrayElementTypeName(typeName))
   }
 
   /**
@@ -478,6 +481,31 @@ internal class TypeRepository(
     else -> null
   }
 }
+
+/**
+ * Canonicalizes a Postgres type name for use as the element type of
+ * [java.sql.Connection.createArrayOf].
+ *
+ * The driver appends `[]` to this name and looks the result up in `pg_type`, so it must be a
+ * canonical `pg_type` name. [TypeRepository.resolveBaseType] additionally accepts SQL spellings
+ * (`integer`, `boolean`, `double precision`) and `pg_catalog.`-qualified names, neither of which
+ * resolve — passing one through produces
+ * `Unable to find server array type for provided name {0}`.
+ *
+ * `serial` and its variants need no entry: Postgres has no serial array type, so a serial column
+ * can never reach the array path.
+ */
+internal fun postgresArrayElementTypeName(typeName: String): String =
+  when (val canonical = typeName.removePrefix("pg_catalog.")) {
+    "smallint" -> "int2"
+    "integer", "int" -> "int4"
+    "bigint" -> "int8"
+    "real" -> "float4"
+    "double precision", "float" -> "float8"
+    "boolean" -> "bool"
+    "string" -> "text"
+    else -> canonical
+  }
 
 /**
  * Maps a Postgres base type name to its [JdbcTypeInfo], or returns `null` if unsupported.
