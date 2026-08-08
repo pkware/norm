@@ -23,12 +23,12 @@ sourceSets {
       // avoid name conflicts between the generated PostgresQueries / Queries classes.
       // all_types uses package `example`; type_mappings uses `example.typemappings`;
       // crud_generation uses `example.crud`.
-      srcDir(rootProject.file("test-scenarios/all_types/example"))
-      srcDir(rootProject.file("test-scenarios/type_mappings/example"))
-      srcDir(rootProject.file("test-scenarios/crud_generation/example"))
+      srcDir(layout.settingsDirectory.dir("test-scenarios/all_types/example"))
+      srcDir(layout.settingsDirectory.dir("test-scenarios/type_mappings/example"))
+      srcDir(layout.settingsDirectory.dir("test-scenarios/crud_generation/example"))
       // User-provided adapter source files (CustomMoodAdapter, JsonDataAdapter, etc.)
       // referenced by the generated type_mappings code.
-      srcDir(rootProject.file("test-scenarios/type_mappings/src"))
+      srcDir(layout.settingsDirectory.dir("test-scenarios/type_mappings/src"))
       // Note: Framework-generated code (test-scenarios-frameworks/) is NOT included as source
       // because it would conflict with the all_types scenario (same package/class names).
       // Framework annotation verification is done via source file inspection instead.

@@ -3,6 +3,7 @@ package norm.gradle
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
+import org.junit.jupiter.api.parallel.ResourceLock
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 import java.nio.file.Files
@@ -29,6 +30,7 @@ import kotlin.io.path.walk
  */
 @Tag("generateGoldenFiles")
 @Execution(ExecutionMode.SAME_THREAD)
+@ResourceLock(TestProject.COMPOSITE_BUILD_RESOURCE_LOCK)
 @OptIn(ExperimentalPathApi::class)
 class GenerateGoldenFiles {
 

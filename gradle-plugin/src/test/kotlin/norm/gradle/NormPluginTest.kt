@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
+import org.junit.jupiter.api.parallel.ResourceLock
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 import java.nio.file.Files
@@ -28,6 +29,10 @@ import kotlin.io.path.relativeTo
 import kotlin.io.path.walk
 import kotlin.io.path.writeText
 
+// Shares `COMPOSITE_BUILD_RESOURCE_LOCK` with `IdeSyncIntegrationTest`: both classes run
+// TestKit builds that `includeBuild` the Norm root project, and running two of those builds at once races
+// on the shared `buildSrc` project's incremental compilation caches. See the lock's KDoc for details.
+@ResourceLock(TestProject.COMPOSITE_BUILD_RESOURCE_LOCK)
 @Execution(ExecutionMode.SAME_THREAD)
 @OptIn(ExperimentalPathApi::class)
 class NormPluginTest {

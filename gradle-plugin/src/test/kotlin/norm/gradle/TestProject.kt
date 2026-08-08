@@ -192,5 +192,16 @@ class TestProject(private val projectDir: Path, private val scenarioDirectory: P
 
   companion object {
     val ROOT_NORM_PROJECT_PATH: Path = Path.of("..").normalize().toAbsolutePath()
+
+    /**
+     * Shared JUnit `@ResourceLock` key for test classes whose TestKit builds `includeBuild` the Norm
+     * root project. Every such build recompiles the shared `buildSrc` project; running two of these
+     * builds at the same time races on `buildSrc`'s incremental compilation caches and intermittently
+     * fails with `Could not close incremental caches`. Test classes that use [TestProject] or otherwise
+     * `includeBuild` the Norm root must apply `@ResourceLock(COMPOSITE_BUILD_RESOURCE_LOCK)` at the class
+     * level so JUnit's parallel test executor serializes them against each other, in addition to
+     * `@Execution(ExecutionMode.SAME_THREAD)` to serialize their own test methods internally.
+     */
+    const val COMPOSITE_BUILD_RESOURCE_LOCK: String = "norm-composite-build"
   }
 }
