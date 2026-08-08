@@ -139,6 +139,8 @@ public class PostgresQueries(
     timestamp_array_notnull_type: Array<LocalDateTime?>,
     timestamptz_array_type: Array<Instant?>?,
     timestamptz_array_notnull_type: Array<Instant?>,
+    oid_array_type: Array<Long?>?,
+    oid_array_notnull_type: Array<Long?>,
   ) -> T, processor: ManyProcessor<T, Return>): Return {
     val sql = "SELECT * FROM type"
     val rowReader: ResultSet.() -> T = {
@@ -237,6 +239,8 @@ public class PostgresQueries(
         getArray(92).mapElements { getObject(2, LocalDateTime::class.java) },
         getArray(93)?.mapElements { getObject(2, OffsetDateTime::class.java)?.toInstant() },
         getArray(94).mapElements { getObject(2, OffsetDateTime::class.java)?.toInstant() },
+        getArray(95)?.mapElements { getLong(2).takeUnless { wasNull() } },
+        getArray(96).mapElements { getLong(2).takeUnless { wasNull() } },
       )
     }
     return processor.invoke(sql, rowReader, null)
@@ -337,6 +341,8 @@ public class PostgresQueries(
     timestamp_array_notnull_type: Array<LocalDateTime?>,
     timestamptz_array_type: Array<Instant?>?,
     timestamptz_array_notnull_type: Array<Instant?>,
+    oid_array_type: Array<Long?>?,
+    oid_array_notnull_type: Array<Long?>,
   ) -> T): Many<T> = all(mapper, driver::queryMany)
 
   override fun <T : Any> allDynamically(mapper: (
@@ -434,6 +440,8 @@ public class PostgresQueries(
     timestamp_array_notnull_type: Array<LocalDateTime?>,
     timestamptz_array_type: Array<Instant?>?,
     timestamptz_array_notnull_type: Array<Instant?>,
+    oid_array_type: Array<Long?>?,
+    oid_array_notnull_type: Array<Long?>,
   ) -> T): Query<T> = all(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
 
   @Throws(SQLException::class)
@@ -753,6 +761,8 @@ public class PostgresQueries(
       timestamp_array_notnull_type: Array<LocalDateTime?>,
       timestamptz_array_type: Array<Instant?>?,
       timestamptz_array_notnull_type: Array<Instant?>,
+      oid_array_type: Array<Long?>?,
+      oid_array_notnull_type: Array<Long?>,
     ) -> T,
     processor: ManyProcessor<T, Return>,
   ): Return {
@@ -853,6 +863,8 @@ public class PostgresQueries(
         getArray(92).mapElements { getObject(2, LocalDateTime::class.java) },
         getArray(93)?.mapElements { getObject(2, OffsetDateTime::class.java)?.toInstant() },
         getArray(94).mapElements { getObject(2, OffsetDateTime::class.java)?.toInstant() },
+        getArray(95)?.mapElements { getLong(2).takeUnless { wasNull() } },
+        getArray(96).mapElements { getLong(2).takeUnless { wasNull() } },
       )
     }
     val queryBinder: (PreparedStatement.() -> Unit)? = {
@@ -956,6 +968,8 @@ public class PostgresQueries(
     timestamp_array_notnull_type: Array<LocalDateTime?>,
     timestamptz_array_type: Array<Instant?>?,
     timestamptz_array_notnull_type: Array<Instant?>,
+    oid_array_type: Array<Long?>?,
+    oid_array_notnull_type: Array<Long?>,
   ) -> T): Many<T> = filterByStringType(string_type, mapper, driver::queryMany)
 
   private fun <T : Any, Return> listNotNullView(mapper: (
@@ -1198,6 +1212,8 @@ public class PostgresQueries(
     timestamp_array_notnull_type: Array<LocalDateTime?>,
     timestamptz_array_type: Array<Instant?>?,
     timestamptz_array_notnull_type: Array<Instant?>,
+    oid_array_type: Array<Long?>?,
+    oid_array_notnull_type: Array<Long?>,
   ) -> T): T {
     val sql = "SELECT * FROM type WHERE string_type = ? AND text_type = ?"
     val rowReader: ResultSet.() -> T = {
@@ -1296,6 +1312,8 @@ public class PostgresQueries(
         getArray(92).mapElements { getObject(2, LocalDateTime::class.java) },
         getArray(93)?.mapElements { getObject(2, OffsetDateTime::class.java)?.toInstant() },
         getArray(94).mapElements { getObject(2, OffsetDateTime::class.java)?.toInstant() },
+        getArray(95)?.mapElements { getLong(2).takeUnless { wasNull() } },
+        getArray(96).mapElements { getLong(2).takeUnless { wasNull() } },
       )
     }
     return driver.queryOne(sql, rowReader) {
@@ -1401,6 +1419,8 @@ public class PostgresQueries(
       timestamp_array_notnull_type: Array<LocalDateTime?>,
       timestamptz_array_type: Array<Instant?>?,
       timestamptz_array_notnull_type: Array<Instant?>,
+      oid_array_type: Array<Long?>?,
+      oid_array_notnull_type: Array<Long?>,
     ) -> T,
     processor: ManyProcessor<T, Return>,
   ): Return {
@@ -1501,6 +1521,8 @@ public class PostgresQueries(
         getArray(92).mapElements { getObject(2, LocalDateTime::class.java) },
         getArray(93)?.mapElements { getObject(2, OffsetDateTime::class.java)?.toInstant() },
         getArray(94).mapElements { getObject(2, OffsetDateTime::class.java)?.toInstant() },
+        getArray(95)?.mapElements { getLong(2).takeUnless { wasNull() } },
+        getArray(96).mapElements { getLong(2).takeUnless { wasNull() } },
       )
     }
     val queryBinder: (PreparedStatement.() -> Unit)? = {
@@ -1605,6 +1627,8 @@ public class PostgresQueries(
     timestamp_array_notnull_type: Array<LocalDateTime?>,
     timestamptz_array_type: Array<Instant?>?,
     timestamptz_array_notnull_type: Array<Instant?>,
+    oid_array_type: Array<Long?>?,
+    oid_array_notnull_type: Array<Long?>,
   ) -> T): Many<T> = filterByMatchingStrings(`value`, mapper, driver::queryMany)
 
   @Throws(SQLException::class)
@@ -2060,6 +2084,64 @@ public class PostgresQueries(
         uuid_array_type(entry)?.let { setArray(9, it.toSqlArray(connection, "uuid")) } ?: setNull(9, Types.ARRAY)
         setArray(10, uuid_array_notnull_type(entry).toSqlArray(connection, "uuid"))
         setString(11, string_type(entry))
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          results.add(executeBatch())
+          batchCount = 0
+          // Performance optimization to reduce register updates per loop iteration
+          totalCount += batchSize
+        }
+      }
+      if (batchCount > 0) {
+        results.add(executeBatch())
+        totalCount += batchCount
+      }
+      combineExecBatchResults(results, totalCount, batchSize)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun updateOidArray(
+    oid_array_type: Array<Long?>?,
+    oid_array_notnull_type: Array<Long?>,
+    string_type: String,
+  ): Int {
+    val sql = """
+        |UPDATE type SET
+        |  oid_array_type = ?,
+        |  oid_array_notnull_type = ?
+        |WHERE string_type = ?
+        """.trimMargin()
+    return driver.executeRows(sql) {
+      oid_array_type?.let { setArray(1, it.toSqlArray(connection, "oid")) } ?: setNull(1, Types.ARRAY)
+      setArray(2, oid_array_notnull_type.toSqlArray(connection, "oid"))
+      setString(3, string_type)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any> updateOidArray(
+    stream: Iterable<Input>,
+    oid_array_type: (Input) -> Array<Long?>?,
+    oid_array_notnull_type: (Input) -> Array<Long?>,
+    string_type: (Input) -> String,
+    batchSize: Int,
+  ): IntArray {
+    val sql = """
+        |UPDATE type SET
+        |  oid_array_type = ?,
+        |  oid_array_notnull_type = ?
+        |WHERE string_type = ?
+        """.trimMargin()
+    return driver.execute(sql) {
+      var totalCount = 0
+      var batchCount = 0
+      val results = mutableListOf<IntArray>()
+      for (entry in stream) {
+        oid_array_type(entry)?.let { setArray(1, it.toSqlArray(connection, "oid")) } ?: setNull(1, Types.ARRAY)
+        setArray(2, oid_array_notnull_type(entry).toSqlArray(connection, "oid"))
+        setString(3, string_type(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {

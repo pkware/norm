@@ -372,4 +372,44 @@ class PlainArrayE2ETest : PostgresTestBase() {
       assertThat(row.uuid_array_type).isNull()
     }
   }
+
+  @Nested
+  inner class OidArrays {
+
+    @Test
+    fun `oid array elements round-trip, including the unsigned oid boundary value and a null element`() {
+      // 4_294_967_295 (2^32 - 1) is the maximum unsigned 32-bit oid value. It exceeds Int.MAX_VALUE,
+      // so this pins Long as the element type: getInt on this value throws in pgjdbc (#196).
+      val updated = queries.updateOidArray(
+        arrayOf(1L, null, 4_294_967_295L),
+        arrayOf(2L, 3L),
+        "array-target",
+      )
+
+      assertThat(updated).isEqualTo(1)
+      val row = row()
+      assertThat(row.oid_array_type!!.toList()).containsExactly(1L, null, 4_294_967_295L)
+      assertThat(row.oid_array_notnull_type.toList()).containsExactly(2L, 3L)
+    }
+
+    @Test
+    fun `empty oid array is distinct from null`() {
+      queries.updateOidArray(emptyArray(), emptyArray(), "array-target")
+
+      val row = row()
+      assertThat(row.oid_array_type).isNotNull()
+      assertThat(row.oid_array_type!!.toList()).isEmpty()
+      assertThat(row.oid_array_notnull_type.toList()).isEmpty()
+    }
+
+    @Test
+    fun `null oid array binds as SQL NULL`() {
+      val updated = queries.updateOidArray(null, arrayOf(1L), "array-target")
+
+      assertThat(updated).isEqualTo(1)
+      val row = row()
+      assertThat(row.oid_array_type).isNull()
+      assertThat(row.oid_array_notnull_type.toList()).containsExactly(1L)
+    }
+  }
 }

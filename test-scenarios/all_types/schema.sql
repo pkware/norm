@@ -92,7 +92,9 @@ CREATE TABLE type (
   timestamp_array_type timestamp[],
   timestamp_array_notnull_type timestamp[] NOT NULL DEFAULT '{}',
   timestamptz_array_type timestamptz[],
-  timestamptz_array_notnull_type timestamptz[] NOT NULL DEFAULT '{}'
+  timestamptz_array_notnull_type timestamptz[] NOT NULL DEFAULT '{}',
+  oid_array_type oid[],
+  oid_array_notnull_type oid[] NOT NULL DEFAULT '{}'
 );
 
 -- View for testing that query result nullability is inferred from the underlying table columns.
