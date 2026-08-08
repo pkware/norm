@@ -410,6 +410,23 @@ internal class TypeRepository(
   private fun tryResolveStandardType(typeName: String, notNull: Boolean, isArray: Boolean): SqlMappable? {
     if (!isArray) return resolveBaseType(typeName, notNull)
 
+    // oid[] diverges from scalar oid: resolveBaseType maps scalar oid to Blob (pgjdbc's setBlob
+    // creates a large object and stores its oid), but an array of large-object handles has no
+    // coherent JDBC semantics, and real-world oid[] columns hold plain catalog identifiers. oid is
+    // an unsigned 32-bit integer, so Long (not Int) is required to hold values above Int.MAX_VALUE.
+    //
+    // Long is wider than oid's valid range of 0..4294967295, and the driver does not reject values
+    // outside it symmetrically: a negative Long silently wraps to its unsigned 32-bit equivalent on
+    // write (`-1L` is stored and read back as `4294967295`), with no error, while a value above
+    // 4294967295 is rejected by Postgres with "value out of range". Callers must keep bound values
+    // within `0..4294967295` themselves; this mapping does not validate that range.
+    if (typeName == "oid" || typeName == "pg_catalog.oid") {
+      val elementType = JdbcTypes.LONG.decorateForNullable(notNull = false)
+      val arrayTypeName = ARRAY.parameterizedBy(elementType.typeName.copy(nullable = true))
+        .copy(nullable = !notNull)
+      return ArrayTypeDecorator(elementType, arrayTypeName, postgresArrayElementTypeName(typeName))
+    }
+
     // Postgres array elements are always nullable regardless of the column's NOT NULL constraint,
     // so the element read must be the nullable form: getInt would turn a NULL element into 0, and
     // InstantSqlMappable's non-null read would throw NullPointerException on one.
@@ -465,6 +482,10 @@ internal class TypeRepository(
     // Not JdbcTypes.STRING: pgjdbc rejects setString() for json and jsonb columns.
     "json", "jsonb" -> JsonSqlMappable(notNull)
 
+    // Scalar oid maps to Blob: pgjdbc's setBlob() creates a Postgres large object and stores its
+    // oid, the standard large-object convention. oid[] does not share this mapping (see
+    // tryResolveStandardType) because an array of large-object handles has no coherent JDBC
+    // semantics, and real-world oid[] columns hold plain catalog identifiers, not large objects.
     "oid", "pg_catalog.oid" -> JdbcTypes.BLOB
     "bytea", "pg_catalog.bytea" -> PostgresSupportedTypes.BYTE_ARRAY
 

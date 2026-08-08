@@ -118,4 +118,6 @@ public data class Type(
   public val timestamp_array_notnull_type: Array<LocalDateTime?>,
   public val timestamptz_array_type: Array<Instant?>?,
   public val timestamptz_array_notnull_type: Array<Instant?>,
+  public val oid_array_type: Array<Long?>?,
+  public val oid_array_notnull_type: Array<Long?>,
 )

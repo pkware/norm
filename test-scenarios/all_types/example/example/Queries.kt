@@ -130,6 +130,8 @@ public interface Queries : Transactable {
     timestamp_array_notnull_type: Array<LocalDateTime?>,
     timestamptz_array_type: Array<Instant?>?,
     timestamptz_array_notnull_type: Array<Instant?>,
+    oid_array_type: Array<Long?>?,
+    oid_array_notnull_type: Array<Long?>,
   ) -> T): Many<T>
 
   /**
@@ -234,6 +236,8 @@ public interface Queries : Transactable {
     timestamp_array_notnull_type: Array<LocalDateTime?>,
     timestamptz_array_type: Array<Instant?>?,
     timestamptz_array_notnull_type: Array<Instant?>,
+    oid_array_type: Array<Long?>?,
+    oid_array_notnull_type: Array<Long?>,
   ) -> T): Query<T>
 
   public fun allDynamically(): Query<Type> = allDynamically(::Type)
@@ -658,6 +662,8 @@ public interface Queries : Transactable {
     timestamp_array_notnull_type: Array<LocalDateTime?>,
     timestamptz_array_type: Array<Instant?>?,
     timestamptz_array_notnull_type: Array<Instant?>,
+    oid_array_type: Array<Long?>?,
+    oid_array_notnull_type: Array<Long?>,
   ) -> T): Many<T>
 
   /**
@@ -951,6 +957,8 @@ public interface Queries : Transactable {
     timestamp_array_notnull_type: Array<LocalDateTime?>,
     timestamptz_array_type: Array<Instant?>?,
     timestamptz_array_notnull_type: Array<Instant?>,
+    oid_array_type: Array<Long?>?,
+    oid_array_notnull_type: Array<Long?>,
   ) -> T): T
 
   /**
@@ -1065,6 +1073,8 @@ public interface Queries : Transactable {
     timestamp_array_notnull_type: Array<LocalDateTime?>,
     timestamptz_array_type: Array<Instant?>?,
     timestamptz_array_notnull_type: Array<Instant?>,
+    oid_array_type: Array<Long?>?,
+    oid_array_notnull_type: Array<Long?>,
   ) -> T): Many<T>
 
   /**
@@ -1661,6 +1671,90 @@ public interface Queries : Transactable {
     bytea_array_notnull_type: Array<ByteArray?>,
     uuid_array_type: Array<UUID?>?,
     uuid_array_notnull_type: Array<UUID?>,
+    string_type: String,
+  ): Int
+
+  /**
+   * Plain (adapterless) oid[] bound as a parameter: pins setArray(index, value.toSqlArray(connection,
+   * "oid")) and the getLong(2).takeUnless { wasNull() } element read, distinct from the scalar oid ->
+   * Blob mapping (#196).
+   *
+   * ```sql
+   * UPDATE type SET
+   *   oid_array_type = ?,
+   *   oid_array_notnull_type = ?
+   * WHERE string_type = ?
+   * ```
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateOidArray(
+    stream: Iterable<Input>,
+    oid_array_type: (Input) -> Array<Long?>?,
+    oid_array_notnull_type: (Input) -> Array<Long?>,
+    string_type: (Input) -> String,
+    batchSize: Int,
+  ): IntArray
+
+  /**
+   * Plain (adapterless) oid[] bound as a parameter: pins setArray(index, value.toSqlArray(connection,
+   * "oid")) and the getLong(2).takeUnless { wasNull() } element read, distinct from the scalar oid ->
+   * Blob mapping (#196).
+   *
+   * ```sql
+   * UPDATE type SET
+   *   oid_array_type = ?,
+   *   oid_array_notnull_type = ?
+   * WHERE string_type = ?
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateOidArray(
+    stream: Iterable<Input>,
+    oid_array_type: (Input) -> Array<Long?>?,
+    oid_array_notnull_type: (Input) -> Array<Long?>,
+    string_type: (Input) -> String,
+  ): IntArray = updateOidArray(stream, oid_array_type, oid_array_notnull_type, string_type, 100)
+
+  /**
+   * Plain (adapterless) oid[] bound as a parameter: pins setArray(index, value.toSqlArray(connection,
+   * "oid")) and the getLong(2).takeUnless { wasNull() } element read, distinct from the scalar oid ->
+   * Blob mapping (#196).
+   *
+   * ```sql
+   * UPDATE type SET
+   *   oid_array_type = ?,
+   *   oid_array_notnull_type = ?
+   * WHERE string_type = ?
+   * ```
+   *
+   * @return The number of rows updated.
+   */
+  @Throws(SQLException::class)
+  public fun updateOidArray(
+    oid_array_type: Array<Long?>?,
+    oid_array_notnull_type: Array<Long?>,
     string_type: String,
   ): Int
 }

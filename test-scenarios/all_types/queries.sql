@@ -127,3 +127,12 @@ UPDATE type SET
   uuid_array_type = ?,
   uuid_array_notnull_type = ?
 WHERE string_type = ?;
+
+-- Plain (adapterless) oid[] bound as a parameter: pins setArray(index, value.toSqlArray(connection,
+-- "oid")) and the getLong(2).takeUnless { wasNull() } element read, distinct from the scalar oid ->
+-- Blob mapping (#196).
+-- name: updateOidArray :execrows
+UPDATE type SET
+  oid_array_type = ?,
+  oid_array_notnull_type = ?
+WHERE string_type = ?;
