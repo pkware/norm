@@ -20,6 +20,9 @@ class SqlParameterInferrerTest {
     "encode" to listOf(FunctionOverload(emptyList(), isStrict = true)),
     "hmac" to listOf(FunctionOverload(emptyList(), isStrict = true)),
     "upper" to listOf(FunctionOverload(listOf("str"), isStrict = true)),
+    // Matches real PostgreSQL pg_proc for the 3-arg overload, verified directly:
+    // proargnames = {string,pattern,replacement}.
+    "regexp_replace" to listOf(FunctionOverload(listOf("string", "pattern", "replacement"), isStrict = true)),
   )
 
   private val inferrer = SqlParameterInferrer(functionOverloads)
@@ -169,6 +172,26 @@ class SqlParameterInferrerTest {
     fun `unknown function does not contribute names`() {
       val result = inferrer.inferParameterInfo("SELECT unknown_func(?, ?) AS result")
       assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `resolves the formal argument name even when a later argument's literal contains an unbalanced parenthesis`() {
+      // Pins a behavior change: findMatchingCloseParenthesis previously miscounted the "(" inside
+      // the string literal '\(' as a real parenthesis, so extractFunctionCalls's own paren search
+      // never found a balanced close for this call — the call was skipped entirely (not "found
+      // with the wrong args"), and the parameter fell through to a caller-level generic default
+      // (p1) instead of a real name. Fixed by SqlUtils.kt's lexical-aware findMatchingCloseParenthesis.
+      // "string" IS the correct name per Norm's own established rule (see "infers formal argument
+      // names from pg_proc" above): a pg_proc formal argument name always wins over a generic
+      // fallback, and regexp_replace(string, pattern, replacement) is regexp_replace's real
+      // 3-argument signature (verified directly against PostgreSQL pg_proc), so the FIRST ? is
+      // "string" here for exactly the same reason the first ? in crypt(?, gen_salt('bf')) is
+      // "password" above — this is not new behavior, just this shape finally reaching the rule
+      // that was always intended for it.
+      val result = inferrer.inferParameterInfo(
+        """SELECT id FROM p WHERE name = regexp_replace(?, '\(', '')""",
+      )
+      assertThat(result.getValue(1).name).isEqualTo("string")
     }
   }
 
