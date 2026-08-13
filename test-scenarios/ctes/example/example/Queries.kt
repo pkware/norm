@@ -4,6 +4,7 @@ import java.util.UUID
 import kotlin.Any
 import kotlin.String
 import norm.Many
+import norm.Query
 import norm.Transactable
 
 public interface Queries : Transactable {
@@ -62,4 +63,40 @@ public interface Queries : Transactable {
    * ```
    */
   public fun createParentWithChildAndAuditEntry(name: String, p2: String): Many<Child> = createParentWithChildAndAuditEntry(name, p2, ::Child)
+
+  /**
+   * Reproduces #203: a data-modifying CTE ("new_parent") references a CTE declared LATER
+   * in the same WITH RECURSIVE clause ("parent_name").
+   *
+   * ```sql
+   * WITH RECURSIVE new_parent AS (
+   *   INSERT INTO parent (name) SELECT label FROM parent_name RETURNING id, name
+   * ),
+   * parent_name AS (
+   *   SELECT 'seeded'::TEXT AS label
+   * )
+   * SELECT id, name FROM new_parent
+   * ```
+   */
+  public fun <T : Any> createParentFromLaterCte(mapper: (id: UUID, name: String) -> T): Many<T>
+
+  /**
+   * Reproduces #203: a data-modifying CTE ("new_parent") references a CTE declared LATER
+   * in the same WITH RECURSIVE clause ("parent_name").
+   *
+   * ```sql
+   * WITH RECURSIVE new_parent AS (
+   *   INSERT INTO parent (name) SELECT label FROM parent_name RETURNING id, name
+   * ),
+   * parent_name AS (
+   *   SELECT 'seeded'::TEXT AS label
+   * )
+   * SELECT id, name FROM new_parent
+   * ```
+   */
+  public fun createParentFromLaterCte(): Many<Parent> = createParentFromLaterCte(::Parent)
+
+  public fun <T : Any> createParentFromLaterCteDynamically(mapper: (id: UUID, name: String) -> T): Query<T>
+
+  public fun createParentFromLaterCteDynamically(): Query<Parent> = createParentFromLaterCteDynamically(::Parent)
 }
