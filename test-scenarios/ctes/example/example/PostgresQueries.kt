@@ -10,6 +10,7 @@ import norm.ConnectionProvider
 import norm.Many
 import norm.ManyProcessor
 import norm.NormDriver
+import norm.Query
 import norm.RealTransactable
 
 public class PostgresQueries(
@@ -67,4 +68,27 @@ public class PostgresQueries(
       name: String,
     ) -> T,
   ): Many<T> = createParentWithChildAndAuditEntry(name, p2, mapper, driver::queryMany)
+
+  private fun <T : Any, Return> createParentFromLaterCte(mapper: (id: UUID, name: String) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH RECURSIVE new_parent AS (
+        |  INSERT INTO parent (name) SELECT label FROM parent_name RETURNING id, name
+        |),
+        |parent_name AS (
+        |  SELECT 'seeded'::TEXT AS label
+        |)
+        |SELECT id, name FROM new_parent
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getObject(1, UUID::class.java),
+        getString(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> createParentFromLaterCte(mapper: (id: UUID, name: String) -> T): Many<T> = createParentFromLaterCte(mapper, driver::queryMany)
+
+  override fun <T : Any> createParentFromLaterCteDynamically(mapper: (id: UUID, name: String) -> T): Query<T> = createParentFromLaterCte(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
 }

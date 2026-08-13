@@ -16,3 +16,14 @@ audit_entry AS (
   ON CONFLICT (parent_id, name) DO NOTHING
 )
 SELECT id, parent_id, name FROM new_child;
+
+-- Reproduces #203: a data-modifying CTE ("new_parent") references a CTE declared LATER
+-- in the same WITH RECURSIVE clause ("parent_name").
+-- name: createParentFromLaterCte :many
+WITH RECURSIVE new_parent AS (
+  INSERT INTO parent (name) SELECT label FROM parent_name RETURNING id, name
+),
+parent_name AS (
+  SELECT 'seeded'::TEXT AS label
+)
+SELECT id, name FROM new_parent;

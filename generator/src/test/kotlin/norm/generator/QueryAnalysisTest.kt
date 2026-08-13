@@ -1715,6 +1715,1192 @@ class QueryAnalysisTest {
     }
 
     @Test
+    fun `forward-referencing data-modifying CTE under WITH RECURSIVE`() {
+      // Reproduces #203: "ins" is a data-modifying CTE whose body references "later", a CTE
+      // declared AFTER it in the same WITH RECURSIVE clause. A prefix built only from preceding
+      // CTE definitions omits "later" and fails to prepare; the probe must use the full WITH
+      // clause instead.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL)",
+        """
+        WITH RECURSIVE ins AS (
+          INSERT INTO t (name) SELECT lbl FROM later RETURNING id
+        ),
+        later AS (
+          SELECT 'q'::TEXT AS lbl
+        )
+        SELECT id FROM ins
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `forward-referencing data-modifying CTE alongside a sibling that references it`() {
+      // Reproduces the mixed case that motivated using the FULL WITH clause as the probe prefix
+      // (rather than just extending the preceding-definitions prefix to include later CTEs):
+      // "ins" references the later-declared "later", while "uses" references "ins" itself. The
+      // full WITH clause resolves both directions at once.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t2 (id SERIAL NOT NULL, name TEXT NOT NULL)",
+        """
+        WITH RECURSIVE
+          ins AS (INSERT INTO t2(name) SELECT lbl FROM later RETURNING id),
+          uses AS (SELECT id FROM ins),
+          later AS (SELECT 'q'::TEXT AS lbl)
+        SELECT id FROM uses
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `forward-referencing data-modifying CTE returns correct nullability for a nullable column`() {
+      // Guards against a fix that merely avoids the "views must not contain data-modifying
+      // statements in WITH" crash without actually consulting real column metadata: "bio" is
+      // nullable in the schema, so RETURNING bio must report nullable even though the CTE
+      // that supplies the forward reference ("later") is itself resolvable.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL, bio TEXT)",
+        """
+        WITH RECURSIVE ins AS (
+          INSERT INTO t (name, bio) SELECT lbl, NULL FROM later RETURNING id, bio
+        ),
+        later AS (
+          SELECT 'q'::TEXT AS lbl
+        )
+        SELECT id, bio FROM ins
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `plain WITH does not let a later CTE shadow a base table referenced by an earlier body`() {
+      // Regression guard: the full-WITH-clause probe prefix must not be tried FIRST for a
+      // non-recursive WITH clause. "src" is both a base table AND the name of a CTE declared
+      // AFTER "upd". A plain WITH clause resolves "upd"'s reference to "src" against the base
+      // table (a later CTE never shadows for an earlier body) — verified against real Postgres
+      // by inserting distinguishable rows: the query returns the base table's value, not the
+      // CTE's, so "c" must report the base table src.name's nullability (nullable).
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE other (name TEXT NOT NULL);
+        CREATE TABLE src (name TEXT);
+        CREATE TABLE t (id SERIAL PRIMARY KEY, name TEXT)
+        """.trimIndent(),
+        """
+        WITH upd AS (
+          UPDATE t SET name = src.name FROM src RETURNING src.name AS c
+        ),
+        src AS (SELECT name FROM other)
+        SELECT c FROM upd
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `WITH RECURSIVE genuinely lets a later CTE shadow a base table of the same name`() {
+      // Companion to the plain-WITH test above, same shape but WITH RECURSIVE: Postgres makes
+      // every CTE name in a WITH RECURSIVE clause visible to every other CTE's body (this is
+      // what permits forward and mutual references), so "src" in "upd" resolves to the sibling
+      // CTE "src" (backed by "other", whose name column is NOT NULL) instead of the base table
+      // "src" (nullable name) — verified against real Postgres by inserting distinguishable
+      // rows: the query returns the CTE's value, not the base table's, so "c" must report the
+      // CTE's column nullability (non-null).
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE other (name TEXT NOT NULL);
+        CREATE TABLE src (name TEXT);
+        CREATE TABLE t (id SERIAL PRIMARY KEY, name TEXT)
+        """.trimIndent(),
+        """
+        WITH RECURSIVE upd AS (
+          UPDATE t SET name = src.name FROM src RETURNING src.name AS c
+        ),
+        src AS (SELECT name FROM other)
+        SELECT c FROM upd
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `data-modifying CTE body with its own nested WITH still resolves sibling shadowing correctly`() {
+      // "upd"'s body carries its own nested WITH ("helper") and a FROM clause, so
+      // convertDmlCteBodyToSelect converts it to a real join-preserving SELECT — reattaching
+      // "helper" verbatim in front of "SELECT src.name AS c FROM t, src, helper" — which then
+      // goes through the same node-tree analysis as any other CTE, resolving "src" against the
+      // sibling CTE (declared before "upd", so it shadows the base table normally) rather than a
+      // metadata probe that would be blind to this either way. Verified against real Postgres by
+      // inserting a NULL row into "other": the sibling CTE "src" wins, so "c" must be nullable.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE other (name TEXT);
+        CREATE TABLE src (name TEXT NOT NULL);
+        CREATE TABLE t (id SERIAL PRIMARY KEY, name TEXT)
+        """.trimIndent(),
+        """
+        WITH src AS (SELECT name FROM other),
+        upd AS (
+          WITH helper AS (SELECT 1 AS one)
+          UPDATE t SET name = src.name FROM src, helper RETURNING src.name AS c
+        )
+        SELECT c FROM upd
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `WITH RECURSIVE variant of nested-WITH shadowing also resolves the sibling CTE`() {
+      // Same shape as the test above, but WITH RECURSIVE. Verified against real Postgres
+      // (inserting a NULL row into "other"): the sibling CTE "src" wins here too — RECURSIVE
+      // does not change which "src" a body sharing scope with a PRECEDING sibling resolves to,
+      // only whether FOLLOWING siblings are visible — so "c" must be nullable, same as the
+      // plain-WITH case.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE other (name TEXT);
+        CREATE TABLE src (name TEXT NOT NULL);
+        CREATE TABLE t (id SERIAL PRIMARY KEY, name TEXT)
+        """.trimIndent(),
+        """
+        WITH RECURSIVE src AS (SELECT name FROM other),
+        upd AS (
+          WITH helper AS (SELECT 1 AS one)
+          UPDATE t SET name = src.name FROM src, helper RETURNING src.name AS c
+        )
+        SELECT c FROM upd
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `no-RETURNING data-modifying CTE with its own nested WITH at a non-zero index`() {
+      // "logged" is the SECOND CTE (index > 0, so the bare-body candidate that commit d4f8d7c
+      // relied on is never tried, by design) and has no RETURNING clause, so the true-scope
+      // probe ("SELECT * FROM logged") itself fails to prepare. This exercises the further
+      // fallback: "<full clause> SELECT 1" confirms the WITH clause is otherwise sound, so a
+      // norm_stub is returned for "logged" instead of aborting generation.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL);
+        CREATE TABLE log_table (id SERIAL NOT NULL, message TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH seed AS (
+          SELECT 'hello'::TEXT AS message
+        ),
+        logged AS (
+          WITH helper AS (SELECT 1 AS one)
+          INSERT INTO log_table(message) SELECT message FROM seed, helper ON CONFLICT DO NOTHING
+        )
+        SELECT id, name FROM t
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `quoted mixed-case CTE name is preserved verbatim in the true-scope probe`() {
+      // Proves CteDefinition.rawName (not the quote-stripped .name) is used for the
+      // true-scope probe: "MyIns"'s body has its own nested WITH, forcing the true-scope
+      // fallback ("SELECT * FROM <rawName>"). If the quote-stripped name were used instead,
+      // "FROM MyIns" (unquoted) would fold to lowercase and fail to find the quoted,
+      // mixed-case relation "MyIns" — falling through to the no-RETURNING fallback and
+      // fabricating a single unrelated "norm_stub" column, which would then make the outer
+      // query's reference to "id" fail to resolve against the stubbed CTE, aborting generation
+      // entirely instead of merely losing nullability precision.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL)",
+        """
+        WITH "Later" AS (
+          SELECT 'x'::TEXT AS lbl
+        ),
+        "MyIns" AS (
+          WITH helper AS (SELECT 1 AS one)
+          INSERT INTO t(name) SELECT lbl FROM "Later", helper RETURNING id
+        )
+        SELECT id FROM "MyIns"
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      // Verified directly against the driver: PostgreSQL's target-list origin tracking traces
+      // "id" all the way through "SELECT * FROM \"MyIns\"" back to t.id, so isNullable reports
+      // NOT NULL precisely here (tableName came back as "t", not unknown) — a bare column
+      // RETURNING with no intervening expression preserves lineage. "MyIns" is a plain INSERT
+      // (no FROM/USING/MERGE join in the OUTER statement, only inside its own SELECT source),
+      // so it never reaches convertDmlCteBodyToSelect's join-preserving conversion and stays on
+      // the probe/stub path — which is fine specifically because INSERT's RETURNING sees only
+      // the just-inserted row: there is no outer join here for the probe to be blind to. The
+      // probe/stub path's fundamental blind spot to outer-join null extension (documented on
+      // PgCatalogLoader.buildSelectStub) does not apply to this test.
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `UPDATE FROM LEFT JOIN RETURNING joined column inside a data-modifying CTE`() {
+      // A metadata probe (PreparedStatement.getMetaData().isNullable) reports base-table
+      // attnotnull — b.val is NOT NULL in the schema — and is blind to the LEFT JOIN
+      // null-extending it at runtime. Verified against real Postgres by inserting an "a" row
+      // with no matching "b" row: the query returns v = NULL, so this MUST be nullable. Before
+      // convertDmlCteBodyToSelect existed, the probe/stub path reported this NOT NULL.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id SERIAL NOT NULL, name TEXT);
+        CREATE TABLE a (k INT NOT NULL);
+        CREATE TABLE b (k INT NOT NULL, val TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH upd AS (
+          UPDATE t SET name = 'x' FROM a LEFT JOIN b ON b.k = a.k RETURNING b.val AS v
+        )
+        SELECT v FROM upd
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `UPDATE FROM LEFT JOIN RETURNING joined column, body with its own nested WITH`() {
+      // Same shape as the test above, but "upd"'s body carries its own nested WITH ("helper"),
+      // exercising convertDmlCteBodyToSelect's nested-WITH reattachment path (WITH helper AS
+      // (...) SELECT b.val AS v FROM t, a LEFT JOIN b ON ..., helper) rather than the plain
+      // conversion path. Verified against real Postgres the same way: v = NULL.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id SERIAL NOT NULL, name TEXT);
+        CREATE TABLE a (k INT NOT NULL);
+        CREATE TABLE b (k INT NOT NULL, val TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH upd AS (
+          WITH helper AS (SELECT 1 AS one)
+          UPDATE t SET name = 'x' FROM a LEFT JOIN b ON b.k = a.k, helper RETURNING b.val AS v
+        )
+        SELECT v FROM upd
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `DELETE USING LEFT JOIN RETURNING joined column inside a data-modifying CTE`() {
+      // Same defect as the UPDATE case, for DELETE ... USING. Verified against real Postgres
+      // (inserting an "a" row with no matching "b" row): the query returns v = NULL.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id SERIAL NOT NULL, name TEXT);
+        CREATE TABLE a (k INT NOT NULL);
+        CREATE TABLE b (k INT NOT NULL, val TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH del AS (
+          DELETE FROM t USING a LEFT JOIN b ON b.k = a.k RETURNING b.val AS v
+        )
+        SELECT v FROM del
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `self-join LEFT JOIN RETURNING kills the rejected getTableName heuristic`() {
+      // This is the shape that rules out a metadata heuristic considered and rejected in favor
+      // of structural conversion: "t2" is an alias for the TARGET table "t" itself, sitting on
+      // the nullable side of a LEFT JOIN. ResultSetMetaData.getTableName() reports the base
+      // relation "t" for t2.name — indistinguishable, by name alone, from the actual DML target
+      // "t" — so a heuristic keyed on "does getTableName() match the target table name" would
+      // conclude t2.name is NOT the join side and keep it fabricated NOT NULL. Structural
+      // conversion sidesteps this entirely: it operates on the real join structure via aliases,
+      // not on relation names. Verified against real Postgres (inserting an "a" row with no
+      // matching "k"): the query returns v = NULL.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id SERIAL NOT NULL, k INT NOT NULL, name TEXT NOT NULL);
+        CREATE TABLE a (k INT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH upd AS (
+          UPDATE t SET name = t.name
+          FROM a LEFT JOIN t t2 ON t2.k = a.k
+          WHERE t.id = 1
+          RETURNING t2.name AS v
+        )
+        SELECT v FROM upd
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `MERGE WHEN NOT MATCHED BY SOURCE THEN DELETE RETURNING source column inside a CTE`() {
+      assumeTrue(pgVersion.toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
+      // WHEN NOT MATCHED BY SOURCE fires for TARGET rows with no matching source row — the
+      // shape convertMergeToSelect models as a LEFT JOIN. Verified against real Postgres: a
+      // target row with no matching source row returns s.name = NULL through this RETURNING.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT PRIMARY KEY, name TEXT NOT NULL);
+        CREATE TABLE s (id INT NOT NULL, name TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH m AS (
+          MERGE INTO t
+          USING s ON t.id = s.id
+          WHEN NOT MATCHED BY SOURCE THEN DELETE
+          RETURNING s.name
+        )
+        SELECT name FROM m
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `MERGE without WHEN NOT MATCHED BY SOURCE keeps source column NOT NULL`() {
+      assumeTrue(pgVersion.toInt() >= 17, "MERGE RETURNING requires PostgreSQL 17+")
+      // No "WHEN NOT MATCHED BY SOURCE" clause: convertMergeToSelect models this as a plain
+      // (inner) join, since every row RETURNING can see has a genuine source match. Verified
+      // against real Postgres: s.name is never NULL through this RETURNING.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT PRIMARY KEY, name TEXT NOT NULL);
+        CREATE TABLE s (id INT NOT NULL, name TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH m AS (
+          MERGE INTO t
+          USING s ON t.id = s.id
+          WHEN MATCHED THEN UPDATE SET name = s.name
+          RETURNING s.name
+        )
+        SELECT name FROM m
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `RETURNING star on UPDATE with a joined relation returns every relation's columns`() {
+      // Verified against real Postgres (via psql \gdesc on the actual UPDATE): "RETURNING *" on
+      // UPDATE ... FROM is NOT limited to the target table's columns — it expands to every
+      // relation in the statement's scope, target AND joined, identically to a plain "SELECT *"
+      // over the same FROM list (t.id, t.name, a.id, a.label — 4 columns, not 2). This is why
+      // convertDmlToSelect passes RETURNING clauses through verbatim rather than qualifying a
+      // bare "*" to the target alone (which would have produced the WRONG column count here).
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL);
+        CREATE TABLE a (id INT NOT NULL, label TEXT)
+        """.trimIndent(),
+        """
+        WITH upd AS (
+          UPDATE t SET name = 'x' FROM a WHERE t.id = a.id RETURNING *
+        )
+        SELECT * FROM upd
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(4)
+      assertThat(query.columns[0].notNull).isTrue() // t.id
+      assertThat(query.columns[1].notNull).isTrue() // t.name
+      assertThat(query.columns[2].notNull).isTrue() // a.id
+      assertThat(query.columns[3].notNull).isFalse() // a.label
+    }
+
+    @Test
+    fun `target-table NOT NULL column stays NOT NULL alongside an outer-joined nullable column`() {
+      // Guard against over-nullability: converting the CTE body to a join-preserving SELECT
+      // must not make EVERYTHING nullable just because a join is present — only the columns
+      // actually reached through the LEFT JOIN's nullable side. "t.id" comes from the target
+      // row, which always exists (UPDATE only touches rows that exist), so it must stay NOT
+      // NULL even though "v" (from the LEFT JOIN) is nullable. Verified against real Postgres.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id SERIAL NOT NULL, name TEXT);
+        CREATE TABLE a (k INT NOT NULL);
+        CREATE TABLE b (k INT NOT NULL, val TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH upd AS (
+          UPDATE t SET name = 'x' FROM a LEFT JOIN b ON b.k = a.k RETURNING t.id, b.val AS v
+        )
+        SELECT id, v FROM upd
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `LEFT JOIN RETURNING joined column survives an unbalanced parenthesis inside a string literal`() {
+      // Regression guard: findTopLevelKeyword previously counted parens inside string literals,
+      // so the "(" inside '\(' hid the real FROM from convertDmlToSelect, silently falling back
+      // to the metadata probe/stub path — which is blind to the LEFT JOIN and fabricates NOT
+      // NULL. Verified against real Postgres (inserting an "a" row with no matching "b" row):
+      // the query returns v = NULL.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id SERIAL NOT NULL, name TEXT);
+        CREATE TABLE a (k INT NOT NULL);
+        CREATE TABLE b (k INT NOT NULL, val TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH upd AS (
+          UPDATE t SET name = regexp_replace(name, '\(', '')
+          FROM a LEFT JOIN b ON b.k = a.k
+          RETURNING b.val AS v
+        )
+        SELECT v FROM upd
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `MERGE RETURNING source column survives an unbalanced parenthesis inside a string literal`() {
+      assumeTrue(pgVersion.toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
+      // Same defect as above, for MERGE: the "(" inside a SET expression's string literal must
+      // not hide the real WHEN NOT MATCHED BY SOURCE clause from convertMergeToSelect. Verified
+      // against real Postgres: a target row with no matching source row returns sname = NULL.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE mt (tid INT PRIMARY KEY, tname TEXT NOT NULL);
+        CREATE TABLE ms (sid INT NOT NULL, sname TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH m AS (
+          MERGE INTO mt
+          USING ms ON mt.tid = ms.sid
+          WHEN MATCHED THEN UPDATE SET tname = ms.sname || '('
+          WHEN NOT MATCHED BY SOURCE THEN DELETE
+          RETURNING ms.sname
+        )
+        SELECT sname FROM m
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `a string literal containing the word FROM with no real FROM clause does not abort generation`() {
+      // REGRESSION guard vs main: before the lexer fix, an unvalidated conversion could replace
+      // PostgreSQL's own parse with garbled text derived from misreading "from" inside a string
+      // literal as if it introduced a real FROM clause — aborting generation entirely on SQL
+      // PostgreSQL accepts fine. Verified against real Postgres: id = 1 (NOT NULL, as expected
+      // for a SERIAL primary key) — there is no join here at all, real or otherwise.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL)",
+        """
+        WITH upd AS (
+          UPDATE t SET name = 'copied from source' WHERE id = 1 RETURNING id
+        )
+        SELECT id FROM upd
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `a line comment containing FROM between SET and the real FROM clause does not abort generation`() {
+      // The comment must sit BETWEEN "SET ..." and the real "FROM" — a comment before "UPDATE"
+      // is already skipped by the leading-whitespace/comment handling every DML-recognition
+      // check starts with, on both old and new code, so it would not exercise this bug (that
+      // shape doesn't demonstrate anything). This one forces findTopLevelKeyword to scan THROUGH
+      // the comment while searching for the real FROM. Verified against real Postgres (inserting
+      // an "a" row with no matching "b" row): the query returns v = NULL.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id SERIAL NOT NULL, name TEXT);
+        CREATE TABLE a (k INT NOT NULL);
+        CREATE TABLE b (k INT NOT NULL, val TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH upd AS (
+          UPDATE t SET name = 'x' -- copied FROM elsewhere
+          FROM a LEFT JOIN b ON b.k = a.k RETURNING b.val AS v
+        )
+        SELECT v FROM upd
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `a block comment containing FROM between SET and the real FROM clause does not abort generation`() {
+      // Same reasoning as the line-comment variant above. Verified against real Postgres
+      // (inserting an "a" row with no matching "b" row): the query returns v = NULL.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id SERIAL NOT NULL, name TEXT);
+        CREATE TABLE a (k INT NOT NULL);
+        CREATE TABLE b (k INT NOT NULL, val TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH upd AS (
+          UPDATE t SET name = 'x' /* set FROM the caller */
+          FROM a LEFT JOIN b ON b.k = a.k RETURNING b.val AS v
+        )
+        SELECT v FROM upd
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `a string literal containing the word from alongside a real FROM LEFT JOIN is still nullable`() {
+      // Combines the two failure modes: the SET expression's literal contains "from" (which must
+      // not be mistaken for, or hide, anything), and there IS a real FROM with a LEFT JOIN right
+      // after it. Verified against real Postgres (inserting an "a" row with no matching "b"
+      // row): the query returns v = NULL.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id SERIAL NOT NULL, name TEXT);
+        CREATE TABLE a (k INT NOT NULL);
+        CREATE TABLE b (k INT NOT NULL, val TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH upd AS (
+          UPDATE t SET name = 'from a' FROM a LEFT JOIN b ON b.k = a.k RETURNING b.val AS v
+        )
+        SELECT v FROM upd
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `MERGE WHEN NOT MATCHED BY SOURCE RETURNING star has correct column order, names, and nullability`() {
+      assumeTrue(pgVersion.toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
+      // Verified against real Postgres (\gdesc plus executing the query): "RETURNING *" expands
+      // SOURCE-first — sid, sname, tid, tname — regardless of which WHEN clauses are present,
+      // and for a target row with no matching source row the actual returned values are
+      // [NULL, NULL, 1, 'target-row']. convertMergeToSelect must emit "FROM source RIGHT JOIN
+      // target" (source first) to match — a target-first conversion would report the nullability
+      // for the WRONG columns even though the metadata (names/types) could look plausible.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE mt (tid INT PRIMARY KEY, tname TEXT NOT NULL);
+        CREATE TABLE ms (sid INT NOT NULL, sname TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH m AS (
+          MERGE INTO mt
+          USING ms ON mt.tid = ms.sid
+          WHEN NOT MATCHED BY SOURCE THEN DELETE
+          RETURNING *
+        )
+        SELECT * FROM m
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(4)
+      assertThat(query.columns.map { it.name }).containsExactly("sid", "sname", "tid", "tname")
+      assertThat(query.columns[0].notNull).isFalse() // sid — from the null-extended source side
+      assertThat(query.columns[1].notNull).isFalse() // sname — from the null-extended source side
+      assertThat(query.columns[2].notNull).isTrue() // tid — target row always present
+      assertThat(query.columns[3].notNull).isTrue() // tname — target row always present
+    }
+
+    @Test
+    fun `literal text matching the WHEN NOT MATCHED BY SOURCE phrase does not trigger the LEFT JOIN model`() {
+      assumeTrue(pgVersion.toInt() >= 17, "MERGE RETURNING requires PostgreSQL 17+")
+      // hasWhenNotMatchedBySourceClause must not misfire on a SET expression's string literal
+      // that happens to contain the phrase "when not matched by source ". Verified against real
+      // Postgres: with no genuine WHEN NOT MATCHED BY SOURCE clause, ms.sname is never NULL.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE mt (tid INT PRIMARY KEY, tname TEXT NOT NULL);
+        CREATE TABLE ms (sid INT NOT NULL, sname TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH m AS (
+          MERGE INTO mt
+          USING ms ON mt.tid = ms.sid
+          WHEN MATCHED THEN UPDATE SET tname = 'when not matched by source '
+          RETURNING ms.sname
+        )
+        SELECT sname FROM m
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `data-modifying CTE preceded by a sibling CTE containing a closing parenthesis in a literal`() {
+      // End-to-end companion to the SqlUtilsTest paren-in-literal coverage: the FIRST CTE's body
+      // contains a ')' inside a string literal, which (before the lexer fix) corrupted
+      // findMatchingCloseParenthesis's body-boundary detection for that CTE — parseCteClause
+      // then stopped after that ONE (corrupted) definition, treating "upd" as part of the
+      // garbled MAIN QUERY text instead of a second CTE. "upd" has a LEFT JOIN specifically so
+      // this is visible: the garbled-query fallback (buildAllNonNullable, "assume every column
+      // non-null") happens to give the RIGHT answer for a plain INSERT (as in the SqlUtilsTest
+      // e2e companion above), but gives the WRONG answer here, where the true answer is
+      // nullable. Verified against real Postgres (inserting an "a" row with no matching "b"
+      // row): the query returns v = NULL.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id SERIAL NOT NULL, name TEXT);
+        CREATE TABLE a (k INT NOT NULL);
+        CREATE TABLE b (k INT NOT NULL, val TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH note AS (
+          SELECT 'closing )'::TEXT AS msg
+        ),
+        upd AS (
+          UPDATE t SET name = 'x' FROM a LEFT JOIN b ON b.k = a.k RETURNING b.val AS v
+        )
+        SELECT v FROM upd
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `sibling CTE with closing paren in a literal still generates correctly for a plain INSERT`() {
+      // Companion to the LEFT JOIN variant above and to the SqlUtilsTest unit coverage: proves
+      // the fix for a shape with NO join at all, where the pre-fix bug's corruption happened to
+      // be masked by the "assume non-null" fallback rather than causing a visibly wrong answer.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL)",
+        """
+        WITH note AS (
+          SELECT 'closing )'::TEXT AS msg
+        ),
+        ins AS (
+          INSERT INTO t(name) SELECT msg FROM note RETURNING id
+        )
+        SELECT id FROM ins
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `LEFT JOIN RETURNING joined column survives a SET-clause column named valid_from`() {
+      // Regression guard: the "_" in "valid_from" did not count as an identifier character in
+      // findTopLevelKeyword's word-boundary check, so "valid_from" matched the keyword "FROM"
+      // at its own position — before the real "FROM a LEFT JOIN b" clause — corrupting
+      // conversion (which then failed validation) and falling back to the metadata probe/stub,
+      // which is blind to the LEFT JOIN and fabricated NOT NULL. Verified against real Postgres
+      // (inserting an "a" row with no matching "b" row): the query returns bval = NULL.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, valid_from TEXT);
+        CREATE TABLE a (id INT NOT NULL);
+        CREATE TABLE b (id INT NOT NULL, bval TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH u AS (
+          UPDATE t SET valid_from='x' FROM a LEFT JOIN b ON b.id=a.id WHERE t.id=a.id
+          RETURNING t.id, b.bval
+        )
+        SELECT id, bval FROM u
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `SET-clause column named returning_note no longer aborts generation`() {
+      // REGRESSION guard vs main: before the word-boundary fix, "returning_note" matched
+      // "RETURNING" as a keyword, making returningIndex point INSIDE the SET clause — earlier
+      // than the join clause start computed from the (correctly found) later FROM — and
+      // buildSelectFromDml's substring(joinClauseStart, returningIndex) threw
+      // StringIndexOutOfBoundsException, aborting generation on SQL PostgreSQL itself accepts
+      // fine. Verified against real Postgres: id = 1 (NOT NULL, as expected for a plain UPDATE
+      // with no outer join at all).
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, returning_note TEXT);
+        CREATE TABLE a (id INT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH u AS (
+          UPDATE t SET returning_note = 'x' FROM a WHERE t.id = a.id RETURNING t.id
+        )
+        SELECT id FROM u
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `stub path forces every column nullable when RETURNING OLD-col accompanies a real LEFT JOIN`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // PostgreSQL 18's RETURNING OLD.col forces this body onto the stub path: the structural
+      // conversion builds a plain SELECT where "OLD" is not a valid range variable, so it fails
+      // to prepare and validatedConversion correctly rejects it. Before the stub-path safety
+      // net, the metadata probe reported the UNRELATED sibling column b.bval as NOT NULL (blind
+      // to the real LEFT JOIN elsewhere in the same body) even though oldname's own OLD-based
+      // imprecision was already an accepted limitation. Verified against real Postgres (inserting
+      // an "a" row with no matching "b" row): oldname = 'orig' (the target row always exists for
+      // a plain UPDATE, so OLD.name is never actually null here), bval = NULL. The safety net
+      // deliberately over-approximates — marking every stub column nullable once any outer join
+      // is detected in the body, not just the ones actually reached through it — so oldname is
+      // ALSO reported nullable here even though its true answer is NOT NULL: safe-direction
+      // imprecision, not a regression, and a documented tradeoff (see PgCatalogLoader's
+      // buildSelectStub and tryPrepareStub KDoc).
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL);
+        CREATE TABLE a (id INT NOT NULL);
+        CREATE TABLE b (id INT NOT NULL, bval TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH u AS (
+          UPDATE t SET name = 'x' FROM a LEFT JOIN b ON b.id = a.id WHERE t.id = a.id
+          RETURNING OLD.name AS oldname, b.bval
+        )
+        SELECT oldname, bval FROM u
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `MERGE detects WHEN NOT MATCHED BY SOURCE despite a comment abutting NOT and MATCHED`() {
+      assumeTrue(pgVersion.toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
+      // skipOptionalKeyword previously required LITERAL whitespace immediately after each
+      // keyword, so a comment directly abutting NOT and MATCHED with no surrounding whitespace
+      // broke clause detection entirely, choosing a plain JOIN and fabricating NOT NULL for the
+      // source column. Verified against real Postgres: id = 1 (NOT NULL, target row), sval =
+      // NULL (nullable, no matching source row).
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE tgt (id INT PRIMARY KEY, name TEXT NOT NULL);
+        CREATE TABLE src (id INT NOT NULL, sval TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH m AS (
+          MERGE INTO tgt
+          USING src ON tgt.id = src.id
+          WHEN NOT/*c*/MATCHED BY SOURCE THEN DELETE
+          RETURNING tgt.id, src.sval
+        )
+        SELECT id, sval FROM m
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `INSERT with a LEFT JOIN in its own SELECT source reports NOT NULL, not fabricated nullable`() {
+      // REGRESSION guard: the stub-path safety net previously fired for ANY body with a
+      // detectable outer join, INSERT included — but an INSERT's RETURNING sees only the row
+      // just inserted, and nothing in its own SELECT source (however joined) can null-extend
+      // it. Verified against real Postgres: INSERT INTO b(id, bval) SELECT a.id, 'v' FROM a
+      // LEFT JOIN b2 ON b2.id = a.id RETURNING id, bval returns id=1, bval='v' — both non-null —
+      // despite the LEFT JOIN in its source. See the companion test below for the UPDATE shape,
+      // where the net must still fire.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE a (id INT NOT NULL);
+        CREATE TABLE b (id INT NOT NULL, bval TEXT NOT NULL);
+        CREATE TABLE b2 (id INT NOT NULL, bval TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH u AS (
+          INSERT INTO b (id, bval) SELECT a.id, 'v' FROM a LEFT JOIN b2 ON b2.id = a.id
+          RETURNING id, bval
+        )
+        SELECT id, bval FROM u
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `UPDATE with a LEFT JOIN still reports nullable — the safety net must keep working`() {
+      // Companion to the INSERT test above: confirms excluding INSERT from the safety net did
+      // NOT also (over-broadly) exclude UPDATE, which genuinely needs it. Verified against real
+      // Postgres (inserting an "a" row with no matching "b" row): the query returns bval = NULL.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, name TEXT);
+        CREATE TABLE a (id INT NOT NULL);
+        CREATE TABLE b (id INT NOT NULL, bval TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH u AS (
+          UPDATE t SET name = 'x' FROM a LEFT JOIN b ON b.id = a.id WHERE t.id = a.id
+          RETURNING t.id, b.bval
+        )
+        SELECT id, bval FROM u
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `LEFT JOIN RETURNING joined column survives a SET-clause column named with two dollar signs`() {
+      // Regression guard: the "$" between "b" and "c" in "a$b$c" was misread as opening a
+      // "$b$"-tagged dollar-quote, swallowing the rest of the statement — including the real
+      // "FROM a LEFT JOIN b" — as unterminated string content. Conversion then failed (or
+      // produced garbage), falling back to the metadata probe/stub, which is blind to the LEFT
+      // JOIN. Verified against real Postgres (inserting an "a" row with no matching "b" row):
+      // the query returns bval = NULL.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, a${'$'}b${'$'}c TEXT);
+        CREATE TABLE a (id INT NOT NULL);
+        CREATE TABLE b (id INT NOT NULL, bval TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH u AS (
+          UPDATE t SET a${'$'}b${'$'}c = 'x' FROM a LEFT JOIN b ON b.id = a.id WHERE t.id = a.id
+          RETURNING t.id, b.bval
+        )
+        SELECT id, bval FROM u
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `MERGE with a LEFT JOIN nested in its USING subquery reports the joined column nullable`() {
+      assumeTrue(pgVersion.toInt() >= 17, "merge_action() requires PostgreSQL 17+")
+      // Regression guard: hasOuterJoin previously scanned only paren depth 0, so a LEFT JOIN
+      // nested inside the USING subquery went undetected — merge_action() in RETURNING already
+      // forces this body onto the stub path (it isn't valid outside MERGE's own RETURNING, so
+      // conversion to a plain SELECT fails to prepare and is rejected), and the stub then
+      // fabricated NOT NULL for the joined column. Verified against real Postgres (sx has no row
+      // matching src): act = 'UPDATE', id = 1, xval = NULL. The safety net's over-approximation
+      // also demotes "id" (the target's PK, always present for a MATCHED row) to nullable here —
+      // an accepted, documented tradeoff, since the stub cannot isolate which columns are
+      // actually reached through the nested join (see buildSelectStub's KDoc).
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
+        CREATE TABLE src (sid INT NOT NULL);
+        CREATE TABLE sx (sid INT NOT NULL, xval TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH m AS (
+          MERGE INTO tgt
+          USING (SELECT src.sid, sx.xval FROM src LEFT JOIN sx ON sx.sid = src.sid) s ON s.sid = tgt.id
+          WHEN MATCHED THEN UPDATE SET tval = 'z'
+          RETURNING merge_action() AS act, tgt.id, s.xval
+        )
+        SELECT act, id, xval FROM m
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[2].notNull).isFalse()
+    }
+
+    @Test
+    fun `DELETE RETURNING OLD-col alongside an unrelated column no longer drags it into nullable`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // FIX 1 regression guard: at e4679ff, forceAllNullable applied to the WHOLE stub once ANY
+      // RETURNING item referenced OLD/NEW — so "id" (never touched by OLD/NEW at all) was
+      // fabricated nullable purely because it shared a RETURNING list with "oldname". Verified
+      // against real Postgres: DELETE FROM t WHERE id = 1 RETURNING OLD.name, t.id returns
+      // oldname = 'orig' and id = 1 — BOTH genuinely NOT NULL for this exact row, but "id" is the
+      // one this fix must stop fabricating nullable for; "oldname" itself is still forced
+      // nullable (over-approximating in the safe direction, unchanged) since knowing OLD is
+      // genuinely never-null for a DELETE specifically would require statement-kind-aware logic
+      // this fix does not add — see oldOrNewReturningColumns's KDoc.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
+        """
+        WITH d AS (
+          DELETE FROM t WHERE id = 1 RETURNING OLD.name AS oldname, t.id
+        )
+        SELECT oldname, id FROM d
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `UPDATE RETURNING OLD-col alongside the target's own column stays NOT NULL for the target column`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // Same regression as above, UPDATE form. Verified against real Postgres: UPDATE t SET name
+      // = 'x' WHERE id = 1 RETURNING OLD.name AS oldname, t.id returns oldname = 'orig', id = 1 —
+      // both genuinely NOT NULL (an UPDATE's target row always exists), but only "id" (untouched
+      // by OLD/NEW) is asserted NOT NULL here; "oldname" is still forced nullable by design.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
+        """
+        WITH u AS (
+          UPDATE t SET name = 'x' WHERE id = 1 RETURNING OLD.name AS oldname, t.id
+        )
+        SELECT oldname, id FROM u
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `INSERT ON CONFLICT RETURNING OLD-col alongside an unrelated column stays NOT NULL for it`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // Same regression, INSERT ON CONFLICT form. Verified against real Postgres: INSERT INTO t
+      // (id, bval) VALUES (1, 'new') ON CONFLICT (id) DO UPDATE SET bval = 'updated' RETURNING
+      // OLD.bval, t.id returns id = 1 (NOT NULL — the conflicting row's id, always present),
+      // bval potentially NULL (a fresh insert has no OLD row) — asserting only on "id" here.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, bval TEXT)",
+        """
+        WITH u AS (
+          INSERT INTO t (id, bval) VALUES (1, 'new')
+          ON CONFLICT (id) DO UPDATE SET bval = 'updated'
+          RETURNING OLD.bval AS oldbval, t.id
+        )
+        SELECT oldbval, id FROM u
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `DELETE USING RETURNING OLD-col alongside the target's own column stays NOT NULL for it`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // Same regression, DELETE ... USING form. Verified against real Postgres: DELETE FROM t
+      // USING a WHERE t.id = a.id RETURNING OLD.name AS oldname, t.id returns oldname = 'orig',
+      // id = 1 — both genuinely NOT NULL — asserting only on "id" here (untouched by OLD/NEW).
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL);
+        CREATE TABLE a (id INT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH d AS (
+          DELETE FROM t USING a WHERE t.id = a.id RETURNING OLD.name AS oldname, t.id
+        )
+        SELECT oldname, id FROM d
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `RETURNING star alongside an OLD reference falls back to forcing every column nullable`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // NOT independently demonstrative of FIX 1: this shape already passed at e4679ff, because
+      // the OLD-only whole-body trigger already forced every column nullable there too — the star
+      // exception changes nothing observable for THIS test. What it DOES confirm is that FIX 1's
+      // star-exception rule (fall back to forcing every column, rather than attempting a
+      // per-column split that would be wrong for a star, since a star's expansion width is
+      // unknown to oldOrNewReturningColumns without asking PostgreSQL) behaves as designed,
+      // guarding against a future change that tried to split a star item and got it wrong.
+      // Verified against real Postgres: DELETE FROM t WHERE id = 1 RETURNING OLD.name, t.*
+      // returns oldname = 'orig', id = 1, name = 'orig' — all genuinely NOT NULL — but the safety
+      // net over-approximates all three to nullable here, an accepted tradeoff (see
+      // PgCatalogLoader's residual imprecision notes), not a claim of exactness.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
+        """
+        WITH d AS (
+          DELETE FROM t WHERE id = 1 RETURNING OLD.name AS oldname, t.*
+        )
+        SELECT oldname, id, name FROM d
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isFalse()
+    }
+
+    @Test
+    fun `RETURNING WITH declared alias for OLD-NEW feeds the same per-column forcing`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // FIX 2 end-to-end: PostgreSQL 18's RETURNING WITH (OLD AS o, NEW AS n) prologue declares
+      // custom names for the pseudo-relations; oldOrNewReturningColumns must recognize "o"/"n" as
+      // OLD/NEW references feeding the same per-column decision as the unqualified form, leaving
+      // "id" (untouched by either alias) alone. Verified against real Postgres: UPDATE t SET name
+      // = 'x' WHERE id = 1 RETURNING WITH (OLD AS o, NEW AS n) o.name AS oldname, n.name AS
+      // newname, t.id returns oldname = 'orig', newname = 'x', id = 1 — all genuinely NOT NULL
+      // for an UPDATE (target row always exists both before and after) — asserting only on "id".
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
+        """
+        WITH u AS (
+          UPDATE t SET name = 'x' WHERE id = 1
+          RETURNING WITH (OLD AS o, NEW AS n) o.name AS oldname, n.name AS newname, t.id
+        )
+        SELECT oldname, newname, id FROM u
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `MERGE fed by a sibling CTE with an internal LEFT JOIN forces the joined column nullable`() {
+      assumeTrue(pgVersion.toInt() >= 17, "merge_action() requires PostgreSQL 17+")
+      // FIX 3: "pre" (a sibling CTE, not part of "m"'s own body text) contains a LEFT JOIN whose
+      // null-extension is entirely invisible to any scan of "m"'s own text — "m" itself has no
+      // join at all. merge_action() in RETURNING forces this body onto the stub path (not valid
+      // outside MERGE's own RETURNING, so the structural conversion fails to prepare and is
+      // rejected); before this fix, the stub's base-table attnotnull fabricated "bval" as NOT
+      // NULL despite the real LEFT JOIN living in "pre". Verified against real Postgres (an "a"
+      // row with no matching "b" row): act = 'UPDATE', bval = NULL, id = 1 (the target's own PK,
+      // always present for a MATCHED row — also demoted to nullable here, an accepted tradeoff,
+      // same as the existing nested-USING-subquery LEFT JOIN test above).
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
+        CREATE TABLE a (id INT NOT NULL);
+        CREATE TABLE b (id INT NOT NULL, bval TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH pre AS (
+          SELECT a.id, b.bval FROM a LEFT JOIN b ON b.id = a.id
+        ),
+        m AS (
+          MERGE INTO tgt USING pre ON pre.id = tgt.id
+          WHEN MATCHED THEN UPDATE SET tval = 'z'
+          RETURNING merge_action() AS act, pre.bval, tgt.id
+        )
+        SELECT act, bval, id FROM m
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `forward-referencing MERGE under WITH RECURSIVE fed by a later sibling with a LEFT JOIN is nullable`() {
+      assumeTrue(pgVersion.toInt() >= 17, "merge_action() requires PostgreSQL 17+")
+      // FIX 3 / genuine NEW-harm regression: "m" (declared FIRST) forward-references "pre"
+      // (declared AFTER it) under WITH RECURSIVE, which makes every sibling name visible to every
+      // other body regardless of declaration order. At e4679ff, this shape silently typed "bval"
+      // NOT NULL — the referencesAnyName sibling check (and its only trigger point) did not exist
+      // yet, so the stub path had nothing to force it nullable with, despite "pre"'s own LEFT
+      // JOIN null-extending it exactly as in the plain-WITH sibling test above. Verified against
+      // real Postgres (an "a" row with no matching "b" row): act = 'UPDATE', bval = NULL, id = 1.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
+        CREATE TABLE a (id INT NOT NULL);
+        CREATE TABLE b (id INT NOT NULL, bval TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH RECURSIVE
+          m AS (
+            MERGE INTO tgt USING pre ON pre.id = tgt.id
+            WHEN MATCHED THEN UPDATE SET tval = 'z'
+            RETURNING merge_action() AS act, pre.bval, tgt.id
+          ),
+          pre AS (
+            SELECT a.id, b.bval FROM a LEFT JOIN b ON b.id = a.id
+          )
+        SELECT act, bval, id FROM m
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `DELETE RETURNING OLD and NEW both report nullable — NEW is always null for a deleted row`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // PostgreSQL 18's RETURNING OLD/NEW: for a DELETE, OLD is the deleted row (always present)
+      // and NEW does not exist (always NULL). Neither the join-preserving conversion (OLD/NEW
+      // are not valid range variables outside RETURNING, so the converted SELECT fails to
+      // prepare) nor plain metadata (which reflects base-table attnotnull, oblivious to OLD/NEW's
+      // conditional existence) can see this — the safety net now forces both nullable whenever a
+      // body's RETURNING references OLD./NEW., regardless of join structure. Verified against
+      // real Postgres: OLD.name = 'orig', NEW.name = NULL.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
+        """
+        WITH d AS (
+          DELETE FROM t WHERE id = 1 RETURNING OLD.name, NEW.name
+        )
+        SELECT * FROM d
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `INSERT ON CONFLICT RETURNING OLD-col is nullable even though INSERT skips the join-based net`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // NOT independently demonstrative of Fix 4: checked directly against the driver
+      // (PreparedStatement.getMetaData()), PostgreSQL's OWN metadata already reports
+      // OLD.bval as nullable for this exact shape, with no forceAllNullable involved — so this
+      // body would pass even without referencesOldOrNew. What this DOES confirm (per the
+      // coordinator's request) is that the two forceAllNullable triggers are independent: this
+      // body IS an INSERT (per isInsertBody, excluded from the join-based trigger) with no join
+      // at all, and still correctly ends up nullable — proving isInsertBody's exclusion doesn't
+      // also (incorrectly) suppress the OLD/NEW trigger. The DELETE test below, where raw
+      // PostgreSQL metadata IS wrong without the fix, is the demonstrative case for Fix 4.
+      // Ground truth for OLD.bval's real nullability: with an existing row (a genuine conflict),
+      // OLD.bval = 'orig'; with no conflict (a fresh insert), OLD.bval = NULL — so across
+      // possible executions the column is genuinely nullable, not merely over-approximated.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, bval TEXT)",
+        """
+        WITH u AS (
+          INSERT INTO t (id, bval) VALUES (1, 'new')
+          ON CONFLICT (id) DO UPDATE SET bval = 'updated'
+          RETURNING OLD.bval
+        )
+        SELECT bval FROM u
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
     fun `data-modifying CTE without RETURNING, unrelated outer SELECT`() {
       val query = analyzeWithSchema(
         """
@@ -2059,6 +3245,212 @@ class QueryAnalysisTest {
       )
       assertThat(query.columns[0].notNull).isTrue()
       assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `top-level MERGE RETURNING merge_action() does not abort generation`() {
+      assumeTrue(pgVersion.toInt() >= 17, "merge_action() requires PostgreSQL 17+")
+      // FIX 1 [P0]: convertDmlToSelect splices merge_action() into a plain SELECT verbatim, where
+      // it is not valid PostgreSQL (merge_action() only works inside MERGE's own RETURNING) — so
+      // the converted SELECT fails to prepare. At d1153f3, Phase 2 (the TOP-LEVEL, non-CTE
+      // conversion path) had no validation gate at all: the bad SELECT reached CREATE VIEW, and
+      // the resulting SQLException was thrown from INSIDE queryColumnNullability's own catch
+      // block, escaping uncaught and aborting the whole build on SQL PostgreSQL itself accepts
+      // fine. Verified against real Postgres (a matched row, no WHEN NOT MATCHED branch — every
+      // returned row genuinely has a target AND source row present): act = 'UPDATE', aval = 'a1',
+      // id = 1 — all three genuinely NOT NULL.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
+        CREATE TABLE a (id INT NOT NULL, aval TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        MERGE INTO tgt USING a ON a.id = tgt.id
+        WHEN MATCHED THEN UPDATE SET tval = 'z'
+        RETURNING merge_action() AS act, a.aval, tgt.id
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `top-level MERGE RETURNING merge_action-comma-star does not abort generation`() {
+      assumeTrue(pgVersion.toInt() >= 17, "merge_action() requires PostgreSQL 17+")
+      // Same FIX 1 crash, star-list variant. Verified against real Postgres (same matched-row
+      // shape as above): merge_action = 'UPDATE', a.id = 1, a.aval = 'a1', tgt.id = 1, tgt.tval =
+      // 'z' — all five genuinely NOT NULL.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
+        CREATE TABLE a (id INT NOT NULL, aval TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        MERGE INTO tgt USING a ON a.id = tgt.id
+        WHEN MATCHED THEN UPDATE SET tval = 'z'
+        RETURNING merge_action(), *
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(5)
+      for (column in query.columns) {
+        assertThat(column.notNull).isTrue()
+      }
+    }
+
+    @Test
+    fun `top-level MERGE RETURNING OLD-col does not abort generation`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // Same FIX 1 crash, OLD-reference variant (also not valid outside RETURNING, same failure
+      // mode as merge_action()). Verified against real Postgres (matched-row-only MERGE, so every
+      // returned row's OLD is the pre-existing target row, always present): OLD.tval = 'x'.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
+        CREATE TABLE a (id INT NOT NULL, aval TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        MERGE INTO tgt USING a ON a.id = tgt.id
+        WHEN MATCHED THEN UPDATE SET tval = 'z'
+        RETURNING OLD.tval
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+  }
+
+  /**
+   * Regression guard belonging to the same fix as [DmlReturning]'s three `merge_action()`/`OLD`
+   * abort guards, but exercising the STUB-path fail-safe specifically (see
+   * [oldOrNewReturningColumns]'s and [PgCatalogLoader.buildSelectStub]'s KDoc): that mechanism
+   * only runs for a data-modifying CTE body, not bare top-level DML, so this needs the `WITH`
+   * wrapper the other three tests intentionally omit.
+   */
+  @Nested
+  inner class OldOrNewStarFailSafe {
+
+    @Test
+    fun `parenthesized star-plus-OLD in a CTE body forces every column, not just the wrong one`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // FIX 2: "(tgt.*)" is a parenthesized star — isStarItem's regex previously only recognized
+      // a bare "*"/"tbl.*", so this shape's real 2-column expansion (id, tval) was miscounted as
+      // a single RETURNING item, shifting "oldv" (the genuinely OLD-dependent column) off its
+      // real index and forcing the WRONG column (tval) nullable instead of the real OLD-dependent
+      // column. isStarItem now recognizes the parenthesized form, so oldOrNewReturningColumns
+      // reports the mapping as KNOWN unreliable (forcedColumns = null) — the caller falls back to
+      // forcing EVERY column nullable, same accepted over-approximation as the star-plus-OLD test
+      // elsewhere in this file, not an attempt at precisely isolating "oldv" alone. Verified
+      // against real Postgres (a fresh insert via ON CONFLICT — no prior row): id = 99, tval =
+      // 'x' (both genuinely NOT NULL — the just-inserted row's own columns), oldv = NULL
+      // (genuinely nullable) — but the safety net over-approximates all three to nullable here.
+      val query = analyzeWithSchema(
+        "CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT)",
+        """
+        WITH u AS (
+          INSERT INTO tgt VALUES (99, 'x') ON CONFLICT (id) DO UPDATE SET tval = 'y'
+          RETURNING (tgt.*), OLD.tval AS oldv
+        )
+        SELECT * FROM u
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isFalse()
+    }
+
+    @Test
+    fun `star item unrecognized by isStarItem still fails safe via the real-column-count cross-check`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // "tgt . *" (whitespace around the dot) is valid PostgreSQL syntax but NOT recognized by
+      // isStarItem's text heuristic (which only matches a star immediately after the dot) — this
+      // proves the item-count-vs-real-column-count cross-check in PgCatalogLoader is an
+      // INDEPENDENT fail-safe, not merely a restatement of isStarItem's own conclusion: even
+      // though oldOrNewReturningColumns's forcedColumns comes back non-null (NOT recognized as
+      // ambiguous), the real probe's column count (3) doesn't match the assumed item count (2),
+      // so every column is still forced nullable. Verified against real Postgres (a fresh insert
+      // via ON CONFLICT — no prior row, so OLD does not exist): id = 99, tval = 'y' (both
+      // genuinely NOT NULL), oldv = NULL (genuinely nullable).
+      val query = analyzeWithSchema(
+        "CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT)",
+        """
+        WITH u AS (
+          INSERT INTO tgt VALUES (99, 'x') ON CONFLICT (id) DO UPDATE SET tval = 'y'
+          RETURNING tgt . *, OLD.tval AS oldv
+        )
+        SELECT * FROM u
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isFalse()
+    }
+
+    @Test
+    fun `an untracked bracket can no longer cancel out a star's split error and defeat the cross-check`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // FIX 1: splitAtTopLevel previously did not track "[...]", so "ARRAY[1, 2]"'s internal comma
+      // split it into two items — which, in THIS exact list, numerically canceled out the "tgt . *"
+      // star's own split error: 4 real columns (id, tval, oldv, arr), and a broken split
+      // ["tgt . *", "OLD.tval AS oldv", "ARRAY[1", "2] AS arr"] that ALSO produced 4 items,
+      // defeating oldOrNewReturningColumns's real-column-count cross-check entirely and forcing
+      // the WRONG column (the second half of "tgt.*"'s expansion, i.e. tval) instead of "oldv".
+      // Verified against real Postgres (a fresh insert via ON CONFLICT — no prior row): id = 99,
+      // tval = 'x', arr = {1,2} (all genuinely NOT NULL), oldv = NULL (genuinely nullable) — but
+      // with the star's own mapping still unreliable (real column count 4 vs. the CORRECTLY split
+      // item count 3), the safety net over-approximates all four to nullable, same accepted
+      // tradeoff as the other star-plus-OLD tests in this file.
+      val query = analyzeWithSchema(
+        "CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT)",
+        """
+        WITH u AS (
+          INSERT INTO tgt VALUES (99, 'x') ON CONFLICT (id) DO UPDATE SET tval = 'y'
+          RETURNING tgt . *, OLD.tval AS oldv, ARRAY[1, 2] AS arr
+        )
+        SELECT * FROM u
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(4)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isFalse()
+      assertThat(query.columns[3].notNull).isFalse()
+    }
+
+    @Test
+    fun `an untracked bracket alone, with no star at all, no longer corrupts the item count`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // NOT independently demonstrative of FIX 1: confirmed (via the established git-stash
+      // before/after technique) that this exact shape ALREADY passed at 94b5a2d — the untracked
+      // "[...]" corrupted the split into 3 items ("ARRAY[1", "2] AS arr", "OLD.tval AS oldv")
+      // against 2 real columns, and that MISMATCH (3 != 2) was already caught by the existing
+      // real-column-count cross-check, which forced every column nullable — coincidentally
+      // correct for "oldv" (genuinely nullable) even before this fix. What this DOES confirm is
+      // that FIX 1 doesn't regress this shape: after tracking "[...]", the split is the CORRECT 2
+      // items, oldOrNewReturningColumns identifies "oldv" (not "arr") as the OLD-referencing item
+      // via precise per-column mapping rather than the coarser "force everything" fallback — a
+      // structural improvement even though it happens to produce the same observable nullability
+      // here. It does NOT prove "arr" keeps its true NOT NULL status either way: the stub path's
+      // own metadata probe reports a computed `ARRAY[]` expression's nullability as
+      // unknown/nullable regardless of forceNullableColumn, a separate, pre-existing imprecision
+      // of the metadata-probe stub itself, not of this fix. Verified against real Postgres (a
+      // fresh insert via ON CONFLICT): arr = {1,2} (genuinely NOT NULL), oldv = NULL (genuinely
+      // nullable — no prior row).
+      val query = analyzeWithSchema(
+        "CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT)",
+        """
+        WITH u AS (
+          INSERT INTO tgt VALUES (99, 'x') ON CONFLICT (id) DO UPDATE SET tval = 'y'
+          RETURNING ARRAY[1, 2] AS arr, OLD.tval AS oldv
+        )
+        SELECT * FROM u
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[1].notNull).isFalse()
     }
   }
 
