@@ -1685,6 +1685,217 @@ class QueryAnalysisTest {
       assertThat(query.columns[0].notNull).isTrue()
       assertThat(query.columns[1].notNull).isFalse()
     }
+
+    @Test
+    fun `chained data-modifying CTEs referencing earlier CTE with trailing no-RETURNING CTE`() {
+      // Reproduces #202: a later data-modifying CTE ("inserted") references an earlier CTE
+      // ("input"), and a trailing CTE ("logged") has no RETURNING clause at all.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL);
+        CREATE TABLE t2 (id SERIAL NOT NULL, name TEXT NOT NULL);
+        CREATE TABLE log_table (id SERIAL NOT NULL, message TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH input AS (
+          SELECT id, name FROM t WHERE id = -1
+        ),
+        inserted AS (
+          INSERT INTO t2(name) SELECT name FROM input RETURNING *
+        ),
+        logged AS (
+          INSERT INTO log_table(message) SELECT 'logged' FROM inserted ON CONFLICT DO NOTHING
+        )
+        SELECT * FROM inserted
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `data-modifying CTE without RETURNING, unrelated outer SELECT`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL);
+        CREATE TABLE u (id INT NOT NULL, label TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH inserted AS (
+          INSERT INTO t(name) VALUES ('test') ON CONFLICT DO NOTHING
+        )
+        SELECT id, label FROM u
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `chained data-modifying CTE followed by SELECT CTE with LEFT JOIN referencing it`() {
+      // Regression guard: a non-DML CTE body must be kept verbatim (not stubbed) when the
+      // query is transformed for view creation, because a stub built from base-table
+      // `attnotnull` cannot reproduce nullability induced by a LEFT JOIN inside the CTE body.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL);
+        CREATE TABLE u (id INT NOT NULL, label TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH ins AS (
+          INSERT INTO t(name) VALUES ('x') RETURNING id
+        ),
+        j AS (
+          SELECT ins.id AS iid, u.label FROM ins LEFT JOIN u ON u.id = ins.id
+        )
+        SELECT iid, label FROM j
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `data-modifying CTE alongside unrelated SELECT CTE with LEFT JOIN`() {
+      // Same regression guard as above, without chaining: the SELECT CTE with the LEFT JOIN
+      // does not reference the data-modifying CTE at all, but the presence of DML anywhere
+      // in the query still triggers the view-creation transform for the whole statement.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL);
+        CREATE TABLE d (id INT NOT NULL);
+        CREATE TABLE u (id INT NOT NULL, label TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH ins AS (
+          INSERT INTO t(name) VALUES ('x') RETURNING id
+        ),
+        j AS (
+          SELECT d.id AS did, u.label FROM d LEFT JOIN u ON u.id = d.id
+        )
+        SELECT did, label FROM j
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `parenthesized SELECT CTE body with LEFT JOIN referencing chained DML CTE`() {
+      // Regression guard: a CTE body may itself be parenthesized (e.g. `AS ((SELECT ...))`).
+      // The leading-keyword check must skip past the extra `(` rather than misclassifying
+      // this SELECT body as data-modifying and stubbing away its LEFT JOIN.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL);
+        CREATE TABLE u (id INT NOT NULL, label TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH ins AS (
+          INSERT INTO t(name) VALUES ('x') RETURNING id
+        ),
+        j AS (
+          (SELECT ins.id AS iid, u.label FROM ins LEFT JOIN u ON u.id = ins.id)
+        )
+        SELECT iid, label FROM j
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `parenthesized SELECT CTE body with leading block comment before the parenthesis`() {
+      // Same regression guard as above, with a block comment between "AS (" and the extra "(".
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL);
+        CREATE TABLE u (id INT NOT NULL, label TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH ins AS (
+          INSERT INTO t(name) VALUES ('x') RETURNING id
+        ),
+        j AS (/* c */ (SELECT ins.id AS iid, u.label FROM ins LEFT JOIN u ON u.id = ins.id))
+        SELECT iid, label FROM j
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `parenthesized UNION ALL CTE body remains non-null when both branches are non-null`() {
+      // Regression guard: a parenthesized UNION ALL body must also be kept verbatim (not
+      // stubbed as data-modifying), so its true non-null result is preserved.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL);
+        CREATE TABLE u (id INT NOT NULL, label TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH ins AS (
+          INSERT INTO t(name) VALUES ('x') RETURNING id
+        ),
+        j AS (
+          (SELECT ins.id AS iid FROM ins) UNION ALL (SELECT id FROM u)
+        )
+        SELECT iid FROM j
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `SELECT CTE body with nested block comment before it is kept verbatim`() {
+      // Regression guard: Postgres block comments nest (`/* a /* b */ */` is one comment), so
+      // the leading-keyword check must skip past the whole nested comment rather than stopping
+      // at the first "*/" and misclassifying this SELECT body as data-modifying.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL);
+        CREATE TABLE u (id INT NOT NULL, label TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH ins AS (
+          INSERT INTO t(name) VALUES ('x') RETURNING id
+        ),
+        j AS (/* a /* b */ */ SELECT ins.id AS iid, u.label FROM ins LEFT JOIN u ON u.id = ins.id)
+        SELECT iid, label FROM j
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `WITH RECURSIVE followed by data-modifying CTE referencing it`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id SERIAL NOT NULL, val INT NOT NULL)",
+        """
+        WITH RECURSIVE counter AS (
+          SELECT 1 AS n
+          UNION ALL
+          SELECT n + 1 FROM counter WHERE n < 3
+        ),
+        inserted AS (
+          INSERT INTO t(val) SELECT n FROM counter RETURNING *
+        )
+        SELECT * FROM inserted
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
   }
 
   @Nested

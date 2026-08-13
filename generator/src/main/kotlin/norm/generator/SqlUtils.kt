@@ -421,6 +421,10 @@ private fun skipOptionalKeyword(sql: String, position: Int, keyword: String): In
 /**
  * Advances past whitespace, single-line comments (`--`), and block comments (`/* */`).
  *
+ * Block comments are matched with nesting depth, following PostgreSQL's documented behavior
+ * where `/* ... /* ... */ ... */` is a single comment (the inner `/*` opens a nested comment,
+ * and the outer comment only ends at the `*/` that brings the depth back to zero).
+ *
  * @return The index of the first non-whitespace, non-comment character at or after [start].
  */
 internal fun skipWhitespaceAndComments(sql: String, start: Int): Int {
@@ -433,8 +437,20 @@ internal fun skipWhitespaceAndComments(sql: String, start: Int): Int {
         i = if (eol < 0) sql.length else eol + 1
       }
       sql[i] == '/' && i + 1 < sql.length && sql[i + 1] == '*' -> {
-        val close = sql.indexOf("*/", i + 2)
-        i = if (close < 0) sql.length else close + 2
+        var depth = 1
+        var j = i + 2
+        while (j < sql.length && depth > 0) {
+          if (sql[j] == '/' && j + 1 < sql.length && sql[j + 1] == '*') {
+            depth++
+            j += 2
+          } else if (sql[j] == '*' && j + 1 < sql.length && sql[j + 1] == '/') {
+            depth--
+            j += 2
+          } else {
+            j++
+          }
+        }
+        i = j
       }
       else -> return i
     }

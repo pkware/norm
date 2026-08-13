@@ -945,20 +945,37 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * that preserves the join structure for outer join nullability analysis.
    *
    * Two transformations are applied:
-   * 1. **CTE bodies** are replaced with `SELECT NULL::<type> AS <name> ... WHERE FALSE` stubs.
+   * 1. **Data-modifying CTE bodies** (a leading `INSERT`, `UPDATE`, `DELETE`, `MERGE`, or a
+   *    nested `WITH`) are replaced with `SELECT NULL::<type> AS <name> ... WHERE FALSE` stubs.
    *    Column metadata is obtained from PostgreSQL via `PreparedStatement.getMetaData()` on
-   *    the original CTE body, so PostgreSQL does the parsing.
+   *    the original CTE body, so PostgreSQL does the parsing. A CTE body may itself reference
+   *    an earlier CTE (e.g. `inserted AS (INSERT INTO t SELECT * FROM input RETURNING *)`), so
+   *    each body is prepared together with a prefix consisting of the ORIGINAL SQL text up to
+   *    and including the previous CTE's closing `)`. That prefix is `WITH <preceding ctes>`,
+   *    which PostgreSQL can prepare even when it ends in a data-modifying statement, and it
+   *    preserves `RECURSIVE`, quoted names, and column alias lists exactly as the user wrote
+   *    them. The first CTE has no preceding definitions, so its body is prepared alone.
+   *    **Non-data-modifying CTE bodies** (a leading `SELECT`, `TABLE`, or `VALUES`) are kept
+   *    verbatim: they resolve their own references (including outer joins nested inside the
+   *    body, whose induced nullability a stub built from base-table `attnotnull` cannot
+   *    reproduce), and PostgreSQL only allows data-modifying statements directly under a
+   *    top-level `WITH`, so a `SELECT`/`TABLE`/`VALUES` body cannot hide DML.
    * 2. **Outer DML** (`UPDATE ... FROM`, `DELETE ... USING`) is converted to an equivalent
    *    SELECT that preserves the FROM/USING join structure.
+   *
+   * A data-modifying CTE with no `RETURNING` clause (e.g. `INSERT ... ON CONFLICT DO NOTHING`)
+   * has no result columns. PostgreSQL still rejects such a statement in `CREATE VIEW`, so its
+   * body is replaced with a one-column stub (`SELECT NULL::int4 AS norm_stub WHERE FALSE`)
+   * rather than being dropped entirely. PostgreSQL guarantees nothing outside the CTE can
+   * reference a no-RETURNING data-modifying CTE, so the fabricated column is never read.
    *
    * @return The transformed SQL, or `null` if the DML has no join structure (the caller
    *   should return an empty nullability list).
    */
   private fun transformForViewCreation(sql: String): String? {
-    // Phase 1: Replace CTE bodies with SELECT stubs.
-    // We replace ALL CTE bodies unconditionally — the outer query's varnullingrels depend
-    // on the outer join structure, not CTE internals. The stubs have matching column names
-    // and types so the outer query's references resolve correctly.
+    // Phase 1: Replace data-modifying CTE bodies with SELECT stubs; keep SELECT/TABLE/VALUES
+    // bodies verbatim, since their internal join structure (e.g. a LEFT JOIN inside the CTE)
+    // affects the nullability of the CTE's own output columns and a stub cannot reproduce it.
     val cteClause = parseCteClause(sql)
     val result: String
     val mainQueryStart: Int
@@ -967,10 +984,21 @@ internal class PgCatalogLoader(private val connection: Connection) {
       // CTE bodies are replaced with stubs. This avoids index invalidation from length changes.
       result = buildString {
         var lastEnd = 0
-        for (cte in cteClause.definitions) {
+        for ((index, cte) in cteClause.definitions.withIndex()) {
           append(sql, lastEnd, cte.bodyOpenParenthesis + 1) // Include the opening '('
           val body = sql.substring(cte.bodyOpenParenthesis + 1, cte.bodyCloseParenthesis)
-          append(buildSelectStub(body) ?: body) // Keep original body if stub fails
+          if (isNonDataModifyingCteBody(body)) {
+            append(body) // Keep verbatim — resolves its own references, cannot hide DML.
+          } else {
+            // Use the ORIGINAL sql text (not the partially-stubbed builder content) as the
+            // prefix, so preceding CTEs are prepared exactly as the user wrote them.
+            val prefix = if (index > 0) {
+              sql.substring(0, cteClause.definitions[index - 1].bodyCloseParenthesis + 1)
+            } else {
+              ""
+            }
+            append(buildSelectStub(prefix, body) ?: body) // Keep original body if stub fails
+          }
           lastEnd = cte.bodyCloseParenthesis // Will include the closing ')' next iteration
         }
         append(sql, lastEnd, sql.length)
@@ -1007,6 +1035,28 @@ internal class PgCatalogLoader(private val connection: Connection) {
   }
 
   /**
+   * Checks whether a CTE [body] is non-data-modifying — i.e. it starts with `SELECT`, `TABLE`,
+   * or `VALUES` (skipping leading whitespace, comments, and any leading `(` — a body may be
+   * parenthesized, e.g. `((SELECT ...))` or `(SELECT ...) UNION ALL (SELECT ...)`). Such bodies
+   * must be kept verbatim rather than replaced with a stub, since PostgreSQL only allows
+   * data-modifying statements directly under a top-level `WITH` — never parenthesized — so a
+   * leading `(` can only wrap a `SELECT`, and a `SELECT`/`TABLE`/`VALUES` body cannot itself
+   * contain `INSERT`/`UPDATE`/`DELETE`/`MERGE`. Skipping leading parens therefore cannot
+   * misclassify a data-modifying body as non-data-modifying.
+   *
+   * @param body A SQL statement (the CTE body text, without surrounding parentheses).
+   */
+  private fun isNonDataModifyingCteBody(body: String): Boolean {
+    var position = skipWhitespaceAndComments(body, 0)
+    while (position < body.length && body[position] == '(') {
+      position = skipWhitespaceAndComments(body, position + 1)
+    }
+    return body.regionMatches(position, "SELECT", 0, 6, ignoreCase = true) ||
+      body.regionMatches(position, "TABLE", 0, 5, ignoreCase = true) ||
+      body.regionMatches(position, "VALUES", 0, 6, ignoreCase = true)
+  }
+
+  /**
    * Builds a SELECT stub that produces the same result columns as the given SQL body, using
    * PostgreSQL's own parser to determine column metadata via `PreparedStatement.getMetaData()`.
    *
@@ -1014,14 +1064,30 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * identifies them as non-null. Nullable columns use `NULL::type` so they evaluate as nullable.
    * The `WHERE FALSE` ensures no rows are returned (the stub is for type/nullability metadata only).
    *
+   * When [prefix] is non-empty, `body` is prepared as `prefix + " " + body` rather than alone.
+   * This lets a CTE body that references an earlier CTE (by name) resolve, since [prefix] is the
+   * original `WITH <preceding ctes>` text ending in that earlier CTE's closing `)`.
+   *
+   * If preparing succeeds but the statement has no result columns (a data-modifying CTE with no
+   * `RETURNING`, e.g. `INSERT ... ON CONFLICT DO NOTHING`), a single fabricated column
+   * (`SELECT NULL::int4 AS norm_stub WHERE FALSE` — nullable, since the literal is `NULL`) is
+   * returned instead of `null`. PostgreSQL rejects any reference to a no-RETURNING data-modifying
+   * CTE, so this column is provably unreferenced by the rest of the query — it exists only so
+   * the CTE body is a valid, DML-free `SELECT` that `CREATE VIEW` will accept.
+   *
+   * @param prefix The original SQL text of preceding CTEs (through their closing `)`), or an
+   *   empty string if this is the first CTE in the `WITH` clause.
    * @param body A SQL statement (the CTE body text, without surrounding parentheses).
-   * @return The SELECT stub, or `null` if metadata cannot be obtained.
+   * @return The SELECT stub, or `null` if the statement could not be prepared.
    */
-  private fun buildSelectStub(body: String): String? {
+  private fun buildSelectStub(prefix: String, body: String): String? {
+    val probeSql = if (prefix.isEmpty()) body else "$prefix $body"
     return try {
-      connection.prepareStatement(body).use { preparedStatement ->
-        val metadata = preparedStatement.metaData ?: return null
-        if (metadata.columnCount == 0) return null
+      connection.prepareStatement(probeSql).use { preparedStatement ->
+        val metadata = preparedStatement.metaData
+        if (metadata == null || metadata.columnCount == 0) {
+          return "SELECT NULL::int4 AS norm_stub WHERE FALSE"
+        }
         buildString {
           append("SELECT ")
           for (i in 1..metadata.columnCount) {

@@ -280,6 +280,34 @@ class SqlUtilsTest {
   }
 
   @Nested
+  inner class SkipWhitespaceAndComments {
+
+    @Test
+    fun `lands on first non-whitespace character after a plain block comment`() {
+      val result = skipWhitespaceAndComments("/* a */ SELECT", 0)
+      assertThat(result).isEqualTo("/* a */ ".length)
+    }
+
+    @Test
+    fun `lands on first non-whitespace character after a nested block comment`() {
+      // Postgres block comments nest: the inner "/*" opens a second level, so the comment
+      // only closes at the "*/" that brings the nesting depth back to zero.
+      val sql = "/* a /* b */ */ SELECT"
+      val result = skipWhitespaceAndComments(sql, 0)
+      assertThat(result).isEqualTo("/* a /* b */ */ ".length)
+      assertThat(sql.substring(result)).isEqualTo("SELECT")
+    }
+
+    @Test
+    fun `lands on first non-whitespace character after a line comment`() {
+      val sql = "-- comment\nSELECT"
+      val result = skipWhitespaceAndComments(sql, 0)
+      assertThat(result).isEqualTo("-- comment\n".length)
+      assertThat(sql.substring(result)).isEqualTo("SELECT")
+    }
+  }
+
+  @Nested
   inner class NonNullSentinel {
 
     @Test
