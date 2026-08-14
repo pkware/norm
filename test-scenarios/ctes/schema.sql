@@ -1,9 +1,13 @@
 -- Parent/child tables with a foreign key and a unique constraint, used to reproduce #202:
 -- a chain of data-modifying CTEs where a later CTE references an earlier one, plus a
 -- trailing data-modifying CTE with no RETURNING clause.
+-- description is nullable, used to reproduce #204: a data-modifying CTE's RETURNING alias
+-- must round-trip through a genuinely nullable column, or a pre-fix bug whose fallback
+-- fabricates every column NOT NULL would coincidentally produce the same golden output.
 CREATE TABLE parent (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name TEXT NOT NULL
+  name TEXT NOT NULL,
+  description TEXT
 );
 
 CREATE TABLE child (

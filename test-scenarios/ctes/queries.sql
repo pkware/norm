@@ -42,3 +42,19 @@ new_parent AS (
   INSERT INTO parent (name) VALUES ('placeholder') RETURNING id
 )
 SELECT parent_id, parent_name, child_name FROM parent_and_child;
+
+-- Reproduces #204: a data-modifying CTE ("new_parent") RETURNs a nullable column
+-- ("description") under a quoted, mixed-case alias, referenced by the outer query with the
+-- same quoting. Before the fix, PgCatalogLoader's stub emitted the alias unquoted, letting
+-- PostgreSQL fold it to lowercase and causing the outer reference to fail to resolve
+-- ("column new_parent.parentDescription does not exist") when creating the temporary view
+-- used for nullability analysis. That failure is caught and silently degrades to asserting
+-- every column of "new_parent" NOT NULL — so "parentDescription", genuinely nullable, would
+-- be wrongly reported NOT NULL. description is deliberately used (rather than "name", which
+-- is NOT NULL and would pass either way, masking the bug) so this scenario actually fails
+-- pre-fix instead of coincidentally matching.
+-- name: createParentReturningQuotedAlias :many
+WITH new_parent AS (
+  INSERT INTO parent (name) VALUES (?) RETURNING id AS "parentId", description AS "parentDescription"
+)
+SELECT new_parent."parentId", new_parent."parentDescription" FROM new_parent;
