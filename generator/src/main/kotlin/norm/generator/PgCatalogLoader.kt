@@ -1205,16 +1205,44 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * contain `INSERT`/`UPDATE`/`DELETE`/`MERGE`. Skipping leading parens therefore cannot
    * misclassify a data-modifying body as non-data-modifying.
    *
+   * A body may instead start with its OWN nested `WITH` clause (e.g. `WITH inner_cte AS (SELECT
+   * 1) SELECT ...`). Text-only keyword matching cannot see past that nested clause, so this
+   * strips it (via [stripLeadingNestedWithClause]) and classifies the nested clause's own main
+   * statement instead — looping, since that main statement can itself start with a further
+   * nested `WITH`. This is safe because PostgreSQL only permits a data-modifying statement
+   * directly under a TOP-level `WITH`; a nested `WITH`'s main statement is never itself
+   * data-modifying, so whatever it resolves to (`SELECT`/`TABLE`/`VALUES`, or — for a body like
+   * `WITH helper AS (...) UPDATE ... RETURNING ...` — the `UPDATE`/`DELETE`/`MERGE` itself)
+   * correctly determines the whole body's classification. The loop terminates when stripping
+   * makes no further progress (no leading `WITH` left to strip), at which point a remaining
+   * `SELECT`/`TABLE`/`VALUES` classifies as non-data-modifying and anything else (a
+   * data-modifying statement, or unparseable text) classifies as data-modifying.
+   *
    * @param body A SQL statement (the CTE body text, without surrounding parentheses).
    */
   private fun isNonDataModifyingCteBody(body: String): Boolean {
-    var position = skipWhitespaceAndComments(body, 0)
-    while (position < body.length && body[position] == '(') {
-      position = skipWhitespaceAndComments(body, position + 1)
+    var remainder = body
+    while (true) {
+      var position = skipWhitespaceAndComments(remainder, 0)
+      while (position < remainder.length && remainder[position] == '(') {
+        position = skipWhitespaceAndComments(remainder, position + 1)
+      }
+      if (remainder.regionMatches(position, "SELECT", 0, 6, ignoreCase = true) ||
+        remainder.regionMatches(position, "TABLE", 0, 5, ignoreCase = true) ||
+        remainder.regionMatches(position, "VALUES", 0, 6, ignoreCase = true)
+      ) {
+        return true
+      }
+      if (!remainder.regionMatches(position, "WITH", 0, 4, ignoreCase = true)) {
+        return false
+      }
+      val nestedMainStatement = remainder.substring(position)
+      val stripped = stripLeadingNestedWithClause(nestedMainStatement)
+      if (stripped == nestedMainStatement) {
+        return false
+      }
+      remainder = stripped
     }
-    return body.regionMatches(position, "SELECT", 0, 6, ignoreCase = true) ||
-      body.regionMatches(position, "TABLE", 0, 5, ignoreCase = true) ||
-      body.regionMatches(position, "VALUES", 0, 6, ignoreCase = true)
   }
 
   /**
