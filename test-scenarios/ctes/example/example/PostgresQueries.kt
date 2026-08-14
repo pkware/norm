@@ -129,4 +129,29 @@ public class PostgresQueries(
     parent_name: String,
     child_name: String?,
   ) -> T): Query<T> = listParentsWithOptionalChildAlongsideInsert(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> createParentReturningQuotedAlias(
+    name: String,
+    mapper: (parentId: UUID, parentDescription: String?) -> T,
+    processor: ManyProcessor<T, Return>,
+  ): Return {
+    val sql = """
+        |WITH new_parent AS (
+        |  INSERT INTO parent (name) VALUES (?) RETURNING id AS "parentId", description AS "parentDescription"
+        |)
+        |SELECT new_parent."parentId", new_parent."parentDescription" FROM new_parent
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getObject(1, UUID::class.java),
+        getString(2),
+      )
+    }
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setString(1, name)
+    }
+    return processor.invoke(sql, rowReader, queryBinder)
+  }
+
+  override fun <T : Any> createParentReturningQuotedAlias(name: String, mapper: (parentId: UUID, parentDescription: String?) -> T): Many<T> = createParentReturningQuotedAlias(name, mapper, driver::queryMany)
 }

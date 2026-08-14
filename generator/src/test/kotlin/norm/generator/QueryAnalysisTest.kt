@@ -3183,6 +3183,84 @@ class QueryAnalysisTest {
       assertThat(query.columns[0].notNull).isTrue()
       assertThat(query.columns[1].notNull).isTrue()
     }
+
+    @Test
+    fun `RETURNING item with no usable name is resolved by the outer query`() {
+      // A RETURNING item that is neither a plain column reference nor a simple cast (here,
+      // string concatenation) has no name of its own, so PostgreSQL reports it as the literal
+      // "?column?" (verified directly against real Postgres via psql \gdesc) — not a valid bare
+      // identifier at all. Before the fix, tryPrepareStub emitted it unquoted ("AS ?column?"),
+      // a syntax error in the stub SELECT, which failed CREATE VIEW the same way #204's mixed-
+      // case alias did. Deliberately concatenates the nullable "name" column (rather than a
+      // literal like "RETURNING 1", which is always non-null and would pass either way, masking
+      // the bug the same way "id" did in the test above) so the CREATE-VIEW failure's
+      // buildAllNonNullable fallback is observable: it wrongly asserts NOT NULL here.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id SERIAL NOT NULL, name TEXT)",
+        """
+        WITH ins AS (
+          INSERT INTO t (name) VALUES (NULL) RETURNING name || 'x'
+        )
+        SELECT * FROM ins
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].name).isEqualTo("?column?")
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `quoted mixed-case RETURNING alias in a data-modifying CTE body is resolved by the outer query`() {
+      // Reproduces #204: "ins"'s body is a plain INSERT, so it never reaches
+      // convertDmlCteBodyToSelect (whose join-preserving conversion is limited to
+      // UPDATE/DELETE/MERGE) and stays on the tryPrepareStub path.
+      // ResultSetMetaData.getColumnName reports the RETURNING alias exactly as declared,
+      // "myId", but before the fix tryPrepareStub emitted it unquoted ("AS myId"), which
+      // PostgreSQL folds to lowercase "myid" when building the stub SELECT used for
+      // CREATE VIEW. The outer query's quoted reference to ins."myId" then fails to resolve
+      // against the stub ("column ins.myId does not exist" — verified directly against real
+      // Postgres via psql). Inside queryColumnNullability, that SQLException is caught and
+      // degraded to buildAllNonNullable's fallback, which asserts EVERY column NOT NULL
+      // regardless of truth — so "name" is nullable in the schema (no NOT NULL constraint),
+      // but before the fix this test wrongly reports it NOT NULL. Deliberately uses a nullable
+      // source column (not id, which is NOT NULL and would pass either way, masking the bug)
+      // so the wrong fallback is actually observable as an assertion failure.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id SERIAL NOT NULL, name TEXT)",
+        """
+        WITH ins AS (
+          INSERT INTO t (name) VALUES (NULL) RETURNING name AS "myId"
+        )
+        SELECT ins."myId" FROM ins
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].name).isEqualTo("myId")
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `RETURNING alias with an embedded double quote in a data-modifying CTE body is resolved by the outer query`() {
+      // Same failure mode as the test above, but the alias itself contains a literal double
+      // quote (written "my""Id" in SQL, an escaped quote inside a quoted identifier, so the
+      // real column name is my"Id). tryPrepareStub must double the embedded quote when
+      // re-quoting the alias for the stub SELECT ("AS \"my\"\"Id\""); emitting only a single
+      // doubled quote or none at all would produce invalid SQL or fold/mismatch the name, and
+      // the outer query's reference would fail to resolve the same way as #204 — degrading to
+      // the same wrong-NOT-NULL fallback described above.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id SERIAL NOT NULL, name TEXT)",
+        """
+        WITH ins AS (
+          INSERT INTO t (name) VALUES (NULL) RETURNING name AS "my""Id"
+        )
+        SELECT ins."my""Id" FROM ins
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].name).isEqualTo("my\"Id")
+      assertThat(query.columns[0].notNull).isFalse()
+    }
   }
 
   @Nested

@@ -1688,7 +1688,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
             } else {
               append(nonNullSentinel(typeName))
             }
-            append(" AS ").append(metadata.getColumnName(i))
+            append(" AS ").append(quoteStubColumnAlias(metadata.getColumnName(i)))
           }
           append(" WHERE FALSE")
         }
@@ -1697,6 +1697,29 @@ internal class PgCatalogLoader(private val connection: Connection) {
   } catch (_: SQLException) {
     null
   }
+
+  /**
+   * Double-quotes [name] for use as a stub column alias, doubling any embedded `"`.
+   *
+   * `ResultSetMetaData.getColumnName` reports the `RETURNING` alias exactly as PostgreSQL
+   * resolved it — case-exact, and not necessarily a valid bare identifier at all (e.g.
+   * `?column?` for a nameless item like `RETURNING 1`). Emitting it unquoted would let
+   * PostgreSQL fold any mixed-case name to lowercase, so a quoted, mixed-case original alias
+   * (e.g. `RETURNING id AS "myId"`) would silently become `myid` on the stub built here — and
+   * the outer query's `"myId"`-quoted reference to the CTE would then fail to resolve against
+   * it (`column ins.myId does not exist`) when this stub is used to create the temporary view
+   * [analyzeViaTemporaryView] reads nullability from. That failure never escapes as a build
+   * error: [queryColumnNullability] catches it around its own [analyzeViaTemporaryView] calls
+   * (see its inline "never an abort" note) and silently degrades to [buildAllNonNullable],
+   * which asserts EVERY column of the CTE NOT NULL regardless of truth — so the CTE's real
+   * nullability is lost, and a genuinely nullable `RETURNING` column is wrongly reported NOT
+   * NULL. This stub is throwaway SQL used only to
+   * probe nullability, so quoting unconditionally (unlike
+   * `JdbcAnalyzer.buildIdentifierQuoter`'s conditional quoting, which matters for generated,
+   * user-facing SQL) is always valid and also handles names like `?column?` that aren't valid
+   * bare identifiers to begin with.
+   */
+  private fun quoteStubColumnAlias(name: String): String = "\"" + name.replace("\"", "\"\"") + "\""
 
   /**
    * Returns a list of `false` values matching the result column count of [sql].
