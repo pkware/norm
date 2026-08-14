@@ -829,22 +829,150 @@ internal fun hasOuterJoin(body: String): Boolean {
 }
 
 /**
+ * Checks whether [body] contains a `ROLLUP`, `CUBE`, or `GROUPING SETS` construct, at ANY nesting
+ * depth, followed by `(`, with a `GROUP BY` (the two keywords, skipping whitespace/comments
+ * between them, at any depth) appearing somewhere BEFORE the match — a grouping set can produce a
+ * "supertotal" row where a grouped column is `NULL` by definition, independently of any join or
+ * `WHEN NOT MATCHED BY SOURCE`. Confirmed against real PostgreSQL: `MERGE INTO tgt USING (SELECT
+ * id, count(*) AS c FROM a WHERE id = 1 GROUP BY ROLLUP(id)) s ON tgt.id = COALESCE(s.id, 2) WHEN
+ * MATCHED THEN UPDATE SET tval = 'z' RETURNING merge_action(), s.id AS sid, tgt.id` returns `sid =
+ * NULL` for the `ROLLUP` supertotal row, matched into the target only via the `COALESCE` in the
+ * `ON` condition — no `LEFT`/`RIGHT`/`FULL JOIN` keyword and no `WHEN NOT MATCHED BY SOURCE`
+ * clause appears anywhere in the body for [hasOuterJoin] or [hasWhenNotMatchedBySourceClause] to
+ * find.
+ *
+ * The trailing `(` is required, not optional: `CUBE` is also an ordinary type/function name from
+ * the `cube` extension (verified: `rollup` ships no such function — `ROLLUP` is merely
+ * syntactically callable as `ROLLUP(...)`, not an actual extension function), so a bare-word
+ * match on `CUBE` alone would misfire far more widely than intended. Requiring `(` alone is still
+ * not enough, though — an ordinary `cube(av)` FUNCTION CALL with no `GROUP BY` anywhere in `body`
+ * has nothing to do with grouping sets at all and was confirmed to misfire (fabricating an
+ * unrelated target column nullable) before this check was added — requiring a preceding
+ * `GROUP BY` rules that out. A `GROUP BY`
+ * that DOES precede the match but belongs to a DIFFERENT, unrelated subquery than the `cube(...)`
+ * call is still an accepted false positive in the safe direction, the same tradeoff [hasOuterJoin]
+ * makes for a keyword match that turns out not to affect the columns `RETURNING` actually reads —
+ * this function does not track subquery scoping precisely enough to rule that out.
+ *
+ * `GROUPING SETS` is matched as the exact two-word phrase (skipping whitespace/comments between
+ * them, like [hasWhenNotMatchedBySourceClause] does for its own multi-word phrase) rather than
+ * scanning for `GROUPING` alone, since `GROUPING` is also a standalone aggregate function
+ * (`GROUPING(col)`) unrelated to `GROUPING SETS`.
+ */
+internal fun hasGroupingSetConstruct(body: String): Boolean {
+  for (keyword in listOf("ROLLUP", "CUBE")) {
+    var searchFrom = 0
+    while (true) {
+      val keywordIndex = findKeywordAtAnyDepth(body, keyword, searchFrom)
+      if (keywordIndex < 0) break
+      val position = skipWhitespaceAndComments(body, keywordIndex + keyword.length)
+      if (position < body.length && body[position] == '(' && hasGroupByBefore(body, keywordIndex)) return true
+      searchFrom = keywordIndex + keyword.length
+    }
+  }
+  var searchFrom = 0
+  while (true) {
+    val groupingIndex = findKeywordAtAnyDepth(body, "GROUPING", searchFrom)
+    if (groupingIndex < 0) return false
+    val beforeSets = skipWhitespaceAndComments(body, groupingIndex + "GROUPING".length)
+    val afterSets = skipOptionalKeyword(body, beforeSets, "SETS")
+    if (afterSets != beforeSets &&
+      afterSets < body.length &&
+      body[afterSets] == '(' &&
+      hasGroupByBefore(body, groupingIndex)
+    ) {
+      return true
+    }
+    searchFrom = groupingIndex + "GROUPING".length
+  }
+}
+
+/**
+ * Checks whether a `GROUP BY` phrase (the two keywords, skipping whitespace/comments between
+ * them, at any nesting depth) appears anywhere in [body] before [beforeIndex]. Used by
+ * [hasGroupingSetConstruct] to require a `ROLLUP`/`CUBE`/`GROUPING SETS` match to actually be
+ * preceded by a `GROUP BY`, ruling out an ordinary `cube(...)`/`rollup(...)` function call that
+ * has no grouping-set construct anywhere nearby.
+ */
+private fun hasGroupByBefore(body: String, beforeIndex: Int): Boolean {
+  var searchFrom = 0
+  while (true) {
+    val groupIndex = findKeywordAtAnyDepth(body, "GROUP", searchFrom)
+    if (groupIndex < 0 || groupIndex >= beforeIndex) return false
+    val position = skipWhitespaceAndComments(body, groupIndex + "GROUP".length)
+    val afterBy = skipOptionalKeyword(body, position, "BY")
+    if (afterBy != position) return true
+    searchFrom = groupIndex + "GROUP".length
+  }
+}
+
+/**
+ * The single predicate for "this body's OWN text contains a construct that can null-extend a
+ * value base-table `attnotnull` reports NOT NULL" — an outer join ([hasOuterJoin]), a `MERGE`'s
+ * `WHEN NOT MATCHED BY SOURCE` branch ([hasWhenNotMatchedBySourceClause]), or a grouping-set
+ * construct's supertotal row ([hasGroupingSetConstruct]). Callers apply the `INSERT` exclusion
+ * ([isInsertBody]) themselves — this function does not, since whether that exclusion applies
+ * depends on the caller's own context (e.g. the sibling-danger seed in
+ * `PgCatalogLoader.transformForViewCreation` applies it, but propagation through that same
+ * fixpoint does not).
+ */
+internal fun hasNullExtendingConstruct(body: String): Boolean =
+  hasOuterJoin(body) || hasWhenNotMatchedBySourceClause(body) || hasGroupingSetConstruct(body)
+
+/**
  * Checks whether [body] mentions any of [names] as a standalone identifier, at any nesting
- * depth. Used to detect whether a rejected data-modifying CTE body references a SIBLING CTE by
- * name (see `PgCatalogLoader.transformForViewCreation`'s KDoc on the sibling-CTE stub-path
- * trigger): a sibling's own join structure — e.g. a `LEFT JOIN` inside a CTE the body merely
- * reads FROM — can null-extend a column the body's own text has no join at all to show, so
- * neither [hasOuterJoin] nor [referencesOldOrNew] can catch it; only knowing the other CTE names
- * in scope (from [parseCteClause]) and checking whether the body mentions one of them can.
+ * depth — UNQUOTED (`pre`, `Pre`), or double-quoted (`"pre"`). Used to detect whether a rejected
+ * data-modifying CTE body references a SIBLING CTE by name (see
+ * `PgCatalogLoader.transformForViewCreation`'s KDoc on the sibling-CTE stub-path trigger): a
+ * sibling's own join structure — e.g. a `LEFT JOIN` inside a CTE the body merely reads FROM — can
+ * null-extend a column the body's own text has no join at all to show, so neither [hasOuterJoin]
+ * nor [referencesOldOrNew] can catch it; only knowing the other CTE names in scope (from
+ * [parseCteClause]) and checking whether the body mentions one of them can.
+ *
+ * A quoted reference is compared against [names] case-INSENSITIVELY, even though PostgreSQL
+ * itself is case-sensitive inside double quotes (a quoted `"PRE"` does NOT resolve to a lowercase
+ * CTE named `pre`) — this is a deliberate over-approximation, not a bug: getting this exactly
+ * right would mean tracking each CTE's exact declared quoting, and a false-positive match here
+ * only costs precision (an extra column forced nullable that didn't need to be), never
+ * correctness. No trailing `.` is required after a quoted match — `MERGE INTO tgt USING "pre" ON
+ * ...` (a bare relation reference, no column access) must match just as `"pre".id` does.
+ *
+ * Otherwise, [body] is scanned token by token exactly as [referencesOldOrNew] does: any other
+ * lexical token (a string literal, a dollar-quoted string, or a comment) is skipped opaquely via
+ * [skipLexicalToken] — a name that only appears inside one of those is NOT a real reference — and
+ * an unquoted match is checked with the same case-insensitive word-boundary rule
+ * [findKeywordAtAnyDepth] already used before this rewrite.
  *
  * Over-approximating is the intended tradeoff here, same as [hasOuterJoin]: a body that merely
  * mentions a sibling's name in a context that turns out not to be a null-extending reference
- * (e.g. inside a string literal that happens to survive lexical skipping incorrectly, or a
- * genuinely non-nullable reference) costs precision, not correctness — the caller only uses this
- * to decide whether to force the stub path's columns nullable.
+ * costs precision, not correctness — the caller only uses this to decide whether to force the
+ * stub path's columns nullable.
  */
-internal fun referencesAnyName(body: String, names: Collection<String>): Boolean =
-  names.any { name -> findKeywordAtAnyDepth(body, name) >= 0 }
+internal fun referencesAnyName(body: String, names: Collection<String>): Boolean {
+  var i = 0
+  while (i < body.length) {
+    if (body[i] == '"') {
+      val afterQuote = skipDoubleQuotedIdentifier(body, i)
+      val quotedContent = body.substring(i + 1, (afterQuote - 1).coerceAtLeast(i + 1))
+      if (names.any { name -> name.equals(quotedContent, ignoreCase = true) }) return true
+      i = afterQuote
+      continue
+    }
+    val afterToken = skipLexicalToken(body, i)
+    if (afterToken != i) {
+      i = afterToken
+      continue
+    }
+    val matchedName = names.firstOrNull { name ->
+      body.regionMatches(i, name, 0, name.length, ignoreCase = true) &&
+        (i == 0 || !isIdentifierChar(body[i - 1])) &&
+        (i + name.length >= body.length || !isIdentifierChar(body[i + name.length]))
+    }
+    if (matchedName != null) return true
+    i++
+  }
+  return false
+}
 
 /**
  * Checks whether [text] contains a reference to PostgreSQL 18's `OLD`/`NEW` `RETURNING`
