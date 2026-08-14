@@ -150,9 +150,14 @@ internal data class SelectItem(val expression: String, val columnName: String?, 
 /**
  * Parses the output clause of a SQL statement to extract individual items.
  *
- * Checks for a SELECT clause first, then falls back to a RETURNING clause for DML statements
- * (INSERT, UPDATE, DELETE). This ensures aliased columns in RETURNING clauses are resolved to
- * their original column names, which is needed for column-level type mapping lookups.
+ * Paired POSITIONALLY against `java.sql.ResultSetMetaData` columns by
+ * `JdbcAnalyzer.buildResultColumns`, so the search is restricted to the statement's MAIN query —
+ * after any leading `WITH` clause's CTEs, via [parseCteClause]'s [ParsedCteClause.mainQueryStart]
+ * — and both `SELECT` and `RETURNING` are located with [findTopLevelKeyword] (depth-0, lexically
+ * aware, never `String.indexOf`), so a nested `SELECT` or a keyword-like substring inside a
+ * literal/comment is never mistaken for the real clause. `RETURNING` is only searched for when
+ * the window's own leading keyword is DML (`INSERT`/`UPDATE`/`DELETE`/`MERGE`), since `RETURNING`
+ * is not reserved and is otherwise legal as a plain `SELECT`'s column alias.
  *
  * Handles:
  * - Simple columns: `title` → expression=`title`, columnName=`title`
@@ -161,36 +166,136 @@ internal data class SelectItem(val expression: String, val columnName: String?, 
  * - Computed expressions: `COUNT(*) AS book_count` → expression=`COUNT(*)`, columnName=`null`
  * - Star projections: `*` → expression=`*`, columnName=`null`
  *
- * @return A list of [SelectItem]s in the order they appear, or an empty list if neither a SELECT
- *   nor a RETURNING clause can be parsed.
+ * A star item (`*`/`table.*`, via [isStarItem]) expands to however many columns the starred
+ * relation has, shifting every later item onto the wrong metadata column; an item before a star is
+ * unaffected by that unknown width, so only the first star and everything after it is dropped — a
+ * lone star is left alone, and items at/after a star fall back to metadata unresolved. The star
+ * guard (below) checks each item's alias-stripped expression plus a trailing-token candidate for
+ * an implicit alias, excluding a `::`-prefixed trailing token (a cast, not an alias — see
+ * [stripTrailingWhitespaceSeparatedToken]'s KDoc).
+ *
+ * KNOWN LIMITATIONS (each yields a WRONG `(table, column)` pairing rather than a lost one; 1 and 2
+ * pre-date this fix, 3 is introduced by it. Tracked separately):
+ * 1. Zero-separator implicit alias abutting a star with no whitespace: `u.*whatever`.
+ * 2. A comment abutting both a star and its implicit alias, with no whitespace anywhere.
+ * 3. `RETURNING` used as a column alias inside a DML statement's own source `SELECT` — the alias
+ *    is matched instead of the real trailing `RETURNING` keyword.
+ *
+ * @return Items strictly before the first star, if any; the full list if there is no star or it's
+ *   a single star item; or empty if the output clause can't be found (e.g. a parenthesized main
+ *   query, a `VALUES` list, or a `TABLE` shorthand — none have a depth-0 `SELECT`/`RETURNING`).
+ *   Both consumers degrade safely for a missing item, falling back to
+ *   `ResultSetMetaData.getColumnName` rather than reporting a wrong original name.
  */
 internal fun parseSelectItems(sql: String): List<SelectItem> {
-  val selectIndex = sql.indexOf("SELECT", ignoreCase = true)
+  val mainQueryStart = parseCteClause(sql)?.mainQueryStart ?: 0
+  val window = sql.substring(mainQueryStart)
+
+  // See this function's KDoc for why RETURNING is gated on the main query's own leading keyword.
+  val leadingKeywordStart = skipWhitespaceAndComments(window, 0)
+  val isDmlMainQuery = listOf("INSERT", "UPDATE", "DELETE", "MERGE").any { keyword ->
+    skipOptionalKeyword(window, leadingKeywordStart, keyword) != leadingKeywordStart
+  }
+
+  val returningIndex = if (isDmlMainQuery) findTopLevelKeyword(window, "RETURNING") else -1
+  val selectIndex = findTopLevelKeyword(window, "SELECT")
+
   val afterKeyword: Int
   val hasFromClause: Boolean
-  if (selectIndex >= 0) {
-    afterKeyword = selectIndex + "SELECT".length
-    hasFromClause = true
-  } else {
-    val returningIndex = sql.indexOf("RETURNING", ignoreCase = true)
-    if (returningIndex < 0) return emptyList()
+  if (returningIndex >= 0) {
     afterKeyword = returningIndex + "RETURNING".length
     // RETURNING clauses are terminal — no FROM keyword follows
     hasFromClause = false
-  }
-
-  val fromIndex = if (hasFromClause) findTopLevelKeyword(sql, "FROM", afterKeyword) else -1
-  val rawClause = if (fromIndex >= 0) {
-    sql.substring(afterKeyword, fromIndex)
+  } else if (selectIndex >= 0) {
+    afterKeyword = selectIndex + "SELECT".length
+    hasFromClause = true
   } else {
-    sql.substring(afterKeyword)
+    return emptyList()
   }
 
-  return splitAtTopLevel(rawClause.trim().trimEnd(';'), ',').map { raw ->
+  val fromIndex = if (hasFromClause) findTopLevelKeyword(window, "FROM", afterKeyword) else -1
+  val rawClause = if (fromIndex >= 0) {
+    window.substring(afterKeyword, fromIndex)
+  } else {
+    window.substring(afterKeyword)
+  }
+
+  val items = splitAtTopLevel(rawClause.trim().trimEnd(';'), ',').map { raw ->
     val item = raw.trim()
     val (expression, _) = extractAlias(item)
     parseColumnReference(expression)
   }
+
+  // Each item is checked against its alias-stripped expression, plus that expression with its
+  // trailing whitespace-separated token removed (recovering an implicit alias on a star, e.g.
+  // `t.* whatever`) — see [stripTrailingWhitespaceSeparatedToken]'s KDoc for why a `::`-prefixed
+  // trailing token is excluded there (a cast, not an alias). A third candidate strips comments
+  // before removing the trailing token, since a comment trailing the implicit alias otherwise
+  // hides the whitespace boundary the second candidate relies on.
+  val firstStarIndex = items.indexOfFirst { item ->
+    val commentsRemoved = stripCommentsAndWhitespace(item.expression, keepWhitespace = true).trim()
+    isStarItem(item.expression) ||
+      isStarItem(stripTrailingWhitespaceSeparatedToken(item.expression)) ||
+      isStarItem(stripTrailingWhitespaceSeparatedToken(commentsRemoved))
+  }
+  return if (firstStarIndex < 0 || items.size == 1) items else items.take(firstStarIndex)
+}
+
+/**
+ * Returns [expression] with its trailing whitespace-separated token removed — recovering the
+ * shape before an IMPLICIT alias (no explicit `AS`, e.g. `u.* whatever`), which [extractAlias]
+ * does not strip (it only recognizes an explicit `AS`). Lexically aware via [skipLexicalToken],
+ * so whitespace INSIDE a quoted identifier (`u.* "My Col"`) is never mistaken for the boundary
+ * before the alias — only a whitespace run between top-level tokens counts as one.
+ *
+ * A COMMENT trailing the implicit alias defeats this function used ALONE: `skipLexicalToken`
+ * correctly treats a comment as an opaque, non-whitespace token — the same treatment it gives a
+ * string literal or quoted identifier — so the LAST whitespace run this function finds in
+ * `u.* whatever -- c` is the one immediately BEFORE the comment (between `whatever` and `-- c`),
+ * not the one before `whatever` itself. Stripping there yields `u.* whatever` — the comment is
+ * gone, but the alias is still attached, exactly the "half of the job" that keeps this from
+ * recognizing the star. [parseSelectItems]'s star guard therefore tries this function in BOTH
+ * orders relative to comment removal — this function applied directly to [expression] (correct
+ * when there is no trailing comment), and this function applied to [expression] with comments
+ * already removed via `stripCommentsAndWhitespace(expression, keepWhitespace = true).trim()`
+ * (correct when a comment DOES trail the alias, since with the comment gone first, the remaining
+ * whitespace run genuinely sits right before the alias) — the same order-independence
+ * [isStarItem] needed for its own comment/parenthesis interplay.
+ *
+ * @return [expression] unchanged if it has no top-level whitespace to split on (e.g. `t.*::text`
+ *   — this makes candidate 1 and candidate 2 identical for such an expression in
+ *   [parseSelectItems]'s star guard, leaving its classification exactly as it was), OR if the
+ *   token after the last whitespace run starts with `::` (a CAST operator, not an alias — see the
+ *   implementation comment below for the false positive this exclusion closes).
+ */
+private fun stripTrailingWhitespaceSeparatedToken(expression: String): String {
+  var lastWhitespaceStart = -1
+  var lastWhitespaceEnd = -1
+  var i = 0
+  while (i < expression.length) {
+    val afterToken = skipLexicalToken(expression, i)
+    if (afterToken != i) {
+      i = afterToken
+      continue
+    }
+    if (expression[i].isWhitespace()) {
+      lastWhitespaceStart = i
+      while (i < expression.length && expression[i].isWhitespace()) i++
+      lastWhitespaceEnd = i
+    } else {
+      i++
+    }
+  }
+  if (lastWhitespaceStart < 0) return expression
+  // A cast operator ("::text") is not an alias: "t.* ::text" is a star followed by a SPACE-
+  // separated cast, not an implicit alias named "::text" — verified against a real PostgreSQL 18
+  // container: "SELECT t.* ::text, a FROM t" is valid and returns 2 columns (t, a), with NO star
+  // expansion. Treating the trailing "::text" as strippable made candidate 2 wrongly reduce to
+  // "t.*", triggering the star guard and losing "a" — the same false-positive class round 7's
+  // reverted comment-as-token-boundary change was reverted for, reached here through whitespace
+  // instead of a comment. A trailing token starting with "::" is therefore never stripped.
+  if (expression.startsWith("::", lastWhitespaceEnd)) return expression
+  return expression.substring(0, lastWhitespaceStart)
 }
 
 /**
@@ -1150,19 +1255,97 @@ internal fun oldOrNewReturningColumns(body: String): OldOrNewReturningAnalysis {
 }
 
 /**
- * Best-effort check for whether a single `RETURNING` item is a star (`*`, `tbl.*`) — including
- * parenthesized (`(tgt.*)`), comment-trailing (`tgt.* /*c*/`, `tgt.* -- comment`), and
- * whitespace-padded variants. NOT claimed exhaustive — see [oldOrNewReturningColumns]'s KDoc for
- * why the caller's real-column-count cross-check, not this function, is what makes the overall
- * mapping fail safe against a spelling this misses.
+ * Removes every comment from [text] — and, when [keepWhitespace] is `false` (the default), all
+ * whitespace too — keeping every other character, including the full contents of a string
+ * literal, quoted identifier, or dollar-quoted string, verbatim and in relative order. A comment
+ * is always removed OUTRIGHT, with nothing put in its place, in EITHER mode. Comments are
+ * recognized (and dropped) via the same [skipLineComment]/[skipBlockComment] logic
+ * [skipWhitespaceAndComments] uses, applied at EVERY position in [text] rather than only at an
+ * edge, so this finds and removes a comment ANYWHERE — including one sitting between two
+ * otherwise-adjacent tokens (`tgt./*c*/ *`) — not merely one that leads or trails the whole
+ * string. A string literal, quoted identifier, or dollar-quoted string is recognized via
+ * [skipLexicalToken] and copied through UNCHANGED (including any whitespace or `--`/`/* */`-shaped
+ * text inside it, which is real content, not a comment) rather than having its own contents
+ * stripped.
+ *
+ * @param keepWhitespace When `true`, whitespace OUTSIDE of any comment is preserved verbatim
+ *   (comments are still removed outright, not replaced with anything) — used by
+ *   [parseSelectItems]'s star guard to strip comments from an expression BEFORE handing it to
+ *   [stripTrailingWhitespaceSeparatedToken], so that function's own whitespace-run search only
+ *   ever sees whitespace that was genuinely there, not a comment token sitting where a boundary
+ *   is being hunted for. NOT actually verbatim in one case: a `--` line comment's own TERMINATING
+ *   NEWLINE is consumed as part of that single comment token (see [skipLineComment]), so it is
+ *   removed along with the rest of the comment, not preserved — a line comment can therefore
+ *   swallow the only whitespace that would otherwise have separated two tokens on either side of
+ *   it, exactly like the block-comment case known limitation 2 on [parseSelectItems] documents.
+ *   When `false` (the default), whitespace is removed outright too — used by [isStarItem] for its
+ *   own suffix check, which needs neither comments nor whitespace to survive.
+ */
+private fun stripCommentsAndWhitespace(text: String, keepWhitespace: Boolean = false): String {
+  val builder = StringBuilder(text.length)
+  var i = 0
+  while (i < text.length) {
+    when {
+      text[i].isWhitespace() -> {
+        if (keepWhitespace) builder.append(text[i])
+        i++
+      }
+      text[i] == '-' && i + 1 < text.length && text[i + 1] == '-' -> i = skipLineComment(text, i)
+      text[i] == '/' && i + 1 < text.length && text[i + 1] == '*' -> i = skipBlockComment(text, i)
+      else -> {
+        val afterToken = skipLexicalToken(text, i)
+        if (afterToken != i) {
+          builder.append(text, i, afterToken)
+          i = afterToken
+        } else {
+          builder.append(text[i])
+          i++
+        }
+      }
+    }
+  }
+  return builder.toString()
+}
+
+/**
+ * Best-effort check for whether a single `RETURNING`/`SELECT` item is a star (`*`, `tbl.*`) —
+ * including parenthesized (`(tgt.*)`), and any placement of comments and whitespace around or
+ * BETWEEN its tokens (`tgt.* /*c*/`, `tgt.* -- comment`, `tgt . *`, `tgt./*c*/ *`), in ANY order
+ * relative to a wrapping `(...)` (a trailing comment can sit inside OR outside the parentheses:
+ * `(tgt.*) -- c`, `(tgt.*) /*c*/`).
+ *
+ * Normalizes by first stripping every comment and all whitespace from the ENTIRE item — via
+ * [stripCommentsAndWhitespace], which finds a comment anywhere in the text, not merely at an
+ * edge — and only THEN repeatedly stripping a wrapping `(...)`, verified via
+ * [findMatchingCloseParenthesis] to be a genuine matching pair (not merely the first and last
+ * characters happening to be `(` and `)`). Doing comment/whitespace stripping BEFORE the
+ * parenthesis check — rather than the reverse, or interleaving ad hoc regexes anchored to one end
+ * of the string for each — is what makes recognition ORDER-INDEPENDENT: a trailing comment
+ * OUTSIDE a wrapping `(...)` only becomes visible as trailing once the comment is gone and the
+ * closing `)` is genuinely the last character, and a comment BETWEEN two tokens (`tgt./*c*/ *`)
+ * is only removable by a scan that looks for comments anywhere, not just at the string's edges.
+ * An earlier version of this function stripped parentheses first and only handled a TRAILING
+ * comment via two anchored regexes, which is exactly what missed the shapes above — verified
+ * against PostgreSQL 18.4: `(tgt.*) -- c`, `(tgt.*) /*c*/`, and `tgt./*c*/ *` were all valid
+ * syntax this function failed to recognize, letting the #212 failure mode (a later item shifted
+ * onto the wrong `ResultSetMetaData` column) survive for exactly those three spellings.
+ *
+ * NOT claimed exhaustive — see [oldOrNewReturningColumns]'s KDoc for why the caller's
+ * real-column-count cross-check, not this function, is what makes the overall mapping fail safe
+ * against a spelling this misses. [parseSelectItems] has no such cross-check (it has no
+ * independent real-column-count to compare against at the point it runs), so a spelling this
+ * function fails to recognize there degrades silently to a wrong, shifted mapping rather than the
+ * documented empty-list fail-safe.
  */
 private fun isStarItem(item: String): Boolean {
-  var text = item.trim()
-  while (text.startsWith("(") && text.endsWith(")")) {
-    text = text.substring(1, text.length - 1).trim()
+  var text = stripCommentsAndWhitespace(item.trim())
+  while (text.length >= 2 &&
+    text.startsWith("(") &&
+    text.endsWith(")") &&
+    findMatchingCloseParenthesis(text, 0) == text.length - 1
+  ) {
+    text = text.substring(1, text.length - 1)
   }
-  text = text.replace(Regex("--[^\n]*$"), "").trimEnd()
-  text = text.replace(Regex("/\\*.*\\*/\\s*$", RegexOption.DOT_MATCHES_ALL), "").trimEnd()
   return text == "*" || text.endsWith(".*")
 }
 

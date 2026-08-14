@@ -269,4 +269,28 @@ public class PostgresQueries(
     id: Int,
     mapper: (id: Int, old_preferences: UserPreferences) -> T,
   ): Many<T> = updatePreferences(preferences, id, mapper, driver::queryMany)
+
+  private fun <T : Any, Return> duplicateUserReturningAliasedPreferences(
+    p1: Int,
+    mapper: (id: Int, duplicated_preferences: UserPreferences) -> T,
+    processor: ManyProcessor<T, Return>,
+  ): Return {
+    val sql = """
+        |INSERT INTO users (email, age, current_mood, metadata, preferences)
+        |SELECT email, age, current_mood, metadata, preferences FROM users WHERE id = ?
+        |RETURNING id, preferences AS duplicated_preferences
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        usersPreferencesAdapter.decode(getString(2)),
+      )
+    }
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setInt(1, p1)
+    }
+    return processor.invoke(sql, rowReader, queryBinder)
+  }
+
+  override fun <T : Any> duplicateUserReturningAliasedPreferences(p1: Int, mapper: (id: Int, duplicated_preferences: UserPreferences) -> T): Many<T> = duplicateUserReturningAliasedPreferences(p1, mapper, driver::queryMany)
 }
