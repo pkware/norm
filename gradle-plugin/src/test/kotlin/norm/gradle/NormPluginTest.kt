@@ -7,6 +7,7 @@ import assertk.assertions.isEqualTo
 import assertk.assertions.isNotEmpty
 import assertk.assertions.isTrue
 import org.gradle.testkit.runner.TaskOutcome.SUCCESS
+import org.gradle.testkit.runner.TaskOutcome.UP_TO_DATE
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.junit.jupiter.api.parallel.Execution
@@ -651,6 +652,260 @@ class NormPluginTest {
 
     val result = project.gradle("normGenerateTest").build()
     assertThat(result.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+  }
+
+  @Test
+  fun `schema directory applies Flyway versioned migrations in numeric version order`() {
+    val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
+    project.setupSettingsOnly()
+
+    // Lexically, "V10__..." sorts before "V2__...". If schemas were still applied by lexical
+    // path order, V10's ALTER TABLE would run before V2's CREATE TABLE and the replay would fail.
+    val schemaDir = projectDir.resolve("migrations")
+    Files.createDirectories(schemaDir)
+    schemaDir.resolve("V2__create_author.sql").writeText(
+      "CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);",
+    )
+    schemaDir.resolve("V10__add_email.sql").writeText(
+      "ALTER TABLE author ADD COLUMN email text;",
+    )
+
+    val queries = projectDir.resolve("queries.sql")
+    queries.writeText(
+      """
+      -- name: getAll :many
+      SELECT * FROM author;
+      """.trimIndent(),
+    )
+
+    project.buildFile.writeText(
+      """
+      plugins {
+        kotlin("jvm")
+        id("com.pkware.norm")
+      }
+
+      norm {
+        databases {
+          create("Test") {
+            packageName = "example"
+            schemas.addAll("$schemaDir")
+            queries.addAll("$queries")
+            generateCrud = false
+          }
+        }
+      }
+      """.trimIndent(),
+    )
+
+    val result = project.gradle("normGenerateTest").build()
+    assertThat(result.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+
+    val generatedFiles = collectKotlinFiles(project.generatedCodeDirectory, project.generatedCodeDirectory)
+    assertThat(generatedFiles.values.any { it.contains("email") }, "Expected the email column in generated code")
+      .isTrue()
+  }
+
+  @Test
+  fun `schema entries apply in declaration order across files and directories`() {
+    val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
+    project.setupSettingsOnly()
+
+    // Named so that lexically-by-absolute-path sorting would place "migrations/..." before
+    // "zz_base.sql", running the ALTER TABLE before the CREATE TABLE it depends on.
+    val baseSchema = projectDir.resolve("zz_base.sql")
+    baseSchema.writeText("CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);")
+
+    val migrationDir = projectDir.resolve("migrations")
+    Files.createDirectories(migrationDir)
+    migrationDir.resolve("V1__add_email.sql").writeText(
+      "ALTER TABLE author ADD COLUMN email text;",
+    )
+
+    val queries = projectDir.resolve("queries.sql")
+    queries.writeText(
+      """
+      -- name: getAll :many
+      SELECT * FROM author;
+      """.trimIndent(),
+    )
+
+    project.buildFile.writeText(
+      """
+      plugins {
+        kotlin("jvm")
+        id("com.pkware.norm")
+      }
+
+      norm {
+        databases {
+          create("Test") {
+            packageName = "example"
+            schemas.addAll("$baseSchema", "$migrationDir")
+            queries.addAll("$queries")
+            generateCrud = false
+          }
+        }
+      }
+      """.trimIndent(),
+    )
+
+    val result = project.gradle("normGenerateTest").build()
+    assertThat(result.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+  }
+
+  @Test
+  fun `a plain file that a versioned migration depends on is not reordered ahead of it`() {
+    val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
+    project.setupSettingsOnly()
+
+    // "Base.sql" sorts lexically before "V1__add_email.sql". Treating every versioned file as
+    // sorting ahead of every plain file (rather than only reordering versioned files among
+    // themselves) would run this ALTER TABLE before the CREATE TABLE it depends on.
+    val schemaDir = projectDir.resolve("migrations")
+    Files.createDirectories(schemaDir)
+    schemaDir.resolve("Base.sql").writeText(
+      "CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);",
+    )
+    schemaDir.resolve("V1__add_email.sql").writeText(
+      "ALTER TABLE author ADD COLUMN email text;",
+    )
+
+    val queries = projectDir.resolve("queries.sql")
+    queries.writeText(
+      """
+      -- name: getAll :many
+      SELECT * FROM author;
+      """.trimIndent(),
+    )
+
+    project.buildFile.writeText(
+      """
+      plugins {
+        kotlin("jvm")
+        id("com.pkware.norm")
+      }
+
+      norm {
+        databases {
+          create("Test") {
+            packageName = "example"
+            schemas.addAll("$schemaDir")
+            queries.addAll("$queries")
+            generateCrud = false
+          }
+        }
+      }
+      """.trimIndent(),
+    )
+
+    val result = project.gradle("normGenerateTest").build()
+    assertThat(result.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+
+    val generatedFiles = collectKotlinFiles(project.generatedCodeDirectory, project.generatedCodeDirectory)
+    assertThat(generatedFiles.values.any { it.contains("email") }, "Expected the email column in generated code")
+      .isTrue()
+  }
+
+  @Test
+  fun `undo migrations are skipped and logged with a warning`() {
+    val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
+    project.setupSettingsOnly()
+
+    val schemaDir = projectDir.resolve("migrations")
+    Files.createDirectories(schemaDir)
+    schemaDir.resolve("V1__create_author.sql").writeText(
+      "CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);",
+    )
+    schemaDir.resolve("U1__undo.sql").writeText("DROP TABLE author;")
+
+    val queries = projectDir.resolve("queries.sql")
+    queries.writeText(
+      """
+      -- name: getAll :many
+      SELECT * FROM author;
+      """.trimIndent(),
+    )
+
+    project.buildFile.writeText(
+      """
+      plugins {
+        kotlin("jvm")
+        id("com.pkware.norm")
+      }
+
+      norm {
+        databases {
+          create("Test") {
+            packageName = "example"
+            schemas.addAll("$schemaDir")
+            queries.addAll("$queries")
+            generateCrud = false
+          }
+        }
+      }
+      """.trimIndent(),
+    )
+
+    val result = project.gradle("normGenerateTest").build()
+    assertThat(result.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+    assertThat(result.output).contains("Skipping undo migration")
+    assertThat(result.output).contains("U1__undo.sql")
+
+    val generatedFiles = collectKotlinFiles(project.generatedCodeDirectory, project.generatedCodeDirectory)
+    assertThat(generatedFiles.values.any { it.contains("Author") }, "Expected the author table in generated code")
+      .isTrue()
+  }
+
+  @Test
+  fun `editing only an undo migration does not invalidate the up-to-date check`() {
+    val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
+    project.setupSettingsOnly()
+
+    val schemaDir = projectDir.resolve("migrations")
+    Files.createDirectories(schemaDir)
+    schemaDir.resolve("V1__create_author.sql").writeText(
+      "CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);",
+    )
+    val undoFile = schemaDir.resolve("U1__undo.sql")
+    undoFile.writeText("DROP TABLE author;")
+
+    val queries = projectDir.resolve("queries.sql")
+    queries.writeText(
+      """
+      -- name: getAll :many
+      SELECT * FROM author;
+      """.trimIndent(),
+    )
+
+    project.buildFile.writeText(
+      """
+      plugins {
+        kotlin("jvm")
+        id("com.pkware.norm")
+      }
+
+      norm {
+        databases {
+          create("Test") {
+            packageName = "example"
+            schemas.addAll("$schemaDir")
+            queries.addAll("$queries")
+            generateCrud = false
+          }
+        }
+      }
+      """.trimIndent(),
+    )
+
+    val firstResult = project.gradle("normGenerateTest").build()
+    assertThat(firstResult.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+
+    // The undo migration is never replayed, so it must not be part of the task's declared inputs.
+    undoFile.writeText("DROP TABLE author; -- edited")
+
+    val secondResult = project.gradle("normGenerateTest").build()
+    assertThat(secondResult.task(":normGenerateTest")?.outcome).isEqualTo(UP_TO_DATE)
   }
 
   @Test
