@@ -14,6 +14,7 @@ import org.gradle.api.provider.Property
 import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.Nested
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
@@ -24,6 +25,7 @@ import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.containers.wait.strategy.Wait
 import org.testcontainers.containers.wait.strategy.WaitAllStrategy
 import org.testcontainers.utility.DockerImageName
+import java.io.File
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.SQLException
@@ -63,24 +65,36 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
   @get:OutputDirectory
   abstract val generatedSources: DirectoryProperty
 
+  @get:Internal
+  abstract val projectDirectory: DirectoryProperty
+
   init {
     group = NormPlugin.NORM_GROUP
     description = "Generates Kotlin code from SQL using JDBC analysis."
-    schemas.from(resolveSqlInputs(database.schemas))
-    queries.from(resolveSqlInputs(database.queries))
+    schemas.from(resolveSqlInputs(database.schemas, excludeUndoMigrations = true))
+    queries.from(resolveSqlInputs(database.queries, excludeUndoMigrations = false))
     generatedSources.set(project.layout.buildDirectory.dir(NormPlugin.NORM_GENERATED_CODE))
+    projectDirectory.set(project.layout.projectDirectory)
   }
 
   /**
    * Resolves a list of user-specified paths to files or file trees. Paths that point to a directory
    * are expanded to all `*.sql` files directly inside (non-recursive). Paths that point to a regular
    * file are included as-is.
+   *
+   * @param excludeUndoMigrations When `true`, Flyway undo migrations (`U<version>__<description>.sql`)
+   * found inside a directory are dropped from the expansion using [isUndoMigration], the same predicate
+   * [NormGenerateTask.orderedSchemaFiles] uses at execution time to skip replaying them. This keeps the
+   * `@InputFiles`-tracked set in sync with what is actually replayed, so editing only an undo migration
+   * does not needlessly invalidate the task's up-to-date check. Pass `false` for inputs that have no
+   * notion of undo migrations, such as [Database.queries].
    */
-  private fun resolveSqlInputs(paths: ListProperty<String>) = paths.map { list ->
+  private fun resolveSqlInputs(paths: ListProperty<String>, excludeUndoMigrations: Boolean) = paths.map { list ->
     list.map { path ->
       val resolved = project.projectDir.toPath().resolve(path).normalize().toFile()
       if (resolved.isDirectory) {
-        project.fileTree(resolved) { include("*.sql") }
+        val sqlFiles = project.fileTree(resolved) { include("*.sql") }
+        if (excludeUndoMigrations) sqlFiles.filter { !isUndoMigration(it) } else sqlFiles
       } else {
         resolved
       }
@@ -152,7 +166,7 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
 
   private fun applySchemas(connection: Connection) {
     logger.lifecycle("Norm: Applying schemas...")
-    schemas.files.sortedBy { it.absolutePath }.forEach { file ->
+    orderedSchemaFiles().forEach { file ->
       val content = file.readText()
       try {
         connection.createStatement().use { it.execute(content) }
@@ -169,6 +183,51 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
       }
     }
     logger.lifecycle("Norm: Schemas applied successfully")
+  }
+
+  /**
+   * Builds the ordered list of schema files to replay, honoring the order in which paths were declared
+   * in [Database.schemas]. Within a directory entry, files are reordered per [orderMigrationFiles]
+   * so that Flyway-versioned migrations replay in the order Flyway itself would apply them, regardless
+   * of the lexical order of their absolute paths.
+   *
+   * Files are de-duplicated by canonical path, keeping the first occurrence, since a user may declare
+   * both a file and its containing directory.
+   */
+  private fun orderedSchemaFiles(): List<File> {
+    val seenCanonicalPaths = mutableSetOf<String>()
+    val orderedFiles = mutableListOf<File>()
+    val skippedUndoMigrations = mutableListOf<File>()
+
+    fun addIfNew(file: File) {
+      if (seenCanonicalPaths.add(file.canonicalPath)) {
+        orderedFiles.add(file)
+      }
+    }
+
+    val projectDirectoryPath = projectDirectory.get().asFile.toPath()
+    for (path in database.schemas.get()) {
+      val resolved = projectDirectoryPath.resolve(path).normalize().toFile()
+      if (resolved.isDirectory) {
+        val filesInDirectory = resolved.listFiles { candidate -> candidate.isFile && candidate.name.endsWith(".sql") }
+          ?.toList()
+          .orEmpty()
+        val order = orderMigrationFiles(filesInDirectory)
+        skippedUndoMigrations.addAll(order.skippedUndoMigrations)
+        order.toApply.forEach(::addIfNew)
+      } else {
+        addIfNew(resolved)
+      }
+    }
+
+    if (skippedUndoMigrations.isNotEmpty()) {
+      logger.warn(
+        "Norm: Skipping undo migration(s), which Flyway never applies during a normal migrate: " +
+          skippedUndoMigrations.joinToString(", ") { it.absolutePath },
+      )
+    }
+
+    return orderedFiles
   }
 
   private fun parseQueryFiles(): List<ParsedQuery> = queries.files

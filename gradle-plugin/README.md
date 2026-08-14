@@ -49,26 +49,35 @@ norm {
 ### Directory-based Configuration
 
 When a path points to a directory, Norm includes all `*.sql` files directly inside it
-(non-recursive), applied in lexicographic order by filename. This works well with migration
-tools like Flyway or Liquibase where schemas are a folder of ordered migration files.
+(non-recursive). Files are first sorted lexicographically by filename; files matching the Flyway
+versioned migration convention (`V<version>__<description>.sql`) are then reordered among
+themselves — each staying in one of the positions a versioned file already occupied — by
+ascending numeric version. Flyway repeatable migrations (`R__<description>.sql`) are always
+applied last, sorted lexically among themselves. Flyway undo migrations
+(`U<version>__<description>.sql`) are skipped. This works well with migration tools like Flyway
+where schemas are a folder of ordered migration files.
+
+A file that is not itself a versioned migration keeps its lexicographic position — it is *not*
+moved earlier. It only runs before the versioned migrations in the directory if its name sorts
+before `V` (e.g. `Base.sql`, `A.sql`, `00_setup.sql`). A lowercase name such as `base.sql` sorts
+*after* every `V...` file and is therefore applied after all of them, which will break a migration
+that depends on it.
+
+Schema entries — whether individual files or directories — are applied in the order you declare
+them. To guarantee that shared setup runs before a directory of migrations regardless of its
+filename, declare it as its own, earlier entry rather than placing it inside the migrations
+directory:
 
 ```kotlin
 norm {
   databases {
     register("example") {
       packageName.set("example")
-      schemas.add("src/main/resources/db/migration") // all *.sql files in this directory
+      schemas.addAll("src/main/sql/base-schema.sql", "src/main/resources/db/migration")
       queries.add("src/main/sql/queries.sql")
     }
   }
 }
-```
-
-You can mix individual files and directories:
-
-```kotlin
-schemas.add("src/main/sql/base-schema.sql")
-schemas.add("src/main/resources/db/migration") // additional migrations from a directory
 ```
 
 ### Configuration Properties

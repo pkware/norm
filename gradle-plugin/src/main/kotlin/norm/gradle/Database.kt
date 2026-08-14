@@ -16,9 +16,23 @@ public abstract class Database(private val name: String) : Named {
   /**
    * Paths to files or directories containing the SQL schema.
    *
-   * When a path points to a directory, all `*.sql` files directly inside it are included
-   * (non-recursive). Files are applied in lexicographic order by absolute path, regardless of
-   * whether they come from individual file entries or directory entries.
+   * Entries are applied in the order declared. When an entry points to a directory, all
+   * `*.sql` files directly inside it are included (non-recursive) and ordered as follows: files
+   * are first sorted lexicographically by filename; files matching the Flyway versioned migration
+   * convention (`V<version>__<description>.sql`) are then reordered among themselves — each
+   * staying in one of the positions a versioned file already occupied — by ascending numeric
+   * version. Flyway repeatable migrations (`R__<description>.sql`) are always applied last,
+   * sorted lexically among themselves. Flyway undo migrations (`U<version>__<description>.sql`)
+   * are skipped entirely, matching Flyway's own behavior during `migrate`.
+   *
+   * A file that is not itself a versioned migration keeps its lexicographic position — it is
+   * *not* moved earlier. That means it only runs before the versioned migrations in the directory
+   * if its name sorts before `V` (e.g. `Base.sql`, `A.sql`, `00_setup.sql`). A lowercase name such
+   * as `base.sql` sorts *after* every `V...` file and is therefore applied after all of them, which
+   * can break a migration that depends on it. To guarantee that shared setup runs before a directory of
+   * migrations regardless of its filename, declare it as its own, earlier entry in [schemas]
+   * instead of placing it inside the migrations directory — entries are always applied in the
+   * order declared here.
    *
    * Relative paths are resolved against the project directory.
    */
