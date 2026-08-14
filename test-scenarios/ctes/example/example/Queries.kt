@@ -99,4 +99,56 @@ public interface Queries : Transactable {
   public fun <T : Any> createParentFromLaterCteDynamically(mapper: (id: UUID, name: String) -> T): Query<T>
 
   public fun createParentFromLaterCteDynamically(): Query<Parent> = createParentFromLaterCteDynamically(::Parent)
+
+  /**
+   * Reproduces #205: a CTE body ("parent_and_child") starts with its own nested WITH clause
+   * ("helper") and contains a LEFT JOIN, alongside a sibling data-modifying CTE ("new_parent").
+   * The nested WITH must not cause the LEFT JOIN's nullability to be lost — child_name is
+   * nullable (child may not exist for a parent), parent_name stays NOT NULL.
+   *
+   * ```sql
+   * WITH parent_and_child AS (
+   *   WITH helper AS (SELECT 1)
+   *   SELECT parent.id AS parent_id, parent.name AS parent_name, child.name AS child_name
+   *   FROM parent LEFT JOIN child ON child.parent_id = parent.id
+   * ),
+   * new_parent AS (
+   *   INSERT INTO parent (name) VALUES ('placeholder') RETURNING id
+   * )
+   * SELECT parent_id, parent_name, child_name FROM parent_and_child
+   * ```
+   */
+  public fun <T : Any> listParentsWithOptionalChildAlongsideInsert(mapper: (
+    parent_id: UUID,
+    parent_name: String,
+    child_name: String?,
+  ) -> T): Many<T>
+
+  /**
+   * Reproduces #205: a CTE body ("parent_and_child") starts with its own nested WITH clause
+   * ("helper") and contains a LEFT JOIN, alongside a sibling data-modifying CTE ("new_parent").
+   * The nested WITH must not cause the LEFT JOIN's nullability to be lost — child_name is
+   * nullable (child may not exist for a parent), parent_name stays NOT NULL.
+   *
+   * ```sql
+   * WITH parent_and_child AS (
+   *   WITH helper AS (SELECT 1)
+   *   SELECT parent.id AS parent_id, parent.name AS parent_name, child.name AS child_name
+   *   FROM parent LEFT JOIN child ON child.parent_id = parent.id
+   * ),
+   * new_parent AS (
+   *   INSERT INTO parent (name) VALUES ('placeholder') RETURNING id
+   * )
+   * SELECT parent_id, parent_name, child_name FROM parent_and_child
+   * ```
+   */
+  public fun listParentsWithOptionalChildAlongsideInsert(): Many<ListParentsWithOptionalChildAlongsideInsert> = listParentsWithOptionalChildAlongsideInsert(::ListParentsWithOptionalChildAlongsideInsert)
+
+  public fun <T : Any> listParentsWithOptionalChildAlongsideInsertDynamically(mapper: (
+    parent_id: UUID,
+    parent_name: String,
+    child_name: String?,
+  ) -> T): Query<T>
+
+  public fun listParentsWithOptionalChildAlongsideInsertDynamically(): Query<ListParentsWithOptionalChildAlongsideInsert> = listParentsWithOptionalChildAlongsideInsertDynamically(::ListParentsWithOptionalChildAlongsideInsert)
 }

@@ -91,4 +91,42 @@ public class PostgresQueries(
   override fun <T : Any> createParentFromLaterCte(mapper: (id: UUID, name: String) -> T): Many<T> = createParentFromLaterCte(mapper, driver::queryMany)
 
   override fun <T : Any> createParentFromLaterCteDynamically(mapper: (id: UUID, name: String) -> T): Query<T> = createParentFromLaterCte(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> listParentsWithOptionalChildAlongsideInsert(mapper: (
+    parent_id: UUID,
+    parent_name: String,
+    child_name: String?,
+  ) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH parent_and_child AS (
+        |  WITH helper AS (SELECT 1)
+        |  SELECT parent.id AS parent_id, parent.name AS parent_name, child.name AS child_name
+        |  FROM parent LEFT JOIN child ON child.parent_id = parent.id
+        |),
+        |new_parent AS (
+        |  INSERT INTO parent (name) VALUES ('placeholder') RETURNING id
+        |)
+        |SELECT parent_id, parent_name, child_name FROM parent_and_child
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getObject(1, UUID::class.java),
+        getString(2),
+        getString(3),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> listParentsWithOptionalChildAlongsideInsert(mapper: (
+    parent_id: UUID,
+    parent_name: String,
+    child_name: String?,
+  ) -> T): Many<T> = listParentsWithOptionalChildAlongsideInsert(mapper, driver::queryMany)
+
+  override fun <T : Any> listParentsWithOptionalChildAlongsideInsertDynamically(mapper: (
+    parent_id: UUID,
+    parent_name: String,
+    child_name: String?,
+  ) -> T): Query<T> = listParentsWithOptionalChildAlongsideInsert(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
 }

@@ -2000,6 +2000,107 @@ class QueryAnalysisTest {
     }
 
     @Test
+    fun `sibling CTE body with its own nested WITH keeps its LEFT JOIN nullability alongside a DML CTE`() {
+      // Issue #205's exact repro. "j"'s body starts with its own nested WITH ("inner_cte"), so
+      // isNonDataModifyingCteBody must classify it by "inner_cte"'s own main statement (a plain
+      // SELECT) rather than stubbing "j" outright — a stub is built from
+      // PreparedStatement.getMetaData().isNullable, which reflects base-table attnotnull and is
+      // blind to the LEFT JOIN inside "j". Before the fix, "j" fell into the stub branch, whose
+      // hasOuterJoin safety net (PgCatalogLoader.kt's forceAllNullable) then forced EVERY column
+      // of "j" nullable — so "did", which is genuinely NOT NULL, was wrongly reported nullable;
+      // "label" also came back nullable, but only because it was forced along with everything
+      // else, not because the stub actually saw the LEFT JOIN. "did" comes from the LEFT JOIN's
+      // preserved side (d), so it stays NOT NULL; "label" comes from the null-extended side (u),
+      // so it must be nullable. Verified against real Postgres by inserting a "d" row with no
+      // matching "u" row: the query returns did = <value>, label = NULL.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE d (id INT NOT NULL);
+        CREATE TABLE u (id INT NOT NULL, label TEXT NOT NULL);
+        CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH j AS (
+          WITH inner_cte AS (SELECT 1)
+          SELECT d.id AS did, u.label FROM d LEFT JOIN u ON u.id = d.id
+        ),
+        ins AS (
+          INSERT INTO t (name) VALUES ('x') RETURNING id
+        )
+        SELECT did, label FROM j
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `data-modifying CTE body with its own nested WITH still takes the DML path alongside a sibling CTE`() {
+      // Regression guard for the isNonDataModifyingCteBody classification change: a body shaped
+      // "WITH helper AS (...) UPDATE ... FROM ... RETURNING ..." must still be recognized as
+      // data-modifying (and go through convertDmlCteBodyToSelect's join-preserving conversion)
+      // even with an unrelated sibling CTE present — not be misclassified as verbatim-safe by
+      // the new nested-WITH handling. If it were misclassified, the embedded UPDATE would still
+      // be present when this SQL is used to CREATE VIEW, which PostgreSQL rejects, and the whole
+      // analysis would fall back to asserting every column NOT NULL — masking the LEFT JOIN's
+      // real nullability. Verified against real Postgres by inserting an "a" row with no
+      // matching "b" row: the query returns v = NULL.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id SERIAL NOT NULL, name TEXT);
+        CREATE TABLE a (k INT NOT NULL);
+        CREATE TABLE b (k INT NOT NULL, val TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH seed AS (
+          SELECT 1 AS one
+        ),
+        upd AS (
+          WITH helper AS (SELECT 1 AS one)
+          UPDATE t SET name = 'x' FROM a LEFT JOIN b ON b.k = a.k, helper RETURNING b.val AS v
+        )
+        SELECT v FROM upd
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `parenthesized nested-WITH CTE body keeps its LEFT JOIN nullability, alongside a data-modifying CTE`() {
+      // Same shape as issue #205's repro, but "j"'s body is additionally wrapped in its own
+      // parentheses (PostgreSQL accepts this: confirmed directly against a real server that
+      // "j AS ((WITH inner_cte AS (...) SELECT ...))" parses and returns did = 1, label = NULL
+      // for a "d" row with no matching "u" row). isNonDataModifyingCteBody must skip the extra
+      // leading "(" the same way it already does for a plain (non-nested-WITH) parenthesized
+      // body, then classify by the nested WITH's own main statement. A sibling data-modifying
+      // CTE ("ins") is required here — a query with no DML at all never reaches
+      // transformForViewCreation/isNonDataModifyingCteBody, since the direct CREATE VIEW
+      // fast path in queryColumnNullability already succeeds for it.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE d (id INT NOT NULL);
+        CREATE TABLE u (id INT NOT NULL, label TEXT NOT NULL);
+        CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH j AS (
+          (WITH inner_cte AS (SELECT 1)
+          SELECT d.id AS did, u.label FROM d LEFT JOIN u ON u.id = d.id)
+        ),
+        ins AS (
+          INSERT INTO t (name) VALUES ('x') RETURNING id
+        )
+        SELECT did, label FROM j
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
     fun `DELETE USING LEFT JOIN RETURNING joined column inside a data-modifying CTE`() {
       // Same defect as the UPDATE case, for DELETE ... USING. Verified against real Postgres
       // (inserting an "a" row with no matching "b" row): the query returns v = NULL.
