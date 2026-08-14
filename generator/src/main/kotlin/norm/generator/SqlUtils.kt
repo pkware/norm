@@ -153,11 +153,12 @@ internal data class SelectItem(val expression: String, val columnName: String?, 
  * Paired POSITIONALLY against `java.sql.ResultSetMetaData` columns by
  * `JdbcAnalyzer.buildResultColumns`, so the search is restricted to the statement's MAIN query —
  * after any leading `WITH` clause's CTEs, via [parseCteClause]'s [ParsedCteClause.mainQueryStart]
- * — and both `SELECT` and `RETURNING` are located with [findTopLevelKeyword] (depth-0, lexically
- * aware, never `String.indexOf`), so a nested `SELECT` or a keyword-like substring inside a
- * literal/comment is never mistaken for the real clause. `RETURNING` is only searched for when
- * the window's own leading keyword is DML (`INSERT`/`UPDATE`/`DELETE`/`MERGE`), since `RETURNING`
- * is not reserved and is otherwise legal as a plain `SELECT`'s column alias.
+ * — and `SELECT` is located with [findTopLevelKeyword] (depth-0, lexically aware, never
+ * `String.indexOf`), so a nested `SELECT` or a keyword-like substring inside a literal/comment is
+ * never mistaken for the real clause. `RETURNING` is located with [findTopLevelReturningKeyword]
+ * instead — see its KDoc for why a plain [findTopLevelKeyword] search is not enough — and is only
+ * searched for when the window's own leading keyword is DML (`INSERT`/`UPDATE`/`DELETE`/`MERGE`),
+ * since `RETURNING` is not reserved and is otherwise legal as a plain `SELECT`'s column alias.
  *
  * Handles:
  * - Simple columns: `title` → expression=`title`, columnName=`title`
@@ -166,20 +167,25 @@ internal data class SelectItem(val expression: String, val columnName: String?, 
  * - Computed expressions: `COUNT(*) AS book_count` → expression=`COUNT(*)`, columnName=`null`
  * - Star projections: `*` → expression=`*`, columnName=`null`
  *
- * A star item (`*`/`table.*`, via [isStarItem]) expands to however many columns the starred
- * relation has, shifting every later item onto the wrong metadata column; an item before a star is
- * unaffected by that unknown width, so only the first star and everything after it is dropped — a
- * lone star is left alone, and items at/after a star fall back to metadata unresolved. The star
- * guard (below) checks each item's alias-stripped expression plus a trailing-token candidate for
- * an implicit alias, excluding a `::`-prefixed trailing token (a cast, not an alias — see
- * [stripTrailingWhitespaceSeparatedToken]'s KDoc).
+ * On the `SELECT` branch only (a `RETURNING` clause has no such quantifier), an optional leading
+ * set quantifier — `ALL`, or `DISTINCT` optionally followed by `ON (...)` — is skipped via
+ * [skipOptionalSetQuantifier] BEFORE the clause is split into items, so the FIRST item's
+ * `expression`/`columnName` reflect the bare column, not the quantifier glued onto it (`SELECT
+ * DISTINCT x, id FROM t` → first item is `x`, not `DISTINCTx`). This must happen here, not inside
+ * [isStarItem]: [isStarItem] normalizes by stripping ALL whitespace, so `ALL 2.*a` and a genuine
+ * star on a table named `all2` (`SELECT all2.* a, p FROM all2` — verified valid, 3 columns) become
+ * textually IDENTICAL (`ALL2.*a`/`all2.*a`) once whitespace is gone; only stripping the quantifier
+ * BEFORE that normalization, using the still-whitespace-intact `window`, can tell them apart —
+ * `skipOptionalKeyword`'s own word-boundary check is what refuses to match `ALL` as a prefix of the
+ * identifier `all2` (verified: `SELECT ALL 2.*a lbl, b FROM t` is arithmetic, 2 columns, distinct
+ * from the `all2` table case despite normalizing identically further down the pipeline).
  *
- * KNOWN LIMITATIONS (each yields a WRONG `(table, column)` pairing rather than a lost one; 1 and 2
- * pre-date this fix, 3 is introduced by it. Tracked separately):
- * 1. Zero-separator implicit alias abutting a star with no whitespace: `u.*whatever`.
- * 2. A comment abutting both a star and its implicit alias, with no whitespace anywhere.
- * 3. `RETURNING` used as a column alias inside a DML statement's own source `SELECT` — the alias
- *    is matched instead of the real trailing `RETURNING` keyword.
+ * A star item (`*`/`table.*`, via [isStarItem] — which also recognizes an implicit alias on a
+ * star, including a quoted, `U&`-escaped, or non-ASCII unquoted alias, though NOT claimed
+ * exhaustive — see [isStarItem]'s own KDoc) expands to however many columns the starred relation
+ * has, shifting every later item onto the wrong metadata column; an item before a star is
+ * unaffected by that unknown width, so only the first star and everything after it is dropped — a
+ * lone star is left alone, and items at/after a star fall back to metadata unresolved.
  *
  * @return Items strictly before the first star, if any; the full list if there is no star or it's
  *   a single star item; or empty if the output clause can't be found (e.g. a parenthesized main
@@ -197,17 +203,20 @@ internal fun parseSelectItems(sql: String): List<SelectItem> {
     skipOptionalKeyword(window, leadingKeywordStart, keyword) != leadingKeywordStart
   }
 
-  val returningIndex = if (isDmlMainQuery) findTopLevelKeyword(window, "RETURNING") else -1
+  val returningIndex = if (isDmlMainQuery) findTopLevelReturningKeyword(window) else -1
   val selectIndex = findTopLevelKeyword(window, "SELECT")
 
   val afterKeyword: Int
+  val itemsStart: Int
   val hasFromClause: Boolean
   if (returningIndex >= 0) {
     afterKeyword = returningIndex + "RETURNING".length
+    itemsStart = afterKeyword
     // RETURNING clauses are terminal — no FROM keyword follows
     hasFromClause = false
   } else if (selectIndex >= 0) {
     afterKeyword = selectIndex + "SELECT".length
+    itemsStart = skipOptionalSetQuantifier(window, afterKeyword)
     hasFromClause = true
   } else {
     return emptyList()
@@ -215,9 +224,9 @@ internal fun parseSelectItems(sql: String): List<SelectItem> {
 
   val fromIndex = if (hasFromClause) findTopLevelKeyword(window, "FROM", afterKeyword) else -1
   val rawClause = if (fromIndex >= 0) {
-    window.substring(afterKeyword, fromIndex)
+    window.substring(itemsStart, fromIndex)
   } else {
-    window.substring(afterKeyword)
+    window.substring(itemsStart)
   }
 
   val items = splitAtTopLevel(rawClause.trim().trimEnd(';'), ',').map { raw ->
@@ -226,76 +235,46 @@ internal fun parseSelectItems(sql: String): List<SelectItem> {
     parseColumnReference(expression)
   }
 
-  // Each item is checked against its alias-stripped expression, plus that expression with its
-  // trailing whitespace-separated token removed (recovering an implicit alias on a star, e.g.
-  // `t.* whatever`) — see [stripTrailingWhitespaceSeparatedToken]'s KDoc for why a `::`-prefixed
-  // trailing token is excluded there (a cast, not an alias). A third candidate strips comments
-  // before removing the trailing token, since a comment trailing the implicit alias otherwise
-  // hides the whitespace boundary the second candidate relies on.
-  val firstStarIndex = items.indexOfFirst { item ->
-    val commentsRemoved = stripCommentsAndWhitespace(item.expression, keepWhitespace = true).trim()
-    isStarItem(item.expression) ||
-      isStarItem(stripTrailingWhitespaceSeparatedToken(item.expression)) ||
-      isStarItem(stripTrailingWhitespaceSeparatedToken(commentsRemoved))
-  }
+  val firstStarIndex = items.indexOfFirst { isStarItem(it.expression) }
   return if (firstStarIndex < 0 || items.size == 1) items else items.take(firstStarIndex)
 }
 
 /**
- * Returns [expression] with its trailing whitespace-separated token removed — recovering the
- * shape before an IMPLICIT alias (no explicit `AS`, e.g. `u.* whatever`), which [extractAlias]
- * does not strip (it only recognizes an explicit `AS`). Lexically aware via [skipLexicalToken],
- * so whitespace INSIDE a quoted identifier (`u.* "My Col"`) is never mistaken for the boundary
- * before the alias — only a whitespace run between top-level tokens counts as one.
+ * Skips an optional leading SQL set quantifier starting at or after [position] in [sql]: `ALL`,
+ * or `DISTINCT` optionally followed by `ON (` ... `)`. Used by [parseSelectItems] to separate a
+ * `SELECT`'s quantifier from its first real item BEFORE [isStarItem] ever sees it — see that
+ * function's KDoc for why this can't be done inside [isStarItem] itself.
  *
- * A COMMENT trailing the implicit alias defeats this function used ALONE: `skipLexicalToken`
- * correctly treats a comment as an opaque, non-whitespace token — the same treatment it gives a
- * string literal or quoted identifier — so the LAST whitespace run this function finds in
- * `u.* whatever -- c` is the one immediately BEFORE the comment (between `whatever` and `-- c`),
- * not the one before `whatever` itself. Stripping there yields `u.* whatever` — the comment is
- * gone, but the alias is still attached, exactly the "half of the job" that keeps this from
- * recognizing the star. [parseSelectItems]'s star guard therefore tries this function in BOTH
- * orders relative to comment removal — this function applied directly to [expression] (correct
- * when there is no trailing comment), and this function applied to [expression] with comments
- * already removed via `stripCommentsAndWhitespace(expression, keepWhitespace = true).trim()`
- * (correct when a comment DOES trail the alias, since with the comment gone first, the remaining
- * whitespace run genuinely sits right before the alias) — the same order-independence
- * [isStarItem] needed for its own comment/parenthesis interplay.
+ * [position] is the index right after the `SELECT` keyword — still followed by whitespace, since
+ * [skipOptionalKeyword] (unlike [skipWhitespaceAndComments]) requires its keyword to start EXACTLY
+ * where it's told to look, with no leading separator of its own to skip. This function skips that
+ * whitespace/comments FIRST, then tries `ALL`/`DISTINCT` at the resulting position — otherwise
+ * `regionMatches` would fail immediately on the space between `SELECT` and the quantifier, this
+ * function would report no quantifier present, and `parseSelectItems` would go right back to
+ * feeding [isStarItem] the fused, whitespace-bearing text this function exists to prevent.
  *
- * @return [expression] unchanged if it has no top-level whitespace to split on (e.g. `t.*::text`
- *   — this makes candidate 1 and candidate 2 identical for such an expression in
- *   [parseSelectItems]'s star guard, leaving its classification exactly as it was), OR if the
- *   token after the last whitespace run starts with `::` (a CAST operator, not an alias — see the
- *   implementation comment below for the false positive this exclusion closes).
+ * [skipOptionalKeyword]'s own word-boundary check is what keeps `ALL`/`DISTINCT` from matching a
+ * longer identifier that merely starts with those letters (`all2`, `distinctive_column`).
+ *
+ * @return The index immediately after the quantifier (and any trailing whitespace/comments), or
+ *   [position] unchanged if there is no quantifier there.
  */
-private fun stripTrailingWhitespaceSeparatedToken(expression: String): String {
-  var lastWhitespaceStart = -1
-  var lastWhitespaceEnd = -1
-  var i = 0
-  while (i < expression.length) {
-    val afterToken = skipLexicalToken(expression, i)
-    if (afterToken != i) {
-      i = afterToken
-      continue
-    }
-    if (expression[i].isWhitespace()) {
-      lastWhitespaceStart = i
-      while (i < expression.length && expression[i].isWhitespace()) i++
-      lastWhitespaceEnd = i
-    } else {
-      i++
-    }
-  }
-  if (lastWhitespaceStart < 0) return expression
-  // A cast operator ("::text") is not an alias: "t.* ::text" is a star followed by a SPACE-
-  // separated cast, not an implicit alias named "::text" — verified against a real PostgreSQL 18
-  // container: "SELECT t.* ::text, a FROM t" is valid and returns 2 columns (t, a), with NO star
-  // expansion. Treating the trailing "::text" as strippable made candidate 2 wrongly reduce to
-  // "t.*", triggering the star guard and losing "a" — the same false-positive class round 7's
-  // reverted comment-as-token-boundary change was reverted for, reached here through whitespace
-  // instead of a comment. A trailing token starting with "::" is therefore never stripped.
-  if (expression.startsWith("::", lastWhitespaceEnd)) return expression
-  return expression.substring(0, lastWhitespaceStart)
+private fun skipOptionalSetQuantifier(sql: String, position: Int): Int {
+  val keywordStart = skipWhitespaceAndComments(sql, position)
+
+  val afterAll = skipOptionalKeyword(sql, keywordStart, "ALL")
+  if (afterAll != keywordStart) return afterAll
+
+  val afterDistinct = skipOptionalKeyword(sql, keywordStart, "DISTINCT")
+  if (afterDistinct == keywordStart) return position
+
+  val afterOn = skipOptionalKeyword(sql, afterDistinct, "ON")
+  if (afterOn == afterDistinct) return afterDistinct
+
+  if (afterOn >= sql.length || sql[afterOn] != '(') return afterDistinct
+  val closeParenthesis = findMatchingCloseParenthesis(sql, afterOn)
+  if (closeParenthesis < 0) return afterDistinct
+  return skipWhitespaceAndComments(sql, closeParenthesis + 1)
 }
 
 /**
@@ -437,6 +416,72 @@ internal fun findKeywordAtAnyDepth(sql: String, keyword: String, startIndex: Int
 }
 
 /**
+ * Finds the top-level `RETURNING` clause keyword in [sql] — distinguishing it from a bare
+ * `returning` used as an explicit `AS returning` column alias, which is otherwise legal PostgreSQL
+ * syntax (verified against PostgreSQL 18.4: `CREATE TABLE bad (returning int)`, `FROM t returning`,
+ * `t AS returning`, and the implicit alias `SELECT email returning FROM users` are ALL syntax
+ * errors — an explicit `AS returning` column alias is the ONLY position a bare `returning` token
+ * is legal in). A plain [findTopLevelKeyword] search returns the FIRST match, which can be that
+ * alias rather than the real clause (`SELECT email AS returning, x FROM t RETURNING id` — the
+ * alias comes first); this function instead returns the first `RETURNING` NOT immediately preceded
+ * by the word `AS`, which is exact rather than heuristic given the grammar fact above — an alias
+ * position is always `AS`-preceded, and the real clause keyword never is.
+ *
+ * A forward single-pass walk in the style of [findTopLevelKeyword]: parenthesis depth is tracked
+ * so only a depth-0 `RETURNING` counts, and [skipLexicalToken] skips string literals, quoted
+ * identifiers, dollar-quoted strings, and comments so a keyword-like substring inside one of those
+ * is never mistaken for a real keyword. A COMMENT does NOT disturb the "was the previous word
+ * `AS`" state — a comment between `AS` and its alias is a separator, not a token (verified valid:
+ * both `SELECT 1 AS/*c*/returning` and `SELECT 1 AS--x` followed by a newline then `returning` are
+ * legal syntax) — while a string literal, quoted identifier, or dollar-quoted string DOES clear
+ * that state, since none of those can themselves be the word `AS`. Plain whitespace, like a
+ * comment, is also not disturbing: it is the ordinary separator between `AS` and an unquoted
+ * alias, which is the common case this function must not break. Any other character (a
+ * parenthesis, comma, or operator) clears the state, since none of those can be the word `AS`
+ * either. Word-boundary handling is inherently correct here, unlike a substring search would be,
+ * because the walk consumes whole words at a time via [isIdentifierChar] — an ordinary identifier
+ * like `returning_batch` is read as ONE word, never mistaken for the bare keyword.
+ *
+ * @return The index of the keyword, or `-1` if there is no top-level `RETURNING` that isn't itself
+ *   an `AS`-preceded column alias.
+ */
+internal fun findTopLevelReturningKeyword(sql: String): Int {
+  var depth = 0
+  var previousWordIsAs = false
+  var i = 0
+  while (i < sql.length) {
+    val afterToken = skipLexicalToken(sql, i)
+    if (afterToken != i) {
+      val isComment = sql[i] == '-' || sql[i] == '/'
+      if (!isComment) previousWordIsAs = false
+      i = afterToken
+      continue
+    }
+    when {
+      sql[i].isWhitespace() -> i++
+      isIdentifierChar(sql[i]) -> {
+        val wordStart = i
+        while (i < sql.length && isIdentifierChar(sql[i])) i++
+        val word = sql.substring(wordStart, i)
+        if (depth == 0 && word.equals("RETURNING", ignoreCase = true) && !previousWordIsAs) {
+          return wordStart
+        }
+        previousWordIsAs = word.equals("AS", ignoreCase = true)
+      }
+      else -> {
+        when (sql[i]) {
+          '(' -> depth++
+          ')' -> depth--
+        }
+        previousWordIsAs = false
+        i++
+      }
+    }
+  }
+  return -1
+}
+
+/**
  * True if [character] can appear inside an unquoted PostgreSQL identifier: a letter, digit,
  * underscore, or dollar sign. PostgreSQL identifiers may not START with a digit or `$`, but
  * that distinction doesn't matter for a WORD-BOUNDARY check — the only question here is whether
@@ -446,6 +491,33 @@ internal fun findKeywordAtAnyDepth(sql: String, keyword: String, startIndex: Int
  */
 private fun isIdentifierChar(character: Char): Boolean =
   character.isLetterOrDigit() || character == '_' || character == '$'
+
+/**
+ * True if [character] is a character PostgreSQL's lexer accepts as a NON-FIRST character of an
+ * unquoted identifier — [isIdentifierChar] (ASCII-oriented: letter, digit, `_`, `$`) OR any
+ * character whose code is `>= 0x80`. PostgreSQL's actual identifier-continuation class is WIDER
+ * than [isIdentifierChar] alone: a combining mark (an alias written in NFD), a currency or other
+ * symbol (`€`, `©`, `¹`, `・`), and a supplementary-plane character (a surrogate pair in a
+ * Kotlin/UTF-16 `String` — both code units are `>= 0x80`, so no special surrogate handling is
+ * needed) are all legal identifier characters [isIdentifierChar] rejects (none of them is a
+ * Unicode letter, digit, `_`, or `$`).
+ *
+ * Used by BOTH [matchTrailingAliasSegment] (an implicit alias's own character class) and
+ * [isStarQualifierAcceptable] (scanning the identifier run before a star's qualifying `.`) — a
+ * SINGLE shared predicate, deliberately, because keeping the two call sites merely "in sync by
+ * convention" already failed three separate times: whenever only one side was widened, a
+ * PostgreSQL-legal, `>= 0x80`-but-not-letter-or-digit character truncated an identifier run at the
+ * wrong place (e.g. `x€9.`: stopping at `€` instead of continuing through it left `9` looking like
+ * the run's own start, misclassifying the whole qualifier as a numeric literal). Calling the same
+ * function from both places makes that symmetry structural, not a comment to remember to update.
+ *
+ * [isIdentifierChar] itself is intentionally UNCHANGED — it also backs keyword word-boundary
+ * checks ([findTopLevelKeyword], [findKeywordAtAnyDepth], [skipOptionalKeyword],
+ * [findTopLevelReturningKeyword]) and [skipLexicalToken]'s dollar-quote guard, where widening it
+ * to admit non-ASCII bytes is a separate, unverified change outside this predicate's scope.
+ */
+private fun isPostgresIdentifierContinuationChar(character: Char): Boolean =
+  isIdentifierChar(character) || character.code >= 0x80
 
 /** Matches `table.column` or just `column` (identifier characters only, no parentheses or operators). */
 private val COLUMN_REFERENCE = Regex("""(?:(?<table>\w+)\.)?(?<column>\w+)""")
@@ -1238,7 +1310,10 @@ internal data class OldOrNewReturningAnalysis(val itemCount: Int, val forcedColu
  */
 internal fun oldOrNewReturningColumns(body: String): OldOrNewReturningAnalysis {
   val dml = stripLeadingNestedWithClause(body)
-  val returningIndex = findTopLevelKeyword(dml, "RETURNING")
+  // findTopLevelReturningKeyword, not a plain findTopLevelKeyword search, so an "AS returning"
+  // column alias inside this body's own source SELECT (e.g. "INSERT INTO t SELECT 1 AS returning
+  // ... RETURNING a, b") is never mistaken for the real clause keyword — see its KDoc.
+  val returningIndex = findTopLevelReturningKeyword(dml)
   if (returningIndex < 0) return OldOrNewReturningAnalysis(0, emptySet())
   val (aliasNames, itemsStart) = parseOldNewAliasPrologue(dml, returningIndex + "RETURNING".length)
   val items = splitAtTopLevel(dml.substring(itemsStart).trim().trimEnd(';'), ',')
@@ -1255,11 +1330,10 @@ internal fun oldOrNewReturningColumns(body: String): OldOrNewReturningAnalysis {
 }
 
 /**
- * Removes every comment from [text] — and, when [keepWhitespace] is `false` (the default), all
- * whitespace too — keeping every other character, including the full contents of a string
- * literal, quoted identifier, or dollar-quoted string, verbatim and in relative order. A comment
- * is always removed OUTRIGHT, with nothing put in its place, in EITHER mode. Comments are
- * recognized (and dropped) via the same [skipLineComment]/[skipBlockComment] logic
+ * Removes every comment AND all whitespace from [text], keeping every other character — including
+ * the full contents of a string literal, quoted identifier, or dollar-quoted string — verbatim
+ * and in relative order. A comment is always removed OUTRIGHT, with nothing put in its place.
+ * Comments are recognized (and dropped) via the same [skipLineComment]/[skipBlockComment] logic
  * [skipWhitespaceAndComments] uses, applied at EVERY position in [text] rather than only at an
  * edge, so this finds and removes a comment ANYWHERE — including one sitting between two
  * otherwise-adjacent tokens (`tgt./*c*/ *`) — not merely one that leads or trails the whole
@@ -1268,28 +1342,18 @@ internal fun oldOrNewReturningColumns(body: String): OldOrNewReturningAnalysis {
  * text inside it, which is real content, not a comment) rather than having its own contents
  * stripped.
  *
- * @param keepWhitespace When `true`, whitespace OUTSIDE of any comment is preserved verbatim
- *   (comments are still removed outright, not replaced with anything) — used by
- *   [parseSelectItems]'s star guard to strip comments from an expression BEFORE handing it to
- *   [stripTrailingWhitespaceSeparatedToken], so that function's own whitespace-run search only
- *   ever sees whitespace that was genuinely there, not a comment token sitting where a boundary
- *   is being hunted for. NOT actually verbatim in one case: a `--` line comment's own TERMINATING
- *   NEWLINE is consumed as part of that single comment token (see [skipLineComment]), so it is
- *   removed along with the rest of the comment, not preserved — a line comment can therefore
- *   swallow the only whitespace that would otherwise have separated two tokens on either side of
- *   it, exactly like the block-comment case known limitation 2 on [parseSelectItems] documents.
- *   When `false` (the default), whitespace is removed outright too — used by [isStarItem] for its
- *   own suffix check, which needs neither comments nor whitespace to survive.
+ * Used by [isStarItem] to normalize an item before its star check, which needs neither comments
+ * nor whitespace to survive — it locates a trailing implicit alias (via
+ * [findTrailingImplicitAliasStart]) and inspects the qualifier and star around it, so the
+ * separator that used to sit between them (whitespace, a comment, or nothing at all) makes no
+ * difference once it's gone.
  */
-private fun stripCommentsAndWhitespace(text: String, keepWhitespace: Boolean = false): String {
+private fun stripCommentsAndWhitespace(text: String): String {
   val builder = StringBuilder(text.length)
   var i = 0
   while (i < text.length) {
     when {
-      text[i].isWhitespace() -> {
-        if (keepWhitespace) builder.append(text[i])
-        i++
-      }
+      text[i].isWhitespace() -> i++
       text[i] == '-' && i + 1 < text.length && text[i + 1] == '-' -> i = skipLineComment(text, i)
       text[i] == '/' && i + 1 < text.length && text[i + 1] == '*' -> i = skipBlockComment(text, i)
       else -> {
@@ -1308,27 +1372,61 @@ private fun stripCommentsAndWhitespace(text: String, keepWhitespace: Boolean = f
 }
 
 /**
- * Best-effort check for whether a single `RETURNING`/`SELECT` item is a star (`*`, `tbl.*`) —
- * including parenthesized (`(tgt.*)`), and any placement of comments and whitespace around or
- * BETWEEN its tokens (`tgt.* /*c*/`, `tgt.* -- comment`, `tgt . *`, `tgt./*c*/ *`), in ANY order
- * relative to a wrapping `(...)` (a trailing comment can sit inside OR outside the parentheses:
- * `(tgt.*) -- c`, `(tgt.*) /*c*/`).
+ * Check for whether a single `RETURNING`/`SELECT` item is a star (`*`, `tbl.*`), with or without
+ * an implicit (no-`AS`) alias — including parenthesized (`(tgt.*)`), and any placement of
+ * comments and whitespace around or BETWEEN its tokens (`tgt.* /*c*/`, `tgt.* -- comment`,
+ * `tgt . *`, `tgt./*c*/ *`, `tgt.*whatever`, `tgt.*`/*c*/`whatever`), in ANY order relative to a
+ * wrapping `(...)` (a trailing comment can sit inside OR outside the parentheses: `(tgt.*) -- c`,
+ * `(tgt.*) /*c*/`).
  *
  * Normalizes by first stripping every comment and all whitespace from the ENTIRE item — via
  * [stripCommentsAndWhitespace], which finds a comment anywhere in the text, not merely at an
- * edge — and only THEN repeatedly stripping a wrapping `(...)`, verified via
- * [findMatchingCloseParenthesis] to be a genuine matching pair (not merely the first and last
- * characters happening to be `(` and `)`). Doing comment/whitespace stripping BEFORE the
- * parenthesis check — rather than the reverse, or interleaving ad hoc regexes anchored to one end
- * of the string for each — is what makes recognition ORDER-INDEPENDENT: a trailing comment
- * OUTSIDE a wrapping `(...)` only becomes visible as trailing once the comment is gone and the
- * closing `)` is genuinely the last character, and a comment BETWEEN two tokens (`tgt./*c*/ *`)
- * is only removable by a scan that looks for comments anywhere, not just at the string's edges.
- * An earlier version of this function stripped parentheses first and only handled a TRAILING
- * comment via two anchored regexes, which is exactly what missed the shapes above — verified
- * against PostgreSQL 18.4: `(tgt.*) -- c`, `(tgt.*) /*c*/`, and `tgt./*c*/ *` were all valid
- * syntax this function failed to recognize, letting the #212 failure mode (a later item shifted
- * onto the wrong `ResultSetMetaData` column) survive for exactly those three spellings.
+ * edge.
+ *
+ * Two paths, tried in order:
+ *
+ * PATH 1 — the ORIGINAL `text == "*" || text.endsWith(".*")` check (via
+ * [unwrapWrappingParentheses] then a literal suffix comparison), preserved BYTE-FOR-BYTE. For
+ * [isStarItem], `false` is the DANGEROUS answer (an unrecognized star lets a later item survive at
+ * its raw list position, silently shifted onto the wrong `ResultSetMetaData` column — the
+ * #212/#215 failure mode) and `true` is the SAFE one (later items are dropped, falling back to
+ * metadata names instead of a wrong mapping), so a rule that already answers `true` for some text
+ * must never be replaced by one that answers `false` for that same text — only new `true` answers
+ * may be ADDED on top, never removed. This path alone already covers every shape whose NORMALIZED
+ * text ends in `.*` verbatim with nothing after it: `t.*`, a parenthesized composite expansion
+ * (`(t).*`, `(u.*)`, `((t.*))` — verified valid PostgreSQL syntax; the unwrap loop only requires
+ * the OUTERMOST wrapping pair to match, so it repeats until no more wrapping parens remain), a
+ * `DISTINCT ON (...)` prefix ([parseSelectItems] strips this before [isStarItem] ever sees it —
+ * see its KDoc), and a Unicode-escape quoted identifier (`U&"my*table".*`, verified valid).
+ *
+ * PATH 2 — reached ONLY when path 1 answers `false`, i.e. only for an item with a trailing
+ * implicit alias (something other than `*` is the last character, so path 1's literal suffix check
+ * can never match). [findTrailingImplicitAliasStart] finds where that alias starts by walking the
+ * text FORWARD and tracking the last SEGMENT seen — PostgreSQL's grammar guarantees an implicit
+ * alias is always the FINAL token of a select item, so anchoring on "the last segment reaches
+ * exactly the end of the text" is grammar-backed, unlike enumerating everything that may
+ * legitimately precede a star's qualifying dot (parentheses, brackets, quotes, a `DISTINCT ON`
+ * prefix, a Unicode-escape identifier...) — an earlier version of this function tried exactly that
+ * enumeration and missed a new qualifier shape on each of three separate review passes. With the
+ * alias located, [unwrapWrappingParentheses] is applied to the PREFIX (the text with that alias
+ * removed), and the SAME path-1 logic is re-run on it: accept if the unwrapped prefix is `*`, or if
+ * it ends in `.*` AND [isStarQualifierAcceptable] accepts the qualifier (everything before that
+ * final `.`) — the ONLY additional check path 2 needs beyond path 1's, since a digit-leading run
+ * immediately before the dot (`2.` in `SELECT 2.*3 lbl, a FROM t` — verified arithmetic returning 2
+ * columns, not a star) is the ONE lexical ambiguity a numeric literal creates with a real
+ * qualifying dot; see [isStarQualifierAcceptable]'s KDoc for why every other qualifier shape is
+ * accepted rather than enumerated.
+ *
+ * Verified against PostgreSQL 18.4: `SELECT u.*whatever, preferences FROM users u` and `SELECT
+ * u.*`/*c*/`whatever, preferences FROM users u` both return 5 columns (star expands, implicit alias
+ * ignored) — an earlier version of this function required a whitespace- or comment-shaped
+ * separator between the star and its implicit alias to even attempt recognizing one, so an alias
+ * directly ABUTTING the star (no separator at all, comment or otherwise) went unrecognized,
+ * letting the #212 failure mode (a later item shifted onto the wrong `ResultSetMetaData` column)
+ * survive for exactly that spelling. `SELECT *whatever, a FROM t` (a BARE star with an abutting
+ * alias) is, by contrast, a genuine PostgreSQL syntax error — a bare `*` cannot itself take an
+ * alias — so this function's willingness to call it a star for an empty qualifier is unreachable
+ * on real input, not a gap that needs closing.
  *
  * NOT claimed exhaustive — see [oldOrNewReturningColumns]'s KDoc for why the caller's
  * real-column-count cross-check, not this function, is what makes the overall mapping fail safe
@@ -1338,15 +1436,190 @@ private fun stripCommentsAndWhitespace(text: String, keepWhitespace: Boolean = f
  * documented empty-list fail-safe.
  */
 private fun isStarItem(item: String): Boolean {
-  var text = stripCommentsAndWhitespace(item.trim())
-  while (text.length >= 2 &&
-    text.startsWith("(") &&
-    text.endsWith(")") &&
-    findMatchingCloseParenthesis(text, 0) == text.length - 1
+  val text = stripCommentsAndWhitespace(item.trim())
+  val unwrappedText = unwrapWrappingParentheses(text)
+  if (unwrappedText == "*" || unwrappedText.endsWith(".*")) return true
+
+  val aliasStart = findTrailingImplicitAliasStart(text) ?: return false
+  val unwrappedPrefix = unwrapWrappingParentheses(text.substring(0, aliasStart))
+  if (unwrappedPrefix == "*") return true
+  return unwrappedPrefix.endsWith(".*") && isStarQualifierAcceptable(unwrappedPrefix.dropLast(1))
+}
+
+/**
+ * Repeatedly strips a wrapping `(...)` from [text] — verified via [findMatchingCloseParenthesis]
+ * to be a genuine matching pair (not merely the first and last characters happening to be `(` and
+ * `)`) — until none remains: `((t.*))` unwraps in two passes to `t.*`.
+ */
+private fun unwrapWrappingParentheses(text: String): String {
+  var result = text
+  while (result.length >= 2 &&
+    result.startsWith("(") &&
+    result.endsWith(")") &&
+    findMatchingCloseParenthesis(result, 0) == result.length - 1
   ) {
-    text = text.substring(1, text.length - 1)
+    result = result.substring(1, result.length - 1)
   }
-  return text == "*" || text.endsWith(".*")
+  return result
+}
+
+/**
+ * Finds where a trailing implicit alias starts in [text] (already normalized by
+ * [stripCommentsAndWhitespace]), or `null` if there is none.
+ *
+ * Walks [text] FORWARD, recording the start and end of the last SEGMENT seen (see
+ * [matchTrailingAliasSegment] for what counts as one). A character that doesn't start a segment,
+ * and a lexical token that ISN'T a segment (a single-quoted string literal, a dollar-quoted
+ * string — skipped via [skipLexicalToken]), are walked over without ending the search; they simply
+ * mean the segment recorded so far is not the final one. An implicit alias EXISTS only if the last
+ * recorded segment ends EXACTLY at `text.length` (nothing trails it) AND starts at an index
+ * greater than `0` (there is something — the qualifier and its star — before it; a segment
+ * spanning the ENTIRE text is not "prefix plus alias", it's just one bare identifier with no star
+ * in it at all, e.g. `preferencesprefs`).
+ *
+ * @return The index where the trailing alias segment starts, or `null` if [text] has no such
+ *   segment.
+ */
+private fun findTrailingImplicitAliasStart(text: String): Int? {
+  var lastSegmentStart = -1
+  var lastSegmentEnd = -1
+  var i = 0
+  while (i < text.length) {
+    val segmentEnd = matchTrailingAliasSegment(text, i)
+    if (segmentEnd != null) {
+      lastSegmentStart = i
+      lastSegmentEnd = segmentEnd
+      i = segmentEnd
+      continue
+    }
+    val afterToken = skipLexicalToken(text, i)
+    i = if (afterToken != i) afterToken else i + 1
+  }
+  return if (lastSegmentEnd == text.length && lastSegmentStart > 0) lastSegmentStart else null
+}
+
+/**
+ * Matches ONE segment starting at [start] in [text], in this precedence order:
+ * 1. A Unicode-escape identifier — `U&`/`u&` immediately followed by a double-quoted identifier
+ *    (via [skipLexicalToken]), optionally followed by the word `UESCAPE` and a single-quoted
+ *    escape-character string, in which case the segment extends through that string — see
+ *    [matchUnicodeEscapeIdentifierSegment]. Tried FIRST: for `u.*U&"a"`, checking the bare-identifier
+ *    rule (3, below) first would match `U` alone as a one-character identifier segment, then
+ *    `"a"` as a separate later segment — the alias would appear to end at `"a"`, but the prefix
+ *    would wrongly include the dangling `U&`, and the star would never be found as `.` + `*`
+ *    immediately before it. Trying the Unicode-escape rule first consumes `U&"a"` as ONE segment,
+ *    so the star at `.*` immediately precedes it, exactly as PostgreSQL itself parses it.
+ * 2. A bare double-quoted identifier, `"..."` (`""`-doubling included, via [skipLexicalToken]).
+ * 3. An unquoted identifier: first character a letter or `_`, every subsequent character
+ *    [isIdentifierChar] — PostgreSQL identifiers may not start with a digit or `$`.
+ *
+ * @return The index immediately after the matched segment, or `null` if [start] does not begin
+ *   one.
+ */
+private fun matchTrailingAliasSegment(text: String, start: Int): Int? {
+  matchUnicodeEscapeIdentifierSegment(text, start)?.let { return it }
+  if (start >= text.length) return null
+  if (text[start] == '"') {
+    val afterToken = skipLexicalToken(text, start)
+    return if (afterToken != start) afterToken else null
+  }
+  // PostgreSQL's lexer admits ANY byte >= 0x80 to START an unquoted identifier too (not merely to
+  // continue one, which [isPostgresIdentifierContinuationChar] already covers) — not merely a
+  // Unicode `isLetter()`. Verified: a combining mark (an alias written in NFD, e.g. "préfs" spelled
+  // p-r-e-COMBINING_ACUTE-f-s), a symbol (a currency sign `€`, `©`, `°`), and a supplementary-plane
+  // character (an astral emoji `🚀`, a mathematical alphanumeric symbol `𝐀`) are all legal FIRST
+  // characters of an unquoted identifier that PostgreSQL accepts, none of which `isLetter()`
+  // recognizes as a letter — `isLetter()` alone therefore MISSED every one of those alias shapes,
+  // the dangerous direction (see [isStarItem]'s KDoc). A surrogate pair (as a supplementary-plane
+  // character always is, in a Kotlin/UTF-16 `String`) is naturally covered without special
+  // handling: BOTH of its code units are >= 0x80, so the ordinary per-character loop below
+  // consumes each half in turn.
+  if (!(text[start].isLetter() || text[start] == '_' || text[start].code >= 0x80)) return null
+  var i = start + 1
+  while (i < text.length && isPostgresIdentifierContinuationChar(text[i])) i++
+  return i
+}
+
+/**
+ * Matches a Unicode-escape identifier — `U&`/`u&` immediately followed by a double-quoted
+ * identifier, e.g. `U&"my*table"` — starting at [start] in [text], optionally extended by a
+ * `UESCAPE '<char>'` clause naming a custom escape character (PostgreSQL merges the identifier,
+ * the `UESCAPE` keyword, and the single-quoted escape-character string into ONE lexical unit —
+ * verified: `U&"d!0061t" UESCAPE '!'` and `U&"!0074" UESCAPE '!'` are each a single identifier,
+ * both resolving via the `!`-escape to the same characters `U&"data"`/`U&"t"` would spell without
+ * one). [text] has already had all whitespace removed by [stripCommentsAndWhitespace], so the
+ * `UESCAPE` keyword and its string abut the identifier directly with no separator to skip.
+ *
+ * @return The index immediately after the identifier (and its `UESCAPE` clause, if present), or
+ *   `null` if [start] does not begin a `U&`/`u&`-prefixed double-quoted identifier at all.
+ */
+private fun matchUnicodeEscapeIdentifierSegment(text: String, start: Int): Int? {
+  if (start + 1 >= text.length) return null
+  if ((text[start] != 'U' && text[start] != 'u') || text[start + 1] != '&') return null
+  val quoteStart = start + 2
+  if (quoteStart >= text.length || text[quoteStart] != '"') return null
+  val afterIdentifier = skipLexicalToken(text, quoteStart)
+
+  val keyword = "UESCAPE"
+  if (!text.regionMatches(afterIdentifier, keyword, 0, keyword.length, ignoreCase = true)) {
+    return afterIdentifier
+  }
+  val afterKeyword = afterIdentifier + keyword.length
+  val isWordBoundary = afterKeyword >= text.length || !isIdentifierChar(text[afterKeyword])
+  if (!isWordBoundary || afterKeyword >= text.length || text[afterKeyword] != '\'') {
+    return afterIdentifier
+  }
+  val afterEscapeString = skipLexicalToken(text, afterKeyword)
+  return if (afterEscapeString != afterKeyword) afterEscapeString else afterIdentifier
+}
+
+/**
+ * Checks that [qualifierEndingInDot] (the qualifier before a star recognized on path 2 of
+ * [isStarItem], guaranteed by its caller to end in `.`) is acceptable — INVERTED relative to an
+ * earlier version of this check, which enumerated every character that may legitimately precede
+ * the dot (`"`, `)`, `]`, an identifier run) and missed a new shape on each of three separate
+ * review passes (a `DISTINCT ON (...)` prefix, a parenthesized composite expansion, an array
+ * subscript, a Unicode-escape identifier with a `UESCAPE` clause...). Enumerating acceptable
+ * endings is backwards: `false` is the DANGEROUS answer here (see [isStarItem]'s KDoc), so it must
+ * be EARNED, not handed out by default whenever a new qualifier shape isn't yet on the list.
+ *
+ * Rejects ONLY when the run of [isPostgresIdentifierContinuationChar] characters immediately
+ * preceding the final `.` is NON-EMPTY and its first character is an ASCII digit (`'0'..'9'`, NOT
+ * `Char.isDigit()`) — a digit-leading run before a dot is a numeric literal (`2.` in `SELECT
+ * 2.*3 lbl, a FROM t` — verified arithmetic returning 2 columns, not a star), the ONE lexical
+ * ambiguity a real qualifying dot has, and PostgreSQL numeric literals use ASCII digits
+ * EXCLUSIVELY — so a non-ASCII digit (Unicode category Nd, e.g. `٣` ARABIC-INDIC DIGIT THREE, `３`
+ * FULLWIDTH DIGIT THREE) can only be an identifier's first character there, never a numeral:
+ * verified with a real table literally named `٣`, `SELECT ٣.* x, a FROM ٣` returns 3 columns.
+ * `Char.isDigit()` is Unicode-aware and would wrongly reject that qualifier as if it were numeric.
+ *
+ * The run scan uses [isPostgresIdentifierContinuationChar] — the SAME predicate
+ * [matchTrailingAliasSegment] uses for its own character class — rather than the ASCII-oriented
+ * [isIdentifierChar] alone: a `>= 0x80` character that is not a letter or digit (`€`, `©`, `¹`)
+ * would otherwise truncate the run early, leaving whatever ASCII digit sits before it looking like
+ * the run's own start (`x€9.`: scanning backward with [isIdentifierChar] alone stops at `€`,
+ * making `9` look like the run's start and wrongly rejecting the whole thing as numeric, when the
+ * real run is `x€9` — letter-led, and correctly acceptable). Sharing the predicate makes that
+ * symmetry STRUCTURAL rather than a comment to remember to keep in sync — a "keep these two in
+ * sync" convention note is exactly what failed here, three separate times.
+ *
+ * Accepts in every other case, INCLUDING an empty run (the character immediately before the dot is
+ * `"`, `)`, `]`, or anything else that isn't an identifier-continuation character at all) — this
+ * is what lets a Unicode-escape qualifier like `U&"!0074"UESCAPE'!'.` (ending in the escape
+ * string's closing `'`) work with no special case for it whatsoever.
+ */
+private fun isStarQualifierAcceptable(qualifierEndingInDot: String): Boolean {
+  val beforeDotIndex = qualifierEndingInDot.length - 2
+  if (beforeDotIndex < 0 ||
+    !isPostgresIdentifierContinuationChar(qualifierEndingInDot[beforeDotIndex])
+  ) {
+    return true
+  }
+  var runStart = beforeDotIndex
+  while (runStart > 0 && isPostgresIdentifierContinuationChar(qualifierEndingInDot[runStart - 1])) {
+    runStart--
+  }
+  return qualifierEndingInDot[runStart] !in '0'..'9'
 }
 
 /**
