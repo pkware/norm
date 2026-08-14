@@ -1051,6 +1051,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
       // probe. Whether it is tried before or after the preceding-definitions-only prefix depends
       // on cteClause.isRecursive — see buildSelectStub's KDoc for why.
       val fullWithClausePrefix = sql.substring(0, cteClause.definitions.last().bodyCloseParenthesis + 1)
+      val dangerousSiblingNames = computeDangerousSiblingNames(sql, cteClause.definitions)
       result = buildString {
         var lastEnd = 0
         for ((index, cte) in cteClause.definitions.withIndex()) {
@@ -1106,30 +1107,26 @@ internal class PgCatalogLoader(private val connection: Connection) {
               //   regression (`RETURNING (tgt.*), OLD.tval AS oldv` forced the wrong column, the
               //   second half of `tgt.*`'s expansion, leaving the real OLD-referencing column on
               //   unchecked metadata). A mismatch forces every column, same as a RECOGNIZED star.
-              // - An outer join (LEFT/RIGHT/FULL JOIN at ANY nesting depth, or a MERGE with WHEN
-              //   NOT MATCHED BY SOURCE) can null-extend a returned column — but NEVER for a
-              //   plain INSERT, whose RETURNING sees only the just-inserted row (confirmed
-              //   against real PostgreSQL: a LEFT JOIN in an INSERT's own SELECT source does not
-              //   make its RETURNING columns nullable), so INSERT bodies are excluded from this
-              //   trigger specifically.
-              // - body referencing, BY NAME, a sibling CTE whose OWN body contains one of these
-              //   same danger signs: that sibling's join structure is invisible to any scan of
-              //   body's own text (see transformForViewCreation's KDoc). Scoped to siblings that
-              //   are THEMSELVES dangerous — not every sibling reference — so an ordinary
+              // - A null-extending construct in body's own text (an outer join, a MERGE with WHEN
+              //   NOT MATCHED BY SOURCE, or a grouping-set construct's supertotal row — see
+              //   hasNullExtendingConstruct's KDoc) — but NEVER for a plain INSERT, whose
+              //   RETURNING sees only the just-inserted row (confirmed against real PostgreSQL: a
+              //   LEFT JOIN in an INSERT's own SELECT source does not make its RETURNING columns
+              //   nullable), so INSERT bodies are excluded from this trigger specifically.
+              // - body referencing, BY NAME, a sibling CTE that is dangerous — either directly (its
+              //   own body has one of the same danger signs) or TRANSITIVELY (it in turn
+              //   references a further sibling that is dangerous, computed as a fixpoint over the
+              //   whole WITH clause by computeDangerousSiblingNames, once per statement, not once
+              //   per CTE): that sibling's danger is invisible to any scan of body's own text (see
+              //   transformForViewCreation's KDoc). A quoted reference to the sibling's name (e.g.
+              //   USING "pre") is matched too — see referencesAnyName's KDoc. Scoped to siblings
+              //   that are THEMSELVES dangerous — not every sibling reference — so an ordinary
               //   forward/backward reference to a plain, join-free sibling (e.g. `later AS
               //   (SELECT 'q'::TEXT AS lbl)`) does not lose its real NOT NULL columns to this
-              //   safety net; only checked one level deep (the sibling's own text), not
-              //   transitively through a chain of siblings referencing further siblings.
+              //   safety net.
               val oldOrNewAnalysis = oldOrNewReturningColumns(body)
-              val dangerousSiblingNames = cteClause.definitions
-                .filter { sibling -> sibling !== cte }
-                .filter { sibling ->
-                  val siblingBody = sql.substring(sibling.bodyOpenParenthesis + 1, sibling.bodyCloseParenthesis)
-                  hasOuterJoin(siblingBody) || hasWhenNotMatchedBySourceClause(siblingBody)
-                }
-                .map { it.name }
-              val forceAllNullable = referencesAnyName(body, dangerousSiblingNames) ||
-                (!isInsertBody(body) && (hasOuterJoin(body) || hasWhenNotMatchedBySourceClause(body)))
+              val forceAllNullable = referencesAnyName(body, dangerousSiblingNames - cte.name) ||
+                (!isInsertBody(body) && hasNullExtendingConstruct(body))
               val forceNullableColumn: (Int, Int) -> Boolean = { columnIndex, totalColumnCount ->
                 val oldOrNewColumns = oldOrNewAnalysis.forcedColumns
                 // null forcedColumns means oldOrNewReturningColumns already recognized the
@@ -1193,6 +1190,98 @@ internal class PgCatalogLoader(private val connection: Connection) {
     } else {
       null // No CTEs, outer DML with no join structure
     }
+  }
+
+  /**
+   * Computes the full, TRANSITIVE set of CTE names in [definitions] that are dangerous to another
+   * sibling's stub-path safety net (see [buildSelectStub]'s KDoc on the sibling-CTE trigger) —
+   * computed ONCE per `WITH` clause, not once per CTE, since the result is the same for every
+   * sibling in the clause.
+   *
+   * Seeded with definitions whose OWN body is dangerous, from either of two INDEPENDENT reasons:
+   * - It references `OLD`/`NEW` at all (via [oldOrNewReturningColumns], which already understands
+   *   the `RETURNING WITH (OLD AS alias, ...)` prologue — not a bare [referencesOldOrNew] call,
+   *   which would miss an aliased reference). This applies REGARDLESS of statement kind, `INSERT`
+   *   included: an `INSERT`'s ordinary target-column `RETURNING` is authoritative against base
+   *   table `attnotnull` (see [isInsertBody]'s KDoc), but `RETURNING OLD.col` is a DIFFERENT
+   *   claim — `OLD`'s own conditional existence (`NULL` for a freshly inserted row with no prior
+   *   conflict) is not something `attnotnull` can see, `INSERT` or not. Confirmed against real
+   *   PostgreSQL (issue #208 P1 follow-up): `WITH ins AS (INSERT INTO it2(id, val) SELECT a.id,
+   *   'v' FROM a LEFT JOIN b ON b.id = a.id ON CONFLICT (id) DO UPDATE SET val = 'w' RETURNING id,
+   *   OLD.val AS oldval), m AS (MERGE INTO tgt USING ins ON ins.id = tgt.id WHEN MATCHED THEN
+   *   UPDATE SET tval = 'z' RETURNING merge_action() AS act, ins.oldval AS ov, tgt.id) SELECT *
+   *   FROM m` returns `ov = NULL` for a fresh insert (no prior conflict row) — an earlier version
+   *   of this seed, which excluded EVERY `INSERT` body regardless of why it was dangerous, missed
+   *   this and fabricated `ov` NOT NULL.
+   * - [hasNullExtendingConstruct] finds a detectable outer join, `WHEN NOT MATCHED BY SOURCE`, or
+   *   grouping-set construct in its OWN body — but ONLY for a non-`INSERT` body: an `INSERT`'s
+   *   `RETURNING` of an ordinary target-table column can only ever see the just-inserted row
+   *   (see [isInsertBody]'s KDoc), so a join in the `INSERT`'s own `SELECT` source cannot
+   *   null-extend it. Seeding on that join anyway would propagate a false alarm down every
+   *   sibling that references the `INSERT`.
+   *
+   * Propagation (below) does NOT apply the `INSERT` exclusion from the second bullet — this is a
+   * deliberate over-approximation, mirroring the own-body trigger's own unconditional
+   * sibling-reference arm (`referencesAnyName(body, dangerousSiblingNames - cte.name)`, which
+   * fires for an `INSERT` body exactly like any other statement kind), not a claim that every
+   * `INSERT` referencing a dangerous sibling is genuinely exposed to its null-extension.
+   * Confirmed against real PostgreSQL that it is NOT always exposed: `WITH j AS (SELECT a.id,
+   * b.bval FROM a LEFT JOIN b ON b.id = a.id), ins AS (INSERT INTO ins_target(id, val) SELECT
+   * j.id, 'v' FROM j RETURNING id, val), m AS (MERGE INTO tgt USING ins ON ins.id = tgt.id WHEN
+   * MATCHED THEN UPDATE SET tval = 'z' RETURNING merge_action(), ins.val AS mv, tgt.id) SELECT *
+   * FROM m` returns `mv = 'v'` — a literal, never touched by `j`'s join — yet this is reported
+   * nullable, because `ins` joins the dangerous set via propagation (it references `j`) and `m`
+   * then references `ins`. The cost is specifically that the `INSERT` precision guard (seeding on
+   * `!isInsertBody`, see the seed bullets above) is NOT recovered once the dangerous source is a
+   * referenced CTE rather than a join inline in the `INSERT`'s own text — same safe-direction
+   * tradeoff every other over-approximation in this file makes.
+   *
+   * Then propagated to a FIXPOINT: any definition (of any statement kind) that
+   * [referencesAnyName] a name already in the dangerous set joins it, and this repeats until a
+   * full pass over [definitions] adds nothing. This is what makes a multi-hop chain like `j` (has
+   * the join) -> `mid` (references only `j`, no join of its own) -> `m` (references only `mid`,
+   * never `j` directly) detected: `mid` joins the dangerous set on the first pass (it references
+   * `j`), then `m` joins on the second pass (it references `mid`, now dangerous) — a one-level
+   * check stops after the first hop and never reaches `m`. Confirmed against real PostgreSQL
+   * (issue #208, Gap 3): `m`'s `bval`, passed through `mid` from `j`'s own `LEFT JOIN`, is
+   * genuinely `NULL` for the row whose join found no match.
+   *
+   * The fixpoint is inherently cycle-safe without a separate visited set: adding a name is
+   * monotonic (the set only grows) and a pass that adds nothing terminates the loop, so a cycle
+   * (`x` references `y`, `y` references `x`) can add at most every name in [definitions] before a
+   * pass finds nothing left to add.
+   */
+  private fun computeDangerousSiblingNames(sql: String, definitions: List<CteDefinition>): Set<String> {
+    fun bodyOf(definition: CteDefinition) =
+      sql.substring(definition.bodyOpenParenthesis + 1, definition.bodyCloseParenthesis)
+
+    // null forcedColumns means a recognized star item coincides with an OLD/NEW reference (danger
+    // regardless of index); a non-null, non-empty set means specific items reference OLD/NEW; an
+    // empty set means no OLD/NEW reference at all. Either of the first two counts as "references
+    // OLD/NEW" for seeding purposes here — which SPECIFIC column doesn't matter yet, only whether
+    // the body has this danger sign at all.
+    fun referencesOldOrNewAnywhere(body: String) =
+      oldOrNewReturningColumns(body).forcedColumns.let { it == null || it.isNotEmpty() }
+
+    val dangerous = definitions
+      .filter { definition ->
+        val body = bodyOf(definition)
+        referencesOldOrNewAnywhere(body) || (!isInsertBody(body) && hasNullExtendingConstruct(body))
+      }
+      .mapTo(mutableSetOf()) { it.name }
+
+    var addedDuringLastPass = true
+    while (addedDuringLastPass) {
+      addedDuringLastPass = false
+      for (definition in definitions) {
+        if (definition.name in dangerous) continue
+        if (referencesAnyName(bodyOf(definition), dangerous)) {
+          dangerous.add(definition.name)
+          addedDuringLastPass = true
+        }
+      }
+    }
+    return dangerous
   }
 
   /**
@@ -1416,29 +1505,35 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * is detected in `body`. Whole-body over-approximation is deliberate for these: identifying
    * precisely which columns a join affects isn't possible from metadata alone (see
    * [tryPrepareStub]'s KDoc):
-   * - A detectable outer join (`LEFT`/`RIGHT`/`FULL JOIN` at ANY nesting depth, or a `MERGE` with
-   *   `WHEN NOT MATCHED BY SOURCE`) — but NEVER for a plain `INSERT`: confirmed against running
-   *   PostgreSQL, `INSERT INTO b(id, bval) SELECT a.id, 'v' FROM a LEFT JOIN b2 ON b2.id = a.id
-   *   RETURNING id, bval` returns non-null values for both columns despite the `LEFT JOIN` in
-   *   its own source, because an `INSERT`'s `RETURNING` can only ever see the row that was
-   *   (or wasn't) actually inserted — see [isInsertBody]'s KDoc. Forcing nullability here for an
-   *   `INSERT` was ITSELF a real over-nullability regression this exclusion fixes: it broke
+   * - A detectable null-extending construct in `body`'s own text ([hasNullExtendingConstruct]: a
+   *   `LEFT`/`RIGHT`/`FULL JOIN` at ANY nesting depth, a `MERGE` with `WHEN NOT MATCHED BY
+   *   SOURCE`, or a grouping-set construct — `ROLLUP`, `CUBE`, `GROUPING SETS` — whose supertotal
+   *   row makes a grouped column `NULL` by definition) — but NEVER for a plain `INSERT`: confirmed
+   *   against running PostgreSQL, `INSERT INTO b(id, bval) SELECT a.id, 'v' FROM a LEFT JOIN b2 ON
+   *   b2.id = a.id RETURNING id, bval` returns non-null values for both columns despite the `LEFT
+   *   JOIN` in its own source, because an `INSERT`'s `RETURNING` can only ever see the row that
+   *   was (or wasn't) actually inserted — see [isInsertBody]'s KDoc. Forcing nullability here for
+   *   an `INSERT` was ITSELF a real over-nullability regression this exclusion fixes: it broke
    *   generated code that legitimately relied on a non-null type.
-   * - `body` referencing, BY NAME, another CTE in the same `WITH` clause (a sibling) whose OWN
-   *   body contains a detectable outer join or `WHEN NOT MATCHED BY SOURCE`: that danger sign can
-   *   null-extend a column this body's `RETURNING` merely passes through, and no scan of `body`'s
-   *   own text can see it — the null-extension lives entirely outside it. Confirmed against
-   *   running PostgreSQL: `WITH pre AS (SELECT a.id, b.bval FROM a LEFT JOIN b ON b.id = a.id), m
-   *   AS (MERGE INTO tgt USING pre ON pre.id = tgt.id WHEN MATCHED THEN UPDATE SET tval = 'z'
+   * - `body` referencing, BY NAME, another CTE in the same `WITH` clause (a sibling) that is
+   *   dangerous — either directly (its own body has one of the constructs above) or TRANSITIVELY
+   *   (it in turn references a further sibling that is dangerous, any number of hops away): that
+   *   danger can null-extend a column this body's `RETURNING` merely passes through, and no scan
+   *   of `body`'s own text can see it — the null-extension lives entirely outside it. The
+   *   transitive set is computed once per `WITH` clause as a fixpoint — see
+   *   `computeDangerousSiblingNames`'s KDoc — so a chain like `j` (has the join) -> `mid`
+   *   (references only `j`) -> `m` (references only `mid`) is followed all the way through, not
+   *   just one hop. The reference itself may be UNQUOTED or double-quoted (`USING "pre"` matches
+   *   exactly like `USING pre` — see [referencesAnyName]'s KDoc). Confirmed against running
+   *   PostgreSQL: `WITH pre AS (SELECT a.id, b.bval FROM a LEFT JOIN b ON b.id = a.id), m AS
+   *   (MERGE INTO tgt USING pre ON pre.id = tgt.id WHEN MATCHED THEN UPDATE SET tval = 'z'
    *   RETURNING merge_action(), pre.bval, tgt.id) SELECT * FROM m` returns `bval = NULL` for a
-   *   target row whose matching `pre` row came from `b`'s nullable side of the join — invisible
-   *   to `m`'s own text, which has no join at all. This trigger checks ONLY the referenced
-   *   sibling's own body text, one level deep — a sibling that is itself only dangerous because
-   *   IT references a further, join-containing sibling is not currently followed transitively
-   *   (see NOT CLAIMED below). Scoping this to siblings that are themselves dangerous — rather
-   *   than firing for ANY sibling reference at all — matters: an ordinary forward reference to a
-   *   plain, join-free sibling (e.g. `later AS (SELECT 'q'::TEXT AS lbl)`, used purely to supply a
-   *   literal value) must not lose its own real NOT NULL columns to this safety net.
+   *   target row whose matching `pre` row came from `b`'s nullable side of the join — invisible to
+   *   `m`'s own text, which has no join at all. Scoping this to siblings that are themselves
+   *   dangerous — rather than firing for ANY sibling reference at all — matters: an ordinary
+   *   forward reference to a plain, join-free sibling (e.g. `later AS (SELECT 'q'::TEXT AS lbl)`,
+   *   used purely to supply a literal value) must not lose its own real NOT NULL columns to this
+   *   safety net.
    *
    * A `RETURNING` that reads `OLD.`/`NEW.` (PostgreSQL 18) — this one DOES apply to `INSERT` too
    * (e.g. `INSERT ... ON CONFLICT DO UPDATE ... RETURNING OLD.col`, where `OLD` is `NULL` exactly
@@ -1458,38 +1553,25 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * this is left as-is.
    *
    * NOT CLAIMED: a body whose null-extension originates entirely outside it — in a base table's
-   * own view definition, a function it calls, a sibling CTE that is dangerous only TRANSITIVELY
-   * (through a further sibling this one-level-deep check does not follow), or anything else this
-   * file cannot see — is not caught by any of the above and may still be reported NOT NULL.
-   * Nothing in this file claims to enumerate every way nullability can leak into a body from
-   * outside its own text — only the shapes verified against real PostgreSQL and listed here.
-   *
-   * Two further pre-existing gaps, confirmed against real PostgreSQL, are not fixed here (both
-   * predate this file's sibling-CTE and per-column work, and are out of this change's scope):
-   * - The sibling-CTE trigger only matches an UNQUOTED (or aliased, or subquery-nested) reference
-   *   to the dangerous sibling's name: [referencesAnyName] runs through [findKeywordAtAnyDepth],
-   *   which SKIPS OVER double-quoted identifiers as an opaque lexical token (by design — see
-   *   [skipLexicalToken]'s KDoc — a quoted identifier's contents are never themselves scanned for
-   *   keywords), so `MERGE INTO tgt USING "pre" ON "pre".id = tgt.id ... RETURNING
-   *   merge_action(), "pre".bval, tgt.id` — quoting a plain, unremarkable lowercase name that
-   *   didn't need quoting at all — never fires the trigger, fabricating `bval` NOT NULL despite
-   *   `pre` containing exactly the same dangerous `LEFT JOIN` as the working, unquoted example
-   *   above.
-   * - A body's OWN null-extension is only detected via [hasOuterJoin] or
-   *   [hasWhenNotMatchedBySourceClause] — an outer join or MERGE's own not-matched-by-source
-   *   branch. Other constructs that make a MERGE's matched source row conditionally absent-valued
-   *   are not recognized at all: `MERGE INTO tgt USING (SELECT id, count(*) AS c FROM a WHERE
-   *   id = 1 GROUP BY ROLLUP(id)) s ON tgt.id = COALESCE(s.id, 2) WHEN MATCHED THEN UPDATE SET
-   *   tval = 'z' RETURNING merge_action(), s.id AS sid, tgt.id` fabricates `sid` NOT NULL — the
-   *   `ROLLUP` supertotal row has `s.id = NULL` by definition, matched here only via the
-   *   `COALESCE` in the `ON` condition, with no `LEFT`/`RIGHT`/`FULL JOIN` keyword or `WHEN NOT
-   *   MATCHED BY SOURCE` clause anywhere in the body for either detector to find.
+   * own view definition, a function it calls, or anything else this file cannot see — is not
+   * caught by any of the above and may still be reported NOT NULL. Nothing in this file claims to
+   * enumerate every way nullability can leak into a body from outside its own text — only the
+   * shapes verified against real PostgreSQL and listed here. In particular,
+   * [hasNullExtendingConstruct] only recognizes an outer join, `WHEN NOT MATCHED BY SOURCE`, and a
+   * grouping-set construct as reasons a `MERGE`'s matched source row can be conditionally
+   * absent-valued — this is the RESIDUAL part of issue #208's Gap 2 that remains unfixed: a
+   * `MERGE` whose matched source row is conditionally absent-valued for some OTHER reason (an
+   * arbitrary `ON` condition — such as `ON tgt.id = COALESCE(s.id, 2)` — sitting over some other
+   * NULL-producing source shape that isn't an outer join, `WHEN NOT MATCHED BY SOURCE`, or a
+   * grouping set) is still not recognized, and its `RETURNING` columns may still be fabricated NOT
+   * NULL.
    *
    * EVERYTHING ABOVE IN THIS KDOC IS SCOPED TO THIS FUNCTION'S CALLERS — the CTE-body path (Phase
    * 1 of `transformForViewCreation`). The TOP-LEVEL (non-CTE) DML path (Phase 2) has NO equivalent
    * safety net at all: this function, [oldOrNewReturningColumns], [referencesAnyName], and
-   * [hasOuterJoin] are never consulted for a bare top-level statement — there is no stub path for
-   * top-level DML to fall back to, only `queryColumnNullability`'s `buildAllNonNullable` fallback,
+   * [hasNullExtendingConstruct] are never consulted for a bare top-level statement — there is no
+   * stub path for top-level DML to fall back to, only `queryColumnNullability`'s
+   * `buildAllNonNullable` fallback,
    * which asserts EVERY column NOT NULL, unconditionally, whenever Phase 2's conversion attempt
    * fails or is rejected. [hasWhenNotMatchedBySourceClause] is DIFFERENT: it IS consulted for a
    * top-level `MERGE`, via `convertMergeToSelect` (called from `convertDmlToSelect`, which Phase 2

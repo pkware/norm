@@ -915,6 +915,39 @@ class SqlUtilsTest {
     fun `detects a name nested inside a subquery`() {
       assertThat(referencesAnyName("SELECT * FROM (SELECT * FROM pre) x", listOf("pre"))).isTrue()
     }
+
+    @Test
+    fun `detects a double-quoted reference with no requirement for a following dot`() {
+      assertThat(
+        referencesAnyName("MERGE INTO tgt USING \"pre\" ON \"pre\".id = tgt.id", listOf("pre")),
+      ).isTrue()
+    }
+
+    @Test
+    fun `does not match a double-quoted name that is not in the given names`() {
+      assertThat(referencesAnyName("MERGE INTO tgt USING \"other\" ON \"other\".id = tgt.id", listOf("pre")))
+        .isFalse()
+    }
+
+    @Test
+    fun `does not match a name that only appears inside a single-quoted string literal`() {
+      assertThat(referencesAnyName("SELECT 'pre' AS label", listOf("pre"))).isFalse()
+    }
+
+    @Test
+    fun `does not match a name that only appears inside a comment`() {
+      assertThat(referencesAnyName("SELECT 1 /* references pre here */", listOf("pre"))).isFalse()
+    }
+
+    @Test
+    fun `does not match a name that only appears inside a dollar-quoted string`() {
+      assertThat(referencesAnyName("SELECT \$\$pre\$\$ AS x", listOf("pre"))).isFalse()
+    }
+
+    @Test
+    fun `does not match a name that only appears inside a tagged dollar-quoted string`() {
+      assertThat(referencesAnyName("SELECT \$tag\$ pre \$tag\$ AS x", listOf("pre"))).isFalse()
+    }
   }
 
   @Nested
@@ -942,6 +975,83 @@ class SqlUtilsTest {
     @Test
     fun `does not match when there is no join at all`() {
       assertThat(hasOuterJoin("UPDATE t SET name = 'x' WHERE id = 1")).isFalse()
+    }
+  }
+
+  @Nested
+  inner class HasGroupingSetConstructTest {
+
+    @Test
+    fun `detects ROLLUP with an adjacent open parenthesis`() {
+      assertThat(hasGroupingSetConstruct("SELECT id, count(*) FROM a GROUP BY ROLLUP(id)")).isTrue()
+    }
+
+    @Test
+    fun `detects CUBE with a space before the open parenthesis`() {
+      assertThat(hasGroupingSetConstruct("SELECT a, b, count(*) FROM t GROUP BY CUBE (a, b)")).isTrue()
+    }
+
+    @Test
+    fun `detects GROUPING SETS`() {
+      assertThat(hasGroupingSetConstruct("SELECT a, b FROM t GROUP BY GROUPING SETS ((a), (b), ())")).isTrue()
+    }
+
+    @Test
+    fun `detects GROUPING SETS with a comment between the two words`() {
+      assertThat(hasGroupingSetConstruct("SELECT a FROM t GROUP BY GROUPING/*c*/SETS((a), ())")).isTrue()
+    }
+
+    @Test
+    fun `detects ROLLUP nested inside a USING subquery`() {
+      val body = "MERGE INTO tgt USING (SELECT id, count(*) AS c FROM a GROUP BY ROLLUP(id)) s " +
+        "ON tgt.id = s.id WHEN MATCHED THEN UPDATE SET tval = 'z' RETURNING s.id"
+      assertThat(hasGroupingSetConstruct(body)).isTrue()
+    }
+
+    @Test
+    fun `does not match a plain GROUP BY with no grouping-set construct`() {
+      assertThat(hasGroupingSetConstruct("SELECT id, count(*) FROM a GROUP BY id")).isFalse()
+    }
+
+    @Test
+    fun `does not match an identifier named rollup with no following open parenthesis`() {
+      assertThat(hasGroupingSetConstruct("SELECT rollup FROM t")).isFalse()
+    }
+
+    @Test
+    fun `does not match an ordinary cube function call with no GROUP BY anywhere`() {
+      // "detects CUBE with a space before the open parenthesis" above already covers the
+      // still-true case (a genuine GROUP BY CUBE(...)) that this negative case is paired with.
+      assertThat(hasGroupingSetConstruct("SELECT cube(av) FROM t")).isFalse()
+    }
+
+    @Test
+    fun `does not match a bare GROUPING aggregate function unrelated to GROUPING SETS`() {
+      assertThat(hasGroupingSetConstruct("SELECT GROUPING(a) FROM t GROUP BY a")).isFalse()
+    }
+  }
+
+  @Nested
+  inner class HasNullExtendingConstructTest {
+
+    @Test
+    fun `trips on an outer join`() {
+      assertThat(hasNullExtendingConstruct("UPDATE t SET x = 1 FROM a LEFT JOIN b ON b.id = a.id")).isTrue()
+    }
+
+    @Test
+    fun `trips on WHEN NOT MATCHED BY SOURCE`() {
+      assertThat(hasNullExtendingConstruct("WHEN NOT MATCHED BY SOURCE THEN DELETE")).isTrue()
+    }
+
+    @Test
+    fun `trips on a grouping-set construct`() {
+      assertThat(hasNullExtendingConstruct("SELECT id, count(*) FROM a GROUP BY ROLLUP(id)")).isTrue()
+    }
+
+    @Test
+    fun `does not trip on a plain body with none of the three constructs`() {
+      assertThat(hasNullExtendingConstruct("UPDATE t SET name = 'x' WHERE id = 1")).isFalse()
     }
   }
 

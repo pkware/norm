@@ -2915,6 +2915,211 @@ class QueryAnalysisTest {
     }
 
     @Test
+    fun `MERGE fed by a double-quoted sibling reference still forces the joined column nullable`() {
+      assumeTrue(pgVersion.toInt() >= 17, "merge_action() requires PostgreSQL 17+")
+      // Issue #208, Gap 1: quoting an otherwise unremarkable lowercase sibling name ("pre")
+      // used to defeat referencesAnyName entirely, since its underlying scan skipped
+      // double-quoted identifiers as an opaque lexical token by design. referencesAnyName now
+      // scans a quoted identifier's own contents instead. Verified against real Postgres 18 (an
+      // "a" row with no matching "b" row, target "tgt" row id = 1): act = 'UPDATE', bval = NULL,
+      // id = 1.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
+        CREATE TABLE a (id INT NOT NULL);
+        CREATE TABLE b (id INT NOT NULL, bval TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH pre AS (
+          SELECT a.id, b.bval FROM a LEFT JOIN b ON b.id = a.id
+        ),
+        m AS (
+          MERGE INTO tgt USING "pre" ON "pre".id = tgt.id
+          WHEN MATCHED THEN UPDATE SET tval = 'z'
+          RETURNING merge_action() AS act, "pre".bval, tgt.id
+        )
+        SELECT act, bval, id FROM m
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `MERGE with a ROLLUP source forces the grouped column nullable`() {
+      assumeTrue(pgVersion.toInt() >= 17, "merge_action() requires PostgreSQL 17+")
+      // Issue #208, Gap 2: a ROLLUP supertotal row makes the grouped column NULL by definition,
+      // matched into the target only via a COALESCE in the ON condition -- no LEFT/RIGHT/FULL
+      // JOIN keyword and no WHEN NOT MATCHED BY SOURCE clause appears anywhere in the body for
+      // the pre-existing detectors to find. hasGroupingSetConstruct now recognizes ROLLUP/CUBE/
+      // GROUPING SETS as a third null-extending construct. Verified against real Postgres 18
+      // (an "a" row with id = 1, tgt rows id = 1 and id = 2): the id = 1 row of the source
+      // matches tgt id = 1 (sid = 1, not the supertotal), and the ROLLUP supertotal row (s.id =
+      // NULL) matches tgt id = 2 via COALESCE(s.id, 2) = 2 -- two result rows, merge_action =
+      // 'UPDATE' for both, {sid = 1, id = 1} and {sid = NULL, id = 2} (MERGE's own output order
+      // across rows is unspecified; only the values were confirmed, not this ordering).
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
+        CREATE TABLE a (id INT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH m AS (
+          MERGE INTO tgt USING (SELECT id, count(*) AS c FROM a WHERE id = 1 GROUP BY ROLLUP(id)) s
+            ON tgt.id = COALESCE(s.id, 2)
+          WHEN MATCHED THEN UPDATE SET tval = 'z'
+          RETURNING merge_action(), s.id AS sid, tgt.id
+        )
+        SELECT * FROM m
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `MERGE fed by a transitive sibling chain forces the joined column nullable`() {
+      assumeTrue(pgVersion.toInt() >= 17, "merge_action() requires PostgreSQL 17+")
+      // Issue #208, Gap 3: "m" references "mid", which has no join of its own -- the LEFT JOIN
+      // lives in "j", which is "mid"'s sibling, not "m"'s. The pre-existing one-level-deep
+      // sibling-danger check stopped at "mid" and never saw "j". computeDangerousSiblingNames now
+      // computes the danger set as a fixpoint over the whole WITH clause, so "mid" (which
+      // references "j") joins the dangerous set first, then "m" (which references "mid") joins
+      // next. Verified against real Postgres 18 (an "a" row with no matching "b" row): act =
+      // 'UPDATE', bval = NULL, id = 1.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
+        CREATE TABLE a (id INT NOT NULL);
+        CREATE TABLE b (id INT NOT NULL, bval TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH j AS (SELECT a.id, b.bval FROM a LEFT JOIN b ON b.id = a.id),
+             mid AS (SELECT id, bval FROM j),
+             m AS (MERGE INTO tgt USING mid ON mid.id = tgt.id
+                   WHEN MATCHED THEN UPDATE SET tval = 'z'
+                   RETURNING merge_action() AS act, mid.bval, tgt.id)
+        SELECT * FROM m
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `MERGE fed by an INSERT sibling with an internal LEFT JOIN keeps the target column NOT NULL`() {
+      assumeTrue(pgVersion.toInt() >= 17, "merge_action() requires PostgreSQL 17+")
+      // Precision guard for the seed-change half of Gap 3's fix: computeDangerousSiblingNames
+      // seeds on "!isInsertBody(body) && hasNullExtendingConstruct(body)" -- an INSERT's
+      // RETURNING can only expose target-table columns, whose attnotnull is authoritative
+      // regardless of any join in the INSERT's own SELECT source (isInsertBody's KDoc). Without
+      // that seed exclusion, "ins" (an INSERT ... SELECT ... LEFT JOIN ... RETURNING) would seed
+      // the dangerous set on its own LEFT JOIN, and "m" (which references "ins") would then be
+      // forced fully nullable, losing a genuinely NOT NULL column. Verified against real
+      // Postgres 18 (an "a" row with no matching "b" row): the INSERT inserts one row into
+      // ins_target (id = 1, val = 'v', both columns genuinely NOT NULL for the row that WAS
+      // inserted), and the MERGE returns act = 'UPDATE', mergedval = 'v', id = 1.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
+        CREATE TABLE a (id INT NOT NULL);
+        CREATE TABLE b (id INT NOT NULL, bval TEXT NOT NULL);
+        CREATE TABLE ins_target (id INT NOT NULL, val TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH ins AS (
+          INSERT INTO ins_target (id, val) SELECT a.id, 'v' FROM a LEFT JOIN b ON b.id = a.id
+          RETURNING id, val
+        ),
+        m AS (
+          MERGE INTO tgt USING ins ON ins.id = tgt.id
+          WHEN MATCHED THEN UPDATE SET tval = 'z'
+          RETURNING merge_action() AS act, ins.val AS mergedval, tgt.id
+        )
+        SELECT * FROM m
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `MERGE fed by an INSERT ON CONFLICT sibling that RETURNS OLD-col forces the passed-through column nullable`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // Issue #208 P1 follow-up: the seed's "!isInsertBody" exclusion (added for the precision
+      // guard test above) is correct for an INSERT's ORDINARY target-column RETURNING, but an
+      // INSERT's RETURNING can also read OLD./NEW., whose own conditional existence attnotnull
+      // cannot see regardless of statement kind -- excluding EVERY INSERT body from the seed,
+      // rather than only excluding hasNullExtendingConstruct's own-join trigger, silently dropped
+      // this danger sign. computeDangerousSiblingNames now seeds separately on
+      // oldOrNewReturningColumns (which also understands a RETURNING WITH (OLD AS alias, ...)
+      // prologue), regardless of isInsertBody. "ins" is an INSERT ... ON CONFLICT DO UPDATE
+      // RETURNING OLD.val -- OLD is NULL exactly when the row was freshly inserted (no prior
+      // conflict) -- and "m" merely passes ins.oldval through. Verified against real Postgres 18
+      // (an "a" row with no matching "b" row, no pre-existing "it2" row so the INSERT always
+      // takes the fresh-insert branch): act = 'UPDATE', ov = NULL, id = 1.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
+        CREATE TABLE a (id INT NOT NULL);
+        CREATE TABLE b (id INT NOT NULL, bval TEXT NOT NULL);
+        CREATE TABLE it2 (id INT PRIMARY KEY, val TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH ins AS (
+          INSERT INTO it2 (id, val) SELECT a.id, 'v' FROM a LEFT JOIN b ON b.id = a.id
+          ON CONFLICT (id) DO UPDATE SET val = 'w'
+          RETURNING id, OLD.val AS oldval
+        ),
+        m AS (
+          MERGE INTO tgt USING ins ON ins.id = tgt.id
+          WHEN MATCHED THEN UPDATE SET tval = 'z'
+          RETURNING merge_action() AS act, ins.oldval AS ov, tgt.id
+        )
+        SELECT * FROM m
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `MERGE fed by an INSERT sibling using the RETURNING WITH OLD-alias prologue forces the column nullable`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // Same danger sign as the unqualified-OLD sibling test above, but via PostgreSQL 18's
+      // `RETURNING WITH (OLD AS alias, ...)` prologue instead of a bare `OLD.col` reference --
+      // computeDangerousSiblingNames seeds on oldOrNewReturningColumns specifically because it
+      // (unlike a bare referencesOldOrNew call) already understands this prologue, so an aliased
+      // reference must trip the same seed. "ins" is an INSERT ... ON CONFLICT DO UPDATE
+      // RETURNING WITH (OLD AS o) id, o.val AS oldval -- OLD is NULL exactly when the row was
+      // freshly inserted -- and "m" merely passes ins.oldval through. Verified against real
+      // Postgres 18 (an "a" row with no pre-existing "it2" row, so the INSERT always takes the
+      // fresh-insert branch): act = 'UPDATE', ov = NULL, id = 1.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
+        CREATE TABLE a (id INT NOT NULL);
+        CREATE TABLE it2 (id INT PRIMARY KEY, val TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH ins AS (
+          INSERT INTO it2 (id, val) SELECT a.id, 'v' FROM a
+          ON CONFLICT (id) DO UPDATE SET val = 'w'
+          RETURNING WITH (OLD AS o) id, o.val AS oldval
+        ),
+        m AS (
+          MERGE INTO tgt USING ins ON ins.id = tgt.id
+          WHEN MATCHED THEN UPDATE SET tval = 'z'
+          RETURNING merge_action() AS act, ins.oldval AS ov, tgt.id
+        )
+        SELECT * FROM m
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
     fun `forward-referencing MERGE under WITH RECURSIVE fed by a later sibling with a LEFT JOIN is nullable`() {
       assumeTrue(pgVersion.toInt() >= 17, "merge_action() requires PostgreSQL 17+")
       // FIX 3 / genuine NEW-harm regression: "m" (declared FIRST) forward-references "pre"
