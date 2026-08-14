@@ -115,6 +115,9 @@ class SqlUtilsTest {
 
     @Test
     fun `SELECT star`() {
+      // Also a regression guard for the star-truncation guard: a LONE star has nothing after it
+      // to shift, so the guard leaves it exactly as parseColumnReference already handles it —
+      // this already passed before the fix.
       val result = parseSelectItems("SELECT * FROM users")
       assertThat(result).containsExactly(
         SelectItem("*", null, null),
@@ -125,6 +128,600 @@ class SqlUtilsTest {
     fun `no SELECT or RETURNING returns empty list`() {
       val result = parseSelectItems("CALL my_proc()")
       assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `WITH RECURSIVE CTE body SELECT is not mistaken for the main query's SELECT`() {
+      // Reproduces #212: the CTE body's own SELECT ("SELECT label FROM parent_name") used to be
+      // picked over the main query's SELECT ("SELECT id, name FROM new_parent") because the old
+      // implementation searched for the first SELECT anywhere in the statement.
+      val result = parseSelectItems(
+        """
+        WITH RECURSIVE new_parent AS (
+          INSERT INTO parent (name) SELECT label FROM parent_name RETURNING id, name
+        ),
+        parent_name AS (
+          SELECT 'seeded'::TEXT AS label
+        )
+        SELECT id, name FROM new_parent
+        """.trimIndent(),
+      )
+      assertThat(result).containsExactly(
+        SelectItem("id", "id", null),
+        SelectItem("name", "name", null),
+      )
+    }
+
+    @Test
+    fun `plain WITH CTE body select list of a different length is not picked over the main query`() {
+      val result = parseSelectItems(
+        "WITH c AS (SELECT 1, 2, 3) SELECT id, name FROM main_table",
+      )
+      assertThat(result).containsExactly(
+        SelectItem("id", "id", null),
+        SelectItem("name", "name", null),
+      )
+    }
+
+    @Test
+    fun `INSERT SELECT RETURNING picks the RETURNING clause, not the SELECT source`() {
+      val result = parseSelectItems("INSERT INTO t(a,b) SELECT x, y FROM s RETURNING id, a")
+      assertThat(result).containsExactly(
+        SelectItem("id", "id", null),
+        SelectItem("a", "a", null),
+      )
+    }
+
+    @Test
+    fun `UPDATE RETURNING with a scalar subquery in SET does not pick the subquery's SELECT`() {
+      val result = parseSelectItems("UPDATE t SET x = (SELECT max(y) FROM s) RETURNING id")
+      assertThat(result).containsExactly(
+        SelectItem("id", "id", null),
+      )
+    }
+
+    @Test
+    fun `SELECT keyword inside a string literal ahead of the real clause is not mistaken for it`() {
+      val result = parseSelectItems("UPDATE t SET note = 'please SELECT this' RETURNING id")
+      assertThat(result).containsExactly(
+        SelectItem("id", "id", null),
+      )
+    }
+
+    @Test
+    fun `SELECT keyword inside a block comment ahead of the real clause is not mistaken for it`() {
+      val result = parseSelectItems("UPDATE t /* SELECT me not */ SET x = 1 RETURNING id")
+      assertThat(result).containsExactly(
+        SelectItem("id", "id", null),
+      )
+    }
+
+    @Test
+    fun `RETURNING as a plain SELECT's column alias is not mistaken for the RETURNING keyword`() {
+      // Regression guard for a defect this very fix introduced: RETURNING is NOT a reserved word
+      // in PostgreSQL — it is legal as a column alias in a SELECT's target list — verified valid
+      // syntax on PostgreSQL 18.4 ("CREATE TABLE t (returning int)" and "FROM users AS returning"
+      // ARE rejected, so the alias position specifically is the hole). Before the main query's
+      // OWN leading keyword was checked, this alias was mistaken for the RETURNING clause
+      // keyword, misreading everything after it (the real "FROM users") as a single bogus item —
+      // the same lost column-level-override failure class #212 exists to fix.
+      val result = parseSelectItems("SELECT preferences AS returning FROM users")
+      assertThat(result).containsExactly(
+        SelectItem("preferences", "preferences", null),
+      )
+    }
+
+    @Test
+    fun `RETURNING as a column alias alongside another item is not mistaken for the RETURNING keyword`() {
+      val result = parseSelectItems("SELECT id, preferences AS returning FROM users")
+      assertThat(result).containsExactly(
+        SelectItem("id", "id", null),
+        SelectItem("preferences", "preferences", null),
+      )
+    }
+
+    @Test
+    fun `RETURNING as a column alias after a WITH clause is not mistaken for the RETURNING keyword`() {
+      val result = parseSelectItems("WITH c AS (SELECT 1) SELECT x AS returning FROM c")
+      assertThat(result).containsExactly(
+        SelectItem("x", "x", null),
+      )
+    }
+
+    @Test
+    fun `quoted CTE name`() {
+      val result = parseSelectItems("""WITH "myCte" AS (SELECT 1 AS a) SELECT a FROM "myCte"""")
+      assertThat(result).containsExactly(
+        SelectItem("a", "a", null),
+      )
+    }
+
+    @Test
+    fun `parenthesized main query following a CTE clause yields no items`() {
+      // Documented fail-safe: a top-level search inside the window cannot see into the
+      // parenthesized main query, so this falls back to an empty list rather than guessing wrong.
+      val result = parseSelectItems("WITH c AS (SELECT 1 AS a) (SELECT a FROM c)")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `parenthesized main query with no WITH clause yields no items`() {
+      // Fail-safe pin, NOT a bug reproduction: this passes on the current code by construction —
+      // there is no fix being verified here. HEAD's naive String.indexOf-based search did not
+      // track paren depth, so it found "SELECT a" inside the parentheses regardless of depth and
+      // resolved it to the correct [a]. The depth-0 search this function replaced it with cannot
+      // see a SELECT sitting at depth 1, so it now returns emptyList() instead — a KNOWN, accepted
+      // loss of precision (never a WRONG answer, just a lost one), documented on parseSelectItems.
+      val result = parseSelectItems("(SELECT a FROM x)")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `parenthesized UNION branches with no WITH clause yield no items`() {
+      // Same accepted fail-safe as above, UNION form: HEAD resolved this to [a] as well.
+      val result = parseSelectItems("(SELECT a FROM x) UNION (SELECT b FROM y)")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `VALUES clause yields no items`() {
+      // Regression guard, not a #212 reproduction: this already passed before the fix, since a
+      // bare VALUES list has no top-level SELECT/RETURNING for either implementation to find.
+      val result = parseSelectItems("VALUES (1, 2)")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `TABLE clause yields no items`() {
+      // Regression guard, not a #212 reproduction: this already passed before the fix, for the
+      // same reason as the VALUES case above.
+      val result = parseSelectItems("TABLE t")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `star alongside another item returns empty list to avoid shifting later items`() {
+      val result = parseSelectItems("SELECT *, id FROM t")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `items strictly before a later star are kept, not discarded`() {
+      // Regression guard: an earlier version of the star guard discarded the ENTIRE list whenever
+      // a star shared it with another item, even for an item like "id" here, whose mapping is
+      // positionally exact regardless of the star's own unknown expansion width.
+      val result = parseSelectItems("SELECT id AS ident, t.* FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("id", "id", null),
+      )
+    }
+
+    @Test
+    fun `RETURNING items strictly before a later star are kept, not discarded`() {
+      val result = parseSelectItems("UPDATE t SET x = 1 RETURNING id AS ident, t.*")
+      assertThat(result).containsExactly(
+        SelectItem("id", "id", null),
+      )
+    }
+
+    @Test
+    fun `parenthesized star as the first item drops the whole list`() {
+      // Verified against real PostgreSQL: "(tgt.*)" is valid syntax, equivalent to "tgt.*". The
+      // star is the FIRST item here, so nothing precedes it to keep.
+      val result = parseSelectItems("SELECT (tgt.*), id AS ident FROM tgt")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `star with a trailing block comment as the first item drops the whole list`() {
+      val result = parseSelectItems("SELECT tgt.* /*c*/, id AS ident FROM tgt")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `star with a trailing line comment as the first item drops the whole list`() {
+      val result = parseSelectItems("SELECT tgt.* -- c\n, id AS ident FROM tgt")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `star with whitespace around the qualifying dot as the first item drops the whole list`() {
+      val result = parseSelectItems("SELECT tgt . *, id AS ident FROM tgt")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `an aliased star still triggers the star guard`() {
+      // Verified against real PostgreSQL 18: "SELECT t.* AS whatever, 7 AS id FROM t" returns
+      // 3 columns (a, b, id) for a two-column "t". Before this guard checked the alias-stripped
+      // expression rather than the raw item text, the star's own "AS whatever" alias defeated
+      // recognition entirely, so the guard never fired and the later "id" item stayed in the
+      // list — positionally misattributed to whichever real column followed t's expansion. This
+      // is the #212 failure mode itself, not merely the truncation trade-off documented on
+      // parseSelectItems: a WRONG mapping survives, rather than degrading to no mapping at all.
+      val result = parseSelectItems("SELECT t.* AS whatever, 7 AS id FROM t")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `an aliased star in RETURNING still triggers the star guard`() {
+      val result = parseSelectItems("UPDATE t SET x = 1 RETURNING t.* AS whatever, 7 AS id")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `a trailing line comment outside a wrapping parenthesis still triggers the star guard`() {
+      // Verified against real PostgreSQL 18.4: valid syntax, returns every column of "tgt". An
+      // earlier version of isStarItem stripped wrapping parentheses BEFORE stripping comments, so
+      // this comment — sitting OUTSIDE the parentheses, on the far side of the closing ")" — was
+      // never removed, "(tgt.*) -- c" never reduced to "tgt.*", and the guard never fired: the
+      // #212 failure mode (a later item shifted onto the wrong ResultSetMetaData column) survived
+      // for exactly this spelling.
+      val result = parseSelectItems("SELECT (tgt.*) -- c\n, id AS ident FROM tgt")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `a trailing block comment outside a wrapping parenthesis still triggers the star guard`() {
+      // Verified against real PostgreSQL 18.4: valid syntax, same defect as the line-comment case
+      // above.
+      val result = parseSelectItems("SELECT (tgt.*) /*c*/, id AS ident FROM tgt")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `a comment between the dot and the star still triggers the star guard`() {
+      // Verified against real PostgreSQL 18.4: valid syntax. An earlier version of isStarItem
+      // only collapsed WHITESPACE around the dot, not a comment sitting between the dot and the
+      // star, so "tgt./*c*/ *" was never recognized.
+      val result = parseSelectItems("SELECT tgt./*c*/ *, id AS ident FROM tgt")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `count star is not mistaken for the star guard even with internal whitespace`() {
+      // Regression guard: a looser normalizer that strips ALL whitespace (needed to recognize
+      // "tgt . *") must not also start recognizing "count( * )" as a star merely because it
+      // contains the character "*" once whitespace is gone ("count(*)") — the trailing ")"
+      // still rules it out. This is only true because "count(*)" does not ALSO look like a
+      // wrapping parenthesis around a star: isStarItem's parenthesis-stripping loop only strips a
+      // pair that wraps the ENTIRE remaining text (verified via findMatchingCloseParenthesis, not
+      // merely the first/last characters), and "count(*)" does not start with "(" at all — its
+      // first character is "c", and the real "(" is the 6th character (index 5) — so the loop's
+      // own startsWith("(") check never fires and the trailing ")" is decisive. (A genuine wrapping
+      // case like "(tgt.*)" normalizes to itself first — still ending in ")" — and only becomes a
+      // recognized star AFTER the stripping loop removes that wrapping pair, leaving "tgt.*".)
+      val result = parseSelectItems("SELECT count( * ) AS total, id FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("count( * )", null, null),
+        SelectItem("id", "id", null),
+      )
+    }
+
+    @Test
+    fun `a cast on a star-shaped expression is not mistaken for the star guard`() {
+      // Regression guard: "t.*::text" ends in neither "*" nor ".*" after normalization (it ends
+      // in "text"), so it must keep its current classification as a computed expression, not a
+      // star, regardless of how aggressively comments/whitespace are stripped elsewhere in it.
+      val result = parseSelectItems("SELECT t.*::text AS whatever, id FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("t.*::text", null, null),
+        SelectItem("id", "id", null),
+      )
+    }
+
+    @Test
+    fun `an implicit alias on a star still triggers the star guard`() {
+      // An implicit alias (no "AS") is valid PostgreSQL syntax on a star ("u.* whatever" —
+      // identical in meaning to "u.* AS whatever"; "u" aliases "users" to make the star
+      // unambiguous). "SELECT u.* whatever, preferences FROM users u" returns every column of
+      // "users" plus a trailing "preferences" item. Before
+      // candidate 2 (the expression minus its trailing whitespace-separated token) was checked,
+      // "u.* whatever" as a whole does not end in ".*", so the guard never fired and "preferences"
+      // (a later, unrelated item) stayed in the list — positionally misattributed to whichever
+      // real column followed u's expansion, applying a real column-level type override meant for
+      // a different column entirely. This is the #212 failure mode itself.
+      val result = parseSelectItems("SELECT u.* whatever, preferences FROM users u")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `an explicit AS alias on a star keeps working alongside the implicit-alias check`() {
+      val result = parseSelectItems("SELECT u.* AS whatever, preferences FROM users u")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `count star with an implicit alias is not mistaken for the star guard`() {
+      // The shape most likely to be broken by a looser implicit-alias check: candidate 2 for
+      // "count(*) total" is "count(*)", which still does not end in ".*" (it ends in ")"), so
+      // this must NOT be treated as a star.
+      val result = parseSelectItems("SELECT count(*) total, id FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("count(*) total", null, null),
+        SelectItem("id", "id", null),
+      )
+    }
+
+    @Test
+    fun `a cast on a star with no whitespace is unaffected by the implicit-alias check`() {
+      // "t.*::text" has no top-level whitespace, so candidate 1 and candidate 2 are identical —
+      // classification is unchanged from before the implicit-alias check existed.
+      val result = parseSelectItems("SELECT t.*::text, id FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("t.*::text", null, null),
+        SelectItem("id", "id", null),
+      )
+    }
+
+    @Test
+    fun `a cast on a star with a comment immediately before it is not mistaken for the star guard`() {
+      // Regression guard: an earlier attempt to close the "comment abuts an implicit alias with
+      // no whitespace" gap made stripCommentsAndWhitespace emit a space in place of a comment when
+      // keepWhitespace was true, so "t.*/*c*/::text" would normalize to "t.* ::text" — which,
+      // after stripping the newly-introduced trailing-token boundary, wrongly recognized "t.*" as
+      // a star and truncated "a" out of the result. That change was reverted specifically because
+      // of this false positive; comments are removed outright with nothing put in their place, so
+      // this must keep resolving to both items, exactly as it did before the implicit-alias check
+      // (and the later, reverted comment-as-boundary attempt) existed.
+      val result = parseSelectItems("SELECT t.*/*c*/::text, a FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("t.*/*c*/::text", null, null),
+        SelectItem("a", "a", null),
+      )
+    }
+
+    @Test
+    fun `a whitespace-separated cast on a star is not mistaken for an implicit alias`() {
+      // Verified against a real PostgreSQL 18 container: "SELECT t.* ::text, a FROM t" is valid
+      // and returns 2 columns (t, a), with NO star expansion. Before the trailing-token candidate
+      // excluded tokens starting with "::", stripTrailingWhitespaceSeparatedToken treated "::text"
+      // as a strippable implicit alias, reducing "t.* ::text" to "t.*" and wrongly triggering the
+      // star guard — losing "a" out of the result, the same false-positive class round 7's
+      // reverted comment-as-token-boundary change was reverted for, reached here through
+      // whitespace instead of a comment.
+      val result = parseSelectItems("SELECT t.* ::text, a FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("t.* ::text", null, null),
+        SelectItem("a", "a", null),
+      )
+    }
+
+    @Test
+    fun `a whitespace-separated array cast on a star is not mistaken for an implicit alias`() {
+      // A different spaced-cast shape from the string-text case above, to confirm the "::" check
+      // is not narrowly tied to one particular cast target type.
+      val result = parseSelectItems("SELECT t.* ::integer[], a FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("t.* ::integer[]", null, null),
+        SelectItem("a", "a", null),
+      )
+    }
+
+    @Test
+    fun `a line comment between a star and its cast is not mistaken for an implicit alias`() {
+      // Verified against a real PostgreSQL 18 container: "SELECT t.*-- c\n::text, a FROM t" is
+      // valid and returns 2 columns (t, a), with NO star expansion. This already resolved
+      // correctly before this round's "::" fix — skipLineComment consumes the whole "-- c\n" span
+      // (including its terminating newline) as ONE opaque token, so none of the three candidates
+      // ever finds a top-level whitespace boundary to strip a trailing token at here at all; "::"
+      // stays attached to "t.*" regardless. It had no dedicated test pinning it, though.
+      val result = parseSelectItems("SELECT t.*-- c\n::text, a FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("t.*-- c\n::text", null, null),
+        SelectItem("a", "a", null),
+      )
+    }
+
+    @Test
+    fun `a quoted implicit alias on a star still triggers the star guard`() {
+      // Verified against real PostgreSQL 18.4: a double-quoted implicit alias is valid syntax.
+      // The whitespace INSIDE the quoted identifier ("My Col") must not be mistaken for the
+      // boundary before it — only the whitespace between "u.*" and the quoted identifier counts.
+      val result = parseSelectItems("""SELECT u.* "My Col", preferences FROM users u""")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `an implicit alias followed by a line comment still triggers the star guard`() {
+      // "u.* whatever -- c" is valid PostgreSQL syntax (an implicit alias on a star, with a
+      // trailing comment). Order matters here: stripTrailingWhitespaceSeparatedToken applied
+      // DIRECTLY to "u.* whatever -- c" finds its LAST whitespace run right before the comment
+      // (skipLexicalToken correctly treats the comment as an opaque token, not whitespace),
+      // stripping the comment but leaving "whatever" attached ("u.* whatever") — not a star. Only
+      // stripping the comment FIRST (via stripCommentsAndWhitespace(keepWhitespace = true).trim())
+      // and THEN hunting for the trailing token recovers "u.*".
+      val result = parseSelectItems("SELECT u.* whatever -- c\n, preferences FROM users u")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `an implicit alias followed by a block comment still triggers the star guard`() {
+      // Same defect as the line-comment case above, block-comment form.
+      val result = parseSelectItems("SELECT u.* whatever /*c*/, preferences FROM users u")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `an implicit alias followed by a comment with no following item is unaffected by truncation`() {
+      // A single item short-circuits the star guard entirely (there is nothing after it to
+      // shift), so this is unaffected by the ordering fix either way — included to confirm the
+      // whole clause still parses correctly rather than the comment swallowing anything past it.
+      val result = parseSelectItems("SELECT u.* whatever -- c\nFROM users u")
+      assertThat(result).containsExactly(
+        SelectItem("u.* whatever -- c", null, null),
+      )
+    }
+
+    @Test
+    fun `a comment abutting an implicit alias with no surrounding whitespace is a documented, unfixed limitation`() {
+      // Pins a KNOWN, documented limitation (see parseSelectItems's KDoc) rather than a bug this
+      // guard is meant to catch: an earlier attempt to close this via stripCommentsAndWhitespace
+      // emitting a space in place of a comment (so "u.*/*c*/whatever" would normalize the same as
+      // "u.* whatever") was reverted, because it introduced a DIFFERENT false positive
+      // ("t.*/*c*/::text, a" wrongly truncated to a lost "a") that is strictly worse than this
+      // accepted gap: none of the three candidates has any top-level whitespace to find a trailing
+      // token boundary at, so the guard never fires and "preferences" survives at its raw list
+      // position, silently misattributed if that position doesn't correspond to its real column.
+      val result = parseSelectItems("SELECT u.*/*c*/whatever, preferences FROM users u")
+      assertThat(result).containsExactly(
+        SelectItem("u.*/*c*/whatever", null, null),
+        SelectItem("preferences", "preferences", null),
+      )
+    }
+
+    @Test
+    fun `a line comment abutting an implicit alias is the same documented, unfixed limitation`() {
+      // Verified against a real PostgreSQL 18 container: "SELECT t.*-- c\nwhatever, id FROM t"
+      // against a 3-column "t" is valid and returns 4 real columns (t's own 3 plus "id"). A LINE
+      // comment reaches the same unfixed gap as the block-comment case above even though it
+      // contains a literal space character ("-- c"): skipLineComment consumes its own terminating
+      // newline as part of ONE opaque comment token, so there is no whitespace left OUTSIDE that
+      // token for any candidate to find a trailing-token boundary at — "whatever" stays attached,
+      // the guard never fires, and "id" (the real 4th column) is misattributed to result column 2
+      // (the real "t"'s second column) instead.
+      val result = parseSelectItems("SELECT t.*-- c\nwhatever, id FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("t.*-- c\nwhatever", null, null),
+        SelectItem("id", "id", null),
+      )
+    }
+
+    @Test
+    fun `a multiplication expression with a trailing line comment is not mistaken for the star guard`() {
+      val result = parseSelectItems("SELECT a * b -- c\n, id FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("a * b -- c", null, null),
+        SelectItem("id", "id", null),
+      )
+    }
+
+    @Test
+    fun `a multiplication expression with an implicit alias and internal block comment is not mistaken as a star`() {
+      val result = parseSelectItems("SELECT 2 * x /*c*/ total, id FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("2 * x /*c*/ total", null, null),
+        SelectItem("id", "id", null),
+      )
+    }
+
+    @Test
+    fun `a function-call multiplication expression with a trailing line comment is not mistaken for the star guard`() {
+      val result = parseSelectItems("SELECT sum(x) * 2 -- c\n, id FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("sum(x) * 2 -- c", null, null),
+        SelectItem("id", "id", null),
+      )
+    }
+
+    @Test
+    fun `a cast on a star with a trailing line comment is not mistaken for the star guard`() {
+      val result = parseSelectItems("SELECT t.*::text -- c\n, id FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("t.*::text -- c", null, null),
+        SelectItem("id", "id", null),
+      )
+    }
+
+    @Test
+    fun `count star with an implicit alias and a trailing line comment is not mistaken for the star guard`() {
+      val result = parseSelectItems("SELECT count(*) total -- c\n, id FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("count(*) total -- c", null, null),
+        SelectItem("id", "id", null),
+      )
+    }
+
+    @Test
+    fun `a multiplication expression split across a line comment and a newline is not mistaken for the star guard`() {
+      val result = parseSelectItems("SELECT a * -- c\n b, id FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("a * -- c\n b", null, null),
+        SelectItem("id", "id", null),
+      )
+    }
+
+    @Test
+    fun `a parenthesized cast with an implicit alias is not mistaken for the star guard`() {
+      val result = parseSelectItems("SELECT (a*b)::int lbl, id FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("(a*b)::int lbl", null, null),
+        SelectItem("id", "id", null),
+      )
+    }
+
+    @Test
+    fun `a string literal containing a star with an implicit alias is not mistaken for the star guard`() {
+      val result = parseSelectItems("SELECT 'lit *' foo, id FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("'lit *' foo", null, null),
+        SelectItem("id", "id", null),
+      )
+    }
+
+    @Test
+    fun `an array-indexed multiplication expression with an implicit alias is not mistaken for the star guard`() {
+      val result = parseSelectItems("SELECT arr[1] * 2 tot, id FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("arr[1] * 2 tot", null, null),
+        SelectItem("id", "id", null),
+      )
+    }
+
+    @Test
+    fun `a lone star with no implicit alias is unaffected by the implicit-alias check`() {
+      val result = parseSelectItems("SELECT * FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("*", null, null),
+      )
+    }
+
+    @Test
+    fun `a lone qualified star with no implicit alias is unaffected by the implicit-alias check`() {
+      val result = parseSelectItems("SELECT t.* FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("t.*", null, null),
+      )
+    }
+
+    @Test
+    fun `an implicit alias on a non-star column is not mistaken for the star guard, but loses its column name`() {
+      // "preferences prefs" is a real implicit alias (no "AS"), but NEITHER candidate 1
+      // ("preferences prefs") NOR candidate 2 ("preferences") is star-shaped, so the guard does
+      // not fire and both items survive. columnName is null for the FIRST item specifically
+      // because parseColumnReference's own regex requires the ENTIRE (unstripped) expression to
+      // match a bare or qualified identifier — "preferences prefs" contains a space, so the whole
+      // match fails — NOT because this function mistakes it for something else. This is a LOST
+      // name (parseColumnReference simply cannot see past the implicit alias it wasn't taught to
+      // strip), not a WRONG one: the resulting `emptyList()`-style fallback in JdbcAnalyzer
+      // degrades to metadata, exactly as documented on parseSelectItems for any expression this
+      // function cannot resolve.
+      val result = parseSelectItems("SELECT preferences prefs, id FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("preferences prefs", null, null),
+        SelectItem("id", "id", null),
+      )
+    }
+
+    @Test
+    fun `WITH clause main query with no FROM clause`() {
+      val result = parseSelectItems("WITH c AS (SELECT 1) SELECT 5, 'x'")
+      assertThat(result).containsExactly(
+        SelectItem("5", "5", null),
+        SelectItem("'x'", null, null),
+      )
+    }
+
+    @Test
+    fun `UNION picks the first branch's columns`() {
+      // Regression guard, not a #212 reproduction: this already passed before the fix — the old
+      // implementation's naive first-SELECT-anywhere search happens to find the same, correct
+      // SELECT here, since there is no WITH clause and this branch's SELECT is the first in the
+      // statement either way.
+      val result = parseSelectItems("SELECT a FROM x UNION SELECT b FROM y")
+      assertThat(result).containsExactly(
+        SelectItem("a", "a", null),
+      )
     }
   }
 
@@ -866,6 +1463,59 @@ class SqlUtilsTest {
         "UPDATE tgt SET tval = 'x' WHERE id = 1 RETURNING tgt.* -- comment\n, OLD.tval AS oldv",
       )
       assertThat(result).isEqualTo(OldOrNewReturningAnalysis(itemCount = 2, forcedColumns = null))
+    }
+
+    @Test
+    fun `recognizes a star item with whitespace around the qualifying dot`() {
+      // Verified against real PostgreSQL: "tgt . *" is valid syntax, identical to "tgt.*".
+      val result =
+        oldOrNewReturningColumns("UPDATE tgt SET tval = 'x' WHERE id = 1 RETURNING tgt . *, OLD.tval AS oldv")
+      assertThat(result).isEqualTo(OldOrNewReturningAnalysis(itemCount = 2, forcedColumns = null))
+    }
+
+    @Test
+    fun `recognizes a star item with a trailing line comment outside a wrapping parenthesis`() {
+      // Verified against real PostgreSQL 18.4: "(tgt.*) -- c" is valid syntax, identical to
+      // "tgt.*". An earlier version of isStarItem stripped wrapping parentheses BEFORE comments,
+      // so a comment OUTSIDE the parentheses was never removed and this spelling went
+      // unrecognized.
+      val result = oldOrNewReturningColumns(
+        "UPDATE tgt SET tval = 'x' WHERE id = 1 RETURNING (tgt.*) -- c\n, OLD.tval AS oldv",
+      )
+      assertThat(result).isEqualTo(OldOrNewReturningAnalysis(itemCount = 2, forcedColumns = null))
+    }
+
+    @Test
+    fun `recognizes a star item with a trailing block comment outside a wrapping parenthesis`() {
+      // Verified against real PostgreSQL 18.4: "(tgt.*) /*c*/" is valid syntax, same defect as
+      // the line-comment case above.
+      val result = oldOrNewReturningColumns(
+        "UPDATE tgt SET tval = 'x' WHERE id = 1 RETURNING (tgt.*) /*c*/, OLD.tval AS oldv",
+      )
+      assertThat(result).isEqualTo(OldOrNewReturningAnalysis(itemCount = 2, forcedColumns = null))
+    }
+
+    @Test
+    fun `recognizes a star item with a comment between the dot and the star`() {
+      // Verified against real PostgreSQL 18.4: "tgt./*c*/ *" is valid syntax. An earlier version
+      // of isStarItem only collapsed WHITESPACE around the dot, not a comment sitting between the
+      // dot and the star.
+      val result = oldOrNewReturningColumns(
+        "UPDATE tgt SET tval = 'x' WHERE id = 1 RETURNING tgt./*c*/ *, OLD.tval AS oldv",
+      )
+      assertThat(result).isEqualTo(OldOrNewReturningAnalysis(itemCount = 2, forcedColumns = null))
+    }
+
+    @Test
+    fun `does not recognize count-star as a star item even with internal whitespace stripped`() {
+      val result = oldOrNewReturningColumns("UPDATE t SET name = 'x' WHERE id = 1 RETURNING count( * ), OLD.name")
+      assertThat(result).isEqualTo(OldOrNewReturningAnalysis(itemCount = 2, forcedColumns = setOf(2)))
+    }
+
+    @Test
+    fun `does not recognize a cast on a star-shaped expression as a star item`() {
+      val result = oldOrNewReturningColumns("UPDATE t SET name = 'x' WHERE id = 1 RETURNING t.*::text, OLD.name")
+      assertThat(result).isEqualTo(OldOrNewReturningAnalysis(itemCount = 2, forcedColumns = setOf(2)))
     }
 
     @Test

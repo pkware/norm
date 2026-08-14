@@ -3711,6 +3711,36 @@ class QueryAnalysisTest {
    * [oldOrNewReturningColumns]'s and [PgCatalogLoader.buildSelectStub]'s KDoc): that mechanism
    * only runs for a data-modifying CTE body, not bare top-level DML, so this needs the `WITH`
    * wrapper the other three tests intentionally omit.
+   *
+   * NOTE on coverage of PgCatalogLoader's item-count-vs-real-column-count cross-check
+   * (`oldOrNewColumns.isNotEmpty() && oldOrNewAnalysis.itemCount != totalColumnCount`): this
+   * class's `an ALIASED star reaches the item-count cross-check directly` test below DOES reach
+   * this branch, reliably. `oldOrNewReturningColumns` (unlike `parseSelectItems`) never
+   * alias-strips an item before checking `isStarItem` against it — so ANY star carrying an
+   * alias, explicit (`tgt.* AS whatever`) or implicit (`tgt.* whatever`), is simply left
+   * unrecognized there: `isStarItem`'s own comment/whitespace/parenthesis normalization has no
+   * concept of an `AS` keyword or an implicit alias to look past, so the alias text survives
+   * normalization and the result never ends in `.*`. That unrecognized star's real expansion still
+   * shows up in the real column count, mismatching the assumed item count, which is exactly what
+   * this cross-check exists to catch — its outcome (forcing every column nullable) is the SAME
+   * safe over-approximation a RECOGNIZED star produces via the `forcedColumns = null` path, just
+   * reached through the sibling branch instead.
+   *
+   * This is deliberately NOT "fixed" by alias-stripping inside `oldOrNewReturningColumns`: doing
+   * so would only change WHICH branch produces the answer, never the answer itself (both branches
+   * force every column nullable), so there is no functional reason to add alias-awareness to this
+   * specific call site — and doing so would silently delete this branch's only current test
+   * coverage. This note makes no claim that this branch is otherwise unreachable in general — only
+   * that the test named above demonstrably reaches it today, via this specific alias-carrying
+   * shape.
+   *
+   * What the star-shape tests in this class (aside from the aliased-star one) still prove — see
+   * `an OLD reference without a star still forces only the referencing column, not the whole body`
+   * below — is that the PER-COLUMN forcing mechanism (`forcedColumns` non-`null` AND
+   * itemCount-matching) survives when no star is involved at all, distinguishing it from the
+   * whole-body `forceAllNullable` fallback every star-plus-`OLD`/`NEW` test in this class
+   * exercises (via one of the two possible routes: `forcedColumns == null`, or the item-count
+   * cross-check).
    */
   @Nested
   inner class OldOrNewStarFailSafe {
@@ -3746,17 +3776,59 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `star item unrecognized by isStarItem still fails safe via the real-column-count cross-check`() {
+    fun `an ALIASED star reaches the item-count cross-check directly`() {
       assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
-      // "tgt . *" (whitespace around the dot) is valid PostgreSQL syntax but NOT recognized by
-      // isStarItem's text heuristic (which only matches a star immediately after the dot) — this
-      // proves the item-count-vs-real-column-count cross-check in PgCatalogLoader is an
-      // INDEPENDENT fail-safe, not merely a restatement of isStarItem's own conclusion: even
-      // though oldOrNewReturningColumns's forcedColumns comes back non-null (NOT recognized as
-      // ambiguous), the real probe's column count (3) doesn't match the assumed item count (2),
-      // so every column is still forced nullable. Verified against real Postgres (a fresh insert
-      // via ON CONFLICT — no prior row, so OLD does not exist): id = 99, tval = 'y' (both
-      // genuinely NOT NULL), oldv = NULL (genuinely nullable).
+      // Verified against real PostgreSQL 18.4: "RETURNING tgt.* AS whatever, OLD.id AS oldv" is
+      // valid syntax, returning 3 real columns for a 2-column "tgt" (tgt.id, tgt.tval, oldv).
+      // Unlike parseSelectItems, oldOrNewReturningColumns never alias-strips an item before
+      // checking isStarItem against it, so "tgt.* AS whatever" as a whole does not end in ".*"
+      // and is NOT recognized as a star here — hasRecognizedStarItem is false. oldOrNewColumnIndices
+      // still correctly identifies item 2 ("OLD.id AS oldv") as the OLD-referencing item, so
+      // oldOrNewReturningColumns returns forcedColumns = {2} (NON-null) with itemCount = 2. Since
+      // the REAL column count is 3 (the star's own 2-column expansion was never counted),
+      // PgCatalogLoader's "oldOrNewColumns.isNotEmpty() && itemCount != totalColumnCount" check
+      // (2 != 3) fires and forces EVERY column nullable — the item-count cross-check itself, not
+      // the "forcedColumns == null" branch the other star-plus-OLD tests in this class exercise.
+      // The outcome is the same safe over-approximation either way, which is exactly why this
+      // gap in oldOrNewReturningColumns's alias-awareness is not itself a bug: the cross-check
+      // makes the missed recognition harmless. Verified against real Postgres (a fresh insert via
+      // ON CONFLICT — no prior row): id = 99, tval = 'x' (both genuinely NOT NULL), oldv = NULL
+      // (genuinely nullable) — but the safety net over-approximates all three to nullable here.
+      val query = analyzeWithSchema(
+        "CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT)",
+        """
+        WITH u AS (
+          INSERT INTO tgt VALUES (99, 'x') ON CONFLICT (id) DO UPDATE SET tval = 'y'
+          RETURNING tgt.* AS whatever, OLD.id AS oldv
+        )
+        SELECT * FROM u
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isFalse()
+    }
+
+    @Test
+    fun `star with whitespace around the dot is recognized by isStarItem and forces every column`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // CORRECTED (was: "not recognized by isStarItem's text heuristic"): #212's fix taught
+      // isStarItem to collapse whitespace around a qualifying dot, so "tgt . *" IS now recognized
+      // — verified via SqlUtilsTest's "recognizes a star item with whitespace around the
+      // qualifying dot". That means oldOrNewReturningColumns itself now returns forcedColumns =
+      // null directly (a RECOGNIZED star coincides with an OLD/NEW reference — see its KDoc), so
+      // PgCatalogLoader's forceNullableColumn short-circuits on "oldOrNewColumns == null" and
+      // NEVER reaches the itemCount-vs-real-column-count cross-check below it — this test no
+      // longer exercises that cross-check at all (see the class KDoc). Kept as a regression guard
+      // for the observable end-to-end nullability outcome (which happens to be UNCHANGED here,
+      // because "tgt" has two columns and the pre-fix itemCount already mismatched the real
+      // column count regardless of recognition — see `an OLD reference forces every column
+      // nullable when a star recognition change loses per-column precision` for a case where
+      // recognizing a star DOES change the observable outcome), not as cross-check coverage.
+      // Verified against real Postgres (a fresh insert via ON CONFLICT — no prior row, so OLD
+      // does not exist): id = 99, tval = 'y' (both genuinely NOT NULL), oldv = NULL (genuinely
+      // nullable).
       val query = analyzeWithSchema(
         "CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT)",
         """
@@ -3774,6 +3846,62 @@ class QueryAnalysisTest {
     }
 
     @Test
+    fun `an OLD reference forces every column nullable when a star recognition change loses per-column precision`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // Pins a REAL, INTENTIONAL nullability outcome change from teaching isStarItem to
+      // recognize "tgt . *" — not merely a different code path reaching the same answer, unlike
+      // the sibling tests above. "tgt" here has exactly ONE column, so "tgt.*"'s real expansion
+      // (1 column) plus "oldv" (1 column) happens to equal the assumed item count (2) — before
+      // isStarItem recognized "tgt . *", oldOrNewReturningColumns computed forcedColumns = {2}
+      // (only "oldv") with NO itemCount mismatch to trigger the cross-check, so PgCatalogLoader's
+      // per-column forcing applied PRECISELY: "id" (from tgt.*'s expansion) was governed by its
+      // real attnotnull (a PRIMARY KEY column — genuinely NOT NULL), and only "oldv" was forced.
+      // Now that "tgt . *" IS recognized, oldOrNewReturningColumns returns forcedColumns = null
+      // directly, and PgCatalogLoader forces EVERY column nullable — "id" included, even though
+      // it is genuinely NOT NULL. The direction is SAFE (over-nullable beats a fabricated NOT
+      // NULL elsewhere), which is why it is kept rather than reverted, but it is a real loss of
+      // precision for this specific shape, not merely a different route to an unchanged answer.
+      // Verified against real Postgres (a fresh insert via ON CONFLICT — no prior row, so OLD
+      // does not exist): id = 99 (genuinely NOT NULL), oldv = NULL (genuinely nullable).
+      val query = analyzeWithSchema(
+        "CREATE TABLE tgt (id INT PRIMARY KEY)",
+        """
+        WITH u AS (
+          INSERT INTO tgt VALUES (99) ON CONFLICT (id) DO UPDATE SET id = 99
+          RETURNING tgt . *, OLD.id AS oldv
+        )
+        SELECT * FROM u
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `the same precision loss extends to one of the newly-normalized star spellings`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // Same outcome change as the test above, for one of the THREE spellings isStarItem was
+      // fixed to additionally normalize (a trailing comment sitting OUTSIDE a wrapping
+      // parenthesis) — confirming the precision loss extends to those spellings too, exactly as
+      // expected: any input that flips from "unrecognized" to "recognized" on a one-column
+      // relation loses this same per-column precision. Verified against real Postgres 18.4: "(tgt
+      // .*) -- c" is valid syntax, id = 99 (genuinely NOT NULL), oldv = NULL (genuinely nullable).
+      val query = analyzeWithSchema(
+        "CREATE TABLE tgt (id INT PRIMARY KEY)",
+        "WITH u AS (\n" +
+          "  INSERT INTO tgt VALUES (99) ON CONFLICT (id) DO UPDATE SET id = 99\n" +
+          "  RETURNING (tgt.*) -- c\n" +
+          "  , OLD.id AS oldv\n" +
+          ")\n" +
+          "SELECT * FROM u",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
     fun `an untracked bracket can no longer cancel out a star's split error and defeat the cross-check`() {
       assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // FIX 1: splitAtTopLevel previously did not track "[...]", so "ARRAY[1, 2]"'s internal comma
@@ -3782,11 +3910,21 @@ class QueryAnalysisTest {
       // ["tgt . *", "OLD.tval AS oldv", "ARRAY[1", "2] AS arr"] that ALSO produced 4 items,
       // defeating oldOrNewReturningColumns's real-column-count cross-check entirely and forcing
       // the WRONG column (the second half of "tgt.*"'s expansion, i.e. tval) instead of "oldv".
+      // CORRECTED (was: "the safety net over-approximates ... because real column count 4 vs. the
+      // CORRECTLY split item count 3"): #212's later fix taught isStarItem to recognize "tgt . *"
+      // (whitespace around the dot), so oldOrNewReturningColumns now returns forcedColumns = null
+      // directly for THIS list — a RECOGNIZED star coincides with an OLD/NEW reference — and
+      // PgCatalogLoader's forceNullableColumn short-circuits on that null before ever comparing
+      // item count (3) against real column count (4). The item-count cross-check this test
+      // originally exercised is therefore NOT reached here anymore either; see the class KDoc.
+      // The observable outcome (all four forced nullable) is UNCHANGED here regardless, because
+      // the pre-fix itemCount already mismatched the real column count on its own — see `an OLD
+      // reference forces every column nullable when a star recognition change loses per-column
+      // precision` for a case where recognizing a star DOES change the observable outcome.
       // Verified against real Postgres (a fresh insert via ON CONFLICT — no prior row): id = 99,
-      // tval = 'x', arr = {1,2} (all genuinely NOT NULL), oldv = NULL (genuinely nullable) — but
-      // with the star's own mapping still unreliable (real column count 4 vs. the CORRECTLY split
-      // item count 3), the safety net over-approximates all four to nullable, same accepted
-      // tradeoff as the other star-plus-OLD tests in this file.
+      // tval = 'x', arr = {1,2} (all genuinely NOT NULL), oldv = NULL (genuinely nullable) — the
+      // safety net still over-approximates all four to nullable, same accepted tradeoff as the
+      // other star-plus-OLD tests in this file, just reached via a different branch than before.
       val query = analyzeWithSchema(
         "CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT)",
         """
@@ -3834,6 +3972,38 @@ class QueryAnalysisTest {
         """.trimIndent(),
       )
       assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `an OLD reference without a star still forces only the referencing column, not the whole body`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // Restores coverage lost when #212 taught isStarItem to recognize "tgt . *": every OTHER
+      // test in this class now involves a star, so every one of them resolves via
+      // oldOrNewReturningColumns's forcedColumns = null (a RECOGNIZED star coincides with an
+      // OLD/NEW reference) and PgCatalogLoader's whole-body forceAllNullable fallback — leaving
+      // NOTHING in this class asserting on the DISTINCT per-column forcing mechanism
+      // (forcedColumns non-null, containing only the specific OLD/NEW-referencing item's index).
+      // With no star at all here, itemCount trivially matches the real column count, so
+      // oldOrNewMappingUnreliable is false and PgCatalogLoader's
+      // "oldOrNewColumns.orEmpty().contains(columnIndex)" line is what decides each column's
+      // fate. If that per-column check were ever replaced by forcing the whole body nullable
+      // whenever ANY OLD/NEW reference is present, "id" below would flip from NOT NULL to
+      // nullable and this assertion would fail. Verified against real Postgres (a fresh insert
+      // via ON CONFLICT — no prior row, so OLD does not exist): id = 99 (genuinely NOT NULL, the
+      // just-inserted row's own column), oldv = NULL (genuinely nullable).
+      val query = analyzeWithSchema(
+        "CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT)",
+        """
+        WITH u AS (
+          INSERT INTO tgt VALUES (99, 'x') ON CONFLICT (id) DO UPDATE SET tval = 'y'
+          RETURNING id, OLD.tval AS oldv
+        )
+        SELECT * FROM u
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
       assertThat(query.columns[1].notNull).isFalse()
     }
   }

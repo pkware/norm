@@ -15,7 +15,7 @@ import kotlin.jvm.JvmRecord
  * SELECT id, name FROM new_parent
  * ```
  *
- * @property id (`parent.label`)
+ * @property id (`parent.id`)
  * @property name (`parent.name`)
  */
 @JvmRecord
