@@ -289,6 +289,161 @@ class SqlUtilsTest {
     }
 
     @Test
+    fun `a source column named with a trailing non-ASCII character is not mistaken for an AS returning alias`() {
+      // #219: verified against a real PostgreSQL 18.4 container against "users(id, email, age,
+      // preferences)" and a source table "src": "INSERT INTO users (email, age, preferences)
+      // SELECT returning€, age, preferences FROM src RETURNING id, email" returns exactly 2
+      // columns (id, email) -- "returning€" is a legal column name (PostgreSQL's lexer admits any
+      // byte >= 0x80 inside an unquoted identifier), not the RETURNING keyword's alias position.
+      // Before the fix, the word scan stopped at "€", saw the bare word "returning", and mistook
+      // the source SELECT's implicit alias position for the real RETURNING clause -- producing 4
+      // mis-paired items instead of the real 2.
+      val result = parseSelectItems(
+        "INSERT INTO users (email, age, preferences) " +
+          "SELECT returning€, age, preferences FROM src RETURNING id, email",
+      )
+      assertThat(result).containsExactly(
+        SelectItem("id", "id", null),
+        SelectItem("email", "email", null),
+      )
+    }
+
+    @Test
+    fun `a dollar-quoted string with a non-ASCII tag is recognized, so later items are not misaligned`() {
+      // Follow-up to #219: verified against a real PostgreSQL 18.4 -- "SELECT $€$x,$€$ AS lbl,
+      // age, email FROM users" returns exactly 3 columns (lbl, age, email); "$€$x,$€$" is a single
+      // dollar-quoted string literal tagged "€" (a legal tag character -- PostgreSQL's scan.l
+      // admits any byte >= 0x80 in a dollar-quote tag, same as in an ordinary identifier). Before
+      // the fix, the tag run used the narrow letter/digit/underscore class, which doesn't include
+      // "€", so the tag was never recognized, the dollar-quoted string was never skipped as one
+      // lexical unit, and its contents ("x", ",", the second "$€$") were scanned as if they were
+      // ordinary SQL -- producing 4 mis-paired items instead of the real 3.
+      val result = parseSelectItems("SELECT \$€\$x,\$€\$ AS lbl, age, email FROM users")
+      assertThat(result).containsExactly(
+        SelectItem("\$€\$x,\$€\$", null, null),
+        SelectItem("age", "age", null),
+        SelectItem("email", "email", null),
+      )
+    }
+
+    @Test
+    fun `RETURNING a column with a trailing non-ASCII character keeps its original name`() {
+      // Follow-up to #219: verified against a real PostgreSQL 18.4 container -- "CREATE TABLE
+      // users(id int, email text, age int, preferences€ text)" then "INSERT INTO
+      // users(id,email,age,preferences€) VALUES (1,'e',2,'p') RETURNING preferences€, email"
+      // returns columns named exactly "preferences€" and "email" -- "preferences€" is a legal
+      // unquoted PostgreSQL column name (the lexer admits any byte >= 0x80 inside an unquoted
+      // identifier). Before the fix, COLUMN_REFERENCE's "\w+" character class is ASCII-only, so
+      // matchEntire on "preferences€" failed (the trailing "€" is left over), and the item fell
+      // back to columnName=null instead of the real name.
+      val result = parseSelectItems("UPDATE t SET x = 1 RETURNING preferences€, email")
+      assertThat(result).containsExactly(
+        SelectItem("preferences€", "preferences€", null),
+        SelectItem("email", "email", null),
+      )
+    }
+
+    @Test
+    fun `a column name written with a supplementary-plane character resolves via the widened regex`() {
+      // A supplementary-plane character is a SURROGATE PAIR in a Kotlin/UTF-16 String -- both code
+      // units are >= 0x80, so PostgreSQL's own lexer admits it in an unquoted identifier the same
+      // as any other >= 0x80 byte (verified against PostgreSQL 18.4: "CREATE TABLE astral(id int,
+      // x𝐀y text)" -- U+1D400 MATHEMATICAL BOLD CAPITAL A -- succeeds, and "SELECT
+      // x𝐀y FROM astral" resolves it unquoted). COLUMN_REFERENCE's ">= 0x80" range is
+      // written as a CODE-POINT range ("\\x{80}-\\x{10FFFF}"), not a per-Char one, specifically so
+      // it matches the whole surrogate pair as one code point rather than requiring the range to
+      // be repeated to cover each UTF-16 half.
+      val result = parseSelectItems("SELECT x𝐀y, id FROM astral")
+      assertThat(result).containsExactly(
+        SelectItem("x𝐀y", "x𝐀y", null),
+        SelectItem("id", "id", null),
+      )
+    }
+
+    @Test
+    fun `a digit-leading fragment abutting a non-ASCII character is not mistaken for a column reference`() {
+      // Widening COLUMN_REFERENCE's continuation class to admit ">= 0x80" characters must NOT also
+      // let a digit-leading fragment match as a whole "identifier": verified against PostgreSQL
+      // 18.4, "SELECT 2€" is rejected outright ("trailing junk after numeric literal") -- "2€" is
+      // not a legal identifier PostgreSQL would ever lex, digit-leading or otherwise. Without
+      // COLUMN_REFERENCE_IDENTIFIER_START's separate (narrower) leading-character class, a naive
+      // widen would matchEntire "2€" as a single "identifier" once "€" became a legal continuation
+      // character, handing back a bogus columnName of "2€" for something PostgreSQL itself would
+      // never resolve to that name.
+      val result = parseSelectItems("SELECT 2€, email FROM users")
+      assertThat(result).containsExactly(
+        SelectItem("2€", null, null),
+        SelectItem("email", "email", null),
+      )
+    }
+
+    @Test
+    fun `an AS keyword directly abutting a closing parenthesis is recognized as an alias boundary`() {
+      // Verified against PostgreSQL 18.4: "SELECT (1)AS b" returns column "b" -- "AS" here abuts
+      // the closing ")" with no whitespace at all, yet is still the real keyword, because ")" is
+      // not an identifier character. Before the fix, extractAlias's whitespace-only boundary check
+      // required literal whitespace on both sides, so this "AS" was never recognized as the
+      // keyword: the alias was never stripped, and the item's expression stayed as the full
+      // "(age)AS b" (asserted below via extractAlias's effect on the expression field) rather than
+      // the correctly-stripped "(age)".
+      val result = parseSelectItems("SELECT (age)AS b FROM users")
+      assertThat(result).containsExactly(
+        SelectItem("(age)", null, null),
+      )
+    }
+
+    @Test
+    fun `an AS keyword directly abutting a closing parenthesis, followed by a quoted alias, is recognized`() {
+      // Verified against PostgreSQL 18.4: "SELECT (1)AS"b"" returns column "b" -- same boundary as
+      // the plain-alias case above, but with a double-quoted alias directly following "AS" (no
+      // whitespace on that side either). Before the fix, the "after" whitespace check rejected
+      // this for the same reason as the "before" side: a double quote is not whitespace, so the
+      // keyword was never recognized and the expression stayed as the whole, unsplit item.
+      val result = parseSelectItems("SELECT (age)AS\"b\" FROM users")
+      assertThat(result).containsExactly(
+        SelectItem("(age)", null, null),
+      )
+    }
+
+    @Test
+    fun `an identifier ending in the letters AS is not mistaken for the AS keyword`() {
+      // Verified against PostgreSQL 18.4: "CREATE TABLE d1(dataAS text)" then "SELECT 1 dataAS"
+      // returns column "dataas" -- "dataAS" lexes as ONE identifier, never as "data" followed by
+      // the keyword "AS". extractAlias's boundary check must reject the "AS" inside "dataAS" as
+      // not a real keyword occurrence on BOTH the old (whitespace) and new (isIdentifierChar) rule
+      // -- included as a regression guard for the widened rule, not a reproduction of a bug.
+      val result = parseSelectItems("SELECT dataAS b FROM users")
+      assertThat(result).containsExactly(
+        SelectItem("dataAS b", null, null),
+      )
+    }
+
+    @Test
+    fun `an AS keyword fused with a following non-ASCII character is not an alias boundary`() {
+      // Verified against PostgreSQL 18.4: "SELECT 1 AS€b" returns column "as€b" -- "AS€b" lexes as
+      // ONE implicit-alias identifier (€ is a legal identifier-continuation character), never as
+      // the keyword "AS" followed by "€b". Regression guard for the widened rule: the old
+      // whitespace-only check already rejected this ("€" is not whitespace either), so this
+      // confirms the new isIdentifierChar-based check agrees for the right reason.
+      val result = parseSelectItems("SELECT age AS€b FROM users")
+      assertThat(result).containsExactly(
+        SelectItem("age AS€b", null, null),
+      )
+    }
+
+    @Test
+    fun `an AS keyword fused with a preceding non-ASCII character is not an alias boundary`() {
+      // Verified against PostgreSQL 18.4: "SELECT age x€AS b FROM users" is a syntax error --
+      // "x€AS" lexes as ONE implicit-alias identifier (the same reasoning as the "AS€b" case
+      // above, from the other side), leaving a stray extra token "b" with nothing to attach to.
+      // Regression guard for the widened rule, same as the case above.
+      val result = parseSelectItems("SELECT age x€AS FROM users")
+      assertThat(result).containsExactly(
+        SelectItem("age x€AS", null, null),
+      )
+    }
+
+    @Test
     fun `quoted CTE name`() {
       val result = parseSelectItems("""WITH "myCte" AS (SELECT 1 AS a) SELECT a FROM "myCte"""")
       assertThat(result).containsExactly(
@@ -1027,8 +1182,8 @@ class SqlUtilsTest {
       // ACCENT, \u0301, written as a Kotlin unicode escape). It does NOT discriminate between any
       // version of the qualifier-side fix, past or present: a non-ASCII digit like "\u0663" starting
       // the qualifier's OWN run (which Char.isDigit() used to wrongly reject, and which the shared
-      // isPostgresIdentifierContinuationChar predicate now correctly runs past) is a DIFFERENT
-      // shape -- see the "\u0663" tests below for that discriminating coverage. Verified against a
+      // isIdentifierChar predicate now correctly runs past) is a DIFFERENT shape -- see the
+      // "\u0663" tests below for that discriminating coverage. Verified against a
       // real PostgreSQL 18.4 container using a temporary table (this literal identifier isn't a
       // real column anywhere, so a plain SELECT against "t" can't execute to confirm a row, only a
       // parse): creating a temp table with an "a" column and a column named by this exact
@@ -1071,7 +1226,7 @@ class SqlUtilsTest {
       // Euro sign, >= 0x80 but neither a letter nor a digit). Scanning backward from the ASCII
       // digit "9" therefore stopped AT "\u20AC", leaving "9" looking like the run's own start and
       // wrongly rejecting the whole qualifier as numeric -- when the real run is "x\u20AC9"
-      // (letter-led, correctly acceptable). isPostgresIdentifierContinuationChar (shared with
+      // (letter-led, correctly acceptable). isIdentifierChar (shared with
       // matchTrailingAliasSegment) runs past "\u20AC" instead. The table alias here is "x",
       // "\u20AC", "9", written as Kotlin unicode escapes. Verified against a real PostgreSQL 18.4
       // container: "SELECT x\u20AC9.* w, preferences FROM users x\u20AC9" returns 5 columns
@@ -1220,9 +1375,12 @@ class SqlUtilsTest {
 
     @Test
     fun `WITH clause main query with no FROM clause`() {
+      // columnName is null for the bare literal "5", not "5" itself: PostgreSQL would never lex a
+      // digit-leading token as an identifier (it's a numeric literal), so COLUMN_REFERENCE's
+      // leading-character restriction correctly rejects it — see COLUMN_REFERENCE's own KDoc.
       val result = parseSelectItems("WITH c AS (SELECT 1) SELECT 5, 'x'")
       assertThat(result).containsExactly(
-        SelectItem("5", "5", null),
+        SelectItem("5", null, null),
         SelectItem("'x'", null, null),
       )
     }
@@ -1237,6 +1395,22 @@ class SqlUtilsTest {
       assertThat(result).containsExactly(
         SelectItem("a", "a", null),
       )
+    }
+
+    @Test
+    fun `a typed-literal call with a standalone E before a backslash-quote does not manufacture a star item`() {
+      // Regression guard for the fail-safe answer that was restored by reverting
+      // skipSingleQuotedString's E lookback back to a narrow class (see that function's KDoc): a
+      // widened lookback made isStarItem's stripCommentsAndWhitespace-then-re-lex path delete the
+      // space between "x" and the standalone "E" of "x E'a\'b'" (PostgreSQL's own
+      // AexprConst: func_name Sconst typed-literal form), producing the never-lexed token
+      // "xE'a\'b'" and mis-parsing this item as star-shaped, which turned this query's result into
+      // 2 items instead of an empty list. A non-empty result here is a WRONG positional split, not
+      // merely a lost name — callers rely on this list's ORDER to pair items with columns from
+      // ResultSetMetaData, and a wrong split misapplies a column-level type override to the wrong
+      // column — so this asserts the fail-safe emptyList(), not a specific parse.
+      val result = parseSelectItems("SELECT (f(x€ E'a\\'b')).* y, id FROM t")
+      assertThat(result).isEmpty()
     }
   }
 
@@ -1590,6 +1764,35 @@ class SqlUtilsTest {
       assertThat(result.definitions[0].name).isEqualTo("renamed")
       assertThat(result.definitions[1].name).isEqualTo("counted")
     }
+
+    @Test
+    fun `CTE name containing a non-ASCII character parses correctly`() {
+      // Verified against a real PostgreSQL 18.4: "WITH data€x AS (SELECT 1 AS inner_name) SELECT
+      // inner_name AS outer_name FROM data€x" is accepted -- "data€x" is an ordinary unquoted
+      // identifier (PostgreSQL's lexer admits any byte >= 0x80 inside one). Before the fix, the
+      // CTE-name run used the narrow letter/digit/underscore class, which stopped at "€", leaving
+      // "x AS (SELECT 1 AS inner_name) SELECT inner_name AS outer_name FROM data€x" where an "AS"
+      // keyword was expected -- so parsing failed and this returned null instead of one definition.
+      val result = parseCteClause(
+        "WITH data€x AS (SELECT 1 AS inner_name) SELECT inner_name AS outer_name FROM data€x",
+      )
+      assertThat(result).isNotNull()
+      assertThat(result!!.definitions).hasSize(1)
+      assertThat(result.definitions[0].name).isEqualTo("data€x")
+    }
+
+    @Test
+    fun `a dollar-led CTE name is not recognized, since PostgreSQL itself rejects one`() {
+      // Issue #219 follow-up: parseSingleCteDefinition's unquoted-name run originally used
+      // isIdentifierChar -- the CONTINUATION predicate -- for the name's FIRST character too, so
+      // a leading "$" was wrongly accepted as starting a CTE name. Verified against a real
+      // PostgreSQL 18.4: "WITH $x AS (SELECT 1) SELECT a FROM x" is a syntax error ("at or near
+      // $") -- "$" may only continue an identifier, never start one. With the first character
+      // correctly gated by isIdentifierStartChar, no CTE name is found here at all, so this
+      // returns null exactly as it does on main.
+      val result = parseCteClause("WITH \$x AS (SELECT 1) SELECT a FROM x")
+      assertThat(result).isNull()
+    }
   }
 
   @Nested
@@ -1709,6 +1912,107 @@ class SqlUtilsTest {
       val sql = "UPDATE t SET x\$from = 1 FROM a"
       val result = findTopLevelKeyword(sql, "FROM")
       assertThat(result).isEqualTo(sql.indexOf("FROM a"))
+    }
+
+    @Test
+    fun `does not match FROM when immediately followed by a non-ASCII identifier-continuation character`() {
+      // Issue #219: PostgreSQL's lexer admits any byte >= 0x80 inside an unquoted identifier, so
+      // "from€" is a single identifier, not the keyword FROM followed by a stray "€".
+      val result = findTopLevelKeyword("SELECT * FROM€ t", "FROM")
+      assertThat(result).isEqualTo(-1)
+    }
+
+    @Test
+    fun `does not match FROM when immediately preceded by a non-ASCII identifier-continuation character`() {
+      // Same fact, leading side: "€from" is a single identifier, not a stray "€" followed by the
+      // keyword FROM.
+      val result = findTopLevelKeyword("SELECT * €FROM t", "FROM")
+      assertThat(result).isEqualTo(-1)
+    }
+  }
+
+  @Nested
+  inner class FindKeywordAtAnyDepthTest {
+
+    @Test
+    fun `does not match a keyword nested in parentheses when immediately followed by a non-ASCII character`() {
+      val result = findKeywordAtAnyDepth("(FROM€ t)", "FROM")
+      assertThat(result).isEqualTo(-1)
+    }
+
+    @Test
+    fun `does not match a keyword nested in parentheses when immediately preceded by a non-ASCII character`() {
+      val result = findKeywordAtAnyDepth("(€FROM t)", "FROM")
+      assertThat(result).isEqualTo(-1)
+    }
+
+    @Test
+    fun `still finds a real keyword at depth greater than zero`() {
+      // NOT demonstrative of any single fix in this file — a positive control confirming the
+      // ordinary, already-working case (a real keyword with plain whitespace on both sides,
+      // nested inside parentheses) still matches. Kept as a regression guard against the
+      // non-ASCII boundary checks above becoming overly broad and rejecting this too.
+      val sql = "(SELECT * FROM t)"
+      val result = findKeywordAtAnyDepth(sql, "FROM")
+      assertThat(result).isEqualTo(sql.indexOf("FROM t"))
+    }
+  }
+
+  @Nested
+  inner class FindTopLevelReturningKeywordTest {
+
+    @Test
+    fun `a trailing non-ASCII character on a returning-shaped identifier is not mistaken for the bare keyword`() {
+      // The exact shape from #219: "returning€" is a legal PostgreSQL column name (PostgreSQL's
+      // lexer admits any byte >= 0x80 inside an unquoted identifier), so this must not be split
+      // into the bare word "returning" plus a stray "€".
+      val sql = "INSERT INTO users (email, age, preferences) " +
+        "SELECT returning€, age, preferences FROM src RETURNING id, email"
+      val result = findTopLevelReturningKeyword(sql)
+      assertThat(result).isEqualTo(sql.indexOf("RETURNING id, email"))
+    }
+
+    @Test
+    fun `a supplementary-plane character abutting the keyword prevents a false match`() {
+      // A surrogate pair's two UTF-16 code units are each >= 0x80 -- no special surrogate
+      // handling is needed, the same per-character loop that handles "€" handles this correctly.
+      val sql = "INSERT INTO users (email) " +
+        "SELECT returning🚀, email FROM src RETURNING id, email"
+      val result = findTopLevelReturningKeyword(sql)
+      assertThat(result).isEqualTo(sql.indexOf("RETURNING id, email"))
+    }
+
+    @Test
+    fun `a standalone non-breaking space before a returning-shaped word is not split off as a separator`() {
+      // Kotlin's Char.isWhitespace() is true for U+00A0 (no-break space), but PostgreSQL's lexer
+      // does not treat it as whitespace at all -- it's an ordinary (>= 0x80) identifier
+      // character. If the whitespace branch were checked before the identifier branch, the
+      // U+00A0 would be consumed as a plain separator, leaving "returning" to stand alone right
+      // after it and be misread as the bare keyword.
+      val sql = "SELECT a, " + "\u00A0returning, b FROM t RETURNING id"
+      val result = findTopLevelReturningKeyword(sql)
+      assertThat(result).isEqualTo(sql.indexOf("RETURNING id"))
+    }
+
+    @Test
+    fun `still finds the real keyword when it is not preceded by AS`() {
+      // NOT demonstrative of any fix in this file — the AS-preceded-alias exclusion predates this
+      // branch's >= 0x80 boundary work (it's the #212-era fix). Kept as a regression guard that
+      // the ordinary, already-working case (a real RETURNING clause with no AS before it) still
+      // matches.
+      val sql = "DELETE FROM t WHERE id = 1 RETURNING id"
+      val result = findTopLevelReturningKeyword(sql)
+      assertThat(result).isEqualTo(sql.indexOf("RETURNING id"))
+    }
+
+    @Test
+    fun `does not match an AS-preceded column alias`() {
+      // NOT demonstrative of any fix in this file — same reasoning as above: the AS-preceded
+      // exclusion is pre-existing behavior, not part of this branch's >= 0x80 boundary work. Kept
+      // as a regression guard against that exclusion becoming overly broad or narrow.
+      val sql = "SELECT email AS returning, x FROM t"
+      val result = findTopLevelReturningKeyword(sql)
+      assertThat(result).isEqualTo(-1)
     }
   }
 
@@ -1917,6 +2221,15 @@ class SqlUtilsTest {
       assertThat(
         referencesOldOrNew("n.name", additionalNames = setOf("n")),
       ).isTrue()
+    }
+
+    @Test
+    fun `does not match OLD when immediately preceded by a non-ASCII identifier-continuation character`() {
+      // Issue #219: "€OLD" is a single identifier, not a stray "€" followed by the pseudo-relation
+      // OLD. Without the word-boundary fix, "before" wrongly treats "€" as a non-identifier
+      // character, so "OLD" is matched as the pseudo-relation and, being followed by ".", this
+      // wrongly returns true -- a false positive, the dangerous direction.
+      assertThat(referencesOldOrNew("€OLD.name")).isFalse()
     }
   }
 
@@ -2133,6 +2446,14 @@ class SqlUtilsTest {
     fun `does not match a name that only appears inside a tagged dollar-quoted string`() {
       assertThat(referencesAnyName("SELECT \$tag\$ pre \$tag\$ AS x", listOf("pre"))).isFalse()
     }
+
+    @Test
+    fun `does not match a sibling name immediately followed by a non-ASCII identifier-continuation character`() {
+      // Issue #219: "pre€" is a single identifier, distinct from the sibling name "pre".
+      assertThat(
+        referencesAnyName("MERGE INTO tgt USING pre€ ON pre€.id = tgt.id", listOf("pre")),
+      ).isFalse()
+    }
   }
 
   @Nested
@@ -2160,6 +2481,34 @@ class SqlUtilsTest {
     @Test
     fun `does not match when there is no join at all`() {
       assertThat(hasOuterJoin("UPDATE t SET name = 'x' WHERE id = 1")).isFalse()
+    }
+
+    @Test
+    fun `does not match JOIN when immediately followed by a non-ASCII identifier-continuation character`() {
+      // Issue #219: "JOIN€" is a single identifier, not the keyword JOIN followed by a stray "€".
+      assertThat(hasOuterJoin("UPDATE t SET x = 1 FROM a LEFT JOIN€x ON x.id = a.id")).isFalse()
+    }
+  }
+
+  @Nested
+  inner class SkipOptionalKeywordTest {
+
+    @Test
+    fun `does not consume OUTER when immediately followed by a non-ASCII identifier-continuation character`() {
+      // Issue #219: "OUTER€" is a single identifier, not the keyword OUTER followed by a stray
+      // "€" -- the position must be left unchanged, exactly as for any other non-matching text.
+      val sql = "OUTER€ JOIN b"
+      assertThat(skipOptionalKeyword(sql, 0, "OUTER")).isEqualTo(0)
+    }
+
+    @Test
+    fun `still consumes a real keyword followed by ordinary whitespace`() {
+      // NOT demonstrative of any fix in this file — a positive control confirming the ordinary,
+      // already-working case (a real keyword followed by plain whitespace) still advances past
+      // it. Kept as a regression guard against the non-ASCII boundary check above becoming overly
+      // broad and rejecting this too.
+      val sql = "OUTER JOIN b"
+      assertThat(skipOptionalKeyword(sql, 0, "OUTER")).isEqualTo(sql.indexOf("JOIN"))
     }
   }
 
@@ -2283,6 +2632,101 @@ class SqlUtilsTest {
       val sql = "SELECT \$1 FROM a"
       val result = findTopLevelKeyword(sql, "FROM")
       assertThat(result).isEqualTo(sql.indexOf("FROM a"))
+    }
+
+    @Test
+    fun `does not open a dollar quote immediately after a non-ASCII identifier-continuation character`() {
+      // Issue #219: under PostgreSQL's flex longest-match, "x€\$\$y\$\$" is ONE identifier, since
+      // "€" (>= 0x80) is itself a legal identifier-continuation character -- so the "\$" right
+      // after it must not be treated as opening a dollar-quoted string.
+      val sql = "x€\$\$y\$\$"
+      val dollarIndex = sql.indexOf('$')
+      assertThat(skipLexicalToken(sql, dollarIndex)).isEqualTo(dollarIndex)
+    }
+
+    @Test
+    fun `a dollar-quote tag containing a non-ASCII character is recognized as a tag`() {
+      // scan.l's dolq_start/dolq_cont admit any byte >= 0x80, same as an ordinary identifier's
+      // ident_start/ident_cont -- so "€" is a legal (one-character) tag. Before the fix, the tag
+      // run used the narrow letter/digit/underscore class, which doesn't include "€", so the run
+      // ended immediately (empty tag), the closing delimiter search looked for a bare "$$" instead
+      // of "$€$", and never found one before the real one -- swallowing everything after it.
+      val sql = "\$€\$x,\$€\$ AS lbl"
+      val result = skipLexicalToken(sql, 0)
+      assertThat(result).isEqualTo(sql.indexOf(" AS lbl"))
+    }
+
+    @Test
+    fun `a digit-leading dollar-quote tag is not recognized as a tag`() {
+      // Verified against PostgreSQL 18.4: scan.l's dolq_start excludes digits (unlike dolq_cont,
+      // which admits them after the first character) -- "$1$foo$1$" is not a dollar-quoted
+      // string at all; "$1" is left as an ordinary "$"-prefixed token. Before the fix, the tag
+      // run's start character used the same letter/digit/underscore class as its continuation, so
+      // a leading digit was wrongly accepted as if it opened a valid tag.
+      val sql = "\$1\$foo\$1\$"
+      assertThat(skipLexicalToken(sql, 0)).isEqualTo(0)
+    }
+  }
+
+  @Nested
+  inner class SkipSingleQuotedStringTest {
+
+    @Test
+    fun `a non-ASCII character before a standalone E is a known deviation from PostgreSQL`() {
+      // Real PostgreSQL treats "x€E" as ONE identifier -- "€" is a legal identifier-continuation
+      // character -- so the "E" immediately before the quote is NOT a standalone E'...'
+      // escape-string marker there. This function's letter/digit/underscore-only lookback does not
+      // know that: it doesn't recognize "€" as an identifier character, so it wrongly treats "E" as
+      // standalone, honors the backslash before the following quote as an escape rather than the
+      // string's terminator, and swallows the rest of the statement looking for a closing quote
+      // that never comes.
+      //
+      // This is a deliberate, KNOWN deviation from PostgreSQL's lexer, not an oversight: widening
+      // this lookback to isIdentifierChar makes this exact case correct, but breaks
+      // skipSingleQuotedString for a select-item string that has already been run through
+      // stripCommentsAndWhitespace and re-lexed by isStarItem, where a separator PostgreSQL
+      // actually lexed on may already be gone from the stripped text (see this function's KDoc, and
+      // the regression test on parseSelectItems in ParseSelectItems for the concrete failure this
+      // is trading against). Do not re-widen this lookback before stripCommentsAndWhitespace itself
+      // is fixed to track original adjacency.
+      val sql = "x€E'a\\' FROM t"
+      val quoteIndex = sql.indexOf('\'')
+      val result = skipLexicalToken(sql, quoteIndex)
+      assertThat(result).isEqualTo(sql.length)
+    }
+  }
+
+  @Nested
+  inner class FunctionCallStartTest {
+
+    @Test
+    fun `captures the whole dollar-containing function name, not just the run after the dollar sign`() {
+      // FUNCTION_CALL_START previously used a bare "\w+", which excludes "$" -- "\w+" cannot match
+      // "my$fn" as one run, so findAll instead matched the shorter run "fn" immediately before the
+      // "(", handing SqlParameterInferrer.extractFunctionCalls the WRONG function name. Verified
+      // against a real PostgreSQL 18.4: "my$fn" is a legal unquoted function name (CREATE FUNCTION
+      // "my$fn"(...) and the unquoted call my$fn(...) resolve to the same function).
+      val match = FUNCTION_CALL_START.find("SELECT my\$fn(?)")
+      assertThat(match!!.groupValues[1]).isEqualTo("my\$fn")
+    }
+
+    @Test
+    fun `captures a function name continuing with a non-ASCII character`() {
+      // "\w+" is ASCII-only, so it also excludes any ">= 0x80" character -- verified against a
+      // real PostgreSQL 18.4: an unquoted function named "fn€" is legal and callable unquoted.
+      val match = FUNCTION_CALL_START.find("SELECT fn€(?)")
+      assertThat(match!!.groupValues[1]).isEqualTo("fn€")
+    }
+
+    @Test
+    fun `does not capture a digit as the start of a function name`() {
+      // Verified against a real PostgreSQL 18.4: "2fn(...)" is rejected outright ("trailing junk
+      // after numeric literal") -- a digit may never START an identifier. The regex's own
+      // leading-character restriction means a match beginning with "2" is impossible; the only
+      // match found here starts at "f", the same "two positions collapsed onto one class" mistake
+      // issue #219 fixed for COLUMN_REFERENCE.
+      val match = FUNCTION_CALL_START.find("SELECT 2fn(?)")
+      assertThat(match!!.groupValues[1]).isEqualTo("fn")
     }
   }
 
