@@ -1,7 +1,22 @@
 package norm.generator
 
-/** Matches `func_name(` to find the start of function calls. */
-internal val FUNCTION_CALL_START = Regex("""(\w+)\(""")
+/**
+ * Matches `func_name(` to find the start of function calls — the captured name is a PostgreSQL
+ * unquoted identifier ([COLUMN_REFERENCE_IDENTIFIER_START] followed by zero or more
+ * [COLUMN_REFERENCE_IDENTIFIER_CONTINUATION] characters, the same identifier shape
+ * [COLUMN_REFERENCE] uses), never a bare `\w+`: `\w` excludes both `$` and any `>= 0x80`
+ * character, both of which PostgreSQL admits after an identifier's first character (see
+ * [isIdentifierChar]). For `SELECT my$fn(?)`, `\w+` cannot match `my$fn` as one run (`$` breaks
+ * it), so `findAll` instead matches the shorter run `fn` immediately before the `(` — handing
+ * `SqlParameterInferrer.extractFunctionCalls` the wrong function name, `fn` instead of `my$fn`.
+ * Verified against a real PostgreSQL 18.4: `CREATE FUNCTION "my$fn"(...)` and the unquoted call
+ * `my$fn(...)` both resolve to the same function, and an unquoted `>= 0x80`-named function
+ * (`fn€(...)`) is likewise legal, while a digit-led name (`2fn(...)`) is rejected outright
+ * ("trailing junk after numeric literal") — exactly the identifier shape this regex now encodes.
+ */
+internal val FUNCTION_CALL_START = Regex(
+  """($COLUMN_REFERENCE_IDENTIFIER_START$COLUMN_REFERENCE_IDENTIFIER_CONTINUATION*)\(""",
+)
 
 /** SQL keywords to exclude when matching function calls. */
 internal val SQL_KEYWORDS = setOf(
@@ -287,6 +302,45 @@ private fun skipOptionalSetQuantifier(sql: String, position: Int): Int {
  * [skipLexicalToken], so an `AS`-like substring or an unbalanced paren inside one of those is
  * not mistaken for a real `AS` keyword or a real parenthesis.
  *
+ * The word-boundary check on either side of a candidate `AS`/`as` uses [isIdentifierChar] — the
+ * same predicate [findTopLevelKeyword] and every other keyword scanner in this file use — rather
+ * than `Char.isWhitespace()`: PostgreSQL's `AS` keyword only needs to NOT be fused into a longer
+ * identifier on either side, not to be surrounded by literal whitespace. Verified against
+ * PostgreSQL 18.4: `SELECT (1)AS b` returns column `b` — `AS` directly abuts the closing `)` with
+ * no whitespace, and `)` is not an identifier character, so this is the real keyword. Conversely
+ * `SELECT 1 AS$b` returns column `as$b`, a SINGLE implicit alias identifier — `$` is a valid
+ * identifier-continuation character (see [isIdentifierChar]), so `AS$b` is one word, not the
+ * keyword `AS` followed by `$b`, and the whitespace-based check happened to reject this case for
+ * the same reason (`$` is not whitespace either), while the identifier-based check rejects it for
+ * the actually-correct reason (`$` continues an identifier). Before this fix, requiring literal
+ * whitespace was STRICTER than PostgreSQL's own grammar: whenever `AS` abutted a non-whitespace,
+ * non-identifier character such as `)` or a closing quote with no separating space, the keyword
+ * went unrecognized, so the alias was never split off — the raw, unsplit item (e.g. `(age)AS b`)
+ * was returned as the `expression` half verbatim, instead of the correctly-split `(age)`.
+ *
+ * This DOES change `columnName`, and for the better, whenever the glued alias prevents the
+ * pre-`AS` text from matching [COLUMN_REFERENCE] on its own but the split-off expression matches
+ * it once separated. `columnName` is derived by [parseSelectItems] from the split `expression` via
+ * [parseColumnReference] (the returned alias itself is discarded — [parseSelectItems] is this
+ * function's only caller, and does `val (expression, _) = extractAlias(item)`), so whatever the
+ * split changes `expression` to feeds directly into that derivation. Verified against PostgreSQL
+ * 18.4: `SELECT a AS"b", id FROM t` is valid (columns `b`, `id`; PostgreSQL reports `a` as the
+ * source column of the first result column). On `main`, the boundary check requires literal
+ * whitespace after `AS`, so `AS"b"` (no space before the quote) is not recognized as the keyword —
+ * the whole glued item `a AS"b"` is returned as `expression` unsplit, which does not match
+ * [COLUMN_REFERENCE] (it contains a space and an embedded quote), giving `columnName=null`. On this
+ * branch, the identifier-character boundary check correctly recognizes `AS` here (`"` is not an
+ * identifier character, so the right-hand boundary holds without requiring whitespace), splitting
+ * the item into `expression="a"`, which DOES match [COLUMN_REFERENCE], giving `columnName="a"` —
+ * the name PostgreSQL itself reports. Not every glued case benefits this way: a glued expression
+ * like `(age)AS b` still fails to match [COLUMN_REFERENCE] once split, because the split-off
+ * `expression` (`(age)`) contains parentheses regardless of the split, so `columnName` stays `null`
+ * for that shape either way. The effect on `expression` itself is unconditional, independent of
+ * `columnName`: `TypeRepository.buildTypeProjectionForQuery` embeds `expression` verbatim in
+ * generated KDoc for a computed expression (`selectItem.columnName == null && column.table ==
+ * null`), so that embedded text now reflects the correctly-split SQL (`(age)`) instead of the
+ * alias-contaminated one (`(age)AS b`) for that boundary shape.
+ *
  * @return A pair of (expression, alias) where alias is `null` if there is no `AS` keyword.
  */
 private fun extractAlias(item: String): Pair<String, String?> {
@@ -304,9 +358,9 @@ private fun extractAlias(item: String): Pair<String, String?> {
       '(' -> depth++
       ')' -> depth--
       'A', 'a' -> if (depth == 0 && i + 1 < item.length && (item[i + 1] == 'S' || item[i + 1] == 's')) {
-        // Check it's the keyword AS (preceded and followed by whitespace)
-        val before = i == 0 || item[i - 1].isWhitespace()
-        val after = i + 2 >= item.length || item[i + 2].isWhitespace()
+        // Check it's the keyword AS (not fused into a longer identifier on either side)
+        val before = i == 0 || !isIdentifierChar(item[i - 1])
+        val after = i + 2 >= item.length || !isIdentifierChar(item[i + 2])
         if (before && after) {
           lastAsIndex = i
         }
@@ -440,7 +494,21 @@ internal fun findKeywordAtAnyDepth(sql: String, keyword: String, startIndex: Int
  * parenthesis, comma, or operator) clears the state, since none of those can be the word `AS`
  * either. Word-boundary handling is inherently correct here, unlike a substring search would be,
  * because the walk consumes whole words at a time via [isIdentifierChar] — an ordinary identifier
- * like `returning_batch` is read as ONE word, never mistaken for the bare keyword.
+ * like `returning_batch`, or one continuing with a `>= 0x80` character like `returning€`, is read
+ * as ONE word, never mistaken for the bare keyword (issue #219: `returning€` is a legal PostgreSQL
+ * column name — PostgreSQL's lexer admits any byte `>= 0x80` inside an unquoted identifier — so
+ * stopping the word scan at `€` and seeing the bare word `returning` misidentified the alias
+ * position as the real clause).
+ *
+ * The identifier branch is checked BEFORE the whitespace branch, deliberately: Kotlin's
+ * `Char.isWhitespace()` is `true` for several `>= 0x80` characters PostgreSQL does NOT treat as
+ * whitespace at all (e.g. U+00A0 NO-BREAK SPACE, U+2000-U+200A the various Unicode spaces, U+3000
+ * IDEOGRAPHIC SPACE) — every character PostgreSQL's own lexer treats as whitespace is ASCII
+ * (`< 0x80`), so [isIdentifierChar]'s wide `>= 0x80` branch never conflicts with a genuine
+ * PostgreSQL whitespace character. Checking whitespace first would let one of those non-ASCII
+ * "whitespace" characters act as an ordinary separator between two otherwise-adjacent words —
+ * splitting what PostgreSQL's lexer reads as ONE identifier into a leading word that can, in turn,
+ * be misread as the bare `RETURNING` keyword.
  *
  * @return The index of the keyword, or `-1` if there is no top-level `RETURNING` that isn't itself
  *   an `AS`-preceded column alias.
@@ -458,7 +526,6 @@ internal fun findTopLevelReturningKeyword(sql: String): Int {
       continue
     }
     when {
-      sql[i].isWhitespace() -> i++
       isIdentifierChar(sql[i]) -> {
         val wordStart = i
         while (i < sql.length && isIdentifierChar(sql[i])) i++
@@ -468,6 +535,7 @@ internal fun findTopLevelReturningKeyword(sql: String): Int {
         }
         previousWordIsAs = word.equals("AS", ignoreCase = true)
       }
+      sql[i].isWhitespace() -> i++
       else -> {
         when (sql[i]) {
           '(' -> depth++
@@ -482,45 +550,157 @@ internal fun findTopLevelReturningKeyword(sql: String): Int {
 }
 
 /**
- * True if [character] can appear inside an unquoted PostgreSQL identifier: a letter, digit,
- * underscore, or dollar sign. PostgreSQL identifiers may not START with a digit or `$`, but
- * that distinction doesn't matter for a WORD-BOUNDARY check — the only question here is whether
- * a character adjacent to a keyword-like substring means that substring is actually part of a
- * larger identifier (e.g. the `from` inside `valid_from`, or the `set` inside `data_set`), and
- * any of these four character kinds on either side answers that "yes".
+ * True if [character] can appear inside an unquoted PostgreSQL identifier, at any position after
+ * the first: a letter, digit, underscore, dollar sign, or any character whose code is `>= 0x80`.
+ * PostgreSQL's actual identifier-continuation class (`scan.l`'s `ident_cont`) is wider than a
+ * plain letter/digit/`_`/`$` check: a combining mark (an alias written in NFD), a currency or
+ * other symbol (`€`, `©`, `¹`, `・`), and a supplementary-plane character (a surrogate pair in a
+ * Kotlin/UTF-16 `String` — both code units are `>= 0x80`, so no special surrogate handling is
+ * needed) are all legal identifier characters that Kotlin's `isLetterOrDigit()` alone does not
+ * recognize (none of them is a Unicode letter or digit).
+ *
+ * This is the SINGLE predicate every keyword word-boundary check in this file uses
+ * ([findTopLevelKeyword], [findKeywordAtAnyDepth], [findTopLevelReturningKeyword], [hasOuterJoin],
+ * [referencesAnyName], [referencesOldOrNew], [matchUnicodeEscapeIdentifierSegment]'s `UESCAPE`
+ * boundary, [skipOptionalKeyword], [extractAlias]'s `AS` boundary, and [skipLexicalToken]'s
+ * dollar-quote guard), as well as [matchTrailingAliasSegment] (an implicit alias's own
+ * continuation characters), [isStarQualifierAcceptable] (scanning the identifier run before a
+ * star's qualifying `.`), [parseSingleCteDefinition] (a CTE name's characters AFTER the first —
+ * see [isIdentifierStartChar] for the first character itself), and [COLUMN_REFERENCE]'s
+ * continuation character class — deliberately ONE predicate everywhere: a real PostgreSQL keyword
+ * can never legitimately abut a `>= 0x80` character outside a string literal, a quoted identifier,
+ * a dollar-quoted string, or a comment (all already skipped by [skipLexicalToken]).
+ *
+ * Widening a boundary check is NOT unconditionally the fail-safe direction — rejecting a keyword
+ * match a narrower predicate would have found can itself make a caller do something WORSE.
+ * [findTopLevelKeyword] rejecting a `FROM` match, for instance, makes [parseSelectItems] fall
+ * through to treating the REST of the window as items (`window.substring(itemsStart)`), producing
+ * MORE items than before — the direction that same function's own KDoc calls dangerous.
+ * Demonstrated directly: `SELECT src.name AS c ©FROM t, src, helper` parses to 1 item on `main`
+ * and 3 items on this branch (the `©` immediately before `FROM`, both `>= 0x80`-adjacent, fuses
+ * into the boundary check and hides the keyword) — but real PostgreSQL 18.4 rejects that exact
+ * input outright, so this is not a shipped regression, only a fact about the predicate's own
+ * behavior in isolation.
+ *
+ * The widening also changes behavior on VALID SQL, and does so correctly. Demonstrated directly:
+ * `INSERT INTO t (a) SELECT 1 AS 𝐀returning RETURNING a, b` executes on PostgreSQL 18.4 and returns
+ * 2 columns (`a`, `b`). [findTopLevelReturningKeyword] scans word runs with this predicate and
+ * matches the first run equal to `"RETURNING"` (case-insensitive). With the widening reverted,
+ * neither UTF-16 code unit of `𝐀` (a supplementary-plane character, written as a surrogate pair) is
+ * an identifier character, so the run started by `𝐀` ends after zero characters — the scan then
+ * restarts at the immediately-following ASCII text and reads a NEW word, `returning`, in isolation.
+ * That word matches `"RETURNING"` case-insensitively, so [findTopLevelReturningKeyword] returns the
+ * position of the alias's own lowercase suffix instead of the real, later `RETURNING` keyword,
+ * and `parseSelectItems` treats everything from there on as the `RETURNING` list:
+ * `[RETURNING a(null), b]` — 2 items, but the first is `"RETURNING a"` (unparsed, `columnName=null`)
+ * because the genuine keyword got absorbed into it. With the widening in place, both surrogate
+ * halves are identifier characters, so `𝐀returning` is scanned as ONE word (not equal to
+ * `"RETURNING"`), and the scan correctly finds the real keyword further on: `[a(a), b(b)]` —
+ * matching what PostgreSQL itself reports. (Verified directly: reverting only this line to drop the
+ * `>= 0x80` disjunct reproduces the `[RETURNING a(null), b]` result on this exact input.)
+ *
+ * So the honest claim is not "no valid input is affected" — this example is valid input, and IS
+ * affected — but something narrower: on valid SQL, the cases this widening changes are corrections,
+ * and on SQL PostgreSQL rejects, it may change the result in either direction (as the `©FROM`
+ * example above shows). The evidence for that is empirical, over a corpus, not a proof: an
+ * 11,542-input differential run comparing this whole change against the code it replaced found that
+ * every input where the item COUNT INCREASED was SQL PostgreSQL itself rejects, and every one of the
+ * 484 distinct column/table names this branch assigns across that same differential is a legal
+ * unquoted PostgreSQL identifier that re-lexes correctly. Valid SQL does change count in the other
+ * direction: roughly 55 valid statements drop to zero items, all of them star shapes — e.g. `SELECT
+ * t.*café, a FROM t`, which PostgreSQL expands to 15 columns while the narrower predicate produced 2
+ * items, so pairing `a` against column 2 (`name`) would have reported a WRONG name. Dropping to zero
+ * is the fail-safe answer: callers fall back to `ResultSetMetaData.getColumnName`. No structural
+ * guarantee follows from any of this — only that the corpus exercised did not turn up a
+ * counterexample.
+ *
+ * Keeping a narrower ASCII-only predicate for keyword boundaries "in sync by convention" with a
+ * wider one for identifier-run scanning already caused three separate regressions in the other
+ * direction: whenever only one side was widened, a PostgreSQL-legal, `>= 0x80` character truncated
+ * a run or a word at the wrong place — e.g. `returning€` (a legal column name) read as the bare
+ * keyword `RETURNING` plus a stray `€` (issue #219), or `x€9.` (stopping at `€` instead of
+ * continuing through it left `9` looking like a qualifier's own start, misclassifying the whole
+ * thing as a numeric literal). Calling the same function from every call site makes that symmetry
+ * structural, not a comment to remember to keep in sync.
  */
 private fun isIdentifierChar(character: Char): Boolean =
-  character.isLetterOrDigit() || character == '_' || character == '$'
+  character.isLetterOrDigit() || character == '_' || character == '$' || character.code >= 0x80
 
 /**
- * True if [character] is a character PostgreSQL's lexer accepts as a NON-FIRST character of an
- * unquoted identifier — [isIdentifierChar] (ASCII-oriented: letter, digit, `_`, `$`) OR any
- * character whose code is `>= 0x80`. PostgreSQL's actual identifier-continuation class is WIDER
- * than [isIdentifierChar] alone: a combining mark (an alias written in NFD), a currency or other
- * symbol (`€`, `©`, `¹`, `・`), and a supplementary-plane character (a surrogate pair in a
- * Kotlin/UTF-16 `String` — both code units are `>= 0x80`, so no special surrogate handling is
- * needed) are all legal identifier characters [isIdentifierChar] rejects (none of them is a
- * Unicode letter, digit, `_`, or `$`).
+ * True if [character] can START an unquoted PostgreSQL identifier: a letter, `_`, or any character
+ * whose code is `>= 0x80` — never a digit or `$`, both of which are legal only after the first
+ * character (see [isIdentifierChar]).
  *
- * Used by BOTH [matchTrailingAliasSegment] (an implicit alias's own character class) and
- * [isStarQualifierAcceptable] (scanning the identifier run before a star's qualifying `.`) — a
- * SINGLE shared predicate, deliberately, because keeping the two call sites merely "in sync by
- * convention" already failed three separate times: whenever only one side was widened, a
- * PostgreSQL-legal, `>= 0x80`-but-not-letter-or-digit character truncated an identifier run at the
- * wrong place (e.g. `x€9.`: stopping at `€` instead of continuing through it left `9` looking like
- * the run's own start, misclassifying the whole qualifier as a numeric literal). Calling the same
- * function from both places makes that symmetry structural, not a comment to remember to update.
+ * This is also the predicate for what can START a dollar-quote TAG (the `tag` in `$tag$...$tag$`):
+ * per PostgreSQL's `scan.l`, `ident_start` (an ordinary identifier's first character) and
+ * `dolq_start` (a dollar-quote tag's first character) are defined by the IDENTICAL character class,
+ * `[A-Za-z\200-\377_]` — a letter, `_`, or any byte `>= 0x80` (`\200`-`\377` in octal), never a
+ * digit and never `$`. That is a genuine coincidence in `scan.l`, not an approximation: unlike the
+ * two CONTINUATION classes, which `scan.l` defines DIFFERENTLY (`ident_cont` admits `$` in addition
+ * to letters/digits/`_`/`>= 0x80`; `dolq_cont` admits digits but never `$` — see
+ * [isDollarQuoteTagContinuationChar]'s KDoc), the two START classes have no such divergence, so
+ * unifying them here does not "collapse two positions onto one class" the way merging the
+ * continuation predicates would. Do NOT extend this merge to the continuation predicates for that
+ * reason: [isIdentifierChar] and [isDollarQuoteTagContinuationChar] must stay separate.
  *
- * [isIdentifierChar] itself is intentionally UNCHANGED — it also backs keyword word-boundary
- * checks ([findTopLevelKeyword], [findKeywordAtAnyDepth], [skipOptionalKeyword],
- * [findTopLevelReturningKeyword]) and [skipLexicalToken]'s dollar-quote guard, where widening it
- * to admit non-ASCII bytes is a separate, unverified change outside this predicate's scope.
+ * This is the SINGLE predicate every identifier-START and dollar-quote-tag-START check in this file
+ * uses — [matchTrailingAliasSegment] (an implicit alias's own first character),
+ * [parseSingleCteDefinition] (an unquoted CTE name's first character), and [skipDollarQuotedString]
+ * (a dollar-quote tag's first character) all call this function directly, and
+ * [COLUMN_REFERENCE_IDENTIFIER_START] is the same rule expressed as a regex character class for
+ * [COLUMN_REFERENCE] and [FUNCTION_CALL_START] to embed. Before [parseSingleCteDefinition] was
+ * changed to call this function, it used [isIdentifierChar] — the CONTINUATION predicate — for a
+ * CTE name's first character too, wrongly accepting a `$`-led name (`WITH $x AS (...)`, which
+ * PostgreSQL rejects outright) — the exact "two positions collapsed onto one class" mistake this
+ * predicate's existence, split from [isIdentifierChar], exists to prevent.
  */
-private fun isPostgresIdentifierContinuationChar(character: Char): Boolean =
-  isIdentifierChar(character) || character.code >= 0x80
+private fun isIdentifierStartChar(character: Char): Boolean =
+  character.isLetter() || character == '_' || character.code >= 0x80
 
-/** Matches `table.column` or just `column` (identifier characters only, no parentheses or operators). */
-private val COLUMN_REFERENCE = Regex("""(?:(?<table>\w+)\.)?(?<column>\w+)""")
+/**
+ * The character class an unquoted PostgreSQL identifier's FIRST character may be — the same rule
+ * [isIdentifierStartChar] checks, expressed as a regex character class: a letter, `_`, or any
+ * character whose code is `>= 0x80` (see [matchTrailingAliasSegment], which enforces the same rule
+ * for an implicit alias's own first character) — but NOT a digit or `$`, both of which are legal
+ * only after the first character (see [isIdentifierChar]).
+ */
+private const val COLUMN_REFERENCE_IDENTIFIER_START = """[\p{L}_\x{80}-\x{10FFFF}]"""
+
+/**
+ * The character class an unquoted PostgreSQL identifier's characters AFTER the first may be — the
+ * same class [isIdentifierChar] checks, expressed as a regex character class: a Unicode letter
+ * (`\p{L}`, matching [Char.isLetter]) or decimal digit (`\p{Nd}`, matching [Char.isDigit]), `_`,
+ * `$`, or any character whose code is `>= 0x80` (`\x{80}-\x{10FFFF}`, a CODE-POINT range, not a
+ * per-`Char` one — this is what lets it match a supplementary-plane character written as a
+ * surrogate pair in a Kotlin `String`, verified directly: `Regex("[\\x{80}-\\x{10FFFF}]").matches`
+ * on a single surrogate-pair string returns `true`, consuming both UTF-16 code units as the ONE
+ * code point they represent, rather than requiring the range to be repeated to cover each half).
+ */
+private const val COLUMN_REFERENCE_IDENTIFIER_CONTINUATION = """[\p{L}\p{Nd}_$\x{80}-\x{10FFFF}]"""
+
+private const val COLUMN_REFERENCE_IDENTIFIER =
+  """$COLUMN_REFERENCE_IDENTIFIER_START$COLUMN_REFERENCE_IDENTIFIER_CONTINUATION*"""
+
+/**
+ * Matches `table.column` or just `column`, where `table`/`column` are each an unquoted PostgreSQL
+ * identifier — [COLUMN_REFERENCE_IDENTIFIER_START] followed by zero or more
+ * [COLUMN_REFERENCE_IDENTIFIER_CONTINUATION] characters — never a bare `\w+`: PostgreSQL's
+ * identifier class is wider than `\w` (it admits `$` and any `>= 0x80` character — see
+ * [isIdentifierChar]) but its FIRST character is narrower (`\w` itself, unlike `\w+`, doesn't
+ * enforce that a digit or `$` may only appear after the first character at all).
+ *
+ * The leading-character restriction matters in the WIDENING direction specifically: without it, a
+ * digit- or `$`-led fragment that merely happens to be followed by identifier-continuation
+ * characters — e.g. the item text `2€`, which PostgreSQL itself rejects outright ("trailing junk
+ * after numeric literal", verified against PostgreSQL 18.4) — would [Regex.matchEntire] as a whole
+ * "identifier" once the continuation class is widened to admit `€`, handing back a `columnName`
+ * PostgreSQL would never actually resolve to that name. [parseColumnReference] returning `null`
+ * for anything that isn't a real identifier is the safe, INTENDED outcome (see [parseSelectItems]'s
+ * KDoc on why a lost name degrades safely to `ResultSetMetaData` while a WRONG one does not).
+ */
+private val COLUMN_REFERENCE = Regex(
+  """(?:(?<table>$COLUMN_REFERENCE_IDENTIFIER)\.)?(?<column>$COLUMN_REFERENCE_IDENTIFIER)""",
+)
 
 /**
  * A parsed CTE definition from a `WITH` clause.
@@ -617,14 +797,19 @@ internal fun parseCteClause(sql: String): ParsedCteClause? {
 private fun parseSingleCteDefinition(sql: String, startPosition: Int): Pair<CteDefinition, Int>? {
   var position = skipWhitespaceAndComments(sql, startPosition)
 
-  // Read CTE name (identifier: word chars or double-quoted)
+  // Read CTE name: an unquoted identifier (isIdentifierStartChar, then a run of isIdentifierChar
+  // characters), or a double-quoted one. The FIRST character is gated by isIdentifierStartChar,
+  // not isIdentifierChar — a leading digit or "$" is not a legal identifier start (see
+  // isIdentifierStartChar's KDoc; issue #219 originally used isIdentifierChar for the whole run,
+  // which wrongly accepted "$x" as a CTE name — PostgreSQL rejects "WITH $x AS (...)" outright).
   val nameStart = position
   if (position < sql.length && sql[position] == '"') {
     position++ // skip opening quote
     while (position < sql.length && sql[position] != '"') position++
     if (position < sql.length) position++ // skip closing quote
-  } else {
-    while (position < sql.length && (sql[position].isLetterOrDigit() || sql[position] == '_')) position++
+  } else if (position < sql.length && isIdentifierStartChar(sql[position])) {
+    position++
+    while (position < sql.length && isIdentifierChar(sql[position])) position++
   }
   if (position == nameStart) return null
   val rawName = sql.substring(nameStart, position)
@@ -1510,8 +1695,9 @@ private fun findTrailingImplicitAliasStart(text: String): Int? {
  *    immediately before it. Trying the Unicode-escape rule first consumes `U&"a"` as ONE segment,
  *    so the star at `.*` immediately precedes it, exactly as PostgreSQL itself parses it.
  * 2. A bare double-quoted identifier, `"..."` (`""`-doubling included, via [skipLexicalToken]).
- * 3. An unquoted identifier: first character a letter or `_`, every subsequent character
- *    [isIdentifierChar] — PostgreSQL identifiers may not start with a digit or `$`.
+ * 3. An unquoted identifier: first character [isIdentifierStartChar] (a letter, `_`, or any
+ *    character whose code is `>= 0x80`), every subsequent character [isIdentifierChar] —
+ *    PostgreSQL identifiers may not start with a digit or `$`.
  *
  * @return The index immediately after the matched segment, or `null` if [start] does not begin
  *   one.
@@ -1524,7 +1710,7 @@ private fun matchTrailingAliasSegment(text: String, start: Int): Int? {
     return if (afterToken != start) afterToken else null
   }
   // PostgreSQL's lexer admits ANY byte >= 0x80 to START an unquoted identifier too (not merely to
-  // continue one, which [isPostgresIdentifierContinuationChar] already covers) — not merely a
+  // continue one, which [isIdentifierChar] already covers) — not merely a
   // Unicode `isLetter()`. Verified: a combining mark (an alias written in NFD, e.g. "préfs" spelled
   // p-r-e-COMBINING_ACUTE-f-s), a symbol (a currency sign `€`, `©`, `°`), and a supplementary-plane
   // character (an astral emoji `🚀`, a mathematical alphanumeric symbol `𝐀`) are all legal FIRST
@@ -1533,10 +1719,11 @@ private fun matchTrailingAliasSegment(text: String, start: Int): Int? {
   // the dangerous direction (see [isStarItem]'s KDoc). A surrogate pair (as a supplementary-plane
   // character always is, in a Kotlin/UTF-16 `String`) is naturally covered without special
   // handling: BOTH of its code units are >= 0x80, so the ordinary per-character loop below
-  // consumes each half in turn.
-  if (!(text[start].isLetter() || text[start] == '_' || text[start].code >= 0x80)) return null
+  // consumes each half in turn. isIdentifierStartChar is the shared predicate for this rule — see
+  // its KDoc for the other call sites.
+  if (!isIdentifierStartChar(text[start])) return null
   var i = start + 1
-  while (i < text.length && isPostgresIdentifierContinuationChar(text[i])) i++
+  while (i < text.length && isIdentifierChar(text[i])) i++
   return i
 }
 
@@ -1583,25 +1770,25 @@ private fun matchUnicodeEscapeIdentifierSegment(text: String, start: Int): Int? 
  * endings is backwards: `false` is the DANGEROUS answer here (see [isStarItem]'s KDoc), so it must
  * be EARNED, not handed out by default whenever a new qualifier shape isn't yet on the list.
  *
- * Rejects ONLY when the run of [isPostgresIdentifierContinuationChar] characters immediately
- * preceding the final `.` is NON-EMPTY and its first character is an ASCII digit (`'0'..'9'`, NOT
- * `Char.isDigit()`) — a digit-leading run before a dot is a numeric literal (`2.` in `SELECT
- * 2.*3 lbl, a FROM t` — verified arithmetic returning 2 columns, not a star), the ONE lexical
- * ambiguity a real qualifying dot has, and PostgreSQL numeric literals use ASCII digits
- * EXCLUSIVELY — so a non-ASCII digit (Unicode category Nd, e.g. `٣` ARABIC-INDIC DIGIT THREE, `３`
- * FULLWIDTH DIGIT THREE) can only be an identifier's first character there, never a numeral:
- * verified with a real table literally named `٣`, `SELECT ٣.* x, a FROM ٣` returns 3 columns.
- * `Char.isDigit()` is Unicode-aware and would wrongly reject that qualifier as if it were numeric.
+ * Rejects ONLY when the run of [isIdentifierChar] characters immediately preceding the final `.`
+ * is NON-EMPTY and its first character is an ASCII digit (`'0'..'9'`, NOT `Char.isDigit()`) — a
+ * digit-leading run before a dot is a numeric literal (`2.` in `SELECT 2.*3 lbl, a FROM t` —
+ * verified arithmetic returning 2 columns, not a star), the ONE lexical ambiguity a real
+ * qualifying dot has, and PostgreSQL numeric literals use ASCII digits EXCLUSIVELY — so a
+ * non-ASCII digit (Unicode category Nd, e.g. `٣` ARABIC-INDIC DIGIT THREE, `３` FULLWIDTH DIGIT
+ * THREE) can only be an identifier's first character there, never a numeral: verified with a real
+ * table literally named `٣`, `SELECT ٣.* x, a FROM ٣` returns 3 columns. `Char.isDigit()` is
+ * Unicode-aware and would wrongly reject that qualifier as if it were numeric.
  *
- * The run scan uses [isPostgresIdentifierContinuationChar] — the SAME predicate
- * [matchTrailingAliasSegment] uses for its own character class — rather than the ASCII-oriented
- * [isIdentifierChar] alone: a `>= 0x80` character that is not a letter or digit (`€`, `©`, `¹`)
- * would otherwise truncate the run early, leaving whatever ASCII digit sits before it looking like
- * the run's own start (`x€9.`: scanning backward with [isIdentifierChar] alone stops at `€`,
- * making `9` look like the run's start and wrongly rejecting the whole thing as numeric, when the
- * real run is `x€9` — letter-led, and correctly acceptable). Sharing the predicate makes that
- * symmetry STRUCTURAL rather than a comment to remember to keep in sync — a "keep these two in
- * sync" convention note is exactly what failed here, three separate times.
+ * The run scan uses [isIdentifierChar] — the same predicate every identifier-continuation check in
+ * this file shares (see its KDoc), including [matchTrailingAliasSegment]'s own character class —
+ * rather than a narrower letter-or-digit-only check: a `>= 0x80` character that is not a letter or
+ * digit (`€`, `©`, `¹`) would otherwise truncate the run early, leaving whatever ASCII digit sits
+ * before it looking like the run's own start (`x€9.`: scanning backward with a letter-or-digit-only
+ * check stops at `€`, making `9` look like the run's start and wrongly rejecting the whole thing as
+ * numeric, when the real run is `x€9` — letter-led, and correctly acceptable). Sharing one
+ * predicate makes that symmetry STRUCTURAL rather than a comment to remember to keep in sync — a
+ * "keep these two in sync" convention note is exactly what failed here, three separate times.
  *
  * Accepts in every other case, INCLUDING an empty run (the character immediately before the dot is
  * `"`, `)`, `]`, or anything else that isn't an identifier-continuation character at all) — this
@@ -1610,13 +1797,11 @@ private fun matchUnicodeEscapeIdentifierSegment(text: String, start: Int): Int? 
  */
 private fun isStarQualifierAcceptable(qualifierEndingInDot: String): Boolean {
   val beforeDotIndex = qualifierEndingInDot.length - 2
-  if (beforeDotIndex < 0 ||
-    !isPostgresIdentifierContinuationChar(qualifierEndingInDot[beforeDotIndex])
-  ) {
+  if (beforeDotIndex < 0 || !isIdentifierChar(qualifierEndingInDot[beforeDotIndex])) {
     return true
   }
   var runStart = beforeDotIndex
-  while (runStart > 0 && isPostgresIdentifierContinuationChar(qualifierEndingInDot[runStart - 1])) {
+  while (runStart > 0 && isIdentifierChar(qualifierEndingInDot[runStart - 1])) {
     runStart--
   }
   return qualifierEndingInDot[runStart] !in '0'..'9'
@@ -1632,7 +1817,7 @@ private fun isStarQualifierAcceptable(qualifierEndingInDot: String): Boolean {
  * is not an identifier character, so the boundary check accepts it, and the trailing
  * `skipWhitespaceAndComments` call then advances past the comment itself.
  */
-private fun skipOptionalKeyword(sql: String, position: Int, keyword: String): Int {
+internal fun skipOptionalKeyword(sql: String, position: Int, keyword: String): Int {
   if (!sql.regionMatches(position, keyword, 0, keyword.length, ignoreCase = true)) return position
   val afterKeyword = position + keyword.length
   if (afterKeyword < sql.length && isIdentifierChar(sql[afterKeyword])) return position
@@ -1743,6 +1928,32 @@ internal fun skipLexicalToken(sql: String, position: Int): Int {
  * immediately before the opening quote), backslash escapes (`\'`, `\\`, etc. — a backslash
  * always consumes the following character as a literal, so it can never end the string).
  *
+ * The "standalone" check — the character before that `E`/`e`, if any, is not itself a letter,
+ * digit, or `_` — deliberately does NOT use [isIdentifierChar], even though every other
+ * word-boundary check in this file does. [isIdentifierChar] is evaluated against
+ * [stripCommentsAndWhitespace]'s STRIPPED output, and this file's own generator round for
+ * issue #219 established (against real PostgreSQL 18.4) that [isStarItem] normalizes a select
+ * item through [stripCommentsAndWhitespace] and then RE-LEXES the stripped string — so deleting a
+ * separator PostgreSQL actually lexed on can manufacture tokens that were never in the query.
+ * Widening this lookback to [isIdentifierChar] made `x E'a\'b'` (valid PostgreSQL: the
+ * `AexprConst: func_name Sconst` typed-literal form, `func_name` here being the ordinary
+ * identifier `x`) normalize to `xE'a\'b'` — the space PostgreSQL lexed as a separator between two
+ * tokens is gone — which then mis-lexed as a SINGLE standalone-`E` escape string, turning
+ * `parseSelectItems("SELECT (f(x€ E'a\\'b')).* y, id FROM t")` from `[]` on the pre-#219 code —
+ * the fail-safe answer, since callers fall back to `ResultSetMetaData.getColumnName` — into 2
+ * items, a WRONG positional split that misapplies a column-level type override. Replacing a safe
+ * answer with a dangerous one is not acceptable even though the wider check is more faithful to
+ * PostgreSQL's own lexer for raw, un-stripped SQL.
+ *
+ * The narrow letter/digit/`_` class here does NOT match PostgreSQL's lexer for raw SQL (it misses
+ * `$` and any `>= 0x80` character, both legal identifier-continuation characters) — that is
+ * DELIBERATE, pending a fix to the root cause: [stripCommentsAndWhitespace] returning an index map
+ * back to the original text, so that every multi-character adjacency decision made against its
+ * stripped output — the `--` line-comment opener, the block-comment opener, the `$` dollar-quote
+ * identifier lookback, and this standalone-`E` lookback — can be gated on ORIGINAL adjacency
+ * instead. Do not re-widen
+ * this to [isIdentifierChar] before that fix lands.
+ *
  * @return The index after the closing quote, or `sql.length` if unterminated.
  */
 private fun skipSingleQuotedString(sql: String, openQuoteIndex: Int): Int {
@@ -1796,8 +2007,27 @@ private fun skipDoubleQuotedIdentifier(sql: String, openQuoteIndex: Int): Int {
 }
 
 /**
- * If `sql[position]` starts a dollar-quote opening tag — `$$` or `$tag$`, where `tag` is a run
- * of word characters — advances past the matching closing tag (the same `$$`/`$tag$` again).
+ * True if [character] can continue a dollar-quote TAG after its first character, per
+ * PostgreSQL's `scan.l`: `dolq_cont = [A-Za-z\200-\377_0-9]`. A tag's first character is instead
+ * gated by [isIdentifierStartChar] — per `scan.l`, `dolq_start` and `ident_start` (an ordinary
+ * identifier's first character) are the IDENTICAL class, so this file shares one predicate for
+ * both (see [isIdentifierStartChar]'s KDoc). This continuation predicate does NOT admit `$`
+ * (unlike [isIdentifierChar], an ordinary identifier's continuation class), since `$` delimits the
+ * tag rather than continuing it — this is the one place `scan.l` splits the two kinds of run
+ * apart, which is why continuation stays a separate predicate even though start does not. It DOES
+ * admit digits, unlike a tag's first character (a tag may not START with one — PostgreSQL rejects
+ * `$1$foo$1$` as a dollar-quoted string entirely, leaving the `$1` to be read as an ordinary,
+ * non-quote `$`-prefixed token instead) — only a tag's first character is restricted, per
+ * `scan.l`'s `dolq_start`/`dolq_cont` split.
+ */
+private fun isDollarQuoteTagContinuationChar(character: Char): Boolean =
+  character.isLetterOrDigit() || character == '_' || character.code >= 0x80
+
+/**
+ * If `sql[position]` starts a dollar-quote opening tag — `$$` or `$tag$`, where `tag` is either
+ * empty or a run beginning with an [isIdentifierStartChar] character and continuing with
+ * [isDollarQuoteTagContinuationChar] characters — advances past the matching closing tag (the
+ * same `$$`/`$tag$` again).
  *
  * Callers MUST first confirm [position] is not immediately preceded by an identifier character
  * (see [skipLexicalToken]'s call site) — this function has no way to tell, from `$` alone,
@@ -1813,7 +2043,10 @@ private fun skipDoubleQuotedIdentifier(sql: String, openQuoteIndex: Int): Int {
 private fun skipDollarQuotedString(sql: String, position: Int): Int? {
   var i = position + 1
   val tagStart = i
-  while (i < sql.length && (sql[i].isLetterOrDigit() || sql[i] == '_')) i++
+  if (i < sql.length && isIdentifierStartChar(sql[i])) {
+    i++
+    while (i < sql.length && isDollarQuoteTagContinuationChar(sql[i])) i++
+  }
   if (i >= sql.length || sql[i] != '$') return null
   val tag = sql.substring(tagStart, i)
   val openingTagEnd = i + 1
