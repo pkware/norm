@@ -737,7 +737,7 @@ public interface Queries : Transactable {
     name: String,
     price: BigDecimal,
     tax: BigDecimal,
-    mapper: (id: Int, total: BigDecimal) -> T,
+    mapper: (id: Int, total: BigDecimal?) -> T,
   ): T
 
   /**
@@ -753,7 +753,7 @@ public interface Queries : Transactable {
     name: (Input) -> String,
     price: (Input) -> BigDecimal,
     tax: (Input) -> BigDecimal,
-    mapper: (id: Int, total: BigDecimal) -> T,
+    mapper: (id: Int, total: BigDecimal?) -> T,
     batchSize: Int,
   ): List<T>
 

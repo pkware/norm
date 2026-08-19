@@ -689,7 +689,7 @@ public class PostgresQueries(
     name: String,
     price: BigDecimal,
     tax: BigDecimal,
-    mapper: (id: Int, total: BigDecimal) -> T,
+    mapper: (id: Int, total: BigDecimal?) -> T,
   ): T {
     val sql = "INSERT INTO product (name, price, tax) VALUES (?, ?, ?) RETURNING id, total"
     val rowReader: ResultSet.() -> T = {
@@ -711,7 +711,7 @@ public class PostgresQueries(
     name: (Input) -> String,
     price: (Input) -> BigDecimal,
     tax: (Input) -> BigDecimal,
-    mapper: (id: Int, total: BigDecimal) -> T,
+    mapper: (id: Int, total: BigDecimal?) -> T,
     batchSize: Int,
   ): List<T> {
     val sql = "INSERT INTO product (name, price, tax) VALUES (?, ?, ?)"

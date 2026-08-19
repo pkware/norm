@@ -2135,6 +2135,79 @@ class SqlUtilsTest {
   }
 
   @Nested
+  inner class DmlSourceClauseRegionTest {
+
+    @Test
+    fun `returns the FROM clause region for an UPDATE with FROM`() {
+      val sql = "UPDATE t SET name = 'x' FROM a WHERE t.id = a.id RETURNING t.id"
+      val region = dmlSourceClauseRegion(sql)
+      assertThat(region).isNotNull()
+      assertThat(sql.substring(region!!.first, region.last + 1).trim()).isEqualTo("a")
+    }
+
+    @Test
+    fun `returns null for an UPDATE with no FROM clause`() {
+      val region = dmlSourceClauseRegion("UPDATE t SET name = 'x' WHERE id = 1 RETURNING id")
+      assertThat(region).isNull()
+    }
+
+    @Test
+    fun `returns the USING clause region for a DELETE with USING`() {
+      val sql = "DELETE FROM t USING a WHERE t.id = a.id RETURNING t.id"
+      val region = dmlSourceClauseRegion(sql)
+      assertThat(region).isNotNull()
+      assertThat(sql.substring(region!!.first, region.last + 1).trim()).isEqualTo("a")
+    }
+
+    @Test
+    fun `returns null for a DELETE with no USING clause`() {
+      val region = dmlSourceClauseRegion("DELETE FROM t WHERE id = 1 RETURNING id")
+      assertThat(region).isNull()
+    }
+
+    @Test
+    fun `returns the USING-to-ON region for a MERGE`() {
+      val sql = "MERGE INTO tgt USING a ON a.id = tgt.id WHEN MATCHED THEN UPDATE SET tval = 'z' RETURNING tgt.id"
+      val region = dmlSourceClauseRegion(sql)
+      assertThat(region).isNotNull()
+      assertThat(sql.substring(region!!.first, region.last + 1).trim()).isEqualTo("a")
+    }
+
+    @Test
+    fun `returns null for a non-DML SELECT`() {
+      val region = dmlSourceClauseRegion("SELECT a.id FROM a LEFT JOIN b ON b.id = a.id")
+      assertThat(region).isNull()
+    }
+
+    @Test
+    fun `skips a leading WITH clause before recognizing the statement kind`() {
+      val sql = "WITH x AS (SELECT 1) UPDATE t SET name = 'x' FROM a WHERE t.id = a.id RETURNING t.id"
+      val region = dmlSourceClauseRegion(sql)
+      assertThat(region).isNotNull()
+      assertThat(sql.substring(region!!.first, region.last + 1).trim()).isEqualTo("a")
+    }
+
+    @Test
+    fun `only scans top-level keywords — a WHERE subquery containing FROM does not extend the region`() {
+      // The UPDATE's own FROM clause is just "a"; the WHERE subquery's "FROM b" is nested inside
+      // parentheses and must not be mistaken for a second top-level FROM, nor should the region
+      // extend past the WHERE keyword into the subquery's own text.
+      val sql = "UPDATE t SET name = 'x' FROM a WHERE t.id IN (SELECT b.id FROM b) RETURNING t.id"
+      val region = dmlSourceClauseRegion(sql)
+      assertThat(region).isNotNull()
+      assertThat(sql.substring(region!!.first, region.last + 1).trim()).isEqualTo("a")
+    }
+
+    @Test
+    fun `only scans top-level keywords — a WHERE subquery containing USING does not extend the region`() {
+      val sql = "DELETE FROM t USING a WHERE t.id IN (SELECT b.id FROM b USING (id)) RETURNING t.id"
+      val region = dmlSourceClauseRegion(sql)
+      assertThat(region).isNotNull()
+      assertThat(sql.substring(region!!.first, region.last + 1).trim()).isEqualTo("a")
+    }
+  }
+
+  @Nested
   inner class HasWhenNotMatchedBySourceClauseTest {
 
     @Test
@@ -2463,6 +2536,135 @@ class SqlUtilsTest {
       // giving itemCount 2 ("a", " OLD.b").
       val result = oldOrNewReturningColumns("INSERT INTO t (a,b) SELECT 1 AS returning, 2 FROM s RETURNING a, OLD.b")
       assertThat(result).isEqualTo(OldOrNewReturningAnalysis(itemCount = 2, forcedColumns = setOf(2)))
+    }
+  }
+
+  @Nested
+  inner class ForcedNullabilityPredicateTest {
+
+    @Test
+    fun `forces nothing when there is no RETURNING, no null-extending construct, and no dangerous sibling`() {
+      val predicate = forcedNullabilityPredicate("UPDATE t SET name = 'x' WHERE id = 1", emptySet())
+      assertThat(predicate(1, 1)).isFalse()
+    }
+
+    @Test
+    fun `forces only the column whose own item references OLD, leaving an unrelated column alone`() {
+      val predicate = forcedNullabilityPredicate("DELETE FROM t WHERE id = 1 RETURNING OLD.tval, t.id", emptySet())
+      assertThat(predicate(1, 2)).isTrue()
+      assertThat(predicate(2, 2)).isFalse()
+    }
+
+    @Test
+    fun `forces every column when a recognized star item accompanies an OLD reference`() {
+      // No FROM/USING clause and a single USING relation, so the only trigger in play is
+      // oldOrNewReturningColumns's own forcedColumns=null (a recognized star coincides with OLD) —
+      // isolated from the null-extending-construct trigger tested separately below.
+      val predicate = forcedNullabilityPredicate(
+        "MERGE INTO tgt USING a ON a.id = tgt.id WHEN MATCHED THEN UPDATE SET tval = 'z' " +
+          "RETURNING merge_action(), OLD.tval, *",
+        emptySet(),
+      )
+      assertThat(predicate(1, 5)).isTrue()
+      assertThat(predicate(3, 5)).isTrue()
+      assertThat(predicate(5, 5)).isTrue()
+    }
+
+    @Test
+    fun `forces every column when the real column count disagrees with the assumed RETURNING item count`() {
+      val predicate = forcedNullabilityPredicate("DELETE FROM t WHERE id = 1 RETURNING OLD.name, t.id", emptySet())
+      // itemCount is 2 (two RETURNING items); calling with a matching totalColumnCount preserves
+      // per-column precision — only the OLD-referencing column (1) is forced.
+      assertThat(predicate(1, 2)).isTrue()
+      assertThat(predicate(2, 2)).isFalse()
+      // A mismatched totalColumnCount (as an unrecognized star's real expansion would produce)
+      // makes the mapping unreliable, forcing EVERY column — including one the item-level
+      // analysis never flagged.
+      assertThat(predicate(2, 5)).isTrue()
+    }
+
+    @Test
+    fun `forces every column for a non-INSERT body with a LEFT JOIN`() {
+      val predicate = forcedNullabilityPredicate(
+        "UPDATE t SET name = t.name FROM a LEFT JOIN b ON b.id = a.id WHERE t.id = a.id RETURNING t.id, t.name, b.val",
+        emptySet(),
+      )
+      assertThat(predicate(1, 3)).isTrue()
+      assertThat(predicate(2, 3)).isTrue()
+      assertThat(predicate(3, 3)).isTrue()
+    }
+
+    @Test
+    fun `does not force columns for an INSERT body with a LEFT JOIN in its own source`() {
+      // isInsertBody excludes INSERT from the null-extending-construct trigger — its RETURNING
+      // sees only the just-inserted row, which a join in its own SELECT source cannot null-extend.
+      val predicate = forcedNullabilityPredicate(
+        "INSERT INTO b(id, bval) SELECT a.id, 'v' FROM a LEFT JOIN b2 ON b2.id = a.id RETURNING id, bval",
+        emptySet(),
+      )
+      assertThat(predicate(1, 2)).isFalse()
+      assertThat(predicate(2, 2)).isFalse()
+    }
+
+    @Test
+    fun `forces every column when the body references a dangerous sibling name`() {
+      val predicate = forcedNullabilityPredicate("SELECT * FROM pre", setOf("pre"))
+      assertThat(predicate(1, 4)).isTrue()
+      assertThat(predicate(4, 4)).isTrue()
+    }
+
+    @Test
+    fun `scoped variant does not force nullable for a LEFT JOIN that only appears in a WHERE subquery`() {
+      // The join sits inside WHERE ... IN (subquery), not in this UPDATE's own FROM clause — it
+      // cannot null-extend RETURNING, so dmlSourceClauseRegion returns null (no top-level FROM)
+      // and the scoped join arm must stay off.
+      val predicate = forcedNullabilityPredicate(
+        "UPDATE t SET name = 'x' WHERE t.id IN (SELECT a.id FROM a LEFT JOIN b ON b.id = a.id) RETURNING t.id, t.name",
+        emptySet(),
+        scopeNullExtendingScanToDmlSourceClause = true,
+      )
+      assertThat(predicate(1, 2)).isFalse()
+      assertThat(predicate(2, 2)).isFalse()
+    }
+
+    @Test
+    fun `scoped variant forces nullable for a LEFT JOIN inside the DML's own FROM-USING region`() {
+      val predicate = forcedNullabilityPredicate(
+        "UPDATE t SET name = t.name FROM a LEFT JOIN b ON b.id = a.id WHERE t.id = a.id RETURNING t.id, b.bval",
+        emptySet(),
+        scopeNullExtendingScanToDmlSourceClause = true,
+      )
+      assertThat(predicate(1, 2)).isTrue()
+      assertThat(predicate(2, 2)).isTrue()
+    }
+
+    @Test
+    fun `scoped variant still scans the whole body for a non-DML statement — R3 pinned`() {
+      // body is a plain SELECT, not a top-level UPDATE/DELETE/MERGE, so
+      // isUpdateDeleteOrMergeStatement is false and dmlSourceClauseRegion has nothing to scope
+      // to — the scoped variant deliberately falls back to today's whole-body scan rather than
+      // turning the join arm off, since a non-DML body reaching this predicate at all is already
+      // a degraded path (see PgCatalogLoader.analyzeUnconvertibleDml's R3 KDoc note) where
+      // over-nullability, not under-nullability, is the accepted direction.
+      val predicate = forcedNullabilityPredicate(
+        "SELECT t.a, ROW(t.a, t.b) AS result FROM t LEFT JOIN u ON u.a = t.a",
+        emptySet(),
+        scopeNullExtendingScanToDmlSourceClause = true,
+      )
+      assertThat(predicate(1, 2)).isTrue()
+      assertThat(predicate(2, 2)).isTrue()
+    }
+
+    @Test
+    fun `scoping off keeps today's whole-body scan even for a join outside the FROM-USING region`() {
+      // Same SQL as the "does not force" scoped test above, but with scoping OFF (the CTE-body
+      // caller's default) — the pre-existing, unscoped whole-body behavior must be unchanged.
+      val predicate = forcedNullabilityPredicate(
+        "UPDATE t SET name = 'x' WHERE t.id IN (SELECT a.id FROM a LEFT JOIN b ON b.id = a.id) RETURNING t.id, t.name",
+        emptySet(),
+      )
+      assertThat(predicate(1, 2)).isTrue()
+      assertThat(predicate(2, 2)).isTrue()
     }
   }
 
