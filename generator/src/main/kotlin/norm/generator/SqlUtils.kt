@@ -1,6 +1,31 @@
 package norm.generator
 
 /**
+ * "The characters at [leftIndex] and `leftIndex + 1` were adjacent in the ORIGINAL SQL text" — the
+ * fact every multi-character lexical decision in this file that spans two adjacent characters (a
+ * `--` line-comment or `/* */` block-comment opener, a `$`-prefixed dollar-quote's identifier
+ * lookback, a standalone-`E` escape-string marker's lookback, a `''`/`""` doubled-quote escape, and
+ * [matchTrailingAliasSegment]'s own bare-identifier run stopping before a `$` that should instead
+ * open a fresh dollar-quoted string) must be gated on, whenever the text being scanned might be
+ * [stripCommentsAndWhitespace]'s STRIPPED output rather than raw SQL.
+ *
+ * This exists because deleting a separator PostgreSQL itself lexed on can manufacture a token that
+ * was never in the query: `1 - -1` (two separate `-` tokens, genuinely separated by a space) strips
+ * to `1--1`, which [skipLexicalToken] would otherwise read as a `--` line comment that was never
+ * there. [StrippedText] is the sole [OriginalAdjacency] implementation with real gaps to report —
+ * see its KDoc — while [ALL_ADJACENT] is what every RAW-text caller passes (implicitly, via the
+ * default parameter on [skipLexicalToken]/[findMatchingCloseParenthesis]): for text that was never
+ * stripped, every neighbouring pair of characters genuinely IS adjacent, so the gate is always
+ * satisfied and raw-text callers see no behavior change at all.
+ */
+internal fun interface OriginalAdjacency {
+  fun wereAdjacent(leftIndex: Int): Boolean
+}
+
+/** The correct [OriginalAdjacency] for raw, never-stripped SQL text — see its KDoc. */
+internal val ALL_ADJACENT: OriginalAdjacency = OriginalAdjacency { true }
+
+/**
  * Matches `func_name(` to find the start of function calls — the captured name is a PostgreSQL
  * unquoted identifier ([COLUMN_REFERENCE_IDENTIFIER_START] followed by zero or more
  * [COLUMN_REFERENCE_IDENTIFIER_CONTINUATION] characters, the same identifier shape
@@ -38,13 +63,20 @@ internal val SQL_KEYWORDS = setOf(
  *
  * @param text The string to search.
  * @param openParenthesisIndex The index of the opening `(`. The search starts at `openParenthesisIndex + 1`.
+ * @param adjacency See [OriginalAdjacency]'s KDoc. Defaults to [ALL_ADJACENT], correct for raw SQL
+ *   text; [StrippedText] threads itself here for its own [StrippedText.findMatchingCloseParenthesis]
+ *   entry point.
  * @return The index of the matching `)`, or `-1` if unbalanced.
  */
-internal fun findMatchingCloseParenthesis(text: String, openParenthesisIndex: Int): Int {
+internal fun findMatchingCloseParenthesis(
+  text: String,
+  openParenthesisIndex: Int,
+  adjacency: OriginalAdjacency = ALL_ADJACENT,
+): Int {
   var depth = 1
   var i = openParenthesisIndex + 1
   while (i < text.length && depth > 0) {
-    val afterToken = skipLexicalToken(text, i)
+    val afterToken = skipLexicalToken(text, i, adjacency)
     if (afterToken != i) {
       i = afterToken
       continue
@@ -1532,9 +1564,20 @@ internal fun oldOrNewReturningColumns(body: String): OldOrNewReturningAnalysis {
  * [findTrailingImplicitAliasStart]) and inspects the qualifier and star around it, so the
  * separator that used to sit between them (whitespace, a comment, or nothing at all) makes no
  * difference once it's gone.
+ *
+ * The result is a [StrippedText], not a plain `String`: deleting a separator PostgreSQL itself
+ * lexed on can fuse two characters that were never adjacent in the original query into a token
+ * that never existed — `1 - -1` (two independently-lexed `-` tokens) strips to `1--1`, which a
+ * naive re-lex of the OUTPUT `String` alone would read as a `--` line comment. [StrippedText]
+ * carries, alongside the stripped characters, each one's ORIGINAL offset, so any later
+ * multi-character adjacency decision made against this output (a `--` line-comment or `/* */`
+ * block-comment opener, the `$` dollar-quote identifier lookback, the standalone-`E` escape-string
+ * lookback, a `''`/`""` doubled-quote escape) can be gated on whether the two characters were
+ * REALLY adjacent in the query PostgreSQL itself lexed, not merely in this function's output.
  */
-private fun stripCommentsAndWhitespace(text: String): String {
+internal fun stripCommentsAndWhitespace(text: String): StrippedText {
   val builder = StringBuilder(text.length)
+  val originalOffsets = ArrayList<Int>(text.length)
   var i = 0
   while (i < text.length) {
     when {
@@ -1545,15 +1588,75 @@ private fun stripCommentsAndWhitespace(text: String): String {
         val afterToken = skipLexicalToken(text, i)
         if (afterToken != i) {
           builder.append(text, i, afterToken)
+          for (originalIndex in i until afterToken) originalOffsets.add(originalIndex)
           i = afterToken
         } else {
           builder.append(text[i])
+          originalOffsets.add(i)
           i++
         }
       }
     }
   }
-  return builder.toString()
+  return StrippedText(builder.toString(), originalOffsets.toIntArray())
+}
+
+/**
+ * The output of [stripCommentsAndWhitespace] — the stripped characters, plus each one's ORIGINAL
+ * offset in the pre-stripping text, so [wereAdjacent] can answer whether two stripped characters
+ * that now sit next to each other in [text] genuinely were adjacent before stripping, or whether a
+ * comment/whitespace separator PostgreSQL itself lexed on used to sit between them. When a lexical
+ * token (a string literal, a quoted identifier, a dollar-quoted string) is copied through wholesale
+ * by [stripCommentsAndWhitespace], each of its characters maps to CONSECUTIVE original offsets, so
+ * [wereAdjacent] is `true` throughout the token's own interior — only a genuinely removed
+ * whitespace/comment separator between two DIFFERENT tokens (or bare characters) ever breaks that
+ * consecutiveness.
+ *
+ * The raw stripped `String` is kept PRIVATE: every lexer entry point stripped-path code needs
+ * ([skipLexicalToken], [findMatchingCloseParenthesis]) is exposed as a member here that threads
+ * `this` as the [OriginalAdjacency], so stripped-path code cannot reach the `String`-taking lexer
+ * functions and silently pass the wrong (or no) adjacency — the only way out to a plain `String` is
+ * [asPlainString], a single, deliberately named, greppable escape hatch for a caller (currently only
+ * [isStarQualifierAcceptable]) that does no lexing at all and therefore has no adjacency decision to
+ * gate.
+ */
+internal class StrippedText(private val text: String, private val originalOffsets: IntArray) : OriginalAdjacency {
+
+  val length: Int get() = text.length
+
+  operator fun get(index: Int): Char = text[index]
+
+  override fun wereAdjacent(leftIndex: Int): Boolean = leftIndex >= 0 &&
+    leftIndex + 1 < originalOffsets.size &&
+    originalOffsets[leftIndex + 1] == originalOffsets[leftIndex] + 1
+
+  /** `true` if the stripped text is EXACTLY [other] — the whole-string equivalent of `==`. */
+  fun contentEquals(other: String): Boolean = text == other
+
+  fun endsWith(suffix: String): Boolean = text.endsWith(suffix)
+
+  fun regionMatchesIgnoreCase(position: Int, other: String): Boolean =
+    text.regionMatches(position, other, 0, other.length, ignoreCase = true)
+
+  /** A new [StrippedText] over `[from, until)`, slicing both the stripped text and its offset map. */
+  fun slice(from: Int, until: Int): StrippedText =
+    StrippedText(text.substring(from, until), originalOffsets.copyOfRange(from, until))
+
+  /** See [skipLexicalToken]'s KDoc — this threads `this` as the [OriginalAdjacency]. */
+  fun skipLexicalToken(position: Int): Int = norm.generator.skipLexicalToken(text, position, this)
+
+  /** See [findMatchingCloseParenthesis]'s KDoc — this threads `this` as the [OriginalAdjacency]. */
+  fun findMatchingCloseParenthesis(openParenthesisIndex: Int): Int =
+    norm.generator.findMatchingCloseParenthesis(text, openParenthesisIndex, this)
+
+  /**
+   * The single, deliberately named escape hatch out of this class's own lexer entry points, back
+   * to a plain `String` — see this class's own KDoc for why every OTHER accessor exists instead of
+   * this one. Safe only for a caller that does no lexing at all, i.e. has no adjacency decision to
+   * gate; [isStarQualifierAcceptable] is the only current caller, since it merely inspects the
+   * character class of a qualifier's trailing run.
+   */
+  fun asPlainString(): String = text
 }
 
 /**
@@ -1623,27 +1726,29 @@ private fun stripCommentsAndWhitespace(text: String): String {
 private fun isStarItem(item: String): Boolean {
   val text = stripCommentsAndWhitespace(item.trim())
   val unwrappedText = unwrapWrappingParentheses(text)
-  if (unwrappedText == "*" || unwrappedText.endsWith(".*")) return true
+  if (unwrappedText.contentEquals("*") || unwrappedText.endsWith(".*")) return true
 
   val aliasStart = findTrailingImplicitAliasStart(text) ?: return false
-  val unwrappedPrefix = unwrapWrappingParentheses(text.substring(0, aliasStart))
-  if (unwrappedPrefix == "*") return true
-  return unwrappedPrefix.endsWith(".*") && isStarQualifierAcceptable(unwrappedPrefix.dropLast(1))
+  val unwrappedPrefix = unwrapWrappingParentheses(text.slice(0, aliasStart))
+  if (unwrappedPrefix.contentEquals("*")) return true
+  return unwrappedPrefix.endsWith(".*") &&
+    isStarQualifierAcceptable(unwrappedPrefix.slice(0, unwrappedPrefix.length - 1).asPlainString())
 }
 
 /**
- * Repeatedly strips a wrapping `(...)` from [text] — verified via [findMatchingCloseParenthesis]
- * to be a genuine matching pair (not merely the first and last characters happening to be `(` and
- * `)`) — until none remains: `((t.*))` unwraps in two passes to `t.*`.
+ * Repeatedly strips a wrapping `(...)` from [text] — verified via
+ * [StrippedText.findMatchingCloseParenthesis] to be a genuine matching pair (not merely the first
+ * and last characters happening to be `(` and `)`) — until none remains: `((t.*))` unwraps in two
+ * passes to `t.*`.
  */
-private fun unwrapWrappingParentheses(text: String): String {
+private fun unwrapWrappingParentheses(text: StrippedText): StrippedText {
   var result = text
   while (result.length >= 2 &&
-    result.startsWith("(") &&
-    result.endsWith(")") &&
-    findMatchingCloseParenthesis(result, 0) == result.length - 1
+    result[0] == '(' &&
+    result[result.length - 1] == ')' &&
+    result.findMatchingCloseParenthesis(0) == result.length - 1
   ) {
-    result = result.substring(1, result.length - 1)
+    result = result.slice(1, result.length - 1)
   }
   return result
 }
@@ -1665,7 +1770,7 @@ private fun unwrapWrappingParentheses(text: String): String {
  * @return The index where the trailing alias segment starts, or `null` if [text] has no such
  *   segment.
  */
-private fun findTrailingImplicitAliasStart(text: String): Int? {
+private fun findTrailingImplicitAliasStart(text: StrippedText): Int? {
   var lastSegmentStart = -1
   var lastSegmentEnd = -1
   var i = 0
@@ -1677,7 +1782,7 @@ private fun findTrailingImplicitAliasStart(text: String): Int? {
       i = segmentEnd
       continue
     }
-    val afterToken = skipLexicalToken(text, i)
+    val afterToken = text.skipLexicalToken(i)
     i = if (afterToken != i) afterToken else i + 1
   }
   return if (lastSegmentEnd == text.length && lastSegmentStart > 0) lastSegmentStart else null
@@ -1697,16 +1802,18 @@ private fun findTrailingImplicitAliasStart(text: String): Int? {
  * 2. A bare double-quoted identifier, `"..."` (`""`-doubling included, via [skipLexicalToken]).
  * 3. An unquoted identifier: first character [isIdentifierStartChar] (a letter, `_`, or any
  *    character whose code is `>= 0x80`), every subsequent character [isIdentifierChar] —
- *    PostgreSQL identifiers may not start with a digit or `$`.
+ *    PostgreSQL identifiers may not start with a digit or `$`. A `$` encountered mid-run stops the
+ *    run instead of continuing it, per [OriginalAdjacency]'s own gate, when [text] says it was NOT
+ *    genuinely adjacent to the character before it — see the loop below.
  *
  * @return The index immediately after the matched segment, or `null` if [start] does not begin
  *   one.
  */
-private fun matchTrailingAliasSegment(text: String, start: Int): Int? {
+private fun matchTrailingAliasSegment(text: StrippedText, start: Int): Int? {
   matchUnicodeEscapeIdentifierSegment(text, start)?.let { return it }
   if (start >= text.length) return null
   if (text[start] == '"') {
-    val afterToken = skipLexicalToken(text, start)
+    val afterToken = text.skipLexicalToken(start)
     return if (afterToken != start) afterToken else null
   }
   // PostgreSQL's lexer admits ANY byte >= 0x80 to START an unquoted identifier too (not merely to
@@ -1723,7 +1830,23 @@ private fun matchTrailingAliasSegment(text: String, start: Int): Int? {
   // its KDoc for the other call sites.
   if (!isIdentifierStartChar(text[start])) return null
   var i = start + 1
-  while (i < text.length && isIdentifierChar(text[i])) i++
+  while (i < text.length && isIdentifierChar(text[i])) {
+    // A "$" is the ONE isIdentifierChar character that can also OPEN an entirely different,
+    // opaque lexical token — a dollar-quoted string (see skipLexicalToken's own dollar-quote
+    // guard) — rather than merely continuing this identifier. PostgreSQL's real lexer only makes
+    // that distinction by whether the "$" is genuinely adjacent to the identifier character before
+    // it; naively treating every isIdentifierChar "$" as a continuation, regardless of adjacency,
+    // would let a stripped-away separator (e.g. "xq $q$a'b$q$" strips to "xq$q$a'b$q$") fuse a
+    // dollar-quote's OWN opening "$" into this run, swallowing part of its tag and its embedded
+    // "'" as ordinary identifier text — corrupting this segment's own boundary and, via the
+    // embedded "'", everything findTrailingImplicitAliasStart scans afterward (see
+    // OriginalAdjacency's KDoc). Stopping the run here — rather than consuming the "$" — hands
+    // that position back to findTrailingImplicitAliasStart's own [StrippedText.skipLexicalToken]
+    // fallback, which correctly recognizes the dollar-quoted string as one opaque, non-segment
+    // token and walks over it whole.
+    if (text[i] == '$' && !text.wereAdjacent(i - 1)) break
+    i++
+  }
   return i
 }
 
@@ -1737,18 +1860,28 @@ private fun matchTrailingAliasSegment(text: String, start: Int): Int? {
  * one). [text] has already had all whitespace removed by [stripCommentsAndWhitespace], so the
  * `UESCAPE` keyword and its string abut the identifier directly with no separator to skip.
  *
+ * The `UESCAPE` keyword's own adjacency to the identifier before it is deliberately left UNGATED,
+ * unlike every other multi-character adjacency decision in this file: PostgreSQL itself permits
+ * whitespace between a `U&"..."` identifier and its `UESCAPE` clause (verified: `U&"!0074"
+ * UESCAPE '!'` and `U&"!0074"UESCAPE'!'` both resolve identically), so the abutment stripping
+ * creates here is not a manufactured token — [stripCommentsAndWhitespace] is implementing the real
+ * grammar, not accidentally fusing two things PostgreSQL lexed apart. And even if some other
+ * adjacency this function doesn't check turned out to matter, a false match here only EXTENDS the
+ * matched segment further than it should — the same safe direction [isStarItem] relies on
+ * throughout (see its KDoc), not the dangerous one a gate exists to prevent.
+ *
  * @return The index immediately after the identifier (and its `UESCAPE` clause, if present), or
  *   `null` if [start] does not begin a `U&`/`u&`-prefixed double-quoted identifier at all.
  */
-private fun matchUnicodeEscapeIdentifierSegment(text: String, start: Int): Int? {
+private fun matchUnicodeEscapeIdentifierSegment(text: StrippedText, start: Int): Int? {
   if (start + 1 >= text.length) return null
   if ((text[start] != 'U' && text[start] != 'u') || text[start + 1] != '&') return null
   val quoteStart = start + 2
   if (quoteStart >= text.length || text[quoteStart] != '"') return null
-  val afterIdentifier = skipLexicalToken(text, quoteStart)
+  val afterIdentifier = text.skipLexicalToken(quoteStart)
 
   val keyword = "UESCAPE"
-  if (!text.regionMatches(afterIdentifier, keyword, 0, keyword.length, ignoreCase = true)) {
+  if (!text.regionMatchesIgnoreCase(afterIdentifier, keyword)) {
     return afterIdentifier
   }
   val afterKeyword = afterIdentifier + keyword.length
@@ -1756,7 +1889,7 @@ private fun matchUnicodeEscapeIdentifierSegment(text: String, start: Int): Int? 
   if (!isWordBoundary || afterKeyword >= text.length || text[afterKeyword] != '\'') {
     return afterIdentifier
   }
-  val afterEscapeString = skipLexicalToken(text, afterKeyword)
+  val afterEscapeString = text.skipLexicalToken(afterKeyword)
   return if (afterEscapeString != afterKeyword) afterEscapeString else afterIdentifier
 }
 
@@ -1900,23 +2033,41 @@ private fun skipBlockComment(sql: String, start: Int): Int {
  * `sql[position]` directly — as of this writing, every character-by-character scanner in this
  * file does.
  *
+ * @param adjacency See [OriginalAdjacency]'s KDoc. Defaults to [ALL_ADJACENT], correct for raw SQL
+ *   text; [StrippedText] threads itself here for its own [StrippedText.skipLexicalToken] entry
+ *   point, gating the `--` line-comment and `/* */` block-comment openers and the `$` dollar-quote
+ *   identifier lookback below (and, transitively, the standalone-`E` and `''`/`""` doubled-quote
+ *   checks inside [skipSingleQuotedString]/[skipDoubleQuotedIdentifier]) on whether stripping
+ *   actually fused these characters together, versus PostgreSQL itself having lexed them adjacent.
  * @return The index after the lexical token, or [position] if none starts there.
  */
-internal fun skipLexicalToken(sql: String, position: Int): Int {
+internal fun skipLexicalToken(sql: String, position: Int, adjacency: OriginalAdjacency = ALL_ADJACENT): Int {
   if (position >= sql.length) return position
   return when {
-    sql[position] == '\'' -> skipSingleQuotedString(sql, position)
-    sql[position] == '"' -> skipDoubleQuotedIdentifier(sql, position)
+    sql[position] == '\'' -> skipSingleQuotedString(sql, position, adjacency)
+    sql[position] == '"' -> skipDoubleQuotedIdentifier(sql, position, adjacency)
     // A "$" immediately after an identifier character (e.g. the second "$" in "a$b$c", or
     // either "$" in "x$$y") can never OPEN a dollar quote — it is continuing the identifier
     // that started before it, exactly as PostgreSQL's own lexer only recognizes dollar-quote
     // tags at the START of a new token. Without this guard, "a$b$c" reads as "a" followed by a
     // "$b$"-tagged dollar-quote opener that swallows everything up to the next literal "$b$" (or
     // the rest of the string, if there isn't one).
-    sql[position] == '$' && !(position > 0 && isIdentifierChar(sql[position - 1])) ->
-      skipDollarQuotedString(sql, position) ?: position
-    sql[position] == '-' && position + 1 < sql.length && sql[position + 1] == '-' -> skipLineComment(sql, position)
-    sql[position] == '/' && position + 1 < sql.length && sql[position + 1] == '*' -> skipBlockComment(sql, position)
+    //
+    // Gated on adjacency.wereAdjacent(position - 1): stripping only ever removes whitespace and
+    // comments, neither of which is an identifier character, so if the character now sitting
+    // immediately before this "$" was NOT actually adjacent to it in the original text, whatever
+    // real separator used to sit there means this "$" genuinely opens a new token, regardless of
+    // what character stripping happened to fuse in front of it (e.g. "x $q$...$q$" strips to
+    // "x$q$...$q$", where the "x" was never really continuing into "$q$" in the original query).
+    sql[position] == '$' &&
+      !(position > 0 && adjacency.wereAdjacent(position - 1) && isIdentifierChar(sql[position - 1])) ->
+      // skipDollarQuotedString takes the same adjacency and applies its own further gates to the
+      // opening and closing delimiters themselves — see its KDoc.
+      skipDollarQuotedString(sql, position, adjacency) ?: position
+    sql[position] == '-' && position + 1 < sql.length && sql[position + 1] == '-' && adjacency.wereAdjacent(position) ->
+      skipLineComment(sql, position)
+    sql[position] == '/' && position + 1 < sql.length && sql[position + 1] == '*' && adjacency.wereAdjacent(position) ->
+      skipBlockComment(sql, position)
     else -> position
   }
 }
@@ -1929,38 +2080,47 @@ internal fun skipLexicalToken(sql: String, position: Int): Int {
  * always consumes the following character as a literal, so it can never end the string).
  *
  * The "standalone" check — the character before that `E`/`e`, if any, is not itself a letter,
- * digit, or `_` — deliberately does NOT use [isIdentifierChar], even though every other
- * word-boundary check in this file does. [isIdentifierChar] is evaluated against
- * [stripCommentsAndWhitespace]'s STRIPPED output, and this file's own generator round for
- * issue #219 established (against real PostgreSQL 18.4) that [isStarItem] normalizes a select
- * item through [stripCommentsAndWhitespace] and then RE-LEXES the stripped string — so deleting a
- * separator PostgreSQL actually lexed on can manufacture tokens that were never in the query.
- * Widening this lookback to [isIdentifierChar] made `x E'a\'b'` (valid PostgreSQL: the
- * `AexprConst: func_name Sconst` typed-literal form, `func_name` here being the ordinary
- * identifier `x`) normalize to `xE'a\'b'` — the space PostgreSQL lexed as a separator between two
- * tokens is gone — which then mis-lexed as a SINGLE standalone-`E` escape string, turning
- * `parseSelectItems("SELECT (f(x€ E'a\\'b')).* y, id FROM t")` from `[]` on the pre-#219 code —
- * the fail-safe answer, since callers fall back to `ResultSetMetaData.getColumnName` — into 2
- * items, a WRONG positional split that misapplies a column-level type override. Replacing a safe
- * answer with a dangerous one is not acceptable even though the wider check is more faithful to
- * PostgreSQL's own lexer for raw, un-stripped SQL.
+ * digit, or `_` — now uses [isIdentifierChar], the SAME predicate every other word-boundary check
+ * in this file uses, GATED on [adjacency] (see [OriginalAdjacency]'s KDoc). It did not always: this
+ * file's own generator round for issue #219 established (against real PostgreSQL 18.4) that
+ * [isStarItem] normalizes a select item through [stripCommentsAndWhitespace] and then RE-LEXES the
+ * stripped string — so deleting a separator PostgreSQL actually lexed on can manufacture tokens
+ * that were never in the query. Widening this lookback to [isIdentifierChar] WITHOUT a gate made
+ * `x E'a\'b'` (valid PostgreSQL: the `AexprConst: func_name Sconst` typed-literal form, `func_name`
+ * here being the ordinary identifier `x`) normalize to `xE'a\'b'` — the space PostgreSQL lexed as a
+ * separator between two tokens is gone — which then mis-lexed as a SINGLE standalone-`E` escape
+ * string, turning `parseSelectItems("SELECT (f(x€ E'a\\'b')).* y, id FROM t")` from `[]` on the
+ * pre-#219 code — the fail-safe answer, since callers fall back to
+ * `ResultSetMetaData.getColumnName` — into 2 items, a WRONG positional split that misapplies a
+ * column-level type override. That regression, issue #222, is what led to reverting this lookback
+ * to a narrow letter/digit/`_` class — which does NOT match PostgreSQL's lexer for raw SQL (it
+ * misses `$` and any `>= 0x80` character, both legal identifier-continuation characters) — pending
+ * a fix to the root cause: [stripCommentsAndWhitespace] returning an index map back to the original
+ * text, so this lookback (like the `--` line-comment and `/* */` block-comment openers and the `$`
+ * dollar-quote identifier lookback in [skipLexicalToken], and the `''` doubled-quote check just
+ * below) could be gated on ORIGINAL adjacency instead of a narrower character class. That fix has
+ * now landed — [OriginalAdjacency] — so the widening is safe: for the same `x€ E'a\'b'` shape,
+ * `adjacency.wereAdjacent` on the character position immediately before `E` reports `false` (the
+ * space that used to separate `€` and `E` is gone from the stripped text, but that fusion is not
+ * something stripping is entitled to manufacture), so `E` is STILL recognized as standalone
+ * regardless of what character stripping happened to fuse in front of it — see [isIdentifierChar]'s
+ * own KDoc for why a widened check here is otherwise the MORE faithful one to PostgreSQL's real
+ * lexer.
  *
- * The narrow letter/digit/`_` class here does NOT match PostgreSQL's lexer for raw SQL (it misses
- * `$` and any `>= 0x80` character, both legal identifier-continuation characters) — that is
- * DELIBERATE, pending a fix to the root cause: [stripCommentsAndWhitespace] returning an index map
- * back to the original text, so that every multi-character adjacency decision made against its
- * stripped output — the `--` line-comment opener, the block-comment opener, the `$` dollar-quote
- * identifier lookback, and this standalone-`E` lookback — can be gated on ORIGINAL adjacency
- * instead. Do not re-widen
- * this to [isIdentifierChar] before that fix lands.
- *
+ * @param adjacency See [OriginalAdjacency]'s KDoc. Gates both the "is the character immediately
+ *   before the opening quote genuinely `E`/`e`" check and, when it is, the standalone lookback one
+ *   position further back — non-adjacency at that second position means the real predecessor was a
+ *   separator PostgreSQL itself lexed on, so `E`/`e` IS standalone regardless of what character
+ *   stripping fused in front of it.
  * @return The index after the closing quote, or `sql.length` if unterminated.
  */
-private fun skipSingleQuotedString(sql: String, openQuoteIndex: Int): Int {
+private fun skipSingleQuotedString(sql: String, openQuoteIndex: Int, adjacency: OriginalAdjacency = ALL_ADJACENT): Int {
   val precedingChar = if (openQuoteIndex > 0) sql[openQuoteIndex - 1] else null
+  val eAbutsQuote = openQuoteIndex > 0 && adjacency.wereAdjacent(openQuoteIndex - 1)
   val precedingCharIsStandalone = openQuoteIndex < 2 ||
-    !(sql[openQuoteIndex - 2].isLetterOrDigit() || sql[openQuoteIndex - 2] == '_')
-  val isEscapeString = (precedingChar == 'E' || precedingChar == 'e') && precedingCharIsStandalone
+    !adjacency.wereAdjacent(openQuoteIndex - 2) ||
+    !isIdentifierChar(sql[openQuoteIndex - 2])
+  val isEscapeString = eAbutsQuote && (precedingChar == 'E' || precedingChar == 'e') && precedingCharIsStandalone
   var i = openQuoteIndex + 1
   while (i < sql.length) {
     if (isEscapeString && sql[i] == '\\' && i + 1 < sql.length) {
@@ -1968,8 +2128,17 @@ private fun skipSingleQuotedString(sql: String, openQuoteIndex: Int): Int {
       continue
     }
     if (sql[i] == '\'') {
+      // The '' doubled-quote-escape check is gated on adjacency too: this is load-bearing, not
+      // uniformity-for-its-own-sake — fusion composes with escape-string mode. If a separator
+      // PostgreSQL lexed between two genuinely SEPARATE quote characters gets stripped away,
+      // fusing them into what LOOKS like a doubled '' escape, treating it as one would keep this
+      // scan going (still in isEscapeString mode, if it started that way) past what should have
+      // been the first string's real terminator — potentially overrunning all the way to
+      // sql.length and defeating findTrailingImplicitAliasStart's "last segment must end exactly
+      // at text.length" anchor (see its KDoc) in the dangerous direction (see isStarItem's KDoc).
+      val firstQuoteIndex = i
       i++
-      if (i < sql.length && sql[i] == '\'') {
+      if (i < sql.length && sql[i] == '\'' && adjacency.wereAdjacent(firstQuoteIndex)) {
         i++ // doubled '' — an escaped quote, not the terminator
       } else {
         return i
@@ -1987,14 +2156,25 @@ private fun skipSingleQuotedString(sql: String, openQuoteIndex: Int): Int {
  * identifier `foo"bar`). Unlike string literals, double-quoted identifiers do not support
  * backslash escapes.
  *
+ * @param adjacency See [OriginalAdjacency]'s KDoc. Gates the `""` doubled-quote-escape check, for
+ *   the same invariant [skipSingleQuotedString]'s own `''` gate states — though, unlike that one,
+ *   this is uniformity rather than a fix earning its own test: every double-quoted-identifier span
+ *   this codebase's tests construct happens to coincide whether or not this specific check is
+ *   gated, so this is included for the same structural reason as every other multi-character
+ *   adjacency decision in this file, not because a concrete wrong-answer case was found.
  * @return The index after the closing quote, or `sql.length` if unterminated.
  */
-private fun skipDoubleQuotedIdentifier(sql: String, openQuoteIndex: Int): Int {
+private fun skipDoubleQuotedIdentifier(
+  sql: String,
+  openQuoteIndex: Int,
+  adjacency: OriginalAdjacency = ALL_ADJACENT,
+): Int {
   var i = openQuoteIndex + 1
   while (i < sql.length) {
     if (sql[i] == '"') {
+      val firstQuoteIndex = i
       i++
-      if (i < sql.length && sql[i] == '"') {
+      if (i < sql.length && sql[i] == '"' && adjacency.wereAdjacent(firstQuoteIndex)) {
         i++ // doubled "" — an escaped quote, not the terminator
       } else {
         return i
@@ -2024,6 +2204,20 @@ private fun isDollarQuoteTagContinuationChar(character: Char): Boolean =
   character.isLetterOrDigit() || character == '_' || character.code >= 0x80
 
 /**
+ * `true` if every consecutive pair of characters in `[start, endExclusive)` was genuinely
+ * adjacent in the original text, per [adjacency] — see [OriginalAdjacency]'s KDoc. Used by
+ * [skipDollarQuotedString] to verify its OPENING delimiter is lexically contiguous, not merely
+ * contiguous in [stripCommentsAndWhitespace]'s stripped output — see that function's KDoc for why
+ * the closing delimiter needs no such check of its own.
+ */
+private fun isAdjacencyContiguousSpan(adjacency: OriginalAdjacency, start: Int, endExclusive: Int): Boolean {
+  for (leftIndex in start until endExclusive - 1) {
+    if (!adjacency.wereAdjacent(leftIndex)) return false
+  }
+  return true
+}
+
+/**
  * If `sql[position]` starts a dollar-quote opening tag — `$$` or `$tag$`, where `tag` is either
  * empty or a run beginning with an [isIdentifierStartChar] character and continuing with
  * [isDollarQuoteTagContinuationChar] characters — advances past the matching closing tag (the
@@ -2035,12 +2229,37 @@ private fun isDollarQuoteTagContinuationChar(character: Char): Boolean =
  * identifier like `a$b$c` (PostgreSQL allows `$` inside an unquoted identifier), so that
  * decision is made by the caller before this is even invoked.
  *
+ * The OPENING delimiter is additionally required to be adjacency-contiguous (see
+ * [OriginalAdjacency]'s KDoc): every character of it — the leading `$` at [position], the tag run,
+ * and the tag's closing `$` — must have been genuinely adjacent to its neighbour in the original
+ * text. Without this, stripping can invent a delimiter that was never one lexical unit in the
+ * original query — e.g. `$q  b $/ /` (two independent `$`-prefixed tokens and a `/`-prefixed
+ * token, none of them a real dollar-quote) strips to `$qb$//`, whose fused `$qb$` would otherwise
+ * be read as an opening delimiter with tag `qb`, and `//` as its (unterminated) body.
+ *
+ * The CLOSING delimiter needs no adjacency check of its own: once the opening delimiter has passed
+ * both this gate and the caller's own `$`-not-preceded-by-an-identifier-character lookback (see
+ * [skipLexicalToken]'s call site), the ORIGINAL text genuinely opened a dollar-quoted string at
+ * [position] — and [stripCommentsAndWhitespace] makes that identical determination (via this same
+ * function, on the original text) BEFORE ever stripping anything, so it copies the entire matched
+ * token — opening delimiter, body, and closing delimiter alike — through to its output VERBATIM,
+ * giving every character in that span consecutive original offsets. A real closing tag inside a
+ * verbatim-copied span is therefore always adjacency-contiguous already, by construction, and no
+ * fused, fake closing tag can appear inside one either — there is nothing left for a second gate to
+ * catch. (An UNTERMINATED dollar-quote — no closing tag found in [sql] at all — is unaffected by
+ * any of this: it is not a stripping artifact, and is handled the same way regardless.)
+ *
+ * @param adjacency See [OriginalAdjacency]'s KDoc. Defaults to [ALL_ADJACENT], correct for raw SQL
+ *   text — every neighbouring pair is trivially adjacent there, so this gate never rejects a
+ *   genuine raw-text dollar-quote. [skipLexicalToken] threads its own `adjacency` parameter through
+ *   here.
  * @return The index after the closing tag (or `sql.length` if unterminated), or `null` if
  *   [position] is a `$` that is not followed by a valid closing tag delimiter at all (e.g. a
  *   bare `$` used as an operator, or a positional parameter marker like `$1` with no matching
- *   second `$`) — the caller should treat that `$` as an ordinary character, not lexically skip it.
+ *   second `$`), or if the opening delimiter itself is not adjacency-contiguous — the caller
+ *   should treat that `$` as an ordinary character, not lexically skip it.
  */
-private fun skipDollarQuotedString(sql: String, position: Int): Int? {
+private fun skipDollarQuotedString(sql: String, position: Int, adjacency: OriginalAdjacency = ALL_ADJACENT): Int? {
   var i = position + 1
   val tagStart = i
   if (i < sql.length && isIdentifierStartChar(sql[i])) {
@@ -2048,6 +2267,7 @@ private fun skipDollarQuotedString(sql: String, position: Int): Int? {
     while (i < sql.length && isDollarQuoteTagContinuationChar(sql[i])) i++
   }
   if (i >= sql.length || sql[i] != '$') return null
+  if (!isAdjacencyContiguousSpan(adjacency, position, i + 1)) return null
   val tag = sql.substring(tagStart, i)
   val openingTagEnd = i + 1
   val closingTag = "$" + tag + "$"

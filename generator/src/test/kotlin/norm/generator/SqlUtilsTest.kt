@@ -1399,17 +1399,92 @@ class SqlUtilsTest {
 
     @Test
     fun `a typed-literal call with a standalone E before a backslash-quote does not manufacture a star item`() {
-      // Regression guard for the fail-safe answer that was restored by reverting
-      // skipSingleQuotedString's E lookback back to a narrow class (see that function's KDoc): a
-      // widened lookback made isStarItem's stripCommentsAndWhitespace-then-re-lex path delete the
-      // space between "x" and the standalone "E" of "x E'a\'b'" (PostgreSQL's own
-      // AexprConst: func_name Sconst typed-literal form), producing the never-lexed token
-      // "xE'a\'b'" and mis-parsing this item as star-shaped, which turned this query's result into
-      // 2 items instead of an empty list. A non-empty result here is a WRONG positional split, not
-      // merely a lost name — callers rely on this list's ORDER to pair items with columns from
-      // ResultSetMetaData, and a wrong split misapplies a column-level type override to the wrong
-      // column — so this asserts the fail-safe emptyList(), not a specific parse.
+      // Regression guard for the fail-safe answer, now grounded in OriginalAdjacency rather than
+      // an incidental character-class exclusion: "x€ E'a\'b'" (a real space between "€" and the
+      // standalone "E") strips to "x€E'a\'b'", and skipSingleQuotedString's standalone-E lookback
+      // gates its "was € really continuing an identifier into E" check on whether € and E were
+      // ADJACENT in the original text -- they were not (the character stripping removed there was
+      // a real separator) -- so E is correctly recognized as standalone regardless of what
+      // character stripping happened to fuse in front of it (see that function's own KDoc). With E
+      // correctly standalone, the whole "E'a\'b'" is scanned as ONE backslash-escaped string, so
+      // isStarItem correctly reaches and recognizes the trailing ".* y" — this item IS star-shaped,
+      // and parseSelectItems drops it and everything after it, giving the fail-safe emptyList()
+      // this test asserts.
+      //
+      // Verified directly (by running this exact input against the pre-#223 code too): this query
+      // already returned emptyList() before OriginalAdjacency existed, via the narrower
+      // letter/digit/underscore-only class from issue #222 — which also happens to exclude "€" —
+      // reaching the SAME star recognition for a narrower, coincidental reason. What changed is
+      // that recognizing "E" as standalone here no longer depends on an accident of "€" failing
+      // that narrow class; it depends on the actual structural fact that "€" was never truly
+      // adjacent to "E" in the original query.
       val result = parseSelectItems("SELECT (f(x€ E'a\\'b')).* y, id FROM t")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `a negative literal subtraction inside a ROW composite star qualifier does not manufacture a --comment`() {
+      // "1 - -1" (two independently-lexed "-" tokens, genuinely separated by a space) strips to
+      // "1--1", which skipLexicalToken would otherwise read as a "--" line comment that was never
+      // in the query — skipLineComment then jumps to the end of the stripped text, so no segment
+      // ends exactly at text.length, findTrailingImplicitAliasStart returns null, and isStarItem
+      // answers false — the DANGEROUS direction (a later item silently shifts onto the wrong
+      // ResultSetMetaData column). Verified against a real PostgreSQL 18.4 container: this query
+      // returns 4 columns (f1, f2, id, name) against a 2-column "t" — the star and everything
+      // before it must be dropped, since two items come after it.
+      val result = parseSelectItems("SELECT (ROW(1, 2 - -1)).* y, id, name FROM t")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `a negative literal subtraction inside a function-call star qualifier does not manufacture a --comment`() {
+      // Same fusion class as the ROW case above, inside a function call's own argument instead of
+      // a ROW constructor. Verified against a real PostgreSQL 18.4 container: this query returns 3
+      // columns (f1, f2, id) — f(int) returns a 2-column composite.
+      val result = parseSelectItems("SELECT (f(1 - -1)).* y, id FROM t")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `a negative literal subtraction inside a CAST star qualifier does not manufacture a --comment`() {
+      // Same fusion class, inside a CAST's ROW argument. Verified against a real PostgreSQL 18.4
+      // container: this query returns 3 columns (f1, f2, id).
+      val result = parseSelectItems("SELECT (CAST(ROW(1 - -1, 2) AS pair)).* y, id FROM t")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `a negative literal subtraction inside an array-subscript star qualifier does not manufacture a --comment`() {
+      // Same fusion class, inside an ARRAY subscript. Verified against a real PostgreSQL 18.4
+      // container: this query returns 3 columns (id, name, id) — "t.*" expands to id/name, then
+      // the trailing bare "id" is a separate item after the star.
+      val result = parseSelectItems("SELECT (ARRAY[t])[1 - -1].* y, id FROM t")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `a space-separated E-string typed literal is not fused into a standalone-E escape string`() {
+      // "xq E'...'" ("xq" — a domain over text — used as a type name in PostgreSQL's own
+      // "typename Sconst" typed-literal form, genuinely separated from the following E-string by a
+      // space) strips to "xqE'...'". Without gating the standalone-E lookback on original
+      // adjacency, the "q" immediately before "E" would look like it continues "xq" into the "E",
+      // wrongly denying the escape string its backslash-escape processing and letting the
+      // backslash-quote inside it terminate the string early, garbling everything scanned after.
+      // Verified against a real PostgreSQL 18.4 container: this query returns 3 columns (f1, f2,
+      // id) — f(xq) returns a 2-column composite.
+      val result = parseSelectItems("SELECT (f(xq E'a\\'b')).* y, id FROM t")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `a space-separated dollar-quoted typed literal is not fused into the identifier before it`() {
+      // "xq \$q\$...\$q\$" strips to "xq\$q\$...\$q\$" — without gating the dollar-quote identifier
+      // lookback on original adjacency, the "q" immediately before "$" would look like it
+      // continues the "xq" identifier (PostgreSQL allows "$" inside an unquoted identifier), so the
+      // "$" would never be recognized as opening a dollar-quoted string at all, and its body —
+      // including the "'" it contains — would be scanned as ordinary SQL. Verified against a real
+      // PostgreSQL 18.4 container: this query returns 3 columns (f1, f2, id).
+      val result = parseSelectItems("SELECT (f(xq \$q\$a'b\$q\$)).* y, id FROM t")
       assertThat(result).isEmpty()
     }
   }
@@ -2672,27 +2747,90 @@ class SqlUtilsTest {
   inner class SkipSingleQuotedStringTest {
 
     @Test
-    fun `a non-ASCII character before a standalone E is a known deviation from PostgreSQL`() {
+    fun `a non-ASCII character before a standalone E means it is not standalone, matching PostgreSQL`() {
       // Real PostgreSQL treats "x€E" as ONE identifier -- "€" is a legal identifier-continuation
       // character -- so the "E" immediately before the quote is NOT a standalone E'...'
-      // escape-string marker there. This function's letter/digit/underscore-only lookback does not
-      // know that: it doesn't recognize "€" as an identifier character, so it wrongly treats "E" as
-      // standalone, honors the backslash before the following quote as an escape rather than the
-      // string's terminator, and swallows the rest of the statement looking for a closing quote
-      // that never comes.
+      // escape-string marker here. With no escape-string mode, the backslash before the closing
+      // quote is an ordinary character, not an escape: the first bare "'" after it -- not a
+      // doubled "''" -- ends the string.
       //
-      // This is a deliberate, KNOWN deviation from PostgreSQL's lexer, not an oversight: widening
-      // this lookback to isIdentifierChar makes this exact case correct, but breaks
-      // skipSingleQuotedString for a select-item string that has already been run through
-      // stripCommentsAndWhitespace and re-lexed by isStarItem, where a separator PostgreSQL
-      // actually lexed on may already be gone from the stripped text (see this function's KDoc, and
-      // the regression test on parseSelectItems in ParseSelectItems for the concrete failure this
-      // is trading against). Do not re-widen this lookback before stripCommentsAndWhitespace itself
-      // is fixed to track original adjacency.
+      // Before OriginalAdjacency existed, this lookback used a narrow letter/digit/underscore-only
+      // class that did not recognize "€" as an identifier character at all, wrongly treating "E"
+      // as standalone here and accepting this as a deliberate, KNOWN deviation from PostgreSQL's
+      // lexer (issue #222). Now that the lookback can distinguish a genuinely fused character from
+      // one a stripped-away separator merely left adjacent (see OriginalAdjacency's KDoc), it is
+      // safe to use the full isIdentifierChar class -- and for this RAW, never-stripped call
+      // (using the default ALL_ADJACENT, correct here since every neighbour genuinely IS
+      // adjacent), that makes this call match PostgreSQL's real answer instead of deviating from
+      // it.
       val sql = "x€E'a\\' FROM t"
       val quoteIndex = sql.indexOf('\'')
       val result = skipLexicalToken(sql, quoteIndex)
-      assertThat(result).isEqualTo(sql.length)
+      assertThat(sql.substring(quoteIndex, result)).isEqualTo("'a\\'")
+    }
+
+    @Test
+    fun `a genuinely separate string immediately after an E-string is not swallowed by a stripped-away separator`() {
+      // Point 3 of issue #223's fix: fusion composes with escape-string mode. "E'a'" (a complete
+      // escape string) followed by a real separator, then another, entirely independent "'\'"
+      // strips (the separator is plain whitespace, which stripCommentsAndWhitespace removes the
+      // same as a comment) to "E'a''\'", where the fused "''" reads as a doubled-quote escape and
+      // the "\" that follows reads as escaping the final "'" -- overrunning to the end of the
+      // text, which would defeat findTrailingImplicitAliasStart's "last segment must end exactly
+      // at text.length" anchor in the dangerous direction (see isStarItem's KDoc).
+      //
+      // NOT achievable as valid SQL end to end, so this is a defensive gate, not a repro of a
+      // reachable bug: verified against a real PostgreSQL 18.4 container, PostgreSQL only
+      // concatenates two adjacent bare string literals when the whitespace between them contains
+      // an actual newline ("SELECT 'a' 'b'" and "SELECT 'a'/*c*/'b'" are both syntax errors --
+      // neither a plain space nor a comment alone licenses concatenation), and a genuine
+      // newline-separated concatenation is a different construct with its own surprising semantics
+      // -- "SELECT E'a'\n'\'" is ITSELF "unterminated" on real PostgreSQL, because the escape-string
+      // mode is inherited across the concatenation boundary. No PostgreSQL-valid SELECT item was
+      // found that exercises this specific composition end to end; the gate is kept anyway, for
+      // the same structural reason every other multi-character adjacency decision in this file is
+      // gated (see OriginalAdjacency's KDoc), not because a concrete wrong-answer case was found.
+      val stripped = stripCommentsAndWhitespace("E'a' '\\'")
+      // Without the gate, an ungated re-scan of stripCommentsAndWhitespace's own OUTPUT (simulated
+      // here via ALL_ADJACENT, i.e. pretending every neighbour really was adjacent) overruns to the
+      // end of the stripped text.
+      assertThat(skipLexicalToken(stripped.asPlainString(), 1, ALL_ADJACENT)).isEqualTo(stripped.length)
+      // Gated on real adjacency, the scan correctly stops right after the first string's own
+      // closing quote instead.
+      assertThat(stripped.skipLexicalToken(1)).isEqualTo(4)
+    }
+  }
+
+  @Nested
+  inner class OriginalAdjacencyGateTest {
+
+    @Test
+    fun `a stripped-away separator does not let two independently-lexed dashes read as a line comment`() {
+      // "1 - -1" (two separate "-" tokens, genuinely separated by a space) strips to "1--1" -- see
+      // OriginalAdjacency's own KDoc. Without the gate, skipLexicalToken would read the fused "--"
+      // as a line-comment opener that was never in the original query, jumping all the way to the
+      // end of the (stripped) text.
+      val stripped = stripCommentsAndWhitespace("1 - -1")
+      assertThat(stripped.skipLexicalToken(1)).isEqualTo(1)
+    }
+
+    @Test
+    fun `a stripped-away separator does not let two independently-lexed characters read as a block comment`() {
+      // "a / *b" (a "/" and a "*", genuinely separated by a space) strips to "a/*b", which would
+      // otherwise look like a block-comment opener that was never in the original query.
+      val stripped = stripCommentsAndWhitespace("a / *b")
+      assertThat(stripped.skipLexicalToken(1)).isEqualTo(1)
+    }
+
+    @Test
+    fun `a stripped-away separator still lets a dollar-quote open, even though an identifier character now abuts it`() {
+      // "x $q$a$q$" (an identifier "x", genuinely separated from a dollar-quoted string by a
+      // space) strips to "x$q$a$q$" -- the "x" now directly abuts the "$", which would otherwise
+      // look like "x" continuing into the dollar-quote tag (PostgreSQL allows "$" inside an
+      // unquoted identifier), hiding the real, separate dollar-quoted string and scanning its body
+      // as ordinary SQL instead.
+      val stripped = stripCommentsAndWhitespace("x \$q\$a\$q\$")
+      assertThat(stripped.skipLexicalToken(1)).isEqualTo(stripped.length)
     }
   }
 
@@ -2727,6 +2865,124 @@ class SqlUtilsTest {
       // issue #219 fixed for COLUMN_REFERENCE.
       val match = FUNCTION_CALL_START.find("SELECT 2fn(?)")
       assertThat(match!!.groupValues[1]).isEqualTo("fn")
+    }
+  }
+
+  @Nested
+  inner class LexicalTokenParityTest {
+
+    /**
+     * Walks [sql] position by position, collecting the text of every OPAQUE lexical token
+     * [skipLexicalToken] recognizes (a string literal, a quoted identifier, a dollar-quoted
+     * string) as one list entry, and every other non-whitespace character as its own
+     * single-character entry. A recognized comment is dropped entirely, matching what
+     * [stripCommentsAndWhitespace] itself deletes. This is exactly the token sequence
+     * [stripCommentsAndWhitespace]'s output SHOULD still contain, in order — see
+     * [lexicalTokensOfStripped] and this class's own test.
+     */
+    private fun lexicalTokensOfOriginal(sql: String): List<String> {
+      val tokens = mutableListOf<String>()
+      var i = 0
+      while (i < sql.length) {
+        if (sql[i].isWhitespace()) {
+          i++
+          continue
+        }
+        val afterToken = skipLexicalToken(sql, i)
+        if (afterToken != i) {
+          val tokenText = sql.substring(i, afterToken)
+          if (!tokenText.startsWith("--") && !tokenText.startsWith("/*")) tokens.add(tokenText)
+          i = afterToken
+        } else {
+          tokens.add(sql[i].toString())
+          i++
+        }
+      }
+      return tokens
+    }
+
+    /**
+     * The same walk as [lexicalTokensOfOriginal], over [sql] after [stripCommentsAndWhitespace].
+     * No whitespace-skip or comment-filter is needed here: stripping already removed every
+     * top-level whitespace character and comment, and [StrippedText.skipLexicalToken] — correctly
+     * gated on [OriginalAdjacency] — must never recognize a `--`/`/* */` opener that only exists
+     * because stripping fused two characters together.
+     */
+    private fun lexicalTokensOfStripped(sql: String): List<String> {
+      val stripped = stripCommentsAndWhitespace(sql)
+      val plain = stripped.asPlainString()
+      val tokens = mutableListOf<String>()
+      var i = 0
+      while (i < stripped.length) {
+        val afterToken = stripped.skipLexicalToken(i)
+        if (afterToken != i) {
+          tokens.add(plain.substring(i, afterToken))
+          i = afterToken
+        } else {
+          tokens.add(plain[i].toString())
+          i++
+        }
+      }
+      return tokens
+    }
+
+    @Test
+    fun `a stripped-away separator does not fuse unrelated dollar signs and a tag run into a dollar-quote`() {
+      // Verifier-supplied regression: "$q  b $/ /" strips (removing the two spaces after "q" and
+      // the one after "b" and each "/") to "$qb$//", whose fused "$qb$" would otherwise be read as
+      // an opening dollar-quote delimiter with tag "qb", and the following "//" as its (unterminated)
+      // body -- one manufactured token in place of six independent original ones ("$", "q", "$",
+      // "/", "/", plus the surrounding words), the same "danger" direction as every other fusion
+      // class in this file (see OriginalAdjacency's KDoc): skipDollarQuotedString's OPENING-delimiter
+      // adjacency gate (see its KDoc) must refuse this fusion. (The closing delimiter needs, and
+      // has, no gate of its own -- see that function's KDoc for why.)
+      //
+      // No PostgreSQL-valid input is known to reach this composition: verified against a real
+      // PostgreSQL 18.4 container, even the simpler "SELECT \$q FROM t" is rejected outright
+      // ("syntax error at or near "\$"") -- a bare "\$" not immediately followed by a digit (a
+      // positional parameter) or a genuine dollar-quote tag is not valid PostgreSQL syntax at all.
+      // Like the "''"/E-string composition gate above, this closes the class structurally rather
+      // than fixing an observed user-visible bug.
+      val input = "SELECT \$q  b \$/ / FROM t"
+      assertThat(lexicalTokensOfStripped(input)).isEqualTo(lexicalTokensOfOriginal(input))
+    }
+
+    @Test
+    fun `stripping never changes what skipLexicalToken sees, for every issue 223 fusion class and every star shape`() {
+      // The invariant issue #223 relies on: walking the ORIGINAL text and the STRIPPED text with
+      // skipLexicalToken must find the SAME lexical tokens, in the SAME order — if stripping ever
+      // fuses two characters into a token that was never in the original query (or hides one that
+      // WAS there), this comparison catches it directly, rather than relying on each individual
+      // gate's own, narrower unit test. Includes every fusion-class input from the issue, plus a
+      // representative sample of the star shapes already covered elsewhere in this file (line and
+      // block comments, string literals, dollar-quoted strings, double-quoted identifiers
+      // containing a literal star, a Unicode-escape identifier with a UESCAPE clause, and
+      // non-ASCII qualifiers).
+      val inputs = listOf(
+        "SELECT (ROW(1, 2 - -1)).* y, id, name FROM t",
+        "SELECT (f(1 - -1)).* y, id FROM t",
+        "SELECT (CAST(ROW(1 - -1, 2) AS pair)).* y, id FROM t",
+        "SELECT (ARRAY[t])[1 - -1].* y, id FROM t",
+        "SELECT (f(xq E'a\\'b')).* y, id FROM t",
+        "SELECT (f(xq \$q\$a'b\$q\$)).* y, id FROM t",
+        "SELECT (f(x€ E'a\\'b')).* y, id FROM t",
+        "SELECT \$q  b \$/ / FROM t",
+        "SELECT t.*-- c\n::text, a FROM t",
+        "SELECT u.* whatever /*c*/, preferences FROM users u",
+        "SELECT u.*/*c*/whatever, preferences FROM users u",
+        """SELECT "my*table".*z, c FROM "my*table"""",
+        """SELECT U&"my*table".*, c FROM "my*table"""",
+        """SELECT t.* U&"d!0061t" UESCAPE '!', a FROM t""",
+        "SELECT (t.*::t).* whatever, a FROM t",
+        "SELECT (ARRAY[t.*])[1].* whatever, a FROM t",
+        "SELECT (f(a*2)).* z, a FROM t",
+        "SELECT t.* €total, a FROM t",
+        "SELECT x€9.* w, preferences FROM users x€9",
+        "SELECT 'lit *' foo, id FROM t",
+      )
+      for (input in inputs) {
+        assertThat(lexicalTokensOfStripped(input)).isEqualTo(lexicalTokensOfOriginal(input))
+      }
     }
   }
 
