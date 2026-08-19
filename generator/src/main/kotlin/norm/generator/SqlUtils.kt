@@ -920,17 +920,14 @@ private fun parseSingleCteDefinition(sql: String, startPosition: Int): Pair<CteD
  * → `PgCatalogLoader`'s Phase 1), it falls back to the metadata-probe stub, which DOES read each
  * column's real `ResultSetMetaData.isNullable`. For the TOP-LEVEL statement (`PgCatalogLoader`'s
  * Phase 2), `null` here (or a conversion that fails to validate) instead reaches
- * `queryColumnNullability`'s `buildAllNonNullable` fallback, which does NOT read `isNullable` at
- * all — it asserts every column `false` (NOT NULL) unconditionally. `buildAllNonNullable` itself
- * CAN return an empty list (if the probe's own `metaData` is `null`, or the probe throws
- * `SQLException`) — but that path is unreachable via the current caller, `JdbcAnalyzer`:
- * `buildResultColumns` returns `emptyList()` BEFORE ever calling `queryColumnNullability`
- * whenever the statement being analyzed has no `ResultSetMetaData` of its own, so
- * `queryColumnNullability` — and therefore `buildAllNonNullable` — is only reached for a
- * statement JDBC has already shown DOES have result-column metadata. "No outer joins are
- * possible" is true for the shapes this function returns `null` for, but that does not mean
- * nullability is left undetermined by the caller that matters today — the top-level path in
- * particular still asserts a specific (and, for a genuinely nullable column, WRONG) answer.
+ * `queryColumnNullability`'s `analyzeUnconvertibleDml` fallback, which DOES read `isNullable` —
+ * OR'd with the same [forcedNullabilityPredicate] safety net the CTE-body stub path applies (issue
+ * #207). `analyzeUnconvertibleDml` itself CAN return an empty list (if the probe's own `metaData`
+ * is `null`, or the probe throws `SQLException`) — but that path is unreachable via the current
+ * caller, `JdbcAnalyzer`: `buildResultColumns` returns `emptyList()` BEFORE ever calling
+ * `queryColumnNullability` whenever the statement being analyzed has no `ResultSetMetaData` of its
+ * own, so `queryColumnNullability` — and therefore `analyzeUnconvertibleDml` — is only reached for
+ * a statement JDBC has already shown DOES have result-column metadata.
  *
  * `OLD.`/`NEW.` (PostgreSQL 18): for an `UPDATE`/`DELETE`/`MERGE` body whose `RETURNING` reads
  * these pseudo-relations, this function still builds a converted `SELECT` — `OLD`/`NEW` are
@@ -1016,6 +1013,113 @@ internal fun isInsertBody(body: String): Boolean {
 }
 
 /**
+ * Checks whether [body], after skipping any leading nested `WITH` clause (see
+ * [stripLeadingNestedWithClause]), begins with `UPDATE`, `DELETE`, or `MERGE` — the statement
+ * kinds [dmlSourceClauseRegion] recognizes.
+ *
+ * Used by [forcedNullabilityPredicate]'s scoped variant to distinguish two cases
+ * [dmlSourceClauseRegion] alone cannot tell apart, since it returns `null` for both: (1) [body] IS
+ * one of these statement kinds but has no `FROM`/`USING`/`ON` clause to scope to (e.g. a plain
+ * `UPDATE ... SET ... WHERE ...` with no `FROM`) — there the join arm should be forced OFF, since
+ * there is no source clause whose join could null-extend `RETURNING` — versus (2) [body] ISN'T one
+ * of these statement kinds at all (e.g. a plain `SELECT` CTE body reached via a degraded, non-DML
+ * path), where the scoped predicate falls back to today's whole-body scan instead — see
+ * [forcedNullabilityPredicate]'s KDoc on its `scopeNullExtendingScanToDmlSourceClause` parameter
+ * for why that fallback is deliberate.
+ */
+internal fun isUpdateDeleteOrMergeStatement(body: String): Boolean {
+  val dml = stripLeadingNestedWithClause(body)
+  val trimmedStart = skipWhitespaceAndComments(dml, 0)
+  return listOf("UPDATE", "DELETE", "MERGE").any { keyword ->
+    dml.regionMatches(trimmedStart, keyword, 0, keyword.length, ignoreCase = true) &&
+      (trimmedStart + keyword.length >= dml.length || !isIdentifierChar(dml[trimmedStart + keyword.length]))
+  }
+}
+
+/**
+ * Returns the region of a top-level DML statement's own text whose join structure can
+ * null-extend its `RETURNING` list: an `UPDATE`'s `FROM` clause, a `DELETE`'s `USING` clause, or a
+ * `MERGE`'s `USING ... ON` source clause — or `null` when [sql] is not a top-level
+ * `UPDATE`/`DELETE`/`MERGE` (see [isUpdateDeleteOrMergeStatement]), or has no such clause at all
+ * (a plain `UPDATE`/`DELETE` with no `FROM`/`USING`, which [convertDmlToSelect] also refuses to
+ * convert for the identical reason: no join structure exists to model).
+ *
+ * Used to SCOPE [hasOuterJoin]/[hasGroupingSetConstruct]'s otherwise whole-statement text scan
+ * (see [forcedNullabilityPredicate]'s `scopeNullExtendingScanToDmlSourceClause` parameter) to only
+ * the clause whose joins can actually reach `RETURNING`. A `LEFT JOIN` inside a `WHERE ... IN
+ * (SELECT ... LEFT JOIN ...)` subquery, for instance, cannot null-extend anything in `RETURNING`
+ * — it only narrows which rows the DML's own target touches — but a flat whole-body scan cannot
+ * tell that apart from a `LEFT JOIN` that genuinely sits in the `FROM`/`USING` clause.
+ *
+ * Mirrors the same top-level keyword walks [convertDmlToSelect] and its private
+ * `convertMergeToSelect` helper already perform for the identical statement kinds (reusing
+ * [findTopLevelKeyword] rather than a new scanning primitive), but returns the clause's own
+ * character RANGE instead of a converted `SELECT` string — this function's caller needs to scan
+ * that exact substring for a null-extending construct, not prepare it as SQL.
+ *
+ * A leading `WITH` clause (see [parseCteClause]) is skipped first, so `WITH x AS (...) UPDATE ...`
+ * is recognized as an `UPDATE`, not rejected for not starting with the `UPDATE` keyword — the
+ * region's returned indices are still relative to [sql] as a whole, not to any stripped prefix.
+ *
+ * @return The region's character range in [sql] (using [sql]'s own indices), or `null` if [sql]
+ *   is not a top-level `UPDATE`/`DELETE`/`MERGE`, or has no `FROM`/`USING` (or, for `MERGE`, no
+ *   `ON`) clause to scope to.
+ */
+internal fun dmlSourceClauseRegion(sql: String): IntRange? {
+  val mainQueryStart = parseCteClause(sql)?.mainQueryStart ?: 0
+  val trimmedStart = skipWhitespaceAndComments(sql, mainQueryStart)
+
+  if (sql.regionMatches(trimmedStart, "UPDATE", 0, 6, ignoreCase = true)) {
+    val setIndex = findTopLevelKeyword(sql, "SET", trimmedStart + 6)
+    if (setIndex < 0) return null
+    val fromIndex = findTopLevelKeyword(sql, "FROM", setIndex)
+    if (fromIndex < 0) return null // No FROM clause → no join structure
+    val regionStart = fromIndex + 4
+    val regionEnd = endOfDmlSourceClause(sql, regionStart)
+    if (!indicesAreOrdered(regionStart, regionEnd)) return null
+    return regionStart until regionEnd
+  }
+
+  if (sql.regionMatches(trimmedStart, "DELETE", 0, 6, ignoreCase = true)) {
+    val fromIndex = findTopLevelKeyword(sql, "FROM", trimmedStart + 6)
+    if (fromIndex < 0) return null
+    val usingIndex = findTopLevelKeyword(sql, "USING", fromIndex)
+    if (usingIndex < 0) return null // No USING clause → no join structure
+    val regionStart = usingIndex + 5
+    val regionEnd = endOfDmlSourceClause(sql, regionStart)
+    if (!indicesAreOrdered(regionStart, regionEnd)) return null
+    return regionStart until regionEnd
+  }
+
+  if (sql.regionMatches(trimmedStart, "MERGE", 0, 5, ignoreCase = true)) {
+    val intoIndex = findTopLevelKeyword(sql, "INTO", trimmedStart)
+    if (intoIndex < 0) return null
+    val usingIndex = findTopLevelKeyword(sql, "USING", intoIndex)
+    if (usingIndex < 0) return null
+    val onIndex = findTopLevelKeyword(sql, "ON", usingIndex)
+    if (onIndex < 0) return null
+    val regionStart = usingIndex + 5
+    if (!indicesAreOrdered(regionStart, onIndex)) return null
+    return regionStart until onIndex
+  }
+
+  return null
+}
+
+/**
+ * Finds where a DML source clause (an `UPDATE`'s `FROM`, or a `DELETE`'s `USING`) ends: the
+ * earlier of a following top-level `WHERE` or `RETURNING` keyword found from [searchFrom] onward
+ * — both can only appear AFTER the source clause, per the same statement grammar
+ * [convertDmlToSelect] relies on for its own keyword ordering — or [sql]'s own length if neither
+ * appears (a `FROM`/`USING` clause with no trailing `WHERE`/`RETURNING` at all).
+ */
+private fun endOfDmlSourceClause(sql: String, searchFrom: Int): Int {
+  val whereIndex = findTopLevelKeyword(sql, "WHERE", searchFrom)
+  val returningIndex = findTopLevelKeyword(sql, "RETURNING", searchFrom)
+  return listOf(whereIndex, returningIndex).filter { it >= 0 }.minOrNull() ?: sql.length
+}
+
+/**
  * If [body] carries its own leading nested `WITH` clause, returns the portion after it — the
  * actual DML/SELECT statement `WITH` introduces. Otherwise returns [body] unchanged.
  *
@@ -1033,7 +1137,8 @@ internal fun stripLeadingNestedWithClause(body: String): String {
 /**
  * Returns `true` if [indices], read left to right, are non-decreasing.
  *
- * `convertDmlToSelect`/`convertMergeToSelect` locate several keywords independently — each
+ * `convertDmlToSelect`/`convertMergeToSelect`/[dmlSourceClauseRegion] locate several keywords
+ * independently — each
  * search anchored at a fixed prior position, not necessarily at the PREVIOUS keyword's own
  * match — so a keyword-boundary false positive (or any other bug, present or future) can return
  * an out-of-order index. Used as a substring range without checking that would silently build
@@ -1543,6 +1648,87 @@ internal fun oldOrNewReturningColumns(body: String): OldOrNewReturningAnalysis {
     OldOrNewReturningAnalysis(items.size, forcedColumns = null)
   } else {
     OldOrNewReturningAnalysis(items.size, oldOrNewColumnIndices)
+  }
+}
+
+/**
+ * Builds the FORCED NULLABILITY predicate for a data-modifying [body] whose own result-column
+ * nullability is being probed from `ResultSetMetaData` (base-table `attnotnull`) rather than
+ * derived from the join-aware node-tree analyzer — the safety net that covers every danger sign
+ * this file can detect regardless of WHY the join-aware path was unavailable: a detectable outer
+ * join in an `UPDATE`/`DELETE`/`MERGE` body (never `INSERT`, whose `RETURNING` cannot be
+ * null-extended by anything in its own source — see [isInsertBody]'s KDoc); a `RETURNING` that
+ * reads `OLD.`/`NEW.`, which applies regardless of statement kind, `INSERT` included (e.g.
+ * `INSERT ... ON CONFLICT DO UPDATE ... RETURNING OLD.col`, where `OLD` is `NULL` exactly when
+ * there was no conflict); a reference, by name, to a sibling that is itself dangerous (a sibling
+ * CTE for the CTE-body caller, or a dangerous CTE the OUTER statement references for the
+ * top-level-DML caller); or an `OLD`/`NEW` item-to-column mapping this file cannot confirm is
+ * reliable.
+ *
+ * Shared by both callers that need this exact logic: the CTE-body stub path (Phase 1 of
+ * `PgCatalogLoader.transformForViewCreation`) and the top-level, no-join-structure DML fallback
+ * (`PgCatalogLoader`'s replacement for its former `buildAllNonNullable`) — before this was
+ * extracted, only the CTE-body path applied any of this, leaving the top-level fallback to assert
+ * every column NOT NULL unconditionally (issue #207).
+ *
+ * @param body A SQL statement (a CTE body, or a top-level DML statement's own main-query text,
+ *   excluding any leading `WITH` clause) with no surrounding parentheses.
+ * @param dangerousSiblingNames Names already known to be dangerous that [body] might reference by
+ *   name — empty when there is nothing else in scope to be dangerous (e.g. a top-level statement
+ *   with no `WITH` clause).
+ * @param scopeNullExtendingScanToDmlSourceClause `false` (the CTE-body caller's default, and its
+ *   ~90 existing tests' baseline — left untouched) scans [body]'s ENTIRE text for a null-extending
+ *   construct, exactly as [hasNullExtendingConstruct] does on its own. `true` (the top-level DML
+ *   fallback's choice, `PgCatalogLoader.analyzeUnconvertibleDml`) instead scopes that scan to
+ *   [dmlSourceClauseRegion] — the ONLY region of a top-level `UPDATE`/`DELETE`/`MERGE` whose joins
+ *   can null-extend its own `RETURNING` list — when [body] IS one of those statement kinds
+ *   ([isUpdateDeleteOrMergeStatement]). A `LEFT JOIN` sitting inside a `WHERE ... IN (SELECT ...)`
+ *   subquery, for instance, only narrows which rows the DML touches; it cannot null-extend
+ *   anything `RETURNING` reads, so scanning it anyway (as the unscoped whole-body scan did)
+ *   fabricates nullable for a column that is genuinely NOT NULL — confirmed against real
+ *   PostgreSQL for `UPDATE t SET name=? WHERE t.id IN (SELECT a.id FROM a LEFT JOIN b ON b.id=a.id)
+ *   RETURNING t.id, t.name`, where both columns are NOT NULL (`t.id` is even the primary key).
+ *   `hasWhenNotMatchedBySourceClause` is NOT scoped by this parameter even when it is `true`: a
+ *   `MERGE`'s `WHEN` clauses live OUTSIDE its `USING ... ON` source clause, so it is always scanned
+ *   over the whole of [body]. When [body] is NOT a top-level `UPDATE`/`DELETE`/`MERGE` (e.g. the
+ *   CTE-body caller's own body is a plain `SELECT` reached via a degraded, non-DML path — see
+ *   `PgCatalogLoader.analyzeUnconvertibleDml`'s "R3" KDoc note), this parameter has no effect:
+ *   scoping to a DML source clause that doesn't exist would silently turn the join arm permanently
+ *   off for a body this predicate has no other way to protect, so the whole-body scan is kept
+ *   instead — over-nullability on that already-degraded path remains the deliberately accepted,
+ *   safe-direction outcome, not a bug this parameter is meant to fix.
+ * @return A predicate taking a 1-based result column index and the probe's total column count,
+ *   returning `true` when that column should be forced nullable regardless of what
+ *   `ResultSetMetaData.isNullable`/base-table `attnotnull` reports for it.
+ */
+internal fun forcedNullabilityPredicate(
+  body: String,
+  dangerousSiblingNames: Set<String>,
+  scopeNullExtendingScanToDmlSourceClause: Boolean = false,
+): (columnIndex: Int, totalColumnCount: Int) -> Boolean {
+  val oldOrNewAnalysis = oldOrNewReturningColumns(body)
+  val hasNullExtending = if (scopeNullExtendingScanToDmlSourceClause && isUpdateDeleteOrMergeStatement(body)) {
+    val sourceClauseRegion = dmlSourceClauseRegion(body)
+    val sourceClauseHasJoinOrGroupingSet = sourceClauseRegion != null &&
+      body.substring(sourceClauseRegion.first, sourceClauseRegion.last + 1).let {
+        hasOuterJoin(it) || hasGroupingSetConstruct(it)
+      }
+    sourceClauseHasJoinOrGroupingSet || hasWhenNotMatchedBySourceClause(body)
+  } else {
+    hasNullExtendingConstruct(body)
+  }
+  val forceAllNullable = referencesAnyName(body, dangerousSiblingNames) ||
+    (!isInsertBody(body) && hasNullExtending)
+  return { columnIndex, totalColumnCount ->
+    val oldOrNewColumns = oldOrNewAnalysis.forcedColumns
+    // null forcedColumns means oldOrNewReturningColumns already recognized the
+    // mapping as unreliable (a recognized star coincides with an OLD/NEW reference);
+    // a non-null but count-mismatched result means it DIDN'T recognize why, but the
+    // real column count from this probe proves the mapping unreliable anyway — either
+    // way, force every column rather than trust any specific index.
+    val oldOrNewMappingUnreliable = oldOrNewColumns == null ||
+      (oldOrNewColumns.isNotEmpty() && oldOrNewAnalysis.itemCount != totalColumnCount)
+    forceAllNullable || oldOrNewMappingUnreliable || oldOrNewColumns.orEmpty().contains(columnIndex)
   }
 }
 

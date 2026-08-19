@@ -621,20 +621,13 @@ internal class PgCatalogLoader(private val connection: Connection) {
    *   that preserve the join structure.
    * - For DML shapes [transformForViewCreation] cannot convert at all — plain `INSERT`, `UPDATE`
    *   without `FROM`, `DELETE` without `USING`, `MERGE` without `RETURNING`, or a top-level
-   *   conversion this file could not validate — this function returns [buildAllNonNullable]'s
-   *   result: EVERY result column asserted `false` (not nullable), regardless of the column's
-   *   real metadata. This is NOT an empty list, and the distinction matters in the UNSAFE
-   *   direction, not a merely pedantic one: `JdbcAnalyzer` treats an index missing from this list
-   *   as nullable (the conservative, safe default), so an actually-empty list would defer to that
-   *   safe default for every column — but the list this function actually returns here is
-   *   full-length and says the OPPOSITE (`false` = NOT NULL) for every one of them. This is an
-   *   ASSERTION, not a deferral, and it is wrong whenever ANY returned column is genuinely
-   *   nullable — which an ordinary `DELETE`/`UPDATE ... RETURNING` of a nullable column does
-   *   routinely, not rarely: no `OLD`/`NEW`, no `MERGE`, and no exotic syntax are needed to hit
-   *   it, only a plain top-level statement returning a column the schema itself declares
-   *   nullable. See [transformForViewCreation]'s "NOT CLAIMED" section for concrete shapes (all
-   *   pre-existing on `main`) where this specific fallback fabricates NOT NULL for a column that
-   *   is genuinely nullable at runtime.
+   *   conversion this file could not validate — this function returns
+   *   [analyzeUnconvertibleDml]'s result: real `ResultSetMetaData.isNullable` for every column,
+   *   OR'd with the same [forcedNullabilityPredicate] safety net the CTE-body stub path applies
+   *   (an outer join, a `RETURNING OLD`/`NEW` reference, or a reference to a dangerous CTE the
+   *   statement itself declares). See [analyzeUnconvertibleDml]'s KDoc for exactly what it can and
+   *   cannot see — in particular, it is still blind to a null-extending construct this file's
+   *   scanners don't recognize (see [hasNullExtendingConstruct]'s KDoc).
    *
    * @param sql The SQL query or DML statement to analyze.
    * @return A list of booleans, one per result column in SELECT order. `true` means the
@@ -650,24 +643,20 @@ internal class PgCatalogLoader(private val connection: Connection) {
       // View creation failed — SQL contains data-modifying statements.
       // Transform the SQL to remove DML while preserving join structure.
       val transformedSql = transformForViewCreation(viewSql)
-        // No join structure was found (or convertible) — NOT a safe fallback: this asserts every
-        // column NOT NULL (see this function's own KDoc), which is wrong whenever the statement's
-        // OWN un-convertible RETURNING can genuinely be null (OLD/NEW, or a join this file failed
-        // to detect or could not validate). Accepted here only because it is what this file
-        // returns for every DML shape it cannot otherwise analyze — not because it is safe.
-        ?: return buildAllNonNullable(viewSql)
+        // No join structure was found (or convertible) — fall back to a metadata-based probe: see
+        // analyzeUnconvertibleDml's KDoc for what it can and cannot see.
+        ?: return analyzeUnconvertibleDml(viewSql)
       // transformForViewCreation validates every conversion it makes against the original SQL's
       // own column signature before returning it (see its KDoc), so this SHOULD always prepare.
       // Caught anyway, not re-thrown, as defense in depth: an `SQLException` escaping from here
       // would propagate out of queryColumnNullability entirely — nothing else on the call stack
       // catches it — turning a nullability-analysis gap into a build failure on SQL PostgreSQL
       // itself accepts fine. A future conversion bug this file's validation doesn't catch must
-      // degrade to the same fallback as "no join structure found" above — an assertion, not a
-      // safe deferral, but never an abort.
+      // degrade to the same fallback as "no join structure found" above, never an abort.
       try {
         analyzeViaTemporaryView(transformedSql)
       } catch (_: SQLException) {
-        buildAllNonNullable(viewSql)
+        analyzeUnconvertibleDml(viewSql)
       }
     }
   }
@@ -1030,8 +1019,9 @@ internal class PgCatalogLoader(private val connection: Connection) {
    *
    * @return The transformed SQL, or `null` if the DML has no join structure (or Phase 2's
    *   conversion could not be validated) — see [queryColumnNullability]'s KDoc for what the
-   *   caller actually does with `null`: NOT an empty nullability list, but
-   *   [buildAllNonNullable]'s full-length, every-column-`false` (asserted NOT NULL) result.
+   *   caller actually does with `null`: [analyzeUnconvertibleDml]'s result (real
+   *   `ResultSetMetaData.isNullable` OR'd with [forcedNullabilityPredicate]), not an empty
+   *   nullability list.
    */
   private fun transformForViewCreation(sql: String): String? {
     // Phase 1: Convert data-modifying CTE bodies to join-preserving SELECTs where possible,
@@ -1124,20 +1114,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
               //   forward/backward reference to a plain, join-free sibling (e.g. `later AS
               //   (SELECT 'q'::TEXT AS lbl)`) does not lose its real NOT NULL columns to this
               //   safety net.
-              val oldOrNewAnalysis = oldOrNewReturningColumns(body)
-              val forceAllNullable = referencesAnyName(body, dangerousSiblingNames - cte.name) ||
-                (!isInsertBody(body) && hasNullExtendingConstruct(body))
-              val forceNullableColumn: (Int, Int) -> Boolean = { columnIndex, totalColumnCount ->
-                val oldOrNewColumns = oldOrNewAnalysis.forcedColumns
-                // null forcedColumns means oldOrNewReturningColumns already recognized the
-                // mapping as unreliable (a recognized star coincides with an OLD/NEW reference);
-                // a non-null but count-mismatched result means it DIDN'T recognize why, but the
-                // real column count from this probe proves the mapping unreliable anyway — either
-                // way, force every column rather than trust any specific index.
-                val oldOrNewMappingUnreliable = oldOrNewColumns == null ||
-                  (oldOrNewColumns.isNotEmpty() && oldOrNewAnalysis.itemCount != totalColumnCount)
-                forceAllNullable || oldOrNewMappingUnreliable || oldOrNewColumns.orEmpty().contains(columnIndex)
-              }
+              val forceNullableColumn = forcedNullabilityPredicate(body, dangerousSiblingNames - cte.name)
               buildSelectStub(prefixes, body, fullWithClausePrefix, cte.rawName, forceNullableColumn) ?: body
             }
             append(stubOrBody)
@@ -1566,56 +1543,51 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * grouping set) is still not recognized, and its `RETURNING` columns may still be fabricated NOT
    * NULL.
    *
-   * EVERYTHING ABOVE IN THIS KDOC IS SCOPED TO THIS FUNCTION'S CALLERS — the CTE-body path (Phase
-   * 1 of `transformForViewCreation`). The TOP-LEVEL (non-CTE) DML path (Phase 2) has NO equivalent
-   * safety net at all: this function, [oldOrNewReturningColumns], [referencesAnyName], and
-   * [hasNullExtendingConstruct] are never consulted for a bare top-level statement — there is no
-   * stub path for top-level DML to fall back to, only `queryColumnNullability`'s
-   * `buildAllNonNullable` fallback,
-   * which asserts EVERY column NOT NULL, unconditionally, whenever Phase 2's conversion attempt
-   * fails or is rejected. [hasWhenNotMatchedBySourceClause] is DIFFERENT: it IS consulted for a
-   * top-level `MERGE`, via `convertMergeToSelect` (called from `convertDmlToSelect`, which Phase 2
-   * calls directly) — not as a stub-path trigger, but as part of the conversion itself, to choose
-   * `RIGHT JOIN` over a plain `JOIN` when modeling the `MERGE`'s shape. When that conversion
-   * succeeds and validates, a top-level `WHEN NOT MATCHED BY SOURCE` `MERGE` is analyzed
-   * ACCURATELY by the join-aware node-tree analyzer, not approximated — confirmed against real
-   * PostgreSQL: this is a case HEAD fixes relative to `main` (which never attempted `MERGE`
-   * conversion at all), flipping a fabricated NOT NULL to the correct nullable.
+   * EVERYTHING ABOVE IN THIS KDOC WAS ONCE SCOPED ONLY TO THIS FUNCTION'S CALLERS — the CTE-body
+   * path (Phase 1 of `transformForViewCreation`) — with the TOP-LEVEL (non-CTE) DML path (Phase 2)
+   * having no equivalent safety net at all: `queryColumnNullability`'s fallback for a Phase-2
+   * conversion that failed or was rejected used to assert EVERY column NOT NULL, unconditionally,
+   * discarding the real `ResultSetMetaData.isNullable` it had already read. Issue #207 fixed this:
+   * `analyzeUnconvertibleDml` now applies the SAME [forcedNullabilityPredicate] this function
+   * builds for a CTE body — built instead from the top-level statement's own main-query text and
+   * whatever dangerous CTE names its own `WITH` clause declares — OR'd with real
+   * `ResultSetMetaData.isNullable`, rather than discarding both. [hasWhenNotMatchedBySourceClause]
+   * is DIFFERENT from this shared safety net: it IS consulted for a top-level `MERGE`, via
+   * `convertMergeToSelect` (called from `convertDmlToSelect`, which Phase 2 calls directly) — not
+   * as a fallback trigger, but as part of the conversion itself, to choose `RIGHT JOIN` over a
+   * plain `JOIN` when modeling the `MERGE`'s shape. When that conversion succeeds and validates, a
+   * top-level `WHEN NOT MATCHED BY SOURCE` `MERGE` is analyzed ACCURATELY by the join-aware
+   * node-tree analyzer, not approximated.
    *
-   * The residual top-level gap, then, is specifically: `OLD`/`NEW` references, `merge_action()`,
-   * and any other shape that forces Phase 2's conversion to be rejected (or never attempted, e.g.
-   * plain `INSERT`) — landing on `buildAllNonNullable` with no join-awareness of its own. Five
-   * shapes confirmed against real PostgreSQL to fabricate NOT NULL this way, all pre-existing on
-   * `main` (this function's CTE-path protections do not apply to any of them, since none involve
-   * a CTE):
+   * Five shapes confirmed against real PostgreSQL to have fabricated NOT NULL before issue #207's
+   * fix, all now correctly reported nullable via `analyzeUnconvertibleDml`'s shared safety net
+   * (see `QueryAnalysisTest.DmlReturning` for the regression tests):
    * - `MERGE INTO tgt USING a ON a.id = tgt.id WHEN NOT MATCHED THEN INSERT (id, tval) VALUES
    *   (a.id, a.aval) RETURNING OLD.tval AS oldv` — a freshly `INSERT`ed row via `MERGE` has no
-   *   prior row, so `OLD.tval` is genuinely `NULL`; reported NOT NULL.
+   *   prior row, so `OLD.tval` is genuinely `NULL`; now forced nullable by the `OLD`/`NEW`
+   *   per-column trigger, regardless of statement kind.
    * - `MERGE INTO tgt USING a ON a.id = tgt.id WHEN MATCHED THEN DELETE RETURNING NEW.tval` — a
-   *   deleted row has no resulting row, so `NEW.tval` is genuinely `NULL`; reported NOT NULL.
+   *   deleted row has no resulting row, so `NEW.tval` is genuinely `NULL`; same trigger.
    * - `INSERT INTO tgt VALUES (99, 'x') ON CONFLICT (id) DO UPDATE SET tval = 'y' RETURNING
-   *   OLD.tval` (top-level, no CTE) — a fresh insert (no conflict) has no prior row; reported NOT
-   *   NULL.
+   *   OLD.tval` (top-level, no CTE) — a fresh insert (no conflict) has no prior row; same trigger.
    * - `MERGE INTO tgt USING (SELECT a.id, b.bval FROM a LEFT JOIN b ON b.id = a.id) s ON s.id =
    *   tgt.id WHEN MATCHED THEN UPDATE SET tval = 'z' RETURNING merge_action() AS act, s.bval` —
-   *   `b`'s `LEFT JOIN` genuinely null-extends `s.bval`; reported NOT NULL only because
-   *   `merge_action()` forces the conversion to be rejected — the SAME query WITHOUT
-   *   `merge_action()` in `RETURNING` converts successfully and is correctly reported nullable,
-   *   confirming the outer join itself is not the obstacle, only the rejected-conversion fallback
-   *   having no join-awareness of its own.
+   *   `b`'s `LEFT JOIN` genuinely null-extends `s.bval`; now forced nullable by the
+   *   null-extending-construct trigger (which — same as the CTE-body case — forces EVERY column,
+   *   `act` included, not just `bval`; see this KDoc's own over-approximation notes above).
    * - The everyday, no-`OLD`/`NEW`/`MERGE` case: a plain `DELETE FROM t WHERE id = ? RETURNING id,
    *   name, note` or `UPDATE ... RETURNING ..., docn`, where `note`/`docn` is a genuinely nullable
-   *   column, reports it NOT NULL — a plain `DELETE`/`UPDATE` with no `FROM`/`USING` clause has no
-   *   join structure for [convertDmlToSelect] to convert in the first place (see its KDoc), so it
-   *   goes straight to `buildAllNonNullable`. That function DOES prepare the statement and DOES
-   *   get real `ResultSetMetaData` back — the same object `tryPrepareStub` reads
-   *   `isNullable(i)` from — but discards it, hardcoding every column `false` instead of
-   *   consulting it. The SAME statement, wrapped in a CTE (`WITH d AS (DELETE ... RETURNING id,
-   *   name, note) SELECT * FROM d`), is reported correctly, because the CTE-body stub path
-   *   (Phase 1) reads that same metadata's `isNullable(i)` rather than ignoring it. This is the
-   *   single most likely of these five shapes to affect a real user: it requires no `MERGE`, no
-   *   PostgreSQL 18, and no CTE avoidance — just an ordinary top-level `DELETE`/`UPDATE ...
-   *   RETURNING` of a nullable column.
+   *   column — a plain `DELETE`/`UPDATE` with no `FROM`/`USING` clause has no join structure for
+   *   [convertDmlToSelect] to convert in the first place (see its KDoc), so it goes straight to
+   *   `analyzeUnconvertibleDml`, which now consults `ResultSetMetaData.isNullable` instead of
+   *   discarding it. This is the single most likely of these five shapes to affect a real user: it
+   *   requires no `MERGE`, no PostgreSQL 18, and no CTE avoidance — just an ordinary top-level
+   *   `DELETE`/`UPDATE ... RETURNING` of a nullable column.
+   *
+   * The residual gap noted above ([hasNullExtendingConstruct] missing an arbitrary `ON` condition
+   * over some other NULL-producing source shape) applies equally to `analyzeUnconvertibleDml`'s
+   * top-level use of the same predicate — this fix closes the "no safety net at all" gap, not
+   * every gap in what the safety net itself can detect.
    *
    * [precisionPrefixes] are tried first, in order, each as `prefix + " " + body` (or `body`
    * alone for an empty prefix — correct precisely when `body` is the first CTE, since then there
@@ -1792,10 +1764,11 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * it (`column ins.myId does not exist`) when this stub is used to create the temporary view
    * [analyzeViaTemporaryView] reads nullability from. That failure never escapes as a build
    * error: [queryColumnNullability] catches it around its own [analyzeViaTemporaryView] calls
-   * (see its inline "never an abort" note) and silently degrades to [buildAllNonNullable],
-   * which asserts EVERY column of the CTE NOT NULL regardless of truth — so the CTE's real
-   * nullability is lost, and a genuinely nullable `RETURNING` column is wrongly reported NOT
-   * NULL. This stub is throwaway SQL used only to
+   * (see its inline "never an abort" note) and silently degrades to [analyzeUnconvertibleDml],
+   * which reads real `ResultSetMetaData.isNullable` OR'd with [forcedNullabilityPredicate] rather
+   * than the join-aware node-tree analyzer this quoting bug prevented from running — so the CTE's
+   * exact nullability is lost in favor of this coarser, still-safe approximation. This stub is
+   * throwaway SQL used only to
    * probe nullability, so quoting unconditionally (unlike
    * `JdbcAnalyzer.buildIdentifierQuoter`'s conditional quoting, which matters for generated,
    * user-facing SQL) is always valid and also handles names like `?column?` that aren't valid
@@ -1804,17 +1777,88 @@ internal class PgCatalogLoader(private val connection: Connection) {
   private fun quoteStubColumnAlias(name: String): String = "\"" + name.replace("\"", "\"\"") + "\""
 
   /**
-   * Returns a list of `false` values matching the result column count of [sql].
+   * Determines result-column nullability for [sql] when [transformForViewCreation] found no join
+   * structure to convert (or its conversion attempt failed to prepare) — the top-level (non-CTE)
+   * counterpart of the CTE-body stub path's [forcedNullabilityPredicate] safety net (issue #207).
    *
-   * Used when the SQL has no join structure that could produce outer-join nullability
-   * (e.g., plain INSERT/DELETE/UPDATE without FROM/USING, or MERGE). The column count is
-   * determined by `PreparedStatement.getMetaData()`, letting PostgreSQL parse the statement.
+   * Used for DML shapes with no join structure for [convertDmlToSelect] to convert in the first
+   * place (a plain `INSERT`, `UPDATE`/`DELETE` without `FROM`/`USING`, or `MERGE` without
+   * `RETURNING`), and for a top-level conversion this file attempted but could not validate (e.g.
+   * a `RETURNING` that reads PostgreSQL 18's `OLD`/`NEW`, or a `MERGE`'s `merge_action()`).
+   *
+   * Unlike the CTE-body stub path — which builds a throwaway probe SQL statement and forces
+   * specific columns to `NULL::<type>` in its text — this reads real `ResultSetMetaData` directly
+   * from [sql] itself (already a preparable statement; no probe construction is needed) and ORs
+   * two independent signals per column: `ResultSetMetaData.isNullable` (base-table `attnotnull`,
+   * blind to outer-join null extension) and [forcedNullabilityPredicate] (the same OLD/NEW and
+   * dangerous-sibling-CTE triggers the CTE-body path applies). The OR is monotone in the safe
+   * direction: the predicate can only flip a column from NOT NULL toward nullable, never the
+   * reverse, so a genuinely NOT NULL column reported as such by `ResultSetMetaData` stays NOT NULL
+   * unless the predicate itself forces it.
+   *
+   * UNLIKE the CTE-body path, this caller passes `scopeNullExtendingScanToDmlSourceClause = true`:
+   * the null-extending-construct arm (an outer join, or a `MERGE`'s grouping-set supertotal row)
+   * is scanned only over [sql]'s own `FROM`/`USING`/`USING ... ON` source clause (see
+   * [dmlSourceClauseRegion]), not the whole statement text. A flat whole-body scan here would
+   * force a column nullable because of a `LEFT JOIN` sitting inside an unrelated `WHERE ... IN
+   * (SELECT ...)` subquery that cannot null-extend `RETURNING` at all — confirmed against real
+   * PostgreSQL to over-nullify exactly that shape before this scoping was added (issue #207,
+   * round 2). The CTE-body path keeps the unscoped whole-body scan (its default parameter value)
+   * because [forcedNullabilityPredicate]'s scoped variant still falls back to the whole-body scan
+   * for any body that ISN'T itself a top-level `UPDATE`/`DELETE`/`MERGE` (e.g. a plain `SELECT`
+   * CTE body) — see [forcedNullabilityPredicate]'s KDoc for why that fallback is deliberate, not
+   * an oversight.
+   *
+   * [forcedNullabilityPredicate] is built from [sql]'s own main-query text (after any leading
+   * `WITH` clause, matching what the CTE-body path passes for its own body) and, when [sql] has a
+   * `WITH` clause of its own, the [computeDangerousSiblingNames] of its CTEs — so a top-level
+   * statement that references one of its OWN dangerous CTEs by name (e.g. a plain `INSERT`, which
+   * has no join structure for Phase 2 to convert but can still read a dangerous sibling's output)
+   * is covered the same way a CTE referencing another CTE's danger is.
+   *
+   * `ResultSetMetaData.columnNullableUnknown` counts as NOT NULL here — DELIBERATELY THE OPPOSITE
+   * of [tryPrepareStub], which treats that same value as nullable. The two sites are not the same
+   * rule reused twice; they differ because the baseline each one must stay monotone against
+   * differs. This function's predecessor, [buildAllNonNullable] (removed by issue #207's fix),
+   * treated every column NOT NULL unconditionally, `columnNullableUnknown` included — an
+   * expression or literal `RETURNING` item (`1 AS one`, `'x'::TEXT AS lbl`) reports exactly that
+   * value, and PostgreSQL never returns `NULL` for a literal, so treating it as NOT NULL here (as
+   * `buildAllNonNullable` always did) is not a compromise, it is simply correct. Treating it as
+   * nullable here instead would flip those columns' generated type from non-nullable to nullable
+   * relative to what shipped as the pre-#207 baseline, for a column that was never wrong before —
+   * a regression this function must not introduce even while fixing the join/attnotnull gap
+   * `buildAllNonNullable` had. [tryPrepareStub]'s CTE-body stub path has no such baseline to stay
+   * monotone against: it has always treated `columnNullableUnknown` as nullable, and roughly 90
+   * existing CTE-path tests encode that choice — changing it now would be an unrelated, unforced
+   * behavior change to a path issue #207 does not touch.
+   *
+   * Residual gap accepted, not fixed, by this choice: `RETURNING lower(nullable_col)` also reports
+   * `columnNullableUnknown` (PostgreSQL cannot derive NOT NULL through an arbitrary function call),
+   * so this function reports it NOT NULL even though `lower` of a nullable column is itself
+   * genuinely nullable. This is identical to `main`'s behavior for the same query — not a
+   * regression — and is tracked by issue #226 rather than fixed here.
+   *
+   * @return An empty list if [sql] cannot be prepared or has no result columns — [JdbcAnalyzer]
+   *   treats a missing index as nullable (the safe default), so this is a safe, not merely
+   *   convenient, degradation.
    */
-  private fun buildAllNonNullable(sql: String): List<Boolean> {
+  private fun analyzeUnconvertibleDml(@Language("PostgreSQL") sql: String): List<Boolean> {
+    val cteClause = parseCteClause(sql)
+    val dangerousSiblingNames = cteClause?.let { computeDangerousSiblingNames(sql, it.definitions) }.orEmpty()
+    val mainQueryText = cteClause?.let { sql.substring(it.mainQueryStart) } ?: sql
+    val forceNullableColumn = forcedNullabilityPredicate(
+      mainQueryText,
+      dangerousSiblingNames,
+      scopeNullExtendingScanToDmlSourceClause = true,
+    )
     return try {
       connection.prepareStatement(sql).use { preparedStatement ->
         val metadata = preparedStatement.metaData ?: return emptyList()
-        List(metadata.columnCount) { false }
+        List(metadata.columnCount) { index ->
+          val columnIndex = index + 1
+          forceNullableColumn(columnIndex, metadata.columnCount) ||
+            metadata.isNullable(columnIndex) == ResultSetMetaData.columnNullable
+        }
       }
     } catch (_: SQLException) {
       emptyList()

@@ -2460,10 +2460,11 @@ class QueryAnalysisTest {
       // findMatchingCloseParenthesis's body-boundary detection for that CTE — parseCteClause
       // then stopped after that ONE (corrupted) definition, treating "upd" as part of the
       // garbled MAIN QUERY text instead of a second CTE. "upd" has a LEFT JOIN specifically so
-      // this is visible: the garbled-query fallback (buildAllNonNullable, "assume every column
-      // non-null") happens to give the RIGHT answer for a plain INSERT (as in the SqlUtilsTest
-      // e2e companion above), but gives the WRONG answer here, where the true answer is
-      // nullable. Verified against real Postgres (inserting an "a" row with no matching "b"
+      // this is visible: the garbled-query fallback (the top-level no-join-structure DML path,
+      // "assume every column non-null" before issue #207's fix) happens to give the RIGHT answer
+      // for a plain INSERT (as in the SqlUtilsTest e2e companion above), but gives the WRONG
+      // answer here, where the true answer is nullable. Verified against real Postgres (inserting
+      // an "a" row with no matching "b"
       // row): the query returns v = NULL.
       val query = analyzeWithSchema(
         """
@@ -3399,7 +3400,9 @@ class QueryAnalysisTest {
       // case alias did. Deliberately concatenates the nullable "name" column (rather than a
       // literal like "RETURNING 1", which is always non-null and would pass either way, masking
       // the bug the same way "id" did in the test above) so the CREATE-VIEW failure's
-      // buildAllNonNullable fallback is observable: it wrongly asserts NOT NULL here.
+      // top-level analyzeUnconvertibleDml fallback (queryColumnNullability's last resort when
+      // analyzeViaTemporaryView on the transformed SQL itself throws) is observable — before
+      // issue #207's fix, that fallback wrongly asserted NOT NULL here regardless of truth.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id SERIAL NOT NULL, name TEXT)",
         """
@@ -3425,9 +3428,9 @@ class QueryAnalysisTest {
       // CREATE VIEW. The outer query's quoted reference to ins."myId" then fails to resolve
       // against the stub ("column ins.myId does not exist" — verified directly against real
       // Postgres via psql). Inside queryColumnNullability, that SQLException is caught and
-      // degraded to buildAllNonNullable's fallback, which asserts EVERY column NOT NULL
-      // regardless of truth — so "name" is nullable in the schema (no NOT NULL constraint),
-      // but before the fix this test wrongly reports it NOT NULL. Deliberately uses a nullable
+      // degraded to analyzeUnconvertibleDml's fallback — before issue #207's fix, that fallback
+      // asserted EVERY column NOT NULL regardless of truth — so "name" is nullable in the schema
+      // (no NOT NULL constraint), but before the fix this test wrongly reports it NOT NULL. Deliberately uses a nullable
       // source column (not id, which is NOT NULL and would pass either way, masking the bug)
       // so the wrong fallback is actually observable as an assertion failure.
       val query = analyzeWithSchema(
@@ -3643,6 +3646,17 @@ class QueryAnalysisTest {
       // fine. Verified against real Postgres (a matched row, no WHEN NOT MATCHED branch — every
       // returned row genuinely has a target AND source row present): act = 'UPDATE', aval = 'a1',
       // id = 1 — all three genuinely NOT NULL.
+      //
+      // Issue #207: "act", "aval", and "id" are still asserted NOT NULL here for the SAME reason
+      // they always were (this is not one of #207's fixed shapes) — analyzeUnconvertibleDml reads
+      // real ResultSetMetaData.isNullable for all three, "aval"/"id" via a simple column reference
+      // tracing to its source column's attnotnull, and "act" (a bare function call) via
+      // `columnNullableUnknown`. That last value is deliberately treated as NOT NULL here, the
+      // OPPOSITE of the CTE-body stub path's treatment of the same value — see
+      // `analyzeUnconvertibleDml`'s KDoc for why the two sites differ: this path must stay
+      // monotone against `buildAllNonNullable`'s pre-#207 baseline (which always asserted every
+      // column NOT NULL, `columnNullableUnknown` included), so an expression like `merge_action()`
+      // that was never wrong before must not newly flip to nullable now.
       val query = analyzeWithSchema(
         """
         CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
@@ -3666,6 +3680,12 @@ class QueryAnalysisTest {
       // Same FIX 1 crash, star-list variant. Verified against real Postgres (same matched-row
       // shape as above): merge_action = 'UPDATE', a.id = 1, a.aval = 'a1', tgt.id = 1, tgt.tval =
       // 'z' — all five genuinely NOT NULL.
+      //
+      // Issue #207: same distinction as the test above — the four plain column references (both
+      // "id"s, "aval", "tval") are NOT NULL via honestly-read ResultSetMetaData, while
+      // "merge_action" (a bare function call, `columnNullableUnknown`) is also reported NOT NULL —
+      // see the previous test's comment for why `columnNullableUnknown` is treated as NOT NULL
+      // here specifically (staying monotone against the pre-#207 `buildAllNonNullable` baseline).
       val query = analyzeWithSchema(
         """
         CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
@@ -3678,17 +3698,39 @@ class QueryAnalysisTest {
         """.trimIndent(),
       )
       assertThat(query.columns).hasSize(5)
-      for (column in query.columns) {
-        assertThat(column.notNull).isTrue()
-      }
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+      assertThat(query.columns[2].notNull).isTrue()
+      assertThat(query.columns[3].notNull).isTrue()
+      assertThat(query.columns[4].notNull).isTrue()
     }
 
     @Test
     fun `top-level MERGE RETURNING OLD-col does not abort generation`() {
       assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // Same FIX 1 crash, OLD-reference variant (also not valid outside RETURNING, same failure
-      // mode as merge_action()). Verified against real Postgres (matched-row-only MERGE, so every
-      // returned row's OLD is the pre-existing target row, always present): OLD.tval = 'x'.
+      // mode as merge_action()) — rejected conversion falls through to analyzeUnconvertibleDml.
+      // Verified against real Postgres (matched-row-only MERGE, so every returned row's OLD is the
+      // pre-existing target row, always present): OLD.tval = 'x', genuinely NOT NULL for this
+      // exact shape. Before issue #207's fix, this happened to be reported correctly (NOT NULL)
+      // only by coincidence, via the old fallback that asserted every column NOT NULL
+      // unconditionally. analyzeUnconvertibleDml now applies the SAME per-column OLD/NEW forcing
+      // the CTE-body stub path always has (see `UPDATE RETURNING OLD-col alongside the target's
+      // own column stays NOT NULL for the target column` above for the CTE-wrapped precedent),
+      // which forces every OLD/NEW-referencing column nullable BY DESIGN regardless of whether a
+      // specific MERGE shape happens to make it always present — an accepted, deliberate loss of
+      // precision in the safe direction, not a regression.
+      //
+      // This assertion CANNOT be restored to main's `isTrue()`: this column's own nullability is
+      // driven entirely by the per-column OLD/NEW forcing above, never by
+      // `metadata.isNullable`/`columnNullableUnknown` (there is no non-OLD/NEW column here at
+      // all), so it is untouched by, and independent of, the `columnNullableUnknown` handling fix
+      // (see the `merge_action()` tests above). Reverting it to NOT NULL would mean removing the
+      // OLD/NEW forcing for THIS shape specifically while keeping it for `WHEN NOT MATCHED THEN
+      // INSERT ... RETURNING OLD.tval` (the "freshly-inserted row" test below), which the text scan
+      // this predicate runs on cannot distinguish — both are `RETURNING OLD.tval` on a single-item
+      // list; only the `WHEN` branches differ, and no static scan tells them apart. Keeping the
+      // over-approximation for both is the same accepted tradeoff already documented above.
       val query = analyzeWithSchema(
         """
         CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
@@ -3701,7 +3743,251 @@ class QueryAnalysisTest {
         """.trimIndent(),
       )
       assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `MERGE INTO with WHEN NOT MATCHED THEN INSERT RETURNING OLD-col is nullable for a freshly-inserted row`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // Issue #207 shape 1: a freshly INSERTed row via MERGE has no prior row, so OLD.tval is
+      // genuinely NULL — before the fix, the top-level no-join-structure fallback
+      // (analyzeUnconvertibleDml's predecessor) asserted it NOT NULL unconditionally. Verified
+      // against real Postgres (a is INSERT INTO a VALUES (1, 'a1'), tgt starts empty, so a.id has
+      // no matching tgt row and WHEN NOT MATCHED fires): oldv = NULL.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
+        CREATE TABLE a (id INT NOT NULL, aval TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        MERGE INTO tgt USING a ON a.id = tgt.id
+        WHEN NOT MATCHED THEN INSERT (id, tval) VALUES (a.id, a.aval)
+        RETURNING OLD.tval AS oldv
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `MERGE INTO with WHEN MATCHED THEN DELETE RETURNING NEW-col is nullable for a deleted row`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING NEW requires PostgreSQL 18+")
+      // Issue #207 shape 2: a deleted row has no resulting row, so NEW.tval is genuinely NULL —
+      // same fallback, same fix. Verified against real Postgres (tgt has a matching row for a):
+      // NEW.tval = NULL.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
+        CREATE TABLE a (id INT NOT NULL, aval TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        MERGE INTO tgt USING a ON a.id = tgt.id
+        WHEN MATCHED THEN DELETE
+        RETURNING NEW.tval
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `INSERT ON CONFLICT DO UPDATE RETURNING OLD-col is nullable for a freshly-inserted row`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // Issue #207 shape 3: a fresh INSERT (no conflicting row) has no prior row, so OLD.tval is
+      // genuinely NULL — a plain top-level INSERT ... ON CONFLICT with no CTE and no MERGE at all,
+      // the simplest possible top-level DML shape this fix covers. Verified against real Postgres
+      // (tgt starts empty, so the INSERT hits no conflict): OLD.tval = NULL.
+      val query = analyzeWithSchema(
+        "CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL)",
+        """
+        INSERT INTO tgt VALUES (99, 'x') ON CONFLICT (id) DO UPDATE SET tval = 'y'
+        RETURNING OLD.tval
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `top-level MERGE RETURNING merge_action() alongside a LEFT JOIN in USING forces every column nullable`() {
+      assumeTrue(pgVersion.toInt() >= 17, "merge_action() requires PostgreSQL 17+")
+      // Issue #207 shape 4: merge_action() forces Phase 2's conversion to be rejected (not valid
+      // outside MERGE's own RETURNING), so this falls to analyzeUnconvertibleDml — which now
+      // detects the LEFT JOIN nested in the USING subquery via the same null-extending-construct
+      // trigger the CTE-body stub path already has, forcing EVERY column nullable, "act" included
+      // — the same accepted over-approximation the CTE-wrapped equivalent test above (`MERGE with
+      // a LEFT JOIN nested in its USING subquery reports the joined column nullable`) documents,
+      // now reached for a bare top-level statement instead of one wrapped in a CTE. Verified
+      // against real Postgres (b has no row matching a): act = 'UPDATE', bval = NULL (genuinely
+      // nullable — the LEFT JOIN's real effect).
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
+        CREATE TABLE a (id INT NOT NULL, aval TEXT NOT NULL);
+        CREATE TABLE b (id INT NOT NULL, bval TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        MERGE INTO tgt USING (SELECT a.id, b.bval FROM a LEFT JOIN b ON b.id = a.id) s ON s.id = tgt.id
+        WHEN MATCHED THEN UPDATE SET tval = 'z'
+        RETURNING merge_action() AS act, s.bval
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `top-level DELETE RETURNING reports a nullable column as nullable, not NOT NULL`() {
+      // Issue #207 shape 5: the everyday, no-OLD-NEW-MERGE case — a plain top-level DELETE with no
+      // FROM/USING clause has no join structure for convertDmlToSelect to convert, so it goes
+      // straight to analyzeUnconvertibleDml, which now reads real ResultSetMetaData.isNullable
+      // instead of discarding it. "note" has no NOT NULL constraint, so it is genuinely nullable;
+      // "id" and "name" are declared NOT NULL and stay that way — this is not "mark everything
+      // nullable", only "consult the metadata this fallback had all along".
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, name TEXT NOT NULL, note TEXT)",
+        "DELETE FROM t WHERE id = ? RETURNING id, name, note",
+      )
+      assertThat(query.columns).hasSize(3)
       assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+      assertThat(query.columns[2].notNull).isFalse()
+    }
+
+    @Test
+    fun `top-level UPDATE RETURNING reports a nullable column as nullable, not NOT NULL`() {
+      // UPDATE equivalent of the DELETE shape above — a plain top-level UPDATE with no FROM
+      // clause has no join structure to convert either, so it hits the same fallback.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, name TEXT NOT NULL, note TEXT)",
+        "UPDATE t SET name = ? WHERE id = ? RETURNING id, name, note",
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+      assertThat(query.columns[2].notNull).isFalse()
+    }
+
+    @Test
+    fun `top-level UPDATE with a LEFT JOIN only inside a WHERE subquery does not force RETURNING nullable`() {
+      // The null-extending-construct arm used to scan the WHOLE statement's text for an outer
+      // join, not just the clause whose join structure can actually reach RETURNING — so a LEFT
+      // JOIN sitting inside an unrelated `WHERE ... IN (subquery)` (which only narrows which rows
+      // the UPDATE touches, and cannot null-extend anything in RETURNING) fabricated nullable for
+      // both columns. Verified against real Postgres 18 (a matching row exists so the WHERE
+      // filter passes; t.id is even the PRIMARY KEY): id and name are genuinely NOT NULL.
+      // dmlSourceClauseRegion returns null here (no top-level FROM clause on this UPDATE at all),
+      // so the join arm is forced OFF rather than scanning the WHERE subquery's own LEFT JOIN.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT PRIMARY KEY, name TEXT NOT NULL);
+        CREATE TABLE a (id INT NOT NULL);
+        CREATE TABLE b (id INT NOT NULL)
+        """.trimIndent(),
+        """
+        UPDATE t SET name = 'x'
+        WHERE t.id IN (SELECT a.id FROM a LEFT JOIN b ON b.id = a.id)
+        RETURNING t.id, t.name
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `top-level DELETE with a LEFT JOIN only inside a WHERE subquery does not force RETURNING nullable`() {
+      // DELETE equivalent of the UPDATE case above — a LEFT JOIN inside a `WHERE ... IN
+      // (subquery)` cannot null-extend a plain DELETE's RETURNING list either, and this DELETE
+      // has no top-level USING clause at all for dmlSourceClauseRegion to scope to.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT PRIMARY KEY, name TEXT NOT NULL);
+        CREATE TABLE a (id INT NOT NULL);
+        CREATE TABLE b (id INT NOT NULL)
+        """.trimIndent(),
+        """
+        DELETE FROM t
+        WHERE t.id IN (SELECT a.id FROM a LEFT JOIN b ON b.id = a.id)
+        RETURNING t.id, t.name
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `top-level UPDATE FROM with OLD-col still finds the real LEFT JOIN in its scoped region`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // A bare `UPDATE ... FROM a LEFT JOIN b ... RETURNING t.name, b.bval` converts and validates
+      // successfully via the join-aware node-tree analyzer, never reaching
+      // analyzeUnconvertibleDml at all — so it cannot exercise the scoped fallback path by itself.
+      // Adding a RETURNING OLD.col forces the structural conversion to be rejected (OLD is not a
+      // valid range variable in the converted SELECT), landing on analyzeUnconvertibleDml — the
+      // top-level counterpart of `stub path forces every column nullable when RETURNING OLD-col
+      // accompanies a real LEFT JOIN` above. dmlSourceClauseRegion scopes the join scan to this
+      // UPDATE's own FROM ... WHERE region, which DOES contain the real LEFT JOIN, so bval (and,
+      // by the same accepted over-approximation as the CTE case, oldname and name too) are forced
+      // nullable — proving the scoped region still finds a join that genuinely belongs to the
+      // source clause, not merely refusing to force anything at all.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL);
+        CREATE TABLE a (id INT NOT NULL);
+        CREATE TABLE b (id INT NOT NULL, bval TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        UPDATE t SET name = 'x' FROM a LEFT JOIN b ON b.id = a.id WHERE t.id = a.id
+        RETURNING OLD.name AS oldname, t.name, b.bval
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isFalse()
+    }
+
+    @Test
+    fun `top-level DELETE USING with OLD-col still finds the real LEFT JOIN in its scoped region`() {
+      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      // DELETE USING equivalent of the UPDATE FROM case above.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL);
+        CREATE TABLE a (id INT NOT NULL);
+        CREATE TABLE b (id INT NOT NULL, bval TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        DELETE FROM t USING a LEFT JOIN b ON b.id = a.id WHERE t.id = a.id
+        RETURNING OLD.name AS oldname, t.name, b.bval
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isFalse()
+    }
+
+    @Test
+    fun `INSERT RETURNING a literal and a bare integer constant reports both NOT NULL`() {
+      // R2 regression: a literal or constant expression RETURNING item reports
+      // ResultSetMetaData.columnNullableUnknown (PostgreSQL cannot describe a literal's
+      // nullability any more precisely than that) — a literal is never NULL, so
+      // analyzeUnconvertibleDml must treat that as NOT NULL, matching the pre-#207
+      // buildAllNonNullable baseline this path must stay monotone against (see its own KDoc).
+      // "name" has no NOT NULL constraint and is left untouched by this rule, since it traces to
+      // a real column whose base-table attnotnull IS known (columnNoNulls), not unknown.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id SERIAL PRIMARY KEY, name TEXT)",
+        "INSERT INTO t (name) VALUES (?) RETURNING id, name, 'lit'::TEXT AS lbl, 1 AS one",
+      )
+      assertThat(query.columns).hasSize(4)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isTrue()
+      assertThat(query.columns[3].notNull).isTrue()
     }
   }
 
@@ -4276,11 +4562,58 @@ class QueryAnalysisTest {
 
     @Test
     fun `ROW constructor`() {
+      // A bare, uncast ROW(...) produces an anonymous "record"-typed column, which PostgreSQL
+      // refuses to expose on a VIEW ("column result has pseudo-type record") — this SQL has no
+      // DML at all, but CREATE VIEW's failure routes it through queryColumnNullability's
+      // catch-all DML fallback (transformForViewCreation/analyzeUnconvertibleDml) regardless,
+      // since that fallback cannot distinguish "CREATE VIEW failed because of DML" from "CREATE
+      // VIEW failed for an unrelated reason". This expression reports `columnNullableUnknown`
+      // (PostgreSQL cannot describe a computed `ROW(...)` construct as NOT NULL). Both before and
+      // after issue #207's fix, `analyzeUnconvertibleDml` treats that value as NOT NULL — the
+      // predecessor `buildAllNonNullable` always did (unconditionally, for every column), and
+      // `analyzeUnconvertibleDml` deliberately stays monotone against that baseline for exactly
+      // this reason (see its own KDoc): flipping `columnNullableUnknown` to nullable would
+      // fabricate a nullable type for a column — like this one — that was never wrong before. A
+      // constructed `ROW(...)` value is, in fact, never itself `NULL`, so NOT NULL here is also
+      // simply correct, not merely a preserved coincidence.
       val query = analyzeWithSchema(
         "CREATE TABLE t (a INT NOT NULL, b INT NOT NULL)",
         "SELECT ROW(a, b) AS result FROM t",
       )
       assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `ROW constructor with a LEFT JOIN over-approximates nullable for the target table too — accepted, not a bug`() {
+      // R3 (accepted, intentionally NOT fixed): this SQL has no DML at all, but CREATE VIEW
+      // rejects a bare ROW(...)'s anonymous "record" pseudo-type regardless, routing it through
+      // the SAME catch-all DML fallback a genuine unconvertible DML statement reaches
+      // (transformForViewCreation returns null because convertDmlToSelect only ever recognizes
+      // UPDATE/DELETE/MERGE, never a plain SELECT, so this falls straight to
+      // analyzeUnconvertibleDml). That fallback's null-extending-construct arm scans the WHOLE
+      // statement's text for this non-DML case (scopeNullExtendingScanToDmlSourceClause has no
+      // effect here — see forcedNullabilityPredicate's KDoc — because this isn't a top-level
+      // UPDATE/DELETE/MERGE for dmlSourceClauseRegion to scope to in the first place), so the
+      // LEFT JOIN it finds forces EVERY column nullable, including "t.a", which is declared NOT
+      // NULL and is never actually null-extended by this join (t is the LEFT side, not u).
+      // Verified against real Postgres: both columns are genuinely NOT NULL for a matching row.
+      //
+      // This is deliberately NOT fixed: a metadata-only answer for a non-DML statement reached via
+      // this degraded path would be unsafe in the OPPOSITE direction for the mirror case (`SELECT
+      // u.x FROM t LEFT JOIN u`, where `u.x` genuinely CAN be null-extended and a naive metadata
+      // read would fabricate NOT NULL for it), so the safe, over-nullable whole-body scan is kept
+      // for any non-DML body on this path. Over-nullability here is the accepted, safe-direction
+      // cost, not a bug — see PgCatalogLoader.analyzeUnconvertibleDml's own KDoc for the same note.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (a INT NOT NULL, b INT NOT NULL);
+        CREATE TABLE u (a INT NOT NULL)
+        """.trimIndent(),
+        "SELECT t.a, ROW(t.a, t.b) AS result FROM t LEFT JOIN u ON u.a = t.a",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
     }
   }
 
