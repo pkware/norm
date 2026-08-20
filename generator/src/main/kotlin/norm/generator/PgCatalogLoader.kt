@@ -1816,27 +1816,61 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * has no join structure for Phase 2 to convert but can still read a dangerous sibling's output)
    * is covered the same way a CTE referencing another CTE's danger is.
    *
-   * `ResultSetMetaData.columnNullableUnknown` counts as NOT NULL here — DELIBERATELY THE OPPOSITE
-   * of [tryPrepareStub], which treats that same value as nullable. The two sites are not the same
-   * rule reused twice; they differ because the baseline each one must stay monotone against
-   * differs. This function's predecessor, [buildAllNonNullable] (removed by issue #207's fix),
-   * treated every column NOT NULL unconditionally, `columnNullableUnknown` included — an
-   * expression or literal `RETURNING` item (`1 AS one`, `'x'::TEXT AS lbl`) reports exactly that
-   * value, and PostgreSQL never returns `NULL` for a literal, so treating it as NOT NULL here (as
-   * `buildAllNonNullable` always did) is not a compromise, it is simply correct. Treating it as
-   * nullable here instead would flip those columns' generated type from non-nullable to nullable
-   * relative to what shipped as the pre-#207 baseline, for a column that was never wrong before —
-   * a regression this function must not introduce even while fixing the join/attnotnull gap
-   * `buildAllNonNullable` had. [tryPrepareStub]'s CTE-body stub path has no such baseline to stay
-   * monotone against: it has always treated `columnNullableUnknown` as nullable, and roughly 90
-   * existing CTE-path tests encode that choice — changing it now would be an unrelated, unforced
-   * behavior change to a path issue #207 does not touch.
+   * `ResultSetMetaData.columnNullableUnknown` counts as NOT NULL here ONLY AS A FALLBACK — the
+   * answer used when [probeUnknownColumnNullability] cannot resolve the column's real
+   * nullability at all. This is now the OPPOSITE of what it was before issue #226: previously
+   * every `columnNullableUnknown` column took this NOT NULL default unconditionally, deliberately
+   * disagreeing with [tryPrepareStub] (whose CTE-body stub path treats that same value as
+   * nullable, unconditionally, and is untouched by this change — see below). This function's
+   * predecessor, [buildAllNonNullable] (removed by issue #207's fix), treated every column NOT
+   * NULL unconditionally, `columnNullableUnknown` included — an expression or literal `RETURNING`
+   * item (`1 AS one`, `'x'::TEXT AS lbl`) reports exactly that value, and PostgreSQL never returns
+   * `NULL` for a literal, so treating it as NOT NULL for that shape is not a compromise, it is
+   * simply correct. That NOT NULL default is preserved here as the FALLBACK for any
+   * `columnNullableUnknown` column [probeUnknownColumnNullability] cannot resolve, so a column
+   * that was already correct under the pre-#226 baseline stays correct.
    *
-   * Residual gap accepted, not fixed, by this choice: `RETURNING lower(nullable_col)` also reports
-   * `columnNullableUnknown` (PostgreSQL cannot derive NOT NULL through an arbitrary function call),
-   * so this function reports it NOT NULL even though `lower` of a nullable column is itself
-   * genuinely nullable. This is identical to `main`'s behavior for the same query — not a
-   * regression — and is tracked by issue #226 rather than fixed here.
+   * What the probe resolves, and what still falls back: [probeUnknownColumnNullability] builds a
+   * throwaway `SELECT <returning items> FROM <target relation>` from [sql] itself and reads its
+   * EXACT nullability through [analyzeViaTemporaryView]'s join-aware [NodeTreeNullabilityAnalyzer]
+   * — the same machinery this file already trusts for a plain `SELECT` or a convertible DML body
+   * — rather than guessing from `ResultSetMetaData` alone. That resolves an expression built over a
+   * source column (`RETURNING lower(note)`, `RETURNING COALESCE(note, 'x')`, a scalar subquery
+   * `RETURNING (SELECT ...)`, a `CASE`, a cast — anything [NodeTreeNullabilityAnalyzer] already
+   * understands), closing the exact gap issue #226 reported: `DELETE ... RETURNING lower(note)`
+   * over a nullable `note` now correctly reports nullable, and `RETURNING lower(name)` over a NOT
+   * NULL `name` still correctly reports NOT NULL — the probe is exact, not a blanket flip either
+   * way. The probe is skipped or discarded — falling back to this function's own NOT NULL default
+   * — for a specific, provably-safe set of shapes: no `RETURNING` clause; a star item in the
+   * `RETURNING` list (index alignment with real columns cannot be trusted); the split item count
+   * disagreeing with the real column count; no recognizable target relation
+   * ([dmlTargetRelationReference] returns `null`); or the probe SQL failing to prepare or its
+   * temporary view failing to create. That last case is not an arbitrary residual gap — it is
+   * EXACTLY the set of items this function's own history already established are always NOT NULL
+   * regardless of any join or source column: `merge_action()` is invalid outside a `MERGE
+   * RETURNING` list, so a plain-`SELECT` probe can never prepare it; `OLD`/`NEW` are invalid
+   * outside `RETURNING` for the identical reason (see [referencesOldOrNew]'s KDoc); and a bare
+   * `ROW(a, b)`/`(a, b)` composite makes `CREATE TEMPORARY VIEW` itself fail (PostgreSQL cannot
+   * create a view column of the pseudo-type `record`). Every one of those is a constant, a
+   * pseudo-relation reference invalid anywhere the probe could reach it, or a construct PostgreSQL
+   * itself refuses to name a type for — never an ordinary expression over a genuinely nullable
+   * source column — so falling back to NOT NULL for precisely that set is provably safe, not
+   * merely convenient.
+   *
+   * [tryPrepareStub]'s CTE-body stub path is DELIBERATELY NOT changed by this: it has always
+   * treated `columnNullableUnknown` as nullable, and roughly 90 existing CTE-path tests encode
+   * that choice — changing it now would be an unrelated, unforced behavior change to a path issue
+   * #226 does not touch. The claim that the two paths "deliberately disagree" no longer describes
+   * this function accurately, though: for any column [probeUnknownColumnNullability] can resolve,
+   * this function now reports that column's REAL nullability — computed by the identical
+   * [analyzeViaTemporaryView] + [NodeTreeNullabilityAnalyzer] machinery [tryPrepareStub]'s own stub
+   * path depends on — rather than a fixed rule chosen to stay monotone against a baseline. The two
+   * paths no longer disagree BY RULE for that column; whichever answer is correct, both paths
+   * would compute it identically if fed the same buildable probe. What remains a genuine, narrower
+   * disagreement is confined to the columns the probe here cannot resolve at all (this function
+   * still defaults to NOT NULL for those, unchanged) and to [tryPrepareStub]'s own path, which does
+   * not attempt this probe and keeps its unconditional nullable default regardless of what the
+   * real answer would be.
    *
    * @return An empty list if [sql] cannot be prepared or has no result columns — [JdbcAnalyzer]
    *   treats a missing index as nullable (the safe default), so this is a safe, not merely
@@ -1854,14 +1888,95 @@ internal class PgCatalogLoader(private val connection: Connection) {
     return try {
       connection.prepareStatement(sql).use { preparedStatement ->
         val metadata = preparedStatement.metaData ?: return emptyList()
+        val hasUnknownColumn = (1..metadata.columnCount).any {
+          metadata.isNullable(it) == ResultSetMetaData.columnNullableUnknown
+        }
+        val probeResult = if (hasUnknownColumn) probeUnknownColumnNullability(sql, metadata.columnCount) else null
         List(metadata.columnCount) { index ->
           val columnIndex = index + 1
-          forceNullableColumn(columnIndex, metadata.columnCount) ||
-            metadata.isNullable(columnIndex) == ResultSetMetaData.columnNullable
+          val metadataNullable = when (metadata.isNullable(columnIndex)) {
+            ResultSetMetaData.columnNullable -> true
+            ResultSetMetaData.columnNoNulls -> false
+            else -> probeResult?.get(index) ?: false
+          }
+          forceNullableColumn(columnIndex, metadata.columnCount) || metadataNullable
         }
       }
     } catch (_: SQLException) {
       emptyList()
+    }
+  }
+
+  /**
+   * Attempts to resolve the EXACT nullability of every result column of an unconvertible DML
+   * [sql] statement, for use only on the columns [analyzeUnconvertibleDml] found reporting
+   * `ResultSetMetaData.columnNullableUnknown` — an expression PostgreSQL's own metadata cannot
+   * itself classify (e.g. a function call, a cast, or a scalar subquery in `RETURNING`).
+   *
+   * Builds a throwaway `SELECT <returning items> FROM <target relation>` from [sql]'s own
+   * `RETURNING` list and target relation — see [dmlTargetRelationReference] — and reads that
+   * probe's real per-column nullability through [analyzeViaTemporaryView]'s join-aware
+   * [NodeTreeNullabilityAnalyzer], the SAME machinery this file already trusts for a plain
+   * `SELECT` or a convertible DML body. A plain `SELECT` over the same target relation and the
+   * same `RETURNING` expressions has identical nullability to the real `RETURNING` list itself:
+   * neither an `UPDATE`/`DELETE`'s own row-filtering (`WHERE`) nor the fact that a row was
+   * modified changes what a source column, or an expression over it, evaluates to for that row.
+   *
+   * Every gate below returns `null` — never a wrong or half-computed answer — whenever this
+   * probe cannot be trusted, so [analyzeUnconvertibleDml] can safely fall back to its own NOT NULL
+   * default:
+   * - no top-level `RETURNING` clause on [sql] at all;
+   * - any `RETURNING` item is a star item ([isStarItem]) — a star's expansion width is unknown
+   *   without asking PostgreSQL, so positional alignment against [expectedColumnCount] cannot be
+   *   trusted;
+   * - the split `RETURNING` item count does not equal [expectedColumnCount] (the same
+   *   real-column-count cross-check [oldOrNewReturningColumns]'s callers already apply for an
+   *   identical reason);
+   * - [dmlTargetRelationReference] cannot find a target relation to probe from;
+   * - the probe SQL cannot be prepared, or its temporary view cannot be created (a `SQLException`
+   *   from either) — see [analyzeUnconvertibleDml]'s KDoc for exactly which real-world shapes hit
+   *   this (`merge_action()`, `OLD`/`NEW`, a bare `ROW(...)`/`(a, b)` composite);
+   * - the probe's own result size does not equal [expectedColumnCount] (defense in depth against
+   *   the same star-expansion risk the item-count gate above targets).
+   *
+   * @param sql The unconvertible top-level DML statement (already parameter-sentinel-substituted
+   *   by the caller — see [buildViewSqlWithSentinels]/[replaceParameterPlaceholders] upstream —
+   *   so this function's own [buildViewSqlWithSentinels] call over the freshly-built probe SQL is
+   *   only a defensive re-check, not the primary `?` removal).
+   * @param expectedColumnCount The real result column count, from [sql]'s own
+   *   `ResultSetMetaData.getColumnCount()`.
+   * @return One nullability value per `RETURNING` item, in order, or `null` if the probe could not
+   *   be built, prepared, or trusted.
+   */
+  private fun probeUnknownColumnNullability(
+    @Language("PostgreSQL") sql: String,
+    expectedColumnCount: Int,
+  ): List<Boolean>? {
+    val dml = stripLeadingNestedWithClause(sql)
+    val returningIndex = findTopLevelReturningKeyword(dml)
+    if (returningIndex < 0) return null
+
+    val returningText = dml.substring(returningIndex + "RETURNING".length).trim().trimEnd(';')
+    val items = splitAtTopLevel(returningText, ',')
+    if (items.any(::isStarItem)) return null
+    if (items.size != expectedColumnCount) return null
+
+    val target = dmlTargetRelationReference(sql) ?: return null
+
+    // A newline, not a space, separates the RETURNING text from FROM: a trailing `--` line
+    // comment on the last RETURNING item (e.g. "RETURNING id, lower(note) AS n -- lowercased")
+    // has no line terminator of its own to stop at when returningText is the LAST thing before
+    // FROM on one line — it would otherwise swallow " FROM $target" into the comment, making the
+    // probe fail to prepare (a `SQLException`, caught below) and silently degrading to today's
+    // NOT NULL default instead of the real answer. Putting FROM on its own line means the comment
+    // can only ever consume up to that line's own end, never past it.
+    val probeSql = "SELECT $returningText\nFROM $target"
+    val viewSql = buildViewSqlWithSentinels(probeSql) ?: if ('?' in probeSql) return null else probeSql
+
+    return try {
+      analyzeViaTemporaryView(viewSql).takeIf { it.size == expectedColumnCount }
+    } catch (_: SQLException) {
+      null
     }
   }
 

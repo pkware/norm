@@ -3651,12 +3651,16 @@ class QueryAnalysisTest {
       // they always were (this is not one of #207's fixed shapes) — analyzeUnconvertibleDml reads
       // real ResultSetMetaData.isNullable for all three, "aval"/"id" via a simple column reference
       // tracing to its source column's attnotnull, and "act" (a bare function call) via
-      // `columnNullableUnknown`. That last value is deliberately treated as NOT NULL here, the
-      // OPPOSITE of the CTE-body stub path's treatment of the same value — see
-      // `analyzeUnconvertibleDml`'s KDoc for why the two sites differ: this path must stay
-      // monotone against `buildAllNonNullable`'s pre-#207 baseline (which always asserted every
-      // column NOT NULL, `columnNullableUnknown` included), so an expression like `merge_action()`
-      // that was never wrong before must not newly flip to nullable now.
+      // `columnNullableUnknown`. Issue #226's probe (probeUnknownColumnNullability) is attempted
+      // for "act" but cannot resolve it: merge_action() is only valid inside a real MERGE's own
+      // RETURNING list, so the plain `SELECT merge_action() AS act, a.aval, tgt.id FROM tgt` probe
+      // this builds fails to prepare (both because merge_action() itself is invalid there, and
+      // because "a" isn't in that probe's FROM list at all) — the probe returns `null` and
+      // analyzeUnconvertibleDml falls back to its own NOT NULL default for "act", the same value
+      // it has always used for `columnNullableUnknown` it cannot otherwise resolve. See
+      // `analyzeUnconvertibleDml`'s KDoc for why that fallback (not the CTE-body stub path's own,
+      // unconditional nullable treatment of the same raw value) is exactly the classifier: an
+      // unbuildable probe here is the signal that the expression was never wrong before.
       val query = analyzeWithSchema(
         """
         CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
@@ -3683,9 +3687,11 @@ class QueryAnalysisTest {
       //
       // Issue #207: same distinction as the test above — the four plain column references (both
       // "id"s, "aval", "tval") are NOT NULL via honestly-read ResultSetMetaData, while
-      // "merge_action" (a bare function call, `columnNullableUnknown`) is also reported NOT NULL —
-      // see the previous test's comment for why `columnNullableUnknown` is treated as NOT NULL
-      // here specifically (staying monotone against the pre-#207 `buildAllNonNullable` baseline).
+      // "merge_action" (a bare function call, `columnNullableUnknown`) is also reported NOT NULL.
+      // Issue #226's probe is gated before it can even attempt this one: the `RETURNING` list has
+      // a star item (`*`), so `probeUnknownColumnNullability` bails out immediately rather than
+      // trust a positional mapping it can't verify — see the previous test's comment for why the
+      // resulting fallback to the NOT NULL default is correct for `merge_action()` regardless.
       val query = analyzeWithSchema(
         """
         CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
@@ -3975,10 +3981,13 @@ class QueryAnalysisTest {
       // R2 regression: a literal or constant expression RETURNING item reports
       // ResultSetMetaData.columnNullableUnknown (PostgreSQL cannot describe a literal's
       // nullability any more precisely than that) — a literal is never NULL, so
-      // analyzeUnconvertibleDml must treat that as NOT NULL, matching the pre-#207
-      // buildAllNonNullable baseline this path must stay monotone against (see its own KDoc).
-      // "name" has no NOT NULL constraint and is left untouched by this rule, since it traces to
-      // a real column whose base-table attnotnull IS known (columnNoNulls), not unknown.
+      // analyzeUnconvertibleDml must treat that as NOT NULL. Issue #226's probe actually confirms
+      // this exactly, rather than merely defaulting to it: it builds `SELECT id, name, 'lit'::TEXT
+      // AS lbl, 1 AS one FROM t` and reads its real per-column nullability via the same node-tree
+      // analyzer a plain SELECT already uses, independently reporting both literal columns NOT
+      // NULL. "name" has no NOT NULL constraint and is left untouched by this rule (the probe's
+      // own answer for it is irrelevant), since it traces to a real column whose base-table
+      // attnotnull IS already known (columnNoNulls), not unknown.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id SERIAL PRIMARY KEY, name TEXT)",
         "INSERT INTO t (name) VALUES (?) RETURNING id, name, 'lit'::TEXT AS lbl, 1 AS one",
@@ -3988,6 +3997,105 @@ class QueryAnalysisTest {
       assertThat(query.columns[1].notNull).isFalse()
       assertThat(query.columns[2].notNull).isTrue()
       assertThat(query.columns[3].notNull).isTrue()
+    }
+  }
+
+  /**
+   * Issue #226: `PgCatalogLoader.analyzeUnconvertibleDml` treats
+   * `ResultSetMetaData.columnNullableUnknown` as NOT NULL — correct for a literal/constant
+   * (`1 AS one`), but wrong for an expression built over a genuinely nullable source column
+   * (`lower(note)`, where `note` has no NOT NULL constraint). These tests exercise
+   * `PgCatalogLoader.probeUnknownColumnNullability`, the supplementary probe that resolves such a
+   * column's real nullability instead of defaulting, and the gates that fall back to today's NOT
+   * NULL default when the probe cannot be trusted.
+   */
+  @Nested
+  inner class UnknownColumnNullabilityProbe {
+
+    @Test
+    fun `DELETE RETURNING an expression over a nullable column reports nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, note TEXT)",
+        "DELETE FROM t WHERE id = ? RETURNING lower(note)",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `UPDATE RETURNING a scalar subquery alongside a real column reports each exactly`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT PRIMARY KEY, name TEXT NOT NULL);
+        CREATE TABLE b (id INT PRIMARY KEY, bval TEXT NOT NULL)
+        """.trimIndent(),
+        "UPDATE t SET name = 'x' WHERE id = 5 RETURNING id, (SELECT bval FROM b WHERE b.id = 999) AS sub",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `DELETE RETURNING an expression over a NOT NULL column reports NOT NULL, proving exactness`() {
+      // The probe must not blanket-flip every columnNullableUnknown column to nullable — only a
+      // genuinely nullable source column should surface as nullable through it.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, name TEXT NOT NULL)",
+        "DELETE FROM t WHERE id = ? RETURNING lower(name)",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `DELETE RETURNING COALESCE over a nullable column reports NOT NULL`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, note TEXT)",
+        "DELETE FROM t WHERE id = ? RETURNING COALESCE(note, 'x')",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `a star item in RETURNING gates the probe off without crashing generation`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, note TEXT)",
+        "DELETE FROM t WHERE id = ? RETURNING *, lower(note)",
+      )
+      assertThat(query.columns).hasSize(3)
+      // The probe is skipped entirely (a star item makes positional alignment untrustworthy), so
+      // "lower(note)" falls back to today's NOT NULL default rather than crashing generation.
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `a trailing line comment on the RETURNING list does not swallow the probe's FROM clause`() {
+      // Regression: probeUnknownColumnNullability used to compose "SELECT $returningText FROM
+      // $target" on a single line. A trailing "--" comment with nothing after it on that same
+      // line (no line break of its own to stop at) swallowed " FROM t" into the comment, making
+      // the probe fail to prepare and silently degrade to today's NOT NULL default instead of the
+      // real (nullable) answer.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, note TEXT)",
+        "DELETE FROM t WHERE id = ? RETURNING id, lower(note) AS n -- lowercased",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `top-level and CTE-wrapped forms of the same RETURNING expression agree`() {
+      val ddl = "CREATE TABLE t (id INT PRIMARY KEY, note TEXT)"
+      val topLevel = analyzeWithSchema(ddl, "DELETE FROM t WHERE id = ? RETURNING lower(note)")
+      val cteWrapped = analyzeWithSchema(
+        ddl,
+        "WITH d AS (DELETE FROM t WHERE id = ? RETURNING lower(note)) SELECT * FROM d",
+      )
+      assertThat(topLevel.columns).hasSize(1)
+      assertThat(cteWrapped.columns).hasSize(1)
+      assertThat(cteWrapped.columns[0].notNull).isEqualTo(topLevel.columns[0].notNull)
     }
   }
 
@@ -4569,11 +4677,13 @@ class QueryAnalysisTest {
       // since that fallback cannot distinguish "CREATE VIEW failed because of DML" from "CREATE
       // VIEW failed for an unrelated reason". This expression reports `columnNullableUnknown`
       // (PostgreSQL cannot describe a computed `ROW(...)` construct as NOT NULL). Both before and
-      // after issue #207's fix, `analyzeUnconvertibleDml` treats that value as NOT NULL — the
-      // predecessor `buildAllNonNullable` always did (unconditionally, for every column), and
-      // `analyzeUnconvertibleDml` deliberately stays monotone against that baseline for exactly
-      // this reason (see its own KDoc): flipping `columnNullableUnknown` to nullable would
-      // fabricate a nullable type for a column — like this one — that was never wrong before. A
+      // after issue #207's fix, `analyzeUnconvertibleDml` treats that value as NOT NULL. Issue
+      // #226's probe never even gets a chance to run here: this SQL is a plain `SELECT`, with no
+      // `RETURNING` clause at all, so `probeUnknownColumnNullability`'s very first gate
+      // (`findTopLevelReturningKeyword` finding nothing) rejects it outright, falling back to the
+      // same NOT NULL default `buildAllNonNullable` always used unconditionally. That fallback
+      // is not an arbitrary leftover, either — see `analyzeUnconvertibleDml`'s KDoc for why an
+      // unbuildable/inapplicable probe is exactly the classifier for "provably always NOT NULL": a
       // constructed `ROW(...)` value is, in fact, never itself `NULL`, so NOT NULL here is also
       // simply correct, not merely a preserved coincidence.
       val query = analyzeWithSchema(
