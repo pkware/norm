@@ -26,8 +26,13 @@ import norm.generator.NodeTreeNullabilityAnalyzer.Companion.extractOuterJoinNull
  *   can be nulled by an outer join. Typically `true` when the set is non-empty.
  * @param isAlwaysNonNull Returns `true` for function OIDs that never return `null` regardless of
  *   argument nullability (e.g., `concat`).
- * @param isStrictButNullable Returns `true` for function OIDs that are marked STRICT but can still
- *   return `null` from non-null inputs (e.g., JSON path-extraction operators like `->>` and `->`).
+ * @param isNeverNullForNonNullInput Returns `true` for function/operator OIDs that are proven TOTAL
+ *   on non-null input — every combination of non-null arguments produces a non-null result (an
+ *   ERROR is fine; only a silent `null` return disqualifies a candidate). `pg_proc.proisstrict`
+ *   alone cannot answer this: STRICT only guarantees NULL-in => NULL-out, never the converse, so
+ *   this is required as an ADDITIONAL conjunct alongside [isStrict] below, never a substitute for
+ *   it. See [PgCatalogLoader.neverNullForNonNullInputOids] for the safe-list this is normally
+ *   backed by, and why omission from that list is always the safe default.
  * @param isLagLeadWithDefault Returns `true` for the 3-argument overloads of `lag` and `lead` window
  *   functions, which return non-null when both the value and default arguments are non-null.
  */
@@ -37,7 +42,7 @@ internal class NodeTreeNullabilityAnalyzer(
   private val isSourceColumnNotNull: (varno: Int, varattno: Int) -> Boolean,
   private val isOuterJoinNullable: (nullingRelations: Set<Int>) -> Boolean,
   private val isAlwaysNonNull: (Int) -> Boolean = { false },
-  private val isStrictButNullable: (Int) -> Boolean = { false },
+  private val isNeverNullForNonNullInput: (Int) -> Boolean = { false },
   private val isLagLeadWithDefault: (Int) -> Boolean = { false },
 ) {
 
@@ -91,18 +96,18 @@ internal class NodeTreeNullabilityAnalyzer(
         isAlwaysNonNull(expression.functionOid) ||
           (
             isStrict(expression.functionOid) &&
-              !isStrictButNullable(expression.functionOid) &&
+              isNeverNullForNonNullInput(expression.functionOid) &&
               expression.arguments.all(recurse)
             )
 
       is PgNodeExpression.OpExpr ->
         isStrict(expression.operatorFunctionOid) &&
-          !isStrictButNullable(expression.operatorFunctionOid) &&
+          isNeverNullForNonNullInput(expression.operatorFunctionOid) &&
           expression.arguments.all(recurse)
 
       is PgNodeExpression.ScalarArrayOpExpr ->
         isStrict(expression.operatorFunctionOid) &&
-          !isStrictButNullable(expression.operatorFunctionOid) &&
+          isNeverNullForNonNullInput(expression.operatorFunctionOid) &&
           expression.arguments.all(recurse)
 
       is PgNodeExpression.CoalesceExpr -> expression.arguments.any(recurse)
@@ -154,11 +159,12 @@ internal class NodeTreeNullabilityAnalyzer(
     if (isLagLeadWithDefault(expression.windowFunctionOid) && expression.arguments.size >= 3) {
       return recurse(expression.arguments[0]) && recurse(expression.arguments[2])
     }
-    // NTILE is strict and always returns non-null from non-null input. Other strict window functions
-    // (FIRST_VALUE, LAST_VALUE, NTH_VALUE, LAG/LEAD 1-2 arg) can return null at frame boundaries
-    // and are excluded via isStrictButNullable.
+    // NTILE is strict and always returns non-null from non-null input, so it is on the
+    // isNeverNullForNonNullInput safe-list. Other strict window functions (FIRST_VALUE,
+    // LAST_VALUE, NTH_VALUE, LAG/LEAD 1-2 arg) can return null at frame boundaries and are
+    // excluded by omission from that safe-list.
     if (isStrict(expression.windowFunctionOid) &&
-      !isStrictButNullable(expression.windowFunctionOid) &&
+      isNeverNullForNonNullInput(expression.windowFunctionOid) &&
       expression.arguments.all(recurse)
     ) {
       return true

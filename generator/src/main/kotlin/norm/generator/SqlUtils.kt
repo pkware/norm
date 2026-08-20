@@ -1225,6 +1225,307 @@ private val INSERT_TARGET_STOP_KEYWORDS =
   listOf("VALUES", "SELECT", "DEFAULT", "OVERRIDING", "ON", "RETURNING", "TABLE", "WITH")
 
 /**
+ * Derives the correlation name a probe's derived table must be given so a `RETURNING` item
+ * qualified through the `UPDATE` statement's own target — e.g. `u.note` after `UPDATE t AS u` —
+ * still resolves once that item is spliced, verbatim, into a wrapping `FROM (...) AS <alias>`
+ * clause (see `PgCatalogLoader.buildUpdateSetAwareFromClause`, issue #228).
+ *
+ * Parses [target] (the exact text [dmlTargetRelationReference] returned) against the grammar
+ * `[ ONLY ] name [ . name ]* [ * ] [ [ AS ] alias ]`:
+ * - An explicit alias (`AS u`) or bare alias (`u`) wins outright — that is the name `RETURNING`
+ *   items in the real statement would have used to qualify a column.
+ * - Otherwise, the target has no alias of its own, so the correlation name PostgreSQL itself uses
+ *   for unqualified `RETURNING` items is the bare table name — the LAST dot-separated segment of
+ *   a possibly schema-qualified name (`public.t` → `t`).
+ *
+ * Every returned string is a VERBATIM substring of [target] — quotes and all, never unquoted or
+ * case-folded — so splicing it back as `AS <result>` resolves exactly the way the original
+ * `RETURNING` clause's own qualifiers would, including for a quoted, case-sensitive alias.
+ *
+ * @return `null` — the caller's signal to fall back to the plain, unwrapped `FROM <target>` this
+ *   function's caller otherwise already builds — whenever [target] doesn't match the grammar
+ *   above closely enough to be confident: an unterminated quote, trailing text after a
+ *   recognized alias that isn't just whitespace/comments, or anything else this parser doesn't
+ *   recognize. Guessing wrong here would silently misattribute a `RETURNING` qualifier to the
+ *   wrong relation, so any doubt bails rather than guesses.
+ */
+internal fun deriveDmlTargetAlias(target: String): String? {
+  val nameSegments = parseDmlTargetNameSegments(target) ?: return null
+  var position = nameSegments.endPosition
+
+  position = skipWhitespaceAndComments(target, position)
+  if (position < target.length && target[position] == '*') {
+    position = skipWhitespaceAndComments(target, position + 1)
+  }
+
+  if (position >= target.length) return nameSegments.lastSegment // no alias — fall back to the table name itself
+
+  val aliasStart = skipWhitespaceAndComments(target, skipOptionalKeyword(target, position, "AS"))
+  if (aliasStart >= target.length) return null // "AS" with nothing after it — malformed, bail
+
+  val aliasEnd = when {
+    target[aliasStart] == '"' -> {
+      var i = aliasStart + 1
+      while (i < target.length && target[i] != '"') i++
+      if (i >= target.length) return null // unterminated quoted alias
+      i + 1
+    }
+    isIdentifierStartChar(target[aliasStart]) -> {
+      var i = aliasStart
+      while (i < target.length && isIdentifierChar(target[i])) i++
+      i
+    }
+    else -> return null
+  }
+
+  // Anything left over that isn't whitespace/comments means target wasn't the simple shape this
+  // parser understands after all (e.g. a TABLESAMPLE clause) — bail rather than guess.
+  if (skipWhitespaceAndComments(target, aliasEnd) != target.length) return null
+
+  return target.substring(aliasStart, aliasEnd)
+}
+
+/**
+ * The result of parsing the `[ ONLY ] name [ . name ]*` prefix of a [dmlTargetRelationReference]
+ * target — shared by [deriveDmlTargetAlias] (which needs only [lastSegment], to fall back on when
+ * no alias follows) and [dmlTargetRelationName] (which needs the full [qualifiedName]).
+ *
+ * @property qualifiedName The `[ ONLY ]`-stripped, dot-joined name text, VERBATIM (quotes and all)
+ *   — everything from just after an optional leading `ONLY` through the end of the last
+ *   dot-separated segment.
+ * @property lastSegment The last dot-separated segment alone, VERBATIM — the bare table name once
+ *   any schema qualification is stripped (`public.t` → `t`).
+ * @property endPosition The index in the original target text just past the parsed name — where a
+ *   caller resumes looking for a `*` or an alias.
+ */
+private data class DmlTargetNameSegments(val qualifiedName: String, val lastSegment: String, val endPosition: Int)
+
+/**
+ * Parses the `[ ONLY ] name [ . name ]*` prefix of [target] (the exact text
+ * [dmlTargetRelationReference] returned) — the shared first half of the grammar both
+ * [deriveDmlTargetAlias] and [dmlTargetRelationName] need to recognize before going their separate
+ * ways (one continuing on to an optional `*` and alias, the other stopping here).
+ *
+ * @return `null` if [target] has no identifier where a name segment was expected, or a quoted
+ *   segment is left unterminated — the same "any doubt bails rather than guesses" rule
+ *   [deriveDmlTargetAlias] documents for itself.
+ */
+private fun parseDmlTargetNameSegments(target: String): DmlTargetNameSegments? {
+  val nameStart = skipOptionalKeyword(target, skipWhitespaceAndComments(target, 0), "ONLY")
+  var position = nameStart
+
+  var lastSegment: String
+  while (true) {
+    val segmentStart = position
+    position = when {
+      position < target.length && target[position] == '"' -> {
+        var i = position + 1
+        while (i < target.length && target[i] != '"') i++
+        if (i >= target.length) return null // unterminated quoted identifier
+        i + 1
+      }
+      position < target.length && isIdentifierStartChar(target[position]) -> {
+        var i = position + 1
+        while (i < target.length && isIdentifierChar(target[i])) i++
+        i
+      }
+      else -> return null // no identifier where a table name segment was expected
+    }
+    lastSegment = target.substring(segmentStart, position)
+    if (position < target.length && target[position] == '.') {
+      position++
+    } else {
+      break
+    }
+  }
+
+  return DmlTargetNameSegments(target.substring(nameStart, position), lastSegment, position)
+}
+
+/**
+ * Extracts the bare, possibly schema-qualified relation name from [target] (the exact text
+ * [dmlTargetRelationReference] returned) — with any leading `ONLY`, trailing `*` (the
+ * "include descendant tables" wildcard, meaningless to `to_regclass`), and alias all stripped —
+ * suitable to pass, VERBATIM (quotes and all, never unquoted or case-folded), as the single text
+ * argument to PostgreSQL's `to_regclass(text)`: that function applies the exact same identifier
+ * folding rules PostgreSQL's own parser would to resolve the same name, so a quoted, case-sensitive
+ * name resolves correctly and an unquoted one still folds to lowercase as it would anywhere else.
+ *
+ * Used by `PgCatalogLoader` (issue #228) to resolve the `UPDATE`/`DELETE` target relation to an
+ * OID before deciding whether a `SET`-assignment-aware `RETURNING` probe can be trusted for it —
+ * see its own KDoc for what that decision covers.
+ *
+ * @return `null` — the caller's signal to bail rather than guess, same as [deriveDmlTargetAlias] —
+ *   whenever [target] doesn't match the `[ ONLY ] name [ . name ]*` prefix of the grammar
+ *   [deriveDmlTargetAlias] documents closely enough to be confident: an unterminated quote, or no
+ *   identifier at all where a name segment was expected.
+ */
+internal fun dmlTargetRelationName(target: String): String? = parseDmlTargetNameSegments(target)?.qualifiedName
+
+/**
+ * A single `UPDATE ... SET` assignment, parsed from the top-level-comma-separated SET list.
+ *
+ * @property columnNames The column(s) assigned. A single entry for a plain `column = expression`
+ *   assignment; two or more for the row form `(a, b) = (...)`, where [isRowForm] is `true`.
+ *   Each name is normalized via the same folding rule PostgreSQL itself applies when storing a
+ *   column name — lowercased if the source text was an unquoted identifier, left verbatim (minus
+ *   the surrounding quotes) if it was quoted — so it compares equal, by plain `String.equals`, to
+ *   `ResultSetMetaData.getColumnName`'s output for the same column.
+ * @property expression The right-hand side text, verbatim (trimmed of surrounding whitespace),
+ *   including the literal `DEFAULT` keyword when that's what was written. Meaningless — never
+ *   read — when [isRowForm] is `true`: a row-form assignment's single right-hand side expression
+ *   cannot be safely attributed to any one of its several target columns.
+ * @property isRowForm `true` for the row form `SET (a, b) = (...)`; `false` for a plain
+ *   `SET column = expression`.
+ */
+internal data class SqlSetAssignment(val columnNames: List<String>, val expression: String, val isRowForm: Boolean)
+
+/**
+ * Parses the top-level-comma-separated list of an `UPDATE ... SET` clause in [dml] — an `UPDATE`
+ * statement (with any leading nested `WITH` clause already stripped by the caller, matching
+ * [dmlTargetRelationReference]'s own precondition).
+ *
+ * The list runs from just after the top-level `SET` keyword to whichever of a top-level `WHERE`,
+ * `RETURNING`, or `FROM` keyword comes first, or the end of [dml] if none do. `FROM` is included
+ * defensively even though a genuine `UPDATE ... FROM` never reaches this parser in practice — its
+ * join structure is handled by `PgCatalogLoader.convertDmlToSelect` long before
+ * `PgCatalogLoader.analyzeUnconvertibleDml` (and this parser) are ever reached — so this is a
+ * safety net against a future or unrecognized shape, not a designed-for input.
+ *
+ * @return One [SqlSetAssignment] per top-level-comma-separated item, in order, or `null` if [dml]
+ *   is not a plain `UPDATE`, has no top-level `SET` keyword, the SET list is empty, or any
+ *   individual item fails to parse as either a plain `column = expression` or a row-form
+ *   `(col, ...) = (...)` assignment — see [SqlSetAssignment]'s KDoc for what each shape means to
+ *   the caller. A wholesale `null` (rather than silently dropping the one bad item) is
+ *   deliberate: `PgCatalogLoader.buildUpdateSetAwareFromClause` cannot trust that skipping one
+ *   bad item still parsed every OTHER item's boundaries correctly, so it falls all the way back
+ *   to its own caller's plain, unwrapped `FROM <target>` instead of risking a half-correct
+ *   substitution.
+ */
+internal fun parseSetAssignments(dml: String): List<SqlSetAssignment>? {
+  val trimmedStart = skipWhitespaceAndComments(dml, 0)
+  if (skipOptionalKeyword(dml, trimmedStart, "UPDATE") == trimmedStart) return null
+  val setIndex = findTopLevelKeyword(dml, "SET", trimmedStart)
+  if (setIndex < 0) return null
+
+  val listStart = setIndex + 3
+  val listEnd = listOf("WHERE", "RETURNING", "FROM")
+    .mapNotNull { keyword -> findTopLevelKeyword(dml, keyword, listStart).takeIf { it >= 0 } }
+    .minOrNull() ?: dml.length
+  if (listEnd < listStart) return null
+
+  val setListText = dml.substring(listStart, listEnd).trim().trimEnd(';')
+  if (setListText.isEmpty()) return null
+
+  return splitAtTopLevel(setListText, ',').map { rawItem -> parseSingleSetAssignment(rawItem.trim()) ?: return null }
+}
+
+/**
+ * Parses one `UPDATE ... SET` list item — either `column = expression`/`column = DEFAULT`, or the
+ * row form `(col, ...) = (...)` — into a [SqlSetAssignment].
+ *
+ * @return `null` if [item] has no top-level `=` sign, its left-hand side isn't recognizable as
+ *   either a single column identifier or a fully-parenthesized column list, or (for the row form)
+ *   any inner column name fails to parse as a plain identifier.
+ */
+private fun parseSingleSetAssignment(item: String): SqlSetAssignment? {
+  val equalsIndex = findTopLevelEqualsSign(item)
+  if (equalsIndex < 0) return null
+  val lhs = item.substring(0, equalsIndex).trim()
+  val rhs = item.substring(equalsIndex + 1).trim()
+  if (lhs.isEmpty() || rhs.isEmpty()) return null
+
+  if (lhs.startsWith("(")) {
+    val closeParenthesis = findMatchingCloseParenthesis(lhs, 0)
+    if (closeParenthesis != lhs.length - 1) return null
+    val innerColumns = splitAtTopLevel(lhs.substring(1, closeParenthesis), ',').map { rawColumn ->
+      normalizeAssignmentColumnName(rawColumn.trim()) ?: return null
+    }
+    if (innerColumns.isEmpty()) return null
+    return SqlSetAssignment(columnNames = innerColumns, expression = rhs, isRowForm = true)
+  }
+
+  val columnName = normalizeAssignmentColumnName(lhs) ?: return null
+  return SqlSetAssignment(columnNames = listOf(columnName), expression = rhs, isRowForm = false)
+}
+
+/**
+ * Normalizes a `SET`-list left-hand-side column reference to the same form PostgreSQL itself uses
+ * when storing (and later reporting, via `ResultSetMetaData.getColumnName`) that column's name:
+ * an unquoted identifier folds to lowercase; a quoted identifier keeps its case, with the
+ * surrounding quotes (and any escaped `""`) removed.
+ *
+ * @return `null` if [text] is not, in its entirety, a single quoted or unquoted identifier —
+ *   e.g. it's empty, or an unquoted identifier followed by trailing junk.
+ */
+private fun normalizeAssignmentColumnName(text: String): String? {
+  if (text.isEmpty()) return null
+  if (text[0] == '"') {
+    if (!text.endsWith("\"") || text.length < 2) return null
+    return text.substring(1, text.length - 1).replace("\"\"", "\"")
+  }
+  if (!isIdentifierStartChar(text[0])) return null
+  for (index in 1 until text.length) {
+    if (!isIdentifierChar(text[index])) return null
+  }
+  return text.lowercase()
+}
+
+/**
+ * Finds the first top-level (depth-0, lexically aware) `=` sign in [text] — the separator between
+ * a `SET`-list item's left-hand side and its right-hand side. Safe to take the FIRST such sign
+ * without further disambiguation from a comparison operator that also contains `=`
+ * (`<=`, `>=`, `<>`, `!=`) or PL/pgSQL's `=>` named-argument syntax: the left-hand side of a
+ * `SET`-list item is always a bare column reference or a parenthesized column list — never an
+ * expression that could itself contain `=` — so the first top-level `=` this scan finds can only
+ * ever be the genuine assignment separator.
+ *
+ * @return The index of the `=` sign, or `-1` if [text] has none at the top level.
+ */
+private fun findTopLevelEqualsSign(text: String): Int {
+  var depth = 0
+  var i = 0
+  while (i < text.length) {
+    val afterToken = skipLexicalToken(text, i)
+    if (afterToken != i) {
+      i = afterToken
+      continue
+    }
+    when (text[i]) {
+      '(', '[' -> depth++
+      ')', ']' -> depth--
+      '=' -> if (depth == 0) return i
+    }
+    i++
+  }
+  return -1
+}
+
+/**
+ * Checks whether [text] contains a `?` parameter placeholder anywhere at the lexical level —
+ * i.e. outside a string literal, quoted identifier, dollar-quoted string, or comment, via the
+ * same [skipLexicalToken] every other scanner in this file uses to make that distinction.
+ *
+ * Used by `PgCatalogLoader.buildUpdateSetAwareFromClause` (issue #228) to detect a `SET`
+ * assignment's right-hand side still carrying a genuine parameter placeholder in the ORIGINAL,
+ * pre-sentinel-substitution SQL — see that function's KDoc for why the pre-sentinel text,
+ * specifically, is what must be checked here.
+ */
+internal fun containsLexicalPlaceholder(text: String): Boolean {
+  var i = 0
+  while (i < text.length) {
+    val afterToken = skipLexicalToken(text, i)
+    if (afterToken != i) {
+      i = afterToken
+      continue
+    }
+    if (text[i] == '?') return true
+    i++
+  }
+  return false
+}
+
+/**
  * Finds the index of the first top-level `(` at or after [start] — depth-0, lexically aware via
  * [skipLexicalToken] the same way [findTopLevelKeyword] is, so a `(` inside a string literal,
  * quoted identifier, dollar-quoted string, or comment is never mistaken for a real one. Used by
@@ -1956,6 +2257,26 @@ internal class StrippedText(private val text: String, private val originalOffset
    * character class of a qualifier's trailing run.
    */
   fun asPlainString(): String = text
+}
+
+/**
+ * `true` if [expression] is nothing but the bare `DEFAULT` keyword — a `SET column = DEFAULT`
+ * assignment's right-hand side, which resolves to the column's table-level default (an unknown,
+ * possibly-`null` value the caller makes no attempt to resolve) — once every comment and all
+ * whitespace around or inside it is discarded via [stripCommentsAndWhitespace].
+ *
+ * An exact-string `.trim().equals("DEFAULT", ignoreCase = true)` comparison misses `DEFAULT /*
+ * reset */` (a trailing comment after the keyword) and `/* x */ DEFAULT` (a leading one): a
+ * comment is not whitespace, so `.trim()` alone leaves it in place and an exact-string check
+ * never matches, letting a genuinely unresolved `DEFAULT` value get treated as an ordinary,
+ * safe-to-evaluate expression. Reusing [stripCommentsAndWhitespace] — the same comment-aware
+ * normalization [isStarItem] already trusts — removes any such comment (and all whitespace)
+ * before the length-and-content check below runs, so both shapes above, and any other comment
+ * placement, are caught.
+ */
+internal fun isDefaultKeyword(expression: String): Boolean {
+  val stripped = stripCommentsAndWhitespace(expression)
+  return stripped.length == "DEFAULT".length && stripped.regionMatchesIgnoreCase(0, "DEFAULT")
 }
 
 /**

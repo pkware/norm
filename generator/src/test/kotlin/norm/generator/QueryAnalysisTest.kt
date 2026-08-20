@@ -1,6 +1,7 @@
 package norm.generator
 
 import assertk.assertThat
+import assertk.assertions.containsAtLeast
 import assertk.assertions.containsExactly
 import assertk.assertions.hasSize
 import assertk.assertions.isEqualTo
@@ -10,6 +11,7 @@ import org.intellij.lang.annotations.Language
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.parallel.ResourceLock
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.containers.wait.strategy.Wait
 import org.testcontainers.containers.wait.strategy.WaitAllStrategy
@@ -524,11 +526,184 @@ class QueryAnalysisTest {
 
     @Test
     fun `extract on non-null`() {
+      // Uses TIME, not TIMESTAMP: extract(text, time) is total on every non-null input (no
+      // infinite representation for TIME), whereas extract(text, timestamp) is NOT — see
+      // `extract over an infinite timestamp is nullable even for a field that is not epoch-like`
+      // below for the counterexample that removed the (text, timestamp) signature from the
+      // safe list. This test previously used a TIMESTAMP column; changed to TIME so it continues
+      // to exercise a genuinely total signature rather than one now correctly excluded.
       val query = analyzeWithSchema(
-        "CREATE TABLE t (ts TIMESTAMP NOT NULL)",
-        "SELECT extract(YEAR FROM ts) AS result FROM t",
+        "CREATE TABLE t (tm TIME NOT NULL)",
+        "SELECT extract(HOUR FROM tm) AS result FROM t",
       )
       assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    /**
+     * P0-2 audit finding (issue #226 follow-up, discovered while re-auditing every safe-listed
+     * entry, not one of the verifier's originally measured defects): `extract`/`date_part` over
+     * `date`, `interval`, `timestamp`, or `timestamp with time zone` is NOT total, unlike
+     * `date_trunc` over the same types. All four base types support an `'infinity'` value, and
+     * `extract`/`date_part` special-case only a FEW fields (`epoch`, `year`, `century`, ...) to
+     * return an infinite result for infinite input — every OTHER field (`hour`, `month`, `day`,
+     * ...) silently returns `null`, with no error, even though the input is a well-typed non-null
+     * value. Verified against real PostgreSQL 18.4:
+     * `extract(hour FROM 'infinity'::timestamp)` returns `null`, and
+     * `extract(month FROM 'infinity'::interval)` and `extract(day FROM 'infinity'::date)` do too.
+     * Because the safe-list is keyed by the function's OID (one per `(name, argument types)`
+     * signature), not by the field-name string literal passed at a given call site, the whole
+     * `(text, timestamp)` signature must be excluded — the mechanism cannot tell "this particular
+     * call always passes `'hour'`" from "this call could pass any field name". This test pins the
+     * newly-nullable outcome for the exact field (`HOUR`) that exposed the gap.
+     */
+    @Test
+    fun `extract over an infinite timestamp is nullable even for a field that is not epoch-like`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (ts TIMESTAMP NOT NULL)",
+        "SELECT extract(HOUR FROM ts) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    /**
+     * Issue #226 root cause: `proisstrict` only guarantees NULL-in => NULL-out, never the
+     * converse. `substring(text FROM pattern)` is STRICT, yet returns `null` on a non-matching
+     * pattern even though every input is non-null. `substring` shares its `proname` with the
+     * TOTAL `substring(text, int, int)` overload, so the safe-list excludes the name wholesale
+     * (see [PgCatalogLoader.neverNullForNonNullInputOids]) rather than trying to key it by
+     * argument signature.
+     */
+    @Test
+    fun `substring with a non-matching regex reports nullable over a NOT NULL source column`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (s TEXT NOT NULL)",
+        "SELECT substring(s FROM '(nomatch)') AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    /**
+     * Issue #226: `regexp_match` is STRICT but returns `null` (not an empty array) when the
+     * pattern does not match, even over a non-null input string.
+     */
+    @Test
+    fun `regexp_match with a non-matching pattern reports nullable over a NOT NULL source column`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (s TEXT NOT NULL)",
+        "SELECT regexp_match(s, 'nomatch') AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    /**
+     * Issue #226: `array_length` is STRICT but returns `null` (not `0`) for an empty array, even
+     * though the array literal itself is a non-null value.
+     */
+    @Test
+    fun `array_length of an empty array reports nullable over a NOT NULL source column`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL)",
+        "SELECT array_length(ARRAY[]::text[], 1) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    /**
+     * Closes the class of unsoundness issue #226 fixes for user code: a STRICT function is no
+     * longer inferred non-null just because it is strict. Only functions on the
+     * [PgCatalogLoader.neverNullForNonNullInputOids] safe-list — which is restricted to
+     * `pg_catalog` — get that inference; a user-defined STRICT function in `public` does not,
+     * because Norm cannot prove it is total on non-null input.
+     */
+    @Test
+    fun `user-defined STRICT function in public is not inferred non-null`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (name TEXT NOT NULL);
+        CREATE FUNCTION double_up(x TEXT) RETURNS TEXT LANGUAGE sql STRICT AS $$ SELECT x || x $$
+        """.trimIndent(),
+        "SELECT double_up(name) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    /**
+     * A user-defined function sharing a safe-listed name (`upper`) outside `pg_catalog` must not
+     * inherit the safe-list entry — the entry is scoped by `pronamespace = 'pg_catalog'`, not by
+     * name alone. Takes two arguments to force PostgreSQL to resolve the call to this function
+     * rather than the single-argument `pg_catalog.upper`.
+     */
+    @Test
+    fun `user-defined function named upper outside pg_catalog does not inherit the safe-list entry`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (name TEXT NOT NULL);
+        CREATE FUNCTION upper(x TEXT, y TEXT) RETURNS TEXT LANGUAGE sql STRICT AS $$ SELECT x || y $$
+        """.trimIndent(),
+        "SELECT upper(name, 'suffix') AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    /**
+     * P0-2 measured defect: `upper(anyrange)` shares `proname = 'upper'` with the total
+     * `upper(text)`, but is STRICT and returns `null` for a non-null, well-typed, UNBOUNDED range
+     * — `SELECT upper(int4range '[1,)')` returns `null` with no error. Verified against real
+     * PostgreSQL 18.4. Before this fix, keying the safe list by name alone reported this NOT NULL.
+     */
+    @Test
+    fun `upper of an unbounded NOT NULL int4range reports nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (r INT4RANGE NOT NULL)",
+        "SELECT upper(r) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    /**
+     * P0-2 measured defect: same as the `upper` test above, but for `lower(anyrange)` over an
+     * EMPTY (rather than unbounded) range — `SELECT lower(int4range 'empty')` returns `null` with
+     * no error. Verified against real PostgreSQL 18.4.
+     */
+    @Test
+    fun `lower of an empty NOT NULL int4range reports nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (r INT4RANGE NOT NULL)",
+        "SELECT lower(r) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    /**
+     * P0-2 measured defect: `lower(anymultirange)` shares `proname = 'lower'` with the total
+     * `lower(text)`, but is STRICT and returns `null` for a non-null, well-typed, EMPTY
+     * multirange — `SELECT lower(int4multirange '{}')` returns `null` with no error. Verified
+     * against real PostgreSQL 18.4.
+     */
+    @Test
+    fun `lower of an empty NOT NULL int4multirange reports nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (m INT4MULTIRANGE NOT NULL)",
+        "SELECT lower(m) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    /**
+     * P0-2 measured defect: `to_char(timestamp, text)` is STRICT but returns `null` for a
+     * non-null, well-typed, EMPTY format string — `SELECT to_char(now(), '')` returns `null` with
+     * no error. Verified against real PostgreSQL 18.4. `to_char` is now dropped from the safe
+     * list entirely (see [PgCatalogLoader.NEVER_NULL_FUNCTION_SIGNATURES]) rather than narrowed,
+     * since the empty-format behavior is a property of every overload's shared formatting engine,
+     * not of the first argument's type.
+     */
+    @Test
+    fun `to_char with a NOT NULL empty format string reports nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (ts TIMESTAMP NOT NULL, fmt TEXT NOT NULL)",
+        "SELECT to_char(ts, fmt) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
     }
   }
 
@@ -666,6 +841,23 @@ class QueryAnalysisTest {
       )
       assertThat(query.columns[0].notNull).isFalse()
     }
+
+    /**
+     * Regression guard for the operator blanket rule this fix replaces with signature keying:
+     * `path_add` (the `+` operator's `path` overload) returns `null`, not an error, when either
+     * operand is a CLOSED path — even though both operands are non-null and well-typed. A
+     * symbol-only safe-list (every `pg_catalog` overload of `+` is safe) cannot see this, because
+     * `+` is also the totally-safe `int4 + int4`. See
+     * [PgCatalogLoader.NEVER_NULL_OPERATOR_SIGNATURES]'s KDoc.
+     */
+    @Test
+    fun `path plus path is nullable, not non-null, despite both operands being NOT NULL`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (p1 PATH NOT NULL, p2 PATH NOT NULL)",
+        "SELECT p1 + p2 AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
   }
 
   @Nested
@@ -705,6 +897,21 @@ class QueryAnalysisTest {
         "SELECT '2024-01-01'::DATE AS result FROM t",
       )
       assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    /**
+     * Regression guard for the cast blanket rule this fix replaces with signature keying:
+     * `jsonb::int4` returns `null`, not an error, on the JSON literal `null` — even though the
+     * source column is non-null and well-typed. A blanket "every `pg_catalog` castfunc is safe"
+     * rule cannot see this. See [PgCatalogLoader.NEVER_NULL_CAST_SIGNATURES]'s KDoc.
+     */
+    @Test
+    fun `jsonb cast to int4 is nullable, not non-null, despite the source column being NOT NULL`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (data JSONB NOT NULL)",
+        "SELECT data::int4 AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
     }
   }
 
@@ -1078,6 +1285,26 @@ class QueryAnalysisTest {
         "SELECT sum(val) FILTER (WHERE active) AS result FROM t",
       )
       assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    /**
+     * Mirrors test-scenarios/nested_joins_embeds's `getBookWithReviewCount` query
+     * (`COUNT(r.id)::int AS review_count` over a `LEFT JOIN`), which that scenario's own golden
+     * comparison test skips (it is in `NormPluginTest.EMBED_SCENARIOS`). `COUNT` is already
+     * non-null via its non-null initial value; the `::int` cast wraps that in a FuncExpr calling
+     * `pg_catalog.int4(int8)`, which must be on [PgCatalogLoader.neverNullForNonNullInputOids] via
+     * the `pg_cast` cast-function rule, or this column would regress to nullable.
+     */
+    @Test
+    fun `COUNT over a LEFT JOIN cast to int stays non-null`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE b (id INT NOT NULL);
+        CREATE TABLE r (id INT NOT NULL, b_id INT NOT NULL)
+        """.trimIndent(),
+        "SELECT COUNT(r.id)::int AS review_count FROM b LEFT JOIN r ON r.b_id = b.id GROUP BY b.id",
+      )
+      assertThat(query.columns[0].notNull).isTrue()
     }
   }
 
@@ -4100,6 +4327,508 @@ class QueryAnalysisTest {
   }
 
   /**
+   * Issue #228: [PgCatalogLoader.probeUnknownColumnNullability]'s bare `SELECT <returning> FROM
+   * <target>` probe (issue #226) evaluates a `RETURNING` expression against the UNMODIFIED target
+   * table, so it cannot see a value the statement's OWN `SET` clause assigns — `UPDATE t SET note
+   * = 'x' RETURNING lower(note)` widened to nullable even though `note` can only ever be `'x'` in
+   * this result, because `note` has no `NOT NULL` constraint in the catalog. These tests exercise
+   * [PgCatalogLoader.buildUpdateSetAwareFromClause], which wraps the probe's target in a derived
+   * table carrying the `SET`-assigned expressions, plus every bail condition that must keep the
+   * bare (pre-#228) column instead.
+   */
+  @Nested
+  inner class SetAssignmentAwareProbe {
+
+    private val schema =
+      "CREATE TABLE t (id INT PRIMARY KEY, name TEXT NOT NULL, note TEXT, other TEXT, data JSONB)"
+
+    @Test
+    fun `assigning a non-null literal to a nullable column reports NOT NULL`() {
+      val query = analyzeWithSchema(schema, "UPDATE t SET note = 'x' WHERE id = 1 RETURNING lower(note) AS n")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `a parameter placeholder assignment reports nullable, since the caller can bind NULL`() {
+      val query = analyzeWithSchema(schema, "UPDATE t SET note = ? WHERE id = 1 RETURNING lower(note) AS n")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `an assignment referencing the column's own old value reports nullable`() {
+      val query = analyzeWithSchema(schema, "UPDATE t SET note = note || 'x' RETURNING lower(note) AS n")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `RETURNING through the target's own alias resolves against the substituted value`() {
+      val query = analyzeWithSchema(schema, "UPDATE t AS u SET note = 'x' RETURNING lower(u.note) AS n")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `a row-form assignment reports nullable, since its right-hand side can't be attributed to one column`() {
+      val query = analyzeWithSchema(
+        schema,
+        "UPDATE t SET (note, other) = ('x', 'y') WHERE id = 1 RETURNING lower(note) AS n",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `an assignment to DEFAULT reports nullable, since the default expression is not resolved`() {
+      val query = analyzeWithSchema(schema, "UPDATE t SET note = DEFAULT WHERE id = 1 RETURNING lower(note) AS n")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `control - assigning a non-null literal to an already NOT NULL column stays NOT NULL`() {
+      val query = analyzeWithSchema(schema, "UPDATE t SET name = 'x' WHERE id = 1 RETURNING lower(name) AS n")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `an unassigned nullable column keeps reporting nullable`() {
+      val query = analyzeWithSchema(schema, "UPDATE t SET name = 'x' WHERE id = 1 RETURNING lower(note) AS n")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `an assignment expression the analyzer can reason through still reports NOT NULL`() {
+      val query = analyzeWithSchema(schema, "UPDATE t SET note = COALESCE(note, 'x') RETURNING lower(note) AS n")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `a system column the SET-aware derived table can't carry doesn't collapse a sibling column's real answer`() {
+      // The wrapped `FROM (SELECT ... FROM t) AS t` derived table has no `ctid` — PostgreSQL fails
+      // to prepare `SELECT ..., ctid FROM (SELECT ... FROM t) AS t` with "column \"ctid\" does not
+      // exist". `ctid` itself is reported NOT NULL directly by `ResultSetMetaData` on the RAW
+      // `UPDATE ... RETURNING` statement — it never goes through the probe at all, at HEAD or
+      // here — so it stays NOT NULL regardless. What the wrapped probe's failure must NOT be
+      // allowed to do is collapse the SEPARATE, otherwise-resolvable `lower(note)` column's own
+      // answer down to the probe's NOT NULL default: without the bare-`FROM t` retry, the whole
+      // combined probe (covering every `RETURNING` item at once) fails to prepare because of
+      // `ctid` alone, silently breaking `lower(note)`'s nullability too even though nothing about
+      // `ctid` bears on it.
+      val query = analyzeWithSchema(schema, "UPDATE t SET note = note || 'x' RETURNING lower(note) AS n, ctid")
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `an untyped literal assigned to a jsonb column reports nullable rather than failing the whole probe`() {
+      // Splicing the untyped literal `'{"a":1}'` into the derived table's column list degrades it
+      // to `text` there, so `data -> 'zzz'` (the `->` jsonb operator) fails to prepare against the
+      // wrapped probe. The bare-target retry sees the real `jsonb` column instead and succeeds.
+      val query = analyzeWithSchema(schema, "UPDATE t SET data = '{\"a\":1}' RETURNING data -> 'zzz' AS v")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `a trailing comment after DEFAULT still bails on splicing it into the derived table`() {
+      val query = analyzeWithSchema(
+        schema,
+        "UPDATE t SET note = DEFAULT /* reset */ WHERE id = 1 RETURNING lower(note) AS n",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `a leading comment before DEFAULT still bails on splicing it into the derived table`() {
+      val query = analyzeWithSchema(
+        schema,
+        "UPDATE t SET note = /* x */ DEFAULT WHERE id = 1 RETURNING lower(note) AS n",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+  }
+
+  /**
+   * A verifier found that [SetAssignmentAwareProbe]'s substitution splices the `SET` right-hand
+   * side into the derived table's column list VERBATIM, with no cast to the column's own declared
+   * type. An untyped literal (`'empty'`) spliced bare is typed `text` by PostgreSQL inside the
+   * derived table — a DIFFERENT type than the real column's — which can resolve a `RETURNING`
+   * function call against a completely different, sometimes safe-listed, overload than the real
+   * statement would ever use: `lower(text)` is safe-listed, `lower(anyrange)` is not, and
+   * `UPDATE t SET r = 'empty' RETURNING lower(r)` resolves the LATTER against the real column but
+   * (pre-fix) the FORMER against the bare-text derived table, silently reporting NOT NULL for a
+   * value that is actually `NULL` at runtime. [PgCatalogLoader.buildUpdateSetAwareFromClause] now
+   * casts every substituted expression to the column's own declared type — via
+   * [PgCatalogLoader.lookupDeclaredColumnTypes]'s `format_type(atttypid, atttypmod)` — so the
+   * derived table's column type is identical to the real one and resolves the identical overload.
+   */
+  @Nested
+  inner class SetAssignmentAwareProbeDeclaredTypeCast {
+
+    @Test
+    fun `an untyped range literal assigned to an INT4RANGE column reports nullable, not NOT NULL`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, r INT4RANGE)",
+        "UPDATE t SET r = 'empty' WHERE id = 1 RETURNING lower(r) AS n",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `an untyped range literal assigned to an INT4RANGE column reports nullable for upper() too`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, r INT4RANGE)",
+        "UPDATE t SET r = '[1,)' WHERE id = 1 RETURNING upper(r) AS n",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `an untyped multirange literal assigned to an INT4MULTIRANGE column reports nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, m INT4MULTIRANGE)",
+        "UPDATE t SET m = '{}' WHERE id = 1 RETURNING lower(m) AS n",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `control - a non-null text literal assigned to a nullable TEXT column still reports NOT NULL`() {
+      // The declared type of a plain TEXT column is "text" with no typmod, exactly what the
+      // untyped literal already defaulted to before this fix — so adding the cast must not change
+      // this answer. Same case as SetAssignmentAwareProbe's own first test, re-asserted here next
+      // to the cast-introducing fix as an explicit before/after control.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, note TEXT)",
+        "UPDATE t SET note = 'x' WHERE id = 1 RETURNING lower(note) AS n",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `control - an assignment the analyzer can reason through via COALESCE still reports NOT NULL`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, note TEXT)",
+        "UPDATE t SET note = COALESCE(note, 'x') RETURNING lower(note) AS n",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `a literal assigned to a VARCHAR(5) column still substitutes and reports NOT NULL`() {
+      // Proves format_type carried the column's typmod (length 5) rather than the substitution
+      // silently failing to build (which would fall back to the bare, unsubstituted `note` column
+      // — nullable in the schema — and report NULLABLE here instead). If the cast's type text were
+      // invalid SQL, or if the typmod were dropped in a way PostgreSQL rejected, the derived
+      // table's `PREPARE` would fail and the whole combined probe would fall back to the bare
+      // target, changing this answer.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, code VARCHAR(5))",
+        "UPDATE t SET code = 'ab' WHERE id = 1 RETURNING upper(code) AS n",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `an untyped range literal assigned to a DOMAIN over INT4RANGE reports nullable`() {
+      // A domain routes through CoerceToDomain, not a cast function, when the substituted
+      // expression is cast to the domain's own declared type (format_type reports the domain's
+      // own name, e.g. "r_domain", not its base type "int4range"). CoerceToDomain recurses
+      // unconditionally into its argument (see NodeTreeNullabilityAnalyzer.isNonNull), and
+      // PostgreSQL strips a domain down to its base type for function-overload resolution, so
+      // `lower()` here resolves the same anyrange overload it would against the real
+      // domain-typed column — reproducing the same wrong-overload bug this fix closes, but through
+      // CoerceToDomain instead of a cast function.
+      val query = analyzeWithSchema(
+        "CREATE DOMAIN r_domain AS INT4RANGE; CREATE TABLE t (id INT PRIMARY KEY, r r_domain)",
+        "UPDATE t SET r = 'empty' WHERE id = 1 RETURNING lower(r) AS n",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+  }
+
+  /**
+   * Issue #228 follow-up: a verifier found that [SetAssignmentAwareProbe]'s substitution ignored
+   * anything that rewrites the tuple BETWEEN the `SET` clause and `RETURNING` — `RETURNING` always
+   * sees the FINAL, post-trigger, post-rule tuple, never the raw `SET` expression, so a `BEFORE`
+   * row trigger, an `INSTEAD OF` trigger, a rewrite rule, or a foreign data wrapper's own write path
+   * can each substitute something else entirely for a value
+   * [PgCatalogLoader.buildUpdateSetAwareFromClause] would otherwise splice in as provably non-null.
+   * These tests exercise [PgCatalogLoader.targetRelationMayRewriteTupleBeforeReturning], the
+   * catalog-based bail that closes each of those gaps, plus the negative case (a statement-level or
+   * `AFTER` trigger) that proves the bail is targeted rather than a blanket "any trigger" check.
+   */
+  @Nested
+  inner class SetAssignmentAwareProbeCatalogBail {
+
+    @Test
+    fun `a BEFORE UPDATE row trigger that nulls the column reports nullable`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT PRIMARY KEY, note TEXT);
+        CREATE FUNCTION nuller() RETURNS trigger AS $$ BEGIN NEW.note := NULL; RETURN NEW; END $$ LANGUAGE plpgsql;
+        CREATE TRIGGER trg BEFORE UPDATE ON t FOR EACH ROW EXECUTE FUNCTION nuller();
+        """.trimIndent(),
+        "UPDATE t SET note = 'x' WHERE id = 1 RETURNING lower(note) AS n",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `an INSTEAD OF UPDATE trigger on a view over the target reports nullable`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT PRIMARY KEY, note TEXT);
+        CREATE VIEW v AS SELECT id, note FROM t;
+        CREATE FUNCTION v_instead_of_update() RETURNS trigger AS $$
+        BEGIN
+          UPDATE t SET note = NEW.note WHERE id = OLD.id;
+          RETURN NEW;
+        END $$ LANGUAGE plpgsql;
+        CREATE TRIGGER trg_instead_of_update INSTEAD OF UPDATE ON v
+          FOR EACH ROW EXECUTE FUNCTION v_instead_of_update();
+        """.trimIndent(),
+        "UPDATE v SET note = 'x' WHERE id = 1 RETURNING lower(note) AS n",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `a BEFORE INSERT row trigger on ANY partition bails, even updated through the parent`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT PRIMARY KEY, note TEXT) PARTITION BY RANGE (id);
+        CREATE TABLE t_p1 PARTITION OF t FOR VALUES FROM (0) TO (100);
+        CREATE TABLE t_p2 PARTITION OF t FOR VALUES FROM (100) TO (200);
+        CREATE FUNCTION nuller() RETURNS trigger AS $$ BEGIN NEW.note := NULL; RETURN NEW; END $$ LANGUAGE plpgsql;
+        CREATE TRIGGER trg BEFORE INSERT ON t_p2 FOR EACH ROW EXECUTE FUNCTION nuller();
+        """.trimIndent(),
+        "UPDATE t SET note = 'x' WHERE id = 1 RETURNING lower(note) AS n",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `a DO INSTEAD rule on the target reports nullable`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT PRIMARY KEY, note TEXT);
+        CREATE TABLE t_shadow (id INT PRIMARY KEY, note TEXT);
+        CREATE RULE r_instead AS ON UPDATE TO t
+          DO INSTEAD (UPDATE t_shadow SET note = NULL WHERE id = OLD.id RETURNING id, note);
+        """.trimIndent(),
+        "UPDATE t SET note = 'x' WHERE id = 1 RETURNING lower(note) AS n",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    // postgres_fdw's loopback connection caching races under JUnit5's default concurrent
+    // execution mode when multiple tests concurrently CREATE/DROP a SERVER + FOREIGN TABLE
+    // against the SAME shared container — observed as a spurious "server ... does not exist"
+    // surfacing from an unrelated concurrent test's DROP SERVER, not from this test's own logic.
+    // @ResourceLock serializes every postgres_fdw-loopback test in this class against each other
+    // (but not against unrelated tests elsewhere), matching the existing pattern in
+    // gradle-plugin's TestProject.COMPOSITE_BUILD_RESOURCE_LOCK for a different shared resource.
+    @Test
+    @ResourceLock("postgres_fdw_loopback")
+    fun `a foreign table target reports nullable, since an FDW can produce any tuple`() {
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use { statement ->
+          statement.execute("CREATE SCHEMA $schemaName")
+          statement.execute("SET search_path TO $schemaName")
+          statement.execute("CREATE TABLE base_for_fdw (id INT PRIMARY KEY, note TEXT)")
+          statement.execute("CREATE EXTENSION IF NOT EXISTS postgres_fdw")
+          statement.execute(
+            "CREATE SERVER loopback_$schemaName FOREIGN DATA WRAPPER postgres_fdw " +
+              "OPTIONS (dbname '${container.databaseName}', host '127.0.0.1', port '5432')",
+          )
+          statement.execute(
+            "CREATE USER MAPPING FOR CURRENT_USER SERVER loopback_$schemaName " +
+              "OPTIONS (user '${container.username}', password '${container.password}')",
+          )
+          statement.execute(
+            "CREATE FOREIGN TABLE ft (id INT, note TEXT) SERVER loopback_$schemaName " +
+              "OPTIONS (schema_name '$schemaName', table_name 'base_for_fdw')",
+          )
+        }
+        try {
+          val analyzer = JdbcAnalyzer(connection)
+          val catalog = analyzer.buildCatalog(listOf(schemaName))
+          val parsedQuery = ParsedQuery(
+            name = "test",
+            command = ":one",
+            sql = "UPDATE ft SET note = 'x' WHERE id = 1 RETURNING lower(note) AS n",
+            comments = emptyList(),
+          )
+          val query = analyzer.analyzeQuery(parsedQuery, catalog)
+          assertThat(query.columns).hasSize(1)
+          assertThat(query.columns[0].notNull).isFalse()
+        } finally {
+          connection.createStatement().use { statement ->
+            statement.execute("DROP SERVER loopback_$schemaName CASCADE")
+            statement.execute("DROP SCHEMA $schemaName CASCADE")
+          }
+        }
+      }
+    }
+
+    @Test
+    @ResourceLock("postgres_fdw_loopback")
+    fun `a foreign partition of a partitioned target reports nullable`() {
+      // P0-1 regression: targetRelationMayRewriteTupleBeforeReturning previously checked
+      // relkind only for the ROOT relation ("p", a partitioned table — relkind 'p'), never for
+      // its descendants. A partition that is itself a FOREIGN TABLE (relkind 'f') was therefore
+      // invisible, and an FDW's own write path can produce any tuple it likes, independent of
+      // this statement's SET clause. Verified against real PostgreSQL 18.4 (via a postgres_fdw
+      // loopback with a BEFORE UPDATE row trigger on the remote table nulling "note"): before the
+      // fix this reported NOT NULL; the actual RETURNING value is NULL.
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use { statement ->
+          statement.execute("CREATE SCHEMA $schemaName")
+          statement.execute("SET search_path TO $schemaName")
+          statement.execute("CREATE TABLE remote_p2 (id INT, k INT, note TEXT)")
+          statement.execute("INSERT INTO remote_p2 VALUES (1, 150, 'y')")
+          statement.execute(
+            "CREATE FUNCTION nuller_p2() RETURNS trigger AS \$\$ BEGIN NEW.note := NULL; RETURN NEW; END \$\$ " +
+              "LANGUAGE plpgsql",
+          )
+          statement.execute("CREATE TRIGGER trg BEFORE UPDATE ON remote_p2 FOR EACH ROW EXECUTE FUNCTION nuller_p2()")
+          statement.execute("CREATE EXTENSION IF NOT EXISTS postgres_fdw")
+          statement.execute(
+            "CREATE SERVER loopback_$schemaName FOREIGN DATA WRAPPER postgres_fdw " +
+              "OPTIONS (dbname '${container.databaseName}', host '127.0.0.1', port '5432')",
+          )
+          statement.execute(
+            "CREATE USER MAPPING FOR CURRENT_USER SERVER loopback_$schemaName " +
+              "OPTIONS (user '${container.username}', password '${container.password}')",
+          )
+          statement.execute("CREATE TABLE p (id INT, k INT NOT NULL, note TEXT) PARTITION BY RANGE (k)")
+          statement.execute("CREATE TABLE p1 PARTITION OF p FOR VALUES FROM (0) TO (100)")
+          statement.execute(
+            "CREATE FOREIGN TABLE p2 PARTITION OF p FOR VALUES FROM (100) TO (200) " +
+              "SERVER loopback_$schemaName OPTIONS (schema_name '$schemaName', table_name 'remote_p2')",
+          )
+        }
+        try {
+          val analyzer = JdbcAnalyzer(connection)
+          val catalog = analyzer.buildCatalog(listOf(schemaName))
+          val parsedQuery = ParsedQuery(
+            name = "test",
+            command = ":one",
+            sql = "UPDATE p SET note = 'x' WHERE id = 1 RETURNING lower(note) AS n",
+            comments = emptyList(),
+          )
+          val query = analyzer.analyzeQuery(parsedQuery, catalog)
+          assertThat(query.columns).hasSize(1)
+          assertThat(query.columns[0].notNull).isFalse()
+        } finally {
+          connection.createStatement().use { statement ->
+            statement.execute("DROP SERVER loopback_$schemaName CASCADE")
+            statement.execute("DROP SCHEMA $schemaName CASCADE")
+          }
+        }
+      }
+    }
+
+    @Test
+    @ResourceLock("postgres_fdw_loopback")
+    fun `a foreign inheritance child of a plain (non-partitioned) target reports nullable`() {
+      // Same P0-1 regression as the foreign-partition test above, but for plain multiple-
+      // inheritance (INHERITS) rather than declarative partitioning: the root relation ("parent2")
+      // is an ordinary table (relkind 'r'), but its inheritance child ("child2") is a FOREIGN
+      // TABLE. Verified against real PostgreSQL 18.4 that "child2 (...) INHERITS (parent2) SERVER
+      // ..." is valid syntax and that the child's remote BEFORE UPDATE trigger nulls the returned
+      // value.
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use { statement ->
+          statement.execute("CREATE SCHEMA $schemaName")
+          statement.execute("SET search_path TO $schemaName")
+          statement.execute("CREATE TABLE remote_child (id INT, note TEXT)")
+          statement.execute("INSERT INTO remote_child VALUES (1, 'y')")
+          statement.execute(
+            "CREATE FUNCTION nuller_child() RETURNS trigger AS \$\$ BEGIN NEW.note := NULL; RETURN NEW; END \$\$ " +
+              "LANGUAGE plpgsql",
+          )
+          statement.execute(
+            "CREATE TRIGGER trg2 BEFORE UPDATE ON remote_child FOR EACH ROW EXECUTE FUNCTION nuller_child()",
+          )
+          statement.execute("CREATE EXTENSION IF NOT EXISTS postgres_fdw")
+          statement.execute(
+            "CREATE SERVER loopback_$schemaName FOREIGN DATA WRAPPER postgres_fdw " +
+              "OPTIONS (dbname '${container.databaseName}', host '127.0.0.1', port '5432')",
+          )
+          statement.execute(
+            "CREATE USER MAPPING FOR CURRENT_USER SERVER loopback_$schemaName " +
+              "OPTIONS (user '${container.username}', password '${container.password}')",
+          )
+          statement.execute("CREATE TABLE parent2 (id INT, note TEXT)")
+          statement.execute(
+            "CREATE FOREIGN TABLE child2 (id INT, note TEXT) INHERITS (parent2) " +
+              "SERVER loopback_$schemaName OPTIONS (schema_name '$schemaName', table_name 'remote_child')",
+          )
+        }
+        try {
+          val analyzer = JdbcAnalyzer(connection)
+          val catalog = analyzer.buildCatalog(listOf(schemaName))
+          val parsedQuery = ParsedQuery(
+            name = "test",
+            command = ":one",
+            sql = "UPDATE parent2 SET note = 'x' WHERE id = 1 RETURNING lower(note) AS n",
+            comments = emptyList(),
+          )
+          val query = analyzer.analyzeQuery(parsedQuery, catalog)
+          assertThat(query.columns).hasSize(1)
+          assertThat(query.columns[0].notNull).isFalse()
+        } finally {
+          connection.createStatement().use { statement ->
+            statement.execute("DROP SERVER loopback_$schemaName CASCADE")
+            statement.execute("DROP SCHEMA $schemaName CASCADE")
+          }
+        }
+      }
+    }
+
+    @Test
+    fun `a statement-level BEFORE trigger and an AFTER row trigger do NOT bail`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT PRIMARY KEY, note TEXT);
+        CREATE FUNCTION noop() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql;
+        CREATE FUNCTION stmt_noop() RETURNS trigger AS $$ BEGIN RETURN NULL; END $$ LANGUAGE plpgsql;
+        CREATE TRIGGER trg_stmt BEFORE UPDATE ON t FOR EACH STATEMENT EXECUTE FUNCTION stmt_noop();
+        CREATE TRIGGER trg_after AFTER UPDATE ON t FOR EACH ROW EXECUTE FUNCTION noop();
+        """.trimIndent(),
+        "UPDATE t SET note = 'x' WHERE id = 1 RETURNING lower(note) AS n",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+  }
+
+  /**
    * Regression guard belonging to the same fix as [DmlReturning]'s three `merge_action()`/`OLD`
    * abort guards, but exercising the STUB-path fail-safe specifically (see
    * [oldOrNewReturningColumns]'s and [PgCatalogLoader.buildSelectStub]'s KDoc): that mechanism
@@ -4840,10 +5569,303 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `strictButNullable OIDs are loaded for JSON operators`() {
+    fun `neverNullForNonNullInput OIDs are loaded and exclude JSON path operators`() {
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         val catalogLoader = PgCatalogLoader(connection)
-        assertThat(catalogLoader.strictButNullableFunctionOids.isNotEmpty()).isTrue()
+        val safeListed = catalogLoader.neverNullForNonNullInputOids
+        assertThat(safeListed.isNotEmpty()).isTrue()
+
+        // "->" and "->>" (JSON path extraction) are STRICT but not TOTAL — they return null on a
+        // missing key/path even though every input is non-null — so they must be absent from the
+        // safe list despite satisfying isStrict.
+        val jsonPathOperatorOids = connection.createStatement().use { stmt ->
+          stmt.executeQuery(
+            """
+            SELECT o.oprcode::integer AS oid FROM pg_catalog.pg_operator o
+            JOIN pg_catalog.pg_namespace n ON n.oid = o.oprnamespace
+            WHERE n.nspname = 'pg_catalog' AND o.oprname IN ('->', '->>')
+            """.trimIndent(),
+          ).use { rs ->
+            buildSet { while (rs.next()) add(rs.getInt("oid")) }
+          }
+        }
+        assertThat(jsonPathOperatorOids.isNotEmpty()).isTrue()
+        assertThat(safeListed.intersect(jsonPathOperatorOids)).hasSize(0)
+      }
+    }
+
+    @Test
+    fun `pg_operator rows for safe-listed symbols match a known snapshot`() {
+      // Enumerates every pg_catalog pg_operator row matching a symbol that appears in
+      // NEVER_NULL_OPERATOR_SIGNATURES (not just the safe-listed signatures — every overload of
+      // that symbol, regardless of operand types), grouped by symbol, as a count. A PostgreSQL
+      // version bump that adds or removes an overload of one of these symbols changes a count
+      // here, forcing a human to look at the new overload and decide whether it is total before
+      // adding its (symbol, left type, right type) triple to NEVER_NULL_OPERATOR_SIGNATURES —
+      // exactly the gap a symbol-only safe-list left open for `path + path`.
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        val symbols = PgCatalogLoader.NEVER_NULL_OPERATOR_SIGNATURES.map { it.symbol }.toSortedSet()
+          .joinToString(", ") { "'$it'" }
+        val counts = connection.createStatement().use { stmt ->
+          stmt.executeQuery(
+            """
+            SELECT o.oprname, count(*) AS operator_count FROM pg_catalog.pg_operator o
+            JOIN pg_catalog.pg_namespace n ON n.oid = o.oprnamespace
+            WHERE n.nspname = 'pg_catalog' AND o.oprname IN ($symbols)
+            GROUP BY o.oprname
+            """.trimIndent(),
+          ).use { rs ->
+            buildMap { while (rs.next()) put(rs.getString("oprname"), rs.getInt("operator_count")) }
+          }
+        }
+        assertThat(counts).isEqualTo(
+          mapOf(
+            "!~" to 3, "!~*" to 3, "!~~" to 4, "!~~*" to 3,
+            "%" to 4, "&&" to 10, "*" to 32, "+" to 50, "-" to 47, "/" to 25,
+            "<" to 58, "<=" to 58, "<>" to 59, "<@" to 20, "=" to 63,
+            ">" to 58, ">=" to 58, "@>" to 17, "||" to 11,
+            "~" to 10, "~*" to 3, "~~" to 4, "~~*" to 3,
+          ),
+        )
+      }
+    }
+
+    @Test
+    fun `pg_proc rows for safe-listed function names match a known snapshot`() {
+      // Enumerates EVERY pg_catalog overload for every function NAME appearing in
+      // NEVER_NULL_FUNCTION_SIGNATURES — not just the safe-listed signatures — so a PostgreSQL
+      // version bump that adds a NEW overload of one of these names (exactly how the
+      // anyrange/anymultirange overloads of lower/upper slipped in, silently widening a
+      // name-keyed safe list to an untotal overload) fails loudly here, forcing a human to look
+      // at the new overload and decide whether it is total before adding it to
+      // NEVER_NULL_FUNCTION_SIGNATURES.
+      //
+      // KNOWN_SIGNATURE_SNAPSHOT below includes `reverse(bytea)`, which only exists starting in
+      // PostgreSQL 18 — see the identically-shaped `pg_cast rows for safe-listed source types`
+      // test's KDoc immediately below for why comparing the live server directly against a fixed
+      // snapshot containing a version-18-only entry would fail on 16/17, and why splitting the
+      // expectation into a safe-listed portion (derived from what actually resolves HERE) and a
+      // non-safe-listed portion (pinned to the fixed snapshot, since `lower`/`upper`'s
+      // anyrange/anymultirange overloads and `trunc`'s macaddr/macaddr8 overloads are not
+      // version-sensitive across 16/17/18) keeps this an exact equality without reintroducing that
+      // failure.
+      //
+      // Deriving the safe-listed portion of the expectation from `actualSignatures` itself (rather
+      // than from the safe list directly) has one absorbed gap: a safe-listed signature
+      // DISAPPEARING from the live server — a real regression, not a version difference — would
+      // vanish from `actualSignatures.intersect(safeListedSignatures)` on the actual side AND from
+      // the same computation on the expected side, so the two stay equal and the test passes
+      // silently. `versionGatedSafeListedSignatures` below closes that gap for every safe-listed
+      // signature except the one entry actually known to be version-gated (`reverse(bytea)`,
+      // PostgreSQL 18+): every other safe-listed signature is asserted present in
+      // `actualSignatures` directly, so its disappearance is a loud failure here, not an absorbed
+      // one. A future safe-listed signature that becomes version-gated on some future PostgreSQL
+      // release would need adding to `versionGatedSafeListedSignatures` by hand, exactly the way
+      // `reverse(bytea)` already is — this does not reintroduce the original brittleness (a fixed
+      // snapshot compared directly against the live server), since every OTHER signature's
+      // presence is still checked live, not against a fixed count.
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        val names = PgCatalogLoader.NEVER_NULL_FUNCTION_SIGNATURES.map { it.name }.toSortedSet()
+        val namesLiteral = names.joinToString(", ") { "'$it'" }
+        val actualSignatures = connection.createStatement().use { stmt ->
+          stmt.executeQuery(
+            """
+            SELECT p.proname,
+              COALESCE(
+                (SELECT array_agg(t.typname::text ORDER BY u.ordinality)
+                 FROM unnest(p.proargtypes) WITH ORDINALITY AS u(type_oid, ordinality)
+                 JOIN pg_catalog.pg_type t ON t.oid = u.type_oid),
+                ARRAY[]::text[]
+              ) AS argtypes
+            FROM pg_catalog.pg_proc p
+            JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'pg_catalog' AND p.proname IN ($namesLiteral)
+            """.trimIndent(),
+          ).use { rs ->
+            buildSet {
+              while (rs.next()) {
+                @Suppress("UNCHECKED_CAST")
+                val argumentTypes = (rs.getArray("argtypes").array as Array<String>).toList()
+                add("${rs.getString("proname")}(${argumentTypes.joinToString(",")})")
+              }
+            }
+          }
+        }
+        val knownSignatureSnapshot = setOf(
+          "abs(float4)", "abs(float8)", "abs(int2)", "abs(int4)", "abs(int8)", "abs(numeric)",
+          "array_to_string(anyarray,text)", "array_to_string(anyarray,text,text)",
+          "ascii(text)",
+          "btrim(bytea,bytea)", "btrim(text)", "btrim(text,text)",
+          "cardinality(anyarray)",
+          "ceil(float8)", "ceil(numeric)",
+          "ceiling(float8)", "ceiling(numeric)",
+          "char_length(bpchar)", "char_length(text)",
+          "chr(int4)",
+          "date_part(text,date)", "date_part(text,interval)", "date_part(text,time)",
+          "date_part(text,timestamp)", "date_part(text,timestamptz)", "date_part(text,timetz)",
+          "date_trunc(text,interval)", "date_trunc(text,timestamp)", "date_trunc(text,timestamptz)",
+          "date_trunc(text,timestamptz,text)",
+          "decode(text,text)",
+          "div(numeric,numeric)",
+          "encode(bytea,text)",
+          "extract(text,date)", "extract(text,interval)", "extract(text,time)",
+          "extract(text,timestamp)", "extract(text,timestamptz)", "extract(text,timetz)",
+          "floor(float8)", "floor(numeric)",
+          "initcap(text)",
+          "left(text,int4)",
+          "length(bit)", "length(bpchar)", "length(bytea)", "length(bytea,name)", "length(lseg)",
+          "length(path)", "length(text)", "length(tsvector)",
+          "lower(anymultirange)", "lower(anyrange)", "lower(text)",
+          "lpad(text,int4)", "lpad(text,int4,text)",
+          "ltrim(bytea,bytea)", "ltrim(text)", "ltrim(text,text)",
+          "md5(bytea)", "md5(text)",
+          "mod(int2,int2)", "mod(int4,int4)", "mod(int8,int8)", "mod(numeric,numeric)",
+          "now()",
+          "ntile(int4)",
+          "octet_length(bit)", "octet_length(bpchar)", "octet_length(bytea)", "octet_length(text)",
+          "position(bit,bit)", "position(bytea,bytea)", "position(text,text)",
+          "power(float8,float8)", "power(numeric,numeric)",
+          "repeat(text,int4)",
+          "replace(text,text,text)",
+          "reverse(bytea)", "reverse(text)",
+          "right(text,int4)",
+          "round(float8)", "round(numeric)", "round(numeric,int4)",
+          "rpad(text,int4)", "rpad(text,int4,text)",
+          "rtrim(bytea,bytea)", "rtrim(text)", "rtrim(text,text)",
+          "sign(float8)", "sign(numeric)",
+          "split_part(text,text,int4)",
+          "sqrt(float8)", "sqrt(numeric)",
+          "strpos(text,text)",
+          "substr(bytea,int4)", "substr(bytea,int4,int4)", "substr(text,int4)", "substr(text,int4,int4)",
+          "translate(text,text,text)",
+          "trunc(float8)", "trunc(macaddr)", "trunc(macaddr8)", "trunc(numeric)", "trunc(numeric,int4)",
+          "upper(anymultirange)", "upper(anyrange)", "upper(text)",
+        )
+        val safeListedSignatures = PgCatalogLoader.NEVER_NULL_FUNCTION_SIGNATURES
+          .map { "${it.name}(${it.argumentTypeNames.joinToString(",")})" }
+          .toSet()
+        val knownNonSafeListedSignatures = knownSignatureSnapshot - safeListedSignatures
+        // Every safe-listed signature other than the one known version-gated entry must actually
+        // resolve here — see this test's KDoc for why this guard exists.
+        val versionGatedSafeListedSignatures = setOf("reverse(bytea)")
+        val alwaysExpectedSafeListedSignatures = safeListedSignatures - versionGatedSafeListedSignatures
+        assertThat(actualSignatures).containsAtLeast(*alwaysExpectedSafeListedSignatures.toTypedArray())
+        val expectedSignatures = knownNonSafeListedSignatures + actualSignatures.intersect(safeListedSignatures)
+        assertThat(actualSignatures).isEqualTo(expectedSignatures)
+      }
+    }
+
+    @Test
+    fun `pg_cast rows for safe-listed source types match a known snapshot`() {
+      // Enumerates EVERY castfunc-backed pg_catalog cast FROM any source type appearing in
+      // NEVER_NULL_CAST_SIGNATURES — not just the safe-listed (source, target) pairs — so a
+      // PostgreSQL version bump that adds a NEW castfunc-backed target for one of these source
+      // types fails loudly here, forcing a human to look at the new cast and decide whether it is
+      // total before adding it to NEVER_NULL_CAST_SIGNATURES. This is the cast analogue of the
+      // `lower`/`upper` overload-drift risk the function and operator snapshot tests above guard
+      // against: the previous blanket rule ("every pg_catalog castfunc is safe") could never have
+      // been caught by a test like this, since it had no explicit pair list to diff against.
+      //
+      // KNOWN_CAST_PAIR_SNAPSHOT below was captured against PostgreSQL 18, which is a STRICT
+      // SUPERSET of 16 and 17 for these source types: PostgreSQL 18 added six castfunc-backed
+      // int2/int4/int8 <-> bytea casts (all six safe-listed) that simply do not exist in pg_cast
+      // on 16/17. Asserting the live server's actual pairs equal that fixed snapshot directly (as
+      // a prior version of this test did) therefore fails on 16/17 even though nothing about those
+      // six pairs is wrong there — they just do not resolve on THIS connected server, exactly the
+      // way PgCatalogLoader.loadNeverNullForNonNullInputOids's live catalog lookup finds no row
+      // for them either.
+      //
+      // The fix keeps the assertion an exact equality (never weakened to a subset check) by
+      // splitting expectedPairs into two halves: the portion of KNOWN_CAST_PAIR_SNAPSHOT that is
+      // NOT itself safe-listed (reg*/oid/char/xml/name — pairs this test enumerates for visibility
+      // but NEVER_NULL_CAST_SIGNATURES has no opinion on) stays pinned to the fixed snapshot, since
+      // that portion is not version-sensitive across 16/17/18 (verified directly against all
+      // three). The safe-listed portion is instead derived from THIS live server — whichever of
+      // NEVER_NULL_CAST_SIGNATURES's pairs actually appear in actualPairs — so it silently
+      // shrinks on a server where a safe-listed pair does not yet resolve, without ever silently
+      // growing: a genuinely NEW overload for one of these source types still shows up in
+      // actualPairs but not in expectedPairs (it's neither a known non-safe-listed extra nor a
+      // safe-listed pair with a matching row in actualPairs) unless a human adds it to one of the
+      // two sets, so drift is still caught exactly the way it was before this fix.
+      //
+      // Deriving the safe-listed portion of expectedPairs from actualPairs itself has one absorbed
+      // gap, the cast analogue of the one described in `pg_proc rows for safe-listed function
+      // names match a known snapshot`'s KDoc above: a safe-listed pair DISAPPEARING from the live
+      // server for a real (non-version) reason would vanish from both sides of the comparison and
+      // pass silently. `versionGatedSafeListedPairs` below closes that gap for every safe-listed
+      // pair except the six actually known to be version-gated (the int2/int4/int8 <-> bytea
+      // pairs, PostgreSQL 18+, named just above): every other safe-listed pair is asserted present
+      // in `actualPairs` directly, so its disappearance is a loud failure here, not an absorbed
+      // one.
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        val sourceTypes = PgCatalogLoader.NEVER_NULL_CAST_SIGNATURES.map { it.sourceTypeName }.toSortedSet()
+        val sourceTypesLiteral = sourceTypes.joinToString(", ") { "'$it'" }
+        val actualPairs = connection.createStatement().use { stmt ->
+          stmt.executeQuery(
+            """
+            SELECT st.typname AS source_type, tt.typname AS target_type
+            FROM pg_catalog.pg_cast c
+            JOIN pg_catalog.pg_type st ON st.oid = c.castsource
+            JOIN pg_catalog.pg_type tt ON tt.oid = c.casttarget
+            JOIN pg_catalog.pg_proc p ON p.oid = c.castfunc
+            JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+            WHERE c.castfunc != 0 AND n.nspname = 'pg_catalog' AND st.typname IN ($sourceTypesLiteral)
+            """.trimIndent(),
+          ).use { rs ->
+            buildSet {
+              while (rs.next()) {
+                add("${rs.getString("source_type")}->${rs.getString("target_type")}")
+              }
+            }
+          }
+        }
+        val knownCastPairSnapshot = setOf(
+          "bit->bit", "bit->int4", "bit->int8",
+          "bool->bpchar", "bool->int4", "bool->text", "bool->varchar",
+          "bpchar->bpchar", "bpchar->char", "bpchar->name", "bpchar->text",
+          "bpchar->varchar", "bpchar->xml", "bytea->int2", "bytea->int4",
+          "bytea->int8", "date->timestamp", "date->timestamptz", "float4->float8",
+          "float4->int2", "float4->int4", "float4->int8", "float4->numeric",
+          "float8->float4", "float8->int2", "float8->int4", "float8->int8",
+          "float8->numeric", "int2->bytea", "int2->float4", "int2->float8",
+          "int2->int4", "int2->int8", "int2->numeric", "int2->oid",
+          "int2->regclass", "int2->regcollation", "int2->regconfig", "int2->regdictionary",
+          "int2->regnamespace", "int2->regoper", "int2->regoperator", "int2->regproc",
+          "int2->regprocedure", "int2->regrole", "int2->regtype", "int4->bit",
+          "int4->bool", "int4->bytea", "int4->char", "int4->float4",
+          "int4->float8", "int4->int2", "int4->int8", "int4->money",
+          "int4->numeric", "int8->bit", "int8->bytea", "int8->float4",
+          "int8->float8", "int8->int2", "int8->int4", "int8->money",
+          "int8->numeric", "int8->oid", "int8->regclass", "int8->regcollation",
+          "int8->regconfig", "int8->regdictionary", "int8->regnamespace", "int8->regoper",
+          "int8->regoperator", "int8->regproc", "int8->regprocedure", "int8->regrole",
+          "int8->regtype", "interval->interval", "interval->time", "money->numeric",
+          "numeric->float4", "numeric->float8", "numeric->int2", "numeric->int4",
+          "numeric->int8", "numeric->money", "numeric->numeric", "time->interval",
+          "time->time", "time->timetz", "timestamp->date", "timestamp->time",
+          "timestamp->timestamp", "timestamp->timestamptz", "timestamptz->date", "timestamptz->time",
+          "timestamptz->timestamp", "timestamptz->timestamptz", "timestamptz->timetz", "timetz->time",
+          "timetz->timetz", "varchar->char", "varchar->name", "varchar->regclass",
+          "varchar->varchar", "varchar->xml",
+        )
+        val safeListedPairs = PgCatalogLoader.NEVER_NULL_CAST_SIGNATURES
+          .map { "${it.sourceTypeName}->${it.targetTypeName}" }
+          .toSet()
+        val knownNonSafeListedPairs = knownCastPairSnapshot - safeListedPairs
+        // Every safe-listed pair other than the six known version-gated ones must actually
+        // resolve here — see this test's KDoc for why this guard exists.
+        val versionGatedSafeListedPairs = setOf(
+          "int2->bytea",
+          "int4->bytea",
+          "int8->bytea",
+          "bytea->int2",
+          "bytea->int4",
+          "bytea->int8",
+        )
+        val alwaysExpectedSafeListedPairs = safeListedPairs - versionGatedSafeListedPairs
+        assertThat(actualPairs).containsAtLeast(*alwaysExpectedSafeListedPairs.toTypedArray())
+        val expectedPairs = knownNonSafeListedPairs + actualPairs.intersect(safeListedPairs)
+        assertThat(actualPairs).isEqualTo(expectedPairs)
       }
     }
 

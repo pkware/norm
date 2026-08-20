@@ -3261,6 +3261,289 @@ class SqlUtilsTest {
     }
   }
 
+  @Nested
+  inner class DeriveDmlTargetAliasTest {
+
+    @Test
+    fun `falls back to the bare table name when there is no alias`() {
+      assertThat(deriveDmlTargetAlias("t")).isEqualTo("t")
+    }
+
+    @Test
+    fun `uses the last dot-separated segment of a schema-qualified name when there is no alias`() {
+      assertThat(deriveDmlTargetAlias("public.t")).isEqualTo("t")
+    }
+
+    @Test
+    fun `resolves an explicit AS alias`() {
+      assertThat(deriveDmlTargetAlias("t AS u")).isEqualTo("u")
+    }
+
+    @Test
+    fun `resolves a bare alias with no AS keyword`() {
+      assertThat(deriveDmlTargetAlias("t u")).isEqualTo("u")
+    }
+
+    @Test
+    fun `strips a leading ONLY keyword before deriving the fallback alias`() {
+      assertThat(deriveDmlTargetAlias("ONLY t")).isEqualTo("t")
+    }
+
+    @Test
+    fun `strips a trailing descendant star before deriving the fallback alias`() {
+      assertThat(deriveDmlTargetAlias("t*")).isEqualTo("t")
+    }
+
+    @Test
+    fun `strips ONLY and a trailing star together`() {
+      assertThat(deriveDmlTargetAlias("ONLY t*")).isEqualTo("t")
+    }
+
+    @Test
+    fun `resolves an alias after a trailing star`() {
+      assertThat(deriveDmlTargetAlias("t* AS u")).isEqualTo("u")
+    }
+
+    @Test
+    fun `preserves a quoted table name's case for the fallback alias`() {
+      assertThat(deriveDmlTargetAlias("""my_schema."My Table"""")).isEqualTo(""""My Table"""")
+    }
+
+    @Test
+    fun `preserves a quoted alias verbatim`() {
+      assertThat(deriveDmlTargetAlias("""t AS "My Alias"""")).isEqualTo(""""My Alias"""")
+    }
+
+    @Test
+    fun `bails on an unterminated quoted table name`() {
+      assertThat(deriveDmlTargetAlias(""""unterminated""")).isNull()
+    }
+
+    @Test
+    fun `bails on an unterminated quoted alias`() {
+      assertThat(deriveDmlTargetAlias("""t AS "unterminated""")).isNull()
+    }
+
+    @Test
+    fun `bails on trailing text after the alias it does not recognize`() {
+      assertThat(deriveDmlTargetAlias("t AS u TABLESAMPLE SYSTEM(10)")).isNull()
+    }
+
+    @Test
+    fun `bails on AS with nothing following it`() {
+      assertThat(deriveDmlTargetAlias("t AS")).isNull()
+    }
+  }
+
+  @Nested
+  inner class DmlTargetRelationNameTest {
+
+    @Test
+    fun `returns the bare table name unchanged`() {
+      assertThat(dmlTargetRelationName("t")).isEqualTo("t")
+    }
+
+    @Test
+    fun `preserves schema qualification, unlike deriveDmlTargetAlias`() {
+      assertThat(dmlTargetRelationName("public.t")).isEqualTo("public.t")
+    }
+
+    @Test
+    fun `strips a leading ONLY keyword`() {
+      assertThat(dmlTargetRelationName("ONLY t")).isEqualTo("t")
+    }
+
+    @Test
+    fun `stops before a trailing descendant star, since to_regclass takes no such wildcard`() {
+      assertThat(dmlTargetRelationName("t*")).isEqualTo("t")
+    }
+
+    @Test
+    fun `stops before an explicit alias`() {
+      assertThat(dmlTargetRelationName("t AS u")).isEqualTo("t")
+    }
+
+    @Test
+    fun `stops before a bare alias with no AS keyword`() {
+      assertThat(dmlTargetRelationName("t u")).isEqualTo("t")
+    }
+
+    @Test
+    fun `preserves a quoted, schema-qualified name's case verbatim`() {
+      assertThat(dmlTargetRelationName("""my_schema."My Table"""")).isEqualTo("""my_schema."My Table"""")
+    }
+
+    @Test
+    fun `bails on an unterminated quoted table name`() {
+      assertThat(dmlTargetRelationName(""""unterminated""")).isNull()
+    }
+  }
+
+  @Nested
+  inner class ParseSetAssignmentsTest {
+
+    @Test
+    fun `parses a single plain assignment`() {
+      val assignments = parseSetAssignments("UPDATE t SET note = 'x' WHERE id = 1")
+      assertThat(assignments).isEqualTo(listOf(SqlSetAssignment(listOf("note"), "'x'", isRowForm = false)))
+    }
+
+    @Test
+    fun `parses multiple comma-separated assignments`() {
+      val assignments = parseSetAssignments("UPDATE t SET a = 1, b = 2 WHERE id = 1")
+      assertThat(assignments).isEqualTo(
+        listOf(
+          SqlSetAssignment(listOf("a"), "1", isRowForm = false),
+          SqlSetAssignment(listOf("b"), "2", isRowForm = false),
+        ),
+      )
+    }
+
+    @Test
+    fun `parses the row form as a single assignment covering every listed column`() {
+      val assignments = parseSetAssignments("UPDATE t SET (a, b) = ('x', 'y') WHERE id = 1")
+      assertThat(assignments).isEqualTo(
+        listOf(SqlSetAssignment(listOf("a", "b"), "('x', 'y')", isRowForm = true)),
+      )
+    }
+
+    @Test
+    fun `parses a DEFAULT assignment`() {
+      val assignments = parseSetAssignments("UPDATE t SET note = DEFAULT WHERE id = 1")
+      assertThat(assignments).isEqualTo(listOf(SqlSetAssignment(listOf("note"), "DEFAULT", isRowForm = false)))
+    }
+
+    @Test
+    fun `folds an unquoted column name to lowercase`() {
+      val assignments = parseSetAssignments("UPDATE t SET NOTE = 'x' WHERE id = 1")
+      assertThat(assignments).isEqualTo(listOf(SqlSetAssignment(listOf("note"), "'x'", isRowForm = false)))
+    }
+
+    @Test
+    fun `preserves a quoted column name's case`() {
+      val assignments = parseSetAssignments("""UPDATE t SET "Note" = 'x' WHERE id = 1""")
+      assertThat(assignments).isEqualTo(listOf(SqlSetAssignment(listOf("Note"), "'x'", isRowForm = false)))
+    }
+
+    @Test
+    fun `does not split a string literal RHS containing an equals sign or a comma`() {
+      val assignments = parseSetAssignments("UPDATE t SET note = 'a=b,c', other = 'y' WHERE id = 1")
+      assertThat(assignments).isEqualTo(
+        listOf(
+          SqlSetAssignment(listOf("note"), "'a=b,c'", isRowForm = false),
+          SqlSetAssignment(listOf("other"), "'y'", isRowForm = false),
+        ),
+      )
+    }
+
+    @Test
+    fun `a comment between the column and its expression does not break parsing`() {
+      val assignments = parseSetAssignments("UPDATE t SET note = /* set to x */ 'x' WHERE id = 1")
+      assertThat(assignments).isNotNull()
+      assertThat(assignments!!).hasSize(1)
+      assertThat(assignments[0].columnNames).isEqualTo(listOf("note"))
+      assertThat(assignments[0].expression).contains("'x'")
+    }
+
+    @Test
+    fun `returns null for a statement that is not an UPDATE`() {
+      assertThat(parseSetAssignments("DELETE FROM t WHERE id = 1")).isNull()
+    }
+
+    @Test
+    fun `returns null when there is no SET keyword`() {
+      assertThat(parseSetAssignments("UPDATE t WHERE id = 1")).isNull()
+    }
+
+    @Test
+    fun `returns null for a malformed left-hand side`() {
+      assertThat(parseSetAssignments("UPDATE t SET 1 = 'x' WHERE id = 1")).isNull()
+    }
+
+    @Test
+    fun `returns null for an unbalanced row-form left-hand side`() {
+      assertThat(parseSetAssignments("UPDATE t SET (a, b = ('x', 'y') WHERE id = 1")).isNull()
+    }
+  }
+
+  @Nested
+  inner class ContainsLexicalPlaceholderTest {
+
+    @Test
+    fun `finds a bare placeholder`() {
+      assertThat(containsLexicalPlaceholder("?")).isTrue()
+    }
+
+    @Test
+    fun `finds a placeholder inside a larger expression`() {
+      assertThat(containsLexicalPlaceholder("note || ?")).isTrue()
+    }
+
+    @Test
+    fun `ignores a question mark inside a string literal`() {
+      assertThat(containsLexicalPlaceholder("'really?'")).isFalse()
+    }
+
+    @Test
+    fun `ignores a question mark inside a comment`() {
+      assertThat(containsLexicalPlaceholder("'x' /* what? */")).isFalse()
+    }
+
+    @Test
+    fun `returns false when there is no question mark at all`() {
+      assertThat(containsLexicalPlaceholder("'x'")).isFalse()
+    }
+  }
+
+  @Nested
+  inner class IsDefaultKeywordTest {
+
+    @Test
+    fun `recognizes the bare keyword`() {
+      assertThat(isDefaultKeyword("DEFAULT")).isTrue()
+    }
+
+    @Test
+    fun `is case-insensitive`() {
+      assertThat(isDefaultKeyword("default")).isTrue()
+    }
+
+    @Test
+    fun `recognizes the keyword with surrounding whitespace`() {
+      assertThat(isDefaultKeyword("  DEFAULT  ")).isTrue()
+    }
+
+    @Test
+    fun `recognizes the keyword with a trailing block comment`() {
+      assertThat(isDefaultKeyword("DEFAULT /* reset */")).isTrue()
+    }
+
+    @Test
+    fun `recognizes the keyword with a leading block comment`() {
+      assertThat(isDefaultKeyword("/* x */ DEFAULT")).isTrue()
+    }
+
+    @Test
+    fun `recognizes the keyword with a trailing line comment`() {
+      assertThat(isDefaultKeyword("DEFAULT -- reset")).isTrue()
+    }
+
+    @Test
+    fun `returns false for an ordinary expression`() {
+      assertThat(isDefaultKeyword("'x'")).isFalse()
+    }
+
+    @Test
+    fun `returns false for an expression merely containing the word DEFAULT`() {
+      assertThat(isDefaultKeyword("COALESCE(DEFAULT, 'x')")).isFalse()
+    }
+
+    @Test
+    fun `returns false for the keyword followed by real trailing text outside a comment`() {
+      assertThat(isDefaultKeyword("DEFAULT x")).isFalse()
+    }
+  }
+
   private companion object {
     // E'text \' FROM here' — the \' is an escaped quote (part of the string content, not a
     // terminator), so "FROM" is inside the string the whole way through to the real closing '.
