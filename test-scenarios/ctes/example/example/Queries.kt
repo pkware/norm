@@ -255,4 +255,36 @@ public interface Queries : Transactable {
    * ```
    */
   public fun deleteParentReturningDescriptionUpperViaCte(id: UUID): Many<DeleteParentReturningDescriptionUpperViaCte> = deleteParentReturningDescriptionUpperViaCte(id, ::DeleteParentReturningDescriptionUpperViaCte)
+
+  /**
+   * Reproduces #228: an UPDATE's SET clause assigns a non-null literal to a nullable column
+   * ("description"), and RETURNING computes an expression over that same column
+   * ("UPPER(description)"). Before the fix, PgCatalogLoader.probeUnknownColumnNullability
+   * evaluated the RETURNING expression against the bare, pre-assignment target relation, so it
+   * had no way to see the SET-assigned value and wrongly reported description_upper nullable —
+   * even though "description" can only ever be the literal 'UPDATED' in this result.
+   *
+   * ```sql
+   * UPDATE parent SET description = 'UPDATED' WHERE id = ? RETURNING id, name, UPPER(description) AS description_upper
+   * ```
+   */
+  public fun <T : Any> updateParentReturningDescriptionUpper(id: UUID, mapper: (
+    id: UUID,
+    name: String,
+    description_upper: String,
+  ) -> T): Many<T>
+
+  /**
+   * Reproduces #228: an UPDATE's SET clause assigns a non-null literal to a nullable column
+   * ("description"), and RETURNING computes an expression over that same column
+   * ("UPPER(description)"). Before the fix, PgCatalogLoader.probeUnknownColumnNullability
+   * evaluated the RETURNING expression against the bare, pre-assignment target relation, so it
+   * had no way to see the SET-assigned value and wrongly reported description_upper nullable —
+   * even though "description" can only ever be the literal 'UPDATED' in this result.
+   *
+   * ```sql
+   * UPDATE parent SET description = 'UPDATED' WHERE id = ? RETURNING id, name, UPPER(description) AS description_upper
+   * ```
+   */
+  public fun updateParentReturningDescriptionUpper(id: UUID): Many<UpdateParentReturningDescriptionUpper> = updateParentReturningDescriptionUpper(id, ::UpdateParentReturningDescriptionUpper)
 }

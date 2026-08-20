@@ -65,12 +65,83 @@ internal class PgCatalogLoader(private val connection: Connection) {
   val alwaysNonNullFunctionOids: Set<Int> by lazy(::loadAlwaysNonNullFunctions)
 
   /**
-   * OIDs of functions that are marked STRICT in `pg_proc` but can still return `null` when all
-   * arguments are non-null. JSON path-extraction operators (`->`, `->>`, `#>`, `#>>`) fall into
-   * this category: they return `null` when the requested key or path does not exist in the JSON
-   * value, even though all inputs are non-null.
+   * OIDs of functions, cast functions, and operators (materialized to their implementing function
+   * OID via `pg_operator.oprcode`) that are proven TOTAL on non-null input — every combination of
+   * non-null arguments produces a non-null result. An ERROR is fine; only a silent `null` return
+   * disqualifies a candidate.
+   *
+   * `pg_proc.proisstrict` is NOT sufficient for this on its own. STRICT only guarantees
+   * NULL-in => NULL-out; it says nothing about the converse. `substring(text, '(z)')` (regex, no
+   * match), `regexp_match(text, pattern)` (no match), and `array_length(ARRAY[]::text[], 1)`
+   * (empty array) are all STRICT and all return `null` on fully non-null, well-typed input. Any
+   * inference rule built from strictness alone is therefore unsound. This set exists to be an
+   * ADDITIONAL conjunct alongside strictness in [NodeTreeNullabilityAnalyzer], never a
+   * replacement for it — so an unforeseen non-strict overload of a listed name can never slip
+   * through.
+   *
+   * Functions are safe-listed by `pg_proc.proname` PLUS ARGUMENT TYPE SIGNATURE — see
+   * [NEVER_NULL_FUNCTION_SIGNATURES] — restricted to `pronamespace = 'pg_catalog'`. Keying by
+   * name alone is NOT safe: `lower(anyrange)`/`upper(anyrange)`/`lower(anymultirange)`/
+   * `upper(anymultirange)` share `proname` with the totally-safe `lower(text)`/`upper(text)` but
+   * return `null` on a non-null, well-typed, non-empty-but-unbounded range or an empty range —
+   * `SELECT upper(int4range '[1,)')` and `SELECT lower(int4range 'empty')` both return `null`.
+   * `substring` is the reason a signature-only match still is not always enough on its own:
+   * `substring(text, int, int)` is total but `substring(text FROM pattern)` is not, and both
+   * would share the SAME two-argument-count shape if only argument count were checked — this is
+   * why the match is on the full ordered list of argument TYPE NAMES (via `pg_type.typname`), not
+   * just arity. `substring` itself is simply left off the list entirely rather than enumerated,
+   * since its regex overloads are non-total.
+   *
+   * Casts are safe-listed by (source type, target type) PAIR — see [NEVER_NULL_CAST_SIGNATURES] —
+   * rather than a class-wide blanket over every `pg_cast.castfunc` in `pg_catalog`. A blanket was
+   * tried first and is FALSE: `('null'::jsonb)::int4` (and every other `jsonb` → numeric/`boolean`
+   * cast) returns `null` on well-typed, non-null input with no error, because the cast function
+   * special-cases the JSON literal `null` rather than raising "cannot convert". A brute-force
+   * sweep against live PostgreSQL of every `jsonb`-targeting numeric/`boolean` cast confirmed this
+   * for all seven overloads (`int2`, `int4`, `int8`, `numeric`, `float4`, `float8`, `bool`); none
+   * of the seven appear in [NEVER_NULL_CAST_SIGNATURES]. The same sweep also found
+   * `timestamp`/`timestamptz` → `time`/`timetz` silently returns `null` for the infinite
+   * (`'infinity'`/`'-infinity'`) input, rather than erroring the way `'infinity'::interval::time`
+   * does — so those three pairs are excluded too. Every other pair the sweep checked (see
+   * [SafeListSweepTest] for the corpus and the full case count) proved total, including on `NaN`,
+   * `Infinity`, `-Infinity`, min/max integer values, and empty strings.
+   *
+   * pgcrypto's `digest` and `hmac` are the one extension carve-out, keyed through `pg_depend`
+   * (`deptype = 'e'`) to the `pgcrypto` extension itself, so a user-defined `digest` in `public`
+   * cannot ride this carve-out. `encode`/`decode` are ordinary `pg_catalog` functions and are
+   * safe-listed on the main function list above, not here. All four `digest`/`hmac` overloads
+   * (`digest(text, text)`, `digest(bytea, text)`, `hmac(text, text, text)`, `hmac(bytea, bytea,
+   * text)`) were verified total on empty non-null input; an unrecognized hash algorithm name
+   * errors rather than returning `null`.
+   *
+   * Operators are safe-listed by (symbol, left operand type, right operand type) TRIPLE — see
+   * [NEVER_NULL_OPERATOR_SIGNATURES] — restricted to `oprnamespace = 'pg_catalog'`, and
+   * materialized to the OID of the implementing function via `oprcode`, the same OID space
+   * [PgNodeExpression.OpExpr] and [PgNodeExpression.ScalarArrayOpExpr] (e.g. `= ANY(...)`) are
+   * keyed by, so no separate operator-specific lookup is needed. Symbol alone is NOT safe: `path +
+   * path` (`path_add`) shares the `+` symbol with the totally-safe `int4 + int4`, but returns
+   * `null`, not an error, when either operand is a CLOSED path (`SELECT ((0,0),(1,1),(2,0)) +
+   * ((0,0),(1,1),(2,0))` on two well-typed, non-null closed paths). A brute-force sweep against
+   * live PostgreSQL of every symbol-restricted-but-unrestricted-by-type combination found exactly
+   * this one bad shape; `path` is entirely absent from [NEVER_NULL_OPERATOR_SIGNATURES] as a
+   * result — every triple that remains was independently swept and found total (see
+   * [SafeListSweepTest]). A left or right type of `null` in a signature means the operator is
+   * unary on that side (no left operand for a prefix operator, no right operand for a postfix
+   * operator), mirroring `pg_operator.oprleft`/`oprright` themselves being `0` (no operand) for a
+   * unary operator — e.g. unary (prefix) `-` (negation), `+`, and `~` (bitwise complement) are all
+   * PREFIX-only overloads of symbols that are ALSO binary elsewhere in this same list (binary `-`
+   * is subtraction, binary `~` is regex match); they needed adding here alongside the binary
+   * overloads specifically because the earlier symbol-only blanket rule this list replaced made
+   * every overload — unary and binary alike — safe together, and losing the unary overloads
+   * would have been an unintended narrowing this fix must not introduce.
+   *
+   * Omitting a signature from this set only WIDENS the result to nullable — it never narrows a
+   * truly nullable expression to non-null — so when in doubt about whether a specific signature is
+   * total on every non-null, well-typed input (including infinite/empty/unbounded edge values, not
+   * just "typical" ones — see [NEVER_NULL_FUNCTION_SIGNATURES] for the `extract`/`date_part`
+   * counterexample this note exists to flag), the correct default is to leave it off.
    */
-  val strictButNullableFunctionOids: Set<Int> by lazy(::loadStrictButNullableFunctions)
+  val neverNullForNonNullInputOids: Set<Int> by lazy(::loadNeverNullForNonNullInputOids)
 
   /**
    * OIDs of the 3-argument overloads of `lag` and `lead` window functions. These overloads accept
@@ -271,23 +342,97 @@ internal class PgCatalogLoader(private val connection: Connection) {
     }
   }
 
-  private fun loadStrictButNullableFunctions(): Set<Int> = buildSet {
+  private fun loadNeverNullForNonNullInputOids(): Set<Int> = buildSet {
     connection.createStatement().use { stmt ->
+      val safeSignatureValues = NEVER_NULL_FUNCTION_SIGNATURES.joinToString(", ") { signature ->
+        val nameLiteral = "'${signature.name}'"
+        val argumentTypesLiteral = if (signature.argumentTypeNames.isEmpty()) {
+          "ARRAY[]::text[]"
+        } else {
+          "ARRAY[${signature.argumentTypeNames.joinToString(", ") { typeName -> "'$typeName'" }}]"
+        }
+        "($nameLiteral, $argumentTypesLiteral)"
+      }
       stmt.executeQuery(
         """
-        SELECT oid::integer FROM pg_catalog.pg_proc
-        WHERE proisstrict = true AND (
-          proname IN (
-            'jsonb_object_field', 'jsonb_object_field_text',
-            'json_object_field', 'json_object_field_text',
-            'jsonb_extract_path', 'jsonb_extract_path_text',
-            'json_extract_path', 'json_extract_path_text',
-            'jsonb_array_element', 'jsonb_array_element_text',
-            'json_array_element', 'json_array_element_text'
-          )
-          OR (prokind = 'w' AND proname IN ('first_value', 'last_value', 'nth_value'))
-          OR (prokind = 'w' AND proname IN ('lag', 'lead') AND pronargs < 3)
+        WITH safe_signature(proname, argument_types) AS (
+          VALUES $safeSignatureValues
         )
+        SELECT p.oid::integer AS oid
+        FROM pg_catalog.pg_proc p
+        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        JOIN safe_signature s ON s.proname = p.proname
+        WHERE n.nspname = 'pg_catalog'
+          AND s.argument_types = COALESCE(
+            (
+              SELECT array_agg(t.typname::text ORDER BY u.ordinality)
+              FROM unnest(p.proargtypes) WITH ORDINALITY AS u(type_oid, ordinality)
+              JOIN pg_catalog.pg_type t ON t.oid = u.type_oid
+            ),
+            ARRAY[]::text[]
+          )
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) add(rs.getInt("oid"))
+      }
+    }
+    connection.createStatement().use { stmt ->
+      val safeCastValues = NEVER_NULL_CAST_SIGNATURES.joinToString(", ") { signature ->
+        "('${signature.sourceTypeName}', '${signature.targetTypeName}')"
+      }
+      stmt.executeQuery(
+        """
+        WITH safe_cast(source_type, target_type) AS (
+          VALUES $safeCastValues
+        )
+        SELECT c.castfunc::integer AS oid
+        FROM pg_catalog.pg_cast c
+        JOIN pg_catalog.pg_type st ON st.oid = c.castsource
+        JOIN pg_catalog.pg_type tt ON tt.oid = c.casttarget
+        JOIN pg_catalog.pg_proc p ON p.oid = c.castfunc
+        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        JOIN safe_cast s ON s.source_type = st.typname AND s.target_type = tt.typname
+        WHERE c.castfunc != 0 AND n.nspname = 'pg_catalog'
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) add(rs.getInt("oid"))
+      }
+    }
+    connection.createStatement().use { stmt ->
+      val safeOperatorValues = NEVER_NULL_OPERATOR_SIGNATURES.joinToString(", ") { signature ->
+        val leftLiteral = signature.leftTypeName?.let { "'$it'" } ?: "NULL::text"
+        val rightLiteral = signature.rightTypeName?.let { "'$it'" } ?: "NULL::text"
+        "('${signature.symbol}', $leftLiteral, $rightLiteral)"
+      }
+      stmt.executeQuery(
+        """
+        WITH safe_operator(symbol, left_type, right_type) AS (
+          VALUES $safeOperatorValues
+        )
+        SELECT o.oprcode::integer AS oid
+        FROM pg_catalog.pg_operator o
+        JOIN pg_catalog.pg_namespace n ON n.oid = o.oprnamespace
+        LEFT JOIN pg_catalog.pg_type lt ON lt.oid = o.oprleft
+        LEFT JOIN pg_catalog.pg_type rt ON rt.oid = o.oprright
+        JOIN safe_operator s ON s.symbol = o.oprname
+          AND s.left_type IS NOT DISTINCT FROM lt.typname
+          AND s.right_type IS NOT DISTINCT FROM rt.typname
+        WHERE n.nspname = 'pg_catalog' AND o.oprcode != 0
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) add(rs.getInt("oid"))
+      }
+    }
+    connection.createStatement().use { stmt ->
+      // pgcrypto extension carve-out, keyed through pg_depend so a user-defined `digest` or
+      // `hmac` outside the extension cannot ride along.
+      stmt.executeQuery(
+        """
+        SELECT p.oid::integer AS oid FROM pg_catalog.pg_proc p
+        JOIN pg_catalog.pg_depend d
+          ON d.objid = p.oid AND d.classid = 'pg_catalog.pg_proc'::regclass AND d.deptype = 'e'
+        JOIN pg_catalog.pg_extension e ON e.oid = d.refobjid
+        WHERE e.extname = 'pgcrypto' AND p.proname IN ('digest', 'hmac')
         """.trimIndent(),
       ).use { rs ->
         while (rs.next()) add(rs.getInt("oid"))
@@ -645,7 +790,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
       val transformedSql = transformForViewCreation(viewSql)
         // No join structure was found (or convertible) — fall back to a metadata-based probe: see
         // analyzeUnconvertibleDml's KDoc for what it can and cannot see.
-        ?: return analyzeUnconvertibleDml(viewSql)
+        ?: return analyzeUnconvertibleDml(viewSql, sql)
       // transformForViewCreation validates every conversion it makes against the original SQL's
       // own column signature before returning it (see its KDoc), so this SHOULD always prepare.
       // Caught anyway, not re-thrown, as defense in depth: an `SQLException` escaping from here
@@ -656,7 +801,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
       try {
         analyzeViaTemporaryView(transformedSql)
       } catch (_: SQLException) {
-        analyzeUnconvertibleDml(viewSql)
+        analyzeUnconvertibleDml(viewSql, sql)
       }
     }
   }
@@ -803,7 +948,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
     isSourceColumnNotNull = isSourceColumnNotNull,
     isOuterJoinNullable = { nullingRelations -> nullingRelations.isNotEmpty() },
     isAlwaysNonNull = { oid -> oid in alwaysNonNullFunctionOids },
-    isStrictButNullable = { oid -> oid in strictButNullableFunctionOids },
+    isNeverNullForNonNullInput = { oid -> oid in neverNullForNonNullInputOids },
     isLagLeadWithDefault = { oid -> oid in lagLeadWithDefaultOids },
   )
 
@@ -1872,11 +2017,22 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * not attempt this probe and keeps its unconditional nullable default regardless of what the
    * real answer would be.
    *
+   * @param sql The already `?`-sentinel-substituted (or `?`-free) form of the statement — see
+   *   [buildViewSqlWithSentinels]/[replaceParameterPlaceholders] upstream — safe to `PREPARE` and
+   *   to `CREATE TEMPORARY VIEW` from directly.
+   * @param originalSql The statement exactly as [queryColumnNullability] received it, BEFORE any
+   *   `?`-sentinel substitution. Passed through, unchanged, to [probeUnknownColumnNullability] so
+   *   its own `UPDATE ... SET` analysis can see a genuine `?` parameter placeholder that [sql]'s
+   *   sentinel substitution has already erased — see that function's KDoc for why this
+   *   distinction matters (issue #228).
    * @return An empty list if [sql] cannot be prepared or has no result columns — [JdbcAnalyzer]
    *   treats a missing index as nullable (the safe default), so this is a safe, not merely
    *   convenient, degradation.
    */
-  private fun analyzeUnconvertibleDml(@Language("PostgreSQL") sql: String): List<Boolean> {
+  private fun analyzeUnconvertibleDml(
+    @Language("PostgreSQL") sql: String,
+    @Language("PostgreSQL") originalSql: String,
+  ): List<Boolean> {
     val cteClause = parseCteClause(sql)
     val dangerousSiblingNames = cteClause?.let { computeDangerousSiblingNames(sql, it.definitions) }.orEmpty()
     val mainQueryText = cteClause?.let { sql.substring(it.mainQueryStart) } ?: sql
@@ -1891,7 +2047,11 @@ internal class PgCatalogLoader(private val connection: Connection) {
         val hasUnknownColumn = (1..metadata.columnCount).any {
           metadata.isNullable(it) == ResultSetMetaData.columnNullableUnknown
         }
-        val probeResult = if (hasUnknownColumn) probeUnknownColumnNullability(sql, metadata.columnCount) else null
+        val probeResult = if (hasUnknownColumn) {
+          probeUnknownColumnNullability(sql, metadata.columnCount, originalSql)
+        } else {
+          null
+        }
         List(metadata.columnCount) { index ->
           val columnIndex = index + 1
           val metadataNullable = when (metadata.isNullable(columnIndex)) {
@@ -1939,18 +2099,33 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * - the probe's own result size does not equal [expectedColumnCount] (defense in depth against
    *   the same star-expansion risk the item-count gate above targets).
    *
+   * For a plain `UPDATE ... SET` (never an `UPDATE ... FROM` — that has join structure of its own
+   * and is converted long before this function is ever reached), the bare `FROM <target relation>`
+   * above is upgraded to a `SET`-assignment-aware derived table by
+   * [buildUpdateSetAwareFromClause] — see its KDoc for exactly what that upgrade can and cannot
+   * see (issue #228): it closes the specific gap where a `RETURNING` expression is built over a
+   * column the statement's OWN `SET` clause just assigned a provably non-null value to (`UPDATE t
+   * SET note = 'x' RETURNING lower(note)`, where `note` is nullable in the catalog but can never
+   * be `NULL` in this particular result). [buildUpdateSetAwareFromClause] returns `null` — falling
+   * back to the bare `FROM <target>` unchanged — for every case it cannot confidently upgrade, so
+   * this function's own answer is never LESS safe than before that upgrade existed, only
+   * sometimes more precise.
+   *
    * @param sql The unconvertible top-level DML statement (already parameter-sentinel-substituted
    *   by the caller — see [buildViewSqlWithSentinels]/[replaceParameterPlaceholders] upstream —
    *   so this function's own [buildViewSqlWithSentinels] call over the freshly-built probe SQL is
    *   only a defensive re-check, not the primary `?` removal).
    * @param expectedColumnCount The real result column count, from [sql]'s own
    *   `ResultSetMetaData.getColumnCount()`.
+   * @param originalSql [sql] before `?`-sentinel substitution — see [buildUpdateSetAwareFromClause]'s
+   *   KDoc for why a `SET` assignment's right-hand side must be inspected in THIS form, not [sql]'s.
    * @return One nullability value per `RETURNING` item, in order, or `null` if the probe could not
    *   be built, prepared, or trusted.
    */
   private fun probeUnknownColumnNullability(
     @Language("PostgreSQL") sql: String,
     expectedColumnCount: Int,
+    @Language("PostgreSQL") originalSql: String,
   ): List<Boolean>? {
     val dml = stripLeadingNestedWithClause(sql)
     val returningIndex = findTopLevelReturningKeyword(dml)
@@ -1962,15 +2137,51 @@ internal class PgCatalogLoader(private val connection: Connection) {
     if (items.size != expectedColumnCount) return null
 
     val target = dmlTargetRelationReference(sql) ?: return null
+    val bareFromClause = "FROM $target"
+    val setAwareFromClause = buildUpdateSetAwareFromClause(sql, originalSql, target, returningText)
 
+    // The SET-aware FROM clause is a strict refinement, never a replacement of last resort: try
+    // it first ONLY when it exists, but if it fails to prepare, fails to build its temporary
+    // view, or comes back with the wrong column count, fall back to the bare `FROM <target>`
+    // probe that issue #226 already trusted — never surface a construction failure the #228
+    // wrapping introduced as a `null` (which `analyzeUnconvertibleDml` reads as NOT NULL) when
+    // the unwrapped probe would have answered correctly. This is what keeps every wrapping
+    // failure, not merely the ones already known about, no less safe than #226's own answer.
+    val setAwareResult = setAwareFromClause?.let { runNullabilityProbe(returningText, it, expectedColumnCount) }
+    return setAwareResult ?: runNullabilityProbe(returningText, bareFromClause, expectedColumnCount)
+  }
+
+  /**
+   * Runs a single `SELECT <returningText> FROM <fromClause>` nullability probe through
+   * [analyzeViaTemporaryView], returning `null` — never a wrong or half-computed answer —
+   * whenever the probe cannot be trusted: it fails to `PREPARE`, its temporary view fails to
+   * create (either surfaces as a `SQLException`), or its result size does not equal
+   * [expectedColumnCount]. Factored out of [probeUnknownColumnNullability] so that function can
+   * run this same logic twice — once for its SET-aware [fromClause], once for the bare
+   * `FROM <target>` fallback — without duplicating the probe-construction or exception-handling
+   * logic between the two attempts.
+   *
+   * @param returningText The already-extracted `RETURNING` list text (no leading `RETURNING`
+   *   keyword), verbatim from [probeUnknownColumnNullability].
+   * @param fromClause A complete `FROM ...` clause — either the bare `FROM <target>` or the
+   *   `SET`-aware derived-table form from [buildUpdateSetAwareFromClause].
+   * @param expectedColumnCount The real result column count the probe's own result must match.
+   * @return One nullability value per `RETURNING` item, in order, or `null` if the probe could
+   *   not be built, prepared, or trusted.
+   */
+  private fun runNullabilityProbe(
+    returningText: String,
+    fromClause: String,
+    expectedColumnCount: Int,
+  ): List<Boolean>? {
     // A newline, not a space, separates the RETURNING text from FROM: a trailing `--` line
     // comment on the last RETURNING item (e.g. "RETURNING id, lower(note) AS n -- lowercased")
     // has no line terminator of its own to stop at when returningText is the LAST thing before
-    // FROM on one line — it would otherwise swallow " FROM $target" into the comment, making the
+    // FROM on one line — it would otherwise swallow the FROM clause into the comment, making the
     // probe fail to prepare (a `SQLException`, caught below) and silently degrading to today's
     // NOT NULL default instead of the real answer. Putting FROM on its own line means the comment
     // can only ever consume up to that line's own end, never past it.
-    val probeSql = "SELECT $returningText\nFROM $target"
+    val probeSql = "SELECT $returningText\n$fromClause"
     val viewSql = buildViewSqlWithSentinels(probeSql) ?: if ('?' in probeSql) return null else probeSql
 
     return try {
@@ -1978,6 +2189,289 @@ internal class PgCatalogLoader(private val connection: Connection) {
     } catch (_: SQLException) {
       null
     }
+  }
+
+  /**
+   * Builds `FROM (SELECT <col-list> FROM <target>) AS <alias>` for a plain `UPDATE ... SET`
+   * statement — the `SET`-assignment-aware upgrade [probeUnknownColumnNullability] applies to its
+   * own bare `FROM <target>` (issue #228). Wrapping the target in a derived table whose column
+   * list already carries the `SET`-assigned expressions lets the SAME node-tree analysis
+   * [probeUnknownColumnNullability] already trusts resolve every identifier itself — no
+   * hand-rolled rewriting of the `RETURNING` text is needed. For `UPDATE t SET note = 'x'
+   * RETURNING lower(note)`, this turns the probe's `FROM t` into `FROM (SELECT id, ('x') AS
+   * "note" FROM t) AS t`, so `note` inside the `RETURNING` expression now evaluates against the
+   * literal `'x'` rather than `note`'s own (nullable) catalog column.
+   *
+   * An assigned column's own expression may reference OTHER target columns by their OLD
+   * (pre-update) value (`SET note = note || 'x'`): inside the inner `SELECT`, an unqualified
+   * `note` resolves against the bare `<target>` — the OLD row — which is exactly what an
+   * `UPDATE`'s `SET`-list semantics already mean, so the substituted expression is spliced in
+   * VERBATIM with no extra handling.
+   *
+   * [parseSetAssignments] is run TWICE — once over [originalSql] (before `?`-sentinel
+   * substitution), once over [sql] (after) — and the two are reconciled BY COLUMN NAME, never by
+   * position, so the two texts never need to align positionally (see [parseSetAssignments]'s own
+   * KDoc for why a `?` sentinel's different length could otherwise desynchronize them). A column
+   * keeps its bare, unsubstituted form in the derived table — deferring to the pre-existing,
+   * already-safe catalog-`attnotnull` answer for that one column — whenever ANY of the following
+   * holds:
+   * - it has no plain (single-column) assignment in [originalSql] at all — this covers both an
+   *   untouched column and the row form `SET (a, b) = (...)`, whose right-hand side cannot be
+   *   safely attributed to any one of its several target columns;
+   * - its [originalSql] assignment's right-hand side is exactly the keyword `DEFAULT` — an
+   *   unknown, possibly-`null` value this function makes no attempt to resolve;
+   * - its [originalSql] assignment's right-hand side contains a lexical `?` — by the time [sql]
+   *   reaches this function, [buildViewSqlWithSentinels] has already replaced every `?` parameter
+   *   placeholder with a typed NON-NULL sentinel (`0::int4`, `''::text`, …), so trusting [sql]'s
+   *   own substituted expression here would silently assert NOT NULL for a value a real caller
+   *   can bind `NULL` to at runtime — the exact regression issue #228 exists to close. Only
+   *   [originalSql]'s pre-sentinel text still carries the bare `?`, so only it can catch this;
+   * - it has no matching plain assignment in [sql]'s own parse — should not happen when [sql] and
+   *   [originalSql] are truly the sentinel/pre-sentinel forms of the same statement, but kept as
+   *   a defensive check: with no [sql]-side expression there is nothing trustworthy to splice.
+   *
+   * Before any of the above, this function bails outright — without even attempting to parse the
+   * `SET` list — whenever the target relation is one where `RETURNING` can see a tuple something
+   * OTHER than this statement's own `SET` clause rewrote between assignment and return. `RETURNING`
+   * always reflects the FINAL, post-trigger, post-rule tuple, never the `SET` expression's raw
+   * value, so substituting that raw value is only safe when nothing else in the pipeline can have
+   * changed it. See [resolveTargetRelationOidIfSubstitutionSafe] for the exact catalog-based
+   * check.
+   *
+   * Also bails when [returningText] references PostgreSQL 18's `OLD`/`NEW` `RETURNING`
+   * pseudo-relations (via [referencesOldOrNew]): `OLD.col` must see the PRE-update value, which is
+   * exactly the opposite of what this function's substitution would splice in for a column `OLD`
+   * qualifies.
+   *
+   * @param returningText The already-extracted `RETURNING` list text (no leading `RETURNING`
+   *   keyword) [probeUnknownColumnNullability] parsed from [sql] — checked for an `OLD`/`NEW`
+   *   pseudo-relation reference before any substitution is attempted.
+   * @return `null` — the caller's signal to keep its own bare `FROM <target>` unchanged — when
+   *   [sql] (after stripping any leading nested `WITH` clause) is not a plain `UPDATE`; when
+   *   [target]'s own alias can't be confidently derived (see [deriveDmlTargetAlias]); when
+   *   `SELECT * FROM <target>` fails to prepare (so the real column list can't be read); when the
+   *   `SET` list fails to parse in either [sql] or [originalSql] (see [parseSetAssignments]'s KDoc
+   *   for why a partial parse is never trusted either); when [returningText] references `OLD`/`NEW`;
+   *   or when [resolveTargetRelationOidIfSubstitutionSafe] reports the target relation unsafe.
+   */
+  private fun buildUpdateSetAwareFromClause(
+    @Language("PostgreSQL") sql: String,
+    @Language("PostgreSQL") originalSql: String,
+    target: String,
+    returningText: String,
+  ): String? {
+    val dml = stripLeadingNestedWithClause(sql)
+    val trimmedStart = skipWhitespaceAndComments(dml, 0)
+    if (skipOptionalKeyword(dml, trimmedStart, "UPDATE") == trimmedStart) return null
+
+    if (referencesOldOrNew(returningText)) return null
+    val relationOid = resolveTargetRelationOidIfSubstitutionSafe(target) ?: return null
+
+    val alias = deriveDmlTargetAlias(target) ?: return null
+
+    val columnNames = try {
+      connection.prepareStatement("SELECT * FROM $target").use { preparedStatement ->
+        preparedStatement.metaData?.let { metadata -> (1..metadata.columnCount).map { metadata.getColumnName(it) } }
+      }
+    } catch (_: SQLException) {
+      null
+    }
+    if (columnNames.isNullOrEmpty()) return null
+
+    val originalAssignments = parseSetAssignments(stripLeadingNestedWithClause(originalSql)) ?: return null
+    val sentinelAssignments = parseSetAssignments(dml) ?: return null
+
+    val originalPlainByColumn = originalAssignments.filter { !it.isRowForm }
+      .associate { it.columnNames.single() to it.expression }
+    val originalRowFormColumns = originalAssignments.filter { it.isRowForm }
+      .flatMapTo(mutableSetOf()) { it.columnNames }
+    val sentinelPlainByColumn = sentinelAssignments.filter { !it.isRowForm }
+      .associate { it.columnNames.single() to it.expression }
+
+    // Never trusted from any other source: an untyped literal or expression spliced bare into the
+    // derived table's column list is typed `text` by PostgreSQL there (issue #226's original bug,
+    // resurfacing as a #228-fix regression) — a DIFFERENT type than the real column's, which can
+    // resolve a RETURNING function call against a completely different, sometimes safe-listed,
+    // overload than the real statement would ever use (`lower(int4range)` vs. the real
+    // `lower(text)` is exactly this). Casting to the column's own declared type — typmod included,
+    // via `format_type` — makes the derived table's column type IDENTICAL to the real one, so
+    // whatever overload the real statement resolves is the same one this probe resolves too.
+    val declaredTypesByColumn = lookupDeclaredColumnTypes(relationOid) ?: emptyMap()
+
+    val innerColumnList = columnNames.joinToString(", ") { columnName ->
+      val originalExpression = originalPlainByColumn[columnName]
+      val sentinelExpression = sentinelPlainByColumn[columnName]
+      val declaredType = declaredTypesByColumn[columnName]
+      val eligible = columnName !in originalRowFormColumns &&
+        originalExpression != null &&
+        sentinelExpression != null &&
+        !isDefaultKeyword(originalExpression) &&
+        !containsLexicalPlaceholder(originalExpression) &&
+        declaredType != null
+      if (eligible) {
+        "($sentinelExpression)::$declaredType AS ${quoteStubColumnAlias(columnName)}"
+      } else {
+        quoteStubColumnAlias(columnName)
+      }
+    }
+
+    return "FROM (SELECT $innerColumnList FROM $target) AS $alias"
+  }
+
+  /**
+   * Looks up the declared type — base type AND typmod (length, precision/scale, array dimensions,
+   * domain identity, etc.) — of every column of [relationOid], via `format_type(atttypid,
+   * atttypmod)` over `pg_attribute`. [buildUpdateSetAwareFromClause] casts each substituted `SET`
+   * expression to this exact string so the derived table's column type is indistinguishable from
+   * the real table's — see that function's own KDoc for why a bare, uncast substitution can
+   * silently resolve a DIFFERENT (and sometimes wrongly safe-listed) function overload than the
+   * real statement would.
+   *
+   * `format_type` itself produces a re-parsable type name — already quoted or schema-qualified
+   * wherever PostgreSQL would otherwise misparse it — so its result is spliced directly after `::`
+   * with no additional quoting from this function.
+   *
+   * @param relationOid The OID [resolveTargetRelationOidIfSubstitutionSafe] already resolved for
+   *   this same target relation — never re-resolved here, so the two functions can never
+   *   disagree about which relation they mean.
+   * @return A map from column name to its declared type text, or `null` if the catalog query
+   *   itself fails to execute — treated by the caller exactly like every column being absent from
+   *   the map: no column becomes eligible for substitution, and each keeps its bare, unsubstituted
+   *   form, deferring to the pre-existing, already-safe catalog-`attnotnull` answer.
+   */
+  private fun lookupDeclaredColumnTypes(relationOid: Int): Map<String, String>? = try {
+    connection.prepareStatement(
+      """
+      SELECT attname, format_type(atttypid, atttypmod) AS declared_type
+      FROM pg_catalog.pg_attribute
+      WHERE attrelid = ? AND attnum > 0 AND NOT attisdropped
+      """.trimIndent(),
+    ).use { preparedStatement ->
+      preparedStatement.setInt(1, relationOid)
+      preparedStatement.executeQuery().use { rs ->
+        buildMap {
+          while (rs.next()) {
+            put(rs.getString("attname"), rs.getString("declared_type"))
+          }
+        }
+      }
+    }
+  } catch (_: SQLException) {
+    null
+  }
+
+  /**
+   * Checks whether [target] — a plain `UPDATE ... SET` statement's target relation, exactly as
+   * [dmlTargetRelationReference] extracted it — is one where `RETURNING` can see a FINAL tuple
+   * that differs from what this statement's own `SET` clause assigned, making
+   * [buildUpdateSetAwareFromClause]'s substitution (issue #228's fix) itself unsafe: `RETURNING`
+   * always reflects the tuple actually stored (or, for `DO INSTEAD`, whatever the replacing query
+   * produces), never the raw `SET` expression, so a row-level `BEFORE` trigger, a rewrite rule, an
+   * `INSTEAD OF` trigger on a view, or an FDW's own write path can each substitute a completely
+   * different value for the very column [buildUpdateSetAwareFromClause] would otherwise splice in
+   * as provably non-null.
+   *
+   * Resolves [target] to an OID via `to_regclass` and returns that SAME OID to the caller on
+   * success — [buildUpdateSetAwareFromClause] reuses it to look up each column's declared type
+   * (see [lookupDeclaredColumnTypes]) rather than resolving [target] to an OID a second time.
+   * Answers "unsafe" (`null`, bail, don't substitute) when ANY of the following hold:
+   * 1. [target] cannot be resolved to an OID at all — an ambiguous, unparseable, or unknown
+   *    relation reference. Never guessed at: an unresolvable target is treated exactly as unsafe
+   *    as one known to be unsafe.
+   * 2. The relation, OR ANY transitive inheritance descendant or partition (recursed via
+   *    `pg_inherits`), has a `pg_class.relkind` of view (`v`), materialized view (`m`), or foreign
+   *    table (`f`). An `INSTEAD OF` trigger or a foreign data wrapper's own `UPDATE` path can
+   *    produce any tuple it likes, independent of this statement's `SET` clause — including an
+   *    auto-updatable view, whose write routes through a base table whose OWN triggers then apply;
+   *    this function does not attempt to chase that base table, it simply bails on the view itself.
+   *    Checking every descendant, not just the root, matters because a partitioned table's
+   *    partition — or a plain inheritance child — can itself be a foreign table even when the root
+   *    relation is an ordinary local table: `UPDATE parent SET ... RETURNING ...` can still route a
+   *    given row through a foreign partition's own remote write path.
+   * 3. The relation, or ANY transitive inheritance descendant or partition (recursed via
+   *    `pg_inherits`), has a row-level `BEFORE` trigger for `UPDATE` OR `INSERT`, excluding
+   *    internal constraint triggers (`tgisinternal`). `INSERT` matters alongside `UPDATE` because a
+   *    partitioned table's cross-partition `UPDATE` is internally re-routed as a `DELETE` on the
+   *    source partition plus an `INSERT` on the destination partition, whose own `BEFORE INSERT`
+   *    trigger can rewrite the tuple `RETURNING` ultimately sees — a risk that exists for the
+   *    partitioned table as a whole regardless of which specific row this statement touches, so
+   *    ANY descendant carrying such a trigger bails the WHOLE relation, not just that descendant's
+   *    own rows. A statement-level trigger, or an `AFTER` trigger of either level, does not affect
+   *    the tuple `RETURNING` observes and is deliberately NOT matched here.
+   * 4. The relation, or any transitive descendant, has any rewrite rule in `pg_rewrite` other than
+   *    a view's own implicit `_RETURN` `SELECT` rule (identified by `rulename`). A `DO INSTEAD`
+   *    rule can replace the statement wholesale with a query this function has no visibility into.
+   *
+   * Deliberately does NOT bail for a generated or identity column (PostgreSQL rejects those as
+   * `SET` targets outright, so they can never appear as a plain assignment in the first place) or
+   * for a domain constraint on an assigned column (a constraint violation aborts the statement
+   * rather than silently rewriting its value) — neither can produce the RETURNING-sees-something-
+   * else risk this function exists to catch.
+   *
+   * @return `null` — meaning [buildUpdateSetAwareFromClause] must bail and keep the caller's bare,
+   *   unwrapped `FROM <target>` probe — whenever any of the above cannot be ruled out, INCLUDING
+   *   when the catalog query itself fails to execute (treated the same as "can't confirm this
+   *   substitution is safe"). Otherwise, [target]'s resolved relation OID — every condition above
+   *   checked and none matched — for [buildUpdateSetAwareFromClause] to proceed and reuse.
+   */
+  private fun resolveTargetRelationOidIfSubstitutionSafe(target: String): Int? {
+    val relationName = dmlTargetRelationName(target) ?: return null
+
+    val result = try {
+      connection.prepareStatement(
+        """
+        WITH RECURSIVE root(relid) AS (
+          SELECT to_regclass(?)::integer
+        ),
+        descendants(relid) AS (
+          SELECT relid FROM root WHERE relid IS NOT NULL
+          UNION
+          SELECT i.inhrelid::integer
+          FROM pg_catalog.pg_inherits i
+          JOIN descendants d ON i.inhparent = d.relid
+        )
+        SELECT
+          (SELECT relid FROM root) AS root_relid,
+          EXISTS (
+            SELECT 1
+            FROM pg_catalog.pg_class c
+            JOIN descendants d ON c.oid = d.relid
+            WHERE c.relkind IN ('v', 'm', 'f')
+          ) AS has_risky_relkind,
+          EXISTS (
+            SELECT 1
+            FROM pg_catalog.pg_trigger tg
+            JOIN descendants d ON tg.tgrelid = d.relid
+            WHERE NOT tg.tgisinternal
+              AND (tg.tgtype & 1) = 1
+              AND (tg.tgtype & 2) = 2
+              AND ((tg.tgtype & 4) = 4 OR (tg.tgtype & 16) = 16)
+          ) AS has_mutating_row_trigger,
+          EXISTS (
+            SELECT 1
+            FROM pg_catalog.pg_rewrite rw
+            JOIN descendants d ON rw.ev_class = d.relid
+            WHERE rw.rulename <> '_RETURN'
+          ) AS has_non_view_rewrite_rule
+        """.trimIndent(),
+      ).use { preparedStatement ->
+        preparedStatement.setString(1, relationName)
+        preparedStatement.executeQuery().use { rs ->
+          if (!rs.next()) return@use null
+          val rootRelid = rs.getInt("root_relid").takeUnless { rs.wasNull() }
+          val hasRisk = rs.getBoolean("has_risky_relkind") ||
+            rs.getBoolean("has_mutating_row_trigger") ||
+            rs.getBoolean("has_non_view_rewrite_rule")
+          rootRelid to hasRisk
+        }
+      }
+    } catch (_: SQLException) {
+      null
+    }
+
+    val (rootRelid, hasRisk) = result ?: return null
+    if (rootRelid == null) return null // to_regclass could not resolve the target — bail, don't guess
+    return rootRelid.takeUnless { hasRisk }
   }
 
   /**
@@ -2047,7 +2541,665 @@ internal class PgCatalogLoader(private val connection: Connection) {
       }
     }
   }
+
+  internal companion object {
+    /**
+     * Exact `(pg_proc.proname, argument type signature)` pairs safe-listed for
+     * [neverNullForNonNullInputOids]. Restricted to `pronamespace = 'pg_catalog'` at query time.
+     * Argument types are matched by `pg_type.typname` in declaration order — e.g. `listOf("text",
+     * "text")` matches only the two-`text`-argument overload of a name, not a same-arity overload
+     * over different types. A signature is listed here ONLY when it was independently confirmed,
+     * against a live PostgreSQL 18 instance, to be total on every non-null, well-typed input —
+     * including infinite, empty, or unbounded edge values, not merely "typical" ones. Below is
+     * that audit, one entry per bullet. Every `pg_catalog` overload actually present for each name
+     * is listed even where excluded, so an omission is visibly a decision rather than an oversight.
+     *
+     * - **upper/lower**: `pg_catalog` overloads are `(text)`, `(anyrange)`, `(anymultirange)`.
+     *   `(text)` is total (kept). `(anyrange)`/`(anymultirange)` are STRICT but return `null` for a
+     *   non-null, non-empty, UNBOUNDED range/multirange (`upper(int4range '[1,)')`) or an EMPTY one
+     *   (`lower(int4range 'empty')`, `lower(int4multirange '{}')`) — excluded.
+     * - **initcap**: only overload is `(text)` — total (kept).
+     * - **length**: overloads are `(text)`, `(bytea)`, `(bytea, name)` (length in a named
+     *   encoding), `(bit)`, `(bpchar)`, `(lseg)`, `(path)`, `(tsvector)`. All total on non-null
+     *   input — a degenerate zero-length `lseg`/single-point `path` returns `0`, not `null`; an
+     *   unrecognized encoding name errors rather than returning `null` (all kept).
+     * - **char_length**: overloads are `(text)`, `(bpchar)` — both total (kept).
+     * - **btrim/ltrim/rtrim**: overloads are `(text)`, `(text, text)`, `(bytea, bytea)` — all total,
+     *   including on an empty trim-characters argument (kept).
+     * - **replace**: only overload is `(text, text, text)` — total (kept).
+     * - **split_part**: only overload is `(text, text, int4)` — total, including a field position
+     *   past the actual field count (returns `''`, not `null`) and a negative position counting
+     *   from the end (kept).
+     * - **strpos**: only overload is `(text, text)` — total, including empty needle/haystack
+     *   (returns `0`/`1`, not `null`) (kept).
+     * - **md5**: overloads are `(text)`, `(bytea)` — both total, including on empty input (kept).
+     * - **abs**: overloads are `(int2)`, `(int4)`, `(int8)`, `(numeric)`, `(float4)`, `(float8)` —
+     *   no `(interval)` overload exists in `pg_catalog` (interval's absolute value is the `@`
+     *   OPERATOR, a distinct catalog entry, not a same-named function). All six are total,
+     *   including on `NaN`/`Infinity` (kept).
+     * - **round**: overloads are `(float8)`, `(numeric)`, `(numeric, int4)` — all total, including
+     *   on `NaN`/`Infinity` (kept).
+     * - **floor/ceil/ceiling**: overloads are `(float8)`, `(numeric)` — all total, including on
+     *   `NaN`/`Infinity` (kept).
+     * - **now**: only overload is `()` — total (kept).
+     * - **date_trunc**: overloads are `(text, interval)`, `(text, timestamp)`, `(text,
+     *   timestamptz)`, `(text, timestamptz, text)`. Unlike `extract`/`date_part` below,
+     *   `date_trunc` special-cases infinite input for EVERY truncation field, verified across
+     *   `hour`, `microseconds`, `week`, `quarter`, `day` on `'infinity'`/`'-infinity'` values of
+     *   all three temporal types, plus the 3-argument timezone-name form — all preserve infinity
+     *   rather than returning `null`, and an unrecognized field name or timezone name errors rather
+     *   than returning `null` (all kept).
+     * - **date_part/extract**: overloads are `(text, date)`, `(text, interval)`, `(text, time)`,
+     *   `(text, timestamp)`, `(text, timestamptz)`, `(text, timetz)`. UNLIKE `date_trunc`, these
+     *   only special-case a FEW fields (`epoch`, `year`, `century`, ...) for infinite input — most
+     *   other fields silently return `null` for a non-null, well-typed infinite value:
+     *   `extract(hour FROM 'infinity'::timestamp)`, `extract(month FROM 'infinity'::interval)`, and
+     *   `extract(day FROM 'infinity'::date)` (`date` supports `'infinity'` too) all return `null`
+     *   with NO error. `(text, date)`, `(text, interval)`, `(text, timestamp)`, `(text,
+     *   timestamptz)` are therefore EXCLUDED. `(text, time)` and `(text, timetz)` have no infinite
+     *   representation for their base type and were verified total across every valid field
+     *   (`hour`, `minute`, `second`, `microseconds`, `milliseconds`, `epoch`,
+     *   `timezone`/`timezone_hour`/`timezone_minute` for `timetz`) plus an unrecognized field name
+     *   (errors, does not return `null`) — kept.
+     * - **to_char**: DROPPED ENTIRELY. `to_char(timestamp, '')` (an empty, non-null, well-typed
+     *   format string) returns `null` with no error — confirmed on `pg_catalog`'s
+     *   `(timestamp, text)` overload; the same risk was not individually re-verified for every
+     *   other `to_char` overload (`bigint`, `float8`, `int4`, `interval`, `numeric`, `float4`,
+     *   `timestamptz`, each paired with `text`) but is assumed present, since the empty-format
+     *   behavior is a property of `to_char`'s shared formatting engine, not of the first
+     *   argument's type.
+     * - **ntile**: only window-function overload is `(int4)` — errors (not `null`) for a
+     *   non-positive bucket count, total otherwise (kept).
+     * - **encode/decode**: overloads are `(bytea, text)` and `(text, text)` respectively — both
+     *   total on empty input; an unrecognized format name errors rather than returning `null`
+     *   (kept).
+     */
+    internal val NEVER_NULL_FUNCTION_SIGNATURES: List<SafeFunctionSignature> = listOf(
+      SafeFunctionSignature("upper", listOf("text")),
+      SafeFunctionSignature("lower", listOf("text")),
+      SafeFunctionSignature("initcap", listOf("text")),
+      SafeFunctionSignature("length", listOf("text")),
+      SafeFunctionSignature("length", listOf("bytea")),
+      SafeFunctionSignature("length", listOf("bytea", "name")),
+      SafeFunctionSignature("length", listOf("bit")),
+      SafeFunctionSignature("length", listOf("bpchar")),
+      SafeFunctionSignature("length", listOf("lseg")),
+      SafeFunctionSignature("length", listOf("path")),
+      SafeFunctionSignature("length", listOf("tsvector")),
+      SafeFunctionSignature("char_length", listOf("text")),
+      SafeFunctionSignature("char_length", listOf("bpchar")),
+      SafeFunctionSignature("btrim", listOf("text")),
+      SafeFunctionSignature("btrim", listOf("text", "text")),
+      SafeFunctionSignature("btrim", listOf("bytea", "bytea")),
+      SafeFunctionSignature("ltrim", listOf("text")),
+      SafeFunctionSignature("ltrim", listOf("text", "text")),
+      SafeFunctionSignature("ltrim", listOf("bytea", "bytea")),
+      SafeFunctionSignature("rtrim", listOf("text")),
+      SafeFunctionSignature("rtrim", listOf("text", "text")),
+      SafeFunctionSignature("rtrim", listOf("bytea", "bytea")),
+      SafeFunctionSignature("replace", listOf("text", "text", "text")),
+      SafeFunctionSignature("split_part", listOf("text", "text", "int4")),
+      SafeFunctionSignature("strpos", listOf("text", "text")),
+      SafeFunctionSignature("md5", listOf("text")),
+      SafeFunctionSignature("md5", listOf("bytea")),
+      SafeFunctionSignature("abs", listOf("int2")),
+      SafeFunctionSignature("abs", listOf("int4")),
+      SafeFunctionSignature("abs", listOf("int8")),
+      SafeFunctionSignature("abs", listOf("numeric")),
+      SafeFunctionSignature("abs", listOf("float4")),
+      SafeFunctionSignature("abs", listOf("float8")),
+      SafeFunctionSignature("round", listOf("float8")),
+      SafeFunctionSignature("round", listOf("numeric")),
+      SafeFunctionSignature("round", listOf("numeric", "int4")),
+      SafeFunctionSignature("floor", listOf("float8")),
+      SafeFunctionSignature("floor", listOf("numeric")),
+      SafeFunctionSignature("ceil", listOf("float8")),
+      SafeFunctionSignature("ceil", listOf("numeric")),
+      SafeFunctionSignature("ceiling", listOf("float8")),
+      SafeFunctionSignature("ceiling", listOf("numeric")),
+      SafeFunctionSignature("now", emptyList()),
+      SafeFunctionSignature("date_trunc", listOf("text", "interval")),
+      SafeFunctionSignature("date_trunc", listOf("text", "timestamp")),
+      SafeFunctionSignature("date_trunc", listOf("text", "timestamptz")),
+      SafeFunctionSignature("date_trunc", listOf("text", "timestamptz", "text")),
+      SafeFunctionSignature("date_part", listOf("text", "time")),
+      SafeFunctionSignature("date_part", listOf("text", "timetz")),
+      SafeFunctionSignature("extract", listOf("text", "time")),
+      SafeFunctionSignature("extract", listOf("text", "timetz")),
+      SafeFunctionSignature("ntile", listOf("int4")),
+      SafeFunctionSignature("encode", listOf("bytea", "text")),
+      SafeFunctionSignature("decode", listOf("text", "text")),
+      SafeFunctionSignature("left", listOf("text", "int4")),
+      SafeFunctionSignature("right", listOf("text", "int4")),
+      SafeFunctionSignature("substr", listOf("text", "int4")),
+      SafeFunctionSignature("substr", listOf("text", "int4", "int4")),
+      SafeFunctionSignature("substr", listOf("bytea", "int4")),
+      SafeFunctionSignature("substr", listOf("bytea", "int4", "int4")),
+      SafeFunctionSignature("repeat", listOf("text", "int4")),
+      SafeFunctionSignature("lpad", listOf("text", "int4")),
+      SafeFunctionSignature("lpad", listOf("text", "int4", "text")),
+      SafeFunctionSignature("rpad", listOf("text", "int4")),
+      SafeFunctionSignature("rpad", listOf("text", "int4", "text")),
+      SafeFunctionSignature("reverse", listOf("text")),
+      SafeFunctionSignature("reverse", listOf("bytea")),
+      SafeFunctionSignature("position", listOf("text", "text")),
+      SafeFunctionSignature("position", listOf("bytea", "bytea")),
+      SafeFunctionSignature("position", listOf("bit", "bit")),
+      SafeFunctionSignature("translate", listOf("text", "text", "text")),
+      SafeFunctionSignature("octet_length", listOf("text")),
+      SafeFunctionSignature("octet_length", listOf("bytea")),
+      SafeFunctionSignature("octet_length", listOf("bpchar")),
+      SafeFunctionSignature("octet_length", listOf("bit")),
+      SafeFunctionSignature("ascii", listOf("text")),
+      SafeFunctionSignature("chr", listOf("int4")),
+      SafeFunctionSignature("sqrt", listOf("float8")),
+      SafeFunctionSignature("sqrt", listOf("numeric")),
+      SafeFunctionSignature("power", listOf("float8", "float8")),
+      SafeFunctionSignature("power", listOf("numeric", "numeric")),
+      SafeFunctionSignature("mod", listOf("int2", "int2")),
+      SafeFunctionSignature("mod", listOf("int4", "int4")),
+      SafeFunctionSignature("mod", listOf("int8", "int8")),
+      SafeFunctionSignature("mod", listOf("numeric", "numeric")),
+      SafeFunctionSignature("div", listOf("numeric", "numeric")),
+      SafeFunctionSignature("trunc", listOf("float8")),
+      SafeFunctionSignature("trunc", listOf("numeric")),
+      SafeFunctionSignature("trunc", listOf("numeric", "int4")),
+      SafeFunctionSignature("sign", listOf("float8")),
+      SafeFunctionSignature("sign", listOf("numeric")),
+      SafeFunctionSignature("cardinality", listOf("anyarray")),
+      SafeFunctionSignature("array_to_string", listOf("anyarray", "text")),
+      SafeFunctionSignature("array_to_string", listOf("anyarray", "text", "text")),
+    )
+
+    /**
+     * (Source type, target type) pairs safe-listed for [neverNullForNonNullInputOids], keyed by
+     * `pg_type.typname` on both sides and restricted to `pg_cast.castfunc`-backed casts (`pg_cast`
+     * rows implemented by an I/O-conversion (`castmethod = 'i'`) rather than a `castfunc` — e.g.
+     * `text` → `integer`, `text` → `date`, `text` → `boolean`, any `enum` ↔ `text` — need no entry
+     * here at all: those surface in the node tree as [PgNodeExpression.CoerceViaIo], which
+     * [NodeTreeNullabilityAnalyzer.isNonNull] already treats as safe by simply recursing into the
+     * argument, since a type's own input function errors on unparseable text rather than returning
+     * `null`). Array-to-array casts (e.g. `text[]` → `int4[]`) likewise need no entry: they surface
+     * as [PgNodeExpression.ArrayCoerceExpr], which recurses the same way.
+     *
+     * Several entries are SELF-casts (`numeric` → `numeric`, `bpchar` → `bpchar`, `varchar` →
+     * `varchar`, `timestamp` → `timestamp`, `timestamptz` → `timestamptz`, `time` → `time`,
+     * `timetz` → `timetz`, `interval` → `interval`, `bit` → `bit`). These are not no-ops: they are
+     * `castfunc`-backed typmod-ENFORCEMENT casts — e.g. applying a declared length limit
+     * (`VARCHAR(5)`) or precision (`NUMERIC(10,2)`, `TIMESTAMP(3)`) to an already-typed value.
+     * PostgreSQL represents "assign this literal to a length/precision-constrained column" as a
+     * same-type cast through this function, not as a no-op RelabelType, which is why
+     * `varchar(5)`-typed columns need `varchar` → `varchar` listed explicitly rather than falling
+     * out of some other rule. Every one of these was verified to either preserve the value or
+     * silently truncate/round it (`'abcdef'::varchar(3)` truncates to `'abc'`, never `null`) by the
+     * same sweep as every other entry here.
+     *
+     * NOT keyed by source type alone: `jsonb` → `integer`/`numeric`/`boolean`/etc. and
+     * `timestamp`/`timestamptz` → `time`/`timetz` are real `castfunc`-backed `pg_catalog` casts
+     * that are NOT total (see [neverNullForNonNullInputOids]'s KDoc for the counterexamples), so a
+     * blanket "every cast function is safe" rule — which is what this list replaced — silently
+     * shipped both. Every pair actually listed here was verified total by
+     * [SafeListSweepTest] against a live PostgreSQL instance using an edge-value corpus (`NaN`,
+     * `Infinity`/`-Infinity`, `infinity`/`-infinity`, min/max integers, empty strings) — that sweep,
+     * not hand-reasoning about any individual pair, is what licenses an entry here. When in doubt
+     * whether a pair is total, the correct default is to leave it off; omission only widens a
+     * result to nullable, it never narrows a truly nullable expression to non-null.
+     */
+    internal val NEVER_NULL_CAST_SIGNATURES: List<SafeCastSignature> = listOf(
+      SafeCastSignature("int2", "int4"),
+      SafeCastSignature("int2", "int8"),
+      SafeCastSignature("int2", "numeric"),
+      SafeCastSignature("int2", "float4"),
+      SafeCastSignature("int2", "float8"),
+      SafeCastSignature("int4", "int2"),
+      SafeCastSignature("int4", "int8"),
+      SafeCastSignature("int4", "numeric"),
+      SafeCastSignature("int4", "float4"),
+      SafeCastSignature("int4", "float8"),
+      SafeCastSignature("int8", "int2"),
+      SafeCastSignature("int8", "int4"),
+      SafeCastSignature("int8", "numeric"),
+      SafeCastSignature("int8", "float4"),
+      SafeCastSignature("int8", "float8"),
+      SafeCastSignature("numeric", "int2"),
+      SafeCastSignature("numeric", "int4"),
+      SafeCastSignature("numeric", "int8"),
+      SafeCastSignature("numeric", "float4"),
+      SafeCastSignature("numeric", "float8"),
+      SafeCastSignature("numeric", "numeric"),
+      SafeCastSignature("float4", "int2"),
+      SafeCastSignature("float4", "int4"),
+      SafeCastSignature("float4", "int8"),
+      SafeCastSignature("float4", "numeric"),
+      SafeCastSignature("float4", "float8"),
+      SafeCastSignature("float8", "int2"),
+      SafeCastSignature("float8", "int4"),
+      SafeCastSignature("float8", "int8"),
+      SafeCastSignature("float8", "numeric"),
+      SafeCastSignature("float8", "float4"),
+      SafeCastSignature("int4", "bool"),
+      SafeCastSignature("bool", "int4"),
+      SafeCastSignature("bool", "text"),
+      SafeCastSignature("bool", "bpchar"),
+      SafeCastSignature("bool", "varchar"),
+      SafeCastSignature("bpchar", "bpchar"),
+      SafeCastSignature("varchar", "varchar"),
+      SafeCastSignature("int2", "bytea"),
+      SafeCastSignature("int4", "bytea"),
+      SafeCastSignature("int8", "bytea"),
+      SafeCastSignature("bytea", "int2"),
+      SafeCastSignature("bytea", "int4"),
+      SafeCastSignature("bytea", "int8"),
+      SafeCastSignature("int4", "money"),
+      SafeCastSignature("int8", "money"),
+      SafeCastSignature("numeric", "money"),
+      SafeCastSignature("money", "numeric"),
+      SafeCastSignature("int4", "bit"),
+      SafeCastSignature("int8", "bit"),
+      SafeCastSignature("date", "timestamptz"),
+      SafeCastSignature("date", "timestamp"),
+      SafeCastSignature("timestamp", "date"),
+      SafeCastSignature("timestamp", "timestamptz"),
+      SafeCastSignature("timestamp", "timestamp"),
+      SafeCastSignature("timestamptz", "date"),
+      SafeCastSignature("timestamptz", "timestamp"),
+      SafeCastSignature("timestamptz", "timestamptz"),
+      SafeCastSignature("time", "timetz"),
+      SafeCastSignature("time", "interval"),
+      SafeCastSignature("time", "time"),
+      SafeCastSignature("timetz", "time"),
+      SafeCastSignature("timetz", "timetz"),
+      SafeCastSignature("interval", "time"),
+      SafeCastSignature("interval", "interval"),
+      SafeCastSignature("bit", "bit"),
+    )
+
+    /**
+     * (Symbol, left operand type, right operand type) triples safe-listed for
+     * [neverNullForNonNullInputOids], keyed by `pg_type.typname` on each side and restricted to
+     * `oprnamespace = 'pg_catalog'` at query time. Deliberately excludes `-> ->> #> #>>` (JSON path
+     * extraction — `null` on a missing key/path, even though `pg_proc.proisstrict` is `true` for
+     * them) and `@@` (jsonpath match — `null` on a non-boolean result) by never listing them, and
+     * excludes every `path`-typed overload of `+`/`-`/`*` (`path_add` etc. return `null`, not an
+     * error, when either operand is a CLOSED path — see [neverNullForNonNullInputOids]'s KDoc).
+     * There is no `jsonb`-typed entry on this list at all — [neverNullForNonNullInputOids]'s KDoc
+     * covers the `jsonb` `'null'` literal counterexample in the context of CASTS, not operators.
+     *
+     * NOT keyed by symbol alone: a blanket "every `pg_catalog` overload of this symbol is safe"
+     * rule — which is what this list replaced — is what let `path + path` through, since `+` is
+     * also the totally-safe `int4 + int4`. Every triple actually listed here was verified total by
+     * [SafeListSweepTest] against a live PostgreSQL instance using an edge-value corpus (`NaN`,
+     * `Infinity`/`-Infinity`, `infinity`/`-infinity`, min/max integers, empty string, empty
+     * array/range/multirange, unbounded range), including the containment
+     * operators (`@>`, `<@`, `&&`) against concrete `integer[]`/`text[]`/`int4range`/`numrange`/
+     * `tsrange`/`daterange`/`int4multirange` instantiations of their generic `anyarray`/`anyrange`/
+     * `anymultirange`/`anyelement` `pg_operator` rows — a single generic row backs every concrete
+     * instantiation, so one safe-listed triple per generic row covers all of them.
+     */
+    internal val NEVER_NULL_OPERATOR_SIGNATURES: List<SafeOperatorSignature> = listOf(
+      SafeOperatorSignature("!~", "bpchar", "text"),
+      SafeOperatorSignature("!~", "text", "text"),
+      SafeOperatorSignature("!~*", "bpchar", "text"),
+      SafeOperatorSignature("!~*", "text", "text"),
+      SafeOperatorSignature("!~~", "bytea", "bytea"),
+      SafeOperatorSignature("!~~", "bpchar", "text"),
+      SafeOperatorSignature("!~~", "text", "text"),
+      SafeOperatorSignature("!~~*", "bpchar", "text"),
+      SafeOperatorSignature("!~~*", "text", "text"),
+      SafeOperatorSignature("%", "int8", "int8"),
+      SafeOperatorSignature("%", "int4", "int4"),
+      SafeOperatorSignature("%", "numeric", "numeric"),
+      SafeOperatorSignature("%", "int2", "int2"),
+      SafeOperatorSignature("*", "int8", "int8"),
+      SafeOperatorSignature("*", "int8", "int4"),
+      SafeOperatorSignature("*", "int8", "int2"),
+      SafeOperatorSignature("*", "float8", "float8"),
+      SafeOperatorSignature("*", "float8", "float4"),
+      SafeOperatorSignature("*", "int4", "int8"),
+      SafeOperatorSignature("*", "int4", "int4"),
+      SafeOperatorSignature("*", "int4", "int2"),
+      SafeOperatorSignature("*", "numeric", "numeric"),
+      SafeOperatorSignature("*", "float4", "float8"),
+      SafeOperatorSignature("*", "float4", "float4"),
+      SafeOperatorSignature("*", "int2", "int8"),
+      SafeOperatorSignature("*", "int2", "int4"),
+      SafeOperatorSignature("*", "int2", "int2"),
+      SafeOperatorSignature("+", "int8", "int8"),
+      SafeOperatorSignature("+", "int8", "int4"),
+      SafeOperatorSignature("+", "int8", "int2"),
+      SafeOperatorSignature("+", "float8", "float8"),
+      SafeOperatorSignature("+", "float8", "float4"),
+      SafeOperatorSignature("+", "int4", "int8"),
+      SafeOperatorSignature("+", "int4", "int4"),
+      SafeOperatorSignature("+", "int4", "int2"),
+      SafeOperatorSignature("+", "numeric", "numeric"),
+      SafeOperatorSignature("+", "float4", "float8"),
+      SafeOperatorSignature("+", "float4", "float4"),
+      SafeOperatorSignature("+", "int2", "int8"),
+      SafeOperatorSignature("+", "int2", "int4"),
+      SafeOperatorSignature("+", "int2", "int2"),
+      SafeOperatorSignature("-", "int8", "int8"),
+      SafeOperatorSignature("-", "int8", "int4"),
+      SafeOperatorSignature("-", "int8", "int2"),
+      SafeOperatorSignature("-", "float8", "float8"),
+      SafeOperatorSignature("-", "float8", "float4"),
+      SafeOperatorSignature("-", "int4", "int8"),
+      SafeOperatorSignature("-", "int4", "int4"),
+      SafeOperatorSignature("-", "int4", "int2"),
+      SafeOperatorSignature("-", "numeric", "numeric"),
+      SafeOperatorSignature("-", "float4", "float8"),
+      SafeOperatorSignature("-", "float4", "float4"),
+      SafeOperatorSignature("-", "int2", "int8"),
+      SafeOperatorSignature("-", "int2", "int4"),
+      SafeOperatorSignature("-", "int2", "int2"),
+      // Unary (prefix) overloads — no left operand (pg_operator.oprleft = 0). Negation errors on
+      // overflow (negating a type's own minimum value) rather than returning null; unary plus is
+      // a total no-op.
+      SafeOperatorSignature("+", null, "int8"),
+      SafeOperatorSignature("+", null, "int4"),
+      SafeOperatorSignature("+", null, "int2"),
+      SafeOperatorSignature("+", null, "numeric"),
+      SafeOperatorSignature("+", null, "float4"),
+      SafeOperatorSignature("+", null, "float8"),
+      SafeOperatorSignature("-", null, "int8"),
+      SafeOperatorSignature("-", null, "int4"),
+      SafeOperatorSignature("-", null, "int2"),
+      SafeOperatorSignature("-", null, "numeric"),
+      SafeOperatorSignature("-", null, "float4"),
+      SafeOperatorSignature("-", null, "float8"),
+      SafeOperatorSignature("-", null, "interval"),
+      // Date/time arithmetic. Binary `+`/`-` between a `date`/`timestamp`/`timestamptz` and an
+      // `int4`/`interval` (and their commuted forms) are distinct pg_operator rows from the
+      // numeric `+`/`-` overloads already listed above, each independently swept.
+      SafeOperatorSignature("+", "date", "int4"),
+      SafeOperatorSignature("+", "int4", "date"),
+      SafeOperatorSignature("-", "date", "int4"),
+      SafeOperatorSignature("-", "date", "date"),
+      SafeOperatorSignature("+", "timestamp", "interval"),
+      SafeOperatorSignature("+", "interval", "timestamp"),
+      SafeOperatorSignature("-", "timestamp", "interval"),
+      SafeOperatorSignature("-", "timestamp", "timestamp"),
+      SafeOperatorSignature("+", "timestamptz", "interval"),
+      SafeOperatorSignature("+", "interval", "timestamptz"),
+      SafeOperatorSignature("-", "timestamptz", "interval"),
+      SafeOperatorSignature("-", "timestamptz", "timestamptz"),
+      SafeOperatorSignature("/", "int8", "int8"),
+      SafeOperatorSignature("/", "int8", "int4"),
+      SafeOperatorSignature("/", "int8", "int2"),
+      SafeOperatorSignature("/", "float8", "float8"),
+      SafeOperatorSignature("/", "float8", "float4"),
+      SafeOperatorSignature("/", "int4", "int8"),
+      SafeOperatorSignature("/", "int4", "int4"),
+      SafeOperatorSignature("/", "int4", "int2"),
+      SafeOperatorSignature("/", "numeric", "numeric"),
+      SafeOperatorSignature("/", "float4", "float8"),
+      SafeOperatorSignature("/", "float4", "float4"),
+      SafeOperatorSignature("/", "int2", "int8"),
+      SafeOperatorSignature("/", "int2", "int4"),
+      SafeOperatorSignature("/", "int2", "int2"),
+      SafeOperatorSignature("<", "int8", "int8"),
+      SafeOperatorSignature("<", "int8", "int4"),
+      SafeOperatorSignature("<", "int8", "int2"),
+      SafeOperatorSignature("<", "bool", "bool"),
+      SafeOperatorSignature("<", "bytea", "bytea"),
+      SafeOperatorSignature("<", "bpchar", "bpchar"),
+      SafeOperatorSignature("<", "date", "date"),
+      SafeOperatorSignature("<", "date", "timestamptz"),
+      SafeOperatorSignature("<", "date", "timestamp"),
+      SafeOperatorSignature("<", "float8", "float8"),
+      SafeOperatorSignature("<", "float8", "float4"),
+      SafeOperatorSignature("<", "int4", "int8"),
+      SafeOperatorSignature("<", "int4", "int4"),
+      SafeOperatorSignature("<", "int4", "int2"),
+      SafeOperatorSignature("<", "interval", "interval"),
+      SafeOperatorSignature("<", "numeric", "numeric"),
+      SafeOperatorSignature("<", "float4", "float8"),
+      SafeOperatorSignature("<", "float4", "float4"),
+      SafeOperatorSignature("<", "int2", "int8"),
+      SafeOperatorSignature("<", "int2", "int4"),
+      SafeOperatorSignature("<", "int2", "int2"),
+      SafeOperatorSignature("<", "text", "text"),
+      SafeOperatorSignature("<", "timetz", "timetz"),
+      SafeOperatorSignature("<", "time", "time"),
+      SafeOperatorSignature("<", "timestamptz", "date"),
+      SafeOperatorSignature("<", "timestamptz", "timestamptz"),
+      SafeOperatorSignature("<", "timestamptz", "timestamp"),
+      SafeOperatorSignature("<", "timestamp", "date"),
+      SafeOperatorSignature("<", "timestamp", "timestamptz"),
+      SafeOperatorSignature("<", "timestamp", "timestamp"),
+      SafeOperatorSignature("<", "uuid", "uuid"),
+      SafeOperatorSignature("<=", "int8", "int8"),
+      SafeOperatorSignature("<=", "int8", "int4"),
+      SafeOperatorSignature("<=", "int8", "int2"),
+      SafeOperatorSignature("<=", "bool", "bool"),
+      SafeOperatorSignature("<=", "bytea", "bytea"),
+      SafeOperatorSignature("<=", "bpchar", "bpchar"),
+      SafeOperatorSignature("<=", "date", "date"),
+      SafeOperatorSignature("<=", "date", "timestamptz"),
+      SafeOperatorSignature("<=", "date", "timestamp"),
+      SafeOperatorSignature("<=", "float8", "float8"),
+      SafeOperatorSignature("<=", "float8", "float4"),
+      SafeOperatorSignature("<=", "int4", "int8"),
+      SafeOperatorSignature("<=", "int4", "int4"),
+      SafeOperatorSignature("<=", "int4", "int2"),
+      SafeOperatorSignature("<=", "interval", "interval"),
+      SafeOperatorSignature("<=", "numeric", "numeric"),
+      SafeOperatorSignature("<=", "float4", "float8"),
+      SafeOperatorSignature("<=", "float4", "float4"),
+      SafeOperatorSignature("<=", "int2", "int8"),
+      SafeOperatorSignature("<=", "int2", "int4"),
+      SafeOperatorSignature("<=", "int2", "int2"),
+      SafeOperatorSignature("<=", "text", "text"),
+      SafeOperatorSignature("<=", "timetz", "timetz"),
+      SafeOperatorSignature("<=", "time", "time"),
+      SafeOperatorSignature("<=", "timestamptz", "date"),
+      SafeOperatorSignature("<=", "timestamptz", "timestamptz"),
+      SafeOperatorSignature("<=", "timestamptz", "timestamp"),
+      SafeOperatorSignature("<=", "timestamp", "date"),
+      SafeOperatorSignature("<=", "timestamp", "timestamptz"),
+      SafeOperatorSignature("<=", "timestamp", "timestamp"),
+      SafeOperatorSignature("<=", "uuid", "uuid"),
+      SafeOperatorSignature("<>", "int8", "int8"),
+      SafeOperatorSignature("<>", "int8", "int4"),
+      SafeOperatorSignature("<>", "int8", "int2"),
+      SafeOperatorSignature("<>", "bool", "bool"),
+      SafeOperatorSignature("<>", "bytea", "bytea"),
+      SafeOperatorSignature("<>", "bpchar", "bpchar"),
+      SafeOperatorSignature("<>", "date", "date"),
+      SafeOperatorSignature("<>", "date", "timestamptz"),
+      SafeOperatorSignature("<>", "date", "timestamp"),
+      SafeOperatorSignature("<>", "float8", "float8"),
+      SafeOperatorSignature("<>", "float8", "float4"),
+      SafeOperatorSignature("<>", "int4", "int8"),
+      SafeOperatorSignature("<>", "int4", "int4"),
+      SafeOperatorSignature("<>", "int4", "int2"),
+      SafeOperatorSignature("<>", "interval", "interval"),
+      SafeOperatorSignature("<>", "numeric", "numeric"),
+      SafeOperatorSignature("<>", "float4", "float8"),
+      SafeOperatorSignature("<>", "float4", "float4"),
+      SafeOperatorSignature("<>", "int2", "int8"),
+      SafeOperatorSignature("<>", "int2", "int4"),
+      SafeOperatorSignature("<>", "int2", "int2"),
+      SafeOperatorSignature("<>", "text", "text"),
+      SafeOperatorSignature("<>", "timetz", "timetz"),
+      SafeOperatorSignature("<>", "time", "time"),
+      SafeOperatorSignature("<>", "timestamptz", "date"),
+      SafeOperatorSignature("<>", "timestamptz", "timestamptz"),
+      SafeOperatorSignature("<>", "timestamptz", "timestamp"),
+      SafeOperatorSignature("<>", "timestamp", "date"),
+      SafeOperatorSignature("<>", "timestamp", "timestamptz"),
+      SafeOperatorSignature("<>", "timestamp", "timestamp"),
+      SafeOperatorSignature("<>", "uuid", "uuid"),
+      SafeOperatorSignature("=", "int8", "int8"),
+      SafeOperatorSignature("=", "int8", "int4"),
+      SafeOperatorSignature("=", "int8", "int2"),
+      SafeOperatorSignature("=", "bool", "bool"),
+      SafeOperatorSignature("=", "bytea", "bytea"),
+      SafeOperatorSignature("=", "bpchar", "bpchar"),
+      SafeOperatorSignature("=", "date", "date"),
+      SafeOperatorSignature("=", "date", "timestamptz"),
+      SafeOperatorSignature("=", "date", "timestamp"),
+      SafeOperatorSignature("=", "float8", "float8"),
+      SafeOperatorSignature("=", "float8", "float4"),
+      SafeOperatorSignature("=", "int4", "int8"),
+      SafeOperatorSignature("=", "int4", "int4"),
+      SafeOperatorSignature("=", "int4", "int2"),
+      SafeOperatorSignature("=", "interval", "interval"),
+      SafeOperatorSignature("=", "numeric", "numeric"),
+      SafeOperatorSignature("=", "float4", "float8"),
+      SafeOperatorSignature("=", "float4", "float4"),
+      SafeOperatorSignature("=", "int2", "int8"),
+      SafeOperatorSignature("=", "int2", "int4"),
+      SafeOperatorSignature("=", "int2", "int2"),
+      SafeOperatorSignature("=", "text", "text"),
+      SafeOperatorSignature("=", "timetz", "timetz"),
+      SafeOperatorSignature("=", "time", "time"),
+      SafeOperatorSignature("=", "timestamptz", "date"),
+      SafeOperatorSignature("=", "timestamptz", "timestamptz"),
+      SafeOperatorSignature("=", "timestamptz", "timestamp"),
+      SafeOperatorSignature("=", "timestamp", "date"),
+      SafeOperatorSignature("=", "timestamp", "timestamptz"),
+      SafeOperatorSignature("=", "timestamp", "timestamp"),
+      SafeOperatorSignature("=", "uuid", "uuid"),
+      SafeOperatorSignature(">", "int8", "int8"),
+      SafeOperatorSignature(">", "int8", "int4"),
+      SafeOperatorSignature(">", "int8", "int2"),
+      SafeOperatorSignature(">", "bool", "bool"),
+      SafeOperatorSignature(">", "bytea", "bytea"),
+      SafeOperatorSignature(">", "bpchar", "bpchar"),
+      SafeOperatorSignature(">", "date", "date"),
+      SafeOperatorSignature(">", "date", "timestamptz"),
+      SafeOperatorSignature(">", "date", "timestamp"),
+      SafeOperatorSignature(">", "float8", "float8"),
+      SafeOperatorSignature(">", "float8", "float4"),
+      SafeOperatorSignature(">", "int4", "int8"),
+      SafeOperatorSignature(">", "int4", "int4"),
+      SafeOperatorSignature(">", "int4", "int2"),
+      SafeOperatorSignature(">", "interval", "interval"),
+      SafeOperatorSignature(">", "numeric", "numeric"),
+      SafeOperatorSignature(">", "float4", "float8"),
+      SafeOperatorSignature(">", "float4", "float4"),
+      SafeOperatorSignature(">", "int2", "int8"),
+      SafeOperatorSignature(">", "int2", "int4"),
+      SafeOperatorSignature(">", "int2", "int2"),
+      SafeOperatorSignature(">", "text", "text"),
+      SafeOperatorSignature(">", "timetz", "timetz"),
+      SafeOperatorSignature(">", "time", "time"),
+      SafeOperatorSignature(">", "timestamptz", "date"),
+      SafeOperatorSignature(">", "timestamptz", "timestamptz"),
+      SafeOperatorSignature(">", "timestamptz", "timestamp"),
+      SafeOperatorSignature(">", "timestamp", "date"),
+      SafeOperatorSignature(">", "timestamp", "timestamptz"),
+      SafeOperatorSignature(">", "timestamp", "timestamp"),
+      SafeOperatorSignature(">", "uuid", "uuid"),
+      SafeOperatorSignature(">=", "int8", "int8"),
+      SafeOperatorSignature(">=", "int8", "int4"),
+      SafeOperatorSignature(">=", "int8", "int2"),
+      SafeOperatorSignature(">=", "bool", "bool"),
+      SafeOperatorSignature(">=", "bytea", "bytea"),
+      SafeOperatorSignature(">=", "bpchar", "bpchar"),
+      SafeOperatorSignature(">=", "date", "date"),
+      SafeOperatorSignature(">=", "date", "timestamptz"),
+      SafeOperatorSignature(">=", "date", "timestamp"),
+      SafeOperatorSignature(">=", "float8", "float8"),
+      SafeOperatorSignature(">=", "float8", "float4"),
+      SafeOperatorSignature(">=", "int4", "int8"),
+      SafeOperatorSignature(">=", "int4", "int4"),
+      SafeOperatorSignature(">=", "int4", "int2"),
+      SafeOperatorSignature(">=", "interval", "interval"),
+      SafeOperatorSignature(">=", "numeric", "numeric"),
+      SafeOperatorSignature(">=", "float4", "float8"),
+      SafeOperatorSignature(">=", "float4", "float4"),
+      SafeOperatorSignature(">=", "int2", "int8"),
+      SafeOperatorSignature(">=", "int2", "int4"),
+      SafeOperatorSignature(">=", "int2", "int2"),
+      SafeOperatorSignature(">=", "text", "text"),
+      SafeOperatorSignature(">=", "timetz", "timetz"),
+      SafeOperatorSignature(">=", "time", "time"),
+      SafeOperatorSignature(">=", "timestamptz", "date"),
+      SafeOperatorSignature(">=", "timestamptz", "timestamptz"),
+      SafeOperatorSignature(">=", "timestamptz", "timestamp"),
+      SafeOperatorSignature(">=", "timestamp", "date"),
+      SafeOperatorSignature(">=", "timestamp", "timestamptz"),
+      SafeOperatorSignature(">=", "timestamp", "timestamp"),
+      SafeOperatorSignature(">=", "uuid", "uuid"),
+      // Unary (prefix) bitwise-complement overloads of "~" — a DIFFERENT operator from the
+      // binary regex-match "~" immediately below; PostgreSQL overloads the symbol. Complementing
+      // any bit pattern of a fixed-width representation always fits back in that same width, so
+      // there is no overflow case the way there is for negation. `macaddr`/`macaddr8`/`inet`
+      // overloads of unary "~" also exist in pg_catalog but are deliberately NOT listed — network
+      // address types are outside the families this fix targets, so an expression using them
+      // stays conservatively nullable rather than being swept and verified.
+      SafeOperatorSignature("~", null, "int8"),
+      SafeOperatorSignature("~", null, "int4"),
+      SafeOperatorSignature("~", null, "int2"),
+      SafeOperatorSignature("~", null, "bit"),
+      SafeOperatorSignature("~", "bpchar", "text"),
+      SafeOperatorSignature("~", "text", "text"),
+      SafeOperatorSignature("~*", "bpchar", "text"),
+      SafeOperatorSignature("~*", "text", "text"),
+      SafeOperatorSignature("~~", "bytea", "bytea"),
+      SafeOperatorSignature("~~", "bpchar", "text"),
+      SafeOperatorSignature("~~", "text", "text"),
+      SafeOperatorSignature("~~*", "bpchar", "text"),
+      SafeOperatorSignature("~~*", "text", "text"),
+      SafeOperatorSignature("||", "bytea", "bytea"),
+      SafeOperatorSignature("||", "text", "text"),
+      SafeOperatorSignature("&&", "anymultirange", "anymultirange"),
+      SafeOperatorSignature("&&", "anymultirange", "anyrange"),
+      SafeOperatorSignature("&&", "anyrange", "anymultirange"),
+      SafeOperatorSignature("&&", "anyrange", "anyrange"),
+      SafeOperatorSignature("<@", "anymultirange", "anymultirange"),
+      SafeOperatorSignature("<@", "anymultirange", "anyrange"),
+      SafeOperatorSignature("<@", "anyrange", "anymultirange"),
+      SafeOperatorSignature("<@", "anyrange", "anyrange"),
+      SafeOperatorSignature("@>", "anymultirange", "anyelement"),
+      SafeOperatorSignature("@>", "anymultirange", "anymultirange"),
+      SafeOperatorSignature("@>", "anymultirange", "anyrange"),
+      SafeOperatorSignature("@>", "anyrange", "anyelement"),
+      SafeOperatorSignature("@>", "anyrange", "anymultirange"),
+      SafeOperatorSignature("@>", "anyrange", "anyrange"),
+      SafeOperatorSignature("&&", "anyarray", "anyarray"),
+      SafeOperatorSignature("<@", "anyarray", "anyarray"),
+      SafeOperatorSignature("@>", "anyarray", "anyarray"),
+    )
+  }
 }
+
+/**
+ * One `pg_catalog` function signature safe-listed as TOTAL on non-null input — see
+ * [PgCatalogLoader.NEVER_NULL_FUNCTION_SIGNATURES] for the audited list and the reasoning behind
+ * each entry.
+ *
+ * @property name The unqualified `pg_proc.proname`.
+ * @property argumentTypeNames The exact, ordered list of `pg_type.typname` values for this
+ *   overload's declared argument types — e.g. `listOf("text", "text")` for the two-argument `text`
+ *   overload of a name. Empty for a zero-argument function (e.g. `now()`).
+ */
+internal data class SafeFunctionSignature(val name: String, val argumentTypeNames: List<String>)
+
+/**
+ * One `pg_catalog` cast signature safe-listed as TOTAL on non-null input — see
+ * [PgCatalogLoader.NEVER_NULL_CAST_SIGNATURES] for the audited list and the reasoning behind each
+ * entry.
+ *
+ * @property sourceTypeName The `pg_type.typname` of `pg_cast.castsource`.
+ * @property targetTypeName The `pg_type.typname` of `pg_cast.casttarget`.
+ */
+internal data class SafeCastSignature(val sourceTypeName: String, val targetTypeName: String)
+
+/**
+ * One `pg_catalog` operator signature safe-listed as TOTAL on non-null input — see
+ * [PgCatalogLoader.NEVER_NULL_OPERATOR_SIGNATURES] for the audited list and the reasoning behind
+ * each entry.
+ *
+ * @property symbol The `pg_operator.oprname`.
+ * @property leftTypeName The `pg_type.typname` of `pg_operator.oprleft`, or `null` if the operator
+ *   has no left operand (a right-unary / prefix operator, `pg_operator.oprleft = 0`).
+ * @property rightTypeName The `pg_type.typname` of `pg_operator.oprright`, or `null` if the
+ *   operator has no right operand (a left-unary / postfix operator, `pg_operator.oprright = 0`).
+ */
+internal data class SafeOperatorSignature(val symbol: String, val leftTypeName: String?, val rightTypeName: String?)
 
 /**
  * Metadata about a PostgreSQL function overload from `pg_proc`.
