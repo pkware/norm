@@ -193,4 +193,66 @@ public interface Queries : Transactable {
    * ```
    */
   public fun createParentReturningQuotedAlias(name: String): Many<CreateParentReturningQuotedAlias> = createParentReturningQuotedAlias(name, ::CreateParentReturningQuotedAlias)
+
+  /**
+   * Reproduces #226: a top-level DELETE's RETURNING list computes an expression
+   * ("UPPER(description)") over a nullable column. Before the fix,
+   * PgCatalogLoader.analyzeUnconvertibleDml unconditionally treated
+   * ResultSetMetaData.columnNullableUnknown as NOT NULL for this shape, wrongly reporting
+   * description_upper NOT NULL even though description has no NOT NULL constraint.
+   *
+   * ```sql
+   * DELETE FROM parent WHERE id = ? RETURNING id, name, UPPER(description) AS description_upper
+   * ```
+   */
+  public fun <T : Any> deleteParentReturningDescriptionUpper(id: UUID, mapper: (
+    id: UUID,
+    name: String,
+    description_upper: String?,
+  ) -> T): Many<T>
+
+  /**
+   * Reproduces #226: a top-level DELETE's RETURNING list computes an expression
+   * ("UPPER(description)") over a nullable column. Before the fix,
+   * PgCatalogLoader.analyzeUnconvertibleDml unconditionally treated
+   * ResultSetMetaData.columnNullableUnknown as NOT NULL for this shape, wrongly reporting
+   * description_upper NOT NULL even though description has no NOT NULL constraint.
+   *
+   * ```sql
+   * DELETE FROM parent WHERE id = ? RETURNING id, name, UPPER(description) AS description_upper
+   * ```
+   */
+  public fun deleteParentReturningDescriptionUpper(id: UUID): Many<DeleteParentReturningDescriptionUpper> = deleteParentReturningDescriptionUpper(id, ::DeleteParentReturningDescriptionUpper)
+
+  /**
+   * CTE-wrapped form of the same RETURNING expression as the query above, demonstrating that the
+   * top-level probe path (#226) and the existing CTE-body stub path agree on description_upper's
+   * nullability.
+   *
+   * ```sql
+   * WITH deleted_parent AS (
+   *   DELETE FROM parent WHERE id = ? RETURNING id, name, UPPER(description) AS description_upper
+   * )
+   * SELECT id, name, description_upper FROM deleted_parent
+   * ```
+   */
+  public fun <T : Any> deleteParentReturningDescriptionUpperViaCte(id: UUID, mapper: (
+    id: UUID,
+    name: String,
+    description_upper: String?,
+  ) -> T): Many<T>
+
+  /**
+   * CTE-wrapped form of the same RETURNING expression as the query above, demonstrating that the
+   * top-level probe path (#226) and the existing CTE-body stub path agree on description_upper's
+   * nullability.
+   *
+   * ```sql
+   * WITH deleted_parent AS (
+   *   DELETE FROM parent WHERE id = ? RETURNING id, name, UPPER(description) AS description_upper
+   * )
+   * SELECT id, name, description_upper FROM deleted_parent
+   * ```
+   */
+  public fun deleteParentReturningDescriptionUpperViaCte(id: UUID): Many<DeleteParentReturningDescriptionUpperViaCte> = deleteParentReturningDescriptionUpperViaCte(id, ::DeleteParentReturningDescriptionUpperViaCte)
 }

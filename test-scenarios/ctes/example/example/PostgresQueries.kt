@@ -154,4 +154,67 @@ public class PostgresQueries(
   }
 
   override fun <T : Any> createParentReturningQuotedAlias(name: String, mapper: (parentId: UUID, parentDescription: String?) -> T): Many<T> = createParentReturningQuotedAlias(name, mapper, driver::queryMany)
+
+  private fun <T : Any, Return> deleteParentReturningDescriptionUpper(
+    id: UUID,
+    mapper: (
+      id: UUID,
+      name: String,
+      description_upper: String?,
+    ) -> T,
+    processor: ManyProcessor<T, Return>,
+  ): Return {
+    val sql = "DELETE FROM parent WHERE id = ? RETURNING id, name, UPPER(description) AS description_upper"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getObject(1, UUID::class.java),
+        getString(2),
+        getString(3),
+      )
+    }
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setObject(1, id)
+    }
+    return processor.invoke(sql, rowReader, queryBinder)
+  }
+
+  override fun <T : Any> deleteParentReturningDescriptionUpper(id: UUID, mapper: (
+    id: UUID,
+    name: String,
+    description_upper: String?,
+  ) -> T): Many<T> = deleteParentReturningDescriptionUpper(id, mapper, driver::queryMany)
+
+  private fun <T : Any, Return> deleteParentReturningDescriptionUpperViaCte(
+    id: UUID,
+    mapper: (
+      id: UUID,
+      name: String,
+      description_upper: String?,
+    ) -> T,
+    processor: ManyProcessor<T, Return>,
+  ): Return {
+    val sql = """
+        |WITH deleted_parent AS (
+        |  DELETE FROM parent WHERE id = ? RETURNING id, name, UPPER(description) AS description_upper
+        |)
+        |SELECT id, name, description_upper FROM deleted_parent
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getObject(1, UUID::class.java),
+        getString(2),
+        getString(3),
+      )
+    }
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setObject(1, id)
+    }
+    return processor.invoke(sql, rowReader, queryBinder)
+  }
+
+  override fun <T : Any> deleteParentReturningDescriptionUpperViaCte(id: UUID, mapper: (
+    id: UUID,
+    name: String,
+    description_upper: String?,
+  ) -> T): Many<T> = deleteParentReturningDescriptionUpperViaCte(id, mapper, driver::queryMany)
 }

@@ -3188,6 +3188,79 @@ class SqlUtilsTest {
     }
   }
 
+  @Nested
+  inner class DmlTargetRelationReferenceTest {
+
+    @Test
+    fun `extracts the target from a plain INSERT`() {
+      assertThat(dmlTargetRelationReference("INSERT INTO t VALUES (1, 2)")).isEqualTo("t")
+    }
+
+    @Test
+    fun `does not swallow an explicit column list into the INSERT target`() {
+      assertThat(dmlTargetRelationReference("INSERT INTO t (a, b) VALUES (?, ?)")).isEqualTo("t")
+    }
+
+    @Test
+    fun `keeps an AS alias attached to an INSERT target when a column list follows`() {
+      assertThat(dmlTargetRelationReference("INSERT INTO t AS x (a, b) VALUES (?, ?)")).isEqualTo("t AS x")
+    }
+
+    @Test
+    fun `extracts the target from an UPDATE with a bare alias`() {
+      assertThat(dmlTargetRelationReference("UPDATE t x SET name = 'v' WHERE id = 1")).isEqualTo("t x")
+    }
+
+    @Test
+    fun `extracts the target from an UPDATE with an AS alias`() {
+      assertThat(dmlTargetRelationReference("UPDATE t AS x SET name = 'v' WHERE id = 1")).isEqualTo("t AS x")
+    }
+
+    @Test
+    fun `extracts the target from a DELETE`() {
+      assertThat(dmlTargetRelationReference("DELETE FROM t WHERE id = ?")).isEqualTo("t")
+    }
+
+    @Test
+    fun `extracts the target from a DELETE with ONLY`() {
+      assertThat(dmlTargetRelationReference("DELETE FROM ONLY t WHERE id = ?")).isEqualTo("ONLY t")
+    }
+
+    @Test
+    fun `extracts the target from a bare DELETE with no trailing clause`() {
+      assertThat(dmlTargetRelationReference("DELETE FROM t")).isEqualTo("t")
+    }
+
+    @Test
+    fun `extracts the target from a MERGE`() {
+      val sql = "MERGE INTO tgt USING src ON src.id = tgt.id WHEN MATCHED THEN UPDATE SET tval = 'z'"
+      assertThat(dmlTargetRelationReference(sql)).isEqualTo("tgt")
+    }
+
+    @Test
+    fun `handles a schema-qualified and quoted target`() {
+      assertThat(dmlTargetRelationReference("""UPDATE my_schema."My Table" SET name = 'v' WHERE id = 1"""))
+        .isEqualTo("""my_schema."My Table"""")
+    }
+
+    @Test
+    fun `skips a leading WITH clause before recognizing the statement kind`() {
+      val sql = "WITH x AS (SELECT 1) UPDATE t SET name = 'v' FROM x WHERE t.id = x.id RETURNING t.id"
+      assertThat(dmlTargetRelationReference(sql)).isEqualTo("t")
+    }
+
+    @Test
+    fun `a RETURNING clause with a parenthesized subquery and comma does not confuse termination`() {
+      val sql = "UPDATE t SET name = 'v' WHERE id = 5 RETURNING id, (SELECT bval FROM b WHERE b.id = 999) AS sub"
+      assertThat(dmlTargetRelationReference(sql)).isEqualTo("t")
+    }
+
+    @Test
+    fun `returns null for a plain SELECT`() {
+      assertThat(dmlTargetRelationReference("SELECT * FROM t WHERE id = 1")).isNull()
+    }
+  }
+
   private companion object {
     // E'text \' FROM here' — the \' is an escaped quote (part of the string content, not a
     // terminator), so "FROM" is inside the string the whole way through to the real closing '.

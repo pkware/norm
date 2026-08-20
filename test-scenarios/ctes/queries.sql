@@ -58,3 +58,20 @@ WITH new_parent AS (
   INSERT INTO parent (name) VALUES (?) RETURNING id AS "parentId", description AS "parentDescription"
 )
 SELECT new_parent."parentId", new_parent."parentDescription" FROM new_parent;
+
+-- Reproduces #226: a top-level DELETE's RETURNING list computes an expression
+-- ("UPPER(description)") over a nullable column. Before the fix,
+-- PgCatalogLoader.analyzeUnconvertibleDml unconditionally treated
+-- ResultSetMetaData.columnNullableUnknown as NOT NULL for this shape, wrongly reporting
+-- description_upper NOT NULL even though description has no NOT NULL constraint.
+-- name: deleteParentReturningDescriptionUpper :many
+DELETE FROM parent WHERE id = ? RETURNING id, name, UPPER(description) AS description_upper;
+
+-- CTE-wrapped form of the same RETURNING expression as the query above, demonstrating that the
+-- top-level probe path (#226) and the existing CTE-body stub path agree on description_upper's
+-- nullability.
+-- name: deleteParentReturningDescriptionUpperViaCte :many
+WITH deleted_parent AS (
+  DELETE FROM parent WHERE id = ? RETURNING id, name, UPPER(description) AS description_upper
+)
+SELECT id, name, description_upper FROM deleted_parent;

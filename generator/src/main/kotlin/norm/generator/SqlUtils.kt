@@ -1135,6 +1135,119 @@ internal fun stripLeadingNestedWithClause(body: String): String {
 }
 
 /**
+ * Extracts the target relation reference from a top-level data-modifying statement — the text
+ * naming the table being inserted into/updated/deleted from/merged into, INCLUDING any `AS alias`
+ * or bare alias that follows it, verbatim (so a later `RETURNING` item qualified through that
+ * alias, e.g. `u.note` after `UPDATE t AS u`, still resolves once spliced into a probe `FROM`
+ * clause).
+ *
+ * Used by `PgCatalogLoader`'s `columnNullableUnknown` probe (issue #226): a probe SQL of the shape
+ * `SELECT <returning items> FROM <target>` needs the ORIGINAL relation reference — not merely the
+ * bare table name — since `RETURNING` may reference the DML statement's own alias rather than the
+ * table name directly.
+ *
+ * [stripLeadingNestedWithClause] is applied first, so a body carrying its own leading nested
+ * `WITH` clause (`WITH helper AS (...) INSERT INTO t ...`) is recognized by its actual DML
+ * keyword, not rejected outright for not starting with one — the same precedent [isInsertBody]
+ * and [isUpdateDeleteOrMergeStatement] already set for the identical shape.
+ *
+ * The termination rule differs by statement kind, mirroring the keyword walks [convertDmlToSelect]
+ * already performs over the same grammar:
+ * - `INSERT INTO <target>`: ends at the first top-level `(` — an explicit column list
+ *   (`INSERT INTO t (a, b) VALUES (...)` must not swallow `(a, b)` into the target) — or the
+ *   first top-level keyword among `VALUES`, `SELECT`, `DEFAULT`, `OVERRIDING`, `ON`, `RETURNING`,
+ *   `TABLE`, `WITH`, whichever comes first.
+ * - `UPDATE <target> SET`: ends at the top-level `SET`.
+ * - `DELETE FROM <target>`: ends at the first top-level `USING`, `WHERE`, or `RETURNING`, or the
+ *   end of the statement if none of those appear (a bare `DELETE FROM t`).
+ * - `MERGE INTO <target> USING`: ends at the top-level `USING`.
+ * - Anything else (a plain `SELECT`, or any statement kind not recognized above): `null`.
+ *
+ * A trailing `;` and any trailing whitespace left over from the slice is stripped — the same
+ * `.trim().trimEnd(';')` shortcut [parseSelectItems]/[buildSelectFromDml]/[convertMergeToSelect]
+ * already take for their own trailing clause text.
+ *
+ * @return The target relation reference, verbatim, or `null` if [sql] is not one of the four
+ *   recognized statement kinds, or its target parses out empty/blank.
+ */
+internal fun dmlTargetRelationReference(sql: String): String? {
+  val dml = stripLeadingNestedWithClause(sql)
+  val trimmedStart = skipWhitespaceAndComments(dml, 0)
+
+  val target: String = when {
+    dml.regionMatches(trimmedStart, "INSERT", 0, 6, ignoreCase = true) -> {
+      val intoIndex = findTopLevelKeyword(dml, "INTO", trimmedStart)
+      if (intoIndex < 0) return null
+      val start = intoIndex + 4
+      val stopKeywordIndex = INSERT_TARGET_STOP_KEYWORDS
+        .mapNotNull { keyword -> findTopLevelKeyword(dml, keyword, start).takeIf { it >= 0 } }
+        .minOrNull()
+      val stopParenIndex = findFirstTopLevelOpenParenthesis(dml, start).takeIf { it >= 0 }
+      val end = listOfNotNull(stopKeywordIndex, stopParenIndex).minOrNull() ?: dml.length
+      dml.substring(start, end)
+    }
+
+    dml.regionMatches(trimmedStart, "UPDATE", 0, 6, ignoreCase = true) -> {
+      val start = trimmedStart + 6
+      val setIndex = findTopLevelKeyword(dml, "SET", start)
+      if (setIndex < 0) return null
+      dml.substring(start, setIndex)
+    }
+
+    dml.regionMatches(trimmedStart, "DELETE", 0, 6, ignoreCase = true) -> {
+      val fromIndex = findTopLevelKeyword(dml, "FROM", trimmedStart)
+      if (fromIndex < 0) return null
+      val start = fromIndex + 4
+      val end = listOf("USING", "WHERE", "RETURNING")
+        .mapNotNull { keyword -> findTopLevelKeyword(dml, keyword, start).takeIf { it >= 0 } }
+        .minOrNull() ?: dml.length
+      dml.substring(start, end)
+    }
+
+    dml.regionMatches(trimmedStart, "MERGE", 0, 5, ignoreCase = true) -> {
+      val intoIndex = findTopLevelKeyword(dml, "INTO", trimmedStart)
+      if (intoIndex < 0) return null
+      val start = intoIndex + 4
+      val usingIndex = findTopLevelKeyword(dml, "USING", start)
+      if (usingIndex < 0) return null
+      dml.substring(start, usingIndex)
+    }
+
+    else -> return null
+  }
+
+  val cleaned = target.trim().trimEnd(';').trim()
+  return cleaned.ifBlank { null }
+}
+
+/** The keywords, other than an explicit column list's `(`, that can follow an `INSERT`'s target. */
+private val INSERT_TARGET_STOP_KEYWORDS =
+  listOf("VALUES", "SELECT", "DEFAULT", "OVERRIDING", "ON", "RETURNING", "TABLE", "WITH")
+
+/**
+ * Finds the index of the first top-level `(` at or after [start] — depth-0, lexically aware via
+ * [skipLexicalToken] the same way [findTopLevelKeyword] is, so a `(` inside a string literal,
+ * quoted identifier, dollar-quoted string, or comment is never mistaken for a real one. Used by
+ * [dmlTargetRelationReference] to find an `INSERT`'s explicit column list, the one termination
+ * candidate there that is a punctuation character rather than a keyword.
+ *
+ * @return The index of the first top-level `(` at or after [start], or `-1` if there is none.
+ */
+private fun findFirstTopLevelOpenParenthesis(sql: String, start: Int): Int {
+  var i = start
+  while (i < sql.length) {
+    val afterToken = skipLexicalToken(sql, i)
+    if (afterToken != i) {
+      i = afterToken
+      continue
+    }
+    if (sql[i] == '(') return i
+    i++
+  }
+  return -1
+}
+
+/**
  * Returns `true` if [indices], read left to right, are non-decreasing.
  *
  * `convertDmlToSelect`/`convertMergeToSelect`/[dmlSourceClauseRegion] locate several keywords
@@ -1909,7 +2022,7 @@ internal class StrippedText(private val text: String, private val originalOffset
  * function fails to recognize there degrades silently to a wrong, shifted mapping rather than the
  * documented empty-list fail-safe.
  */
-private fun isStarItem(item: String): Boolean {
+internal fun isStarItem(item: String): Boolean {
   val text = stripCommentsAndWhitespace(item.trim())
   val unwrappedText = unwrapWrappingParentheses(text)
   if (unwrappedText.contentEquals("*") || unwrappedText.endsWith(".*")) return true
