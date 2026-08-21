@@ -228,5 +228,106 @@ internal class NodeTreeNullabilityAnalyzer(
           }
         }
     }
+
+    /**
+     * Returns the `(varno, varattno)` pairs that the query's `WHERE` clause proves non-null.
+     *
+     * A row only survives `WHERE` when the qual evaluates to TRUE, so every top-level `AND`
+     * conjunct is known to be non-null, and non-nullness propagates down through strict
+     * operators and functions to the leaf `Var`s.
+     *
+     * Deliberately excluded, because they do not prove non-nullness for every surviving row:
+     * quals under `OR` or `NOT`, `ON` clauses of joins (see [PgNodeTreeParser.parseWhereQuals]),
+     * `HAVING`, and `Var`s with `levelsUp` greater than `0` (whose `varno` belongs to an
+     * enclosing query's range table).
+     *
+     * Outer-join nullability is not considered here; the caller's `isOuterJoinNullable` check in
+     * the [isNonNull] `Var` branch still applies and still wins.
+     *
+     * @param nodeTreeText the raw text of the query block to inspect
+     * @param isStrict returns `true` when the function or operator OID is strict
+     */
+    internal fun qualProvenNonNullVars(nodeTreeText: String, isStrict: (Int) -> Boolean): Set<Pair<Int, Int>> {
+      val parser = PgNodeTreeParser()
+      val whereQuals = parser.parseWhereQuals(nodeTreeText) ?: return emptySet()
+      return buildSet {
+        collectConjunctProvenVars(whereQuals, this, isStrict, MAX_EXPRESSION_DEPTH)
+      }
+    }
+
+    /**
+     * Collects `Var`s proven non-null by [expression] when [expression] is a top-level `WHERE`
+     * conjunct (i.e. it must evaluate to TRUE for the row to survive).
+     */
+    private fun collectConjunctProvenVars(
+      expression: PgNodeExpression,
+      sink: MutableSet<Pair<Int, Int>>,
+      isStrict: (Int) -> Boolean,
+      depth: Int,
+    ) {
+      if (depth <= 0) return
+      when {
+        expression is PgNodeExpression.BoolExpr && expression.boolOperator == PgNodeExpression.BOOL_OPERATOR_AND ->
+          expression.arguments.forEach { collectConjunctProvenVars(it, sink, isStrict, depth - 1) }
+
+        expression is PgNodeExpression.NullTest && expression.nullTestType == PgNodeExpression.NULL_TEST_IS_NOT_NULL ->
+          collectStrictLeafVars(expression.argument, sink, isStrict, depth - 1)
+
+        // The conjunct must be TRUE, therefore non-null, so the same propagation applies. This
+        // covers a bare boolean column, an OpExpr, and a FuncExpr.
+        else -> collectStrictLeafVars(expression, sink, isStrict, depth - 1)
+      }
+    }
+
+    /**
+     * Given that [expression] is known to be non-null, collects the `Var`s that must also be
+     * non-null for that to hold.
+     */
+    private fun collectStrictLeafVars(
+      expression: PgNodeExpression,
+      sink: MutableSet<Pair<Int, Int>>,
+      isStrict: (Int) -> Boolean,
+      depth: Int,
+    ) {
+      if (depth <= 0) return
+      when (expression) {
+        is PgNodeExpression.Var ->
+          if (expression.levelsUp == 0) sink.add(expression.varno to expression.varattno)
+
+        is PgNodeExpression.RelabelType -> collectStrictLeafVars(expression.argument, sink, isStrict, depth - 1)
+        is PgNodeExpression.CoerceViaIo -> collectStrictLeafVars(expression.argument, sink, isStrict, depth - 1)
+        is PgNodeExpression.CollateExpr -> collectStrictLeafVars(expression.argument, sink, isStrict, depth - 1)
+        is PgNodeExpression.CoerceToDomain -> collectStrictLeafVars(expression.argument, sink, isStrict, depth - 1)
+        is PgNodeExpression.ArrayCoerceExpr -> collectStrictLeafVars(expression.argument, sink, isStrict, depth - 1)
+
+        is PgNodeExpression.FuncExpr ->
+          if (isStrict(expression.functionOid)) {
+            expression.arguments.forEach { collectStrictLeafVars(it, sink, isStrict, depth - 1) }
+          }
+
+        is PgNodeExpression.OpExpr ->
+          if (isStrict(expression.operatorFunctionOid)) {
+            expression.arguments.forEach { collectStrictLeafVars(it, sink, isStrict, depth - 1) }
+          }
+
+        is PgNodeExpression.ScalarArrayOpExpr ->
+          if (isStrict(expression.operatorFunctionOid)) {
+            if (expression.useOr) {
+              // ANY: every operand (scalar and array) must be non-null for a strict operator to
+              // produce the non-null TRUE this conjunct requires.
+              expression.arguments.forEach { collectStrictLeafVars(it, sink, isStrict, depth - 1) }
+            } else {
+              // ALL: `x <> ALL(ARRAY[]::text[])` is TRUE even when `x` is `null`, so the scalar
+              // operand is not proven. A `null` array yields `null` for both ANY and ALL, so the
+              // array operand always is proven.
+              expression.arguments.getOrNull(1)?.let { collectStrictLeafVars(it, sink, isStrict, depth - 1) }
+            }
+          }
+
+        // Notable NULL-tolerant cases that do not propagate non-nullness to their arguments:
+        // CoalesceExpr, NullIfExpr, MinMaxExpr, CaseExpr, DistinctExpr, BooleanTest, SubLink.
+        else -> Unit
+      }
+    }
   }
 }

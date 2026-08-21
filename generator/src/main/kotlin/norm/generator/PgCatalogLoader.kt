@@ -178,6 +178,12 @@ internal class PgCatalogLoader(private val connection: Connection) {
    */
   val viewColumnNotNullByRelidAndAttnum: Map<Pair<Int, Int>, Boolean> by lazy(::loadViewColumnNotNull)
 
+  /**
+   * Shared strictness lookup used by every [buildAnalyzer] call site and by
+   * [NodeTreeNullabilityAnalyzer.qualProvenNonNullVars].
+   */
+  private val isStrictFunction: (Int) -> Boolean = { oid -> functionStrictnessByOid[oid] == true }
+
   private fun loadColumnNotNull(): Map<Pair<Int, Int>, Boolean> = buildMap {
     connection.createStatement().use { stmt ->
       // No schema filter — relids come from the query's rtable and may reference tables
@@ -799,7 +805,10 @@ internal class PgCatalogLoader(private val connection: Connection) {
       // itself accepts fine. A future conversion bug this file's validation doesn't catch must
       // degrade to the same fallback as "no join structure found" above, never an abort.
       try {
-        analyzeViaTemporaryView(transformedSql)
+        // applyQualNarrowing = false: transformedSql came from a DML-to-SELECT conversion (see
+        // analyzeViaTemporaryView's KDoc on this parameter), which drops SET/MERGE-action clauses
+        // while keeping the original WHERE/ON predicate.
+        analyzeViaTemporaryView(transformedSql, applyQualNarrowing = false)
       } catch (_: SQLException) {
         analyzeUnconvertibleDml(viewSql, sql)
       }
@@ -833,8 +842,18 @@ internal class PgCatalogLoader(private val connection: Connection) {
   /**
    * Creates a temporary view from [viewSql], reads its node tree from `pg_rewrite`,
    * and returns per-column nullability using full expression analysis.
+   *
+   * @param applyQualNarrowing When `false`, disables `WHERE`-clause qual narrowing
+   *   ([NodeTreeNullabilityAnalyzer.qualProvenNonNullVars]) for this entire call — the top-level
+   *   query AND every nested CTE body and subquery reached from it. Must be `false` whenever
+   *   [viewSql] passed through a DML-to-SELECT conversion (`transformForViewCreation`): that
+   *   conversion drops the `SET`/`MERGE ... WHEN` clause but keeps the original `WHERE`/`ON`
+   *   predicate, so a qual that looks like it proves a `RETURNING` column non-null may in fact be
+   *   testing a value the statement is about to overwrite. Suppressing narrowing for the whole
+   *   call is conservative by construction — it can only WIDEN a result to nullable, never narrow
+   *   one incorrectly — and loses nothing relative to before qual narrowing existed at all.
    */
-  private fun analyzeViaTemporaryView(viewSql: String): List<Boolean> {
+  private fun analyzeViaTemporaryView(viewSql: String, applyQualNarrowing: Boolean = true): List<Boolean> {
     val viewName = "norm_nullability_${UUID.randomUUID().toString().replace("-", "")}"
     try {
       try {
@@ -900,11 +919,29 @@ internal class PgCatalogLoader(private val connection: Connection) {
       // For subquery RTEs (rtekind 1), the outer VAR's varno is not in rangeTable.
       // Resolve their nullability by recursively analyzing each subquery's target list.
       // The map is keyed by (varno, varattno) for direct lookup in isSourceColumnNotNull.
-      val subqueryColumnNotNull = buildSubqueryColumnNotNull(nodeTree)
-      val cteColumnNotNull = buildCteColumnNotNull(nodeTree)
+      val subqueryColumnNotNull = buildSubqueryColumnNotNull(nodeTree, applyQualNarrowing)
+      val cteColumnNotNull = buildCteColumnNotNull(nodeTree, applyQualNarrowing)
+      // GROUPING SETS/CUBE/ROLLUP null-extend grouping keys AFTER the WHERE clause has already
+      // filtered rows, so a qual can never prove a grouped result column non-null. This matters
+      // even for a NOT NULL base column, because null-extension overrides the base column's own
+      // constraint. parseGroupingKeyVars() only recognizes bare-Var grouping keys (e.g.
+      // `ROLLUP(a)`); an expression key such as `ROLLUP(lower(a))` produces no {VAR } entry there,
+      // so without this guard narrowing would leak through for expression grouping keys. Suppress
+      // qual narrowing for the entire block rather than trying to map an expression grouping key
+      // back to its null-extended leaf Vars — that is more machinery than this warrants, and a
+      // subtle mistake there would reintroduce an unsound narrowing. This is conservative by
+      // construction: every non-key output column of a grouping-sets query is an aggregate, so
+      // suppressing narrowing here costs nothing real.
+      val qualNotNullVars = if (applyQualNarrowing && !hasGroupingSets) {
+        NodeTreeNullabilityAnalyzer.qualProvenNonNullVars(nodeTree, isStrictFunction)
+      } else {
+        emptySet()
+      }
       val analyzer = buildAnalyzer { varno, varattno ->
         if (groupingKeyVars.contains(varno to varattno)) {
           false
+        } else if (isProvenByQuals(qualNotNullVars, groupRteMap, varno, varattno)) {
+          true
         } else {
           val relid = rangeTable[varno]
           if (relid != null) {
@@ -943,7 +980,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
   private fun buildAnalyzer(
     isSourceColumnNotNull: (varno: Int, varattno: Int) -> Boolean,
   ): NodeTreeNullabilityAnalyzer = NodeTreeNullabilityAnalyzer(
-    isStrict = { oid -> functionStrictnessByOid[oid] == true },
+    isStrict = isStrictFunction,
     hasNonNullInitialValue = { oid -> aggregateHasNonNullInitialValue[oid] == true },
     isSourceColumnNotNull = isSourceColumnNotNull,
     isOuterJoinNullable = { nullingRelations -> nullingRelations.isNotEmpty() },
@@ -953,10 +990,29 @@ internal class PgCatalogLoader(private val connection: Connection) {
   )
 
   /**
+   * Returns `true` when `(varno, varattno)` is proven non-null by the query's `WHERE` clause,
+   * either directly or through the GROUP RTE remap (target-list `Var`s point at the GROUP RTE
+   * when `hasGroupRTE`, while `WHERE`-clause `Var`s use base relation varnos).
+   */
+  private fun isProvenByQuals(
+    qualNotNullVars: Set<Pair<Int, Int>>,
+    groupRteMap: Map<Pair<Int, Int>, Pair<Int, Int>>,
+    varno: Int,
+    varattno: Int,
+  ): Boolean = qualNotNullVars.contains(varno to varattno) ||
+    groupRteMap[varno to varattno]?.let { qualNotNullVars.contains(it) } == true
+
+  /**
    * Builds a map from `(varno, varattno)` to `true` for CTE result columns that are guaranteed
    * non-null. Analyzes each CTE body with a sub-analyzer using the CTE's own range table.
+   *
+   * @param applyQualNarrowing See [analyzeViaTemporaryView]'s parameter of the same name. Threaded
+   *   through unchanged to every CTE body analyzed here.
    */
-  private fun buildCteColumnNotNull(nodeTree: String): Map<Pair<Int, Int>, Boolean> {
+  private fun buildCteColumnNotNull(
+    nodeTree: String,
+    applyQualNarrowing: Boolean = true,
+  ): Map<Pair<Int, Int>, Boolean> {
     val cteDefinitions = nodeTreeParser.parseCteList(nodeTree)
     if (cteDefinitions.isEmpty()) return emptyMap()
     val cteRteMap = nodeTreeParser.parseCteRangeTableEntries(nodeTree)
@@ -964,7 +1020,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
 
     val resolvedCtes = mutableMapOf<String, List<Boolean>>()
     for (cte in cteDefinitions) {
-      val nullabilities = analyzeCteBodyNullability(cte, resolvedCtes) ?: continue
+      val nullabilities = analyzeCteBodyNullability(cte, resolvedCtes, applyQualNarrowing) ?: continue
       resolvedCtes[cte.name] = nullabilities
     }
 
@@ -981,11 +1037,12 @@ internal class PgCatalogLoader(private val connection: Connection) {
   private fun analyzeCteBodyNullability(
     cte: NodeTreeCteDefinition,
     previouslyResolved: Map<String, List<Boolean>>,
+    applyQualNarrowing: Boolean = true,
   ): List<Boolean>? {
     if (nodeTreeParser.hasSetOperations(cte.queryBlock)) {
-      return analyzeSetOperationBranches(cte.queryBlock, previouslyResolved, cte.name)
+      return analyzeSetOperationBranches(cte.queryBlock, previouslyResolved, cte.name, applyQualNarrowing)
     }
-    val analyzer = buildCteBodyAnalyzer(cte.queryBlock, previouslyResolved)
+    val analyzer = buildCteBodyAnalyzer(cte.queryBlock, previouslyResolved, applyQualNarrowing)
     val result = analyzer.extractColumnNullability(cte.queryBlock)
     if (result.isNotEmpty()) return result
     // DML CTEs store RETURNING columns in :returningList, not :targetList.
@@ -1001,6 +1058,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
     queryBlock: String,
     previouslyResolved: Map<String, List<Boolean>>,
     cteName: String,
+    applyQualNarrowing: Boolean = true,
   ): List<Boolean>? {
     val subqueryRangeTable = nodeTreeParser.parseSubqueryRangeTable(queryBlock)
     if (subqueryRangeTable.isEmpty()) return null
@@ -1012,7 +1070,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
       } else {
         previouslyResolved
       }
-      val branchAnalyzer = buildCteBodyAnalyzer(branchBlock, resolved)
+      val branchAnalyzer = buildCteBodyAnalyzer(branchBlock, resolved, applyQualNarrowing)
       val result = branchAnalyzer.extractColumnNullability(branchBlock)
       if (result.isEmpty()) continue
       branchResults.add(result)
@@ -1044,26 +1102,59 @@ internal class PgCatalogLoader(private val connection: Connection) {
     }
   }
 
+  /**
+   * @param applyQualNarrowing See [analyzeViaTemporaryView]'s parameter of the same name.
+   */
   private fun buildCteBodyAnalyzer(
     queryBlock: String,
     previouslyResolved: Map<String, List<Boolean>>,
+    applyQualNarrowing: Boolean = true,
   ): NodeTreeNullabilityAnalyzer {
     val cteRangeTable = nodeTreeParser.parseRangeTable(queryBlock)
-    val groupRteMap = nodeTreeParser.parseGroupRteMap(queryBlock)
+    // See analyzeViaTemporaryView's identical guard for why groupingKeyVars must be checked
+    // FIRST, before qual narrowing or ordinary column resolution: GROUPING SETS/CUBE/ROLLUP can
+    // null-extend a grouping key even when the underlying base table column is NOT NULL, and even
+    // when the WHERE clause proved it non-null before aggregation.
+    val hasGroupingSets = nodeTreeParser.hasGroupingSets(queryBlock)
+    val groupingKeyVars = if (hasGroupingSets) {
+      nodeTreeParser.parseGroupingKeyVars(queryBlock)
+    } else {
+      emptySet()
+    }
+    val groupRteMap = if (hasGroupingSets) {
+      emptyMap()
+    } else {
+      nodeTreeParser.parseGroupRteMap(queryBlock)
+    }
     val innerCteNotNull = buildInnerCteNotNull(queryBlock, previouslyResolved)
-    val subqueryColumnNotNull = buildSubqueryColumnNotNull(queryBlock)
+    val subqueryColumnNotNull = buildSubqueryColumnNotNull(queryBlock, applyQualNarrowing)
+    // See analyzeViaTemporaryView's identical guard for why qual narrowing is suppressed whenever
+    // hasGroupingSets: a grouping key is exactly the thing a GROUPING SETS/CUBE/ROLLUP query
+    // null-extends after WHERE has already run, and parseGroupingKeyVars() cannot see expression
+    // keys like ROLLUP(lower(a)).
+    val qualNotNullVars = if (applyQualNarrowing && !hasGroupingSets) {
+      NodeTreeNullabilityAnalyzer.qualProvenNonNullVars(queryBlock, isStrictFunction)
+    } else {
+      emptySet()
+    }
     return buildAnalyzer { varno, varattno ->
-      val relid = cteRangeTable[varno]
-      if (relid != null) {
-        isColumnNotNull(relid to varattno)
+      if (groupingKeyVars.contains(varno to varattno)) {
+        false
+      } else if (isProvenByQuals(qualNotNullVars, groupRteMap, varno, varattno)) {
+        true
       } else {
-        val baseVar = groupRteMap[varno to varattno]
-        if (baseVar != null) {
-          val baseRelid = cteRangeTable[baseVar.first]
-          baseRelid != null && isColumnNotNull(baseRelid to baseVar.second)
+        val relid = cteRangeTable[varno]
+        if (relid != null) {
+          isColumnNotNull(relid to varattno)
         } else {
-          subqueryColumnNotNull[varno to varattno] == true ||
-            innerCteNotNull[varno to varattno] == true
+          val baseVar = groupRteMap[varno to varattno]
+          if (baseVar != null) {
+            val baseRelid = cteRangeTable[baseVar.first]
+            baseRelid != null && isColumnNotNull(baseRelid to baseVar.second)
+          } else {
+            subqueryColumnNotNull[varno to varattno] == true ||
+              innerCteNotNull[varno to varattno] == true
+          }
         }
       }
     }
@@ -1083,9 +1174,13 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * because the subquery RTE has no `relid` in the outer range table.
    *
    * @param nodeTree the `pg_rewrite.ev_action` text of the outer query's temporary view
+   * @param applyQualNarrowing See [analyzeViaTemporaryView]'s parameter of the same name.
    * @return A map from `(varno, varattno)` pairs to `true` when the subquery column is non-null
    */
-  private fun buildSubqueryColumnNotNull(nodeTree: String): Map<Pair<Int, Int>, Boolean> {
+  private fun buildSubqueryColumnNotNull(
+    nodeTree: String,
+    applyQualNarrowing: Boolean = true,
+  ): Map<Pair<Int, Int>, Boolean> {
     // Set-operation queries (UNION ALL, INTERSECT, EXCEPT) store their branches as rtekind=1
     // subquery RTEs. Tracing through them would incorrectly report the first branch's nullability
     // as the result's nullability — the true result is the union across ALL branches, some of which
@@ -1098,9 +1193,39 @@ internal class PgCatalogLoader(private val connection: Connection) {
       for ((outerVarno, subqueryBlock) in subqueryRangeTable) {
         // Parse the subquery's own base-table range table for isSourceColumnNotNull.
         val subRangeTable = nodeTreeParser.parseRangeTable(subqueryBlock)
+        // See analyzeViaTemporaryView's identical guard: GROUPING SETS/CUBE/ROLLUP can
+        // null-extend a grouping key even when the base table column is NOT NULL. On PostgreSQL
+        // 16/17 (no GROUP RTE) the subquery's target-list Var IS the base Var, so without this
+        // guard groupingKeyVars would be silently skipped here.
+        val hasGroupingSets = nodeTreeParser.hasGroupingSets(subqueryBlock)
+        val groupingKeyVars = if (hasGroupingSets) {
+          nodeTreeParser.parseGroupingKeyVars(subqueryBlock)
+        } else {
+          emptySet()
+        }
+        val groupRteMap = if (hasGroupingSets) {
+          emptyMap()
+        } else {
+          nodeTreeParser.parseGroupRteMap(subqueryBlock)
+        }
+        // See analyzeViaTemporaryView's identical guard: suppress qual narrowing whenever
+        // hasGroupingSets, because parseGroupingKeyVars() cannot see expression grouping keys
+        // like ROLLUP(lower(a)), and those are exactly what GROUPING SETS/CUBE/ROLLUP
+        // null-extends after WHERE has already filtered rows.
+        val subQualNotNullVars = if (applyQualNarrowing && !hasGroupingSets) {
+          NodeTreeNullabilityAnalyzer.qualProvenNonNullVars(subqueryBlock, isStrictFunction)
+        } else {
+          emptySet()
+        }
         val subAnalyzer = buildAnalyzer { subVarno, subVarattno ->
-          val relid = subRangeTable[subVarno] ?: return@buildAnalyzer false
-          isColumnNotNull(relid to subVarattno)
+          if (groupingKeyVars.contains(subVarno to subVarattno)) {
+            false
+          } else if (isProvenByQuals(subQualNotNullVars, groupRteMap, subVarno, subVarattno)) {
+            true
+          } else {
+            val relid = subRangeTable[subVarno] ?: return@buildAnalyzer false
+            isColumnNotNull(relid to subVarattno)
+          }
         }
         val subNullabilities = subAnalyzer.extractColumnNullability(subqueryBlock)
         subNullabilities.forEachIndexed { columnIndex, nullable ->
