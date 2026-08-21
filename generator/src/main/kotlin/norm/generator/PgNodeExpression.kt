@@ -8,7 +8,14 @@ package norm.generator
  */
 internal sealed interface PgNodeExpression {
 
-  data class Var(val varno: Int, val varattno: Int, val nullingRelations: Set<Int>) : PgNodeExpression
+  /**
+   * @property levelsUp `0` when this `Var` resolves in the current query level. A value greater
+   *   than `0` means it is an outer reference from a correlated or LATERAL subquery, and [varno]
+   *   refers to an enclosing query's range table rather than the current block's, so it must not
+   *   be interpreted against the current block.
+   */
+  data class Var(val varno: Int, val varattno: Int, val nullingRelations: Set<Int>, val levelsUp: Int = 0) :
+    PgNodeExpression
 
   data class Const(val isNull: Boolean) : PgNodeExpression
 
@@ -16,7 +23,14 @@ internal sealed interface PgNodeExpression {
 
   data class OpExpr(val operatorFunctionOid: Int, val arguments: List<PgNodeExpression>) : PgNodeExpression
 
-  data class ScalarArrayOpExpr(val operatorFunctionOid: Int, val arguments: List<PgNodeExpression>) : PgNodeExpression
+  /**
+   * @property useOr `true` for `ANY`/`SOME`, `false` for `ALL`.
+   */
+  data class ScalarArrayOpExpr(
+    val operatorFunctionOid: Int,
+    val arguments: List<PgNodeExpression>,
+    val useOr: Boolean = false,
+  ) : PgNodeExpression
 
   data class CoalesceExpr(val arguments: List<PgNodeExpression>) : PgNodeExpression
 
@@ -33,7 +47,10 @@ internal sealed interface PgNodeExpression {
   data class CaseExpr(val resultExpressions: List<PgNodeExpression>, val defaultResult: PgNodeExpression?) :
     PgNodeExpression
 
-  data class BoolExpr(val arguments: List<PgNodeExpression>) : PgNodeExpression
+  /**
+   * @property boolOperator One of [BOOL_OPERATOR_AND], [BOOL_OPERATOR_OR], or [BOOL_OPERATOR_NOT].
+   */
+  data class BoolExpr(val arguments: List<PgNodeExpression>, val boolOperator: String) : PgNodeExpression
 
   data class RelabelType(val argument: PgNodeExpression) : PgNodeExpression
   data class CoerceViaIo(val argument: PgNodeExpression) : PgNodeExpression
@@ -42,7 +59,11 @@ internal sealed interface PgNodeExpression {
   data class CoerceToDomain(val argument: PgNodeExpression) : PgNodeExpression
 
   data class SqlValueFunction(val operation: Int) : PgNodeExpression
-  data class NullTest(val argument: PgNodeExpression) : PgNodeExpression
+
+  /**
+   * @property nullTestType [NULL_TEST_IS_NULL] for `IS NULL`, [NULL_TEST_IS_NOT_NULL] for `IS NOT NULL`.
+   */
+  data class NullTest(val argument: PgNodeExpression, val nullTestType: Int) : PgNodeExpression
   data class BooleanTest(val argument: PgNodeExpression) : PgNodeExpression
   data class DistinctExpr(val arguments: List<PgNodeExpression>) : PgNodeExpression
   data class ArrayExpr(val elements: List<PgNodeExpression>) : PgNodeExpression
@@ -83,6 +104,15 @@ internal sealed interface PgNodeExpression {
 
     // JsonBehaviorType (primnodes.h)
     const val JSON_BEHAVIOR_NULL: Int = 0
+
+    // BoolExprType (primnodes.h)
+    const val BOOL_OPERATOR_AND: String = "and"
+    const val BOOL_OPERATOR_OR: String = "or"
+    const val BOOL_OPERATOR_NOT: String = "not"
+
+    // NullTestType (primnodes.h)
+    const val NULL_TEST_IS_NULL: Int = 0
+    const val NULL_TEST_IS_NOT_NULL: Int = 1
 
     // XmlExprOp (primnodes.h)
     const val XML_IS_XMLCONCAT: Int = 0

@@ -152,20 +152,65 @@ internal class PgNodeTreeParser {
    * @return `true` if the outer query is a set operation query; `false` otherwise
    */
   fun hasSetOperations(nodeTreeText: String): Boolean {
-    val outerBraceIndex = nodeTreeText.indexOf('{')
-    if (outerBraceIndex == -1) return false
-    // Search for `:setOperations` at depth=1, excluding the trailing `{` from the marker since `{`
-    // is processed as a brace character and never reaches the character-comparison branch.
-    val marker = ":setOperations "
+    val markerEnd = findMarkerAtDepthOne(nodeTreeText, ":setOperations ")
+    if (markerEnd == -1) return false
+    // The value may be preceded by extra whitespace; a non-`{` value (e.g. `<>` for empty) means
+    // this is not a set operation query.
+    var index = markerEnd
+    while (index < nodeTreeText.length && nodeTreeText[index] == ' ') index++
+    return index < nodeTreeText.length && nodeTreeText[index] == '{'
+  }
+
+  /**
+   * Parses the top-level `WHERE` clause expression from [nodeTreeText].
+   *
+   * Locates `:jointree {FROMEXPR ...}` at the outermost QUERY level and returns its `:quals`
+   * expression. The `ON` clause of a `JOINEXPR` nested in `:fromlist` is deliberately not
+   * returned — it sits at a deeper brace level and does not constrain rows the way `WHERE` does.
+   *
+   * @return the parsed `WHERE` expression, or `null` when the query has no `WHERE` clause
+   *   (`:quals <>`), when there is no `:jointree`, or when [nodeTreeText] is malformed
+   */
+  fun parseWhereQuals(nodeTreeText: String): PgNodeExpression? {
+    val jointreeMarkerEnd = findMarkerAtDepthOne(nodeTreeText, ":jointree ")
+    if (jointreeMarkerEnd == -1 ||
+      jointreeMarkerEnd >= nodeTreeText.length ||
+      nodeTreeText[jointreeMarkerEnd] != '{'
+    ) {
+      return null
+    }
+    val fromExprBlock = extractBalancedBraces(nodeTreeText, jointreeMarkerEnd) ?: return null
+
+    val qualsMarkerEnd = findMarkerAtDepthOne(fromExprBlock, ":quals ")
+    if (qualsMarkerEnd == -1 ||
+      qualsMarkerEnd >= fromExprBlock.length ||
+      fromExprBlock[qualsMarkerEnd] != '{'
+    ) {
+      return null
+    }
+    val qualsBlock = extractBalancedBraces(fromExprBlock, qualsMarkerEnd) ?: return null
+    return parseExpression(qualsBlock)
+  }
+
+  /**
+   * Finds [marker] at brace depth 1 (measured from the first `{` in [text]) and returns the index
+   * just past the marker's last character, or `-1` when [marker] does not appear at that depth
+   * before the outermost block closes, or [text] contains no `{`.
+   *
+   * "Depth 1" means directly inside the outermost `{...}` block, excluding any field nested
+   * inside a child `{...}` block — this is what prevents matching, for example, a nested
+   * `JOINEXPR`'s own `:quals` field when looking for the top-level `:quals` of a `FROMEXPR`.
+   */
+  private fun findMarkerAtDepthOne(text: String, marker: String): Int {
+    val outerBraceIndex = text.indexOf('{')
+    if (outerBraceIndex == -1) return -1
+
     var braceDepth = 0
     var index = outerBraceIndex
     var markerMatchIndex = 0
-    while (index < nodeTreeText.length) {
-      val character = nodeTreeText[index]
+    while (index < text.length) {
+      val character = text[index]
       when {
-        // When we've matched `:setOperations ` and encounter `{` at depth=1, this is a set
-        // operation query. The `{` opens the SETOPERATIONSTMT node value.
-        character == '{' && braceDepth == 1 && markerMatchIndex == marker.length -> return true
         character == '{' -> {
           braceDepth++
           markerMatchIndex = 0
@@ -175,17 +220,18 @@ internal class PgNodeTreeParser {
           markerMatchIndex = 0
           if (braceDepth == 0) break
         }
-        braceDepth == 1 && markerMatchIndex == marker.length ->
-          // Marker already fully matched. Any non-space character that isn't `{` means value is
-          // not a brace block (e.g., `<>` for empty). Reset so the matched state doesn't persist.
-          if (character != ' ') markerMatchIndex = if (character == marker[0]) 1 else 0
-        braceDepth == 1 && character == marker[markerMatchIndex] -> markerMatchIndex++
-        braceDepth == 1 -> markerMatchIndex = if (character == marker[0]) 1 else 0
+        braceDepth == 1 ->
+          if (character == marker[markerMatchIndex]) {
+            markerMatchIndex++
+            if (markerMatchIndex == marker.length) return index + 1
+          } else {
+            markerMatchIndex = if (character == marker[0]) 1 else 0
+          }
         else -> markerMatchIndex = 0
       }
       index++
     }
-    return false
+    return -1
   }
 
   /**
@@ -366,7 +412,13 @@ internal class PgNodeTreeParser {
     val varattno = extractIntField(text, ":varattno")
       ?: error("Missing :varattno in VAR node")
     val nullingRelations = extractBitmapset(text, ":varnullingrels")
-    return PgNodeExpression.Var(varno = varno, varattno = varattno, nullingRelations = nullingRelations)
+    val levelsUp = extractIntField(text, ":varlevelsup") ?: 0
+    return PgNodeExpression.Var(
+      varno = varno,
+      varattno = varattno,
+      nullingRelations = nullingRelations,
+      levelsUp = levelsUp,
+    )
   }
 
   private fun parseConst(text: String): PgNodeExpression.Const {
@@ -386,9 +438,12 @@ internal class PgNodeTreeParser {
 
   private fun parseScalarArrayOpExpr(text: String): PgNodeExpression.ScalarArrayOpExpr {
     val operatorFunctionOid = extractIntField(text, ":opfuncid") ?: error("Missing :opfuncid in SCALARARRAYOPEXPR node")
+    // Unknown defaults to the more restrictive ALL handling.
+    val useOr = extractBoolField(text, ":useOr") ?: false
     return PgNodeExpression.ScalarArrayOpExpr(
       operatorFunctionOid = operatorFunctionOid,
       arguments = parseArgList(text, ":args"),
+      useOr = useOr,
     )
   }
 
@@ -443,8 +498,10 @@ internal class PgNodeTreeParser {
     return PgNodeExpression.CaseExpr(resultExpressions = resultExpressions, defaultResult = defaultResult)
   }
 
-  private fun parseBoolExpr(text: String): PgNodeExpression.BoolExpr =
-    PgNodeExpression.BoolExpr(arguments = parseArgList(text, ":args"))
+  private fun parseBoolExpr(text: String): PgNodeExpression.BoolExpr = PgNodeExpression.BoolExpr(
+    arguments = parseArgList(text, ":args"),
+    boolOperator = extractStringField(text, ":boolop") ?: "",
+  )
 
   private fun parseRelabelType(text: String): PgNodeExpression.RelabelType {
     val argument = extractFieldExpression(text, ":arg") ?: error("Missing :arg in RELABELTYPE node")
@@ -478,7 +535,9 @@ internal class PgNodeTreeParser {
 
   private fun parseNullTest(text: String): PgNodeExpression.NullTest {
     val argument = extractFieldExpression(text, ":arg") ?: error("Missing :arg in NULLTEST node")
-    return PgNodeExpression.NullTest(argument = parseExpression(argument))
+    // Unknown defaults to the form that proves nothing.
+    val nullTestType = extractIntField(text, ":nulltesttype") ?: PgNodeExpression.NULL_TEST_IS_NULL
+    return PgNodeExpression.NullTest(argument = parseExpression(argument), nullTestType = nullTestType)
   }
 
   private fun parseBooleanTest(text: String): PgNodeExpression.BooleanTest {
@@ -691,43 +750,9 @@ internal class PgNodeTreeParser {
    */
   private fun extractOuterSectionContent(text: String, marker: String): String? {
     check(marker.endsWith("(")) { "marker must end with '(': $marker" }
-    val outerBraceIndex = text.indexOf('{')
-    if (outerBraceIndex == -1) return null
-
-    var braceDepth = 0
-    var index = outerBraceIndex
-    var markerMatchIndex = 0
-    var markerStart = -1
-
-    while (index < text.length) {
-      val character = text[index]
-      when {
-        character == '{' -> {
-          braceDepth++
-          markerMatchIndex = 0
-        }
-        character == '}' -> {
-          braceDepth--
-          markerMatchIndex = 0
-          if (braceDepth == 0) break
-        }
-        braceDepth == 1 ->
-          if (character == marker[markerMatchIndex]) {
-            markerMatchIndex++
-            if (markerMatchIndex == marker.length) {
-              markerStart = index - marker.length + 1
-              break
-            }
-          } else {
-            markerMatchIndex = if (character == marker[0]) 1 else 0
-          }
-        else -> markerMatchIndex = 0
-      }
-      index++
-    }
-
-    if (markerStart == -1) return null
-    val openParenthesisIndex = markerStart + marker.length - 1
+    val markerEnd = findMarkerAtDepthOne(text, marker)
+    if (markerEnd == -1) return null
+    val openParenthesisIndex = markerEnd - 1
     return extractBalancedParentheses(text, openParenthesisIndex)
   }
 

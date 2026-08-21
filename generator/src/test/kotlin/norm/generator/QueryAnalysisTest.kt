@@ -5895,6 +5895,347 @@ class QueryAnalysisTest {
   }
 
   @Nested
+  inner class WhereClauseNarrowing {
+
+    private val schema = "CREATE TABLE t (id BIGINT PRIMARY KEY, a TEXT, b TEXT, flag BOOLEAN)"
+
+    // A DML-to-SELECT conversion (see PgCatalogLoader.transformForViewCreation /
+    // SqlUtils.convertDmlToSelect) drops the SET clause but keeps the original WHERE predicate.
+    // A qual that looks like it proves a RETURNING column non-null may really be testing a value
+    // the statement is about to overwrite, so qual narrowing must be suppressed entirely whenever
+    // the analyzed SQL passed through that conversion.
+    private val dmlSchema = """
+      CREATE TABLE t (id INT NOT NULL, a TEXT);
+      CREATE TABLE u (id INT NOT NULL, val TEXT)
+    """.trimIndent()
+
+    @Test
+    fun `WHERE a IS NOT NULL AND b IS NOT NULL narrows both columns`() {
+      val query = analyzeWithSchema(schema, "SELECT a, b FROM t WHERE a IS NOT NULL AND b IS NOT NULL")
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `WHERE with strict equality operator narrows`() {
+      val query = analyzeWithSchema(schema, "SELECT a FROM t WHERE a = 'x'")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `WHERE narrows through a strict function chain`() {
+      val query = analyzeWithSchema(schema, "SELECT a FROM t WHERE upper(a) = 'X'")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `bare boolean column conjunct narrows itself`() {
+      val query = analyzeWithSchema(schema, "SELECT flag FROM t WHERE flag")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `WHERE a = ANY narrows the scalar operand`() {
+      val query = analyzeWithSchema(schema, "SELECT a FROM t WHERE a = ANY(ARRAY['x'])")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `subquery RTE narrowed by its own WHERE clause`() {
+      val query = analyzeWithSchema(schema, "SELECT x FROM (SELECT a AS x FROM t WHERE a IS NOT NULL) s")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `CTE narrowed by its own WHERE clause`() {
+      val query = analyzeWithSchema(
+        schema,
+        "WITH c AS (SELECT a FROM t WHERE a IS NOT NULL) SELECT a FROM c",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `narrowing survives an aggregate-free GROUP BY`() {
+      val query = analyzeWithSchema(schema, "SELECT a FROM t WHERE a IS NOT NULL GROUP BY a")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `OR does not narrow either side`() {
+      val query = analyzeWithSchema(schema, "SELECT a, b FROM t WHERE a IS NOT NULL OR b IS NOT NULL")
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `NOT does not narrow`() {
+      val query = analyzeWithSchema(schema, "SELECT a FROM t WHERE NOT (a IS NULL)")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `IS NULL does not narrow`() {
+      val query = analyzeWithSchema(schema, "SELECT a FROM t WHERE a IS NULL")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `coalesce does not narrow its argument`() {
+      val query = analyzeWithSchema(schema, "SELECT a FROM t WHERE coalesce(a, 'x') = 'y'")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `greatest (MinMaxExpr) does not narrow its argument`() {
+      val query = analyzeWithSchema(schema, "SELECT a FROM t WHERE greatest(a, 'x') = 'y'")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `IS DISTINCT FROM does not narrow`() {
+      val query = analyzeWithSchema(schema, "SELECT a FROM t WHERE a IS DISTINCT FROM 'x'")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `ALL's scalar operand is not proven`() {
+      val query = analyzeWithSchema(schema, "SELECT a FROM t WHERE a <> ALL(ARRAY['x'])")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `join ON clause does not narrow the nullable side`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id BIGINT PRIMARY KEY);
+        CREATE TABLE u (id BIGINT PRIMARY KEY, val TEXT)
+        """.trimIndent(),
+        "SELECT u.val FROM t LEFT JOIN u ON u.val IS NOT NULL",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `outer join nullability wins over a proving WHERE clause`() {
+      // Deliberately conservative: u.val is proven non-null by WHERE for surviving rows, but the
+      // LEFT JOIN can still null-extend the whole row (including u.val) before WHERE is applied to
+      // rows where the join found no match — the outer-join veto in isNonNull's Var branch always
+      // wins over WHERE-clause narrowing.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id BIGINT PRIMARY KEY);
+        CREATE TABLE u (id BIGINT PRIMARY KEY, val TEXT)
+        """.trimIndent(),
+        "SELECT u.val FROM t LEFT JOIN u ON u.id = t.id WHERE u.val IS NOT NULL",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `HAVING does not narrow`() {
+      val query = analyzeWithSchema(schema, "SELECT a FROM t GROUP BY a HAVING a IS NOT NULL")
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `GROUPING SETS guard is not defeated by a proving WHERE clause`() {
+      // The `()` grouping set emits a null row for `a` regardless of what WHERE proved about the
+      // rows that fed the aggregation — this is the regression test for the single worst failure
+      // mode of this change.
+      val query = analyzeWithSchema(
+        schema,
+        "SELECT a FROM t WHERE a IS NOT NULL GROUP BY GROUPING SETS ((a), ())",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `LATERAL outer reference does not collide with a local varno-varattno pair`() {
+      // o.marker is an outer reference inside the LATERAL subquery: varno 1, varattno 3,
+      // varlevelsup 1. inner_t.other is locally varno 1, varattno 3 in that same subquery block.
+      // Without the levelsUp filter, the outer reference would be misread as proving
+      // inner_t.other non-null.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE outer_t (id BIGINT, ref TEXT, marker TEXT);
+        CREATE TABLE inner_t (id BIGINT, val TEXT, other TEXT)
+        """.trimIndent(),
+        "SELECT s.other FROM outer_t o, LATERAL (SELECT i.other FROM inner_t i WHERE i.val = o.marker) s",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `UPDATE FROM RETURNING does not narrow a column WHERE tests but SET does not touch`() {
+      val query = analyzeWithSchema(
+        dmlSchema,
+        "UPDATE t SET a = u.val FROM u WHERE u.id = t.id AND t.a = 'x' RETURNING t.a",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `UPDATE FROM RETURNING does not narrow a column SET is about to null out`() {
+      val query = analyzeWithSchema(
+        dmlSchema,
+        "UPDATE t SET a = NULL FROM u WHERE u.id = t.id AND t.a IS NOT NULL RETURNING t.a",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `UPDATE FROM RETURNING an expression over a SET-nulled column does not narrow`() {
+      val query = analyzeWithSchema(
+        dmlSchema,
+        "UPDATE t SET a = NULL FROM u WHERE u.id = t.id AND t.a IS NOT NULL RETURNING lower(t.a)",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `WITH modifying CTE RETURNING does not narrow a column SET is about to null out`() {
+      val query = analyzeWithSchema(
+        dmlSchema,
+        """
+        WITH c AS (
+          UPDATE t SET a = NULL FROM u WHERE u.id = t.id AND t.a IS NOT NULL RETURNING t.a
+        )
+        SELECT a FROM c
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    // On PostgreSQL 16/17 (no GROUP RTE), a subquery's or CTE's own target-list Var for a
+    // grouping key IS the base Var, so without a parseGroupingKeyVars guard at that nesting
+    // level, qual narrowing collides with it and wrongly proves the column non-null. On
+    // PostgreSQL 18 (GROUP RTE present), the target-list Var's varno differs from the base
+    // varno, which happens to prevent the same collision independently of this guard — so these
+    // four tests only exercise the true regression when run against PostgreSQL 16/17.
+
+    @Test
+    fun `subquery ROLLUP grouping set guard is not defeated by a proving WHERE clause`() {
+      val query = analyzeWithSchema(
+        schema,
+        "SELECT x FROM (SELECT a AS x FROM t WHERE a IS NOT NULL GROUP BY ROLLUP(a)) s",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `subquery GROUPING SETS guard is not defeated by a proving WHERE clause`() {
+      val query = analyzeWithSchema(
+        schema,
+        "SELECT x FROM (SELECT a AS x FROM t WHERE a IS NOT NULL GROUP BY GROUPING SETS ((a), ())) s",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `CTE ROLLUP grouping set guard is not defeated by a proving WHERE clause`() {
+      val query = analyzeWithSchema(
+        schema,
+        "WITH c AS (SELECT a FROM t WHERE a IS NOT NULL GROUP BY ROLLUP(a)) SELECT a FROM c",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `CTE GROUPING SETS guard is not defeated by a proving WHERE clause`() {
+      val query = analyzeWithSchema(
+        schema,
+        "WITH c AS (SELECT a FROM t WHERE a IS NOT NULL GROUP BY GROUPING SETS ((a), ())) SELECT a FROM c",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    // An EXPRESSION grouping key — as opposed to the bare-Var keys above — produces no {VAR }
+    // target-list entry, so parseGroupingKeyVars() cannot see it and the groupingKeyVars guard
+    // never fires for it. These four tests only catch the regression on PostgreSQL 16/17: on
+    // PostgreSQL 18, the GROUP RTE independently blocks qual narrowing from reaching the leaf Var,
+    // so they pass there regardless of whether the fix in PgCatalogLoader (suppressing qual
+    // narrowing for the whole query block whenever hasGroupingSets) is present.
+
+    @Test
+    fun `expression ROLLUP grouping key guard is not defeated by a proving WHERE clause`() {
+      val query = analyzeWithSchema(
+        schema,
+        "SELECT lower(a) FROM t WHERE a IS NOT NULL GROUP BY ROLLUP(lower(a))",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `concatenation ROLLUP grouping key guard is not defeated by a proving WHERE clause`() {
+      val query = analyzeWithSchema(
+        schema,
+        "SELECT a || 'z' FROM t WHERE a IS NOT NULL GROUP BY ROLLUP(a || 'z')",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `subquery expression ROLLUP grouping key guard is not defeated by a proving WHERE clause`() {
+      val query = analyzeWithSchema(
+        schema,
+        """
+        SELECT y FROM (
+          SELECT lower(a) AS y FROM t WHERE a IS NOT NULL GROUP BY ROLLUP(lower(a))
+        ) s
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `CTE expression ROLLUP grouping key guard is not defeated by a proving WHERE clause`() {
+      val query = analyzeWithSchema(
+        schema,
+        """
+        WITH c AS (
+          SELECT lower(a) AS y FROM t WHERE a IS NOT NULL GROUP BY ROLLUP(lower(a))
+        )
+        SELECT y FROM c
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+  }
+
+  @Nested
   inner class ParserDefensiveBehavior {
 
     @Test
@@ -5938,6 +6279,19 @@ class QueryAnalysisTest {
     fun `hasGroupingSets returns false for malformed input`() {
       val parser = PgNodeTreeParser()
       assertThat(parser.hasGroupingSets("malformed")).isFalse()
+    }
+
+    @Test
+    fun `parseWhereQuals returns null for malformed input`() {
+      val parser = PgNodeTreeParser()
+      assertThat(parser.parseWhereQuals("malformed")).isEqualTo(null)
+    }
+
+    @Test
+    fun `parseWhereQuals returns null when quals is empty`() {
+      val parser = PgNodeTreeParser()
+      val nodeTree = "{QUERY :jointree {FROMEXPR :fromlist ({RANGETBLREF :rtindex 1}) :quals <>}}"
+      assertThat(parser.parseWhereQuals(nodeTree)).isEqualTo(null)
     }
 
     @Test
