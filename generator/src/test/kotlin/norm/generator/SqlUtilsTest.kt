@@ -3415,7 +3415,8 @@ class SqlUtilsTest {
       // prologue's closing parenthesis (`RETURNING WITH (OLD AS o /*c*/) o.note`) is valid syntax
       // and does not become part of the alias name — "o" alone refers to OLD, exactly as it would
       // without the comment.
-      val result = oldOrNewReturningColumns("UPDATE t SET note = 'x' WHERE id = 1 RETURNING WITH (OLD AS o /*c*/) o.note")
+      val result =
+        oldOrNewReturningColumns("UPDATE t SET note = 'x' WHERE id = 1 RETURNING WITH (OLD AS o /*c*/) o.note")
       assertThat(result).isEqualTo(OldOrNewReturningAnalysis(itemCount = 1, forcedColumns = setOf(1)))
     }
 
