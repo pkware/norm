@@ -4,6 +4,10 @@ import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.SQLException
 import java.sql.Types
+import java.time.Instant
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
+import java.util.UUID
 import kotlin.Any
 import kotlin.Array
 import kotlin.Int
@@ -25,7 +29,10 @@ import norm.encodeToSqlArray
 public class PostgresQueries(
   connectionProvider: ConnectionProvider,
   private val emailAdapter: ColumnAdapter<Email, String> = EmailAdapter(),
+  private val externalReferenceAdapter:
+      ColumnAdapter<ExternalReference, UUID> = ExternalReferenceAdapter(),
   private val moodAdapter: ColumnAdapter<Mood, String> = MoodAdapter(),
+  private val orderPlacedAtAdapter: ColumnAdapter<OrderPlacedAt, Instant> = OrderPlacedAtAdapter(),
   private val positiveIntegerAdapter:
       ColumnAdapter<PositiveInteger, Int> = PositiveIntegerAdapter(),
   private val usPostalCodeAdapter: ColumnAdapter<UsPostalCode, String> = UsPostalCodeAdapter(),
@@ -43,6 +50,8 @@ public class PostgresQueries(
     previous_mood: Mood?,
     past_moods: Array<Mood?>?,
     scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
   ) -> T): T {
     val sql = "SELECT * FROM users WHERE email = ?"
     val rowReader: ResultSet.() -> T = {
@@ -55,6 +64,8 @@ public class PostgresQueries(
         getString(6)?.let { moodAdapter.decode(it) },
         getArray(7)?.decodeArray(moodAdapter),
         getArray(8)?.decodeArray(positiveIntegerAdapter),
+        orderPlacedAtAdapter.decode(getObject(9, OffsetDateTime::class.java).toInstant()),
+        getObject(10)?.let { externalReferenceAdapter.decode(it) },
       )
     }
     return driver.queryOne(sql, rowReader) {
@@ -73,6 +84,8 @@ public class PostgresQueries(
       previous_mood: Mood?,
       past_moods: Array<Mood?>?,
       scores: Array<PositiveInteger?>?,
+      placed_at: OrderPlacedAt,
+      external_ref: ExternalReference?,
     ) -> T,
     processor: ManyProcessor<T, Return>,
   ): Return {
@@ -87,6 +100,8 @@ public class PostgresQueries(
         getString(6)?.let { moodAdapter.decode(it) },
         getArray(7)?.decodeArray(moodAdapter),
         getArray(8)?.decodeArray(positiveIntegerAdapter),
+        orderPlacedAtAdapter.decode(getObject(9, OffsetDateTime::class.java).toInstant()),
+        getObject(10)?.let { externalReferenceAdapter.decode(it) },
       )
     }
     val queryBinder: (PreparedStatement.() -> Unit)? = {
@@ -104,6 +119,8 @@ public class PostgresQueries(
     previous_mood: Mood?,
     past_moods: Array<Mood?>?,
     scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
   ) -> T): Many<T> = listUsersByAge(age, mapper, driver::queryMany)
 
   private fun <T : Any, Return> getUsersByZipCode(
@@ -117,6 +134,8 @@ public class PostgresQueries(
       previous_mood: Mood?,
       past_moods: Array<Mood?>?,
       scores: Array<PositiveInteger?>?,
+      placed_at: OrderPlacedAt,
+      external_ref: ExternalReference?,
     ) -> T,
     processor: ManyProcessor<T, Return>,
   ): Return {
@@ -131,6 +150,8 @@ public class PostgresQueries(
         getString(6)?.let { moodAdapter.decode(it) },
         getArray(7)?.decodeArray(moodAdapter),
         getArray(8)?.decodeArray(positiveIntegerAdapter),
+        orderPlacedAtAdapter.decode(getObject(9, OffsetDateTime::class.java).toInstant()),
+        getObject(10)?.let { externalReferenceAdapter.decode(it) },
       )
     }
     val queryBinder: (PreparedStatement.() -> Unit)? = {
@@ -148,6 +169,8 @@ public class PostgresQueries(
     previous_mood: Mood?,
     past_moods: Array<Mood?>?,
     scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
   ) -> T): Many<T> = getUsersByZipCode(zip_code, mapper, driver::queryMany)
 
   private fun <T : Any, Return> getUsersByMood(
@@ -161,6 +184,8 @@ public class PostgresQueries(
       previous_mood: Mood?,
       past_moods: Array<Mood?>?,
       scores: Array<PositiveInteger?>?,
+      placed_at: OrderPlacedAt,
+      external_ref: ExternalReference?,
     ) -> T,
     processor: ManyProcessor<T, Return>,
   ): Return {
@@ -175,6 +200,8 @@ public class PostgresQueries(
         getString(6)?.let { moodAdapter.decode(it) },
         getArray(7)?.decodeArray(moodAdapter),
         getArray(8)?.decodeArray(positiveIntegerAdapter),
+        orderPlacedAtAdapter.decode(getObject(9, OffsetDateTime::class.java).toInstant()),
+        getObject(10)?.let { externalReferenceAdapter.decode(it) },
       )
     }
     val queryBinder: (PreparedStatement.() -> Unit)? = {
@@ -192,7 +219,92 @@ public class PostgresQueries(
     previous_mood: Mood?,
     past_moods: Array<Mood?>?,
     scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
   ) -> T): Many<T> = getUsersByMood(current_mood, mapper, driver::queryMany)
+
+  private fun <T : Any, Return> getUsersPlacedAfter(
+    placed_at: OrderPlacedAt,
+    mapper: (
+      id: Int,
+      email: Email,
+      age: PositiveInteger?,
+      zip_code: UsPostalCode?,
+      current_mood: Mood,
+      previous_mood: Mood?,
+      past_moods: Array<Mood?>?,
+      scores: Array<PositiveInteger?>?,
+      placed_at: OrderPlacedAt,
+      external_ref: ExternalReference?,
+    ) -> T,
+    processor: ManyProcessor<T, Return>,
+  ): Return {
+    val sql = "SELECT * FROM users WHERE placed_at > ?"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        emailAdapter.decode(getString(2)),
+        getInt(3).takeUnless { wasNull() }?.let { positiveIntegerAdapter.decode(it) },
+        getString(4)?.let { usPostalCodeAdapter.decode(it) },
+        moodAdapter.decode(getString(5)),
+        getString(6)?.let { moodAdapter.decode(it) },
+        getArray(7)?.decodeArray(moodAdapter),
+        getArray(8)?.decodeArray(positiveIntegerAdapter),
+        orderPlacedAtAdapter.decode(getObject(9, OffsetDateTime::class.java).toInstant()),
+        getObject(10)?.let { externalReferenceAdapter.decode(it) },
+      )
+    }
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setObject(1, OffsetDateTime.ofInstant(orderPlacedAtAdapter.encode(placed_at), ZoneOffset.UTC))
+    }
+    return processor.invoke(sql, rowReader, queryBinder)
+  }
+
+  override fun <T : Any> getUsersPlacedAfter(placed_at: OrderPlacedAt, mapper: (
+    id: Int,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
+    current_mood: Mood,
+    previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+  ) -> T): Many<T> = getUsersPlacedAfter(placed_at, mapper, driver::queryMany)
+
+  @Throws(SQLException::class)
+  override fun <T : Any> getUserByExternalReference(external_ref: ExternalReference, mapper: (
+    id: Int,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
+    current_mood: Mood,
+    previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+  ) -> T): T {
+    val sql = "SELECT * FROM users WHERE external_ref = ?"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        emailAdapter.decode(getString(2)),
+        getInt(3).takeUnless { wasNull() }?.let { positiveIntegerAdapter.decode(it) },
+        getString(4)?.let { usPostalCodeAdapter.decode(it) },
+        moodAdapter.decode(getString(5)),
+        getString(6)?.let { moodAdapter.decode(it) },
+        getArray(7)?.decodeArray(moodAdapter),
+        getArray(8)?.decodeArray(positiveIntegerAdapter),
+        orderPlacedAtAdapter.decode(getObject(9, OffsetDateTime::class.java).toInstant()),
+        getObject(10)?.let { externalReferenceAdapter.decode(it) },
+      )
+    }
+    return driver.queryOne(sql, rowReader) {
+      setObject(1, externalReferenceAdapter.encode(external_ref))
+    }
+  }
 
   @Throws(SQLException::class)
   override fun createUser(

@@ -8,6 +8,13 @@ CHECK (VALUE > 0);
 CREATE DOMAIN us_postal_code AS TEXT
 CHECK (VALUE ~ '^\d{5}(-\d{4})?$');
 
+-- Domains over common base types (timestamptz, uuid) that previously aborted code generation
+-- entirely -- resolveJdbcTypeInfo had no entry for either, even though both are common domain
+-- base types.
+CREATE DOMAIN order_placed_at AS TIMESTAMPTZ;
+
+CREATE DOMAIN external_reference AS UUID;
+
 -- Custom enum types that require adapter generation
 CREATE TYPE mood AS ENUM ('happy', 'sad', 'angry');
 
@@ -22,5 +29,7 @@ CREATE TABLE users (
   current_mood mood NOT NULL,
   previous_mood mood,
   past_moods mood[],
-  scores positive_integer[]
+  scores positive_integer[],
+  placed_at order_placed_at NOT NULL,
+  external_ref external_reference
 );

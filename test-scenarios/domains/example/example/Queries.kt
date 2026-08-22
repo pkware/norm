@@ -28,6 +28,8 @@ public interface Queries : Transactable {
     previous_mood: Mood?,
     past_moods: Array<Mood?>?,
     scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
   ) -> T): T
 
   /**
@@ -52,6 +54,8 @@ public interface Queries : Transactable {
     previous_mood: Mood?,
     past_moods: Array<Mood?>?,
     scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
   ) -> T): Many<T>
 
   /**
@@ -75,6 +79,8 @@ public interface Queries : Transactable {
     previous_mood: Mood?,
     past_moods: Array<Mood?>?,
     scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
   ) -> T): Many<T>
 
   /**
@@ -98,6 +104,8 @@ public interface Queries : Transactable {
     previous_mood: Mood?,
     past_moods: Array<Mood?>?,
     scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
   ) -> T): Many<T>
 
   /**
@@ -106,6 +114,58 @@ public interface Queries : Transactable {
    * ```
    */
   public fun getUsersByMood(current_mood: Mood): Many<Users> = getUsersByMood(current_mood, ::Users)
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE placed_at > ?
+   * ```
+   */
+  public fun <T : Any> getUsersPlacedAfter(placed_at: OrderPlacedAt, mapper: (
+    id: Int,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
+    current_mood: Mood,
+    previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+  ) -> T): Many<T>
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE placed_at > ?
+   * ```
+   */
+  public fun getUsersPlacedAfter(placed_at: OrderPlacedAt): Many<Users> = getUsersPlacedAfter(placed_at, ::Users)
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE external_ref = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> getUserByExternalReference(external_ref: ExternalReference, mapper: (
+    id: Int,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
+    current_mood: Mood,
+    previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+  ) -> T): T
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE external_ref = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun getUserByExternalReference(external_ref: ExternalReference): Users = getUserByExternalReference(external_ref, ::Users)
 
   /**
    * ```sql
