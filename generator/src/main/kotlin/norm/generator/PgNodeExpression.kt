@@ -19,7 +19,19 @@ internal sealed interface PgNodeExpression {
 
   data class Const(val isNull: Boolean) : PgNodeExpression
 
-  data class FuncExpr(val functionOid: Int, val arguments: List<PgNodeExpression>) : PgNodeExpression
+  /**
+   * @property isVariadic `true` when the call uses `VARIADIC` (e.g. `concat(VARIADIC arr)`) —
+   *   from `:funcvariadic`. In this form the LAST entry of [arguments] is the array expression
+   *   itself, passed through as one value, not exploded into its elements. This matters for
+   *   nullability: `concat(VARIADIC arr)` is `null` when `arr` itself is `null` (verified live on
+   *   PostgreSQL 16, 17, and 18), which neither [PgCatalogLoader.alwaysNonNullFunctionOids] nor
+   *   [PgCatalogLoader.nonNullIffFirstArgumentNonNullFunctionOids] account for on their own — both
+   *   assume the ordinary (non-`VARIADIC`) calling form where every argument is an individual
+   *   scalar value, and [NodeTreeNullabilityAnalyzer.isNonNull] must check this flag before
+   *   trusting either list unconditionally.
+   */
+  data class FuncExpr(val functionOid: Int, val arguments: List<PgNodeExpression>, val isVariadic: Boolean = false) :
+    PgNodeExpression
 
   data class OpExpr(val operatorFunctionOid: Int, val arguments: List<PgNodeExpression>) : PgNodeExpression
 
@@ -44,8 +56,25 @@ internal sealed interface PgNodeExpression {
 
   data class SubLink(val subLinkType: Int, val outerOperand: PgNodeExpression? = null) : PgNodeExpression
 
-  data class CaseExpr(val resultExpressions: List<PgNodeExpression>, val defaultResult: PgNodeExpression?) :
-    PgNodeExpression
+  /**
+   * @property testExpression The `CASE testexpr WHEN ...` test expression (from `:arg`), `null`
+   *   for the `CASE WHEN cond THEN ...` form, which has no single test expression. Not evaluated
+   *   by [NodeTreeNullabilityAnalyzer.isNonNull] — a `CASE`'s own nullability never depends on its
+   *   test expression's nullability — but retained so a `Var` that appears only here (e.g.
+   *   `CASE a WHEN 'x' THEN 1 ELSE 2 END`) is reachable by
+   *   [NodeTreeNullabilityAnalyzer] for GROUPING SETS/CUBE/ROLLUP Var-reachability analysis.
+   * @property whenConditions The condition expression of each `WHEN` arm (from each `CASEWHEN`
+   *   block's `:expr`). Like [testExpression], not evaluated by [NodeTreeNullabilityAnalyzer.isNonNull]
+   *   — a `WHEN` condition's nullability does not affect the `CASE` result's nullability — but
+   *   retained for the same Var-reachability reason: `CASE WHEN a = 'x' THEN 1 ELSE 2 END` has its
+   *   only `Var` inside a `WHEN` condition, never in [resultExpressions] or [defaultResult].
+   */
+  data class CaseExpr(
+    val resultExpressions: List<PgNodeExpression>,
+    val defaultResult: PgNodeExpression?,
+    val testExpression: PgNodeExpression? = null,
+    val whenConditions: List<PgNodeExpression> = emptyList(),
+  ) : PgNodeExpression
 
   /**
    * @property boolOperator One of [BOOL_OPERATOR_AND], [BOOL_OPERATOR_OR], or [BOOL_OPERATOR_NOT].
@@ -141,13 +170,20 @@ internal data class NodeTreeCteDefinition(val name: String, val queryBlock: Stri
  * A single result column from a query's `targetList`.
  *
  * @property expression The parsed expression node for this column.
- * @property resultName The column alias or name (from `:resname`), `null` if absent.
+ * @property resultName The column alias or name (from `:resname`), with `pg_node_tree`
+ *   backslash-escaping already removed (an alias `k}x` round-trips as exactly `k}x`, never the raw
+ *   `k\}x` — see [PgNodeTreeParser]'s class-level note on escaping). `null` if absent.
  * @property resultNumber The 1-based column position (from `:resno`).
  * @property isJunk Whether this entry is a junk column (`:resjunk true`), which should be excluded from results.
+ * @property sortGroupRef The entry's `:ressortgroupref` value, `0` when the entry is not a `GROUP BY`/`ORDER
+ *   BY`/`DISTINCT` key. When non-zero and this value appears among the `:tleSortGroupRef`s referenced by
+ *   `:groupClause`/`:groupingSets`, this entry IS a `GROUP BY` grouping key — see
+ *   [NodeTreeNullabilityAnalyzer]'s GROUPING SETS/CUBE/ROLLUP handling.
  */
 internal data class TargetEntry(
   val expression: PgNodeExpression,
   val resultName: String?,
   val resultNumber: Int,
   val isJunk: Boolean,
+  val sortGroupRef: Int = 0,
 )

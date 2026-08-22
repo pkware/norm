@@ -24,17 +24,53 @@ import norm.generator.NodeTreeNullabilityAnalyzer.Companion.extractOuterJoinNull
  *   `varattno` has a `NOT NULL` constraint. Used for [isNonNull] evaluation of [PgNodeExpression.Var].
  * @param isOuterJoinNullable Returns `true` if the given `nullingRelations` set indicates the column
  *   can be nulled by an outer join. Typically `true` when the set is non-empty.
- * @param isAlwaysNonNull Returns `true` for function OIDs that never return `null` regardless of
- *   argument nullability (e.g., `concat`).
+ * @param isAlwaysNonNull Returns `true` for function OIDs that never return `null` for ANY
+ *   combination of argument values, including when every argument is `null` (e.g., `concat`, which
+ *   renders a `null` argument as an empty string) — but ONLY for the ORDINARY (non-`VARIADIC`)
+ *   calling form. `concat(VARIADIC arr)` IS `null` when `arr` itself is `null` (verified live on
+ *   PostgreSQL 16, 17, and 18): `isNonNull`'s [PgNodeExpression.FuncExpr] branch checks
+ *   [PgNodeExpression.FuncExpr.isVariadic] before trusting this callback at all, and this
+ *   parameter's own guarantee never covers that form. See
+ *   [PgCatalogLoader.alwaysNonNullFunctionOids]'s KDoc for why the non-`VARIADIC` guarantee must
+ *   be unconditional in every argument position — `concat_ws` is deliberately NOT eligible here
+ *   despite also being non-strict, because it depends on WHICH argument is `null` (only a `null`
+ *   separator, its first argument, makes the result `null`); see
+ *   [isNonNullIffFirstArgumentNonNull] for how that case is modeled instead.
  * @param isNeverNullForNonNullInput Returns `true` for function/operator OIDs that are proven TOTAL
  *   on non-null input — every combination of non-null arguments produces a non-null result (an
  *   ERROR is fine; only a silent `null` return disqualifies a candidate). `pg_proc.proisstrict`
  *   alone cannot answer this: STRICT only guarantees NULL-in => NULL-out, never the converse, so
  *   this is required as an ADDITIONAL conjunct alongside [isStrict] below, never a substitute for
  *   it. See [PgCatalogLoader.neverNullForNonNullInputOids] for the safe-list this is normally
- *   backed by, and why omission from that list is always the safe default.
+ *   backed by, and why omission from that list is always the safe default. That safe-list's
+ *   verification (see `SafeListSweepTest`) covers only the ORDINARY, element-wise calling
+ *   convention — `isNonNull`'s [PgNodeExpression.FuncExpr] branch never consults this
+ *   parameter at all for a `VARIADIC` call (see [PgNodeExpression.FuncExpr.isVariadic]'s KDoc):
+ *   the array argument being non-null says nothing about whether an element inside it is, and no
+ *   function on the safe-list this backs is variadic today, so trusting it for that shape has
+ *   never been verified.
  * @param isLagLeadWithDefault Returns `true` for the 3-argument overloads of `lag` and `lead` window
  *   functions, which return non-null when both the value and default arguments are non-null.
+ * @param isFoldableToConst Returns `true` for function/operator OIDs that are IMMUTABLE and not
+ *   set-returning (`pg_proc.provolatile = 'i' AND NOT proretset`). Used by
+ *   [isSafeFromGroupingSetNullExtension]'s [foldsToConst] leg — see that method's KDoc.
+ * @param isNonNullIffFirstArgumentNonNull Returns `true` for function OIDs that are non-null if and
+ *   only if their first argument is non-null, regardless of any other argument's nullability, in
+ *   the ORDINARY (non-`VARIADIC`) calling form — used for [isNonNull] evaluation of
+ *   [PgNodeExpression.FuncExpr] when [PgNodeExpression.FuncExpr.isVariadic] is `false`. Currently
+ *   backs `concat_ws`: its first argument is the separator, and `concat_ws(null, 'x', 'y')` is
+ *   `null` even though the later, individually-null-tolerant arguments are non-null (verified live
+ *   on PostgreSQL 16, 17, and 18). `concat_ws(',', VARIADIC arr)` is a DIFFERENT case this
+ *   parameter's guarantee does NOT cover: it is `null` when `arr` itself is `null` even though the
+ *   literal separator is non-null (also verified live on PostgreSQL 16, 17, and 18). See
+ *   [PgCatalogLoader.nonNullIffFirstArgumentNonNullFunctionOids] for the safe-list this is normally
+ *   backed by, and why it is intentionally separate from [isAlwaysNonNull].
+ * @param hasGroupingSets `true` when the query block this analyzer evaluates uses GROUPING SETS,
+ *   CUBE, or ROLLUP (see [PgNodeTreeParser.hasGroupingSets]). When `true`, [extractColumnNullability]
+ *   forces a result column nullable when it is itself a grouping key, or when its expression is not
+ *   provably immune to the grouping-set null-extension mechanism — see [isSafeFromGroupingSetNullExtension]
+ *   for the reasoning. Defaults to `false` (ordinary [isNonNull] evaluation only) for query blocks
+ *   without grouping sets.
  */
 internal class NodeTreeNullabilityAnalyzer(
   private val isStrict: (Int) -> Boolean,
@@ -44,6 +80,9 @@ internal class NodeTreeNullabilityAnalyzer(
   private val isAlwaysNonNull: (Int) -> Boolean = { false },
   private val isNeverNullForNonNullInput: (Int) -> Boolean = { false },
   private val isLagLeadWithDefault: (Int) -> Boolean = { false },
+  private val isFoldableToConst: (Int) -> Boolean = { false },
+  private val isNonNullIffFirstArgumentNonNull: (Int) -> Boolean = { false },
+  private val hasGroupingSets: Boolean = false,
 ) {
 
   private val parser = PgNodeTreeParser()
@@ -66,11 +105,274 @@ internal class NodeTreeNullabilityAnalyzer(
   fun extractColumnNullability(nodeTreeText: String): List<Boolean> {
     val entries = parser.parseTargetList(nodeTreeText)
     if (entries.isEmpty()) return emptyList()
+    val groupingSortGroupRefs = if (hasGroupingSets) parser.parseGroupingSortGroupRefs(nodeTreeText) else emptySet()
 
     return entries
       .filter { !it.isJunk }
       .sortedBy { it.resultNumber }
-      .map { entry -> !isNonNull(entry.expression) }
+      .map { entry -> !isEffectivelyNonNull(entry, groupingSortGroupRefs) }
+  }
+
+  /**
+   * Evaluates whether [entry] is guaranteed non-null, applying the GROUPING SETS/CUBE/ROLLUP
+   * override before falling back to ordinary [isNonNull] evaluation.
+   *
+   * When [hasGroupingSets] is `true`, [entry] is forced nullable when either:
+   * - [entry] IS a grouping key itself: its [TargetEntry.sortGroupRef] is non-zero and appears in
+   *   [groupingSortGroupRefs] (from [PgNodeTreeParser.parseGroupingSortGroupRefs]); or
+   * - [entry]'s expression is not proven [isSafeFromGroupingSetNullExtension].
+   *
+   * Both conditions are load-bearing and independent: the first alone would miss a *derived*
+   * expression over a key (e.g. `upper(lower(a))` when the key is `lower(a)`, which has
+   * `sortGroupRef == 0` — it does not match the key textually, only structurally, which
+   * [isSafeFromGroupingSetNullExtension] is what actually catches). The second alone would miss a
+   * bare-`Const` grouping key (e.g. `GROUP BY ROLLUP('ALL'::text)`) — a `Const` is
+   * [isSafeFromGroupingSetNullExtension] by definition (see that method), yet PostgreSQL still
+   * null-extends it when it IS the grouping key, which only the first condition catches.
+   */
+  private fun isEffectivelyNonNull(entry: TargetEntry, groupingSortGroupRefs: Set<Int>): Boolean {
+    if (hasGroupingSets) {
+      val isGroupingKey = entry.sortGroupRef != 0 && entry.sortGroupRef in groupingSortGroupRefs
+      if (isGroupingKey || !isSafeFromGroupingSetNullExtension(entry.expression)) return false
+    }
+    return isNonNull(entry.expression)
+  }
+
+  /**
+   * Returns `true` if [expression] is provably immune to PostgreSQL's GROUPING SETS/CUBE/ROLLUP
+   * null-extension mechanism — i.e. it cannot be the *value* PostgreSQL replaces with `NULL` for a
+   * row belonging to a grouping set that omits it.
+   *
+   * Only meaningful when the enclosing query block has GROUPING SETS, CUBE, or ROLLUP
+   * ([hasGroupingSets]); see [isEffectivelyNonNull] for how the two nullability conditions combine.
+   *
+   * Null-extension is a **structural, planner-level substitution**: PostgreSQL scans the target
+   * list for stable, non-folded subexpressions that match a grouping key and replaces their
+   * computed value with `NULL` outright for rows outside that key's grouping set — it does not
+   * evaluate the subexpression's own semantics first. This means even a construct that is
+   * *semantically* always non-null under ordinary evaluation (e.g. `EXISTS(...)`, `ARRAY[...]`,
+   * `IS NULL`) can still be replaced with a literal `NULL` if it matches a grouping key. Whether an
+   * expression CAN match is governed by two special cases PostgreSQL's matching applies before
+   * falling through to ordinary structural equality:
+   * - `Aggref`/`GroupingFunc` — aggregates are illegal inside `GROUP BY`, so no expression
+   *   containing one can itself be a grouping key, and neither can any expression built on top of
+   *   one, because the aggregate/grouping value it depends on cannot be null-extended out from
+   *   under it.
+   * - `Const` — PostgreSQL's grouping-key matching specifically refuses to match a bare constant
+   *   (there would be no point: a constant is trivially recomputable), so a lone `Const` is never
+   *   itself null-extended. This does NOT extend to a `Const` wrapped in a non-folded coercion
+   *   chain (e.g. a `text`-to-`timestamptz` cast, which is a real function call, not a no-op) —
+   *   that wrapping expression is a stable, matchable subexpression like any other, and the `Const`
+   *   underneath it does not make it safe.
+   *
+   * So `safe(e)` is: [foldsToConst] → safe (a third, independent leg — see that method); a
+   * NON-`VARIADIC` [PgNodeExpression.FuncExpr] whose function is [isAlwaysNonNull] → safe (a
+   * fourth, independent leg — see the note near the bottom of this KDoc); otherwise
+   * `Aggref`/`GroupingFunc` → safe (matches the first special case); `Const` → safe (matches the
+   * second, though [foldsToConst] already subsumes it); `WindowFunc` → safe iff every child is
+   * itself safe (a window function can never itself be a grouping key — window functions, like
+   * aggregates, are illegal inside `GROUP BY` — but unlike `Aggref` it does NOT get blanket safety:
+   * its arguments are evaluated over already-grouped, potentially null-extended rows, e.g.
+   * `first_value(b) OVER (...)` is genuinely nullable, verified live — see the ground truth in
+   * `QueryAnalysisTest`); everything else, **including a bare `Var`**, → safe iff `e`'s parsed
+   * descendants include at least one `Aggref`/`GroupingFunc`/`WindowFunc` (per the first special
+   * case — a `WindowFunc` counts here too, since it likewise can never itself be a grouping key) AND
+   * every parsed child of `e` is itself safe (the whole subtree is dominated by that
+   * aggregate/window, modulo constants and foldable subexpressions). A bare `Var` has no
+   * descendants, so it is never safe under this rule (correct: a bare column reference is exactly
+   * what a grouping key most commonly is, or is derived from). `count(*) + 1` is safe (its `OpExpr`
+   * has an `Aggref` descendant and both children — `Aggref`, `Const` — are themselves safe);
+   * `count(*) || some_stable_cast(a_const)` is NOT safe, because the cast side has no
+   * `Aggref`/`WindowFunc` descendant AND does not [foldsToConst] (a stable cast survives constant
+   * folding) even though the `||` as a whole has an `Aggref` — safety is required of every child
+   * independently, not just the subtree as a whole, otherwise a matchable non-aggregate side would
+   * be missed.
+   *
+   * This walk is only sound for a [PgNodeExpression] subtype whose parsed representation retains
+   * every child expression the underlying Postgres node actually has — for a subtype that drops a
+   * child, this method cannot rule out an unseen child changing the answer.
+   * [PgNodeExpression.CaseExpr] is the motivating example that IS handled faithfully:
+   * [PgNodeExpression.CaseExpr.testExpression] and [PgNodeExpression.CaseExpr.whenConditions] exist
+   * on that type purely so this walk (not [isNonNull], which correctly ignores them, since a `CASE`
+   * result's nullability never depends on its own test/condition expressions) can see a `Var` that
+   * appears only in a `CASE`'s test expression or a `WHEN` condition, e.g.
+   * `CASE a WHEN 'x' THEN 1 ELSE 2 END` or `CASE WHEN a = 'x' THEN 1 ELSE 2 END`.
+   *
+   * [PgNodeExpression.JsonExpr] and [PgNodeExpression.Unknown] are the two subtypes that drop
+   * information this method cannot recover by walking harder — [PgNodeExpression.JsonExpr] does not
+   * retain a `JSON_VALUE`/`JSON_QUERY`/`JSON_EXISTS` `PASSING` clause's values, so a `Var` living
+   * only there (e.g. `JSON_EXISTS(doc, '\$.a ? (@ == \$v)' PASSING a AS v)`) is invisible; parsing
+   * the `PASSING` clause was deliberately not attempted (parser work against an unconfirmed node
+   * shape for marginal precision gain). Both are therefore hardcoded UNSAFE unconditionally,
+   * regardless of an `Aggref` elsewhere in the tree — an `Aggref` sibling cannot rescue a subtree
+   * that might independently contain a hidden, matchable `Var`. The same treatment applies once
+   * [depth] is exhausted.
+   *
+   * A fourth, independent leg alongside [foldsToConst]: a NON-`VARIADIC` [PgNodeExpression.FuncExpr]
+   * whose function is [isAlwaysNonNull] (e.g. `concat` — see
+   * [PgCatalogLoader.alwaysNonNullFunctionOids]) is safe regardless of its arguments' nullability,
+   * by that list's own definition — `concat` renders a `null` argument as an empty string, so
+   * null-extending one of its arguments cannot make `concat(a, '-', b)`'s result `null`. This
+   * defers to ordinary [isNonNull] evaluation, which independently reaches the same conclusion via
+   * the identical [isAlwaysNonNull] check in its own [PgNodeExpression.FuncExpr] branch. `concat_ws`
+   * is deliberately NOT on [isAlwaysNonNull]'s list — despite also being non-strict, it is non-null
+   * only when its first argument (the separator) is non-null, so it gets no dedicated leg here and
+   * falls through to the generic aggregate/window domination rule below like any other `FuncExpr`,
+   * where a `Var` in ANY of its argument positions — including the separator — correctly makes it
+   * unsafe; see [PgCatalogLoader.alwaysNonNullFunctionOids]'s KDoc for why this distinction is
+   * load-bearing. The `VARIADIC` exclusion matters for the same reason [isNonNull] excludes it:
+   * `concat(VARIADIC arr)` is `null` when `arr` itself is `null` (verified live on PostgreSQL 16,
+   * 17, and 18) — a `VARIADIC` call gets NO short-circuit here at all and falls through to the
+   * generic rule, where its sole argument (the array — a `Var` for a column, or an `ArrayExpr`
+   * for a literal) is evaluated on its own merits, correctly unsafe if it can be null-extended.
+   * This does NOT extend to a function merely on the (much
+   * larger, STRICT-only) [isNeverNullForNonNullInput] safe-list — that list only proves totality
+   * for NON-NULL arguments, and says nothing about what a strict function does when null-extension
+   * hands it an actual `null`, which is exactly the scenario this whole gate exists to guard
+   * against.
+   *
+   * @param depth remaining recursion budget, mirroring [MAX_EXPRESSION_DEPTH]; returns `false`
+   *   (safe: assume UNSAFE — i.e. possibly null-extended) once exhausted
+   */
+  private fun isSafeFromGroupingSetNullExtension(
+    expression: PgNodeExpression,
+    depth: Int = MAX_EXPRESSION_DEPTH,
+  ): Boolean {
+    if (depth <= 0) return false
+    if (foldsToConst(expression, depth)) return true
+    if (expression is PgNodeExpression.FuncExpr && !expression.isVariadic && isAlwaysNonNull(expression.functionOid)) {
+      return true
+    }
+    return when (expression) {
+      is PgNodeExpression.Aggref, is PgNodeExpression.GroupingFunc -> true
+      is PgNodeExpression.Const -> true
+      is PgNodeExpression.JsonExpr, is PgNodeExpression.Unknown -> false
+      is PgNodeExpression.WindowFunc ->
+        safetyWalkChildren(expression).all { isSafeFromGroupingSetNullExtension(it, depth - 1) }
+
+      else -> {
+        val children = safetyWalkChildren(expression)
+        containsDominatingConstruct(expression, depth) &&
+          children.all { isSafeFromGroupingSetNullExtension(it, depth - 1) }
+      }
+    }
+  }
+
+  /**
+   * Returns `true` if [expression] provably constant-folds by the time PostgreSQL's planner reaches
+   * the grouping-set null-extension substitution — i.e. it is a [PgNodeExpression.Const], or an
+   * IMMUTABLE, non-set-returning function/operator call whose every argument itself [foldsToConst],
+   * or a [PgNodeExpression.RelabelType] (a no-op type reinterpretation, not a function call) over
+   * one, or a [PgNodeExpression.ArrayExpr] whose every element does.
+   *
+   * This matters because PostgreSQL's grouping-set null-extension substitution
+   * (`search_indexed_tlist_for_non_var` in `setrefs.c`) runs at the END of planning and explicitly
+   * refuses to match a `Const` (`if (IsA(node, Const)) return NULL`), while constant folding itself
+   * (`eval_const_expressions`, from `preprocess_expression`) runs EARLY, well before that
+   * substitution. An expression that will fold to a `Const` by the time the substitution runs was
+   * therefore NEVER a candidate for it — safe regardless of whether it contains an
+   * `Aggref`/`GroupingFunc`/`WindowFunc`, unlike the general rule in [isSafeFromGroupingSetNullExtension].
+   *
+   * IMMUTABLE only. A STABLE function — e.g. `date_trunc('month', current_date)`, which depends on
+   * the current date — is NOT constant-folded, survives to become a genuine, matchable
+   * subexpression, and PostgreSQL DOES null-extend it when it matches a grouping key (verified
+   * live). VOLATILE is not safe either — `GROUP BY random()` is legal SQL, and the key-matching
+   * itself is structural (`equal()`), not a volatility check.
+   *
+   * [PgNodeExpression.CoerceViaIo], [PgNodeExpression.CoerceToDomain],
+   * [PgNodeExpression.ArrayCoerceExpr], [PgNodeExpression.RowExpr],
+   * [PgNodeExpression.SqlValueFunction], and [PgNodeExpression.NextValExpr] are deliberately NOT
+   * treated as foldable: none of them expose a function/operator OID this class can check
+   * immutability for (unlike [PgNodeExpression.FuncExpr]/[PgNodeExpression.OpExpr]), so treating any
+   * of them as folding would be an unverified guess. This matters concretely for
+   * [PgNodeExpression.CoerceViaIo]: an I/O-based cast function can itself be STABLE (e.g.
+   * `timestamptz`'s output function depends on the session's `TimeZone` setting).
+   *
+   * @param depth remaining recursion budget, mirroring [MAX_EXPRESSION_DEPTH]; returns `false` (not
+   *   provably folding) once exhausted
+   */
+  private fun foldsToConst(expression: PgNodeExpression, depth: Int = MAX_EXPRESSION_DEPTH): Boolean {
+    if (depth <= 0) return false
+    return when (expression) {
+      is PgNodeExpression.Const -> true
+      is PgNodeExpression.FuncExpr ->
+        isFoldableToConst(expression.functionOid) && expression.arguments.all { foldsToConst(it, depth - 1) }
+
+      is PgNodeExpression.OpExpr ->
+        isFoldableToConst(expression.operatorFunctionOid) &&
+          expression.arguments.all { foldsToConst(it, depth - 1) }
+
+      is PgNodeExpression.RelabelType -> foldsToConst(expression.argument, depth - 1)
+      is PgNodeExpression.ArrayExpr -> expression.elements.all { foldsToConst(it, depth - 1) }
+      else -> false
+    }
+  }
+
+  /**
+   * Returns `true` if [expression] itself, or any descendant reachable via [safetyWalkChildren], is
+   * a [PgNodeExpression.Aggref], [PgNodeExpression.GroupingFunc], or [PgNodeExpression.WindowFunc].
+   *
+   * A pure presence check used by [isSafeFromGroupingSetNullExtension]'s aggregate-domination
+   * requirement — it does not recurse into one of these three node types' own arguments once found,
+   * since finding the node itself already answers the question.
+   */
+  private fun containsDominatingConstruct(expression: PgNodeExpression, depth: Int): Boolean {
+    if (depth <= 0) return false
+    return when (expression) {
+      is PgNodeExpression.Aggref, is PgNodeExpression.GroupingFunc, is PgNodeExpression.WindowFunc -> true
+      else -> safetyWalkChildren(expression).any { containsDominatingConstruct(it, depth - 1) }
+    }
+  }
+
+  /**
+   * Returns the immediate parsed child expressions of [expression] for
+   * [isSafeFromGroupingSetNullExtension] and [containsDominatingConstruct].
+   *
+   * [PgNodeExpression.Var], [PgNodeExpression.Const], [PgNodeExpression.Aggref],
+   * [PgNodeExpression.GroupingFunc], [PgNodeExpression.SqlValueFunction],
+   * [PgNodeExpression.NextValExpr], [PgNodeExpression.JsonExpr], and [PgNodeExpression.Unknown] are
+   * resolved directly by their callers without consulting this method (each is either a genuine
+   * leaf or hardcoded by the lossy-parsing rule), so they return an empty list here defensively
+   * rather than being omitted from the `when`.
+   */
+  private fun safetyWalkChildren(expression: PgNodeExpression): List<PgNodeExpression> = when (expression) {
+    is PgNodeExpression.FuncExpr -> expression.arguments
+    is PgNodeExpression.OpExpr -> expression.arguments
+    is PgNodeExpression.ScalarArrayOpExpr -> expression.arguments
+    is PgNodeExpression.CoalesceExpr -> expression.arguments
+    is PgNodeExpression.NullIfExpr -> expression.arguments
+    is PgNodeExpression.MinMaxExpr -> expression.arguments
+    is PgNodeExpression.WindowFunc -> expression.arguments
+    is PgNodeExpression.SubLink -> listOfNotNull(expression.outerOperand)
+    is PgNodeExpression.CaseExpr ->
+      expression.resultExpressions +
+        listOfNotNull(expression.defaultResult, expression.testExpression) +
+        expression.whenConditions
+
+    is PgNodeExpression.BoolExpr -> expression.arguments
+    is PgNodeExpression.RelabelType -> listOf(expression.argument)
+    is PgNodeExpression.CoerceViaIo -> listOf(expression.argument)
+    is PgNodeExpression.ArrayCoerceExpr -> listOf(expression.argument)
+    is PgNodeExpression.CollateExpr -> listOf(expression.argument)
+    is PgNodeExpression.CoerceToDomain -> listOf(expression.argument)
+    is PgNodeExpression.NullTest -> listOf(expression.argument)
+    is PgNodeExpression.BooleanTest -> listOf(expression.argument)
+    is PgNodeExpression.DistinctExpr -> expression.arguments
+    is PgNodeExpression.ArrayExpr -> expression.elements
+    is PgNodeExpression.RowExpr -> expression.arguments
+    is PgNodeExpression.FieldSelect -> listOf(expression.argument)
+    is PgNodeExpression.JsonIsPredicate -> listOf(expression.argument)
+    is PgNodeExpression.JsonConstructorExpr -> expression.arguments
+    is PgNodeExpression.XmlExpr -> expression.arguments
+    is PgNodeExpression.Var,
+    is PgNodeExpression.Const,
+    is PgNodeExpression.Aggref,
+    is PgNodeExpression.GroupingFunc,
+    is PgNodeExpression.SqlValueFunction,
+    is PgNodeExpression.NextValExpr,
+    is PgNodeExpression.JsonExpr,
+    is PgNodeExpression.Unknown,
+    -> emptyList()
   }
 
   /**
@@ -93,12 +395,47 @@ internal class NodeTreeNullabilityAnalyzer(
 
       is PgNodeExpression.Const -> !expression.isNull
       is PgNodeExpression.FuncExpr ->
-        isAlwaysNonNull(expression.functionOid) ||
-          (
-            isStrict(expression.functionOid) &&
-              isNeverNullForNonNullInput(expression.functionOid) &&
-              expression.arguments.all(recurse)
-            )
+        if (expression.isVariadic) {
+          if (isAlwaysNonNull(expression.functionOid) || isNonNullIffFirstArgumentNonNull(expression.functionOid)) {
+            // VARIADIC passes the array argument itself as one value, not exploded into
+            // elements (see PgNodeExpression.FuncExpr.isVariadic's KDoc) — isAlwaysNonNull's
+            // "regardless of any argument" and isNonNullIffFirstArgumentNonNull's "only the
+            // first argument matters" both assume the ordinary calling form and are unsound
+            // here: concat(VARIADIC arr) and concat_ws(',', VARIADIC arr) are both null when
+            // arr itself is null (verified live on PostgreSQL 16, 17, and 18). Requiring every
+            // argument non-null is sound for both functions in this form (the separator is
+            // still one of the arguments) and preserves real precision (concat_ws(',',
+            // VARIADIC ARRAY['a', NULL]) is 'a', still non-null).
+            expression.arguments.all(recurse)
+          } else {
+            // Deliberately does NOT fall through to the isStrict/isNeverNullForNonNullInput leg
+            // below. That safe-list's "total on non-null input" guarantee (see
+            // PgCatalogLoader.neverNullForNonNullInputOids's KDoc and SafeListSweepTest) was
+            // verified for the ORDINARY, element-wise calling convention. For a VARIADIC call,
+            // "every argument non-null" only means the array Datum itself is non-null —
+            // recurse() on the array (an ArrayExpr) is unconditionally true regardless of NULL
+            // elements inside it (an array container is never NULL merely because one of its
+            // elements is), so that leg would prove nothing about NULL elements even if
+            // reached, and no per-function verification exists for whether an internal NULL
+            // element could still make a safe-listed function return NULL when invoked this
+            // way. Not reachable today — verified empirically that no name on
+            // NEVER_NULL_FUNCTION_SIGNATURES resolves to a `provariadic <> 0` function on
+            // PostgreSQL 16, 17, or 18 — but must not silently start trusting the list the
+            // moment a variadic name is added to it.
+            false
+          }
+        } else {
+          isAlwaysNonNull(expression.functionOid) ||
+            (
+              isNonNullIffFirstArgumentNonNull(expression.functionOid) &&
+                expression.arguments.firstOrNull()?.let(recurse) == true
+              ) ||
+            (
+              isStrict(expression.functionOid) &&
+                isNeverNullForNonNullInput(expression.functionOid) &&
+                expression.arguments.all(recurse)
+              )
+        }
 
       is PgNodeExpression.OpExpr ->
         isStrict(expression.operatorFunctionOid) &&
