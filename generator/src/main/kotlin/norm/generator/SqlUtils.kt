@@ -2726,12 +2726,35 @@ private fun parseOldNewAliasPrologue(dml: String, afterReturningKeyword: Int): P
   val closeParenthesis = findMatchingCloseParenthesis(dml, afterWith)
   if (closeParenthesis < 0) return emptySet<String>() to afterReturningKeyword
   val aliasNames = splitAtTopLevel(dml.substring(afterWith + 1, closeParenthesis), ',')
-    .mapNotNull { entry ->
-      val asIndex = findTopLevelKeyword(entry, "AS")
-      if (asIndex < 0) null else entry.substring(asIndex + 2).trim().trim('"')
-    }
+    .mapNotNull { entry -> parseOldNewAliasName(entry) }
     .toSet()
   return aliasNames to (closeParenthesis + 1)
+}
+
+/**
+ * Extracts the alias name declared after `AS` in one comma-separated entry of a
+ * `RETURNING WITH (OLD AS o, NEW AS n)` prologue (e.g. the `o` in `OLD AS o`), or `null` if
+ * [entry] has no top-level `AS`.
+ *
+ * Whitespace and comments between `AS` and the alias, and trailing the alias before the entry
+ * ends, are skipped rather than captured — PostgreSQL accepts both (`OLD AS o /*c*/`, verified
+ * live on PostgreSQL 18) and neither is part of the declared name. A naive
+ * `substring(asIndex + 2).trim()` captured a trailing comment as part of the alias (`o /*c*/`
+ * instead of `o`), which then never matched any real `RETURNING` item reference and silently
+ * dropped the alias from [OldOrNewReturningAnalysis.forcedColumns].
+ */
+private fun parseOldNewAliasName(entry: String): String? {
+  val asIndex = findTopLevelKeyword(entry, "AS")
+  if (asIndex < 0) return null
+  val afterAs = skipWhitespaceAndComments(entry, asIndex + "AS".length)
+  if (afterAs >= entry.length) return null
+  if (entry[afterAs] == '"') {
+    val afterQuote = skipDoubleQuotedIdentifier(entry, afterAs)
+    return entry.substring(afterAs + 1, (afterQuote - 1).coerceAtLeast(afterAs + 1))
+  }
+  var end = afterAs
+  while (end < entry.length && isIdentifierChar(entry[end])) end++
+  return entry.substring(afterAs, end)
 }
 
 /**

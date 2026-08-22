@@ -3410,6 +3410,16 @@ class SqlUtilsTest {
     }
 
     @Test
+    fun `honors a RETURNING WITH alias prologue with a comment trailing the declared alias`() {
+      // Verified against real PostgreSQL 18: a comment between the declared alias and the
+      // prologue's closing parenthesis (`RETURNING WITH (OLD AS o /*c*/) o.note`) is valid syntax
+      // and does not become part of the alias name — "o" alone refers to OLD, exactly as it would
+      // without the comment.
+      val result = oldOrNewReturningColumns("UPDATE t SET note = 'x' WHERE id = 1 RETURNING WITH (OLD AS o /*c*/) o.note")
+      assertThat(result).isEqualTo(OldOrNewReturningAnalysis(itemCount = 1, forcedColumns = setOf(1)))
+    }
+
+    @Test
     fun `returns no items and no forced columns when there is no RETURNING clause at all`() {
       val result = oldOrNewReturningColumns("DELETE FROM t WHERE id = 1")
       assertThat(result).isEqualTo(OldOrNewReturningAnalysis(itemCount = 0, forcedColumns = emptySet()))
