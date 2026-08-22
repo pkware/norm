@@ -2,7 +2,6 @@ package norm.gradle
 
 import org.gradle.api.Plugin
 import org.gradle.api.Project
-import org.gradle.api.tasks.TaskProvider
 import org.gradle.kotlin.dsl.getByName
 import org.gradle.kotlin.dsl.getByType
 import org.gradle.kotlin.dsl.register
@@ -39,8 +38,6 @@ public class NormPlugin : Plugin<Project> {
     val mainSourceSet: KotlinSourceSet = project.extensions.getByName<KotlinProjectExtension>("kotlin")
       .sourceSets.getByName("main")
 
-    val generateTasks = mutableListOf<TaskProvider<NormGenerateTask>>()
-
     norm.databases.all {
       postgresVersion.convention("18-alpine")
       generateCrud.convention(true)
@@ -56,10 +53,9 @@ public class NormPlugin : Plugin<Project> {
       }
 
       IdeIntegration.registerGeneratedSources(mainSourceSet, generateTask)
-      generateTasks += generateTask
     }
 
-    IdeIntegration.configureGenerationOnIdeSync(project, norm.generateOnIdeSync, generateTasks)
+    IdeIntegration.configureGenerationOnIdeSync(project, norm.generateOnIdeSync)
 
     // Add the runtime dependency to the project
     val sourceSetApiConfigName =
