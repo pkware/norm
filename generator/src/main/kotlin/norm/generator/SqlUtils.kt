@@ -2660,12 +2660,11 @@ internal fun referencesAnyName(body: String, names: Collection<String>): Boolean
  * See [referencesAnyName]'s KDoc for why this function bails conservatively on this form entirely,
  * rather than decoding it.
  */
-private fun isUnicodeEscapeIdentifierStart(body: String, position: Int): Boolean =
-  position + 2 < body.length &&
-    (body[position] == 'u' || body[position] == 'U') &&
-    body[position + 1] == '&' &&
-    body[position + 2] == '"' &&
-    (position == 0 || !isIdentifierChar(body[position - 1]))
+private fun isUnicodeEscapeIdentifierStart(body: String, position: Int): Boolean = position + 2 < body.length &&
+  (body[position] == 'u' || body[position] == 'U') &&
+  body[position + 1] == '&' &&
+  body[position + 2] == '"' &&
+  (position == 0 || !isIdentifierChar(body[position - 1]))
 
 /**
  * Checks whether [text] contains a reference to PostgreSQL 18's `OLD`/`NEW` `RETURNING`

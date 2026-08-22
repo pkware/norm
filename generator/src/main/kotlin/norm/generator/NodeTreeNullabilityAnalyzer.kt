@@ -513,9 +513,10 @@ internal class NodeTreeNullabilityAnalyzer(
     expression: PgNodeExpression.JsonExpr,
     recurse: (PgNodeExpression) -> Boolean,
   ): Boolean = when (expression.op) {
-    PgNodeExpression.JSON_EXISTS_OP -> recurse(expression.argument) && isKnownNonNullJsonExistsErrorBehavior(
-      expression.onError,
-    )
+    PgNodeExpression.JSON_EXISTS_OP -> recurse(expression.argument) &&
+      isKnownNonNullJsonExistsErrorBehavior(
+        expression.onError,
+      )
 
     PgNodeExpression.JSON_SERIALIZE_OP -> recurse(expression.argument)
 
