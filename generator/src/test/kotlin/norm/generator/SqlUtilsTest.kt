@@ -89,6 +89,34 @@ class SqlUtilsTest {
     }
 
     @Test
+    fun `extractAlias bails on an unmatched closing parenthesis instead of splitting off a wrong alias`() {
+      // ") (bogus AS alias" has a stray ")" before any "(" — depth dips negative. Without a floor,
+      // the subsequent "(" brings depth back to exactly 0, so the later "AS" is (wrongly) treated
+      // as a top-level alias boundary, splitting into expression=") (bogus", alias="alias". Bailing
+      // at the first negative dip instead returns the whole item unsplit, with no alias stripped —
+      // an honest "could not parse this" over a confidently wrong split.
+      val result = parseSelectItems("UPDATE t SET x = 1 RETURNING id, ) (bogus AS alias")
+      assertThat(result).containsExactly(
+        SelectItem("id", "id", null),
+        SelectItem(") (bogus AS alias", null, null),
+      )
+    }
+
+    @Test
+    fun `RETURNING WITH OLD-NEW alias prologue is stripped before the first item`() {
+      // PostgreSQL 18's `RETURNING WITH (OLD AS o, NEW AS n) o.x, n.x` — verified live to return
+      // 2 columns. Without stripping the prologue, the first item's expression becomes
+      // "WITH (OLD AS o, NEW AS n) o.x", which parseColumnReference cannot make sense of
+      // (columnName/tableName null), and that unparsed text would be embedded verbatim in
+      // generated KDoc.
+      val result = parseSelectItems("UPDATE t SET x = 1 RETURNING WITH (OLD AS o, NEW AS n) o.x, n.x")
+      assertThat(result).containsExactly(
+        SelectItem("o.x", "x", "o"),
+        SelectItem("n.x", "x", "n"),
+      )
+    }
+
+    @Test
     fun `SELECT with simple columns`() {
       val result = parseSelectItems("SELECT id, name FROM users")
       assertThat(result).containsExactly(
@@ -2861,6 +2889,18 @@ class SqlUtilsTest {
       val result = findTopLevelKeyword("SELECT * €FROM t", "FROM")
       assertThat(result).isEqualTo(-1)
     }
+
+    @Test
+    fun `bails to not-found once an unmatched closing parenthesis drives depth negative`() {
+      // A bare ")" with no matching "(" before it means the input is not the well-formed,
+      // balanced text this scan assumes. Without a floor, depth stays negative until a LATER
+      // unmatched "(" happens to bring it back to exactly 0 — at which point a keyword genuinely
+      // inside that malformed region would wrongly be treated as top-level. Bailing to -1 at the
+      // first negative dip is the safe direction: an honest "not found" over a confidently wrong
+      // match.
+      val result = findTopLevelKeyword(") (x FROM t", "FROM")
+      assertThat(result).isEqualTo(-1)
+    }
   }
 
   @Nested
@@ -3587,6 +3627,25 @@ class SqlUtilsTest {
       assertThat(
         referencesAnyName("MERGE INTO tgt USING pre€ ON pre€.id = tgt.id", listOf("pre")),
       ).isFalse()
+    }
+
+    @Test
+    fun `detects a double-quoted reference whose name contains a doubled-quote escape`() {
+      // A sibling CTE literally named a"b is written "a""b" in SQL. Without collapsing the
+      // doubled "" to a single literal ", the raw extracted content is a""b, which never equals
+      // the real name a"b — a false negative that would leave a dangerous sibling reference
+      // undetected.
+      assertThat(
+        referencesAnyName("MERGE INTO tgt USING \"a\"\"b\" ON \"a\"\"b\".id = tgt.id", listOf("a\"b")),
+      ).isTrue()
+    }
+
+    @Test
+    fun `detects a double-quoted reference at the very end of the body with no closing quote`() {
+      // Unterminated quote: skipDoubleQuotedIdentifier returns body.length, indistinguishable from
+      // a quote that closes exactly on the last character. Naively trimming one trailing character
+      // drops the real final letter of the name ("sibling" -> "siblin"), which then never matches.
+      assertThat(referencesAnyName("MERGE INTO tgt USING \"sibling", listOf("sibling"))).isTrue()
     }
   }
 
@@ -4320,6 +4379,18 @@ class SqlUtilsTest {
     @Test
     fun `returns null for an unbalanced row-form left-hand side`() {
       assertThat(parseSetAssignments("UPDATE t SET (a, b = ('x', 'y') WHERE id = 1")).isNull()
+    }
+
+    @Test
+    fun `returns null for a SET item with an unmatched closing parenthesis before its equals sign`() {
+      // findTopLevelEqualsSign bails to not-found (rather than continuing with a negative depth
+      // that a later unmatched "(" could bring back to 0) once a bare ")" appears with no matching
+      // "(" before it. The subsequent normalizeAssignmentColumnName/row-form validation in
+      // parseSingleSetAssignment independently rejects every left-hand side this scan could ever
+      // wrongly recover into (neither a bare identifier nor a "(...)" spanning the whole
+      // left-hand side can contain a stray ")"), so this asserts the observable, safe outcome
+      // rather than a specific internal index.
+      assertThat(parseSetAssignments("UPDATE t SET ) (bogus = 'x' WHERE id = 1")).isNull()
     }
   }
 

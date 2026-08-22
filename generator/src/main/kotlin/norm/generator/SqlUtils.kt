@@ -309,7 +309,12 @@ private fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> {
   val hasFromClause: Boolean
   if (returningIndex >= 0) {
     afterKeyword = returningIndex + "RETURNING".length
-    itemsStart = afterKeyword
+    // PostgreSQL 18's `RETURNING WITH (OLD AS o, NEW AS n) o.x, n.x` prologue is not part of the
+    // first item's own expression — skip past it via parseOldNewAliasPrologue (the same helper
+    // oldOrNewReturningColumns already uses for nullability) so itemsStart lands on the real first
+    // item, not on `WITH (OLD AS o, NEW AS n) o.x` (which parseColumnReference cannot make sense
+    // of, so it would otherwise be embedded verbatim in generated KDoc as that column's expression).
+    itemsStart = parseOldNewAliasPrologue(window, afterKeyword).second
     // RETURNING clauses are terminal — no FROM keyword follows
     hasFromClause = false
   } else if (selectIndex >= 0) {
@@ -824,6 +829,18 @@ private fun skipOptionalSetQuantifier(sql: String, position: Int): Int {
  * [skipLexicalToken], so an `AS`-like substring or an unbalanced paren inside one of those is
  * not mistaken for a real `AS` keyword or a real parenthesis.
  *
+ * Tracks `(`/`)` only, deliberately NOT `[`/`]` — unlike [splitAtTopLevel] and
+ * [findTopLevelEqualsSign], which share one depth counter across both bracket kinds. Those two
+ * scan RAW, not-yet-split clause text, where a top-level-looking `,`/`=` can sit directly inside an
+ * unsplit `ARRAY[...]` literal (see [splitAtTopLevel]'s own KDoc). [extractAlias] instead only ever
+ * receives an item [parseOutputItemsWithAlias] already split via [splitAtTopLevel] — so any
+ * `[`/`]` pair the item contains is, by construction of that prior split, already self-balanced
+ * and cannot itself hold an unmatched `(`/`)` inside it either. Tracking `[`/`]` here would
+ * therefore never change which `AS` this scan finds: PostgreSQL syntax also never lets a bare `AS`
+ * appear directly inside `[...]` (an array literal holds element expressions, not aliases) without
+ * that `AS` also sitting inside some `(...)` this scan already tracks (`ARRAY[CAST(x AS int)]`, for
+ * instance, has its `AS` inside `CAST(...)`'s own parentheses).
+ *
  * The word-boundary check on either side of a candidate `AS`/`as` uses [isIdentifierChar] — the
  * same predicate [findTopLevelKeyword] and every other keyword scanner in this file use — rather
  * than `Char.isWhitespace()`: PostgreSQL's `AS` keyword only needs to NOT be fused into a longer
@@ -883,7 +900,16 @@ private fun extractAlias(item: String): Pair<String, String?> {
     }
     when (item[i]) {
       '(' -> depth++
-      ')' -> depth--
+      ')' -> {
+        depth--
+        // A bare ')' with no matching '(' means [item] is not the well-formed, already-top-level
+        // expression this scan assumes — see findTopLevelKeyword's own KDoc on why bailing (rather
+        // than clamping depth at 0 and continuing) is the safe direction: an unbalanced scan's
+        // assumptions are already void, so a loud "no alias found" is safer than a depth count that
+        // silently recovers and may misplace a later real AS keyword. [item] is returned unsplit,
+        // the same fallback [extractAlias] already uses when no top-level AS exists at all.
+        if (depth < 0) return item to null
+      }
       'A', 'a' -> if (depth == 0 && i + 1 < item.length && (item[i + 1] == 'S' || item[i + 1] == 's')) {
         // Check it's the keyword AS (not fused into a longer identifier on either side)
         val before = i == 0 || !isIdentifierChar(item[i - 1])
@@ -1012,7 +1038,22 @@ private fun parseColumnReference(expression: String): SelectItem {
  * `valid_from`, `from_date`, `data_set`, and similar ordinary column/table names are never
  * mistaken for the keywords `FROM`/`SET` they merely contain as a substring.
  *
- * @return The index of the keyword, or `-1` if not found at the top level.
+ * A bare `)` with no matching `(` before it (`depth` going negative) means [sql] is not the
+ * well-formed, already-balanced text this scan assumes — BAILS immediately to `-1` (not found)
+ * rather than clamping `depth` at `0` and continuing. Clamping would let the scan silently recover
+ * and keep searching past the unbalanced point, which is not obviously safe either way: for a
+ * search this function's own callers (`parseSelectItems`'s KDoc for one) treat a MISSING keyword
+ * as the dangerous direction — e.g. a missing `FROM` making `parseSelectItems` fall through to
+ * `window.substring(itemsStart)`, taking MORE text as items than it should — a clamp-and-continue
+ * scan could just as easily find some LATER, wrongly-in-scope keyword instead of correctly finding
+ * none at all. An unbalanced scan's assumptions are already void by that point, so returning `-1`
+ * loudly, rather than guessing which recovery is safe, is the same policy [oldOrNewReturningColumns]'s
+ * own caller-side cross-check exists to enforce elsewhere: an honestly-wrong "not found" a caller's
+ * existing fallback already handles, over a confidently-wrong match this function cannot itself
+ * tell apart from a correct one.
+ *
+ * @return The index of the keyword, or `-1` if not found at the top level, INCLUDING when [sql]
+ *   contains an unbalanced closing parenthesis before any top-level match — see above.
  */
 internal fun findTopLevelKeyword(sql: String, keyword: String, startIndex: Int = 0): Int {
   var depth = 0
@@ -1030,6 +1071,7 @@ internal fun findTopLevelKeyword(sql: String, keyword: String, startIndex: Int =
       }
       ')' -> {
         depth--
+        if (depth < 0) return -1
         i++
       }
       else -> {
@@ -1369,6 +1411,49 @@ private val COLUMN_REFERENCE = Regex(
  */
 private fun unescapeQuotedIdentifier(rawQuotedToken: String): String =
   rawQuotedToken.substring(1, rawQuotedToken.length - 1).replace("\"\"", "\"")
+
+/**
+ * Extracts the LOGICAL content of a double-quoted token starting at the `"` at [openQuoteIndex] —
+ * surrounding quotes removed and any doubled `""` escape collapsed to the single literal `"` it
+ * represents, via [unescapeQuotedIdentifier] — mirroring [skipDoubleQuotedIdentifier]'s own
+ * doubled-quote scan but additionally tracking whether a genuine, non-doubled closing `"` was ever
+ * found before [text] ends.
+ *
+ * That tracking matters for an UNTERMINATED quoted identifier (no real closing `"` before [text]
+ * ends): [skipDoubleQuotedIdentifier] returns `text.length` in that case, exactly as it does for a
+ * properly closed identifier ending at the last character of [text] — the two are indistinguishable
+ * from its return value alone. Naively assuming the LAST character of the scanned range is always a
+ * real closing quote (`text.substring(openQuoteIndex + 1, afterQuote - 1)`) is correct for the
+ * terminated case but drops the genuinely-real final content character of an unterminated one. This
+ * function resolves the ambiguity during the SAME scan that decides where the token ends, rather
+ * than reconstructing an answer afterward from indices alone (which, for a run of doubled `""`
+ * pairs immediately preceding the cutoff, cannot reliably tell "properly closed" apart from "the
+ * last doubled pair's second quote happened to land on the final character" after the fact).
+ *
+ * @return the decoded content and the index just past the token — the same contract
+ *   [skipDoubleQuotedIdentifier] has for its own return value, so a caller can resume scanning [text]
+ *   from there exactly as it would after calling that function directly.
+ */
+private fun extractQuotedIdentifierContent(text: String, openQuoteIndex: Int): Pair<String, Int> {
+  var i = openQuoteIndex + 1
+  var closedWithRealQuote = false
+  while (i < text.length) {
+    if (text[i] == '"') {
+      i++
+      if (i < text.length && text[i] == '"') {
+        i++ // doubled "" — an escaped literal quote, not the terminator
+      } else {
+        closedWithRealQuote = true
+        break
+      }
+    } else {
+      i++
+    }
+  }
+  val unterminatedSuffix = if (closedWithRealQuote) "" else "\""
+  val rawToken = text.substring(openQuoteIndex, i) + unterminatedSuffix
+  return unescapeQuotedIdentifier(rawToken) to i
+}
 
 /**
  * A parsed CTE definition from a `WITH` clause.
@@ -2128,7 +2213,14 @@ private fun normalizeAssignmentColumnName(text: String): String? {
  * expression that could itself contain `=` — so the first top-level `=` this scan finds can only
  * ever be the genuine assignment separator.
  *
- * @return The index of the `=` sign, or `-1` if [text] has none at the top level.
+ * A bare closing `)`/`]` with no matching opener before it (`depth` going negative) means [text]
+ * is not the well-formed, already-balanced text this scan assumes — bails immediately to `-1`
+ * (not found) rather than clamping `depth` at `0` and continuing; see [findTopLevelKeyword]'s own
+ * KDoc for why bailing, not clamping, is the safe direction once a scan's balancing assumption is
+ * already broken.
+ *
+ * @return The index of the `=` sign, or `-1` if [text] has none at the top level, INCLUDING when
+ *   [text] contains an unbalanced closing bracket before any top-level `=` — see above.
  */
 private fun findTopLevelEqualsSign(text: String): Int {
   var depth = 0
@@ -2141,7 +2233,10 @@ private fun findTopLevelEqualsSign(text: String): Int {
     }
     when (text[i]) {
       '(', '[' -> depth++
-      ')', ']' -> depth--
+      ')', ']' -> {
+        depth--
+        if (depth < 0) return -1
+      }
       '=' -> if (depth == 0) return i
     }
     i++
@@ -2498,6 +2593,18 @@ internal fun hasNullExtendingConstruct(body: String): Boolean =
  * correctness. No trailing `.` is required after a quoted match — `MERGE INTO tgt USING "pre" ON
  * ...` (a bare relation reference, no column access) must match just as `"pre".id` does.
  *
+ * That "false positive only" claim depends on the quoted content itself being extracted
+ * CORRECTLY, via [extractQuotedIdentifierContent] — a doubled `""` escape inside the quoted text
+ * (a CTE literally named `a"b`, written `"a""b"`) must be collapsed to the single `"` it
+ * represents before comparison, or [names] containing the real name `a"b` would never match the
+ * raw, still-escaped `a""b` this scan would otherwise extract — a FALSE NEGATIVE, not merely lost
+ * precision, and exactly the kind of miss this whole function exists to avoid (a sibling CTE
+ * reference going undetected leaves a column that should be forced nullable as NOT NULL instead).
+ * [extractQuotedIdentifierContent] also resolves an UNTERMINATED quote (no closing `"` before
+ * [body] ends) correctly rather than dropping its last real character — see that function's own
+ * KDoc for why the two cases cannot be told apart from [skipDoubleQuotedIdentifier]'s return value
+ * alone.
+ *
  * Otherwise, [body] is scanned token by token exactly as [referencesOldOrNew] does: any other
  * lexical token (a string literal, a dollar-quoted string, or a comment) is skipped opaquely via
  * [skipLexicalToken] — a name that only appears inside one of those is NOT a real reference — and
@@ -2513,8 +2620,7 @@ internal fun referencesAnyName(body: String, names: Collection<String>): Boolean
   var i = 0
   while (i < body.length) {
     if (body[i] == '"') {
-      val afterQuote = skipDoubleQuotedIdentifier(body, i)
-      val quotedContent = body.substring(i + 1, (afterQuote - 1).coerceAtLeast(i + 1))
+      val (quotedContent, afterQuote) = extractQuotedIdentifierContent(body, i)
       if (names.any { name -> name.equals(quotedContent, ignoreCase = true) }) return true
       i = afterQuote
       continue
