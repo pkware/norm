@@ -2053,6 +2053,157 @@ class QueryAnalysisTest {
       assertThat(query.columns[0].notNull).isFalse()
       assertThat(query.columns[1].notNull).isTrue()
     }
+
+    @Test
+    fun `duplicate concat call that IS the ROLLUP key is nullable in both occurrences`() {
+      // GROUP BY ROLLUP(concat(a, '-')) makes concat(a, '-') itself the grouping key. PostgreSQL's
+      // grouping-set null-extension (setrefs.c) assigns :ressortgroupref to only ONE of the two
+      // syntactically-identical target-list entries (verified live: the first), but its
+      // null-extension matching is STRUCTURAL, not ressortgroupref-keyed — it null-extends every
+      // target-list entry that structurally equals the grouping key, including the duplicate with
+      // ressortgroupref 0. Verified live (PostgreSQL 16 and 17): both x and y are NULL in the
+      // ROLLUP summary row, alongside 'p-'/'p-' and 'q-'/'q-' in the per-group rows. Before this
+      // fix, the isAlwaysNonNull short-circuit for concat wrongly reported y non-null: that
+      // short-circuit only proves concat tolerates a null ARGUMENT (it renders one as an empty
+      // string), which says nothing about the case at hand, where the entire concat(...) call is
+      // itself null-extended wholesale and never evaluated at all.
+      val query = analyzeWithSchema(
+        "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
+        "SELECT concat(a, '-') AS x, concat(a, '-') AS y, count(*) AS c FROM gs_t GROUP BY ROLLUP(concat(a, '-'))",
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `concat over a bare-Var ROLLUP key stays non-null, unlike the identical-expression-as-key case above`() {
+      // GROUP BY ROLLUP(a): the grouping key is the bare column a, NOT concat(a, '-') itself, so
+      // concat(a, '-') is never a candidate for whole-expression substitution — only the nested a
+      // reference can be null-extended, and concat tolerates that (renders it as an empty string).
+      // Verified live (PostgreSQL 16, 17, and 18): 'p-'/'q-' per group, '-' (never NULL) in the
+      // ROLLUP summary row. This is the positive control the fix for the case above must not
+      // over-correct: concat's isAlwaysNonNull short-circuit must still apply here.
+      val query = analyzeWithSchema(
+        "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
+        "SELECT concat(a, '-') AS z, count(*) AS c FROM gs_t GROUP BY ROLLUP(a)",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `duplicate bare Const grouping key stays non-null in the un-ref'd occurrence on PostgreSQL 16 and 17`() {
+      // GROUP BY ROLLUP('ALL') matches the FIRST 'ALL'::text occurrence (l1) by ressortgroupref.
+      // Verified live on EVERY supported version (16, 17, and 18): l1 is NULL, l2 stays 'ALL', in
+      // the ROLLUP summary row — PostgreSQL's structural null-extension (setrefs.c) explicitly
+      // refuses to match a bare Const node at all (see isSafeFromGroupingSetNullExtension's
+      // KDoc), so the un-ref'd duplicate l2 is genuinely never NULL on any version. This pins the
+      // asymmetry groupingKeyExpressions' Const/foldsToConst exclusion depends on — including l2
+      // in that set would wrongly force it nullable.
+      //
+      // On PostgreSQL 18 specifically, Norm's own analysis cannot see this: verified live via
+      // pg_rewrite.ev_action, PostgreSQL 18's parse-analysis phase (not the planner) pre-resolves
+      // BOTH l1 and l2 into the IDENTICAL bare `{VAR :varno 2 :varattno 1 :varnullingrels (2)}`
+      // referencing a synthesized "*GROUP*" RTE, before Norm's analyzer ever inspects the tree —
+      // ressortgroupref (1 for l1, 0 for l2) still differs, but that isn't consulted by the
+      // ordinary Var-nullability check, and the Const-vs-key distinction that rescues l2 on
+      // PostgreSQL 16/17 is resolved later, during planning, which pg_rewrite.ev_action never
+      // reflects. This is a genuine data-availability gap on PostgreSQL 18, not a bug this fix's
+      // groupingKeyExpressions check could close — an accepted over-widening pinned separately
+      // below, not silenced by asserting the same (imprecise) answer here for every version.
+      val query = analyzeWithSchema(
+        "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
+        "SELECT 'ALL'::text AS l1, 'ALL'::text AS l2, count(*) AS c FROM gs_t GROUP BY ROLLUP('ALL'::text)",
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isEqualTo(pgVersion.substringBefore('.').toInt() < 18)
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `duplicate IMMUTABLE-folding call stays non-null in the un-ref'd occurrence on PostgreSQL 16 and 17`() {
+      // upper('a') is IMMUTABLE over a literal argument, so PostgreSQL's early constant folding
+      // (eval_const_expressions, well before setrefs.c's null-extension substitution) reduces
+      // BOTH occurrences to a bare Const('A') before the substitution pass ever runs. Verified
+      // live on EVERY supported version (16, 17, and 18): u1 is NULL, u2 stays 'A', in the ROLLUP
+      // summary row — u2 is genuinely never NULL on any version (unlike a STABLE call over the
+      // same shape, which does NOT fold and IS null-extended in both occurrences — see the
+      // date_trunc case below).
+      //
+      // On PostgreSQL 18 specifically, as with the bare-Const case above, Norm's analysis cannot
+      // see this: its parse-analysis phase pre-resolves both u1 and u2 into the identical bare
+      // "*GROUP*" RTE Var before Norm's analyzer ever runs, independently of whether the original
+      // expression was foldable — an accepted over-widening, verified live and pinned above for
+      // the bare-Const case this shares its root cause with.
+      val query = analyzeWithSchema(
+        "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
+        "SELECT upper('a') AS u1, upper('a') AS u2, count(*) AS c FROM gs_t GROUP BY ROLLUP(upper('a'))",
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isEqualTo(pgVersion.substringBefore('.').toInt() < 18)
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `duplicate STABLE call is null-extended in BOTH occurrences — the sharpest proof matching is structural`() {
+      // date_trunc('month', current_date) is STABLE, not IMMUTABLE, so — unlike upper('a') above —
+      // it survives constant folding and remains a genuine, matchable subexpression when setrefs.c's
+      // null-extension substitution runs. Since that substitution matches STRUCTURALLY rather than
+      // by ressortgroupref, it null-extends d1 (the ref'd occurrence) AND d2 (the un-ref'd
+      // duplicate) alike — this is the same mechanism, applied to a non-Const, non-folding
+      // expression, that the concat bug this fix addresses exploited. Verified live (PostgreSQL 16
+      // and 17): BOTH d1 and d2 are NULL in the ROLLUP summary row.
+      val query = analyzeWithSchema(
+        "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
+        """
+        SELECT date_trunc('month', current_date) AS d1, date_trunc('month', current_date) AS d2, count(*) AS c
+        FROM gs_t
+        GROUP BY ROLLUP(date_trunc('month', current_date))
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `duplicate VOLATILE call is null-extended in both occurrences — matching is structural, not volatility`() {
+      // random() is VOLATILE, yet it is still matched and null-extended in both occurrences —
+      // proving the null-extension substitution is a pure structural-equality check
+      // (PostgreSQL's equal()), never a volatility check that would otherwise justify treating a
+      // VOLATILE call as immune to whole-expression substitution. Verified live (PostgreSQL 16 and
+      // 17): both r1 and r2 are NULL in the ROLLUP summary row, and in the per-group rows, r1 and
+      // r2 hold the SAME value within a row (the executor evaluates the target list once per row,
+      // not once per occurrence).
+      val query = analyzeWithSchema(
+        "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
+        "SELECT random() AS r1, random() AS r2, count(*) AS c FROM gs_t GROUP BY ROLLUP(random())",
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `aggregate domination — count(*) + 1 over a nullable ROLLUP key is never null`() {
+      // count(*) never returns null (it has a non-null initial transition value), and the OpExpr
+      // wrapping it (+ 1) is on the isNeverNullForNonNullInput safe-list, so n is provably
+      // non-null regardless of a itself being nullable in the ROLLUP summary row. Verified live
+      // (PostgreSQL 16 and 17): n is 3 in the summary row, never NULL.
+      val query = analyzeWithSchema(
+        "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
+        "SELECT count(*) + 1 AS n FROM gs_t GROUP BY ROLLUP(a)",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
   }
 
   @Nested
