@@ -17,4 +17,6 @@ public data class Users(
   public val previous_mood: Mood?,
   public val past_moods: Array<Mood?>?,
   public val scores: Array<PositiveInteger?>?,
+  public val placed_at: OrderPlacedAt,
+  public val external_ref: ExternalReference?,
 )

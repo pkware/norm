@@ -10,6 +10,12 @@ SELECT * FROM users WHERE zip_code = ?;
 -- name: getUsersByMood :many
 SELECT * FROM users WHERE current_mood = ?;
 
+-- name: getUsersPlacedAfter :many
+SELECT * FROM users WHERE placed_at > ?;
+
+-- name: getUserByExternalReference :one
+SELECT * FROM users WHERE external_ref = ?;
+
 -- name: createUser :exec
 INSERT INTO users (email, age, zip_code, current_mood, previous_mood)
 VALUES (?, ?, ?, ?, ?);
