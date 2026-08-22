@@ -187,47 +187,39 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
 
   /**
    * Builds the ordered list of schema files to replay, honoring the order in which paths were declared
-   * in [Database.schemas]. Within a directory entry, files are reordered per [orderMigrationFiles]
-   * so that Flyway-versioned migrations replay in the order Flyway itself would apply them, regardless
-   * of the lexical order of their absolute paths.
+   * in [Database.schemas]. Every declared directory entry's Flyway-versioned migrations are reordered
+   * together, globally, per [orderMigrationFiles], so they replay in the order Flyway itself would apply
+   * them across every declared `schemas` directory — not just within the one directory a file happens to
+   * live in.
    *
    * Files are de-duplicated by canonical path, keeping the first occurrence, since a user may declare
    * both a file and its containing directory.
    */
   private fun orderedSchemaFiles(): List<File> {
-    val seenCanonicalPaths = mutableSetOf<String>()
-    val orderedFiles = mutableListOf<File>()
-    val skippedUndoMigrations = mutableListOf<File>()
-
-    fun addIfNew(file: File) {
-      if (seenCanonicalPaths.add(file.canonicalPath)) {
-        orderedFiles.add(file)
-      }
-    }
-
     val projectDirectoryPath = projectDirectory.get().asFile.toPath()
-    for (path in database.schemas.get()) {
+    val schemaSources = database.schemas.get().map { path ->
       val resolved = projectDirectoryPath.resolve(path).normalize().toFile()
       if (resolved.isDirectory) {
         val filesInDirectory = resolved.listFiles { candidate -> candidate.isFile && candidate.name.endsWith(".sql") }
           ?.toList()
           .orEmpty()
-        val order = orderMigrationFiles(filesInDirectory)
-        skippedUndoMigrations.addAll(order.skippedUndoMigrations)
-        order.toApply.forEach(::addIfNew)
+        SchemaSource.Directory(filesInDirectory)
       } else {
-        addIfNew(resolved)
+        SchemaSource.SingleFile(resolved)
       }
     }
 
-    if (skippedUndoMigrations.isNotEmpty()) {
+    val order = orderMigrationFiles(schemaSources)
+
+    if (order.skippedUndoMigrations.isNotEmpty()) {
       logger.warn(
         "Norm: Skipping undo migration(s), which Flyway never applies during a normal migrate: " +
-          skippedUndoMigrations.joinToString(", ") { it.absolutePath },
+          order.skippedUndoMigrations.joinToString(", ") { it.absolutePath },
       )
     }
 
-    return orderedFiles
+    val seenCanonicalPaths = mutableSetOf<String>()
+    return order.toApply.filter { seenCanonicalPaths.add(it.canonicalPath) }
   }
 
   private fun parseQueryFiles(): List<ParsedQuery> = queries.files
