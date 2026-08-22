@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.4.2](https://github.com/pkware/norm/compare/v0.4.1...v0.4.2) (2026-08-22)
+
+
+### Bug Fixes
+
+* analyze chained data-modifying CTEs ([#202](https://github.com/pkware/norm/issues/202)) ([f98bdd9](https://github.com/pkware/norm/commit/f98bdd9b75d2f2a532e39ae8d9d0118839b965aa))
+* analyze data-modifying CTE bodies via join-preserving SELECT conversion, not isolated metadata probes ([#203](https://github.com/pkware/norm/issues/203)) ([d588645](https://github.com/pkware/norm/commit/d58864557b47f8e54c09edc8376703cdaa3e0031))
+* bind and read plain array columns correctly ([#190](https://github.com/pkware/norm/issues/190), [#192](https://github.com/pkware/norm/issues/192)) ([af98e41](https://github.com/pkware/norm/commit/af98e4104fc416c7b5f5ce6a123edfa41949a478))
+* bind plain jsonb parameters with setObject(Types.OTHER) ([0de21d2](https://github.com/pkware/norm/commit/0de21d25c4f301c28715a2ca9f0d7e395a6b832f)), closes [#187](https://github.com/pkware/norm/issues/187)
+* classify a CTE body by the statement its own nested WITH introduces ([#205](https://github.com/pkware/norm/issues/205)) ([9650729](https://github.com/pkware/norm/commit/9650729a0196ccf52ea4a6389b7b8f10dd1a37b2))
+* close the sibling-CTE and grouping-set nullability gaps ([#208](https://github.com/pkware/norm/issues/208)) ([9c5398d](https://github.com/pkware/norm/commit/9c5398d9dd86af108e611503b4a2918031379e8c))
+* **deps:** update dependency com.diffplug.spotless:spotless-plugin-gradle to v8.10.0 ([75938c8](https://github.com/pkware/norm/commit/75938c890b023f01ff2f4ebcc76cdba99575816f))
+* **deps:** update dependency com.diffplug.spotless:spotless-plugin-gradle to v8.9.0 ([81b32c2](https://github.com/pkware/norm/commit/81b32c22ebae5f7a57d9090503bd0722b50d637f))
+* **deps:** update dependency dev.detekt:dev.detekt.gradle.plugin to v2.0.0-alpha.6 ([350a1b4](https://github.com/pkware/norm/commit/350a1b4355902c82de4d0fd033ec9aa5c9001734))
+* **deps:** update dependency io.micronaut.test:micronaut-test-junit5 to v5.1.0 ([3930c77](https://github.com/pkware/norm/commit/3930c77d33b70847a34ce352349b846fcbb70acd))
+* **deps:** update dependency io.micronaut.test:micronaut-test-junit5 to v5.1.1 ([de70baf](https://github.com/pkware/norm/commit/de70baf5ed3f4b8250bd6419f44be5d290565502))
+* **deps:** update dependency org.junit.jupiter:junit-jupiter-params to v6.1.2 ([917f597](https://github.com/pkware/norm/commit/917f5978c7994c4e26f559f88f01208c34ef06d3))
+* **deps:** update dependency org.junit.jupiter:junit-jupiter-params to v6.1.3 ([437e632](https://github.com/pkware/norm/commit/437e63247d8a4d53b92e34416830a2decc0b0893))
+* **deps:** update dependency org.springframework.boot:spring-boot-dependencies to v4.1.1 ([3656cf4](https://github.com/pkware/norm/commit/3656cf46f80854e4f075daa81fe7efe6356a37e3))
+* **deps:** update kotlin monorepo to v2.4.10 ([f1675bb](https://github.com/pkware/norm/commit/f1675bb0024e6bccb290d9be7b0539b73799fc9e))
+* **deps:** update micronaut to v5.1.10 ([170349e](https://github.com/pkware/norm/commit/170349e190457e3218931e349425246789b882f7))
+* **deps:** update micronaut to v5.1.11 ([db2275b](https://github.com/pkware/norm/commit/db2275b634340afea2ed035ed16250f2a6bc0ee4))
+* **deps:** update micronaut to v5.1.12 ([3bb4816](https://github.com/pkware/norm/commit/3bb4816fb73a21dea562816715824353a29be251))
+* **deps:** update micronaut to v5.1.8 ([a82d811](https://github.com/pkware/norm/commit/a82d8112a64f286f8de8dacd765f2bf873744a85))
+* **deps:** update micronaut to v5.1.9 ([1ee3cc4](https://github.com/pkware/norm/commit/1ee3cc4ec7b551e11398e8732c974beea1f1e651))
+* **deps:** update micronautdata to v5.1.0 ([c3cf86c](https://github.com/pkware/norm/commit/c3cf86cb4730b3c91064710df19a63804acee304))
+* **deps:** update micronautdata to v5.1.1 ([ef93391](https://github.com/pkware/norm/commit/ef933911bdcfde697f04caedcc4e2b1a70402b0f))
+* **deps:** update micronautdata to v5.1.2 ([ca9e7ac](https://github.com/pkware/norm/commit/ca9e7acfd9749c24b580812838b6dffaaecc550b))
+* **e2e-tests-micronaut:** declare kspTest so @MicronautTest bean definitions generate ([b13b6ec](https://github.com/pkware/norm/commit/b13b6ecd27a4b929adff4bf283e835628297ff0b))
+* give the SQL scanners lexical awareness of strings, comments, and brackets ([cb1300e](https://github.com/pkware/norm/commit/cb1300e0b2a01174177e9591197876cab39f0dae))
+* give top-level DML RETURNING the same nullability safety net as CTE bodies ([909a11f](https://github.com/pkware/norm/commit/909a11f53286dca3c7adf849c966df45db457568)), closes [#207](https://github.com/pkware/norm/issues/207)
+* locate the main query's output clause, not the first SELECT anywhere ([#212](https://github.com/pkware/norm/issues/212)) ([406f4d9](https://github.com/pkware/norm/commit/406f4d95f5c4b4af35eb467e62e6c95cda91891f))
+* map oid[] to Array&lt;Long?&gt; rather than Array&lt;Blob?&gt; ([#196](https://github.com/pkware/norm/issues/196)) ([1a8bfc5](https://github.com/pkware/norm/commit/1a8bfc5678251ef101a64d341bdb3bf9f4e73976))
+* map Postgres json alongside jsonb ([#191](https://github.com/pkware/norm/issues/191)) ([941d89a](https://github.com/pkware/norm/commit/941d89aa1c6f55383bf55fffc727c16a4dc9f215))
+* match PostgreSQL's identifier character classes per lexical position ([#219](https://github.com/pkware/norm/issues/219)) ([e0ac252](https://github.com/pkware/norm/commit/e0ac252ac327e92079cae63d57e8e4750d4b099d))
+* narrow result nullability using WHERE-clause predicates ([58f9029](https://github.com/pkware/norm/commit/58f90294d46ca5e52feb4f0e23944f0be944f66c)), closes [#186](https://github.com/pkware/norm/issues/186)
+* order schema replay the way Flyway orders migrations ([22f6657](https://github.com/pkware/norm/commit/22f66579fbc9422e1e4b002f66ebc3f5172d365a))
+* quote the nullability stub's column aliases ([#204](https://github.com/pkware/norm/issues/204)) ([01286ad](https://github.com/pkware/norm/commit/01286ad102f3b75f3a90b2394c1415e2da39f3ec))
+* recognize a star by its trailing alias, not by enumerating what may precede it ([#215](https://github.com/pkware/norm/issues/215)) ([e500f3c](https://github.com/pkware/norm/commit/e500f3c6554446448539ad6ff426b8883b693852))
+* resolve [@property](https://github.com/property) provenance through CTE bodies, correct-or-silent ([b41b813](https://github.com/pkware/norm/commit/b41b8137f158a8feaaa1706f19c17b2bd2dce78e)), closes [#229](https://github.com/pkware/norm/issues/229)
+* resolve RETURNING nullability against SET-assigned values ([#228](https://github.com/pkware/norm/issues/228)) ([431126b](https://github.com/pkware/norm/commit/431126b6f179d6ef357c2ff2bbdd1d6cb4c7301a))
+* resolve unknown-nullability RETURNING columns by probing the target relation ([#226](https://github.com/pkware/norm/issues/226)) ([0769c9a](https://github.com/pkware/norm/commit/0769c9ac4a6b0a7e6c42570124949005e16c094f))
+* return a correctly sized array from batch overloads ([#189](https://github.com/pkware/norm/issues/189)) ([db3d420](https://github.com/pkware/norm/commit/db3d420f72814e41bc58e4f8f9dc135bba552b86))
+
 ## [0.4.1](https://github.com/pkware/norm/compare/v0.4.0...v0.4.1) (2026-07-09)
 
 
