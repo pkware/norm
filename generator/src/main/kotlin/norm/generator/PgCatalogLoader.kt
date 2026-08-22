@@ -1157,33 +1157,75 @@ internal class PgCatalogLoader(private val connection: Connection) {
       .map { entry -> !analyzer.isNonNull(entry.expression) }
   }
 
+  /**
+   * Analyzes a `UNION`/`UNION ALL`/`INTERSECT`/`EXCEPT` [queryBlock] branch-by-branch and combines
+   * each branch's per-column nullability with OR: a column is nullable in the combined result if
+   * ANY branch can produce `null` for it.
+   *
+   * A `WITH RECURSIVE` CTE's recursive term(s) reference the CTE by name ([cteName]) — resolved by
+   * [buildCteBodyAnalyzer] via `previouslyResolved` — creating a genuine fixpoint problem: the
+   * recursive term's own nullability depends on the CTE's OWN combined nullability, which this
+   * function is what computes. PostgreSQL requires the FIRST branch (the seed/non-recursive term)
+   * to never reference the CTE itself, so it alone is computed once, outside the loop, as a known
+   * starting point. Every subsequent branch (there is always exactly one recursive term for a
+   * `WITH RECURSIVE` CTE, but this handles a plain multi-branch `UNION` identically) is then
+   * re-analyzed, feeding back the CURRENT combined result as [cteName]'s own nullability, and the
+   * combined result is recomputed — repeated until a pass changes nothing.
+   *
+   * This converges because the per-column nullability lattice (`false` = NOT NULL, `true` =
+   * nullable, ordered `false < true`) is monotone under this loop's own update rule: OR-combining
+   * MORE branch results (now including a possibly-wider self-reference) can only ever ADD `true`
+   * bits, never remove one. Starting from the seed's own (fixed, correct) nullability — the
+   * narrowest value the CTE's self-reference could possibly have — and iterating a
+   * monotone-widening step over a `columnCount`-bit lattice reaches its fixpoint in at most
+   * `columnCount + 1` passes (each pass either flips at least one more bit `false → true`, or
+   * changes nothing and the loop stops), which the `while` condition below checks directly rather
+   * than trusting an iteration-count bound alone.
+   *
+   * @return `null` if [queryBlock] has no analyzable subquery branches at all, or if the seed
+   *   branch itself could not be analyzed (an empty result — see [extractColumnNullability]'s
+   *   contract). Otherwise, one nullability value per output column, in `SELECT` order.
+   */
   private fun analyzeSetOperationBranches(
     queryBlock: String,
     previouslyResolved: Map<String, List<Boolean>>,
     cteName: String,
     applyQualNarrowing: Boolean = true,
   ): List<Boolean>? {
-    val subqueryRangeTable = nodeTreeParser.parseSubqueryRangeTable(queryBlock)
-    if (subqueryRangeTable.isEmpty()) return null
-    var seedResult: List<Boolean>? = null
-    val branchResults = mutableListOf<List<Boolean>>()
-    for ((_, branchBlock) in subqueryRangeTable) {
-      val resolved = if (seedResult != null) {
-        previouslyResolved + (cteName to seedResult)
-      } else {
-        previouslyResolved
+    val subqueryBranches = nodeTreeParser.parseSubqueryRangeTable(queryBlock).values.toList()
+    if (subqueryBranches.isEmpty()) return null
+
+    // The seed (first) branch of a recursive CTE structurally cannot reference the CTE itself —
+    // PostgreSQL rejects a self-reference in the non-recursive term — so its nullability never
+    // depends on the fixpoint loop below and is computed exactly once.
+    val seedBlock = subqueryBranches.first()
+    val seedAnalyzer = buildCteBodyAnalyzer(seedBlock, previouslyResolved, applyQualNarrowing)
+    val seedResult = seedAnalyzer.extractColumnNullability(seedBlock)
+    if (seedResult.isEmpty()) return null
+
+    val otherBranches = subqueryBranches.drop(1)
+    if (otherBranches.isEmpty()) return seedResult
+
+    // Bounded at columnCount + 1 passes — the maximum this monotone-widening loop can take to
+    // reach its fixpoint (see this function's own KDoc for the termination argument) — rather
+    // than trusting that argument alone to keep this loop from ever running forever.
+    var combined = seedResult
+    var previous: List<Boolean>?
+    var remainingPasses = seedResult.size + 1
+    do {
+      previous = combined
+      val resolvedWithSelfReference = previouslyResolved + (cteName to combined)
+      val branchResults = mutableListOf(seedResult)
+      for (branchBlock in otherBranches) {
+        val branchAnalyzer = buildCteBodyAnalyzer(branchBlock, resolvedWithSelfReference, applyQualNarrowing)
+        val result = branchAnalyzer.extractColumnNullability(branchBlock)
+        if (result.isNotEmpty()) branchResults.add(result)
       }
-      val branchAnalyzer = buildCteBodyAnalyzer(branchBlock, resolved, applyQualNarrowing)
-      val result = branchAnalyzer.extractColumnNullability(branchBlock)
-      if (result.isEmpty()) continue
-      branchResults.add(result)
-      if (seedResult == null) seedResult = result
-    }
-    if (branchResults.isEmpty()) return null
-    val columnCount = branchResults.maxOf { it.size }
-    return (0 until columnCount).map { col ->
-      branchResults.any { it.getOrElse(col) { true } }
-    }
+      val columnCount = branchResults.maxOf { it.size }
+      combined = (0 until columnCount).map { col -> branchResults.any { it.getOrElse(col) { true } } }
+      remainingPasses--
+    } while (combined != previous && remainingPasses > 0)
+    return combined
   }
 
   /**

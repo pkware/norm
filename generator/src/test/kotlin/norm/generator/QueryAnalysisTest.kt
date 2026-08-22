@@ -2331,6 +2331,31 @@ class QueryAnalysisTest {
     }
 
     @Test
+    fun `a recursive CTE column that only becomes nullable through later iterations is reported nullable`() {
+      // Verified live on PostgreSQL: this query produces rows 1|1, 1|<NULL>, <NULL>|<NULL> — "n"
+      // IS genuinely nullable, even though the seed term's own "n" (1) is NOT NULL. Analyzing the
+      // recursive term ("SELECT m, NULL::int FROM r WHERE n < 5") only ONCE against the SEED's
+      // nullability (n=NOT NULL, m=NOT NULL) misses this: the recursive term's own "n" column reads
+      // "m" from the PREVIOUS iteration, which becomes nullable starting at the second iteration
+      // (its own second column is a literal NULL) — a fixpoint over the whole recursion is required
+      // to see that "m" (and therefore "n") widens to nullable.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL)",
+        """
+        WITH RECURSIVE r(n, m) AS (
+          SELECT 1, 1
+          UNION ALL
+          SELECT m, NULL::int FROM r WHERE n < 5
+        )
+        SELECT n, m FROM r
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
     fun `multiple CTEs`() {
       val query = analyzeWithSchema(
         "CREATE TABLE d (id INT NOT NULL, name TEXT NOT NULL); CREATE TABLE e (id INT NOT NULL, d_id INT NOT NULL, name TEXT NOT NULL)",
