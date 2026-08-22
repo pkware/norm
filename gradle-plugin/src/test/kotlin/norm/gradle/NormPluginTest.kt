@@ -479,7 +479,7 @@ class NormPluginTest {
     val schemaDir = projectDir.resolve("migrations")
     Files.createDirectories(schemaDir)
     schemaDir.resolve("V001__create_author.sql").writeText(
-      "CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);",
+      AUTHOR_TABLE_SCHEMA_SQL,
     )
 
     val queries = projectDir.resolve("queries.sql")
@@ -525,7 +525,7 @@ class NormPluginTest {
     val migrationDir = projectDir.resolve("migrations")
     Files.createDirectories(migrationDir)
     migrationDir.resolve("V001__author.sql").writeText(
-      "CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);",
+      AUTHOR_TABLE_SCHEMA_SQL,
     )
 
     val queries = projectDir.resolve("queries.sql")
@@ -571,7 +571,7 @@ class NormPluginTest {
     val schemaDir = projectDir.resolve("migrations")
     Files.createDirectories(schemaDir)
     schemaDir.resolve("V001__create_author.sql").writeText(
-      "CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);",
+      AUTHOR_TABLE_SCHEMA_SQL,
     )
 
     val queries = projectDir.resolve("queries.sql")
@@ -618,7 +618,7 @@ class NormPluginTest {
     val schemaDir = projectDir.resolve("migrations")
     Files.createDirectories(schemaDir)
     schemaDir.resolve("V001__create_author.sql").writeText(
-      "CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);",
+      AUTHOR_TABLE_SCHEMA_SQL,
     )
     schemaDir.resolve("README.md").writeText("This directory contains migrations.")
 
@@ -664,7 +664,7 @@ class NormPluginTest {
     val schemaDir = projectDir.resolve("migrations")
     Files.createDirectories(schemaDir)
     schemaDir.resolve("V2__create_author.sql").writeText(
-      "CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);",
+      AUTHOR_TABLE_SCHEMA_SQL,
     )
     schemaDir.resolve("V10__add_email.sql").writeText(
       "ALTER TABLE author ADD COLUMN email text;",
@@ -714,7 +714,7 @@ class NormPluginTest {
     // Named so that lexically-by-absolute-path sorting would place "migrations/..." before
     // "zz_base.sql", running the ALTER TABLE before the CREATE TABLE it depends on.
     val baseSchema = projectDir.resolve("zz_base.sql")
-    baseSchema.writeText("CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);")
+    baseSchema.writeText(AUTHOR_TABLE_SCHEMA_SQL)
 
     val migrationDir = projectDir.resolve("migrations")
     Files.createDirectories(migrationDir)
@@ -755,6 +755,60 @@ class NormPluginTest {
   }
 
   @Test
+  fun `a repeatable migration in an earlier schemas entry runs after a versioned migration in a later entry`() {
+    val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
+    project.setupSettingsOnly()
+
+    // Regression case for per-entry (rather than global) ordering: the first directory's repeatable
+    // migration depends on a table created by the second directory's versioned migration. Per-entry
+    // ordering applied the first directory's repeatable migration right after that directory's own
+    // (empty) versioned-migration list, before the second directory was even considered — running the
+    // view creation before the table it selects from existed.
+    val firstDirectory = projectDir.resolve("views")
+    Files.createDirectories(firstDirectory)
+    firstDirectory.resolve("R__author_view.sql").writeText(
+      "CREATE VIEW author_view AS SELECT * FROM author;",
+    )
+
+    val secondDirectory = projectDir.resolve("migrations")
+    Files.createDirectories(secondDirectory)
+    secondDirectory.resolve("V1__create_author.sql").writeText(
+      "CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);",
+    )
+
+    val queries = projectDir.resolve("queries.sql")
+    queries.writeText(
+      """
+      -- name: getAll :many
+      SELECT * FROM author_view;
+      """.trimIndent(),
+    )
+
+    project.buildFile.writeText(
+      """
+      plugins {
+        kotlin("jvm")
+        id("com.pkware.norm")
+      }
+
+      norm {
+        databases {
+          create("Test") {
+            packageName = "example"
+            schemas.addAll("$firstDirectory", "$secondDirectory")
+            queries.addAll("$queries")
+            generateCrud = false
+          }
+        }
+      }
+      """.trimIndent(),
+    )
+
+    val result = project.gradle("normGenerateTest").build()
+    assertThat(result.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+  }
+
+  @Test
   fun `a plain file that a versioned migration depends on is not reordered ahead of it`() {
     val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
     project.setupSettingsOnly()
@@ -765,7 +819,7 @@ class NormPluginTest {
     val schemaDir = projectDir.resolve("migrations")
     Files.createDirectories(schemaDir)
     schemaDir.resolve("Base.sql").writeText(
-      "CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);",
+      AUTHOR_TABLE_SCHEMA_SQL,
     )
     schemaDir.resolve("V1__add_email.sql").writeText(
       "ALTER TABLE author ADD COLUMN email text;",
@@ -815,7 +869,7 @@ class NormPluginTest {
     val schemaDir = projectDir.resolve("migrations")
     Files.createDirectories(schemaDir)
     schemaDir.resolve("V1__create_author.sql").writeText(
-      "CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);",
+      AUTHOR_TABLE_SCHEMA_SQL,
     )
     schemaDir.resolve("U1__undo.sql").writeText("DROP TABLE author;")
 
@@ -865,7 +919,7 @@ class NormPluginTest {
     val schemaDir = projectDir.resolve("migrations")
     Files.createDirectories(schemaDir)
     schemaDir.resolve("V1__create_author.sql").writeText(
-      "CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);",
+      AUTHOR_TABLE_SCHEMA_SQL,
     )
     val undoFile = schemaDir.resolve("U1__undo.sql")
     undoFile.writeText("DROP TABLE author;")

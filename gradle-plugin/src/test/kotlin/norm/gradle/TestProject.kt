@@ -11,6 +11,13 @@ import kotlin.io.path.isRegularFile
 import kotlin.io.path.writeText
 
 /**
+ * Minimal `author` table DDL shared by tests that need a known, simple schema without exercising any
+ * particular SQL feature.
+ */
+internal const val AUTHOR_TABLE_SCHEMA_SQL: String =
+  "CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);"
+
+/**
  * Sets up a Gradle test project configured to use the Norm plugin with a specific scenario.
  *
  * The project uses Gradle's composite build feature to substitute the published `runtime` artifact
@@ -184,11 +191,7 @@ class TestProject(private val projectDir: Path, private val scenarioDirectory: P
     projectDir.resolve("settings.gradle.kts").writeText(settingsContent)
   }
 
-  fun gradle(vararg tasks: String): GradleRunner = GradleRunner.create()
-    .withProjectDir(projectDir.toFile())
-    .withArguments(*tasks)
-    .withPluginClasspath()
-    .forwardOutput()
+  fun gradle(vararg tasks: String): GradleRunner = gradleRunner(projectDir, *tasks)
 
   companion object {
     val ROOT_NORM_PROJECT_PATH: Path = Path.of("..").normalize().toAbsolutePath()
@@ -203,5 +206,16 @@ class TestProject(private val projectDir: Path, private val scenarioDirectory: P
      * `@Execution(ExecutionMode.SAME_THREAD)` to serialize their own test methods internally.
      */
     const val COMPOSITE_BUILD_RESOURCE_LOCK: String = "norm-composite-build"
+
+    /**
+     * Builds a [GradleRunner] against [projectDir] with the arguments and plugin classpath every test in
+     * this module needs. Shared so that tests which manage their own project directory (rather than going
+     * through a [TestProject] instance) don't each declare their own, identical builder.
+     */
+    fun gradleRunner(projectDir: Path, vararg tasks: String): GradleRunner = GradleRunner.create()
+      .withProjectDir(projectDir.toFile())
+      .withArguments(*tasks)
+      .withPluginClasspath()
+      .forwardOutput()
   }
 }
