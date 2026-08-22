@@ -6185,6 +6185,65 @@ class QueryAnalysisTest {
     }
 
     @Test
+    fun `a view column backed by two same-named source columns is nullable if either source is nullable`() {
+      // "val" is SELECTed only from "b" (nullable), but the JOIN condition ALSO references "a.val"
+      // (NOT NULL) — PostgreSQL's pg_depend records a normal dependency for EVERY source column the
+      // view's definition touches anywhere, not just the ones that feed a specific output column, so
+      // matching those dependency rows to a view column purely BY NAME (as this loader does) sees
+      // both "a.val" and "b.val" as candidate sources for the single output column "val". Verified
+      // live: this exact schema produces two pg_depend rows for "v.val" — (b.val, notNull=false) and
+      // (a.val, notNull=true). loadViewColumnNullability must apply the same any-nullable-source-wins
+      // reduction the relid-keyed viewColumnNotNullByRelidAndAttnum already does, not let the NOT
+      // NULL row win regardless of arrival order.
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          it.execute(
+            """
+            CREATE TABLE a (id INT NOT NULL, val TEXT NOT NULL);
+            CREATE TABLE b (id INT NOT NULL, val TEXT);
+            CREATE VIEW v AS SELECT b.val FROM a JOIN b ON a.val = b.val
+            """.trimIndent(),
+          )
+        }
+        try {
+          val catalogLoader = PgCatalogLoader(connection)
+          val nonNull = catalogLoader.loadViewColumnNullability(schemaName)
+          assertThat(nonNull.contains("v.val")).isFalse()
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    @Test
+    fun `a view column backed by two same-named NOT NULL source columns stays NOT NULL`() {
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          it.execute(
+            """
+            CREATE TABLE a (id INT NOT NULL, val TEXT NOT NULL);
+            CREATE TABLE b (id INT NOT NULL, val TEXT NOT NULL);
+            CREATE VIEW v AS SELECT b.val FROM a JOIN b ON a.val = b.val
+            """.trimIndent(),
+          )
+        }
+        try {
+          val catalogLoader = PgCatalogLoader(connection)
+          val nonNull = catalogLoader.loadViewColumnNullability(schemaName)
+          assertThat(nonNull.contains("v.val")).isTrue()
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    @Test
     fun `materialized view excluded from outer join analysis`() {
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
