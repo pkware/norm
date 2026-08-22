@@ -2605,6 +2605,14 @@ internal fun hasNullExtendingConstruct(body: String): Boolean =
  * KDoc for why the two cases cannot be told apart from [skipDoubleQuotedIdentifier]'s return value
  * alone.
  *
+ * A PostgreSQL Unicode-escape double-quoted identifier (`U&"..."`, e.g. `U&"d\0061ta"` for
+ * `data` — verified live) is never decoded and compared: its raw, still-escaped quoted content
+ * would not match a plain name even when the escape decodes to it, a false negative in the
+ * dangerous direction. Rather than decode the escape, [isUnicodeEscapeIdentifierStart] bails
+ * conservatively — this function returns `true` the moment it sees a `U&"` token anywhere in
+ * [body], regardless of [names] — since a false positive here only costs precision, exactly this
+ * function's own intended tradeoff, while a false negative would not.
+ *
  * Otherwise, [body] is scanned token by token exactly as [referencesOldOrNew] does: any other
  * lexical token (a string literal, a dollar-quoted string, or a comment) is skipped opaquely via
  * [skipLexicalToken] — a name that only appears inside one of those is NOT a real reference — and
@@ -2625,6 +2633,7 @@ internal fun referencesAnyName(body: String, names: Collection<String>): Boolean
       i = afterQuote
       continue
     }
+    if (isUnicodeEscapeIdentifierStart(body, i)) return true
     val afterToken = skipLexicalToken(body, i)
     if (afterToken != i) {
       i = afterToken
@@ -2640,6 +2649,23 @@ internal fun referencesAnyName(body: String, names: Collection<String>): Boolean
   }
   return false
 }
+
+/**
+ * True if [body] contains a PostgreSQL Unicode-escape double-quoted identifier (`U&"..."`)
+ * starting at [position] — a case-insensitive `U`, immediately (no whitespace) followed by `&`,
+ * immediately followed by the opening `"`, at a word boundary (not itself part of a longer
+ * identifier, e.g. the `u` ending `menu`). Verified live: `U & "x"` (with a space before `&`) is a
+ * syntax error, so requiring the three characters adjacent is not an over-narrow guess.
+ *
+ * See [referencesAnyName]'s KDoc for why this function bails conservatively on this form entirely,
+ * rather than decoding it.
+ */
+private fun isUnicodeEscapeIdentifierStart(body: String, position: Int): Boolean =
+  position + 2 < body.length &&
+    (body[position] == 'u' || body[position] == 'U') &&
+    body[position + 1] == '&' &&
+    body[position + 2] == '"' &&
+    (position == 0 || !isIdentifierChar(body[position - 1]))
 
 /**
  * Checks whether [text] contains a reference to PostgreSQL 18's `OLD`/`NEW` `RETURNING`
