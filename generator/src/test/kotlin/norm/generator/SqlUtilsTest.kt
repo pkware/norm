@@ -89,6 +89,20 @@ class SqlUtilsTest {
     }
 
     @Test
+    fun `RETURNING WITH OLD-NEW alias prologue is stripped before the first item`() {
+      // PostgreSQL 18's `RETURNING WITH (OLD AS o, NEW AS n) o.x, n.x` — verified live to return
+      // 2 columns. Without stripping the prologue, the first item's expression becomes
+      // "WITH (OLD AS o, NEW AS n) o.x", which parseColumnReference cannot make sense of
+      // (columnName/tableName null), and that unparsed text would be embedded verbatim in
+      // generated KDoc.
+      val result = parseSelectItems("UPDATE t SET x = 1 RETURNING WITH (OLD AS o, NEW AS n) o.x, n.x")
+      assertThat(result).containsExactly(
+        SelectItem("o.x", "x", "o"),
+        SelectItem("n.x", "x", "n"),
+      )
+    }
+
+    @Test
     fun `SELECT with simple columns`() {
       val result = parseSelectItems("SELECT id, name FROM users")
       assertThat(result).containsExactly(
