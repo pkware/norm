@@ -1,6 +1,7 @@
 package norm.generator
 
 import com.squareup.kotlinpoet.ARRAY
+import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
@@ -332,6 +333,22 @@ internal class JsonSqlMappable(private val notNull: Boolean) : SqlMappable {
  * @property kotlinType The KotlinPoet [TypeName] for the Kotlin type that JDBC delivers this value as
  *   (e.g., `String` for text/varchar, `Int` for int4). This is the wire type used for adapter type parameters
  *   and domain value class properties.
+ * @property getterClassHint When non-`null`, the read is generated as `getObject(index, X::class.java)`
+ *   (where `X` is [getterClassHint]) instead of `getterName(index)`. Required for `java.time` types
+ *   (`LocalDate`, `LocalTime`, `OffsetTime`, `LocalDateTime`, `OffsetDateTime`): pgjdbc's plain
+ *   `getObject(int)` returns the legacy `java.sql.Date`/`Time`/`Timestamp` for these columns, not the
+ *   `java.time` type — only the two-argument, class-qualified overload does (verified against pgjdbc
+ *   42.7.13's `PgResultSet.getObject(int, Class)`, which special-cases exactly these five classes).
+ *   `null` for every type where a plain `getterName(index)` call already returns [kotlinType] directly
+ *   (including `uuid`, whose plain `getObject(int)` already returns `java.util.UUID` — verified against
+ *   pgjdbc's `PgResultSet.internalGetObject`, which special-cases the Postgres `uuid` type by name).
+ * @property convertOffsetDateTimeToInstant When `true`, the wire value read via [getterClassHint]
+ *   (always [OffsetDateTime] in this case) is converted with `.toInstant()` after reading, and a
+ *   [kotlinType] ([Instant]) value is converted back with `OffsetDateTime.ofInstant(value,
+ *   ZoneOffset.UTC)` before writing. Set only for `timestamptz`, whose wire representation
+ *   ([OffsetDateTime]) differs from the Kotlin representation the non-domain scalar path uses
+ *   ([Instant], see [InstantSqlMappable]) — every other type's wire and Kotlin representations are
+ *   the same type, so this is `false` for them.
  */
 internal data class JdbcTypeInfo(
   val getterName: String,
@@ -340,6 +357,8 @@ internal data class JdbcTypeInfo(
   val sqlTypeConstant: String,
   val useSqlTypeHint: Boolean = false,
   val kotlinType: TypeName,
+  val getterClassHint: ClassName? = null,
+  val convertOffsetDateTimeToInstant: Boolean = false,
 )
 
 /**
@@ -391,11 +410,10 @@ internal class AdaptedTypeSqlMappable(
       } else {
         { index, parameterName ->
           CodeBlock.of(
-            "%N(%L, %N.encode(%L))",
+            "%N(%L, %L)",
             jdbcTypeInfo.setterName,
             index,
-            adapterPropertyName,
-            parameterName,
+            encodedValueExpression(parameterName),
           )
         }
       }
@@ -417,11 +435,11 @@ internal class AdaptedTypeSqlMappable(
       } else {
         { index, parameterName ->
           CodeBlock.of(
-            "%L?.let { %N(%L, %N.encode(it)) } ?: setNull(%L, %T.%N)",
+            "%L?.let { %N(%L, %L) } ?: setNull(%L, %T.%N)",
             parameterName,
             jdbcTypeInfo.setterName,
             index,
-            adapterPropertyName,
+            encodedValueExpression(CodeBlock.of("it")),
             index,
             Types::class,
             jdbcTypeInfo.sqlTypeConstant,
@@ -432,26 +450,68 @@ internal class AdaptedTypeSqlMappable(
 
   override val resultSetAction: (index: Int) -> CodeBlock
     get() = if (notNull) {
-      { index -> CodeBlock.of("%N.decode(%N(%L))", adapterPropertyName, jdbcTypeInfo.getterName, index) }
+      { index -> CodeBlock.of("%N.decode(%L)", adapterPropertyName, readExpression(index, nullable = false)) }
     } else if (jdbcTypeInfo.isPrimitive) {
       { index ->
         CodeBlock.of(
-          "%N(%L).takeUnless { wasNull() }?.let { %N.decode(it) }",
-          jdbcTypeInfo.getterName,
-          index,
+          "%L.takeUnless { wasNull() }?.let { %N.decode(it) }",
+          rawReadExpression(index),
           adapterPropertyName,
         )
       }
     } else {
       { index ->
         CodeBlock.of(
-          "%N(%L)?.let { %N.decode(it) }",
-          jdbcTypeInfo.getterName,
-          index,
+          "%L?.let { %N.decode(it) }",
+          readExpression(index, nullable = true),
           adapterPropertyName,
         )
       }
     }
+
+  /**
+   * The encoded, wire-ready form of [valueExpression] (an already-non-null Kotlin value of
+   * [applicationTypeName]'s underlying domain/adapter base type): `adapter.encode(value)`, or — only
+   * when [JdbcTypeInfo.convertOffsetDateTimeToInstant] is set — that same encode call converted from
+   * [Instant] to [OffsetDateTime], since `timestamptz`'s wire representation is [OffsetDateTime] but
+   * its Kotlin representation ([kotlinType][JdbcTypeInfo.kotlinType]) is [Instant]. See
+   * [JdbcTypeInfo.convertOffsetDateTimeToInstant]'s KDoc.
+   */
+  private fun encodedValueExpression(valueExpression: CodeBlock): CodeBlock {
+    val encoded = CodeBlock.of("%N.encode(%L)", adapterPropertyName, valueExpression)
+    return if (jdbcTypeInfo.convertOffsetDateTimeToInstant) {
+      CodeBlock.of("%T.ofInstant(%L, %T.UTC)", OffsetDateTime::class, encoded, ZoneOffset::class)
+    } else {
+      encoded
+    }
+  }
+
+  /**
+   * The raw JDBC read at [index]: `getterName(index)`, or — when [JdbcTypeInfo.getterClassHint] is
+   * set — `getObject(index, X::class.java)`. See [JdbcTypeInfo.getterClassHint]'s KDoc for why some
+   * types need the class-qualified form.
+   */
+  private fun rawReadExpression(index: Int): CodeBlock = if (jdbcTypeInfo.getterClassHint != null) {
+    CodeBlock.of("%N(%L, %T::class.java)", jdbcTypeInfo.getterName, index, jdbcTypeInfo.getterClassHint)
+  } else {
+    CodeBlock.of("%N(%L)", jdbcTypeInfo.getterName, index)
+  }
+
+  /**
+   * [rawReadExpression] converted to [JdbcTypeInfo.kotlinType] — only [JdbcTypeInfo.convertOffsetDateTimeToInstant]
+   * types need a conversion, applied as a safe call (`?.toInstant()`) when [nullable] so a `NULL`
+   * column value stays `null` rather than throwing on the safe-call receiver.
+   */
+  private fun readExpression(index: Int, nullable: Boolean): CodeBlock {
+    val raw = rawReadExpression(index)
+    return if (!jdbcTypeInfo.convertOffsetDateTimeToInstant) {
+      raw
+    } else if (nullable) {
+      CodeBlock.of("%L?.toInstant()", raw)
+    } else {
+      CodeBlock.of("%L.toInstant()", raw)
+    }
+  }
 }
 
 /**
