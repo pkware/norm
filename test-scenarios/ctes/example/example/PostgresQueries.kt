@@ -246,4 +246,38 @@ public class PostgresQueries(
     name: String,
     description_upper: String,
   ) -> T): Many<T> = updateParentReturningDescriptionUpper(id, mapper, driver::queryMany)
+
+  private fun <T : Any, Return> deleteParentReturningQuotedDescriptionUpperViaCte(
+    id: UUID,
+    mapper: (
+      id: UUID,
+      name: String,
+      descriptionUpper: String?,
+    ) -> T,
+    processor: ManyProcessor<T, Return>,
+  ): Return {
+    val sql = """
+        |WITH deleted_parent AS (
+        |  DELETE FROM parent WHERE id = ? RETURNING id, name, UPPER(description) AS "descriptionUpper"
+        |)
+        |SELECT id, name, "descriptionUpper" FROM deleted_parent
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getObject(1, UUID::class.java),
+        getString(2),
+        getString(3),
+      )
+    }
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setObject(1, id)
+    }
+    return processor.invoke(sql, rowReader, queryBinder)
+  }
+
+  override fun <T : Any> deleteParentReturningQuotedDescriptionUpperViaCte(id: UUID, mapper: (
+    id: UUID,
+    name: String,
+    descriptionUpper: String?,
+  ) -> T): Many<T> = deleteParentReturningQuotedDescriptionUpperViaCte(id, mapper, driver::queryMany)
 }

@@ -42,3 +42,16 @@ SELECT * FROM book WHERE published_year >= ? AND published_year <= ?;
 -- Function-wrapped parameter: the param maps to the column despite being inside crypt().
 -- name: createAccount :exec
 INSERT INTO account (username, password) VALUES (?, crypt(?, gen_salt('bf')));
+
+-- Quoted column reference WITH an alias: originalName must resolve through the quoted column's
+-- own name ("Foo"), not through the alias ("bar") pgjdbc's own ResultSetMetaData.getColumnName
+-- reports instead when AS is used -- otherwise comment lookup for "Foo" fails outright, since no
+-- column is actually named "bar". A second column is selected so a data class (with @property
+-- comment lines) is generated instead of a bare scalar, making the comment lookup outcome visible.
+-- name: getQuotedColumnWithAlias :one
+SELECT id, "Foo" AS bar FROM tq WHERE id = ?;
+
+-- Quoted column reference containing a space, with no alias. A second column is selected for the
+-- same reason as above -- so the comment lookup outcome shows up as a @property line.
+-- name: getQuotedColumnWithSpace :one
+SELECT id, "My Col" FROM tq WHERE id = ?;

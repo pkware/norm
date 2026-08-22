@@ -324,4 +324,32 @@ public class PostgresQueries(
       combineExecBatchResults(results, totalCount, batchSize)
     }
   }
+
+  @Throws(SQLException::class)
+  override fun <T : Any> getQuotedColumnWithAlias(id: Int, mapper: (id: Int, bar: String) -> T): T {
+    val sql = "SELECT id, \"Foo\" AS bar FROM tq WHERE id = ?"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        getString(2),
+      )
+    }
+    return driver.queryOne(sql, rowReader) {
+      setInt(1, id)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <T : Any> getQuotedColumnWithSpace(id: Int, mapper: (id: Int, `My Col`: String?) -> T): T {
+    val sql = "SELECT id, \"My Col\" FROM tq WHERE id = ?"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        getString(2),
+      )
+    }
+    return driver.queryOne(sql, rowReader) {
+      setInt(1, id)
+    }
+  }
 }

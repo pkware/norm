@@ -84,3 +84,15 @@ SELECT id, name, description_upper FROM deleted_parent;
 -- even though "description" can only ever be the literal 'UPDATED' in this result.
 -- name: updateParentReturningDescriptionUpper :many
 UPDATE parent SET description = 'UPDATED' WHERE id = ? RETURNING id, name, UPPER(description) AS description_upper;
+
+-- Quoted-alias variant of deleteParentReturningDescriptionUpperViaCte above: the CTE body's own
+-- RETURNING alias is quoted, mixed-case ("descriptionUpper" instead of description_upper), and
+-- the outer reference to it is the same quoted, mixed-case form. Demonstrates that a quoted
+-- reference into a CTE's own expression-derived output resolves the underlying SQL expression
+-- through resolveCteOutputExpression, the same way the unquoted sibling query already does,
+-- rather than being classified a computed expression and echoing the quoted outer name back.
+-- name: deleteParentReturningQuotedDescriptionUpperViaCte :many
+WITH deleted_parent AS (
+  DELETE FROM parent WHERE id = ? RETURNING id, name, UPPER(description) AS "descriptionUpper"
+)
+SELECT id, name, "descriptionUpper" FROM deleted_parent;

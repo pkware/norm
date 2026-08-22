@@ -14,6 +14,7 @@ import kotlin.jvm.JvmRecord
  *
  * @property id (`parent.id`)
  * @property name (`parent.name`)
+ * @property description_upper (`UPPER(description)`)
  */
 @JvmRecord
 public data class DeleteParentReturningDescriptionUpperViaCte(
