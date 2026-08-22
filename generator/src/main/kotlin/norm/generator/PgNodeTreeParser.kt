@@ -466,7 +466,12 @@ internal class PgNodeTreeParser {
   }
 
   private fun parseConst(text: String): PgNodeExpression.Const {
-    val isNull = extractBoolField(text, ":constisnull") ?: false
+    // Default to `true` (nullable) when `:constisnull` cannot be read — never `false`. `:constisnull`
+    // is always emitted by a live server, but that guarantee only covers today's known-good format;
+    // if a future Postgres version ever renamed or reordered the field, this default is what a
+    // malformed/absent read degrades to, and it must fail toward nullable, never toward a confidently
+    // wrong NOT NULL.
+    val isNull = extractBoolField(text, ":constisnull") ?: true
     return PgNodeExpression.Const(isNull = isNull)
   }
 
@@ -483,11 +488,16 @@ internal class PgNodeTreeParser {
    * whether the nesting is variadic-in-non-variadic or non-variadic-in-variadic (both directions
    * verified live — see `PgNodeTreeParserTest`). If a future PostgreSQL version ever reordered
    * `FUNCEXPR`'s fields or made `:funcvariadic` conditional, this extraction would silently start
-   * reading the wrong node's flag.
+   * reading the wrong node's flag — which is exactly why the fallback below defaults to `true`
+   * (variadic) rather than `false`: the "always emitted" guarantee describes today's known-good
+   * format, not a reason to trust an optimistic default should that ever stop holding.
+   * [NodeTreeNullabilityAnalyzer.isNonNull]'s `FuncExpr` branch treats a variadic call far more
+   * conservatively than an ordinary one (see its own KDoc), so defaulting `true` here can only
+   * make an unreadable flag resolve toward nullable, never toward a confidently wrong NOT NULL.
    */
   private fun parseFuncExpr(text: String): PgNodeExpression.FuncExpr {
     val functionOid = extractIntField(text, ":funcid") ?: error("Missing :funcid in FUNCEXPR node")
-    val isVariadic = extractBoolField(text, ":funcvariadic") ?: false
+    val isVariadic = extractBoolField(text, ":funcvariadic") ?: true
     return PgNodeExpression.FuncExpr(
       functionOid = functionOid,
       arguments = parseArgList(text, ":args"),
