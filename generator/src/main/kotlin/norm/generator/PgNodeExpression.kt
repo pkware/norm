@@ -131,14 +131,15 @@ internal sealed interface PgNodeExpression {
     const val JSON_VALUE_OP: Int = 2
     const val JSON_SERIALIZE_OP: Int = 4
 
-    // JsonBehaviorType (primnodes.h). Only the four codes verified live (PostgreSQL 17 and 18) to
-    // always produce a definite, non-null outcome for a JSON_VALUE/JSON_QUERY ON EMPTY/ON ERROR
-    // clause are named here — see NodeTreeNullabilityAnalyzer.evaluateJsonExpr's ALLOW-list, which
-    // deliberately does not name (and therefore treats as nullable) JSON_BEHAVIOR_TRUE/FALSE/UNKNOWN
-    // (JsonBehaviorType values 3-5, valid only for JSON_EXISTS's own ON ERROR, a different node
-    // field entirely) or any future value Postgres might add.
+    // JsonBehaviorType (primnodes.h). Each code named here is one NodeTreeNullabilityAnalyzer's
+    // evaluateJsonExpr recognizes as producing a definite outcome for JSON_QUERY's ON EMPTY/ON
+    // ERROR clause or JSON_EXISTS's ON ERROR clause; an unrecognized or unnamed code is treated as
+    // nullable, the safe default.
     const val JSON_BEHAVIOR_NULL: Int = 0
     const val JSON_BEHAVIOR_ERROR: Int = 1
+    const val JSON_BEHAVIOR_TRUE: Int = 3
+    const val JSON_BEHAVIOR_FALSE: Int = 4
+    const val JSON_BEHAVIOR_UNKNOWN: Int = 5
     const val JSON_BEHAVIOR_EMPTY_ARRAY: Int = 6
     const val JSON_BEHAVIOR_EMPTY_OBJECT: Int = 7
     const val JSON_BEHAVIOR_DEFAULT: Int = 8
