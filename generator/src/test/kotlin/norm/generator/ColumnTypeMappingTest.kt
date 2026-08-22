@@ -985,26 +985,56 @@ class ColumnTypeMappingTest {
     }
 
     /**
-     * Anti-drift sweep, the same shape as [DomainBaseTypeAntiDriftSweep]: every canonical type name
-     * [BASE_TYPE_RESOLVERS] accepts (the exact set [TypeRepository.resolveBaseType] accepts) must
-     * fold, via [postgresArrayElementTypeName], to a name that is ITSELF a
-     * [BASE_TYPE_RESOLVERS] key — i.e. a name [TypeRepository.resolveBaseType] would also
-     * recognize, and therefore a genuine canonical `pg_type` spelling, not a leftover SQL alias
-     * `createArrayOf` cannot look up. A future alias added to [BASE_TYPE_RESOLVERS] without a
-     * matching fold here would leave `postgresArrayElementTypeName` returning that alias verbatim,
-     * reproducing the `pg_catalog.`/SQL-spelling gap [postgresArrayElementTypeName]'s KDoc
-     * describes — this sweep catches that the moment it happens, rather than waiting for a runtime
-     * `Unable to find server array type` failure.
+     * Anti-drift sweep for [postgresArrayElementTypeName], the same intent as
+     * [DomainBaseTypeAntiDriftSweep] but pinned against a HARDCODED, independently-verified
+     * classification rather than [BASE_TYPE_RESOLVERS] membership. A membership check is a
+     * tautology here: every [BASE_TYPE_RESOLVERS] key that is not folded still passes itself
+     * through unchanged (`postgresArrayElementTypeName`'s `else` branch), and every SQL-spelling
+     * alias is, by construction, also a [BASE_TYPE_RESOLVERS] key — so deleting every fold branch
+     * would still leave every folded result a [BASE_TYPE_RESOLVERS] key and a membership check
+     * green.
      *
-     * Every fold was additionally verified against a live PostgreSQL 17 server via `SELECT typname
-     * FROM pg_type WHERE oid = to_regtype(?)` — see [postgresArrayElementTypeName]'s KDoc.
+     * [expectedCanonicalNameByAlias] and [alreadyCanonicalNames] below are hand-verified against a
+     * live PostgreSQL 17 server via `SELECT typname FROM pg_type WHERE oid = to_regtype(?)` — see
+     * [postgresArrayElementTypeName]'s KDoc — and never derived from [BASE_TYPE_RESOLVERS] or
+     * [postgresArrayElementTypeName] themselves. The set-equality assertion catches a new
+     * [BASE_TYPE_RESOLVERS] key added without being classified into either bucket; the per-alias
+     * assertions catch a fold branch that is deleted, or wrong, by checking the ACTUAL fold result
+     * against this table's fixed expectation rather than a self-referential set.
+     *
+     * Serial variants (`serial`, `bigserial`, ...) are excluded: [postgresArrayElementTypeName]'s
+     * own KDoc documents that a serial column can never reach the array path, so they need no fold
+     * and are outside this sweep's scope.
      */
     @Test
-    fun `every canonical base type folds to a name resolveBaseType itself would recognize`() {
-      val notFoldedToACanonicalName = BASE_TYPE_RESOLVERS.keys
-        .map { it to postgresArrayElementTypeName(it) }
-        .filter { (_, folded) -> folded !in BASE_TYPE_RESOLVERS.keys }
-      assertThat(notFoldedToACanonicalName).isEmpty()
+    fun `every SQL-spelling alias folds to its verified canonical pg_type name`() {
+      val serialVariants = setOf("smallserial", "serial2", "serial", "serial4", "bigserial", "serial8")
+      val expectedCanonicalNameByAlias = mapOf(
+        "smallint" to "int2",
+        "integer" to "int4",
+        "int" to "int4",
+        "bigint" to "int8",
+        "real" to "float4",
+        "double precision" to "float8",
+        "float" to "float8",
+        "boolean" to "bool",
+        "string" to "text",
+      )
+      val alreadyCanonicalNames = setOf(
+        "int2", "int4", "int8", "float4", "float8", "numeric", "bool",
+        "json", "jsonb", "oid", "bytea", "date", "time", "timetz", "timestamp", "timestamptz",
+        "text", "varchar", "bpchar", "uuid",
+      )
+
+      assertThat(BASE_TYPE_RESOLVERS.keys - serialVariants)
+        .isEqualTo(expectedCanonicalNameByAlias.keys + alreadyCanonicalNames)
+
+      expectedCanonicalNameByAlias.forEach { (alias, expectedCanonical) ->
+        assertThat(postgresArrayElementTypeName(alias)).isEqualTo(expectedCanonical)
+      }
+      alreadyCanonicalNames.forEach { canonicalName ->
+        assertThat(postgresArrayElementTypeName(canonicalName)).isEqualTo(canonicalName)
+      }
     }
   }
 
