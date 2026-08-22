@@ -265,7 +265,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * inside the view's own definition — computed once here and shared by both
    * [viewColumnNotNullByRelidAndAttnum]'s own subtraction step and the public,
    * schema-scoped [loadViewOuterJoinNullableColumns], so the two can never independently drift
-   * from each other's answer for the same column the way the pre-existing duplicate queries could.
+   * from each other's answer for the same column.
    *
    * Materialized views are excluded because their data is stored at refresh time; the outer-join
    * structure of the definition does not affect the persisted NOT NULL guarantee of a materialized
