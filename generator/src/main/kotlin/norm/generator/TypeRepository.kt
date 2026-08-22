@@ -256,7 +256,21 @@ internal class TypeRepository(
       )
       primaryConstructor.addParameter(column.name, columnType)
     }
-    val selectItems = parseSelectItems(queryText)
+    // A non-empty parseSelectItems() result whose size disagrees with the real column count
+    // (queryResults.size, ultimately from ResultSetMetaData.getColumnCount()) means at least one
+    // select item didn't map 1:1 onto a result column (e.g. an unrecognized star item expanding to
+    // several columns) -- see parseSelectItems' KDoc for why it has no independent cross-check of
+    // its own. Treating the mismatch as if parsing had failed outright (the documented empty-list
+    // fail-safe) avoids a wrong, shifted mapping of names/comments/expressions onto columns they
+    // don't belong to. oldOrNewReturningColumns' callers (SqlUtils.kt/PgCatalogLoader.kt) and
+    // probeUnknownColumnNullability apply the identical real-column-count cross-check for the same
+    // reason.
+    val rawSelectItems = parseSelectItems(queryText)
+    val selectItems = if (rawSelectItems.isNotEmpty() && rawSelectItems.size != queryResults.size) {
+      emptyList()
+    } else {
+      rawSelectItems
+    }
     typeBeingDefined.addClassKdoc(
       classComment = "",
       tableName = null,

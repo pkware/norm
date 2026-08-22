@@ -199,7 +199,20 @@ public class JdbcAnalyzer(private val connection: Connection) {
     if (rsmd == null) return emptyList()
 
     val columnNullability = catalogLoader.queryColumnNullability(sql)
-    val selectItems = parseSelectItems(sql)
+    // A non-empty parseSelectItems() result whose size disagrees with rsmd's real column count
+    // means at least one select item didn't map 1:1 onto a result column (e.g. an unrecognized
+    // star item expanding to several columns) -- see parseSelectItems' KDoc for why it has no
+    // independent cross-check of its own. Treating the mismatch as if parsing had failed outright
+    // (the documented empty-list fail-safe) avoids a wrong, shifted mapping of names/comments onto
+    // columns they don't belong to. oldOrNewReturningColumns' callers and
+    // probeUnknownColumnNullability apply the identical real-column-count cross-check for the same
+    // reason.
+    val rawSelectItems = parseSelectItems(sql)
+    val selectItems = if (rawSelectItems.isNotEmpty() && rawSelectItems.size != rsmd.columnCount) {
+      emptyList()
+    } else {
+      rawSelectItems
+    }
 
     val columns = mutableListOf<Column>()
     for (i in 1..rsmd.columnCount) {
