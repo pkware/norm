@@ -16,6 +16,24 @@ SELECT * FROM users WHERE placed_at > ?;
 -- name: getUserByExternalReference :one
 SELECT * FROM users WHERE external_ref = ?;
 
+-- name: getUsersByPreferredDate :many
+SELECT * FROM users WHERE preferred_date = ?;
+
+-- name: getUsersByOpeningTime :many
+SELECT * FROM users WHERE opening_time = ?;
+
+-- name: getUsersByMeetingTimeTz :many
+SELECT * FROM users WHERE meeting_time_tz = ?;
+
+-- name: getUsersByCreatedAtLocal :many
+SELECT * FROM users WHERE created_at_local = ?;
+
+-- name: getUsersByLargeObjectRef :many
+SELECT * FROM users WHERE large_object_ref = ?;
+
+-- name: getUsersByThumbnail :many
+SELECT * FROM users WHERE thumbnail = ?;
+
 -- name: createUser :exec
 INSERT INTO users (email, age, zip_code, current_mood, previous_mood)
 VALUES (?, ?, ?, ?, ?);

@@ -334,14 +334,19 @@ internal class JsonSqlMappable(private val notNull: Boolean) : SqlMappable {
  *   (e.g., `String` for text/varchar, `Int` for int4). This is the wire type used for adapter type parameters
  *   and domain value class properties.
  * @property getterClassHint When non-`null`, the read is generated as `getObject(index, X::class.java)`
- *   (where `X` is [getterClassHint]) instead of `getterName(index)`. Required for `java.time` types
- *   (`LocalDate`, `LocalTime`, `OffsetTime`, `LocalDateTime`, `OffsetDateTime`): pgjdbc's plain
- *   `getObject(int)` returns the legacy `java.sql.Date`/`Time`/`Timestamp` for these columns, not the
- *   `java.time` type — only the two-argument, class-qualified overload does (verified against pgjdbc
- *   42.7.13's `PgResultSet.getObject(int, Class)`, which special-cases exactly these five classes).
- *   `null` for every type where a plain `getterName(index)` call already returns [kotlinType] directly
- *   (including `uuid`, whose plain `getObject(int)` already returns `java.util.UUID` — verified against
- *   pgjdbc's `PgResultSet.internalGetObject`, which special-cases the Postgres `uuid` type by name).
+ *   (where `X` is [getterClassHint]) instead of `getterName(index)`. Required whenever [getterName] is
+ *   the generic `"getObject"`: `java.sql.ResultSet.getObject(int)` is declared to return `Object`, so a
+ *   bare `getObject(index)` call is statically `Any` in Kotlin no matter what concrete type the driver
+ *   returns at runtime, and that `Any` cannot be passed to a `ColumnAdapter<Application, Wire>.decode`
+ *   expecting [kotlinType]. This covers both the `java.time` types (`LocalDate`, `LocalTime`,
+ *   `OffsetTime`, `LocalDateTime`, `OffsetDateTime`), where pgjdbc's plain `getObject(int)` returns the
+ *   legacy `java.sql.Date`/`Time`/`Timestamp` even at runtime, and `uuid`, where pgjdbc's plain
+ *   `getObject(int)` does return a `java.util.UUID` at runtime (`PgResultSet.internalGetObject`
+ *   special-cases the Postgres `uuid` type by name) but the static type is still `Any` — the class hint
+ *   is required in both cases, for different reasons (verified against pgjdbc 42.7.13's
+ *   `PgResultSet.getObject(int, Class)`, which special-cases each of these classes explicitly).
+ *   `null` only for types read via a named, non-generic getter (e.g. `getString`, `getBlob`, `getBytes`),
+ *   whose declared return type already is [kotlinType].
  * @property convertOffsetDateTimeToInstant When `true`, the wire value read via [getterClassHint]
  *   (always [OffsetDateTime] in this case) is converted with `.toInstant()` after reading, and a
  *   [kotlinType] ([Instant]) value is converted back with `OffsetDateTime.ofInstant(value,

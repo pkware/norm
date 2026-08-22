@@ -8,12 +8,23 @@ CHECK (VALUE > 0);
 CREATE DOMAIN us_postal_code AS TEXT
 CHECK (VALUE ~ '^\d{5}(-\d{4})?$');
 
--- Domains over common base types (timestamptz, uuid) that previously aborted code generation
--- entirely -- resolveJdbcTypeInfo had no entry for either, even though both are common domain
--- base types.
+-- Domains over every other base type Norm supports as a plain column type, each exercised below
+-- on both a result column and a query parameter.
 CREATE DOMAIN order_placed_at AS TIMESTAMPTZ;
 
 CREATE DOMAIN external_reference AS UUID;
+
+CREATE DOMAIN preferred_date AS DATE;
+
+CREATE DOMAIN opening_time AS TIME;
+
+CREATE DOMAIN meeting_time_tz AS TIMETZ;
+
+CREATE DOMAIN created_at_local AS TIMESTAMP;
+
+CREATE DOMAIN large_object_ref AS OID;
+
+CREATE DOMAIN thumbnail AS BYTEA;
 
 -- Custom enum types that require adapter generation
 CREATE TYPE mood AS ENUM ('happy', 'sad', 'angry');
@@ -31,5 +42,11 @@ CREATE TABLE users (
   past_moods mood[],
   scores positive_integer[],
   placed_at order_placed_at NOT NULL,
-  external_ref external_reference
+  external_ref external_reference,
+  preferred_date preferred_date,
+  opening_time opening_time,
+  meeting_time_tz meeting_time_tz,
+  created_at_local created_at_local,
+  large_object_ref large_object_ref,
+  thumbnail thumbnail
 );

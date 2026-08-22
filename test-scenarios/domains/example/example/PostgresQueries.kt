@@ -1,15 +1,21 @@
 package example
 
+import java.sql.Blob
 import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.SQLException
 import java.sql.Types
 import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.OffsetDateTime
+import java.time.OffsetTime
 import java.time.ZoneOffset
 import java.util.UUID
 import kotlin.Any
 import kotlin.Array
+import kotlin.ByteArray
 import kotlin.Int
 import kotlin.IntArray
 import kotlin.String
@@ -28,13 +34,22 @@ import norm.encodeToSqlArray
 
 public class PostgresQueries(
   connectionProvider: ConnectionProvider,
+  private val createdAtLocalAdapter:
+      ColumnAdapter<CreatedAtLocal, LocalDateTime> = CreatedAtLocalAdapter(),
   private val emailAdapter: ColumnAdapter<Email, String> = EmailAdapter(),
   private val externalReferenceAdapter:
       ColumnAdapter<ExternalReference, UUID> = ExternalReferenceAdapter(),
+  private val largeObjectRefAdapter: ColumnAdapter<LargeObjectRef, Blob> = LargeObjectRefAdapter(),
+  private val meetingTimeTzAdapter:
+      ColumnAdapter<MeetingTimeTz, OffsetTime> = MeetingTimeTzAdapter(),
   private val moodAdapter: ColumnAdapter<Mood, String> = MoodAdapter(),
+  private val openingTimeAdapter: ColumnAdapter<OpeningTime, LocalTime> = OpeningTimeAdapter(),
   private val orderPlacedAtAdapter: ColumnAdapter<OrderPlacedAt, Instant> = OrderPlacedAtAdapter(),
   private val positiveIntegerAdapter:
       ColumnAdapter<PositiveInteger, Int> = PositiveIntegerAdapter(),
+  private val preferredDateAdapter:
+      ColumnAdapter<PreferredDate, LocalDate> = PreferredDateAdapter(),
+  private val thumbnailAdapter: ColumnAdapter<Thumbnail, ByteArray> = ThumbnailAdapter(),
   private val usPostalCodeAdapter: ColumnAdapter<UsPostalCode, String> = UsPostalCodeAdapter(),
 ) : RealTransactable(connectionProvider),
     Queries {
@@ -52,6 +67,12 @@ public class PostgresQueries(
     scores: Array<PositiveInteger?>?,
     placed_at: OrderPlacedAt,
     external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
   ) -> T): T {
     val sql = "SELECT * FROM users WHERE email = ?"
     val rowReader: ResultSet.() -> T = {
@@ -65,7 +86,13 @@ public class PostgresQueries(
         getArray(7)?.decodeArray(moodAdapter),
         getArray(8)?.decodeArray(positiveIntegerAdapter),
         orderPlacedAtAdapter.decode(getObject(9, OffsetDateTime::class.java).toInstant()),
-        getObject(10)?.let { externalReferenceAdapter.decode(it) },
+        getObject(10, UUID::class.java)?.let { externalReferenceAdapter.decode(it) },
+        getObject(11, LocalDate::class.java)?.let { preferredDateAdapter.decode(it) },
+        getObject(12, LocalTime::class.java)?.let { openingTimeAdapter.decode(it) },
+        getObject(13, OffsetTime::class.java)?.let { meetingTimeTzAdapter.decode(it) },
+        getObject(14, LocalDateTime::class.java)?.let { createdAtLocalAdapter.decode(it) },
+        getBlob(15)?.let { largeObjectRefAdapter.decode(it) },
+        getBytes(16)?.let { thumbnailAdapter.decode(it) },
       )
     }
     return driver.queryOne(sql, rowReader) {
@@ -86,6 +113,12 @@ public class PostgresQueries(
       scores: Array<PositiveInteger?>?,
       placed_at: OrderPlacedAt,
       external_ref: ExternalReference?,
+      preferred_date: PreferredDate?,
+      opening_time: OpeningTime?,
+      meeting_time_tz: MeetingTimeTz?,
+      created_at_local: CreatedAtLocal?,
+      large_object_ref: LargeObjectRef?,
+      thumbnail: Thumbnail?,
     ) -> T,
     processor: ManyProcessor<T, Return>,
   ): Return {
@@ -101,7 +134,13 @@ public class PostgresQueries(
         getArray(7)?.decodeArray(moodAdapter),
         getArray(8)?.decodeArray(positiveIntegerAdapter),
         orderPlacedAtAdapter.decode(getObject(9, OffsetDateTime::class.java).toInstant()),
-        getObject(10)?.let { externalReferenceAdapter.decode(it) },
+        getObject(10, UUID::class.java)?.let { externalReferenceAdapter.decode(it) },
+        getObject(11, LocalDate::class.java)?.let { preferredDateAdapter.decode(it) },
+        getObject(12, LocalTime::class.java)?.let { openingTimeAdapter.decode(it) },
+        getObject(13, OffsetTime::class.java)?.let { meetingTimeTzAdapter.decode(it) },
+        getObject(14, LocalDateTime::class.java)?.let { createdAtLocalAdapter.decode(it) },
+        getBlob(15)?.let { largeObjectRefAdapter.decode(it) },
+        getBytes(16)?.let { thumbnailAdapter.decode(it) },
       )
     }
     val queryBinder: (PreparedStatement.() -> Unit)? = {
@@ -121,6 +160,12 @@ public class PostgresQueries(
     scores: Array<PositiveInteger?>?,
     placed_at: OrderPlacedAt,
     external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
   ) -> T): Many<T> = listUsersByAge(age, mapper, driver::queryMany)
 
   private fun <T : Any, Return> getUsersByZipCode(
@@ -136,6 +181,12 @@ public class PostgresQueries(
       scores: Array<PositiveInteger?>?,
       placed_at: OrderPlacedAt,
       external_ref: ExternalReference?,
+      preferred_date: PreferredDate?,
+      opening_time: OpeningTime?,
+      meeting_time_tz: MeetingTimeTz?,
+      created_at_local: CreatedAtLocal?,
+      large_object_ref: LargeObjectRef?,
+      thumbnail: Thumbnail?,
     ) -> T,
     processor: ManyProcessor<T, Return>,
   ): Return {
@@ -151,7 +202,13 @@ public class PostgresQueries(
         getArray(7)?.decodeArray(moodAdapter),
         getArray(8)?.decodeArray(positiveIntegerAdapter),
         orderPlacedAtAdapter.decode(getObject(9, OffsetDateTime::class.java).toInstant()),
-        getObject(10)?.let { externalReferenceAdapter.decode(it) },
+        getObject(10, UUID::class.java)?.let { externalReferenceAdapter.decode(it) },
+        getObject(11, LocalDate::class.java)?.let { preferredDateAdapter.decode(it) },
+        getObject(12, LocalTime::class.java)?.let { openingTimeAdapter.decode(it) },
+        getObject(13, OffsetTime::class.java)?.let { meetingTimeTzAdapter.decode(it) },
+        getObject(14, LocalDateTime::class.java)?.let { createdAtLocalAdapter.decode(it) },
+        getBlob(15)?.let { largeObjectRefAdapter.decode(it) },
+        getBytes(16)?.let { thumbnailAdapter.decode(it) },
       )
     }
     val queryBinder: (PreparedStatement.() -> Unit)? = {
@@ -171,6 +228,12 @@ public class PostgresQueries(
     scores: Array<PositiveInteger?>?,
     placed_at: OrderPlacedAt,
     external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
   ) -> T): Many<T> = getUsersByZipCode(zip_code, mapper, driver::queryMany)
 
   private fun <T : Any, Return> getUsersByMood(
@@ -186,6 +249,12 @@ public class PostgresQueries(
       scores: Array<PositiveInteger?>?,
       placed_at: OrderPlacedAt,
       external_ref: ExternalReference?,
+      preferred_date: PreferredDate?,
+      opening_time: OpeningTime?,
+      meeting_time_tz: MeetingTimeTz?,
+      created_at_local: CreatedAtLocal?,
+      large_object_ref: LargeObjectRef?,
+      thumbnail: Thumbnail?,
     ) -> T,
     processor: ManyProcessor<T, Return>,
   ): Return {
@@ -201,7 +270,13 @@ public class PostgresQueries(
         getArray(7)?.decodeArray(moodAdapter),
         getArray(8)?.decodeArray(positiveIntegerAdapter),
         orderPlacedAtAdapter.decode(getObject(9, OffsetDateTime::class.java).toInstant()),
-        getObject(10)?.let { externalReferenceAdapter.decode(it) },
+        getObject(10, UUID::class.java)?.let { externalReferenceAdapter.decode(it) },
+        getObject(11, LocalDate::class.java)?.let { preferredDateAdapter.decode(it) },
+        getObject(12, LocalTime::class.java)?.let { openingTimeAdapter.decode(it) },
+        getObject(13, OffsetTime::class.java)?.let { meetingTimeTzAdapter.decode(it) },
+        getObject(14, LocalDateTime::class.java)?.let { createdAtLocalAdapter.decode(it) },
+        getBlob(15)?.let { largeObjectRefAdapter.decode(it) },
+        getBytes(16)?.let { thumbnailAdapter.decode(it) },
       )
     }
     val queryBinder: (PreparedStatement.() -> Unit)? = {
@@ -221,6 +296,12 @@ public class PostgresQueries(
     scores: Array<PositiveInteger?>?,
     placed_at: OrderPlacedAt,
     external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
   ) -> T): Many<T> = getUsersByMood(current_mood, mapper, driver::queryMany)
 
   private fun <T : Any, Return> getUsersPlacedAfter(
@@ -236,6 +317,12 @@ public class PostgresQueries(
       scores: Array<PositiveInteger?>?,
       placed_at: OrderPlacedAt,
       external_ref: ExternalReference?,
+      preferred_date: PreferredDate?,
+      opening_time: OpeningTime?,
+      meeting_time_tz: MeetingTimeTz?,
+      created_at_local: CreatedAtLocal?,
+      large_object_ref: LargeObjectRef?,
+      thumbnail: Thumbnail?,
     ) -> T,
     processor: ManyProcessor<T, Return>,
   ): Return {
@@ -251,7 +338,13 @@ public class PostgresQueries(
         getArray(7)?.decodeArray(moodAdapter),
         getArray(8)?.decodeArray(positiveIntegerAdapter),
         orderPlacedAtAdapter.decode(getObject(9, OffsetDateTime::class.java).toInstant()),
-        getObject(10)?.let { externalReferenceAdapter.decode(it) },
+        getObject(10, UUID::class.java)?.let { externalReferenceAdapter.decode(it) },
+        getObject(11, LocalDate::class.java)?.let { preferredDateAdapter.decode(it) },
+        getObject(12, LocalTime::class.java)?.let { openingTimeAdapter.decode(it) },
+        getObject(13, OffsetTime::class.java)?.let { meetingTimeTzAdapter.decode(it) },
+        getObject(14, LocalDateTime::class.java)?.let { createdAtLocalAdapter.decode(it) },
+        getBlob(15)?.let { largeObjectRefAdapter.decode(it) },
+        getBytes(16)?.let { thumbnailAdapter.decode(it) },
       )
     }
     val queryBinder: (PreparedStatement.() -> Unit)? = {
@@ -271,6 +364,12 @@ public class PostgresQueries(
     scores: Array<PositiveInteger?>?,
     placed_at: OrderPlacedAt,
     external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
   ) -> T): Many<T> = getUsersPlacedAfter(placed_at, mapper, driver::queryMany)
 
   @Throws(SQLException::class)
@@ -285,6 +384,12 @@ public class PostgresQueries(
     scores: Array<PositiveInteger?>?,
     placed_at: OrderPlacedAt,
     external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
   ) -> T): T {
     val sql = "SELECT * FROM users WHERE external_ref = ?"
     val rowReader: ResultSet.() -> T = {
@@ -298,13 +403,427 @@ public class PostgresQueries(
         getArray(7)?.decodeArray(moodAdapter),
         getArray(8)?.decodeArray(positiveIntegerAdapter),
         orderPlacedAtAdapter.decode(getObject(9, OffsetDateTime::class.java).toInstant()),
-        getObject(10)?.let { externalReferenceAdapter.decode(it) },
+        getObject(10, UUID::class.java)?.let { externalReferenceAdapter.decode(it) },
+        getObject(11, LocalDate::class.java)?.let { preferredDateAdapter.decode(it) },
+        getObject(12, LocalTime::class.java)?.let { openingTimeAdapter.decode(it) },
+        getObject(13, OffsetTime::class.java)?.let { meetingTimeTzAdapter.decode(it) },
+        getObject(14, LocalDateTime::class.java)?.let { createdAtLocalAdapter.decode(it) },
+        getBlob(15)?.let { largeObjectRefAdapter.decode(it) },
+        getBytes(16)?.let { thumbnailAdapter.decode(it) },
       )
     }
     return driver.queryOne(sql, rowReader) {
       setObject(1, externalReferenceAdapter.encode(external_ref))
     }
   }
+
+  private fun <T : Any, Return> getUsersByPreferredDate(
+    preferred_date: PreferredDate,
+    mapper: (
+      id: Int,
+      email: Email,
+      age: PositiveInteger?,
+      zip_code: UsPostalCode?,
+      current_mood: Mood,
+      previous_mood: Mood?,
+      past_moods: Array<Mood?>?,
+      scores: Array<PositiveInteger?>?,
+      placed_at: OrderPlacedAt,
+      external_ref: ExternalReference?,
+      preferred_date: PreferredDate?,
+      opening_time: OpeningTime?,
+      meeting_time_tz: MeetingTimeTz?,
+      created_at_local: CreatedAtLocal?,
+      large_object_ref: LargeObjectRef?,
+      thumbnail: Thumbnail?,
+    ) -> T,
+    processor: ManyProcessor<T, Return>,
+  ): Return {
+    val sql = "SELECT * FROM users WHERE preferred_date = ?"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        emailAdapter.decode(getString(2)),
+        getInt(3).takeUnless { wasNull() }?.let { positiveIntegerAdapter.decode(it) },
+        getString(4)?.let { usPostalCodeAdapter.decode(it) },
+        moodAdapter.decode(getString(5)),
+        getString(6)?.let { moodAdapter.decode(it) },
+        getArray(7)?.decodeArray(moodAdapter),
+        getArray(8)?.decodeArray(positiveIntegerAdapter),
+        orderPlacedAtAdapter.decode(getObject(9, OffsetDateTime::class.java).toInstant()),
+        getObject(10, UUID::class.java)?.let { externalReferenceAdapter.decode(it) },
+        getObject(11, LocalDate::class.java)?.let { preferredDateAdapter.decode(it) },
+        getObject(12, LocalTime::class.java)?.let { openingTimeAdapter.decode(it) },
+        getObject(13, OffsetTime::class.java)?.let { meetingTimeTzAdapter.decode(it) },
+        getObject(14, LocalDateTime::class.java)?.let { createdAtLocalAdapter.decode(it) },
+        getBlob(15)?.let { largeObjectRefAdapter.decode(it) },
+        getBytes(16)?.let { thumbnailAdapter.decode(it) },
+      )
+    }
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setObject(1, preferredDateAdapter.encode(preferred_date))
+    }
+    return processor.invoke(sql, rowReader, queryBinder)
+  }
+
+  override fun <T : Any> getUsersByPreferredDate(preferred_date: PreferredDate, mapper: (
+    id: Int,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
+    current_mood: Mood,
+    previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
+  ) -> T): Many<T> = getUsersByPreferredDate(preferred_date, mapper, driver::queryMany)
+
+  private fun <T : Any, Return> getUsersByOpeningTime(
+    opening_time: OpeningTime,
+    mapper: (
+      id: Int,
+      email: Email,
+      age: PositiveInteger?,
+      zip_code: UsPostalCode?,
+      current_mood: Mood,
+      previous_mood: Mood?,
+      past_moods: Array<Mood?>?,
+      scores: Array<PositiveInteger?>?,
+      placed_at: OrderPlacedAt,
+      external_ref: ExternalReference?,
+      preferred_date: PreferredDate?,
+      opening_time: OpeningTime?,
+      meeting_time_tz: MeetingTimeTz?,
+      created_at_local: CreatedAtLocal?,
+      large_object_ref: LargeObjectRef?,
+      thumbnail: Thumbnail?,
+    ) -> T,
+    processor: ManyProcessor<T, Return>,
+  ): Return {
+    val sql = "SELECT * FROM users WHERE opening_time = ?"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        emailAdapter.decode(getString(2)),
+        getInt(3).takeUnless { wasNull() }?.let { positiveIntegerAdapter.decode(it) },
+        getString(4)?.let { usPostalCodeAdapter.decode(it) },
+        moodAdapter.decode(getString(5)),
+        getString(6)?.let { moodAdapter.decode(it) },
+        getArray(7)?.decodeArray(moodAdapter),
+        getArray(8)?.decodeArray(positiveIntegerAdapter),
+        orderPlacedAtAdapter.decode(getObject(9, OffsetDateTime::class.java).toInstant()),
+        getObject(10, UUID::class.java)?.let { externalReferenceAdapter.decode(it) },
+        getObject(11, LocalDate::class.java)?.let { preferredDateAdapter.decode(it) },
+        getObject(12, LocalTime::class.java)?.let { openingTimeAdapter.decode(it) },
+        getObject(13, OffsetTime::class.java)?.let { meetingTimeTzAdapter.decode(it) },
+        getObject(14, LocalDateTime::class.java)?.let { createdAtLocalAdapter.decode(it) },
+        getBlob(15)?.let { largeObjectRefAdapter.decode(it) },
+        getBytes(16)?.let { thumbnailAdapter.decode(it) },
+      )
+    }
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setObject(1, openingTimeAdapter.encode(opening_time))
+    }
+    return processor.invoke(sql, rowReader, queryBinder)
+  }
+
+  override fun <T : Any> getUsersByOpeningTime(opening_time: OpeningTime, mapper: (
+    id: Int,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
+    current_mood: Mood,
+    previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
+  ) -> T): Many<T> = getUsersByOpeningTime(opening_time, mapper, driver::queryMany)
+
+  private fun <T : Any, Return> getUsersByMeetingTimeTz(
+    meeting_time_tz: MeetingTimeTz,
+    mapper: (
+      id: Int,
+      email: Email,
+      age: PositiveInteger?,
+      zip_code: UsPostalCode?,
+      current_mood: Mood,
+      previous_mood: Mood?,
+      past_moods: Array<Mood?>?,
+      scores: Array<PositiveInteger?>?,
+      placed_at: OrderPlacedAt,
+      external_ref: ExternalReference?,
+      preferred_date: PreferredDate?,
+      opening_time: OpeningTime?,
+      meeting_time_tz: MeetingTimeTz?,
+      created_at_local: CreatedAtLocal?,
+      large_object_ref: LargeObjectRef?,
+      thumbnail: Thumbnail?,
+    ) -> T,
+    processor: ManyProcessor<T, Return>,
+  ): Return {
+    val sql = "SELECT * FROM users WHERE meeting_time_tz = ?"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        emailAdapter.decode(getString(2)),
+        getInt(3).takeUnless { wasNull() }?.let { positiveIntegerAdapter.decode(it) },
+        getString(4)?.let { usPostalCodeAdapter.decode(it) },
+        moodAdapter.decode(getString(5)),
+        getString(6)?.let { moodAdapter.decode(it) },
+        getArray(7)?.decodeArray(moodAdapter),
+        getArray(8)?.decodeArray(positiveIntegerAdapter),
+        orderPlacedAtAdapter.decode(getObject(9, OffsetDateTime::class.java).toInstant()),
+        getObject(10, UUID::class.java)?.let { externalReferenceAdapter.decode(it) },
+        getObject(11, LocalDate::class.java)?.let { preferredDateAdapter.decode(it) },
+        getObject(12, LocalTime::class.java)?.let { openingTimeAdapter.decode(it) },
+        getObject(13, OffsetTime::class.java)?.let { meetingTimeTzAdapter.decode(it) },
+        getObject(14, LocalDateTime::class.java)?.let { createdAtLocalAdapter.decode(it) },
+        getBlob(15)?.let { largeObjectRefAdapter.decode(it) },
+        getBytes(16)?.let { thumbnailAdapter.decode(it) },
+      )
+    }
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setObject(1, meetingTimeTzAdapter.encode(meeting_time_tz))
+    }
+    return processor.invoke(sql, rowReader, queryBinder)
+  }
+
+  override fun <T : Any> getUsersByMeetingTimeTz(meeting_time_tz: MeetingTimeTz, mapper: (
+    id: Int,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
+    current_mood: Mood,
+    previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
+  ) -> T): Many<T> = getUsersByMeetingTimeTz(meeting_time_tz, mapper, driver::queryMany)
+
+  private fun <T : Any, Return> getUsersByCreatedAtLocal(
+    created_at_local: CreatedAtLocal,
+    mapper: (
+      id: Int,
+      email: Email,
+      age: PositiveInteger?,
+      zip_code: UsPostalCode?,
+      current_mood: Mood,
+      previous_mood: Mood?,
+      past_moods: Array<Mood?>?,
+      scores: Array<PositiveInteger?>?,
+      placed_at: OrderPlacedAt,
+      external_ref: ExternalReference?,
+      preferred_date: PreferredDate?,
+      opening_time: OpeningTime?,
+      meeting_time_tz: MeetingTimeTz?,
+      created_at_local: CreatedAtLocal?,
+      large_object_ref: LargeObjectRef?,
+      thumbnail: Thumbnail?,
+    ) -> T,
+    processor: ManyProcessor<T, Return>,
+  ): Return {
+    val sql = "SELECT * FROM users WHERE created_at_local = ?"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        emailAdapter.decode(getString(2)),
+        getInt(3).takeUnless { wasNull() }?.let { positiveIntegerAdapter.decode(it) },
+        getString(4)?.let { usPostalCodeAdapter.decode(it) },
+        moodAdapter.decode(getString(5)),
+        getString(6)?.let { moodAdapter.decode(it) },
+        getArray(7)?.decodeArray(moodAdapter),
+        getArray(8)?.decodeArray(positiveIntegerAdapter),
+        orderPlacedAtAdapter.decode(getObject(9, OffsetDateTime::class.java).toInstant()),
+        getObject(10, UUID::class.java)?.let { externalReferenceAdapter.decode(it) },
+        getObject(11, LocalDate::class.java)?.let { preferredDateAdapter.decode(it) },
+        getObject(12, LocalTime::class.java)?.let { openingTimeAdapter.decode(it) },
+        getObject(13, OffsetTime::class.java)?.let { meetingTimeTzAdapter.decode(it) },
+        getObject(14, LocalDateTime::class.java)?.let { createdAtLocalAdapter.decode(it) },
+        getBlob(15)?.let { largeObjectRefAdapter.decode(it) },
+        getBytes(16)?.let { thumbnailAdapter.decode(it) },
+      )
+    }
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setObject(1, createdAtLocalAdapter.encode(created_at_local))
+    }
+    return processor.invoke(sql, rowReader, queryBinder)
+  }
+
+  override fun <T : Any> getUsersByCreatedAtLocal(created_at_local: CreatedAtLocal, mapper: (
+    id: Int,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
+    current_mood: Mood,
+    previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
+  ) -> T): Many<T> = getUsersByCreatedAtLocal(created_at_local, mapper, driver::queryMany)
+
+  private fun <T : Any, Return> getUsersByLargeObjectRef(
+    large_object_ref: LargeObjectRef,
+    mapper: (
+      id: Int,
+      email: Email,
+      age: PositiveInteger?,
+      zip_code: UsPostalCode?,
+      current_mood: Mood,
+      previous_mood: Mood?,
+      past_moods: Array<Mood?>?,
+      scores: Array<PositiveInteger?>?,
+      placed_at: OrderPlacedAt,
+      external_ref: ExternalReference?,
+      preferred_date: PreferredDate?,
+      opening_time: OpeningTime?,
+      meeting_time_tz: MeetingTimeTz?,
+      created_at_local: CreatedAtLocal?,
+      large_object_ref: LargeObjectRef?,
+      thumbnail: Thumbnail?,
+    ) -> T,
+    processor: ManyProcessor<T, Return>,
+  ): Return {
+    val sql = "SELECT * FROM users WHERE large_object_ref = ?"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        emailAdapter.decode(getString(2)),
+        getInt(3).takeUnless { wasNull() }?.let { positiveIntegerAdapter.decode(it) },
+        getString(4)?.let { usPostalCodeAdapter.decode(it) },
+        moodAdapter.decode(getString(5)),
+        getString(6)?.let { moodAdapter.decode(it) },
+        getArray(7)?.decodeArray(moodAdapter),
+        getArray(8)?.decodeArray(positiveIntegerAdapter),
+        orderPlacedAtAdapter.decode(getObject(9, OffsetDateTime::class.java).toInstant()),
+        getObject(10, UUID::class.java)?.let { externalReferenceAdapter.decode(it) },
+        getObject(11, LocalDate::class.java)?.let { preferredDateAdapter.decode(it) },
+        getObject(12, LocalTime::class.java)?.let { openingTimeAdapter.decode(it) },
+        getObject(13, OffsetTime::class.java)?.let { meetingTimeTzAdapter.decode(it) },
+        getObject(14, LocalDateTime::class.java)?.let { createdAtLocalAdapter.decode(it) },
+        getBlob(15)?.let { largeObjectRefAdapter.decode(it) },
+        getBytes(16)?.let { thumbnailAdapter.decode(it) },
+      )
+    }
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setBlob(1, largeObjectRefAdapter.encode(large_object_ref))
+    }
+    return processor.invoke(sql, rowReader, queryBinder)
+  }
+
+  override fun <T : Any> getUsersByLargeObjectRef(large_object_ref: LargeObjectRef, mapper: (
+    id: Int,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
+    current_mood: Mood,
+    previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
+  ) -> T): Many<T> = getUsersByLargeObjectRef(large_object_ref, mapper, driver::queryMany)
+
+  private fun <T : Any, Return> getUsersByThumbnail(
+    thumbnail: Thumbnail,
+    mapper: (
+      id: Int,
+      email: Email,
+      age: PositiveInteger?,
+      zip_code: UsPostalCode?,
+      current_mood: Mood,
+      previous_mood: Mood?,
+      past_moods: Array<Mood?>?,
+      scores: Array<PositiveInteger?>?,
+      placed_at: OrderPlacedAt,
+      external_ref: ExternalReference?,
+      preferred_date: PreferredDate?,
+      opening_time: OpeningTime?,
+      meeting_time_tz: MeetingTimeTz?,
+      created_at_local: CreatedAtLocal?,
+      large_object_ref: LargeObjectRef?,
+      thumbnail: Thumbnail?,
+    ) -> T,
+    processor: ManyProcessor<T, Return>,
+  ): Return {
+    val sql = "SELECT * FROM users WHERE thumbnail = ?"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        emailAdapter.decode(getString(2)),
+        getInt(3).takeUnless { wasNull() }?.let { positiveIntegerAdapter.decode(it) },
+        getString(4)?.let { usPostalCodeAdapter.decode(it) },
+        moodAdapter.decode(getString(5)),
+        getString(6)?.let { moodAdapter.decode(it) },
+        getArray(7)?.decodeArray(moodAdapter),
+        getArray(8)?.decodeArray(positiveIntegerAdapter),
+        orderPlacedAtAdapter.decode(getObject(9, OffsetDateTime::class.java).toInstant()),
+        getObject(10, UUID::class.java)?.let { externalReferenceAdapter.decode(it) },
+        getObject(11, LocalDate::class.java)?.let { preferredDateAdapter.decode(it) },
+        getObject(12, LocalTime::class.java)?.let { openingTimeAdapter.decode(it) },
+        getObject(13, OffsetTime::class.java)?.let { meetingTimeTzAdapter.decode(it) },
+        getObject(14, LocalDateTime::class.java)?.let { createdAtLocalAdapter.decode(it) },
+        getBlob(15)?.let { largeObjectRefAdapter.decode(it) },
+        getBytes(16)?.let { thumbnailAdapter.decode(it) },
+      )
+    }
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setBytes(1, thumbnailAdapter.encode(thumbnail))
+    }
+    return processor.invoke(sql, rowReader, queryBinder)
+  }
+
+  override fun <T : Any> getUsersByThumbnail(thumbnail: Thumbnail, mapper: (
+    id: Int,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
+    current_mood: Mood,
+    previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
+  ) -> T): Many<T> = getUsersByThumbnail(thumbnail, mapper, driver::queryMany)
 
   @Throws(SQLException::class)
   override fun createUser(

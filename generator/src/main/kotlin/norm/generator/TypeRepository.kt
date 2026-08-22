@@ -637,7 +637,7 @@ internal fun postgresArrayElementTypeName(typeName: String): String =
  *
  * Every getter/setter/Kotlin-type combination below matches [BASE_TYPE_RESOLVERS]'s NON-domain
  * mapping for the same key exactly — see [JdbcTypeInfo.getterClassHint] and
- * [JdbcTypeInfo.convertOffsetDateTimeToInstant] for the two cases (`java.time` types, and
+ * [JdbcTypeInfo.convertOffsetDateTimeToInstant] for the cases (`java.time` types, `uuid`, and
  * `timestamptz` specifically) where matching the non-domain path requires more than a plain
  * `getX`/`setX` method pair, each verified against pgjdbc 42.7.13's source rather than assumed.
  */
@@ -735,12 +735,24 @@ internal fun resolveJdbcTypeInfo(baseTypeName: String): JdbcTypeInfo? = when (ba
       getterClassHint = OffsetDateTime::class.asClassName(),
       convertOffsetDateTimeToInstant = true,
     )
-  // Matches PostgresSupportedTypes.UUID: unlike the java.time types above, pgjdbc's PLAIN
-  // getObject(int) already returns java.util.UUID directly for a uuid column (PgResultSet's
-  // internalGetObject special-cases the Postgres "uuid" type by name — verified against pgjdbc
-  // 42.7.13's source), so no class-hint is needed here.
+  // Matches PostgresSupportedTypes.UUID: java.sql.ResultSet.getObject(int) is declared to return
+  // Object, so a bare getObject(index) call is statically Any in Kotlin regardless of what pgjdbc
+  // returns at runtime — PgResultSet's internalGetObject does special-case the Postgres "uuid"
+  // type by name and hands back a java.util.UUID instance (verified against pgjdbc 42.7.13's
+  // source), but that's a runtime fact, not a static type, and ColumnAdapter<Application,
+  // UUID>.decode requires a statically-typed UUID argument. The class-qualified
+  // getObject(int, Class) overload (getterClassHint) fixes the static type; pgjdbc's
+  // PgResultSet#getObject(int, Class<T>) explicitly special-cases `type == UUID.class` by
+  // delegating to the same runtime read and casting, so this is safe.
   "uuid" ->
-    JdbcTypeInfo("getObject", "setObject", false, "OTHER", kotlinType = UUID::class.asTypeName())
+    JdbcTypeInfo(
+      "getObject",
+      "setObject",
+      false,
+      "OTHER",
+      kotlinType = UUID::class.asTypeName(),
+      getterClassHint = UUID::class.asClassName(),
+    )
   else -> null
 }
 
