@@ -19,6 +19,7 @@ import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.utility.DockerImageName
 import java.sql.DriverManager
+import java.sql.Statement
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -456,6 +457,80 @@ class QueryAnalysisTest {
       val query = analyzeWithSchema(
         "CREATE TABLE t (a TEXT, b TEXT)",
         "SELECT concat_ws(', ', a, b) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `concat_ws with a nullable separator is nullable`() {
+      // concat_ws is non-null iff its FIRST argument (the separator) is non-null — a null
+      // separator poisons the whole result even though later arguments are individually
+      // null-tolerant. Verified live on PostgreSQL 16, 17, and 18: concat_ws(NULL, 'x', 'y') IS
+      // NULL. This is the pre-existing bug (present before grouping-sets work ever touched this
+      // file): concat_ws was wrongly on the unconditional always-non-null list.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t3 (s TEXT)",
+        "SELECT concat_ws(s, 'x', 'y') AS k FROM t3",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    // VARIADIC passes the array argument itself as one value, not exploded into elements —
+    // isAlwaysNonNull's "regardless of any argument" and isNonNullIffFirstArgumentNonNull's "only
+    // the first argument matters" both assume the ordinary calling form and are unsound for
+    // VARIADIC: concat(VARIADIC arr) and concat_ws(',', VARIADIC arr) are both NULL when arr
+    // itself is NULL. Verified live on PostgreSQL 16, 17, and 18.
+
+    @Test
+    fun `concat with VARIADIC over a nullable array is nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t4 (arr TEXT[])",
+        "SELECT concat(VARIADIC arr) AS c FROM t4",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `concat_ws with VARIADIC over a nullable array is nullable even with a literal separator`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t4 (arr TEXT[])",
+        "SELECT concat_ws(',', VARIADIC arr) AS w FROM t4",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `concat with VARIADIC over a NOT NULL array is non-null`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t4 (arr TEXT[] NOT NULL)",
+        "SELECT concat(VARIADIC arr) AS c FROM t4",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `concat_ws with VARIADIC over a NOT NULL array is non-null`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t4 (arr TEXT[] NOT NULL)",
+        "SELECT concat_ws(',', VARIADIC arr) AS w FROM t4",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `concat_ws with VARIADIC over an array literal containing a NULL element is still non-null`() {
+      // Verified live on PostgreSQL 16, 17, and 18: concat_ws(',', VARIADIC ARRAY['a', NULL]) is
+      // 'a', never NULL — the ARRAY[] constructor itself is never NULL even when an element is,
+      // and that (not "every element non-null") is the condition that matters here.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL)",
+        "SELECT concat_ws(',', VARIADIC ARRAY['a', NULL]) AS w FROM t",
       )
       assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].notNull).isTrue()
@@ -1383,6 +1458,600 @@ class QueryAnalysisTest {
       assertThat(query.columns[0].notNull).isFalse()
       assertThat(query.columns[1].notNull).isTrue()
       assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    // These exercise the expression-grouping-key rule directly, WITHOUT a proving WHERE clause.
+    // A bare-Var grouping key (e.g. GROUP BY ROLLUP(a)) also resolves via ordinary Var evaluation
+    // on PostgreSQL 18 because the *GROUP* RTE masks it, but on PostgreSQL 16/17 the target-list
+    // Var for that key sits at the same varno/varattno as the base table column, so this rule is
+    // needed even for bare keys there. An EXPRESSION grouping key (e.g. lower(a)) never produces a
+    // {VAR } target-list entry at all — only walking the typed expression tree
+    // (NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension) catches these on every
+    // PostgreSQL version.
+
+    @Test
+    fun `expression ROLLUP grouping key is nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT lower(a) FROM t GROUP BY ROLLUP(lower(a))",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `non-strict COALESCE ROLLUP grouping key is nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT coalesce(a, 'z') FROM t GROUP BY ROLLUP(coalesce(a, 'z'))",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `expression derived from an expression ROLLUP grouping key is nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT upper(lower(a)) FROM t GROUP BY ROLLUP(lower(a))",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `function over an expression ROLLUP grouping key is nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT length(lower(a)) FROM t GROUP BY ROLLUP(lower(a))",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `CUBE over two expression keys — both become nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL, b TEXT NOT NULL)",
+        "SELECT lower(a), upper(b) FROM t GROUP BY CUBE(lower(a), upper(b))",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `GROUPING SETS with an expression key is nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT lower(a) FROM t GROUP BY GROUPING SETS ((lower(a)), ())",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `aggregates and GROUPING stay non-null alongside a nullable expression key`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT lower(a) AS x, grouping(a) AS grp, count(*) AS cnt, count(a) AS cnt_a FROM t GROUP BY ROLLUP(a)",
+      )
+      assertThat(query.columns).hasSize(4)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+      assertThat(query.columns[2].notNull).isTrue()
+      assertThat(query.columns[3].notNull).isTrue()
+    }
+
+    @Test
+    fun `subquery expression ROLLUP grouping key is nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT y FROM (SELECT lower(a) AS y FROM t GROUP BY ROLLUP(lower(a))) s",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `CTE expression ROLLUP grouping key is nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "WITH c AS (SELECT lower(a) AS y FROM t GROUP BY ROLLUP(lower(a))) SELECT y FROM c",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    // A CaseExpr's :arg (test expression) and each WHEN's :expr (condition) are ordinary
+    // expressions that can carry the only Var in the whole CASE — but neither is evaluated by
+    // isNonNull, since a CASE's own nullability never depends on them. Without also walking them
+    // in isSafeFromGroupingSetNullExtension, a Var living only in a test expression or WHEN
+    // condition is invisible to the grouping-sets override, and a CASE whose results/default are
+    // all constants is wrongly reported non-null even though Postgres null-extends it for the
+    // summary row.
+
+    @Test
+    fun `CASE WHEN grouping key with the only Var in the WHEN condition is nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT CASE WHEN a = 'x' THEN 1 ELSE 2 END AS c FROM t GROUP BY ROLLUP(CASE WHEN a = 'x' THEN 1 ELSE 2 END)",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `shorthand CASE grouping key with the only Var in the test expression is nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT CASE a WHEN 'x' THEN 1 ELSE 2 END AS c FROM t GROUP BY ROLLUP(CASE a WHEN 'x' THEN 1 ELSE 2 END)",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `constant-only CASE column under grouping sets is an accepted over-widening`() {
+      // CASE WHEN true THEN 1 ELSE 2 END is never actually null-extended by Postgres (its leaves
+      // are all Const, which the planner never matches to a grouping key), but
+      // isSafeFromGroupingSetNullExtension requires an Aggref/GroupingFunc descendant to prove
+      // safety and this expression has none, so it widens to nullable — an accepted, deliberate
+      // cost documented on isSafeFromGroupingSetNullExtension's KDoc, not a bug to chase.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT CASE WHEN true THEN 1 ELSE 2 END AS constant_case, a FROM t GROUP BY ROLLUP(a)",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    // JSON_EXISTS/JSON_VALUE/JSON_QUERY do not retain their PASSING clause's values (see
+    // PgNodeExpression.JsonExpr's KDoc), so a Var living only there is invisible to
+    // isSafeFromGroupingSetNullExtension's walk. Unlike a CaseExpr's dropped children, this one is
+    // not recovered by parsing more — it is closed by hardcoding JsonExpr as always UNSAFE,
+    // matching Unknown, regardless of an Aggref elsewhere in the tree.
+
+    @Test
+    fun `JSON_EXISTS grouping key with the only Var in the PASSING clause is nullable`() {
+      assumeTrue(pgVersion.toInt() >= 17, "JSON_EXISTS PASSING requires PostgreSQL 17+")
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, a INT NOT NULL)",
+        """
+        SELECT JSON_EXISTS(jsonb '{"a":1}', '${'$'}.a ? (@ == ${'$'}v)' PASSING a AS v) AS e
+        FROM t
+        GROUP BY ROLLUP(JSON_EXISTS(jsonb '{"a":1}', '${'$'}.a ? (@ == ${'$'}v)' PASSING a AS v))
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `JSON_VALUE with defaults and the only Var in the PASSING clause is nullable`() {
+      assumeTrue(pgVersion.toInt() >= 17, "JSON_VALUE PASSING requires PostgreSQL 17+")
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, a INT NOT NULL)",
+        """
+        SELECT JSON_VALUE(
+          jsonb '{"a":1}', '${'$'}.a ? (@ == ${'$'}v)' PASSING a AS v DEFAULT 0 ON EMPTY DEFAULT 0 ON ERROR
+        ) AS c
+        FROM t
+        GROUP BY ROLLUP(
+          JSON_VALUE(jsonb '{"a":1}', '${'$'}.a ? (@ == ${'$'}v)' PASSING a AS v DEFAULT 0 ON EMPTY DEFAULT 0 ON ERROR)
+        )
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    // A `}`, `{`, or `\` in a column alias is backslash-escaped by Postgres in the raw node-tree
+    // text (e.g. an alias `k}x` is written as `:resname k\}x`). PgNodeTreeParser's brace-counting
+    // scanners must skip escaped pairs, or an escaped brace derails brace-depth tracking and
+    // hasGroupingSets silently returns false for the WHOLE query block — not just the offending
+    // column, since the scan that finds `:groupingSets` runs once over the entire node tree.
+
+    @Test
+    fun `a closing brace in the grouping key's own alias does not defeat the fix`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        """SELECT lower(a) AS "k}x" FROM t GROUP BY ROLLUP(lower(a))""",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `an opening brace in a CUBE key's alias does not defeat the fix`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL, b TEXT NOT NULL)",
+        """SELECT lower(a) AS "k{x", upper(b) AS m FROM t GROUP BY CUBE(lower(a), upper(b))""",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `a backslash immediately followed by a brace in a GROUPING SETS key's alias does not defeat the fix`() {
+      // A literal backslash followed immediately by a literal `}` (identifier `k\}m`) is written
+      // as the escaped-backslash pair immediately followed by the escaped-brace pair — three
+      // consecutive raw backslashes then `}`. A scanner that loses parity here (rather than
+      // consuming exactly two raw characters per escape, strictly left to right) can still
+      // miscount even with some escape-awareness.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        """SELECT lower(a) AS "k\}m" FROM t GROUP BY GROUPING SETS ((lower(a)), ())""",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `a brace in one column's alias does not poison a different column's nullability`() {
+      // The exact reported repro shape: the brace-bearing alias sits on the AGGREGATE column, and
+      // the grouping key with no alias issue at all is a separate column — proving the derailment
+      // is block-wide (hasGroupingSets), not confined to whichever column carries the brace.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        """SELECT count(*) AS "n}", lower(a) AS k FROM t GROUP BY ROLLUP(lower(a))""",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    // A grouping key need not contain a Var at all. Postgres's grouping-set null-extension is a
+    // structural match against the grouping key's own (stable, non-folded) subexpression — a Const
+    // key still gets null-extended, and so does any larger expression built on top of one, even
+    // though a lone Const is itself immune (the planner never matches a bare Const). This is why
+    // isEffectivelyNonNull needs BOTH the sortGroupRef-based key check AND
+    // isSafeFromGroupingSetNullExtension's aggregate-domination walk — neither alone is sufficient.
+
+    @Test
+    fun `Var-free Const grouping key is nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT 'ALL'::text AS scope, count(*) AS n FROM t GROUP BY ROLLUP(scope)",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `all-Const composite grouping key is nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT 'a'::text || 'b'::text AS c, count(*) AS n FROM t GROUP BY ROLLUP('a'::text || 'b'::text)",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `expression derived from a Var-free grouping key is nullable`() {
+      // date_trunc('month', current_date) is the grouping key; the target-list entry adds
+      // "+ interval '1 day'" on top, so its own ressortgroupref is 0 — it does not textually match
+      // the key, only structurally once the interval addition is stripped away by Postgres's own
+      // subexpression matching. Only isSafeFromGroupingSetNullExtension's tree walk (not the
+      // sortGroupRef-based key check) can catch this. current_date is STABLE, not IMMUTABLE, so
+      // this key is never constant-folded away — the whole point of this case.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        """
+        SELECT date_trunc('month', current_date) + interval '1 day' AS d, count(*) AS n
+        FROM t
+        GROUP BY ROLLUP(date_trunc('month', current_date))
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `a cast chain over a Const with an Aggref sibling is nullable — mixed operator case`() {
+      // count(*)::text || ('2026-01-01'::text::timestamptz)::text: the '::text::timestamptz' cast
+      // chain is a real, non-folded coercion function call (unlike a single literal cast, which
+      // resolves directly to a Const), so it is a stable, matchable subexpression in its own right
+      // — even though its only leaf is a Const. Verified live: PG16 returns NULL for this column in
+      // the ROLLUP summary row; PG18 does not (a genuine cross-version behavioral divergence, not
+      // an analysis difference). Since the generated Kotlin type must be correct on every supported
+      // Postgres version, this column must be nullable — which is an accepted over-widening on
+      // PG18, not something to "fix" in the PG18 direction.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        """
+        SELECT count(*)::text || ('2026-01-01'::text::timestamptz)::text AS mixed, count(*) AS n
+        FROM t
+        GROUP BY ROLLUP(('2026-01-01'::text::timestamptz))
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    // The following must NOT widen: each has an Aggref/GroupingFunc dominating every part of its
+    // expression tree (modulo Consts), so isSafeFromGroupingSetNullExtension proves it immune to
+    // null-extension, and none of them is itself a grouping key.
+
+    @Test
+    fun `count concatenated with a Const stays non-null alongside a nullable expression key`() {
+      // count(*)::text (not bare count(*)) so the || resolves to the plain text||text operator,
+      // which is on the isNeverNullForNonNullInput safe-list — the point under test is the
+      // grouping-sets safety walk, not general operator-safelist coverage. 'B' (not 'A') on the
+      // concatenation side deliberately differs from the 'A' grouping key: on PostgreSQL 18, the
+      // GROUP RTE mechanism structurally substitutes a GROUP-RTE Var for any target-list
+      // subexpression that EXACTLY matches the grouping key — reusing 'A'::text here would trigger
+      // that substitution and make `d` genuinely nullable, verified live, which is a different,
+      // legitimate case, not this one.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT count(*)::text || 'B'::text AS d, 'A'::text AS k FROM t GROUP BY ROLLUP('A'::text)",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `a bare Const tag that is not the grouping key stays non-null`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT 'ALL'::text AS tag, lower(a) AS k, count(*) AS n FROM t GROUP BY ROLLUP(lower(a))",
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `count plus a literal stays non-null alongside a nullable expression key`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT count(*) + 1 AS n, lower(a) AS k FROM t GROUP BY ROLLUP(lower(a))",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `count with a FILTER clause stays non-null alongside a nullable expression key`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT count(*) FILTER (WHERE a = 'zzz') AS f, lower(a) AS k FROM t GROUP BY ROLLUP(lower(a))",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    // isSafeFromGroupingSetNullExtension's aggregate-domination rule alone over-widens: an implicit
+    // int4->int8 literal like `0::bigint` is a FuncExpr over a Const, not a folded Const, so
+    // `count(*) + 0::bigint` has no Aggref descendant on ITS OWN unless the whole subtree is
+    // examined together — the domination check finds count(*)'s Aggref for the OUTER `+`, but the
+    // literal side still needs to be proven safe independently via constant-folding
+    // (isSafeFromGroupingSetNullExtension's foldsToConst leg), not via any aggregate. Without that
+    // leg, ordinary aggregate arithmetic like `coalesce(count(*), 0)` was wrongly nullable.
+
+    @Test
+    fun `aggregate arithmetic over IMMUTABLE-folding literals stays non-null alongside a nullable key`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        """
+        SELECT
+          coalesce(count(*), 0) AS c1,
+          greatest(count(*), 1) AS c2,
+          count(*) + length('ab') AS c3,
+          lower(a) AS k
+        FROM t
+        GROUP BY ROLLUP(lower(a))
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(4)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+      assertThat(query.columns[2].notNull).isTrue()
+      assertThat(query.columns[3].notNull).isFalse()
+    }
+
+    @Test
+    fun `count plus an implicit widening cast of a literal stays non-null while a different literal is the key`() {
+      // The aggregate side deliberately uses a DIFFERENT literal (5, not 0) than the key (0): on
+      // PostgreSQL 18, using the SAME literal on both sides makes the GROUP RTE mechanism
+      // structurally substitute a nullingrels-flagged Var for the aggregate side's matching
+      // subexpression too — verified live this substitution does NOT actually make that combined
+      // value null at runtime (count(*) + 0::bigint is never null even in the summary row), but our
+      // analyzer cannot see through that PG18-only substitution artifact to know that, so it
+      // conservatively (and, for this exact same-literal case, needlessly) reports nullable. Using
+      // a different literal avoids the substitution entirely and tests the real feature under test
+      // — aggregate arithmetic over an implicit-cast literal — without hitting that artifact.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT count(*) + 5::bigint AS c, 0::bigint AS k FROM t GROUP BY ROLLUP((0::bigint))",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `count plus a literal stays non-null while an output-column-alias Const key is nullable`() {
+      // "one" in GROUP BY ROLLUP(one) refers back to the output column alias — Postgres allows
+      // referencing a target-list alias in GROUP BY. cp does not itself match the key (its own
+      // ressortgroupref is 0) and must be proven safe via the Aggref it contains, exactly like the
+      // simpler count(*)+1 cases elsewhere in this file — this is a second, independent example to
+      // confirm behavior does not depend on which PostgreSQL version substitutes the key. cp uses a
+      // different literal (2, not 1) than the key for the same reason as the test above — same
+      // literal on both sides hits a PG18-only GROUP RTE substitution artifact this analyzer cannot
+      // see through, unrelated to the aggregate-arithmetic feature under test here.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT 1 AS one, count(*) + 2 AS cp FROM t GROUP BY ROLLUP(one)",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `ROW_NUMBER and a plain count window function stay non-null under a nullable ROLLUP key`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t2 (b TEXT NOT NULL, c INT NOT NULL)",
+        "SELECT row_number() OVER () AS rn, count(*) OVER () AS w FROM t2 GROUP BY ROLLUP(b)",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `aggregate division, GROUPING plus a literal, aggregate CASE, and LAG with a default all stay non-null`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        """
+        SELECT
+          count(*) / greatest(count(a), 1) AS division,
+          grouping(lower(a)) + length('ab') AS grouping_plus,
+          CASE WHEN count(*) > 1 THEN count(*) ELSE 0::bigint END AS aggregate_case,
+          lag(count(*), 1, 0::bigint) OVER () AS lag_with_default,
+          lower(a) AS k
+        FROM t
+        GROUP BY ROLLUP(lower(a))
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(5)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+      assertThat(query.columns[2].notNull).isTrue()
+      assertThat(query.columns[3].notNull).isTrue()
+      assertThat(query.columns[4].notNull).isFalse()
+    }
+
+    @Test
+    fun `xmlelement wrapping a cast aggregate stays non-null alongside a nullable expression key`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT xmlelement(name x, count(*)::text) AS elem, lower(a) AS k FROM t GROUP BY ROLLUP(lower(a))",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `an IMMUTABLE function over a Const stays non-null as a non-key subexpression`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT count(*)::text || lower('X'::text) AS d, lower(a) AS k FROM t GROUP BY ROLLUP(lower(a))",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `a window function whose own argument is not dominated by an aggregate stays nullable`() {
+      // Regression guard for the WindowFunc special case: it must NOT get Aggref's blanket safety.
+      // first_value(b)'s argument is a bare Var — evaluated over already-grouped, null-extended
+      // rows — so it is genuinely nullable even though b is NOT NULL. Verified live: all three
+      // ROLLUP(b) rows return NULL for this column on both PG16 and PG18.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t2 (b TEXT NOT NULL, c INT NOT NULL)",
+        "SELECT first_value(b) OVER (ORDER BY grouping(b) DESC) AS fv FROM t2 GROUP BY ROLLUP(b)",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `a folded-constant expression that IS the grouping key is still nullable via rule (b)`() {
+      // Proves the foldsToConst leg did not break the sortGroupRef-based key check: lower('X'::text)
+      // folds to a Const (lower is IMMUTABLE), which would make it "safe" under foldsToConst alone —
+      // but it is also the literal grouping key, so rule (b) must still force it nullable. Verified
+      // live: NULL in the ROLLUP summary row.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT lower('X'::text) AS k, count(*) AS n FROM t GROUP BY ROLLUP(lower('X'::text))",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `concat stays non-null under a nullable ROLLUP key because it is on the always-non-null list`() {
+      // concat is non-strict — it renders a null argument as an empty string — so null-extending
+      // one of its arguments cannot make the result null. Verified live on PG16, 17, and 18: never
+      // NULL for the plain ROLLUP case, for a LEFT JOIN that null-extends one argument, and for an
+      // empty input table.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t2 (a TEXT NOT NULL, b TEXT NOT NULL)",
+        "SELECT concat(a, '-', b) AS label, count(*) AS n FROM t2 GROUP BY ROLLUP(a, b)",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `concat_ws with a null-extended separator argument is nullable — the P0 regression`() {
+      // concat_ws's non-nullness depends on its separator (first argument) specifically, not on
+      // whether SOME argument is non-null — unlike concat, it must NOT get the always-non-null
+      // short-circuit. Here the separator IS the ROLLUP key, so it is null-extended for the
+      // summary row, and concat_ws(NULL, 'x', 'y') really is NULL there (verified live on
+      // PostgreSQL 16, 17, and 18). Before this fix, concat_ws's presence on the always-non-null
+      // list made this wrongly non-null.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t2 (a TEXT NOT NULL, b TEXT NOT NULL)",
+        "SELECT concat_ws(a, 'x', 'y') AS k, count(*) AS n FROM t2 GROUP BY ROLLUP(a)",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `concat_ws with a literal separator over a null-extended later argument is an accepted over-widening`() {
+      // Verified live on PostgreSQL 16, 17, and 18: concat_ws(',', a, b) is NEVER null under
+      // GROUP BY ROLLUP(a, b), including the fully null-extended summary row — a non-null literal
+      // separator makes concat_ws total regardless of the other (even null-extended) arguments.
+      // This analyzer still reports it nullable: the grouping-sets safety gate's generic rule
+      // requires an Aggref/GroupingFunc/WindowFunc descendant to prove safety, and this expression
+      // has none — concat_ws gets no special "only the separator argument matters" reasoning built
+      // into the gate (that would need the same fragile structural-identity matching the
+      // grouping-sets rewrite deliberately avoids elsewhere). This is a known, accepted
+      // over-widening (the safe direction), not a bug to chase in this round.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t2 (a TEXT NOT NULL, b TEXT NOT NULL)",
+        "SELECT concat_ws(',', a, b) AS k, count(*) AS n FROM t2 GROUP BY ROLLUP(a, b)",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `concat with VARIADIC over a null-extended NOT NULL array ROLLUP key is nullable`() {
+      // arr is NOT NULL by schema, but IS the ROLLUP key, so it is null-extended for the summary
+      // row, and concat(VARIADIC arr) really is NULL there — verified live on PostgreSQL 16, 17,
+      // and 18. Before this fix, concat's VARIADIC form was wrongly reported non-null via the
+      // isAlwaysNonNull short-circuit, which is unconditional and does not (and cannot) inspect
+      // arguments at all.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t4 (arr TEXT[] NOT NULL)",
+        "SELECT concat(VARIADIC arr) AS c, count(*) AS n FROM t4 GROUP BY ROLLUP(arr)",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
     }
   }
 
@@ -5546,25 +6215,350 @@ class QueryAnalysisTest {
 
     @Test
     fun `upper is strict, concat is not strict`() {
+      // Resolved by NAME from pg_catalog, independent of functionStrictnessByOid's own SQL (which
+      // is a direct passthrough of pg_proc.proisstrict), so this test verifies the CONTENT of the
+      // loaded map for two specific, known-in-advance oids rather than merely that some entries
+      // happen to be true and the always-non-null set happens to be non-empty — the bare
+      // `isNotEmpty()` this replaces would stay green even if strictness were loaded backwards.
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         val catalogLoader = PgCatalogLoader(connection)
         val strictness = catalogLoader.functionStrictnessByOid
-        val upperOids = strictness.filterValues { it }.keys
-        val alwaysNonNull = catalogLoader.alwaysNonNullFunctionOids
-        assertThat(upperOids.isNotEmpty()).isTrue()
-        assertThat(alwaysNonNull.isNotEmpty()).isTrue()
+        val oidsByPronameAndArgtypes = connection.createStatement().use { stmt ->
+          stmt.executeQuery(
+            """
+            SELECT p.proname, p.oid::integer AS oid,
+              COALESCE(
+                (SELECT array_agg(t.typname::text ORDER BY u.ordinality)
+                 FROM unnest(p.proargtypes) WITH ORDINALITY AS u(type_oid, ordinality)
+                 JOIN pg_catalog.pg_type t ON t.oid = u.type_oid),
+                ARRAY[]::text[]
+              ) AS argtypes
+            FROM pg_catalog.pg_proc p
+            JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'pg_catalog' AND p.proname IN ('upper', 'concat')
+            """.trimIndent(),
+          ).use { rs ->
+            buildMap {
+              while (rs.next()) {
+                @Suppress("UNCHECKED_CAST")
+                val argumentTypes = (rs.getArray("argtypes").array as Array<String>).toList()
+                put("${rs.getString("proname")}(${argumentTypes.joinToString(",")})", rs.getInt("oid"))
+              }
+            }
+          }
+        }
+        val upperTextOid = requireNotNull(oidsByPronameAndArgtypes["upper(text)"])
+        val concatOid = requireNotNull(oidsByPronameAndArgtypes["concat(any)"])
+        assertThat(strictness[upperTextOid]).isEqualTo(true)
+        assertThat(strictness[concatOid]).isEqualTo(false)
       }
     }
 
     @Test
-    fun `count has non-null initial value, sum does not`() {
+    fun `aggregateHasNonNullInitialValue-listed aggregates are non-null over empty input, unlike sum and avg`() {
+      // The mis-named predecessor of this test only asserted that BOTH the true and false subsets
+      // of aggregateHasNonNullInitialValue were non-empty — a property satisfied even by a WRONG
+      // classification, as long as at least one aggregate landed on each side. This version runs
+      // every aggregate this map claims is non-null-initial over a genuinely EMPTY input (`...
+      // WHERE false`) and asserts the result really is non-null — the ground truth the map's name
+      // claims — then spot-checks that sum/avg/max/min, which the map correctly excludes, really
+      // do return null over the same empty input.
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         val catalogLoader = PgCatalogLoader(connection)
-        val aggValues = catalogLoader.aggregateHasNonNullInitialValue
-        val withInitial = aggValues.filterValues { it }
-        val withoutInitial = aggValues.filterValues { !it }
-        assertThat(withInitial.isNotEmpty()).isTrue()
-        assertThat(withoutInitial.isNotEmpty()).isTrue()
+        val nonNullInitialOids = catalogLoader.aggregateHasNonNullInitialValue.filterValues { it }.keys
+        assertThat(nonNullInitialOids.isNotEmpty()).isTrue()
+
+        val signaturesByOid = connection.createStatement().use { stmt ->
+          stmt.executeQuery(
+            """
+            SELECT p.oid::integer AS oid, p.proname,
+              COALESCE(
+                (SELECT array_agg(t.typname::text ORDER BY u.ordinality)
+                 FROM unnest(p.proargtypes) WITH ORDINALITY AS u(type_oid, ordinality)
+                 JOIN pg_catalog.pg_type t ON t.oid = u.type_oid),
+                ARRAY[]::text[]
+              ) AS argtypes
+            FROM pg_catalog.pg_proc p
+            """.trimIndent(),
+          ).use { rs ->
+            buildMap {
+              while (rs.next()) {
+                @Suppress("UNCHECKED_CAST")
+                val argumentTypes = (rs.getArray("argtypes").array as Array<String>).toList()
+                put(rs.getInt("oid"), rs.getString("proname") to argumentTypes)
+              }
+            }
+          }
+        }
+
+        val failures = mutableListOf<String>()
+        connection.createStatement().use { stmt ->
+          for (oid in nonNullInitialOids) {
+            val (name, argumentTypes) = requireNotNull(signaturesByOid[oid]) { "No pg_proc row for aggregate oid $oid" }
+            if (aggregateOverEmptyInputIsNull(stmt, name, argumentTypes)) {
+              failures += "$name(${argumentTypes.joinToString(",")}) returned NULL over empty input"
+            }
+          }
+        }
+        assertThat(failures).isEqualTo(emptyList<String>())
+
+        connection.createStatement().use { stmt ->
+          assertThat(aggregateOverEmptyInputIsNull(stmt, "sum", listOf("int4"))).isTrue()
+          assertThat(aggregateOverEmptyInputIsNull(stmt, "avg", listOf("numeric"))).isTrue()
+          assertThat(aggregateOverEmptyInputIsNull(stmt, "max", listOf("int4"))).isTrue()
+          assertThat(aggregateOverEmptyInputIsNull(stmt, "min", listOf("int4"))).isTrue()
+        }
+      }
+    }
+
+    @Test
+    fun `immutableFunctionOids includes an immutable example and excludes stable, volatile, and set-returning ones`() {
+      // Deliberately does NOT compare immutableFunctionOids against a live re-query of
+      // `provolatile = 'i' AND NOT proretset AND prokind IN ('f', 'w')` — PgCatalogLoader.loadImmutableFunctionOids
+      // runs EXACTLY that predicate (see PgCatalogLoader.kt), so an `isEqualTo` against the same
+      // predicate here could only ever detect broken plumbing (a query that fails to run at all),
+      // never a WRONG predicate: a mutation to the production SQL would move both sides of the
+      // comparison together and the test would stay green. The named-function assertions below are
+      // this test's only teeth, so they are widened past the original two (STABLE, VOLATILE) to
+      // also cover the SET-RETURNING dimension of the predicate, which nothing here previously
+      // exercised with a concrete example at all: `unnest(anyarray)` is itself IMMUTABLE
+      // (`provolatile = 'i'`) but set-returning (`proretset = true`), so it must be excluded by the
+      // `NOT proretset` conjunct specifically, not by volatility.
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        val catalogLoader = PgCatalogLoader(connection)
+        val immutableOids = catalogLoader.immutableFunctionOids
+        assertThat(immutableOids.isNotEmpty()).isTrue()
+
+        val exampleOids = connection.createStatement().use { stmt ->
+          stmt.executeQuery(
+            """
+            SELECT p.oid::integer AS oid, p.proname,
+              COALESCE(
+                (SELECT array_agg(t.typname::text ORDER BY u.ordinality)
+                 FROM unnest(p.proargtypes) WITH ORDINALITY AS u(type_oid, ordinality)
+                 JOIN pg_catalog.pg_type t ON t.oid = u.type_oid),
+                ARRAY[]::text[]
+              ) AS argtypes
+            FROM pg_catalog.pg_proc p
+            JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'pg_catalog' AND p.proname IN ('abs', 'date_trunc', 'random', 'unnest')
+            """.trimIndent(),
+          ).use { rs ->
+            buildMap {
+              while (rs.next()) {
+                @Suppress("UNCHECKED_CAST")
+                val argumentTypes = (rs.getArray("argtypes").array as Array<String>).toList()
+                put("${rs.getString("proname")}(${argumentTypes.joinToString(",")})", rs.getInt("oid"))
+              }
+            }
+          }
+        }
+        // abs(int4) is IMMUTABLE and non-set-returning: it MUST be present.
+        val absImmutableOid = requireNotNull(exampleOids["abs(int4)"])
+        assertThat(immutableOids.contains(absImmutableOid)).isTrue()
+        // date_trunc(text, timestamptz) is STABLE (its result depends on the session timezone).
+        val dateTruncStableOid = requireNotNull(exampleOids["date_trunc(text,timestamptz)"])
+        assertThat(immutableOids.contains(dateTruncStableOid)).isFalse()
+        // random() is VOLATILE.
+        val randomVolatileOid = requireNotNull(exampleOids["random()"])
+        assertThat(immutableOids.contains(randomVolatileOid)).isFalse()
+        // unnest(anyarray) is IMMUTABLE but SET-RETURNING — excluded by NOT proretset, not by volatility.
+        val unnestSetReturningOid = requireNotNull(exampleOids["unnest(anyarray)"])
+        assertThat(immutableOids.contains(unnestSetReturningOid)).isFalse()
+      }
+    }
+
+    @Test
+    fun `neverNullForNonNullInputOids and lagLeadWithDefaultOids contain no VARIADIC pg_proc rows`() {
+      // PgCatalogLoader.neverNullForNonNullInputOids's KDoc claims NO function on that list is
+      // VARIADIC ("verified live on PostgreSQL 16, 17, and 18") — unlike alwaysNonNullFunctionOids
+      // and nonNullIffFirstArgumentNonNullFunctionOids, whose sole entries (concat/concat_ws) are
+      // DELIBERATELY, DOCUMENTED-ly VARIADIC ("any") and are excluded from this check for exactly
+      // that reason (see PgNodeExpression.FuncExpr.isVariadic's KDoc and the two properties' own
+      // KDoc for why the VARIADIC calling form is handled separately rather than trusted here).
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        val catalogLoader = PgCatalogLoader(connection)
+        val oidsToCheck = catalogLoader.neverNullForNonNullInputOids + catalogLoader.lagLeadWithDefaultOids
+        assertThat(oidsToCheck.isNotEmpty()).isTrue()
+        val variadicOids = connection.createStatement().use { stmt ->
+          stmt.executeQuery("SELECT oid::integer FROM pg_catalog.pg_proc WHERE provariadic != 0").use { rs ->
+            buildSet { while (rs.next()) add(rs.getInt(1)) }
+          }
+        }
+        assertThat(oidsToCheck.intersect(variadicOids)).isEqualTo(emptySet())
+      }
+    }
+
+    @Test
+    fun `pg_proc rows for concat and concat_ws match a known snapshot`() {
+      // The catalog-drift analogue, for alwaysNonNullFunctionOids/nonNullIffFirstArgumentNonNullFunctionOids,
+      // of `pg_operator rows for safe-listed symbols match a known snapshot`/`pg_proc rows for
+      // safe-listed function names match a known snapshot` above: enumerates EVERY pg_catalog
+      // overload of concat/concat_ws (not just the strictness-filtered ones production actually
+      // loads), so a future PostgreSQL version adding a new overload of either name — e.g. a
+      // second, STRICT concat overload that would need excluding from alwaysNonNullFunctionOids
+      // the same way concat_ws already is — fails loudly here instead of silently riding along.
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        val actualSignatures = connection.createStatement().use { stmt ->
+          stmt.executeQuery(
+            """
+            SELECT p.proname,
+              COALESCE(
+                (SELECT array_agg(t.typname::text ORDER BY u.ordinality)
+                 FROM unnest(p.proargtypes) WITH ORDINALITY AS u(type_oid, ordinality)
+                 JOIN pg_catalog.pg_type t ON t.oid = u.type_oid),
+                ARRAY[]::text[]
+              ) AS argtypes
+            FROM pg_catalog.pg_proc p
+            JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'pg_catalog' AND p.proname IN ('concat', 'concat_ws')
+            """.trimIndent(),
+          ).use { rs ->
+            buildSet {
+              while (rs.next()) {
+                @Suppress("UNCHECKED_CAST")
+                val argumentTypes = (rs.getArray("argtypes").array as Array<String>).toList()
+                add("${rs.getString("proname")}(${argumentTypes.joinToString(",")})")
+              }
+            }
+          }
+        }
+        assertThat(actualSignatures).isEqualTo(setOf("concat(any)", "concat_ws(text,any)"))
+      }
+    }
+
+    @Test
+    fun `pg_proc rows for lag and lead match a known snapshot`() {
+      // The catalog-drift analogue, for lagLeadWithDefaultOids, of the snapshot tests above:
+      // enumerates EVERY window-function overload of lag/lead (1-, 2-, and 3-argument alike), so a
+      // future PostgreSQL version adding a 4th overload fails loudly here, forcing a human to
+      // decide whether it belongs on lagLeadWithDefaultOids before it silently would (or
+      // wouldn't).
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        val actualSignatures = connection.createStatement().use { stmt ->
+          stmt.executeQuery(
+            """
+            SELECT p.proname,
+              COALESCE(
+                (SELECT array_agg(t.typname::text ORDER BY u.ordinality)
+                 FROM unnest(p.proargtypes) WITH ORDINALITY AS u(type_oid, ordinality)
+                 JOIN pg_catalog.pg_type t ON t.oid = u.type_oid),
+                ARRAY[]::text[]
+              ) AS argtypes
+            FROM pg_catalog.pg_proc p
+            JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'pg_catalog' AND p.proname IN ('lag', 'lead') AND p.prokind = 'w'
+            """.trimIndent(),
+          ).use { rs ->
+            buildSet {
+              while (rs.next()) {
+                @Suppress("UNCHECKED_CAST")
+                val argumentTypes = (rs.getArray("argtypes").array as Array<String>).toList()
+                add("${rs.getString("proname")}(${argumentTypes.joinToString(",")})")
+              }
+            }
+          }
+        }
+        assertThat(actualSignatures).isEqualTo(
+          setOf(
+            "lag(anyelement)",
+            "lag(anyelement,int4)",
+            "lag(anycompatible,int4,anycompatible)",
+            "lead(anyelement)",
+            "lead(anyelement,int4)",
+            "lead(anycompatible,int4,anycompatible)",
+          ),
+        )
+      }
+    }
+
+    @Test
+    fun `pg_aggregate rows match a known snapshot`() {
+      // The catalog-drift analogue, for aggregateHasNonNullInitialValue, of the pg_proc/pg_cast
+      // snapshot tests above. aggregateHasNonNullInitialValue has no name restriction at all (see
+      // its loader) — it classifies EVERY pg_aggregate row in the whole catalog — so its drift
+      // surface is the entire catalog, not a curated name list. KNOWN_AGGREGATE_SNAPSHOT below was
+      // captured on PostgreSQL 16 (identical to 17); PostgreSQL 18 added exactly four new
+      // castfunc-unrelated overloads (max/min of bytea and record), none of which have a non-null
+      // initial value, so they are listed as version-gated additions rather than folded into the
+      // fixed snapshot, mirroring the cast/function snapshot tests' split above.
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        val actualSignatures = connection.createStatement().use { stmt ->
+          stmt.executeQuery(
+            """
+            SELECT p.proname,
+              COALESCE(
+                (SELECT array_agg(t.typname::text ORDER BY u.ordinality)
+                 FROM unnest(p.proargtypes) WITH ORDINALITY AS u(type_oid, ordinality)
+                 JOIN pg_catalog.pg_type t ON t.oid = u.type_oid),
+                ARRAY[]::text[]
+              ) AS argtypes
+            FROM pg_catalog.pg_aggregate a
+            JOIN pg_catalog.pg_proc p ON p.oid = a.aggfnoid
+            """.trimIndent(),
+          ).use { rs ->
+            buildSet {
+              while (rs.next()) {
+                @Suppress("UNCHECKED_CAST")
+                val argumentTypes = (rs.getArray("argtypes").array as Array<String>).toList()
+                add("${rs.getString("proname")}(${argumentTypes.joinToString(",")})")
+              }
+            }
+          }
+        }
+        val knownAggregateSnapshot = setOf(
+          "any_value(anyelement)", "array_agg(anyarray)", "array_agg(anynonarray)",
+          "avg(float4)", "avg(float8)", "avg(int2)", "avg(int4)", "avg(int8)", "avg(interval)", "avg(numeric)",
+          "bit_and(bit)", "bit_and(int2)", "bit_and(int4)", "bit_and(int8)",
+          "bit_or(bit)", "bit_or(int2)", "bit_or(int4)", "bit_or(int8)",
+          "bit_xor(bit)", "bit_xor(int2)", "bit_xor(int4)", "bit_xor(int8)",
+          "bool_and(bool)", "bool_or(bool)",
+          "corr(float8,float8)",
+          "count()", "count(any)",
+          "covar_pop(float8,float8)", "covar_samp(float8,float8)",
+          "cume_dist(any)", "dense_rank(any)", "every(bool)",
+          "json_agg(anyelement)", "json_agg_strict(anyelement)",
+          "json_object_agg(any,any)", "json_object_agg_strict(any,any)",
+          "json_object_agg_unique(any,any)", "json_object_agg_unique_strict(any,any)",
+          "jsonb_agg(anyelement)", "jsonb_agg_strict(anyelement)",
+          "jsonb_object_agg(any,any)", "jsonb_object_agg_strict(any,any)",
+          "jsonb_object_agg_unique(any,any)", "jsonb_object_agg_unique_strict(any,any)",
+          "max(anyarray)", "max(anyenum)", "max(bpchar)", "max(date)", "max(float4)", "max(float8)",
+          "max(inet)", "max(int2)", "max(int4)", "max(int8)", "max(interval)", "max(money)",
+          "max(numeric)", "max(oid)", "max(pg_lsn)", "max(text)", "max(tid)", "max(time)",
+          "max(timestamp)", "max(timestamptz)", "max(timetz)", "max(xid8)",
+          "min(anyarray)", "min(anyenum)", "min(bpchar)", "min(date)", "min(float4)", "min(float8)",
+          "min(inet)", "min(int2)", "min(int4)", "min(int8)", "min(interval)", "min(money)",
+          "min(numeric)", "min(oid)", "min(pg_lsn)", "min(text)", "min(tid)", "min(time)",
+          "min(timestamp)", "min(timestamptz)", "min(timetz)", "min(xid8)",
+          "mode(anyelement)", "percent_rank(any)",
+          "percentile_cont(_float8,float8)", "percentile_cont(_float8,interval)",
+          "percentile_cont(float8,float8)", "percentile_cont(float8,interval)",
+          "percentile_disc(_float8,anyelement)", "percentile_disc(float8,anyelement)",
+          "range_agg(anymultirange)", "range_agg(anyrange)",
+          "range_intersect_agg(anymultirange)", "range_intersect_agg(anyrange)",
+          "rank(any)",
+          "regr_avgx(float8,float8)", "regr_avgy(float8,float8)", "regr_count(float8,float8)",
+          "regr_intercept(float8,float8)", "regr_r2(float8,float8)", "regr_slope(float8,float8)",
+          "regr_sxx(float8,float8)", "regr_sxy(float8,float8)", "regr_syy(float8,float8)",
+          "stddev(float4)", "stddev(float8)", "stddev(int2)", "stddev(int4)", "stddev(int8)", "stddev(numeric)",
+          "stddev_pop(float4)", "stddev_pop(float8)", "stddev_pop(int2)", "stddev_pop(int4)",
+          "stddev_pop(int8)", "stddev_pop(numeric)",
+          "stddev_samp(float4)", "stddev_samp(float8)", "stddev_samp(int2)", "stddev_samp(int4)",
+          "stddev_samp(int8)", "stddev_samp(numeric)",
+          "string_agg(bytea,bytea)", "string_agg(text,text)",
+          "sum(float4)", "sum(float8)", "sum(int2)", "sum(int4)", "sum(int8)", "sum(interval)",
+          "sum(money)", "sum(numeric)",
+          "var_pop(float4)", "var_pop(float8)", "var_pop(int2)", "var_pop(int4)", "var_pop(int8)", "var_pop(numeric)",
+          "var_samp(float4)", "var_samp(float8)", "var_samp(int2)", "var_samp(int4)", "var_samp(int8)",
+          "var_samp(numeric)",
+          "variance(float4)", "variance(float8)", "variance(int2)", "variance(int4)", "variance(int8)",
+          "variance(numeric)",
+          "xmlagg(xml)",
+        )
+        val versionGatedAdditions = setOf("max(bytea)", "max(record)", "min(bytea)", "min(record)")
+        val expectedSignatures = knownAggregateSnapshot + actualSignatures.intersect(versionGatedAdditions)
+        assertThat(actualSignatures).isEqualTo(expectedSignatures)
       }
     }
 
@@ -5870,18 +6864,144 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `lagLeadWithDefault OIDs are loaded`() {
+    fun `lagLeadWithDefault OIDs equal exactly the 3-argument lag and lead window overloads`() {
+      // The real exact + behavioral check for this property now lives in SafeListSweepTest's
+      // `lagLeadWithDefaultOids-listed 3-argument lag and lead fill window boundaries from a
+      // non-null default` test. This one is kept, rather than deleted as redundant, for
+      // consistency with every sibling test in THIS class (each PgCatalogLoader-loaded property
+      // gets its own small, cheap, exact-by-name OID check here) — but upgraded from a bare
+      // `isNotEmpty()` to genuine exact membership, resolved by NAME from pg_catalog independently
+      // of PgCatalogLoader.loadLagLeadWithDefaultOids's own `pronargs = 3` predicate, so a mutation
+      // that widens or narrows that predicate (e.g. to the 2-argument overloads) is caught by the
+      // resulting set INEQUALITY here too, not just in the heavier live sweep.
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         val catalogLoader = PgCatalogLoader(connection)
-        assertThat(catalogLoader.lagLeadWithDefaultOids.isNotEmpty()).isTrue()
+        val expectedOids = connection.createStatement().use { stmt ->
+          stmt.executeQuery(
+            """
+            SELECT p.oid::integer AS oid
+            FROM pg_catalog.pg_proc p
+            JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'pg_catalog' AND p.proname IN ('lag', 'lead') AND p.pronargs = 3 AND p.prokind = 'w'
+            """.trimIndent(),
+          ).use { rs -> buildSet { while (rs.next()) add(rs.getInt("oid")) } }
+        }
+        assertThat(expectedOids.isNotEmpty()).isTrue()
+        assertThat(catalogLoader.lagLeadWithDefaultOids).isEqualTo(expectedOids)
       }
     }
 
     @Test
-    fun `alwaysNonNull OIDs include concat and concat_ws`() {
+    fun `alwaysNonNull OIDs equal exactly the concat overloads, and exclude concat_ws`() {
+      // concat_ws is deliberately excluded: it is non-null only when its separator (first
+      // argument) is non-null, not unconditionally — see alwaysNonNullFunctionOids's KDoc and
+      // nonNullIffFirstArgumentNonNullFunctionOids below. Both halves are resolved by NAME from
+      // pg_catalog, restricted to that namespace for the same reason as the concat_ws sibling test
+      // above: this class's tests run in PARALLEL against the same shared container, and
+      // `user-defined concat and concat_ws in another schema do not ride onto either safe-list`
+      // concurrently creates and drops schema-scoped `concat`/`concat_ws` functions that an
+      // un-namespaced query could intermittently pick up.
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         val catalogLoader = PgCatalogLoader(connection)
-        assertThat(catalogLoader.alwaysNonNullFunctionOids.size >= 2).isTrue()
+        val concatOids = connection.createStatement().use { stmt ->
+          stmt.executeQuery(
+            """
+            SELECT p.oid::integer AS oid
+            FROM pg_catalog.pg_proc p
+            JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+            WHERE p.proname = 'concat' AND n.nspname = 'pg_catalog'
+            """.trimIndent(),
+          ).use { rs -> buildSet { while (rs.next()) add(rs.getInt("oid")) } }
+        }
+        assertThat(concatOids.isNotEmpty()).isTrue()
+        assertThat(catalogLoader.alwaysNonNullFunctionOids).isEqualTo(concatOids)
+
+        val concatWsOids = connection.createStatement().use { stmt ->
+          stmt.executeQuery(
+            """
+            SELECT p.oid::integer AS oid
+            FROM pg_catalog.pg_proc p
+            JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+            WHERE p.proname = 'concat_ws' AND n.nspname = 'pg_catalog'
+            """.trimIndent(),
+          ).use { rs -> buildSet { while (rs.next()) add(rs.getInt("oid")) } }
+        }
+        assertThat(catalogLoader.alwaysNonNullFunctionOids.intersect(concatWsOids)).isEqualTo(emptySet())
+      }
+    }
+
+    @Test
+    fun `nonNullIffFirstArgumentNonNull OIDs equal exactly the concat_ws overloads`() {
+      // `isNotEmpty()` alone is the exact `size >= 2` shape that let the original concat_ws bug
+      // ship: it stays green under a mutation that puts `concat` (or any other function) on this
+      // list ALONGSIDE or INSTEAD OF `concat_ws`, since the set is still non-empty either way. The
+      // OIDs resolved here are independent of PgCatalogLoader.loadNonNullIffFirstArgumentNonNullFunctionOids's
+      // own SQL — matched by NAME alone, not by re-asserting its `NOT proisstrict` predicate — so a
+      // mutation that widens or narrows the production predicate to a different name (or an
+      // additional one) is caught by the resulting set INEQUALITY, not absorbed by both sides
+      // moving together. Restricted to `pg_catalog` (unlike the sibling `alwaysNonNull` test's
+      // intersect-only check, which does not need it): tests in this class run in PARALLEL, each on
+      // its own connection but against the SAME shared container, and `user-defined concat and
+      // concat_ws in another schema do not ride onto either safe-list` concurrently creates and
+      // drops a schema-scoped `concat_ws` — an un-namespaced query here would intermittently pick up
+      // that shadow OID too and fail this exact-equality assertion on a false positive.
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        val catalogLoader = PgCatalogLoader(connection)
+        val concatWsOids = connection.createStatement().use { stmt ->
+          stmt.executeQuery(
+            """
+            SELECT p.oid::integer AS oid
+            FROM pg_catalog.pg_proc p
+            JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+            WHERE p.proname = 'concat_ws' AND n.nspname = 'pg_catalog'
+            """.trimIndent(),
+          ).use { rs -> buildSet { while (rs.next()) add(rs.getInt("oid")) } }
+        }
+        assertThat(concatWsOids.isNotEmpty()).isTrue()
+        assertThat(catalogLoader.nonNullIffFirstArgumentNonNullFunctionOids).isEqualTo(concatWsOids)
+      }
+    }
+
+    @Test
+    fun `user-defined concat and concat_ws in another schema do not ride onto either safe-list`() {
+      // Verified live: without a pronamespace restriction, a user-defined function sharing the
+      // name `concat`/`concat_ws` (even with completely different, always-NULL behavior) gets
+      // picked up by these lists' `proname`-only predicate and would be wrongly trusted as
+      // non-null.
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use { stmt ->
+          stmt.execute("CREATE SCHEMA $schemaName")
+          stmt.execute(
+            """
+            CREATE FUNCTION $schemaName.concat(text, text) RETURNS text AS ${'$'}fn${'$'}
+              SELECT NULL::text
+            ${'$'}fn${'$'} LANGUAGE sql CALLED ON NULL INPUT;
+            CREATE FUNCTION $schemaName.concat_ws(text, text) RETURNS text AS ${'$'}fn${'$'}
+              SELECT NULL::text
+            ${'$'}fn${'$'} LANGUAGE sql CALLED ON NULL INPUT;
+            """.trimIndent(),
+          )
+        }
+        try {
+          val shadowConcatOid = connection.createStatement().use { stmt ->
+            stmt.executeQuery("SELECT '$schemaName.concat(text,text)'::regprocedure::oid AS oid").use { rs ->
+              rs.next()
+              rs.getInt("oid")
+            }
+          }
+          val shadowConcatWsOid = connection.createStatement().use { stmt ->
+            stmt.executeQuery("SELECT '$schemaName.concat_ws(text,text)'::regprocedure::oid AS oid").use { rs ->
+              rs.next()
+              rs.getInt("oid")
+            }
+          }
+          val catalogLoader = PgCatalogLoader(connection)
+          assertThat(catalogLoader.alwaysNonNullFunctionOids.contains(shadowConcatOid)).isFalse()
+          assertThat(catalogLoader.nonNullIffFirstArgumentNonNullFunctionOids.contains(shadowConcatWsOid)).isFalse()
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
       }
     }
 
@@ -6132,11 +7252,12 @@ class QueryAnalysisTest {
     }
 
     // On PostgreSQL 16/17 (no GROUP RTE), a subquery's or CTE's own target-list Var for a
-    // grouping key IS the base Var, so without a parseGroupingKeyVars guard at that nesting
-    // level, qual narrowing collides with it and wrongly proves the column non-null. On
-    // PostgreSQL 18 (GROUP RTE present), the target-list Var's varno differs from the base
-    // varno, which happens to prevent the same collision independently of this guard — so these
-    // four tests only exercise the true regression when run against PostgreSQL 16/17.
+    // grouping key IS the base Var, so without suppressing qual narrowing for the whole query
+    // block whenever hasGroupingSets, the proving WHERE clause would collide with it and wrongly
+    // prove the column non-null. On PostgreSQL 18 (GROUP RTE present), the target-list Var's
+    // varno differs from the base varno, which happens to prevent the same collision
+    // independently of this guard — so these four tests only exercise the true regression when
+    // run against PostgreSQL 16/17.
 
     @Test
     fun `subquery ROLLUP grouping set guard is not defeated by a proving WHERE clause`() {
@@ -6178,12 +7299,14 @@ class QueryAnalysisTest {
       assertThat(query.columns[0].notNull).isFalse()
     }
 
-    // An EXPRESSION grouping key — as opposed to the bare-Var keys above — produces no {VAR }
-    // target-list entry, so parseGroupingKeyVars() cannot see it and the groupingKeyVars guard
-    // never fires for it. These four tests only catch the regression on PostgreSQL 16/17: on
-    // PostgreSQL 18, the GROUP RTE independently blocks qual narrowing from reaching the leaf Var,
-    // so they pass there regardless of whether the fix in PgCatalogLoader (suppressing qual
-    // narrowing for the whole query block whenever hasGroupingSets) is present.
+    // An EXPRESSION grouping key — as opposed to the bare-Var keys above — never matches a {VAR}
+    // target-list entry pointing straight at a base column, so resolving these correctly here
+    // depends entirely on suppressing qual narrowing for the whole query block whenever
+    // hasGroupingSets (the key's own nullability is handled independently, and unconditionally on
+    // every PostgreSQL version, by NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension). These
+    // four tests only catch the qual-narrowing regression on PostgreSQL 16/17: on PostgreSQL 18,
+    // the GROUP RTE independently blocks qual narrowing from reaching the leaf Var, so they pass
+    // there regardless of whether this suppression is present.
 
     @Test
     fun `expression ROLLUP grouping key guard is not defeated by a proving WHERE clause`() {
@@ -6304,6 +7427,36 @@ class QueryAnalysisTest {
       )
       assertThat(analyzer.isNonNull(PgNodeExpression.Const(isNull = false), depth = 0)).isFalse()
     }
+
+    @Test
+    fun `a strict, never-null-for-non-null-input function is not trusted for a VARIADIC call`() {
+      // Guards the exact failure mode that produced the concat/concat_ws P0s: a curated
+      // safe-list's guarantee, verified only for the ordinary calling convention, silently
+      // applied to VARIADIC too. No real function on NEVER_NULL_FUNCTION_SIGNATURES resolves to
+      // a provariadic <> 0 function on PostgreSQL 16, 17, or 18 (verified live), so this stubs
+      // isStrict/isNeverNullForNonNullInput to simulate one being added in variadic form — the
+      // only way to reach this path without editing the safe-list itself. The ArrayExpr argument
+      // contains a NULL element; isNonNull's own ArrayExpr branch is unconditionally true
+      // regardless of that (an array container is never NULL merely because an element is),
+      // so if this leg were reached the NULL element would be invisible.
+      val analyzer = NodeTreeNullabilityAnalyzer(
+        isStrict = { true },
+        hasNonNullInitialValue = { false },
+        isSourceColumnNotNull = { _, _ -> true },
+        isOuterJoinNullable = { false },
+        isNeverNullForNonNullInput = { true },
+      )
+      val variadicCall = PgNodeExpression.FuncExpr(
+        functionOid = 1,
+        arguments = listOf(
+          PgNodeExpression.ArrayExpr(
+            elements = listOf(PgNodeExpression.Const(isNull = false), PgNodeExpression.Const(isNull = true)),
+          ),
+        ),
+        isVariadic = true,
+      )
+      assertThat(analyzer.isNonNull(variadicCall)).isFalse()
+    }
   }
 
   /**
@@ -6326,6 +7479,48 @@ class QueryAnalysisTest {
       } finally {
         connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
       }
+    }
+  }
+
+  /**
+   * Ground truth for [PgCatalogLoader.aggregateHasNonNullInitialValue]: calls the aggregate named
+   * [aggregateName], with arguments typed [argumentTypeNames], over a genuinely EMPTY input (`...
+   * WHERE false`, not merely an aggregate over no matching group), and reports whether the result
+   * is `null`. `count` with zero declared arguments is `count(*)` — the only ordinary-call-syntax
+   * exception PostgreSQL's aggregate grammar needs here, mirroring
+   * [SafeListSweepTest.functionCallExpression]'s `ntile`/`extract`/`position` special-casing for
+   * the same reason: `count()` alone is a syntax error.
+   *
+   * A declared `any` argument type (e.g. `count`'s one-argument overload, `count(any)`) is the
+   * PSEUDO-type PostgreSQL uses to mean "accepts a value of any concrete type" — it has no literal
+   * form of its own, so `NULL::any` is a syntax error the same way `NULL::anyelement` would be.
+   * Instantiated here to a concrete `int4` column instead, the same way
+   * [SafeListSweepTest.concreteInstantiationsFor] instantiates `anyelement` to `int4` for the same
+   * reason.
+   */
+  private fun aggregateOverEmptyInputIsNull(
+    stmt: Statement,
+    aggregateName: String,
+    argumentTypeNames: List<String>,
+  ): Boolean {
+    val concreteArgumentTypeNames = argumentTypeNames.map { typeName -> if (typeName == "any") "int4" else typeName }
+    val columnAliases = concreteArgumentTypeNames.indices.map { index -> "c$index" }
+    val emptySourceColumns = if (concreteArgumentTypeNames.isEmpty()) {
+      "1"
+    } else {
+      concreteArgumentTypeNames.zip(columnAliases).joinToString(", ") { (typeName, alias) ->
+        "NULL::$typeName AS $alias"
+      }
+    }
+    val aggregateCall = if (aggregateName == "count" && argumentTypeNames.isEmpty()) {
+      "count(*)"
+    } else {
+      "$aggregateName(${columnAliases.joinToString(", ")})"
+    }
+    val sql = "SELECT ($aggregateCall) IS NULL FROM (SELECT $emptySourceColumns WHERE false) empty_input"
+    return stmt.executeQuery(sql).use { rs ->
+      rs.next()
+      rs.getBoolean(1)
     }
   }
 

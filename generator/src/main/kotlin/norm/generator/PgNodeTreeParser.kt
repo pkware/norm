@@ -9,6 +9,21 @@ import java.util.logging.Logger
  * The `pg_node_tree` format uses `{NODE_TYPE :field value ...}` notation where values may be
  * integers, booleans, bitmapsets (`(b N ...)`), or nested `{...}` blocks.
  *
+ * **Escaping**: Postgres's node-tree writer (`outToken` in `outfuncs.c`) backslash-escapes any
+ * character in a string/identifier VALUE that would otherwise be misread as structural by the
+ * reader: `{`, `}`, `(`, `)`, whitespace, and the backslash character itself (verified empirically
+ * against a live server — e.g. a column alias of `k}x` is written as `:resname k\}x`, and a
+ * literal backslash in a value is written as `\\`). Every backslash-prefixed pair is exactly two
+ * characters (the escaping is never multi-character, e.g. there is no `\n`-for-newline mnemonic —
+ * a literal newline is written as a backslash followed by the raw newline byte). Every function in
+ * this class that scans raw text character-by-character for structural `{`, `}`, `(`, or `)` must
+ * treat a `\`-prefixed pair as an opaque, non-structural unit — see [nextUnescapedIndexOf],
+ * [findMarkerAtDepthOne], and [extractBalancedDelimiters]. Field-name markers (e.g. `:targetList (`,
+ * `:expr {`) are Postgres's own fixed labels, never user data, so they are never escaped and the
+ * plain (non-escape-aware) substring searches for them elsewhere in this class
+ * ([extractArgListSection], [extractFieldExpression], and similar) remain safe as long as they
+ * hand off to an escape-aware balanced-delimiter scan for everything past the marker.
+ *
  * This class is stateless. Call [parseExpression] with any `{NODE_TYPE ...}` text to get a typed
  * node. Unrecognized node types become [PgNodeExpression.Unknown] and malformed input becomes
  * `Unknown("PARSE_ERROR")` — this class never throws.
@@ -20,6 +35,7 @@ internal class PgNodeTreeParser {
   private val nodeTypePattern = Regex("""^\{(\w+)""")
   private val whitespace = Regex("""\s+""")
   private val bitmapsetPattern = Regex("""\(([^)]*)\)""")
+  private val integerListPattern = Regex("""\(i((?:\s+-?\d+)+)\s*\)""")
   private val intFieldPatterns = mutableMapOf<String, Regex>()
   private val boolFieldPatterns = mutableMapOf<String, Regex>()
   private val stringFieldPatterns = mutableMapOf<String, Regex>()
@@ -193,16 +209,21 @@ internal class PgNodeTreeParser {
   }
 
   /**
-   * Finds [marker] at brace depth 1 (measured from the first `{` in [text]) and returns the index
-   * just past the marker's last character, or `-1` when [marker] does not appear at that depth
-   * before the outermost block closes, or [text] contains no `{`.
+   * Finds [marker] at brace depth 1 (measured from the first unescaped `{` in [text]) and returns
+   * the index just past the marker's last character, or `-1` when [marker] does not appear at
+   * that depth before the outermost block closes, or [text] contains no unescaped `{`.
    *
    * "Depth 1" means directly inside the outermost `{...}` block, excluding any field nested
    * inside a child `{...}` block — this is what prevents matching, for example, a nested
    * `JOINEXPR`'s own `:quals` field when looking for the top-level `:quals` of a `FROMEXPR`.
+   *
+   * Escaping: see the class-level note on backslash escaping. Every `\`-prefixed pair is skipped
+   * as an opaque, non-structural unit — an escaped `\{`/`\}` inside a quoted identifier (e.g. a
+   * column alias containing a literal `}`) is data, not a real brace, and must not perturb
+   * [braceDepth] or terminate the scan early.
    */
   private fun findMarkerAtDepthOne(text: String, marker: String): Int {
-    val outerBraceIndex = text.indexOf('{')
+    val outerBraceIndex = nextUnescapedIndexOf(text, '{', 0)
     if (outerBraceIndex == -1) return -1
 
     var braceDepth = 0
@@ -210,6 +231,11 @@ internal class PgNodeTreeParser {
     var markerMatchIndex = 0
     while (index < text.length) {
       val character = text[index]
+      if (character == '\\' && index + 1 < text.length) {
+        index += 2
+        markerMatchIndex = 0
+        continue
+      }
       when {
         character == '{' -> {
           braceDepth++
@@ -235,6 +261,29 @@ internal class PgNodeTreeParser {
   }
 
   /**
+   * Returns the index of the first occurrence of [target] in [text] at or after [fromIndex] that
+   * is NOT escaped by a preceding backslash, or `-1` if none exists.
+   *
+   * See the class-level note on backslash escaping. A backslash in `pg_node_tree` output always
+   * introduces a one-character escape, so this treats every `\`-prefixed pair as an opaque,
+   * two-character unit when scanning — an escaped `target` (e.g. a literal `{` inside a quoted
+   * identifier, written as `\{`) is never mistaken for a real, structural occurrence.
+   */
+  private fun nextUnescapedIndexOf(text: String, target: Char, fromIndex: Int): Int {
+    var index = fromIndex
+    while (index < text.length) {
+      val character = text[index]
+      if (character == '\\' && index + 1 < text.length) {
+        index += 2
+        continue
+      }
+      if (character == target) return index
+      index++
+    }
+    return -1
+  }
+
+  /**
    * Returns `true` if the outermost QUERY node in [nodeTreeText] has a non-empty `:groupingSets` field.
    *
    * PostgreSQL's `GROUPING SETS`, `CUBE`, and `ROLLUP` clauses populate `:groupingSets` with
@@ -251,44 +300,39 @@ internal class PgNodeTreeParser {
     extractOuterSectionContent(nodeTreeText, ":groupingSets (") != null
 
   /**
-   * Returns the set of `(varno, varattno)` pairs for GROUP BY key columns in a query that uses
-   * GROUPING SETS, CUBE, or ROLLUP.
+   * Returns the union of `tleSortGroupRef` values that identify a `GROUP BY` grouping key: every
+   * `:tleSortGroupRef` in `:groupClause`, unioned with every integer found inside `:groupingSets`.
    *
-   * PostgreSQL 18 introduced a `*GROUP*` range table entry (rtekind 9) that acts as a nullability
-   * barrier: target list VARs reference the GROUP RTE rather than the base table directly, so they
-   * fall outside [parseRangeTable]'s base-table map and are treated as nullable. PostgreSQL 16 and
-   * 17 do not have this RTE — their target list VARs point straight to the base table, which would
-   * cause [parseRangeTable] to resolve them as NOT NULL even when GROUPING SETS/CUBE/ROLLUP can
-   * produce `null` for any grouping key.
+   * `:groupingSets` holds one or more `{GROUPINGSET ...}` nodes. A `GROUPINGSET` with `:kind 1`
+   * (SIMPLE) stores its member `tleSortGroupRef`s directly as an integer list, e.g. `:content (i 1 2)`;
+   * ROLLUP/CUBE/SETS (`:kind` 2/3/4) nest further `{GROUPINGSET ...}` blocks in `:content` instead —
+   * PostgreSQL does not pre-expand ROLLUP/CUBE into their individual grouping sets at parse-analysis
+   * time, that happens later in the planner. Rather than modeling that nesting, this method takes the
+   * union of every `(i ...)` integer list found anywhere inside `:groupingSets`, which — since a
+   * `GROUPINGSET`'s only other fields are the scalar `:kind` and `:location` integers, never
+   * `(i ...)`-formatted — is exactly the set of grouping-key `tleSortGroupRef`s regardless of nesting.
    *
-   * This method identifies those VARs by correlating `:groupClause` (`tleSortGroupRef` values)
-   * with `:targetList` (`ressortgroupref` values) so the caller can force them to nullable.
+   * Both halves matter: relying on `:groupClause` alone would miss a `GROUPING SETS`/`CUBE`/`ROLLUP`
+   * grouping key that a target-list entry's `:ressortgroupref` still points at, and relying on
+   * `:groupingSets` alone is needlessly fragile against alternate/older node-tree shapes — the union
+   * is taken defensively rather than trusting either source alone.
    *
    * @param nodeTreeText the raw `pg_rewrite.ev_action` text
-   * @return `(varno, varattno)` pairs for GROUP BY key columns; empty if none or if the target
-   *   list entries use non-VAR expressions for GROUP BY keys
+   * @return the set of `tleSortGroupRef` values that are `GROUP BY` grouping keys; empty if the
+   *   query has neither a `:groupClause` nor a `:groupingSets`
    */
-  fun parseGroupingKeyVars(nodeTreeText: String): Set<Pair<Int, Int>> {
-    val groupClauseContent = extractOuterSectionContent(nodeTreeText, ":groupClause (") ?: return emptySet()
-    val sortGroupRefs = buildSet {
-      splitBraceBlocks(groupClauseContent).forEach { clauseBlock ->
-        extractIntField(clauseBlock, ":tleSortGroupRef")?.let { add(it) }
+  fun parseGroupingSortGroupRefs(nodeTreeText: String): Set<Int> {
+    val fromGroupClause = extractOuterSectionContent(nodeTreeText, ":groupClause (")?.let { groupClauseContent ->
+      splitBraceBlocks(groupClauseContent).mapNotNull { clauseBlock ->
+        extractIntField(clauseBlock, ":tleSortGroupRef")
       }
-    }
-    if (sortGroupRefs.isEmpty()) return emptySet()
-
-    val targetListContent = extractOuterSectionContent(nodeTreeText, ":targetList (") ?: return emptySet()
-    return buildSet {
-      splitBraceBlocks(targetListContent).forEach { entryBlock ->
-        val sortGroupRef = extractIntField(entryBlock, ":ressortgroupref") ?: return@forEach
-        if (sortGroupRef == 0 || sortGroupRef !in sortGroupRefs) return@forEach
-        val exprBlock = extractFieldExpression(entryBlock, ":expr") ?: return@forEach
-        if (!exprBlock.startsWith("{VAR ")) return@forEach
-        val varno = extractIntField(exprBlock, ":varno") ?: return@forEach
-        val varattno = extractIntField(exprBlock, ":varattno") ?: return@forEach
-        add(varno to varattno)
-      }
-    }
+    } ?: emptyList()
+    val fromGroupingSets = extractOuterSectionContent(nodeTreeText, ":groupingSets (")?.let { groupingSetsContent ->
+      integerListPattern.findAll(groupingSetsContent).flatMap { match ->
+        match.groupValues[1].trim().split(whitespace).mapNotNull { it.toIntOrNull() }
+      }.toList()
+    } ?: emptyList()
+    return (fromGroupClause + fromGroupingSets).toSet()
   }
 
   /**
@@ -426,9 +470,29 @@ internal class PgNodeTreeParser {
     return PgNodeExpression.Const(isNull = isNull)
   }
 
+  /**
+   * Parses a `{FUNCEXPR ...}` block.
+   *
+   * Correctness of [PgNodeExpression.FuncExpr.isVariadic] rests on an invariant of the
+   * `pg_node_tree` format, verified live on PostgreSQL 16, 17, and 18: `:funcvariadic` is a
+   * scalar field of `FUNCEXPR` that always precedes `:args` in that node's own field order, and
+   * it is always emitted explicitly — including `:funcvariadic false` for an ordinary call, never
+   * omitted. [extractBoolField] matches the FIRST occurrence of `:funcvariadic` anywhere in
+   * [text], including inside nested blocks, so this is only safe because the outer node's own
+   * field is textually guaranteed to appear before any nested `FUNCEXPR`'s field, regardless of
+   * whether the nesting is variadic-in-non-variadic or non-variadic-in-variadic (both directions
+   * verified live — see `PgNodeTreeParserTest`). If a future PostgreSQL version ever reordered
+   * `FUNCEXPR`'s fields or made `:funcvariadic` conditional, this extraction would silently start
+   * reading the wrong node's flag.
+   */
   private fun parseFuncExpr(text: String): PgNodeExpression.FuncExpr {
     val functionOid = extractIntField(text, ":funcid") ?: error("Missing :funcid in FUNCEXPR node")
-    return PgNodeExpression.FuncExpr(functionOid = functionOid, arguments = parseArgList(text, ":args"))
+    val isVariadic = extractBoolField(text, ":funcvariadic") ?: false
+    return PgNodeExpression.FuncExpr(
+      functionOid = functionOid,
+      arguments = parseArgList(text, ":args"),
+      isVariadic = isVariadic,
+    )
   }
 
   private fun parseOpExpr(text: String): PgNodeExpression.OpExpr {
@@ -485,17 +549,25 @@ internal class PgNodeTreeParser {
   }
 
   private fun parseCaseExpr(text: String): PgNodeExpression.CaseExpr {
-    val caseWhenBlocks = extractArgListSection(text, ":args")
-    val resultExpressions = if (caseWhenBlocks == null) {
-      emptyList()
-    } else {
-      splitBraceBlocks(caseWhenBlocks)
-        .filter { it.startsWith("{CASEWHEN") }
-        .mapNotNull { block -> extractFieldExpression(block, ":result") }
-        .map { parseExpression(it) }
-    }
+    // The `CASE testexpr WHEN ...` test expression (`:arg`) holds a real Var for the shorthand
+    // form, e.g. `CASE a WHEN 'x' THEN 1 ELSE 2 END` — see PgNodeExpression.CaseExpr's KDoc.
+    val testExpression = extractFieldExpression(text, ":arg")?.let { parseExpression(it) }
+    val whenBlocks = extractArgListSection(text, ":args")?.let { splitBraceBlocks(it) }
+      ?.filter { it.startsWith("{CASEWHEN") }
+      ?: emptyList()
+    val resultExpressions = whenBlocks.mapNotNull { block -> extractFieldExpression(block, ":result") }
+      .map { parseExpression(it) }
+    // Each WHEN's own condition (`:expr`) holds the real Var for the explicit form, e.g.
+    // `CASE WHEN a = 'x' THEN 1 ELSE 2 END` — see PgNodeExpression.CaseExpr's KDoc.
+    val whenConditions = whenBlocks.mapNotNull { block -> extractFieldExpression(block, ":expr") }
+      .map { parseExpression(it) }
     val defaultResult = extractFieldExpression(text, ":defresult")?.let { parseExpression(it) }
-    return PgNodeExpression.CaseExpr(resultExpressions = resultExpressions, defaultResult = defaultResult)
+    return PgNodeExpression.CaseExpr(
+      resultExpressions = resultExpressions,
+      defaultResult = defaultResult,
+      testExpression = testExpression,
+      whenConditions = whenConditions,
+    )
   }
 
   private fun parseBoolExpr(text: String): PgNodeExpression.BoolExpr = PgNodeExpression.BoolExpr(
@@ -682,11 +754,13 @@ internal class PgNodeTreeParser {
     val resultNumber = extractIntField(suffix, ":resno") ?: return null
     val resultName = extractStringField(suffix, ":resname")
     val isJunk = suffix.contains(":resjunk true")
+    val sortGroupRef = extractIntField(suffix, ":ressortgroupref") ?: 0
     return TargetEntry(
       expression = expression,
       resultName = resultName,
       resultNumber = resultNumber,
       isJunk = isJunk,
+      sortGroupRef = sortGroupRef,
     )
   }
 
@@ -713,16 +787,49 @@ internal class PgNodeTreeParser {
       .find(text)?.groupValues?.get(1)?.let { it == "true" }
 
   /**
-   * Extracts a non-whitespace string field value from a node block.
+   * Extracts a non-whitespace string field value from a node block, with backslash-escaping
+   * removed (see the class-level note on backslash escaping) — e.g. a `:resname` of `k\}x` (an
+   * alias `k}x` containing a literal `}`) is returned as `k}x`, not the raw escaped text.
+   *
+   * This does NOT recover a value containing an escaped (literal) whitespace character — a space,
+   * tab, newline, or any other character `\S` excludes: the `\S+` capture group below has no
+   * escape-awareness of its own and stops at that byte regardless of the preceding backslash,
+   * truncating the match before [unescapeToken] ever runs (verified live: an alias `"t<TAB>x"`
+   * captures as just `t\`, dropping the escaped tab and everything after it). No current caller of
+   * this method depends on a field value containing whitespace, so this residual gap is left
+   * unaddressed rather than rewriting the capture into a full escape-aware scanner for a case no
+   * caller hits.
    *
    * @param text the full node block text
    * @param fieldName the field name including the leading colon, e.g. `":ctename"`
-   * @return the string value (first contiguous non-whitespace run after the field name and space),
-   *   or `null` if the field is absent
+   * @return the unescaped string value (first contiguous non-whitespace run after the field name
+   *   and space), or `null` if the field is absent
    */
   private fun extractStringField(text: String, fieldName: String): String? =
     stringFieldPatterns.getOrPut(fieldName) { Regex("""$fieldName (\S+)""") }
-      .find(text)?.groupValues?.get(1)
+      .find(text)?.groupValues?.get(1)?.let(::unescapeToken)
+
+  /**
+   * Removes `pg_node_tree` backslash-escaping from an already-captured raw token: each
+   * `\`-prefixed pair collapses to just the escaped character (see the class-level note on
+   * backslash escaping).
+   */
+  private fun unescapeToken(token: String): String {
+    if ('\\' !in token) return token
+    val result = StringBuilder(token.length)
+    var index = 0
+    while (index < token.length) {
+      val character = token[index]
+      if (character == '\\' && index + 1 < token.length) {
+        result.append(token[index + 1])
+        index += 2
+      } else {
+        result.append(character)
+        index++
+      }
+    }
+    return result.toString()
+  }
 
   /**
    * Extracts a PostgreSQL bitmapset field value into a [Set] of integers.
@@ -780,6 +887,10 @@ internal class PgNodeTreeParser {
   /**
    * Extracts content inside balanced delimiters starting at [startIndex].
    *
+   * See the class-level note on backslash escaping: a `\`-prefixed pair (e.g. `\{`, `\}`, `\\`, or
+   * an escaped space) is copied into [content] verbatim and never counted toward [depth] or
+   * matched against [open]/[close], even when the escaped character is itself one of them.
+   *
    * @param includeDelimiters when `true`, the outer delimiter pair is included in the result;
    *   when `false`, only the content between the delimiters is returned
    * @return the extracted content, or `null` if [startIndex] does not point to [open] or the
@@ -798,6 +909,11 @@ internal class PgNodeTreeParser {
     var index = startIndex
     while (index < text.length) {
       val character = text[index]
+      if (character == '\\' && index + 1 < text.length) {
+        content.append(character).append(text[index + 1])
+        index += 2
+        continue
+      }
       when (character) {
         open -> {
           depth++
@@ -828,12 +944,16 @@ internal class PgNodeTreeParser {
   /**
    * Splits parenthesized node-tree list content into its top-level `{...}` blocks, respecting
    * nested braces. Returns ALL brace blocks regardless of node type.
+   *
+   * Uses [nextUnescapedIndexOf] (not a plain `indexOf`) so a literal `{` escaped inside a quoted
+   * identifier between blocks — see the class-level note on backslash escaping — is not mistaken
+   * for the start of the next block.
    */
   private fun splitBraceBlocks(content: String): List<String> {
     val entries = mutableListOf<String>()
     var index = 0
     while (index < content.length) {
-      val braceIndex = content.indexOf('{', index)
+      val braceIndex = nextUnescapedIndexOf(content, '{', index)
       if (braceIndex == -1) break
       val entry = extractBalancedBraces(content, braceIndex) ?: break
       entries.add(entry)

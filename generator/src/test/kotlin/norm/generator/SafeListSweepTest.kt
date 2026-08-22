@@ -413,6 +413,212 @@ class SafeListSweepTest {
     }
   }
 
+  /**
+   * The mirror image of [checkTotal]: executes `SELECT (<expression>) IS NULL` and requires the
+   * result to actually BE `null` — used by the [nonNullIffFirstArgumentNonNullFunctionOids] sweep's
+   * property (ii), where a `NULL` first argument must poison the whole result regardless of every
+   * other argument.
+   *
+   * Returns `true` ONLY when the case genuinely EVALUATED and CONFIRMED a `null` result — the one
+   * outcome that actually proves the property, mirroring how only [CaseOutcome.EvaluatedNonNull]
+   * proves totality for [checkTotal]. Returns `false` for a non-`null` result (also recorded as a
+   * failure) and `null` for anything that did NOT confirm the property one way or the other: a
+   * class-42 (never-evaluated) SQLSTATE, matching [isNotEvaluatedSqlState], AND a genuine runtime
+   * error. An earlier version of this method conflated "evaluated to `null`" with "raised ANY
+   * non-class-42 exception", returning `true` for both — a future entry whose every NULL-first case
+   * happened to raise a real (non-class-42) runtime error, rather than actually returning `null`,
+   * would then have passed this sweep having proven NOTHING about the property under test. The
+   * caller must require at least one `true` case per signature, exactly the way
+   * [CoverageTracker.requirePositiveCoverage] requires at least one [CaseOutcome.EvaluatedNonNull]
+   * for [checkTotal] — a `false`/`null` case is not proof, the same way an [CaseOutcome.EvaluatedError]/
+   * [CaseOutcome.NotEvaluated] case is not positive coverage there.
+   */
+  private fun checkAlwaysNull(
+    stmt: Statement,
+    description: String,
+    expression: String,
+    failures: MutableList<String>,
+  ): Boolean? {
+    val sql = "SELECT ($expression) IS NULL"
+    return try {
+      stmt.executeQuery(sql).use { rs ->
+        rs.next()
+        if (rs.getBoolean(1)) {
+          true
+        } else {
+          failures += "$description returned NON-NULL for: $sql"
+          false
+        }
+      }
+    } catch (_: SQLException) {
+      null
+    }
+  }
+
+  /**
+   * Brute-force verification that every entry in [PgCatalogLoader.alwaysNonNullFunctionOids]
+   * really is non-null for ANY combination of argument values, including when EVERY argument is
+   * `NULL` — the exact claim [concat_ws] shipping on this list would have violated (`concat_ws`
+   * returns `null` when its separator is `NULL`, even though every other argument is non-null).
+   * This is the test the `concat_ws` bug this file's KDoc describes needed: unlike the totality
+   * sweep above, which never substitutes an actual `NULL` literal for any argument,
+   * [nullEveryPositionCases] specifically forces a `NULL` into every position, one at a time (with
+   * every other position drawn from [EDGE_VALUE_CORPUS]), plus the all-`NULL` combination.
+   *
+   * OIDs are read from [PgCatalogLoader.alwaysNonNullFunctionOids] itself — computed live, the same
+   * way production does — rather than a hardcoded OID, and resolved back to a `pg_proc.proname` via
+   * [resolveProcName] so this test automatically covers whatever the production list actually
+   * contains today. [NULL_ARGUMENT_SWEEP_SIGNATURES_BY_NAME] supplies the CONCRETE arity/types to
+   * call each name with, since `concat`'s single `pg_catalog` row is declared `VARIADIC "any"` — a
+   * pseudo-type with no literal form of its own, unlike `anyarray`/`anyrange`/`anyelement`, which
+   * [concreteInstantiationsFor] already knows how to instantiate.
+   */
+  @Test
+  fun `every alwaysNonNullFunctionOids-listed function is non-null for every NULL-argument combination`() {
+    val catalogLoader = PgCatalogLoader(connection)
+    val oids = catalogLoader.alwaysNonNullFunctionOids
+    assertThat(oids.isNotEmpty()).isTrue()
+    val failures = mutableListOf<String>()
+    var caseCount = 0
+    connection.createStatement().use { stmt ->
+      for (oid in oids) {
+        val name = resolveProcName(oid)
+        val signatures = requireNotNull(NULL_ARGUMENT_SWEEP_SIGNATURES_BY_NAME[name]) {
+          "alwaysNonNullFunctionOids contains '$name' (oid=$oid) with no registered corpus signature in " +
+            "NULL_ARGUMENT_SWEEP_SIGNATURES_BY_NAME"
+        }
+        for (signature in signatures) {
+          val description = "always-non-null function ${signature.name}(${signature.argumentTypeNames.joinToString(
+            ",",
+          )})"
+          val coverage = CoverageTracker()
+          for (rawArguments in nullEveryPositionCases(signature.argumentTypeNames)) {
+            caseCount++
+            coverage.record(checkTotal(stmt, description, functionCallExpression(signature, rawArguments), failures))
+          }
+          coverage.requirePositiveCoverage(description, failures)
+        }
+      }
+    }
+    assertThat(caseCount).isGreaterThan(0)
+    assertThat(failures).isEmpty()
+  }
+
+  /**
+   * Brute-force verification of BOTH directions of
+   * [PgCatalogLoader.nonNullIffFirstArgumentNonNullFunctionOids]'s claim: (i) a non-null first
+   * argument with `NULL`(s) anywhere else never produces a `null` result, and (ii) a `NULL` first
+   * argument ALWAYS produces a `null` result, regardless of the other arguments. Property (ii) is
+   * what distinguishes this list from [alwaysNonNullFunctionOids] — an entry here is non-null only
+   * CONDITIONALLY, and a signature that turns out to be non-null even with a `NULL` first argument
+   * belongs on that list instead, not this one.
+   *
+   * OIDs and corpus signatures are resolved the same way as the `alwaysNonNullFunctionOids` sweep
+   * above — see that test's KDoc.
+   */
+  @Test
+  fun `every nonNullIffFirstArgumentNonNullFunctionOids-listed function depends only on its first argument`() {
+    val catalogLoader = PgCatalogLoader(connection)
+    val oids = catalogLoader.nonNullIffFirstArgumentNonNullFunctionOids
+    assertThat(oids.isNotEmpty()).isTrue()
+    val failures = mutableListOf<String>()
+    var caseCount = 0
+    connection.createStatement().use { stmt ->
+      for (oid in oids) {
+        val name = resolveProcName(oid)
+        val signatures = requireNotNull(NULL_ARGUMENT_SWEEP_SIGNATURES_BY_NAME[name]) {
+          "nonNullIffFirstArgumentNonNullFunctionOids contains '$name' (oid=$oid) with no registered corpus " +
+            "signature in NULL_ARGUMENT_SWEEP_SIGNATURES_BY_NAME"
+        }
+        for (signature in signatures) {
+          val firstArgumentTypeName = signature.argumentTypeNames.first()
+          val restArgumentTypeNames = signature.argumentTypeNames.drop(1)
+          val signatureText = "${signature.name}(${signature.argumentTypeNames.joinToString(",")})"
+          val fullDescription = "nonNullIffFirstArgument function $signatureText"
+
+          // Property (i): non-null first argument, NULL(s) elsewhere -> never null.
+          val nonNullFirstDescription = "$fullDescription with a non-null first argument"
+          val nonNullFirstCoverage = CoverageTracker()
+          for (firstLiteral in edgeValueCorpusFor(firstArgumentTypeName)) {
+            for (restArguments in nullEveryPositionCases(restArgumentTypeNames)) {
+              caseCount++
+              val rawArguments = listOf(firstLiteral) + restArguments
+              val expression = functionCallExpression(signature, rawArguments)
+              nonNullFirstCoverage.record(checkTotal(stmt, nonNullFirstDescription, expression, failures))
+            }
+          }
+          nonNullFirstCoverage.requirePositiveCoverage(nonNullFirstDescription, failures)
+
+          // Property (ii): NULL first argument -> always null, regardless of the rest.
+          val nullFirstDescription = "$fullDescription with a NULL first argument"
+          var confirmedNullCaseCount = 0
+          for (restArguments in cartesianProduct(restArgumentTypeNames.map { edgeValueCorpusFor(it) })) {
+            caseCount++
+            val rawArguments = listOf("NULL") + restArguments
+            val expression = functionCallExpression(signature, rawArguments)
+            if (checkAlwaysNull(stmt, nullFirstDescription, expression, failures) == true) confirmedNullCaseCount++
+          }
+          if (confirmedNullCaseCount == 0) {
+            failures += "$nullFirstDescription has zero cases that evaluated to a confirmed NULL result"
+          }
+        }
+      }
+    }
+    assertThat(caseCount).isGreaterThan(0)
+    assertThat(failures).isEmpty()
+  }
+
+  /**
+   * Verification of [PgCatalogLoader.lagLeadWithDefaultOids]'s claim: the 3-argument `lag`/`lead`
+   * overloads are non-null when their value and default expressions are non-null, EVEN at a window
+   * boundary where the 1- and 2-argument forms would return `null` (no such row exists to fetch).
+   * Runs both `lag` and `lead` over a small non-null, ordered dataset with a non-null literal
+   * default and asserts every row's output is non-null, then asserts the actual BOUNDARY row (the
+   * one with no preceding/following row for the given offset) equals the literal default exactly —
+   * proving the default genuinely filled in the boundary, not merely that no row happened to be
+   * `null` for some other reason. Also asserts the 2-argument form is NOT on this list: it has no
+   * default to fall back on, so it genuinely does return `null` at a window boundary.
+   */
+  @Test
+  fun `lagLeadWithDefaultOids-listed 3-argument lag and lead fill window boundaries from a non-null default`() {
+    val catalogLoader = PgCatalogLoader(connection)
+    val threeArgumentOids = catalogLoader.lagLeadWithDefaultOids
+    assertThat(threeArgumentOids.isNotEmpty()).isTrue()
+
+    val actualThreeArgumentOids = connection.createStatement().use { stmt ->
+      stmt.executeQuery(
+        "SELECT oid::integer FROM pg_catalog.pg_proc WHERE proname IN ('lag', 'lead') AND pronargs = 3 AND prokind = 'w'",
+      ).use { rs -> buildSet { while (rs.next()) add(rs.getInt(1)) } }
+    }
+    assertThat(threeArgumentOids).isEqualTo(actualThreeArgumentOids)
+
+    val twoArgumentOids = connection.createStatement().use { stmt ->
+      stmt.executeQuery(
+        "SELECT oid::integer FROM pg_catalog.pg_proc WHERE proname IN ('lag', 'lead') AND pronargs = 2 AND prokind = 'w'",
+      ).use { rs -> buildSet { while (rs.next()) add(rs.getInt(1)) } }
+    }
+    assertThat(twoArgumentOids.isNotEmpty()).isTrue()
+    assertThat(threeArgumentOids.intersect(twoArgumentOids)).isEqualTo(emptySet())
+
+    connection.createStatement().use { stmt ->
+      for (functionName in listOf("lag", "lead")) {
+        val sql = """
+          SELECT n, $functionName(v, 1, 'default') OVER (ORDER BY n) AS windowed
+          FROM (VALUES (1, 'a'), (2, 'b'), (3, 'c')) AS t(n, v)
+          ORDER BY n
+        """.trimIndent()
+        stmt.executeQuery(sql).use { rs ->
+          val windowedValues = mutableListOf<String?>()
+          while (rs.next()) windowedValues += rs.getString("windowed")
+          assertThat(windowedValues.size).isEqualTo(3)
+          assertThat(windowedValues.any { it == null }).isFalse()
+          val boundaryIndex = if (functionName == "lag") 0 else 2
+          assertThat(windowedValues[boundaryIndex]).isEqualTo("default")
+        }
+      }
+    }
+  }
+
   companion object {
     private val pgVersion = System.getProperty("norm.test.pgVersion", "18")
 
@@ -614,6 +820,70 @@ class SafeListSweepTest {
      * [SELF_CAST_TYPMOD_SUFFIX]'s narrower `bit(1)` — is the one actually doing the truncation.
      */
     private val SELF_CAST_SOURCE_TYPMOD_SUFFIX: Map<String, String> = mapOf("bit" to "(3)")
+
+    /**
+     * Concrete arities/types to sweep for [PgCatalogLoader.alwaysNonNullFunctionOids]'s and
+     * [PgCatalogLoader.nonNullIffFirstArgumentNonNullFunctionOids]'s NULL-argument properties,
+     * keyed by `pg_proc.proname`. Both properties are keyed by NAME ALONE in production (see
+     * [PgCatalogLoader.loadAlwaysNonNullFunctions]/
+     * [PgCatalogLoader.loadNonNullIffFirstArgumentNonNullFunctionOids]'s `proname = '...'`
+     * predicates), because `concat`/`concat_ws`'s single `pg_catalog` row for each is declared
+     * `VARIADIC "any"`/`VARIADIC "any"` — the DECLARED argument type is the pseudo-type `any`
+     * itself, with no literal form of its own, unlike `anyarray`/`anyrange`/`anyelement`, which
+     * [concreteInstantiationsFor] already knows how to instantiate. This map supplies the concrete
+     * arity/types actually exercised at the call site instead.
+     *
+     * `concat_ws` is registered here even though production correctly never lists it under
+     * [PgCatalogLoader.alwaysNonNullFunctionOids] today — if that regressed (this is exactly the
+     * shipped bug this whole file's KDoc describes), the always-non-null sweep must actually
+     * EXERCISE `concat_ws`'s real NULL-argument behavior and fail on the genuine semantic violation
+     * (`concat_ws(NULL, 'x', 'y')` returns `null`), not merely fail on a missing corpus
+     * registration that would just as easily hide a real regression.
+     */
+    private val NULL_ARGUMENT_SWEEP_SIGNATURES_BY_NAME: Map<String, List<SafeFunctionSignature>> = mapOf(
+      "concat" to listOf(
+        SafeFunctionSignature("concat", listOf("text", "text")),
+        SafeFunctionSignature("concat", listOf("text", "text", "text")),
+      ),
+      "concat_ws" to listOf(
+        SafeFunctionSignature("concat_ws", listOf("text", "text", "text")),
+      ),
+    )
+
+    /**
+     * Every argument combination needed to prove a function is non-null for ANY combination of
+     * argument values INCLUDING when every argument is `NULL`: the all-`NULL` combination, plus,
+     * for each argument position, that position forced to `NULL` with every OTHER position drawn
+     * from the cartesian product of [EDGE_VALUE_CORPUS] for that position's type. `"NULL"` needs no
+     * special handling from [functionCallExpression] — it is a valid raw argument literal the same
+     * way `"'abc'"` or `"0"` is, since `$literal::$typeName` becomes plain `NULL::$typeName`.
+     */
+    private fun nullEveryPositionCases(argumentTypeNames: List<String>): List<List<String>> {
+      val allNull = argumentTypeNames.map { "NULL" }
+      val onePositionNullCases = argumentTypeNames.indices.flatMap { nullPosition ->
+        val corpora = argumentTypeNames.mapIndexed { index, typeName ->
+          if (index == nullPosition) listOf("NULL") else edgeValueCorpusFor(typeName)
+        }
+        cartesianProduct(corpora)
+      }
+      return listOf(allNull) + onePositionNullCases
+    }
+
+    /**
+     * Resolves [oid] to its unqualified `pg_proc.proname` — lets the
+     * `alwaysNonNullFunctionOids`/`nonNullIffFirstArgumentNonNullFunctionOids` sweeps look up which
+     * concrete [NULL_ARGUMENT_SWEEP_SIGNATURES_BY_NAME] entry to test for an OID computed LIVE by
+     * [PgCatalogLoader] (the same way production does), rather than hardcoding an OID that would
+     * silently go stale across a PostgreSQL version bump.
+     */
+    private fun resolveProcName(oid: Int): String =
+      connection.prepareStatement("SELECT proname FROM pg_catalog.pg_proc WHERE oid = ?").use { preparedStatement ->
+        preparedStatement.setInt(1, oid)
+        preparedStatement.executeQuery().use { rs ->
+          check(rs.next()) { "No pg_proc row found for oid $oid" }
+          rs.getString("proname")
+        }
+      }
 
     @JvmStatic
     @BeforeAll

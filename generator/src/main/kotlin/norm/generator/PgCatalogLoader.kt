@@ -47,6 +47,24 @@ internal class PgCatalogLoader(private val connection: Connection) {
   val functionStrictnessByOid: Map<Int, Boolean> by lazy(::loadFunctionStrictness)
 
   /**
+   * OIDs of IMMUTABLE, non-set-returning functions (`pg_proc.provolatile = 'i' AND NOT proretset`).
+   *
+   * Also covers operators, with no separate `pg_operator` lookup needed: [PgNodeExpression.OpExpr]
+   * and [PgNodeExpression.ScalarArrayOpExpr] are keyed by `opfuncid`/`oprcode` — the operator's
+   * *implementing function* OID — which is itself a `pg_proc` row already captured by this single
+   * query, unlike [neverNullForNonNullInputOids], which needs its own `pg_operator` query because it
+   * safe-lists specific (symbol, operand types) triples rather than a volatility flag every
+   * `pg_proc` row already carries.
+   *
+   * Used by [NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension]'s `foldsToConst` leg —
+   * see that method's KDoc for why IMMUTABLE specifically (not STRICT, and not restricted to
+   * `pg_catalog`) is the correct test: this mirrors PostgreSQL's own planner rule for constant
+   * folding directly, rather than an empirically-swept safe-list, so a user-defined `IMMUTABLE`
+   * function is exactly as fold-safe as a built-in one and no namespace restriction is needed.
+   */
+  val immutableFunctionOids: Set<Int> by lazy(::loadImmutableFunctionOids)
+
+  /**
    * Maps aggregate function OIDs to whether they have a non-null initial transition value.
    *
    * Aggregates with non-null `agginitval` (like COUNT with `agginitval = '0'`) return a
@@ -58,17 +76,80 @@ internal class PgCatalogLoader(private val connection: Connection) {
   val aggregateHasNonNullInitialValue: Map<Int, Boolean> by lazy(::loadAggregateInitialValues)
 
   /**
-   * OIDs of non-strict functions that are guaranteed to never return `null`, regardless of argument
-   * nullability. Currently includes `concat` and `concat_ws`, which silently coerce `null` arguments
-   * to empty strings.
+   * OIDs of non-strict functions that are guaranteed to never return `null` for ANY combination of
+   * argument values passed in the ORDINARY (non-`VARIADIC`) calling form, including when EVERY
+   * argument is `null`. Currently `concat` only: verified live `concat(NULL::text, NULL::text)`
+   * returns `''` (empty string), never `null`.
+   *
+   * The `VARIADIC` calling form (`concat(VARIADIC arr)`) is a DIFFERENT case this list's claim does
+   * NOT cover: it passes the array argument itself as one value rather than exploding it into
+   * elements, and `concat(VARIADIC arr)` IS `null` when `arr` itself is `null` (verified live on
+   * PostgreSQL 16, 17, and 18). [PgNodeExpression.FuncExpr.isVariadic] exists specifically so
+   * [NodeTreeNullabilityAnalyzer.isNonNull] and
+   * [NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension] can detect this form and
+   * require every argument non-null instead of trusting this list unconditionally — see both
+   * methods' KDoc.
+   *
+   * `concat_ws` is deliberately NOT on this list at all, even for the ordinary calling form, despite
+   * also being non-strict: it is non-null only when its FIRST argument (the separator) is non-null
+   * — `concat_ws(NULL, 'x', 'y')` returns `null` (verified live on PostgreSQL 16, 17, and 18),
+   * because a `null` separator poisons the whole result even though the later arguments are
+   * individually null-tolerant. That argument-position-dependent condition does not fit
+   * "unconditionally non-null" at all, so it is modeled separately — see
+   * [nonNullIffFirstArgumentNonNullFunctionOids] and [NodeTreeNullabilityAnalyzer]'s `concat_ws`
+   * handling in `isNonNull`'s `FuncExpr` branch.
+   *
+   * This distinction matters beyond precision: [NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension]
+   * treats membership on THIS list (for a non-`VARIADIC` call) as an unconditional safety proof for
+   * the grouping-sets null-extension gate specifically because "non-null regardless of input" also
+   * means "non-null regardless of which argument grouping-set null-extension replaces with `null`".
+   * A function that is only non-null for a PARTICULAR argument (like `concat_ws`'s separator) does
+   * not have that property — null-extension could target exactly that argument — so it must never
+   * be added here.
+   *
+   * Restricted to `pronamespace = 'pg_catalog'` at query time — a user-defined function sharing the
+   * name `concat` must not ride along onto this list; see the loader.
    */
   val alwaysNonNullFunctionOids: Set<Int> by lazy(::loadAlwaysNonNullFunctions)
+
+  /**
+   * OIDs of functions that are non-null if and only if their FIRST argument is non-null, regardless
+   * of any other argument's nullability, in the ORDINARY (non-`VARIADIC`) calling form. Currently
+   * `concat_ws` only: verified live `concat_ws(',', NULL, NULL)` returns `','`-joined empty string
+   * (`''`, non-null) but `concat_ws(NULL, 'x', 'y')` returns `null` — the separator (first argument)
+   * alone determines whether the whole call can be `null`.
+   *
+   * The `VARIADIC` calling form (`concat_ws(',', VARIADIC arr)`) does NOT get this treatment: it
+   * passes the array argument itself as one value, and `concat_ws(',', VARIADIC arr)` IS `null`
+   * when `arr` itself is `null` even though the literal separator is non-null (verified live on
+   * PostgreSQL 16, 17, and 18) — see [PgNodeExpression.FuncExpr.isVariadic]'s KDoc.
+   *
+   * Used by [NodeTreeNullabilityAnalyzer.isNonNull]'s [PgNodeExpression.FuncExpr] branch (for the
+   * non-`VARIADIC` form only). Not used by the grouping-sets safety gate
+   * ([NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension]) at all, `VARIADIC` or not:
+   * unlike [alwaysNonNullFunctionOids], this property depends on WHICH argument is non-null, so a
+   * `Var` in the first-argument position is exactly as unsafe under grouping-set null-extension as
+   * any other `Var` — the generic aggregate/window-domination rule already handles it correctly
+   * without a dedicated leg.
+   *
+   * Restricted to `pronamespace = 'pg_catalog'` at query time — a user-defined function sharing the
+   * name `concat_ws` must not ride along onto this list; see the loader.
+   */
+  val nonNullIffFirstArgumentNonNullFunctionOids: Set<Int> by lazy(::loadNonNullIffFirstArgumentNonNullFunctionOids)
 
   /**
    * OIDs of functions, cast functions, and operators (materialized to their implementing function
    * OID via `pg_operator.oprcode`) that are proven TOTAL on non-null input — every combination of
    * non-null arguments produces a non-null result. An ERROR is fine; only a silent `null` return
    * disqualifies a candidate.
+   *
+   * This is verified only for the ORDINARY, element-wise calling convention (see `SafeListSweepTest`).
+   * [NodeTreeNullabilityAnalyzer.isNonNull]'s [PgNodeExpression.FuncExpr] branch never consults
+   * this set for a `VARIADIC` call: a non-null array argument says nothing about whether an
+   * element inside it is non-null, and no function on this list is variadic today (verified live
+   * on PostgreSQL 16, 17, and 18: `provariadic <> 0` intersected with every safe-listed name here
+   * is empty) — but this must not silently start trusting the list for that shape the moment one
+   * is added. See [NodeTreeNullabilityAnalyzer]'s `isNeverNullForNonNullInput` KDoc.
    *
    * `pg_proc.proisstrict` is NOT sufficient for this on its own. STRICT only guarantees
    * NULL-in => NULL-out; it says nothing about the converse. `substring(text, '(z)')` (regex, no
@@ -322,6 +403,24 @@ internal class PgCatalogLoader(private val connection: Connection) {
     }
   }
 
+  private fun loadImmutableFunctionOids(): Set<Int> = buildSet {
+    connection.createStatement().use { stmt ->
+      // Regular functions and window functions, matching loadFunctionStrictness's scope; excludes
+      // procedures ('p') and aggregates ('a'), which are never foldable subexpressions here.
+      //
+      // No separate pg_operator/oprcode query is needed: an operator's implementing function
+      // (oprcode) is itself a row in pg_proc, so this single query already covers operators too —
+      // PgNodeExpression.OpExpr/ScalarArrayOpExpr are keyed by that same function OID, not by any
+      // pg_operator-specific ID. Measured empirically: zero operator oprcode OIDs satisfying the
+      // volatility/proretset filter fall outside this query's result.
+      stmt.executeQuery(
+        "SELECT oid::integer FROM pg_catalog.pg_proc WHERE provolatile = 'i' AND NOT proretset AND prokind IN ('f', 'w')",
+      ).use { rs ->
+        while (rs.next()) add(rs.getInt("oid"))
+      }
+    }
+  }
+
   private fun loadAggregateInitialValues(): Map<Int, Boolean> = buildMap {
     connection.createStatement().use { stmt ->
       // An aggregate is non-null for empty groups only when it has a non-null initial transition value
@@ -340,8 +439,32 @@ internal class PgCatalogLoader(private val connection: Connection) {
 
   private fun loadAlwaysNonNullFunctions(): Set<Int> = buildSet {
     connection.createStatement().use { stmt ->
+      // pronamespace restricted to pg_catalog: a user-defined function named `concat` must not
+      // ride onto this list just by sharing the name (verified live: CREATE FUNCTION
+      // us.concat(...) with different null behavior gets picked up without this restriction).
       stmt.executeQuery(
-        "SELECT oid::integer FROM pg_catalog.pg_proc WHERE proname IN ('concat', 'concat_ws') AND NOT proisstrict",
+        """
+        SELECT p.oid::integer AS oid
+        FROM pg_catalog.pg_proc p
+        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        WHERE p.proname = 'concat' AND NOT p.proisstrict AND n.nspname = 'pg_catalog'
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) add(rs.getInt("oid"))
+      }
+    }
+  }
+
+  private fun loadNonNullIffFirstArgumentNonNullFunctionOids(): Set<Int> = buildSet {
+    connection.createStatement().use { stmt ->
+      // pronamespace restricted to pg_catalog — see loadAlwaysNonNullFunctions's identical guard.
+      stmt.executeQuery(
+        """
+        SELECT p.oid::integer AS oid
+        FROM pg_catalog.pg_proc p
+        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        WHERE p.proname = 'concat_ws' AND NOT p.proisstrict AND n.nspname = 'pg_catalog'
+        """.trimIndent(),
       ).use { rs ->
         while (rs.next()) add(rs.getInt("oid"))
       }
@@ -897,20 +1020,15 @@ internal class PgCatalogLoader(private val connection: Connection) {
       // column so isSourceColumnNotNull can check pg_attribute.attnotnull correctly.
       //
       // EXCEPTION: When GROUPING SETS, CUBE, or ROLLUP is used, GROUP BY columns can receive NULL
-      // for rows where the column is not part of the current grouping set. In that case, skip
-      // GROUP RTE resolution so the columns are treated as nullable (safe default).
-      //
-      // PostgreSQL 18 enforces this via a *GROUP* RTE (rtekind 9): target list VARs reference the
-      // GROUP RTE instead of the base table, so parseRangeTable() can't find them. On PostgreSQL
-      // 16/17 there is no GROUP RTE — VARs reference the base table directly and would be
-      // incorrectly resolved as NOT NULL. parseGroupingKeyVars() identifies those VARs so they can
-      // be overridden to nullable regardless of pg_attribute.attnotnull.
+      // for rows where the column is not part of the current grouping set. PostgreSQL 18 enforces
+      // this via a *GROUP* RTE (rtekind 9): target list VARs reference the GROUP RTE instead of the
+      // base table, so parseRangeTable() can't find them and they fall back to nullable on their
+      // own. PostgreSQL 16/17 have no GROUP RTE, so this exception skips GROUP RTE resolution
+      // entirely; the actual nullability override for grouping keys (including EXPRESSION keys
+      // such as `ROLLUP(lower(a))`, which never produce a bare {VAR } target-list entry to remap
+      // here) is applied by NodeTreeNullabilityAnalyzer.extractColumnNullability via the
+      // hasGroupingSets flag passed to buildAnalyzer below.
       val hasGroupingSets = nodeTreeParser.hasGroupingSets(nodeTree)
-      val groupingKeyVars = if (hasGroupingSets) {
-        nodeTreeParser.parseGroupingKeyVars(nodeTree)
-      } else {
-        emptySet()
-      }
       val groupRteMap = if (hasGroupingSets) {
         emptyMap()
       } else {
@@ -924,23 +1042,18 @@ internal class PgCatalogLoader(private val connection: Connection) {
       // GROUPING SETS/CUBE/ROLLUP null-extend grouping keys AFTER the WHERE clause has already
       // filtered rows, so a qual can never prove a grouped result column non-null. This matters
       // even for a NOT NULL base column, because null-extension overrides the base column's own
-      // constraint. parseGroupingKeyVars() only recognizes bare-Var grouping keys (e.g.
-      // `ROLLUP(a)`); an expression key such as `ROLLUP(lower(a))` produces no {VAR } entry there,
-      // so without this guard narrowing would leak through for expression grouping keys. Suppress
-      // qual narrowing for the entire block rather than trying to map an expression grouping key
-      // back to its null-extended leaf Vars — that is more machinery than this warrants, and a
-      // subtle mistake there would reintroduce an unsound narrowing. This is conservative by
-      // construction: every non-key output column of a grouping-sets query is an aggregate, so
-      // suppressing narrowing here costs nothing real.
+      // constraint. Suppress qual narrowing for the entire block rather than trying to map a
+      // (possibly expression) grouping key back to its null-extended leaf Vars — that is more
+      // machinery than this warrants, and a subtle mistake there would reintroduce an unsound
+      // narrowing. This is conservative by construction: every non-key output column of a
+      // grouping-sets query is an aggregate, so suppressing narrowing here costs nothing real.
       val qualNotNullVars = if (applyQualNarrowing && !hasGroupingSets) {
         NodeTreeNullabilityAnalyzer.qualProvenNonNullVars(nodeTree, isStrictFunction)
       } else {
         emptySet()
       }
-      val analyzer = buildAnalyzer { varno, varattno ->
-        if (groupingKeyVars.contains(varno to varattno)) {
-          false
-        } else if (isProvenByQuals(qualNotNullVars, groupRteMap, varno, varattno)) {
+      val analyzer = buildAnalyzer(hasGroupingSets = hasGroupingSets) { varno, varattno ->
+        if (isProvenByQuals(qualNotNullVars, groupRteMap, varno, varattno)) {
           true
         } else {
           val relid = rangeTable[varno]
@@ -978,6 +1091,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * subquery).
    */
   private fun buildAnalyzer(
+    hasGroupingSets: Boolean = false,
     isSourceColumnNotNull: (varno: Int, varattno: Int) -> Boolean,
   ): NodeTreeNullabilityAnalyzer = NodeTreeNullabilityAnalyzer(
     isStrict = isStrictFunction,
@@ -987,6 +1101,9 @@ internal class PgCatalogLoader(private val connection: Connection) {
     isAlwaysNonNull = { oid -> oid in alwaysNonNullFunctionOids },
     isNeverNullForNonNullInput = { oid -> oid in neverNullForNonNullInputOids },
     isLagLeadWithDefault = { oid -> oid in lagLeadWithDefaultOids },
+    isFoldableToConst = { oid -> oid in immutableFunctionOids },
+    isNonNullIffFirstArgumentNonNull = { oid -> oid in nonNullIffFirstArgumentNonNullFunctionOids },
+    hasGroupingSets = hasGroupingSets,
   )
 
   /**
@@ -1111,16 +1228,11 @@ internal class PgCatalogLoader(private val connection: Connection) {
     applyQualNarrowing: Boolean = true,
   ): NodeTreeNullabilityAnalyzer {
     val cteRangeTable = nodeTreeParser.parseRangeTable(queryBlock)
-    // See analyzeViaTemporaryView's identical guard for why groupingKeyVars must be checked
-    // FIRST, before qual narrowing or ordinary column resolution: GROUPING SETS/CUBE/ROLLUP can
-    // null-extend a grouping key even when the underlying base table column is NOT NULL, and even
-    // when the WHERE clause proved it non-null before aggregation.
+    // See analyzeViaTemporaryView's identical guard: GROUPING SETS/CUBE/ROLLUP can null-extend a
+    // grouping key even when the underlying base table column is NOT NULL, and even when the
+    // WHERE clause proved it non-null before aggregation. The actual override (including
+    // EXPRESSION grouping keys) is applied by extractColumnNullability via hasGroupingSets below.
     val hasGroupingSets = nodeTreeParser.hasGroupingSets(queryBlock)
-    val groupingKeyVars = if (hasGroupingSets) {
-      nodeTreeParser.parseGroupingKeyVars(queryBlock)
-    } else {
-      emptySet()
-    }
     val groupRteMap = if (hasGroupingSets) {
       emptyMap()
     } else {
@@ -1130,17 +1242,14 @@ internal class PgCatalogLoader(private val connection: Connection) {
     val subqueryColumnNotNull = buildSubqueryColumnNotNull(queryBlock, applyQualNarrowing)
     // See analyzeViaTemporaryView's identical guard for why qual narrowing is suppressed whenever
     // hasGroupingSets: a grouping key is exactly the thing a GROUPING SETS/CUBE/ROLLUP query
-    // null-extends after WHERE has already run, and parseGroupingKeyVars() cannot see expression
-    // keys like ROLLUP(lower(a)).
+    // null-extends after WHERE has already run.
     val qualNotNullVars = if (applyQualNarrowing && !hasGroupingSets) {
       NodeTreeNullabilityAnalyzer.qualProvenNonNullVars(queryBlock, isStrictFunction)
     } else {
       emptySet()
     }
-    return buildAnalyzer { varno, varattno ->
-      if (groupingKeyVars.contains(varno to varattno)) {
-        false
-      } else if (isProvenByQuals(qualNotNullVars, groupRteMap, varno, varattno)) {
+    return buildAnalyzer(hasGroupingSets = hasGroupingSets) { varno, varattno ->
+      if (isProvenByQuals(qualNotNullVars, groupRteMap, varno, varattno)) {
         true
       } else {
         val relid = cteRangeTable[varno]
@@ -1194,33 +1303,25 @@ internal class PgCatalogLoader(private val connection: Connection) {
         // Parse the subquery's own base-table range table for isSourceColumnNotNull.
         val subRangeTable = nodeTreeParser.parseRangeTable(subqueryBlock)
         // See analyzeViaTemporaryView's identical guard: GROUPING SETS/CUBE/ROLLUP can
-        // null-extend a grouping key even when the base table column is NOT NULL. On PostgreSQL
-        // 16/17 (no GROUP RTE) the subquery's target-list Var IS the base Var, so without this
-        // guard groupingKeyVars would be silently skipped here.
+        // null-extend a grouping key even when the base table column is NOT NULL. The actual
+        // override (including EXPRESSION grouping keys) is applied by extractColumnNullability
+        // via hasGroupingSets below.
         val hasGroupingSets = nodeTreeParser.hasGroupingSets(subqueryBlock)
-        val groupingKeyVars = if (hasGroupingSets) {
-          nodeTreeParser.parseGroupingKeyVars(subqueryBlock)
-        } else {
-          emptySet()
-        }
         val groupRteMap = if (hasGroupingSets) {
           emptyMap()
         } else {
           nodeTreeParser.parseGroupRteMap(subqueryBlock)
         }
         // See analyzeViaTemporaryView's identical guard: suppress qual narrowing whenever
-        // hasGroupingSets, because parseGroupingKeyVars() cannot see expression grouping keys
-        // like ROLLUP(lower(a)), and those are exactly what GROUPING SETS/CUBE/ROLLUP
-        // null-extends after WHERE has already filtered rows.
+        // hasGroupingSets, because those are exactly what GROUPING SETS/CUBE/ROLLUP null-extends
+        // after WHERE has already filtered rows.
         val subQualNotNullVars = if (applyQualNarrowing && !hasGroupingSets) {
           NodeTreeNullabilityAnalyzer.qualProvenNonNullVars(subqueryBlock, isStrictFunction)
         } else {
           emptySet()
         }
-        val subAnalyzer = buildAnalyzer { subVarno, subVarattno ->
-          if (groupingKeyVars.contains(subVarno to subVarattno)) {
-            false
-          } else if (isProvenByQuals(subQualNotNullVars, groupRteMap, subVarno, subVarattno)) {
+        val subAnalyzer = buildAnalyzer(hasGroupingSets = hasGroupingSets) { subVarno, subVarattno ->
+          if (isProvenByQuals(subQualNotNullVars, groupRteMap, subVarno, subVarattno)) {
             true
           } else {
             val relid = subRangeTable[subVarno] ?: return@buildAnalyzer false
