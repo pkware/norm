@@ -1371,6 +1371,48 @@ private fun unescapeQuotedIdentifier(rawQuotedToken: String): String =
   rawQuotedToken.substring(1, rawQuotedToken.length - 1).replace("\"\"", "\"")
 
 /**
+ * Extracts the LOGICAL content of a double-quoted token starting at the `"` at [openQuoteIndex] —
+ * surrounding quotes removed and any doubled `""` escape collapsed to the single literal `"` it
+ * represents, via [unescapeQuotedIdentifier] — mirroring [skipDoubleQuotedIdentifier]'s own
+ * doubled-quote scan but additionally tracking whether a genuine, non-doubled closing `"` was ever
+ * found before [text] ends.
+ *
+ * That tracking matters for an UNTERMINATED quoted identifier (no real closing `"` before [text]
+ * ends): [skipDoubleQuotedIdentifier] returns `text.length` in that case, exactly as it does for a
+ * properly closed identifier ending at the last character of [text] — the two are indistinguishable
+ * from its return value alone. Naively assuming the LAST character of the scanned range is always a
+ * real closing quote (`text.substring(openQuoteIndex + 1, afterQuote - 1)`) is correct for the
+ * terminated case but drops the genuinely-real final content character of an unterminated one. This
+ * function resolves the ambiguity during the SAME scan that decides where the token ends, rather
+ * than reconstructing an answer afterward from indices alone (which, for a run of doubled `""`
+ * pairs immediately preceding the cutoff, cannot reliably tell "properly closed" apart from "the
+ * last doubled pair's second quote happened to land on the final character" after the fact).
+ *
+ * @return the decoded content and the index just past the token — the same contract
+ *   [skipDoubleQuotedIdentifier] has for its own return value, so a caller can resume scanning [text]
+ *   from there exactly as it would after calling that function directly.
+ */
+private fun extractQuotedIdentifierContent(text: String, openQuoteIndex: Int): Pair<String, Int> {
+  var i = openQuoteIndex + 1
+  var closedWithRealQuote = false
+  while (i < text.length) {
+    if (text[i] == '"') {
+      i++
+      if (i < text.length && text[i] == '"') {
+        i++ // doubled "" — an escaped literal quote, not the terminator
+      } else {
+        closedWithRealQuote = true
+        break
+      }
+    } else {
+      i++
+    }
+  }
+  val rawToken = if (closedWithRealQuote) text.substring(openQuoteIndex, i) else text.substring(openQuoteIndex, i) + "\""
+  return unescapeQuotedIdentifier(rawToken) to i
+}
+
+/**
  * A parsed CTE definition from a `WITH` clause.
  *
  * @property name The CTE name, with surrounding double quotes stripped (if any). Safe for DISPLAY,
@@ -2498,6 +2540,18 @@ internal fun hasNullExtendingConstruct(body: String): Boolean =
  * correctness. No trailing `.` is required after a quoted match — `MERGE INTO tgt USING "pre" ON
  * ...` (a bare relation reference, no column access) must match just as `"pre".id` does.
  *
+ * That "false positive only" claim depends on the quoted content itself being extracted
+ * CORRECTLY, via [extractQuotedIdentifierContent] — a doubled `""` escape inside the quoted text
+ * (a CTE literally named `a"b`, written `"a""b"`) must be collapsed to the single `"` it
+ * represents before comparison, or [names] containing the real name `a"b` would never match the
+ * raw, still-escaped `a""b` this scan would otherwise extract — a FALSE NEGATIVE, not merely lost
+ * precision, and exactly the kind of miss this whole function exists to avoid (a sibling CTE
+ * reference going undetected leaves a column that should be forced nullable as NOT NULL instead).
+ * [extractQuotedIdentifierContent] also resolves an UNTERMINATED quote (no closing `"` before
+ * [body] ends) correctly rather than dropping its last real character — see that function's own
+ * KDoc for why the two cases cannot be told apart from [skipDoubleQuotedIdentifier]'s return value
+ * alone.
+ *
  * Otherwise, [body] is scanned token by token exactly as [referencesOldOrNew] does: any other
  * lexical token (a string literal, a dollar-quoted string, or a comment) is skipped opaquely via
  * [skipLexicalToken] — a name that only appears inside one of those is NOT a real reference — and
@@ -2513,8 +2567,7 @@ internal fun referencesAnyName(body: String, names: Collection<String>): Boolean
   var i = 0
   while (i < body.length) {
     if (body[i] == '"') {
-      val afterQuote = skipDoubleQuotedIdentifier(body, i)
-      val quotedContent = body.substring(i + 1, (afterQuote - 1).coerceAtLeast(i + 1))
+      val (quotedContent, afterQuote) = extractQuotedIdentifierContent(body, i)
       if (names.any { name -> name.equals(quotedContent, ignoreCase = true) }) return true
       i = afterQuote
       continue

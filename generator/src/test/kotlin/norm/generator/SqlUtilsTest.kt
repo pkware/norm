@@ -3588,6 +3588,25 @@ class SqlUtilsTest {
         referencesAnyName("MERGE INTO tgt USING pre€ ON pre€.id = tgt.id", listOf("pre")),
       ).isFalse()
     }
+
+    @Test
+    fun `detects a double-quoted reference whose name contains a doubled-quote escape`() {
+      // A sibling CTE literally named a"b is written "a""b" in SQL. Without collapsing the
+      // doubled "" to a single literal ", the raw extracted content is a""b, which never equals
+      // the real name a"b — a false negative that would leave a dangerous sibling reference
+      // undetected.
+      assertThat(
+        referencesAnyName("MERGE INTO tgt USING \"a\"\"b\" ON \"a\"\"b\".id = tgt.id", listOf("a\"b")),
+      ).isTrue()
+    }
+
+    @Test
+    fun `detects a double-quoted reference at the very end of the body with no closing quote`() {
+      // Unterminated quote: skipDoubleQuotedIdentifier returns body.length, indistinguishable from
+      // a quote that closes exactly on the last character. Naively trimming one trailing character
+      // drops the real final letter of the name ("sibling" -> "siblin"), which then never matches.
+      assertThat(referencesAnyName("MERGE INTO tgt USING \"sibling", listOf("sibling"))).isTrue()
+    }
   }
 
   @Nested
