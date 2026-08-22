@@ -6,7 +6,6 @@ import assertk.assertions.doesNotContain
 import assertk.assertions.isEqualTo
 import assertk.assertions.isTrue
 import assertk.assertions.startsWith
-import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome.SUCCESS
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
@@ -58,8 +57,10 @@ class IdeSyncIntegrationTest {
 
       val result = gradleRunner(":app:prepareKotlinIdeaImportNorm", "--dry-run", "--isolated-projects").build()
 
+      // ":app:normGenerateTest" is not itself on the command line, so its appearance here is only
+      // explained by the dependency edge under test, unlike ":app:prepareKotlinIdeaImportNorm" (the
+      // requested task), which dry-run would always echo regardless of whether the edge exists.
       assertThat(result.output).contains(":app:normGenerateTest")
-      assertThat(result.output).contains(":app:prepareKotlinIdeaImportNorm")
     }
 
     @Test
@@ -95,6 +96,53 @@ class IdeSyncIntegrationTest {
       assertThat(result.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
       assertThat(result.task(":prepareKotlinIdeaImportNorm")?.outcome).isEqualTo(SUCCESS)
       assertThat(project.generatedCodeDirectory.resolve("example").exists()).isTrue()
+    }
+  }
+
+  @Nested
+  inner class ResolvedTaskGraph {
+
+    /**
+     * Asserts directly on [org.gradle.api.tasks.TaskDependency], not on `--dry-run` text or a successful
+     * build outcome: a verification task queries `prepareKotlinIdeaImportNorm`'s resolved
+     * [org.gradle.api.tasks.TaskDependency] and fails the build itself if `normGenerateTest` is not one of
+     * the tasks it resolves to. This is what would have caught the aliasing bug directly — a refactor that
+     * left `prepareKotlinIdeaImportNorm`'s `dependsOn` resolving to an empty list would fail *this*
+     * assertion even if the overall build still happened to succeed.
+     */
+    @Test
+    fun `prepareKotlinIdeaImportNorm resolves normGenerateTest as a task dependency`() {
+      writeAuthorSchemaAndQueries(projectDir)
+      val project = TestProject(projectDir, projectDir)
+      project.setupSettingsOnly()
+
+      project.buildFile.writeText(
+        """
+        plugins {
+          kotlin("jvm")
+          id("com.pkware.norm")
+        }
+
+        norm {
+          ${databasesBlock(projectDir)}
+        }
+
+        tasks.register("assertPrepareKotlinIdeaImportDependsOnNormGenerate") {
+          doLast {
+            val syncTask = tasks.named("prepareKotlinIdeaImportNorm").get()
+            val resolvedDependencies = syncTask.taskDependencies.getDependencies(syncTask).map { it.path }
+            check(":normGenerateTest" in resolvedDependencies) {
+              "Expected prepareKotlinIdeaImportNorm to resolve normGenerateTest as a dependency, " +
+                "but resolved: ${'$'}resolvedDependencies"
+            }
+          }
+        }
+        """.trimIndent(),
+      )
+
+      val result = project.gradle("assertPrepareKotlinIdeaImportDependsOnNormGenerate").build()
+
+      assertThat(result.task(":assertPrepareKotlinIdeaImportDependsOnNormGenerate")?.outcome).isEqualTo(SUCCESS)
     }
   }
 
@@ -139,13 +187,14 @@ class IdeSyncIntegrationTest {
 
     /**
      * With `generateOnIdeSync = false`, `prepareKotlinIdeaImportNorm` is still registered — it is Norm's
-     * own task, so registering it unconditionally is harmless — but must depend on nothing. Asserting that
-     * `:prepareKotlinIdeaImportNorm` itself appears in the `--dry-run` output proves Norm's task wiring
-     * actually ran (as opposed to being skipped altogether), while asserting `:normGenerateTest` is absent
-     * proves the flag suppressed the dependency specifically. Unlike a fixture that pre-registers a
-     * consumer's own `prepareKotlinIdeaImport` task, this fixture registers nothing besides what Norm
-     * itself registers, so there is no other source of a `prepareKotlinIdeaImport*` task name that could
-     * make the "no dependency" assertion pass for the wrong reason.
+     * own task, so registering it unconditionally is harmless — but must depend on nothing.
+     * `project.gradle(":prepareKotlinIdeaImportNorm", ...).build()` succeeding at all already proves the
+     * task exists (Gradle fails outright if a requested task is unregistered); asserting `:normGenerateTest`
+     * is absent from the `--dry-run` output on top of that proves the flag specifically suppressed the
+     * dependency. Unlike a fixture that pre-registers a consumer's own `prepareKotlinIdeaImport` task, this
+     * fixture registers nothing besides what Norm itself registers, so there is no other source of a
+     * `prepareKotlinIdeaImport*` task name that could make the "no dependency" assertion pass for the wrong
+     * reason.
      */
     @Test
     fun `disables the dependency when set before the databases block`() {
@@ -153,7 +202,6 @@ class IdeSyncIntegrationTest {
 
       val result = project.gradle(":prepareKotlinIdeaImportNorm", "--dry-run").build()
 
-      assertThat(result.output).contains(":prepareKotlinIdeaImportNorm")
       assertThat(result.output).doesNotContain(":normGenerateTest")
     }
 
@@ -163,7 +211,6 @@ class IdeSyncIntegrationTest {
 
       val result = project.gradle(":prepareKotlinIdeaImportNorm", "--dry-run").build()
 
-      assertThat(result.output).contains(":prepareKotlinIdeaImportNorm")
       assertThat(result.output).doesNotContain(":normGenerateTest")
     }
   }
@@ -181,7 +228,6 @@ class IdeSyncIntegrationTest {
     @Test
     fun `Norm's sync task name starts with prepareKotlinIdeaImport`() {
       assertThat(IdeIntegration.PREPARE_KOTLIN_IDEA_IMPORT_TASK_NAME).startsWith("prepareKotlinIdeaImport")
-      assertThat(IdeIntegration.PREPARE_KOTLIN_IDEA_IMPORT_TASK_NAME).isEqualTo("prepareKotlinIdeaImportNorm")
     }
   }
 
@@ -191,7 +237,7 @@ class IdeSyncIntegrationTest {
    * any particular SQL feature.
    */
   private fun writeAuthorSchemaAndQueries(directory: Path) {
-    directory.resolve("schema.sql").writeText("CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);")
+    directory.resolve("schema.sql").writeText(AUTHOR_TABLE_SCHEMA_SQL)
     directory.resolve("queries.sql").writeText(
       """
       -- name: getAll :many
@@ -356,9 +402,5 @@ class IdeSyncIntegrationTest {
     )
   }
 
-  private fun gradleRunner(vararg tasks: String) = GradleRunner.create()
-    .withProjectDir(projectDir.toFile())
-    .withArguments(*tasks)
-    .withPluginClasspath()
-    .forwardOutput()
+  private fun gradleRunner(vararg tasks: String) = TestProject.gradleRunner(projectDir, *tasks)
 }

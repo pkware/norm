@@ -8,32 +8,21 @@ import org.jetbrains.kotlin.gradle.plugin.KotlinSourceSet
 /**
  * IDE integration utilities for improving the developer experience when using Norm with IntelliJ IDEA.
  *
- * Provides two mechanisms:
- * 1. Registers generated sources via Kotlin's `generatedKotlin` API (Kotlin 2.3.0+) when available. As of
- *    IntelliJ 2026.1, this marks the directory as a generated source root (YouTrack KTIJ-35910, Fixed). It
- *    does NOT, by itself, cause IntelliJ to run generation during sync — that is tracked separately as
- *    KTIJ-31282, which is Planned with no fix version at time of writing.
- * 2. Wires Norm's generation tasks as dependencies of [PREPARE_KOTLIN_IDEA_IMPORT_TASK_NAME], a task Norm
- *    registers under its own name and that IntelliJ runs on every Gradle sync (including first import), so
- *    generated sources exist by the time the IDE reads them.
+ * Registers generated sources so compilation (including KSP) and, on Kotlin 2.3.0+, IntelliJ's
+ * source-root detection (YouTrack KTIJ-35910) see them; and wires Norm's generation tasks to run on
+ * Gradle sync via [PREPARE_KOTLIN_IDEA_IMPORT_TASK_NAME], since Kotlin Gradle Plugin's own sync hook
+ * (KTIJ-31282) does not trigger generation by itself.
  */
 internal object IdeIntegration {
 
   /**
    * Name of the task Norm registers so IntelliJ IDEA runs Norm's generation tasks on every Gradle sync.
    *
-   * IMPORTANT: IntelliJ's `PrepareKotlinIdeaImportTaskModelBuilder` (Kotlin Gradle Plugin's IDE tooling,
-   * bundled with the IDE) discovers sync tasks by scanning `project.tasks.getNames()` for any name that
-   * STARTS WITH `prepareKotlinIdeaImport`, and requests every match — a prefix match, not an exact-name
-   * match (verified by decompiling the IDE's own `kotlin-gradle-tooling.jar`). This name is therefore
-   * load-bearing: it must keep the `prepareKotlinIdeaImport` prefix, or IntelliJ silently stops finding it
-   * — generated sources simply stop being refreshed on sync, with no build failure and no warning. Do NOT
-   * rename this constant to a value that does not start with `prepareKotlinIdeaImport`.
-   *
-   * The name deliberately does not equal Kotlin Gradle Plugin's own `prepareKotlinIdeaImport` task name:
-   * Norm always registers this task under a name it owns outright, so it can never collide with a task a
-   * consumer, or Kotlin Gradle Plugin itself, registers under that exact name, regardless of when they do
-   * so (including from their own `afterEvaluate` block, which runs after Norm's plugin has applied).
+   * IntelliJ's Kotlin Gradle Plugin tooling discovers sync tasks by name *prefix* `prepareKotlinIdeaImport`,
+   * not exact match, so this constant's value must keep that prefix — pinned by
+   * [IdeSyncIntegrationTest.TaskNamePrefixContract]. The name intentionally differs from Kotlin Gradle
+   * Plugin's own `prepareKotlinIdeaImport` task, so Norm's task can never collide with one a consumer, or
+   * Kotlin Gradle Plugin itself, registers under that exact name.
    */
   internal const val PREPARE_KOTLIN_IDEA_IMPORT_TASK_NAME = "prepareKotlinIdeaImportNorm"
 
@@ -66,34 +55,23 @@ internal object IdeIntegration {
   }
 
   /**
-   * Registers [PREPARE_KOTLIN_IDEA_IMPORT_TASK_NAME] on [project], the task IntelliJ IDEA discovers and
-   * runs on every Gradle sync (see that constant's KDoc for why the name matters). The task depends on
-   * [generateTasks] whenever [generateOnIdeSync] resolves to `true`, so generated sources exist before the
-   * IDE reads them.
+   * Registers [PREPARE_KOTLIN_IDEA_IMPORT_TASK_NAME] on [project] and makes it depend on every
+   * [NormGenerateTask] registered on [project] whenever [generateOnIdeSync] resolves to `true`. The
+   * dependency is computed lazily, inside a [Provider.map] against `project.tasks.withType`, so it always
+   * reflects every `normGenerate<Name>` task registered by `norm { databases { } }` regardless of whether
+   * that block runs before or after this function is called — no fixed list of tasks is captured.
    *
-   * This function only ever reads or mutates [project]'s own `tasks` container: it never reaches into
-   * `project.rootProject` or any other project, so it is unconditionally safe under Gradle's Isolated
-   * Projects, including when [project] is a subproject.
-   *
-   * The task is always registered, even when [generateOnIdeSync] resolves to `false` — with a name Norm
-   * owns outright, registering an empty placeholder task is harmless, and it keeps this function's
-   * behavior independent of when, in the build script, `generateOnIdeSync` is set. The dependency itself
-   * is computed from [generateOnIdeSync] via [Provider.map], so it is resolved lazily at task-graph time,
-   * after the whole build script — including a `norm { databases { } }` block appearing either before or
-   * after `generateOnIdeSync` is set — has finished configuring. No `afterEvaluate` is needed.
+   * Reads only [project]'s own `tasks` container, so it is safe under Gradle's Isolated Projects even when
+   * [project] is a subproject; see [IdeSyncIntegrationTest.SubprojectUnderIsolatedProjects].
    */
-  fun configureGenerationOnIdeSync(
-    project: Project,
-    generateOnIdeSync: Provider<Boolean>,
-    generateTasks: List<TaskProvider<NormGenerateTask>>,
-  ) {
+  fun configureGenerationOnIdeSync(project: Project, generateOnIdeSync: Provider<Boolean>) {
     project.tasks.register(PREPARE_KOTLIN_IDEA_IMPORT_TASK_NAME) {
       description = "Runs Norm's generation tasks so generated sources exist before IntelliJ IDEA reads " +
         "them. IntelliJ IDEA runs this task, and any other task whose name starts with " +
         "`prepareKotlinIdeaImport`, on every Gradle sync, including first import."
       dependsOn(
         generateOnIdeSync.map { enabled ->
-          if (enabled) generateTasks else emptyList()
+          if (enabled) project.tasks.withType(NormGenerateTask::class.java) else emptyList<Any>()
         },
       )
     }
