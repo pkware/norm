@@ -1450,7 +1450,8 @@ private fun extractQuotedIdentifierContent(text: String, openQuoteIndex: Int): P
       i++
     }
   }
-  val rawToken = if (closedWithRealQuote) text.substring(openQuoteIndex, i) else text.substring(openQuoteIndex, i) + "\""
+  val unterminatedSuffix = if (closedWithRealQuote) "" else "\""
+  val rawToken = text.substring(openQuoteIndex, i) + unterminatedSuffix
   return unescapeQuotedIdentifier(rawToken) to i
 }
 
