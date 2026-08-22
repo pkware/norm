@@ -1,8 +1,8 @@
 package norm.gradle
 
 import assertk.assertThat
+import assertk.assertions.contains
 import assertk.assertions.isEqualTo
-import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome.SUCCESS
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -30,23 +30,22 @@ class GradleVersionCompatibilityTest {
   private lateinit var projectDir: Path
 
   @Test
-  fun `plugin applies successfully on the minimum supported Gradle version`() {
+  fun `plugin registers its generate task on the minimum supported Gradle version`() {
     writeProjectFiles()
 
-    val result = GradleRunner.create()
+    // "tasks" merely lists what the plugin registered; it does not execute normGenerateTest, so this
+    // stays a fast smoke test of plugin application rather than a full Testcontainers-backed run.
+    val result = TestProject.gradleRunner(projectDir, "tasks", "--group=norm")
       .withGradleVersion(MINIMUM_SUPPORTED_GRADLE_VERSION)
-      .withProjectDir(projectDir.toFile())
-      .withArguments("help")
-      .withPluginClasspath()
-      .forwardOutput()
       .build()
 
-    assertThat(result.task(":help")?.outcome).isEqualTo(SUCCESS)
+    assertThat(result.task(":tasks")?.outcome).isEqualTo(SUCCESS)
+    assertThat(result.output).contains("normGenerateTest")
   }
 
   private fun writeProjectFiles() {
     val schema = projectDir.resolve("schema.sql")
-    schema.writeText("CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);")
+    schema.writeText(AUTHOR_TABLE_SCHEMA_SQL)
     val queries = projectDir.resolve("queries.sql")
     queries.writeText("")
 
