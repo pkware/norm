@@ -14,6 +14,55 @@ import org.junit.jupiter.api.Test
  */
 class TypeRepositoryTest {
 
+  /**
+   * Regression coverage for the guard added at [TypeRepository.buildTypeProjectionForQuery]'s
+   * `parseSelectItems` call site: [parseSelectItems] has no independent way to confirm its own
+   * item count against the real result column count (see its KDoc), so a spelling it
+   * mis-recognizes -- most concretely, an unrecognized star item that expands to several real
+   * columns -- degrades SILENTLY to a shifted, wrong mapping of names/expressions onto columns
+   * they don't belong to, rather than the documented empty-list fail-safe, unless the caller
+   * cross-checks the count itself. [oldOrNewReturningColumns]'s callers apply the identical
+   * real-column-count cross-check for the same reason.
+   *
+   * The mismatch here is constructed directly at [TypeRepository.buildTypeProjectionForQuery]'s
+   * own seam (a [queryText] whose select-item count disagrees with the passed `queryResults`)
+   * rather than via a real unrecognized-star SQL input, since [TypeRepository] has no dependency
+   * on [java.sql.ResultSetMetaData] to construct such a case end-to-end.
+   */
+  @Nested
+  inner class SelectItemColumnCountMismatchGuard {
+
+    @Test
+    fun `a select-item count mismatch falls back to no expression attribution, not a shifted one`() {
+      // 3 select items, all computed expressions with distinct, individually-recognizable text.
+      val queryText = "SELECT LENGTH(a) AS a_len, UPPER(b) AS b_upper, LOWER(c) AS c_lower FROM t"
+
+      // Only 2 REAL result columns -- simulates the exact shape of the bug: parseSelectItems'
+      // item count (3) disagrees with the real column count (2, what queryResults.size stands in
+      // for here). Without the guard, the second queryResult ("c_lower", conceptually LOWER(c))
+      // would incorrectly borrow selectItems[1] -- UPPER(b), a DIFFERENT expression entirely.
+      val queryResults = listOf(
+        Column(name = "a_len", notNull = true, type = Identifier(name = "int4")),
+        Column(name = "c_lower", notNull = true, type = Identifier(name = "text")),
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("computeThings", queryResults, queryText)
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      // The raw SQL always appears verbatim in a fenced code block regardless of attribution, so
+      // asserting on "@property" lines specifically (not bare substring presence of the SQL text)
+      // is what actually distinguishes the fail-safe from the wrong, shifted mapping.
+      assertThat(kdoc).doesNotContain("@property c_lower (`UPPER(b)`)")
+      assertThat(kdoc).doesNotContain("@property c_lower")
+      // The fail-safe treats the WHOLE mapping as unreliable once the counts disagree -- not just
+      // the specific item that would otherwise be shifted -- so a_len loses its (individually
+      // correct) attribution too, exactly like oldOrNewReturningColumns' callers, which fall back
+      // to forcing every column rather than only the ones they can specifically identify as risky.
+      assertThat(kdoc).doesNotContain("@property a_len")
+    }
+  }
+
   @Nested
   inner class ComputedExpressionSourceReference {
 
