@@ -260,6 +260,25 @@ internal class PgCatalogLoader(private val connection: Connection) {
   val viewColumnNotNullByRelidAndAttnum: Map<Pair<Int, Int>, Boolean> by lazy(::loadViewColumnNotNull)
 
   /**
+   * Maps `(relid, attnum)` pairs to `true` for REGULAR (non-materialized) view columns that are
+   * nullable because they sit on the nullable side of an outer join (`LEFT`/`RIGHT`/`FULL JOIN`)
+   * inside the view's own definition — computed once here and shared by both
+   * [viewColumnNotNullByRelidAndAttnum]'s own subtraction step and the public,
+   * schema-scoped [loadViewOuterJoinNullableColumns], so the two can never independently drift
+   * from each other's answer for the same column the way the pre-existing duplicate queries could.
+   *
+   * Materialized views are excluded because their data is stored at refresh time; the outer-join
+   * structure of the definition does not affect the persisted NOT NULL guarantee of a materialized
+   * view's columns (PostgreSQL allows defining NOT NULL constraints on matview columns separately).
+   *
+   * Returns `false` for absent keys (not on the nullable side of any outer join the analyzer
+   * detects, or not a regular view column at all).
+   */
+  val viewOuterJoinNullableByRelidAndAttnum: Map<Pair<Int, Int>, Boolean> by lazy(
+    ::loadViewOuterJoinNullableByRelidAndAttnum,
+  )
+
+  /**
    * Shared strictness lookup used by every [buildAnalyzer] call site and by
    * [NodeTreeNullabilityAnalyzer.qualProvenNonNullVars].
    */
@@ -324,9 +343,22 @@ internal class PgCatalogLoader(private val connection: Connection) {
       }
     }
 
-    // Step 2: subtract columns that are nullable due to outer joins in the view's definition.
-    // For each regular view (not materialized), run node tree analysis to find outer-join-nullable
-    // columns by position and remove them from the non-null set.
+    // Step 2: subtract columns that are nullable due to outer joins in the view's definition,
+    // using the shared computation also exposed publicly via loadViewOuterJoinNullableColumns.
+    for ((key, outerJoinNullable) in viewOuterJoinNullableByRelidAndAttnum) {
+      if (outerJoinNullable) {
+        candidateNotNull[key] = false
+      }
+    }
+
+    return candidateNotNull.filterValues { it }
+  }
+
+  /**
+   * Loader for [viewOuterJoinNullableByRelidAndAttnum]: for each regular (non-materialized) view,
+   * runs node tree analysis to find outer-join-nullable columns by position.
+   */
+  private fun loadViewOuterJoinNullableByRelidAndAttnum(): Map<Pair<Int, Int>, Boolean> = buildMap {
     connection.createStatement().use { stmt ->
       stmt.executeQuery(
         """
@@ -350,15 +382,12 @@ internal class PgCatalogLoader(private val connection: Connection) {
           val outerJoinNullable = NodeTreeNullabilityAnalyzer.extractOuterJoinNullability(nodeTree)
           for ((index, nullable) in outerJoinNullable.withIndex()) {
             if (nullable && index < attnums.size) {
-              // This view column is on the nullable side of an outer join — remove it.
-              candidateNotNull[viewRelid to attnums[index]] = false
+              put(viewRelid to attnums[index], true)
             }
           }
         }
       }
     }
-
-    return candidateNotNull.filterValues { it }
   }
 
   private fun loadFunctionOverloads(): Map<String, List<FunctionOverload>> =
@@ -580,109 +609,66 @@ internal class PgCatalogLoader(private val connection: Connection) {
   }
 
   /**
-   * Returns NOT NULL column information for views and materialized views by tracing columns back to their
-   * source base table columns via `pg_depend`.
+   * Returns NOT NULL column information for views and materialized views in [schemaName], for
+   * [JdbcAnalyzer]'s catalog construction.
    *
-   * JDBC's `getColumns()` reports all view/matview columns as nullable because views carry no constraints.
-   * This method resolves the actual nullability by following dependency links from view columns to base
-   * table columns, where `NOT NULL` constraints exist.
-   *
-   * Only marks a view column as `NOT NULL` when it depends on **exactly one** base table column that is
-   * `NOT NULL`. Columns backed by expressions, multiple source columns, or nullable source columns are
-   * left as nullable (the safe default).
+   * A thin name-resolution adapter over [viewColumnNotNullByRelidAndAttnum] — the single,
+   * relid-keyed source of truth for view-column nullability (source-column tracing via
+   * `pg_depend`, with any-nullable-source-wins reduction, already net of outer-join subtraction —
+   * see the property's own KDoc). This function does no computation of its own: it resolves
+   * each `(relid, attnum)` the shared map already judged NOT NULL back to a `"viewName.columnName"`
+   * string, scoped to [schemaName]. Kept relid-keyed and computed once, rather than re-querying
+   * `pg_depend`/`pg_rewrite` by name per schema, so this and every other caller of the shared map
+   * can never independently drift from each other's answer for the same column — exactly the
+   * divergence that previously made this function skip the any-nullable-source-wins reduction the
+   * relid-keyed map already applied.
    *
    * @param schemaName The schema to check.
    * @return A set of `"viewName.columnName"` strings for view/matview columns that are non-nullable.
    */
-  fun loadViewColumnNullability(schemaName: String): Set<String> = buildSet {
-    connection.createStatement().use { stmt ->
-      stmt.executeQuery(
-        """
-        SELECT
-          view_class.relname AS view_name,
-          view_attr.attname AS view_column,
-          source_attr.attnotnull AS source_notNull
-        FROM pg_catalog.pg_depend d
-        JOIN pg_catalog.pg_rewrite rw ON rw.oid = d.objid
-        JOIN pg_catalog.pg_class view_class ON view_class.oid = rw.ev_class
-        JOIN pg_catalog.pg_namespace n ON n.oid = view_class.relnamespace
-        JOIN pg_catalog.pg_attribute source_attr
-          ON source_attr.attrelid = d.refobjid AND source_attr.attnum = d.refobjsubid
-        JOIN pg_catalog.pg_class source_class ON source_class.oid = d.refobjid
-        JOIN pg_catalog.pg_attribute view_attr ON view_attr.attrelid = view_class.oid
-        WHERE n.nspname = '$schemaName'
-          AND view_class.relkind IN ('v', 'm')
-          AND d.classid = 'pg_rewrite'::regclass
-          AND d.refclassid = 'pg_class'::regclass
-          AND d.refobjsubid > 0
-          AND d.deptype = 'n'
-          AND source_class.relkind IN ('r', 'p')
-          AND view_attr.attnum > 0
-          AND view_attr.attname = source_attr.attname
-          AND source_attr.attnum > 0
-        """.trimIndent(),
-      ).use { rs ->
-        while (rs.next()) {
-          if (rs.getBoolean("source_notNull")) {
-            add("${rs.getString("view_name")}.${rs.getString("view_column")}")
-          }
-        }
-      }
-    }
-  }
+  fun loadViewColumnNullability(schemaName: String): Set<String> = loadViewColumnNamesByRelidAndAttnum(schemaName)
+    .filterKeys { key -> viewColumnNotNullByRelidAndAttnum[key] == true }
+    .values.toSet()
 
   /**
    * Returns view columns that are nullable due to outer joins in the view's own definition.
    *
-   * Reads each (non-materialized) view's query tree from `pg_rewrite.ev_action` and runs
-   * [NodeTreeNullabilityAnalyzer] on it to detect which output columns can be `null` because of a
-   * `LEFT JOIN`, `RIGHT JOIN`, or `FULL OUTER JOIN` inside the view. Outer-join-nullable columns
-   * must remain nullable even if the underlying base table column is `NOT NULL`.
-   *
-   * This corrects a class of false positives from [loadViewColumnNullability]: when two joined tables
-   * both have a column with the same name (e.g., `department.name` and `employee.name`), and one of
-   * those tables is on the nullable side of a `LEFT JOIN`, the view column inherits `NOT NULL` from
-   * the preserved side even though the actual column selected is from the nullable side. The node tree
-   * analysis detects this case and vetoes the incorrect `NOT NULL`.
-   *
-   * Materialized views are excluded because their data is stored at refresh time; the outer-join
-   * structure of the definition does not affect the persisted `NOT NULL` guarantee of a materialized
-   * view's columns (PostgreSQL allows defining `NOT NULL` constraints on matview columns separately).
+   * A thin name-resolution adapter over [viewOuterJoinNullableByRelidAndAttnum] — the single,
+   * relid-keyed source of truth for this, also consulted by [viewColumnNotNullByRelidAndAttnum]'s
+   * own subtraction step. This function does no computation of its own: it resolves each
+   * `(relid, attnum)` the shared map already judged outer-join-nullable back to a
+   * `"viewName.columnName"` string, scoped to [schemaName].
    *
    * @param schemaName The schema to inspect.
    * @return A set of `"viewName.columnName"` strings for view columns that are nullable from outer joins.
    */
-  fun loadViewOuterJoinNullableColumns(schemaName: String): Set<String> = buildSet {
-    // For each regular view, read its node tree and cross-reference with its column list.
-    // The node tree's targetList positions correspond to pg_attribute attnum order.
+  fun loadViewOuterJoinNullableColumns(schemaName: String): Set<String> =
+    loadViewColumnNamesByRelidAndAttnum(schemaName)
+      .filterKeys { key -> viewOuterJoinNullableByRelidAndAttnum[key] == true }
+      .values.toSet()
+
+  /**
+   * Maps `(relid, attnum)` to `"viewName.columnName"` for every view/matview column in
+   * [schemaName] — the name-resolution half of [loadViewColumnNullability]'s adapter over
+   * [viewColumnNotNullByRelidAndAttnum].
+   */
+  private fun loadViewColumnNamesByRelidAndAttnum(schemaName: String): Map<Pair<Int, Int>, String> = buildMap {
     connection.createStatement().use { stmt ->
       stmt.executeQuery(
         """
-        SELECT
-          c.relname AS view_name,
-          rw.ev_action::text AS node_tree,
-          array_agg(a.attname ORDER BY a.attnum) AS col_names
+        SELECT c.oid::integer AS relid, a.attnum, c.relname AS view_name, a.attname AS column_name
         FROM pg_catalog.pg_class c
         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        JOIN pg_catalog.pg_rewrite rw ON rw.ev_class = c.oid AND rw.ev_type = '1'
         JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
         WHERE n.nspname = '$schemaName'
-          AND c.relkind = 'v'
-        GROUP BY c.relname, rw.ev_action
+          AND c.relkind IN ('v', 'm')
         """.trimIndent(),
       ).use { rs ->
         while (rs.next()) {
-          val viewName = rs.getString("view_name")
-          val nodeTree = rs.getString("node_tree")
-
-          @Suppress("UNCHECKED_CAST")
-          val columnNames = (rs.getArray("col_names").array as Array<String>).toList()
-          val outerJoinNullable = NodeTreeNullabilityAnalyzer.extractOuterJoinNullability(nodeTree)
-          for ((index, nullable) in outerJoinNullable.withIndex()) {
-            if (nullable && index < columnNames.size) {
-              add("$viewName.${columnNames[index]}")
-            }
-          }
+          put(
+            rs.getInt("relid") to rs.getInt("attnum"),
+            "${rs.getString("view_name")}.${rs.getString("column_name")}",
+          )
         }
       }
     }
@@ -1171,33 +1157,75 @@ internal class PgCatalogLoader(private val connection: Connection) {
       .map { entry -> !analyzer.isNonNull(entry.expression) }
   }
 
+  /**
+   * Analyzes a `UNION`/`UNION ALL`/`INTERSECT`/`EXCEPT` [queryBlock] branch-by-branch and combines
+   * each branch's per-column nullability with OR: a column is nullable in the combined result if
+   * ANY branch can produce `null` for it.
+   *
+   * A `WITH RECURSIVE` CTE's recursive term(s) reference the CTE by name ([cteName]) — resolved by
+   * [buildCteBodyAnalyzer] via `previouslyResolved` — creating a genuine fixpoint problem: the
+   * recursive term's own nullability depends on the CTE's OWN combined nullability, which this
+   * function is what computes. PostgreSQL requires the FIRST branch (the seed/non-recursive term)
+   * to never reference the CTE itself, so it alone is computed once, outside the loop, as a known
+   * starting point. Every subsequent branch (there is always exactly one recursive term for a
+   * `WITH RECURSIVE` CTE, but this handles a plain multi-branch `UNION` identically) is then
+   * re-analyzed, feeding back the CURRENT combined result as [cteName]'s own nullability, and the
+   * combined result is recomputed — repeated until a pass changes nothing.
+   *
+   * This converges because the per-column nullability lattice (`false` = NOT NULL, `true` =
+   * nullable, ordered `false < true`) is monotone under this loop's own update rule: OR-combining
+   * MORE branch results (now including a possibly-wider self-reference) can only ever ADD `true`
+   * bits, never remove one. Starting from the seed's own (fixed, correct) nullability — the
+   * narrowest value the CTE's self-reference could possibly have — and iterating a
+   * monotone-widening step over a `columnCount`-bit lattice reaches its fixpoint in at most
+   * `columnCount + 1` passes (each pass either flips at least one more bit `false → true`, or
+   * changes nothing and the loop stops), which the `while` condition below checks directly rather
+   * than trusting an iteration-count bound alone.
+   *
+   * @return `null` if [queryBlock] has no analyzable subquery branches at all, or if the seed
+   *   branch itself could not be analyzed (an empty result — see [extractColumnNullability]'s
+   *   contract). Otherwise, one nullability value per output column, in `SELECT` order.
+   */
   private fun analyzeSetOperationBranches(
     queryBlock: String,
     previouslyResolved: Map<String, List<Boolean>>,
     cteName: String,
     applyQualNarrowing: Boolean = true,
   ): List<Boolean>? {
-    val subqueryRangeTable = nodeTreeParser.parseSubqueryRangeTable(queryBlock)
-    if (subqueryRangeTable.isEmpty()) return null
-    var seedResult: List<Boolean>? = null
-    val branchResults = mutableListOf<List<Boolean>>()
-    for ((_, branchBlock) in subqueryRangeTable) {
-      val resolved = if (seedResult != null) {
-        previouslyResolved + (cteName to seedResult)
-      } else {
-        previouslyResolved
+    val subqueryBranches = nodeTreeParser.parseSubqueryRangeTable(queryBlock).values.toList()
+    if (subqueryBranches.isEmpty()) return null
+
+    // The seed (first) branch of a recursive CTE structurally cannot reference the CTE itself —
+    // PostgreSQL rejects a self-reference in the non-recursive term — so its nullability never
+    // depends on the fixpoint loop below and is computed exactly once.
+    val seedBlock = subqueryBranches.first()
+    val seedAnalyzer = buildCteBodyAnalyzer(seedBlock, previouslyResolved, applyQualNarrowing)
+    val seedResult = seedAnalyzer.extractColumnNullability(seedBlock)
+    if (seedResult.isEmpty()) return null
+
+    val otherBranches = subqueryBranches.drop(1)
+    if (otherBranches.isEmpty()) return seedResult
+
+    // Bounded at columnCount + 1 passes — the maximum this monotone-widening loop can take to
+    // reach its fixpoint (see this function's own KDoc for the termination argument) — rather
+    // than trusting that argument alone to keep this loop from ever running forever.
+    var combined = seedResult
+    var previous: List<Boolean>?
+    var remainingPasses = seedResult.size + 1
+    do {
+      previous = combined
+      val resolvedWithSelfReference = previouslyResolved + (cteName to combined)
+      val branchResults = mutableListOf(seedResult)
+      for (branchBlock in otherBranches) {
+        val branchAnalyzer = buildCteBodyAnalyzer(branchBlock, resolvedWithSelfReference, applyQualNarrowing)
+        val result = branchAnalyzer.extractColumnNullability(branchBlock)
+        if (result.isNotEmpty()) branchResults.add(result)
       }
-      val branchAnalyzer = buildCteBodyAnalyzer(branchBlock, resolved, applyQualNarrowing)
-      val result = branchAnalyzer.extractColumnNullability(branchBlock)
-      if (result.isEmpty()) continue
-      branchResults.add(result)
-      if (seedResult == null) seedResult = result
-    }
-    if (branchResults.isEmpty()) return null
-    val columnCount = branchResults.maxOf { it.size }
-    return (0 until columnCount).map { col ->
-      branchResults.any { it.getOrElse(col) { true } }
-    }
+      val columnCount = branchResults.maxOf { it.size }
+      combined = (0 until columnCount).map { col -> branchResults.any { it.getOrElse(col) { true } } }
+      remainingPasses--
+    } while (combined != previous && remainingPasses > 0)
+    return combined
   }
 
   /**
@@ -2150,35 +2178,25 @@ internal class PgCatalogLoader(private val connection: Connection) {
   /**
    * Determines result-column nullability for [sql] when [transformForViewCreation] found no join
    * structure to convert (or its conversion attempt failed to prepare) — the top-level (non-CTE)
-   * counterpart of the CTE-body stub path's [forcedNullabilityPredicate] safety net (issue #207).
+   * counterpart of the CTE-body stub path's [forcedNullabilityPredicate] safety net.
    *
    * Used for DML shapes with no join structure for [convertDmlToSelect] to convert in the first
    * place (a plain `INSERT`, `UPDATE`/`DELETE` without `FROM`/`USING`, or `MERGE` without
    * `RETURNING`), and for a top-level conversion this file attempted but could not validate (e.g.
    * a `RETURNING` that reads PostgreSQL 18's `OLD`/`NEW`, or a `MERGE`'s `merge_action()`).
    *
-   * Unlike the CTE-body stub path — which builds a throwaway probe SQL statement and forces
-   * specific columns to `NULL::<type>` in its text — this reads real `ResultSetMetaData` directly
-   * from [sql] itself (already a preparable statement; no probe construction is needed) and ORs
-   * two independent signals per column: `ResultSetMetaData.isNullable` (base-table `attnotnull`,
-   * blind to outer-join null extension) and [forcedNullabilityPredicate] (the same OLD/NEW and
-   * dangerous-sibling-CTE triggers the CTE-body path applies). The OR is monotone in the safe
-   * direction: the predicate can only flip a column from NOT NULL toward nullable, never the
-   * reverse, so a genuinely NOT NULL column reported as such by `ResultSetMetaData` stays NOT NULL
-   * unless the predicate itself forces it.
+   * Reads real `ResultSetMetaData` directly from [sql] itself and ORs two independent signals per
+   * column: `ResultSetMetaData.isNullable` (base-table `attnotnull`, blind to outer-join null
+   * extension) and [forcedNullabilityPredicate] (the same OLD/NEW and dangerous-sibling-CTE
+   * triggers the CTE-body path applies). The OR is monotone in the safe direction: the predicate
+   * can only flip a column from NOT NULL toward nullable, never the reverse.
    *
    * UNLIKE the CTE-body path, this caller passes `scopeNullExtendingScanToDmlSourceClause = true`:
    * the null-extending-construct arm (an outer join, or a `MERGE`'s grouping-set supertotal row)
    * is scanned only over [sql]'s own `FROM`/`USING`/`USING ... ON` source clause (see
-   * [dmlSourceClauseRegion]), not the whole statement text. A flat whole-body scan here would
-   * force a column nullable because of a `LEFT JOIN` sitting inside an unrelated `WHERE ... IN
-   * (SELECT ...)` subquery that cannot null-extend `RETURNING` at all — confirmed against real
-   * PostgreSQL to over-nullify exactly that shape before this scoping was added (issue #207,
-   * round 2). The CTE-body path keeps the unscoped whole-body scan (its default parameter value)
-   * because [forcedNullabilityPredicate]'s scoped variant still falls back to the whole-body scan
-   * for any body that ISN'T itself a top-level `UPDATE`/`DELETE`/`MERGE` (e.g. a plain `SELECT`
-   * CTE body) — see [forcedNullabilityPredicate]'s KDoc for why that fallback is deliberate, not
-   * an oversight.
+   * [dmlSourceClauseRegion]), not the whole statement text — a flat whole-body scan would force a
+   * column nullable because of a `LEFT JOIN` sitting inside an unrelated `WHERE ... IN (SELECT
+   * ...)` subquery that cannot null-extend `RETURNING` at all.
    *
    * [forcedNullabilityPredicate] is built from [sql]'s own main-query text (after any leading
    * `WITH` clause, matching what the CTE-body path passes for its own body) and, when [sql] has a
@@ -2187,61 +2205,28 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * has no join structure for Phase 2 to convert but can still read a dangerous sibling's output)
    * is covered the same way a CTE referencing another CTE's danger is.
    *
-   * `ResultSetMetaData.columnNullableUnknown` counts as NOT NULL here ONLY AS A FALLBACK — the
-   * answer used when [probeUnknownColumnNullability] cannot resolve the column's real
-   * nullability at all. This is now the OPPOSITE of what it was before issue #226: previously
-   * every `columnNullableUnknown` column took this NOT NULL default unconditionally, deliberately
-   * disagreeing with [tryPrepareStub] (whose CTE-body stub path treats that same value as
-   * nullable, unconditionally, and is untouched by this change — see below). This function's
-   * predecessor, [buildAllNonNullable] (removed by issue #207's fix), treated every column NOT
-   * NULL unconditionally, `columnNullableUnknown` included — an expression or literal `RETURNING`
-   * item (`1 AS one`, `'x'::TEXT AS lbl`) reports exactly that value, and PostgreSQL never returns
-   * `NULL` for a literal, so treating it as NOT NULL for that shape is not a compromise, it is
-   * simply correct. That NOT NULL default is preserved here as the FALLBACK for any
-   * `columnNullableUnknown` column [probeUnknownColumnNullability] cannot resolve, so a column
-   * that was already correct under the pre-#226 baseline stays correct.
-   *
-   * What the probe resolves, and what still falls back: [probeUnknownColumnNullability] builds a
-   * throwaway `SELECT <returning items> FROM <target relation>` from [sql] itself and reads its
-   * EXACT nullability through [analyzeViaTemporaryView]'s join-aware [NodeTreeNullabilityAnalyzer]
-   * — the same machinery this file already trusts for a plain `SELECT` or a convertible DML body
-   * — rather than guessing from `ResultSetMetaData` alone. That resolves an expression built over a
-   * source column (`RETURNING lower(note)`, `RETURNING COALESCE(note, 'x')`, a scalar subquery
-   * `RETURNING (SELECT ...)`, a `CASE`, a cast — anything [NodeTreeNullabilityAnalyzer] already
-   * understands), closing the exact gap issue #226 reported: `DELETE ... RETURNING lower(note)`
-   * over a nullable `note` now correctly reports nullable, and `RETURNING lower(name)` over a NOT
-   * NULL `name` still correctly reports NOT NULL — the probe is exact, not a blanket flip either
-   * way. The probe is skipped or discarded — falling back to this function's own NOT NULL default
-   * — for a specific, provably-safe set of shapes: no `RETURNING` clause; a star item in the
-   * `RETURNING` list (index alignment with real columns cannot be trusted); the split item count
-   * disagreeing with the real column count; no recognizable target relation
+   * `ResultSetMetaData.columnNullableUnknown` counts as NULLABLE here ONLY AS A FALLBACK — the
+   * answer used when [probeUnknownColumnNullability] cannot resolve the column's real nullability
+   * at all. Nullability analysis must be correct or silent: when this file cannot PROVE a column
+   * non-null, it reports nullable, even for a shape (a literal `RETURNING` item, `merge_action()`)
+   * that happens to always be non-null in practice — proving that would require recognizing the
+   * specific expression shape, which the fallback, by construction, does not attempt.
+   * [probeUnknownColumnNullability] is the mechanism that DOES prove it, wherever it can: it builds
+   * a throwaway `SELECT <returning items> FROM <target relation>` from [sql] itself and reads its
+   * exact nullability through [analyzeViaTemporaryView]'s join-aware [NodeTreeNullabilityAnalyzer]
+   * — the same machinery this file already trusts for a plain `SELECT` or a convertible DML body —
+   * closing the gap for an expression built over a source column (`RETURNING lower(note)`,
+   * `RETURNING COALESCE(note, 'x')`, a scalar subquery, a `CASE`, a cast). The probe is skipped or
+   * discarded — falling back to this function's own nullable default — for a specific set of
+   * shapes it cannot trust: no `RETURNING` clause; a `RETURNING` star item the catalog can't expand
+   * into an explicit column list (see [probeUnknownColumnNullability]'s KDoc); the resulting item
+   * count disagreeing with the real column count; no recognizable target relation
    * ([dmlTargetRelationReference] returns `null`); or the probe SQL failing to prepare or its
-   * temporary view failing to create. That last case is not an arbitrary residual gap — it is
-   * EXACTLY the set of items this function's own history already established are always NOT NULL
-   * regardless of any join or source column: `merge_action()` is invalid outside a `MERGE
-   * RETURNING` list, so a plain-`SELECT` probe can never prepare it; `OLD`/`NEW` are invalid
-   * outside `RETURNING` for the identical reason (see [referencesOldOrNew]'s KDoc); and a bare
-   * `ROW(a, b)`/`(a, b)` composite makes `CREATE TEMPORARY VIEW` itself fail (PostgreSQL cannot
-   * create a view column of the pseudo-type `record`). Every one of those is a constant, a
-   * pseudo-relation reference invalid anywhere the probe could reach it, or a construct PostgreSQL
-   * itself refuses to name a type for — never an ordinary expression over a genuinely nullable
-   * source column — so falling back to NOT NULL for precisely that set is provably safe, not
-   * merely convenient.
+   * temporary view failing to create (e.g. `merge_action()`/`OLD`/`NEW` outside `RETURNING`, or a
+   * bare `ROW(a, b)` composite `CREATE TEMPORARY VIEW` refuses to expose).
    *
-   * [tryPrepareStub]'s CTE-body stub path is DELIBERATELY NOT changed by this: it has always
-   * treated `columnNullableUnknown` as nullable, and roughly 90 existing CTE-path tests encode
-   * that choice — changing it now would be an unrelated, unforced behavior change to a path issue
-   * #226 does not touch. The claim that the two paths "deliberately disagree" no longer describes
-   * this function accurately, though: for any column [probeUnknownColumnNullability] can resolve,
-   * this function now reports that column's REAL nullability — computed by the identical
-   * [analyzeViaTemporaryView] + [NodeTreeNullabilityAnalyzer] machinery [tryPrepareStub]'s own stub
-   * path depends on — rather than a fixed rule chosen to stay monotone against a baseline. The two
-   * paths no longer disagree BY RULE for that column; whichever answer is correct, both paths
-   * would compute it identically if fed the same buildable probe. What remains a genuine, narrower
-   * disagreement is confined to the columns the probe here cannot resolve at all (this function
-   * still defaults to NOT NULL for those, unchanged) and to [tryPrepareStub]'s own path, which does
-   * not attempt this probe and keeps its unconditional nullable default regardless of what the
-   * real answer would be.
+   * [tryPrepareStub]'s CTE-body stub path already treats `columnNullableUnknown` as nullable
+   * unconditionally and is untouched by this function.
    *
    * @param sql The already `?`-sentinel-substituted (or `?`-free) form of the statement — see
    *   [buildViewSqlWithSentinels]/[replaceParameterPlaceholders] upstream — safe to `PREPARE` and
@@ -2283,7 +2268,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
           val metadataNullable = when (metadata.isNullable(columnIndex)) {
             ResultSetMetaData.columnNullable -> true
             ResultSetMetaData.columnNoNulls -> false
-            else -> probeResult?.get(index) ?: false
+            else -> probeResult?.get(index) ?: true
           }
           forceNullableColumn(columnIndex, metadata.columnCount) || metadataNullable
         }
@@ -2309,21 +2294,23 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * modified changes what a source column, or an expression over it, evaluates to for that row.
    *
    * Every gate below returns `null` — never a wrong or half-computed answer — whenever this
-   * probe cannot be trusted, so [analyzeUnconvertibleDml] can safely fall back to its own NOT NULL
+   * probe cannot be trusted, so [analyzeUnconvertibleDml] can safely fall back to its own nullable
    * default:
    * - no top-level `RETURNING` clause on [sql] at all;
-   * - any `RETURNING` item is a star item ([isStarItem]) — a star's expansion width is unknown
-   *   without asking PostgreSQL, so positional alignment against [expectedColumnCount] cannot be
-   *   trusted;
-   * - the split `RETURNING` item count does not equal [expectedColumnCount] (the same
-   *   real-column-count cross-check [oldOrNewReturningColumns]'s callers already apply for an
-   *   identical reason);
-   * - [dmlTargetRelationReference] cannot find a target relation to probe from;
+   * - no recognizable target relation ([dmlTargetRelationReference] returns `null`) — needed
+   *   before a star item can even be expanded, since expansion reads [target]'s own column list;
+   * - a `RETURNING` star item ([isStarItem]) that [expandStarReturningItems] cannot expand — its
+   *   real column list can't be read from [target] (the only relation in scope for the DML shapes
+   *   that reach this function: a plain `INSERT`, `UPDATE`/`DELETE` without `FROM`/`USING`, or a
+   *   rejected `MERGE` conversion — so a star item here can only mean [target]'s own columns);
+   * - the (possibly star-expanded) item count still does not equal [expectedColumnCount] — e.g. a
+   *   `MERGE`'s `RETURNING *`, which spans every relation in the `MERGE`'s `USING` clause, not just
+   *   [target] alone, so expansion against [target] alone under-counts and this gate catches it;
    * - the probe SQL cannot be prepared, or its temporary view cannot be created (a `SQLException`
    *   from either) — see [analyzeUnconvertibleDml]'s KDoc for exactly which real-world shapes hit
    *   this (`merge_action()`, `OLD`/`NEW`, a bare `ROW(...)`/`(a, b)` composite);
    * - the probe's own result size does not equal [expectedColumnCount] (defense in depth against
-   *   the same star-expansion risk the item-count gate above targets).
+   *   the same expansion risk the item-count gate above targets).
    *
    * For a plain `UPDATE ... SET` (never an `UPDATE ... FROM` — that has join structure of its own
    * and is converted long before this function is ever reached), the bare `FROM <target relation>`
@@ -2357,24 +2344,58 @@ internal class PgCatalogLoader(private val connection: Connection) {
     val returningIndex = findTopLevelReturningKeyword(dml)
     if (returningIndex < 0) return null
 
-    val returningText = dml.substring(returningIndex + "RETURNING".length).trim().trimEnd(';')
-    val items = splitAtTopLevel(returningText, ',')
-    if (items.any(::isStarItem)) return null
-    if (items.size != expectedColumnCount) return null
+    val rawReturningText = dml.substring(returningIndex + "RETURNING".length).trim().trimEnd(';')
+    val rawItems = splitAtTopLevel(rawReturningText, ',')
 
     val target = dmlTargetRelationReference(sql) ?: return null
+    val items = expandStarReturningItems(rawItems, target) ?: return null
+    if (items.size != expectedColumnCount) return null
+    val returningText = items.joinToString(", ")
+
     val bareFromClause = "FROM $target"
     val setAwareFromClause = buildUpdateSetAwareFromClause(sql, originalSql, target, returningText)
 
     // The SET-aware FROM clause is a strict refinement, never a replacement of last resort: try
     // it first ONLY when it exists, but if it fails to prepare, fails to build its temporary
     // view, or comes back with the wrong column count, fall back to the bare `FROM <target>`
-    // probe that issue #226 already trusted — never surface a construction failure the #228
-    // wrapping introduced as a `null` (which `analyzeUnconvertibleDml` reads as NOT NULL) when
-    // the unwrapped probe would have answered correctly. This is what keeps every wrapping
-    // failure, not merely the ones already known about, no less safe than #226's own answer.
+    // probe — never surface a construction failure this wrapping introduced as a `null` (which
+    // degrades precision to `analyzeUnconvertibleDml`'s nullable default) when the unwrapped probe
+    // would have answered correctly.
     val setAwareResult = setAwareFromClause?.let { runNullabilityProbe(returningText, it, expectedColumnCount) }
     return setAwareResult ?: runNullabilityProbe(returningText, bareFromClause, expectedColumnCount)
+  }
+
+  /**
+   * Expands each `*` / `<alias>.*` item in [items] into the explicit, quoted column names of
+   * [target], so [probeUnknownColumnNullability]'s positional item-count cross-check against the
+   * real result column count is trustworthy instead of guessing a star's width.
+   *
+   * [target] is the only relation this expansion considers, because it is the only relation in
+   * scope for the DML shapes that reach [probeUnknownColumnNullability] at all — a plain `INSERT`,
+   * an `UPDATE`/`DELETE` with no `FROM`/`USING` clause, or a rejected `MERGE` conversion. A `MERGE`
+   * whose `RETURNING *` actually spans its `USING` source too, not just [target], is not silently
+   * mis-expanded by this assumption: the resulting item count simply won't match
+   * [expectedColumnCount], and [probeUnknownColumnNullability]'s own size check bails to nullable
+   * the same way it already does for any other count mismatch.
+   *
+   * @return [items] unchanged if none is a star; the expanded list if every star item resolves
+   *   against [target]'s real column list; or `null` if that column list itself can't be read
+   *   ([target] fails to prepare as `SELECT * FROM <target>`, or reports no columns at all) — the
+   *   caller then bails to nullable, same as every other gate in [probeUnknownColumnNullability].
+   */
+  private fun expandStarReturningItems(items: List<String>, target: String): List<String>? {
+    if (items.none(::isStarItem)) return items
+    val columnNames = try {
+      connection.prepareStatement("SELECT * FROM $target").use { preparedStatement ->
+        preparedStatement.metaData?.let { metadata -> (1..metadata.columnCount).map { metadata.getColumnName(it) } }
+      }
+    } catch (_: SQLException) {
+      null
+    }
+    if (columnNames.isNullOrEmpty()) return null
+    return items.flatMap { item ->
+      if (isStarItem(item)) columnNames.map(::quoteStubColumnAlias) else listOf(item)
+    }
   }
 
   /**
@@ -2405,7 +2426,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
     // has no line terminator of its own to stop at when returningText is the LAST thing before
     // FROM on one line — it would otherwise swallow the FROM clause into the comment, making the
     // probe fail to prepare (a `SQLException`, caught below) and silently degrading to today's
-    // NOT NULL default instead of the real answer. Putting FROM on its own line means the comment
+    // nullable default instead of the real answer. Putting FROM on its own line means the comment
     // can only ever consume up to that line's own end, never past it.
     val probeSql = "SELECT $returningText\n$fromClause"
     val viewSql = buildViewSqlWithSentinels(probeSql) ?: if ('?' in probeSql) return null else probeSql
