@@ -106,33 +106,70 @@ internal class NodeTreeNullabilityAnalyzer(
     val entries = parser.parseTargetList(nodeTreeText)
     if (entries.isEmpty()) return emptyList()
     val groupingSortGroupRefs = if (hasGroupingSets) parser.parseGroupingSortGroupRefs(nodeTreeText) else emptySet()
+    val groupingKeyExpressions = if (hasGroupingSets) {
+      entries
+        .filter { it.sortGroupRef != 0 && it.sortGroupRef in groupingSortGroupRefs }
+        .map { it.expression }
+        .filterNot { it is PgNodeExpression.Const || foldsToConst(it) }
+        .toSet()
+    } else {
+      emptySet()
+    }
 
     return entries
       .filter { !it.isJunk }
       .sortedBy { it.resultNumber }
-      .map { entry -> !isEffectivelyNonNull(entry, groupingSortGroupRefs) }
+      .map { entry -> !isEffectivelyNonNull(entry, groupingSortGroupRefs, groupingKeyExpressions) }
   }
 
   /**
    * Evaluates whether [entry] is guaranteed non-null, applying the GROUPING SETS/CUBE/ROLLUP
    * override before falling back to ordinary [isNonNull] evaluation.
    *
-   * When [hasGroupingSets] is `true`, [entry] is forced nullable when either:
+   * When [hasGroupingSets] is `true`, [entry] is forced nullable when any of:
    * - [entry] IS a grouping key itself: its [TargetEntry.sortGroupRef] is non-zero and appears in
    *   [groupingSortGroupRefs] (from [PgNodeTreeParser.parseGroupingSortGroupRefs]); or
+   * - [entry]'s expression structurally equals one of [groupingKeyExpressions] — a *duplicate*
+   *   occurrence of a grouping key expression that PostgreSQL did not assign the matching
+   *   `ressortgroupref` to (see that parameter's KDoc for why this is a distinct case from the
+   *   one above, not a redundant restatement of it); or
    * - [entry]'s expression is not proven [isSafeFromGroupingSetNullExtension].
    *
-   * Both conditions are load-bearing and independent: the first alone would miss a *derived*
+   * All three conditions are load-bearing and independent. The first alone would miss a *derived*
    * expression over a key (e.g. `upper(lower(a))` when the key is `lower(a)`, which has
    * `sortGroupRef == 0` — it does not match the key textually, only structurally, which
-   * [isSafeFromGroupingSetNullExtension] is what actually catches). The second alone would miss a
-   * bare-`Const` grouping key (e.g. `GROUP BY ROLLUP('ALL'::text)`) — a `Const` is
-   * [isSafeFromGroupingSetNullExtension] by definition (see that method), yet PostgreSQL still
-   * null-extends it when it IS the grouping key, which only the first condition catches.
+   * [isSafeFromGroupingSetNullExtension] is what actually catches). The second is not subsumed by
+   * [isSafeFromGroupingSetNullExtension] either — that method proves an expression's *result*
+   * cannot be forced null by null-extending some deeper subexpression, which says nothing about
+   * the expression *as a whole* being wholesale swapped for `NULL` because it happens to
+   * structurally repeat the grouping key. The third would miss a bare-`Const` grouping key (e.g.
+   * `GROUP BY ROLLUP('ALL'::text)`) — a `Const` is [isSafeFromGroupingSetNullExtension] by
+   * definition (see that method), yet PostgreSQL still null-extends it when it IS the grouping
+   * key, which only the first condition (or, for an unref'd duplicate Const, the second) catches.
+   *
+   * @param groupingKeyExpressions the expressions of every entry whose own [TargetEntry.sortGroupRef]
+   *   IS a grouping key (per [groupingSortGroupRefs]), excluding any that are a bare
+   *   [PgNodeExpression.Const] or that [foldsToConst] — PostgreSQL's structural matching
+   *   (`search_indexed_tlist_for_non_var` in `setrefs.c`) explicitly refuses to match a `Const`
+   *   node (see [isSafeFromGroupingSetNullExtension]'s KDoc), and an expression that folds to a
+   *   `Const` before that matching pass runs (e.g. `upper('a')`) is, by the time the pass runs,
+   *   already a `Const` too — verified live (PostgreSQL 16 and 17): `SELECT upper('a') AS u1,
+   *   upper('a') AS u2, ... GROUP BY ROLLUP(upper('a'))` leaves the un-ref'd duplicate `u2` as
+   *   `'A'`, never `NULL`, in the ROLLUP summary row, unlike a duplicate that does NOT fold (see
+   *   the `date_trunc` case in [isSafeFromGroupingSetNullExtension]'s KDoc, where BOTH occurrences
+   *   are null-extended). Without this exclusion, a duplicate literal like `SELECT 'ALL'::text AS
+   *   l1, 'ALL'::text AS l2, ... GROUP BY ROLLUP('ALL'::text)` would be wrongly forced nullable for
+   *   `l2` — verified live (PostgreSQL 16 and 17) that `l2` stays `'ALL'`, never `NULL`, even
+   *   though `l1` (the ref'd occurrence) does become `NULL`.
    */
-  private fun isEffectivelyNonNull(entry: TargetEntry, groupingSortGroupRefs: Set<Int>): Boolean {
+  private fun isEffectivelyNonNull(
+    entry: TargetEntry,
+    groupingSortGroupRefs: Set<Int>,
+    groupingKeyExpressions: Set<PgNodeExpression>,
+  ): Boolean {
     if (hasGroupingSets) {
-      val isGroupingKey = entry.sortGroupRef != 0 && entry.sortGroupRef in groupingSortGroupRefs
+      val isGroupingKey = (entry.sortGroupRef != 0 && entry.sortGroupRef in groupingSortGroupRefs) ||
+        entry.expression in groupingKeyExpressions
       if (isGroupingKey || !isSafeFromGroupingSetNullExtension(entry.expression)) return false
     }
     return isNonNull(entry.expression)
@@ -210,12 +247,23 @@ internal class NodeTreeNullabilityAnalyzer(
    *
    * A fourth, independent leg alongside [foldsToConst]: a NON-`VARIADIC` [PgNodeExpression.FuncExpr]
    * whose function is [isAlwaysNonNull] (e.g. `concat` — see
-   * [PgCatalogLoader.alwaysNonNullFunctionOids]) is safe regardless of its arguments' nullability,
-   * by that list's own definition — `concat` renders a `null` argument as an empty string, so
-   * null-extending one of its arguments cannot make `concat(a, '-', b)`'s result `null`. This
-   * defers to ordinary [isNonNull] evaluation, which independently reaches the same conclusion via
-   * the identical [isAlwaysNonNull] check in its own [PgNodeExpression.FuncExpr] branch. `concat_ws`
-   * is deliberately NOT on [isAlwaysNonNull]'s list — despite also being non-strict, it is non-null
+   * [PgCatalogLoader.alwaysNonNullFunctionOids]) is safe from having its OWN RESULT forced `null`
+   * by a deeper subexpression being null-extended — by that list's own definition, `concat` renders
+   * a `null` argument as an empty string, so null-extending one of its ARGUMENTS (e.g. `a` inside
+   * `concat(a, '-')` when `a` alone, not the whole `concat` call, is the grouping key — verified
+   * live, PostgreSQL 16/17/18: `concat(a, '-')` stays `'-'`, never `null`, in that case) cannot make
+   * the call's result `null`. This is a DIFFERENT scenario from `concat(a, '-')` ITSELF being
+   * null-extended wholesale because it structurally repeats the grouping key expression (e.g.
+   * `GROUP BY ROLLUP(concat(a, '-'))`, verified live to null-extend a duplicate, un-ref'd
+   * occurrence too, not just the one PostgreSQL attached `ressortgroupref` to) — there,
+   * PostgreSQL's substitution replaces the ENTIRE call's result before `concat` ever runs, so its
+   * argument-null-tolerance is irrelevant and provides no protection. This leg does not (and, from
+   * inside a single expression's own subtree, structurally cannot) distinguish the two; ruling out
+   * the second is [isEffectivelyNonNull]'s job via its `groupingKeyExpressions` structural-duplicate
+   * check, which this leg's safety claim depends on to stay sound. Deferring to ordinary [isNonNull]
+   * evaluation for the first scenario independently reaches the same conclusion via the identical
+   * [isAlwaysNonNull] check in its own [PgNodeExpression.FuncExpr] branch. `concat_ws` is
+   * deliberately NOT on [isAlwaysNonNull]'s list — despite also being non-strict, it is non-null
    * only when its first argument (the separator) is non-null, so it gets no dedicated leg here and
    * falls through to the generic aggregate/window domination rule below like any other `FuncExpr`,
    * where a `Var` in ANY of its argument positions — including the separator — correctly makes it
@@ -227,9 +275,10 @@ internal class NodeTreeNullabilityAnalyzer(
    * for a literal) is evaluated on its own merits, correctly unsafe if it can be null-extended.
    * This does NOT extend to a function merely on the (much
    * larger, STRICT-only) [isNeverNullForNonNullInput] safe-list — that list only proves totality
-   * for NON-NULL arguments, and says nothing about what a strict function does when null-extension
-   * hands it an actual `null`, which is exactly the scenario this whole gate exists to guard
-   * against.
+   * for NON-NULL arguments, and says nothing about whether the function's result stays non-null
+   * when one of ITS OWN ARGUMENTS is individually null-extended (the first scenario above), which
+   * is exactly the scenario this leg exists to guard against for the (much narrower) functions
+   * that ARE on [isAlwaysNonNull]'s list.
    *
    * @param depth remaining recursion budget, mirroring [MAX_EXPRESSION_DEPTH]; returns `false`
    *   (safe: assume UNSAFE — i.e. possibly null-extended) once exhausted

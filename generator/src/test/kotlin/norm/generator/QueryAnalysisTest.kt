@@ -2053,6 +2053,46 @@ class QueryAnalysisTest {
       assertThat(query.columns[0].notNull).isFalse()
       assertThat(query.columns[1].notNull).isTrue()
     }
+
+    @Test
+    fun `duplicate concat call that IS the ROLLUP key is nullable in both occurrences`() {
+      // GROUP BY ROLLUP(concat(a, '-')) makes concat(a, '-') itself the grouping key. PostgreSQL's
+      // grouping-set null-extension (setrefs.c) assigns :ressortgroupref to only ONE of the two
+      // syntactically-identical target-list entries (verified live: the first), but its
+      // null-extension matching is STRUCTURAL, not ressortgroupref-keyed — it null-extends every
+      // target-list entry that structurally equals the grouping key, including the duplicate with
+      // ressortgroupref 0. Verified live (PostgreSQL 16 and 17): both x and y are NULL in the
+      // ROLLUP summary row, alongside 'p-'/'p-' and 'q-'/'q-' in the per-group rows. Before this
+      // fix, the isAlwaysNonNull short-circuit for concat wrongly reported y non-null: that
+      // short-circuit only proves concat tolerates a null ARGUMENT (it renders one as an empty
+      // string), which says nothing about the case at hand, where the entire concat(...) call is
+      // itself null-extended wholesale and never evaluated at all.
+      val query = analyzeWithSchema(
+        "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
+        "SELECT concat(a, '-') AS x, concat(a, '-') AS y, count(*) AS c FROM gs_t GROUP BY ROLLUP(concat(a, '-'))",
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `concat over a bare-Var ROLLUP key stays non-null, unlike the identical-expression-as-key case above`() {
+      // GROUP BY ROLLUP(a): the grouping key is the bare column a, NOT concat(a, '-') itself, so
+      // concat(a, '-') is never a candidate for whole-expression substitution — only the nested a
+      // reference can be null-extended, and concat tolerates that (renders it as an empty string).
+      // Verified live (PostgreSQL 16, 17, and 18): 'p-'/'q-' per group, '-' (never NULL) in the
+      // ROLLUP summary row. This is the positive control the fix for the case above must not
+      // over-correct: concat's isAlwaysNonNull short-circuit must still apply here.
+      val query = analyzeWithSchema(
+        "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
+        "SELECT concat(a, '-') AS z, count(*) AS c FROM gs_t GROUP BY ROLLUP(a)",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
   }
 
   @Nested
