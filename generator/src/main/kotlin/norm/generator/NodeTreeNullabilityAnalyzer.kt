@@ -516,15 +516,59 @@ internal class NodeTreeNullabilityAnalyzer(
     PgNodeExpression.JSON_EXISTS_OP -> true
     PgNodeExpression.JSON_SERIALIZE_OP -> recurse(expression.argument)
     PgNodeExpression.JSON_VALUE_OP, PgNodeExpression.JSON_QUERY_OP -> {
-      val emptyOk = expression.onEmpty != PgNodeExpression.JSON_BEHAVIOR_NULL &&
-        expression.onEmptyDefault?.let(recurse) != false
-      val errorOk = expression.onError != PgNodeExpression.JSON_BEHAVIOR_NULL &&
-        expression.onErrorDefault?.let(recurse) != false
+      val emptyOk = isKnownNonNullJsonBehavior(expression.onEmpty) && expression.onEmptyDefault?.let(recurse) != false
+      val errorOk = isKnownNonNullJsonBehavior(expression.onError) && expression.onErrorDefault?.let(recurse) != false
       emptyOk && errorOk
     }
 
     else -> false
   }
+
+  /**
+   * Returns `true` only for a `JsonBehaviorType` code POSITIVELY VERIFIED (live, PostgreSQL 17 and
+   * 18) to make a `JSON_VALUE`/`JSON_QUERY` `ON EMPTY`/`ON ERROR` clause produce a definite,
+   * non-null outcome — an ALLOW-list, not the `!= JSON_BEHAVIOR_NULL` DENY-list this replaced. The
+   * deny-list shape meant any `JsonBehaviorType` value a future Postgres version added would default
+   * to non-null-compatible the moment it existed, with no verification at all; this allow-list
+   * instead defaults an unrecognized code to nullable, the safe direction, until it is added here
+   * with its own live verification.
+   *
+   * The four allowed codes and why each is safe:
+   * - [PgNodeExpression.JSON_BEHAVIOR_ERROR]: raises a runtime error rather than returning a value at
+   *   all for the row — the same "an ERROR is fine; only a silent `null` return disqualifies a
+   *   candidate" reasoning [isNeverNullForNonNullInput]'s own KDoc documents elsewhere in this class.
+   *   Verified live: `:expr <>` (absent) for this code, so [PgNodeExpression.JsonExpr.onEmptyDefault]/
+   *   [PgNodeExpression.JsonExpr.onErrorDefault] parses to `null` here, and `null?.let(recurse) !=
+   *   false` is `true` unconditionally — no default expression exists to recurse into.
+   * - [PgNodeExpression.JSON_BEHAVIOR_EMPTY_ARRAY]/[PgNodeExpression.JSON_BEHAVIOR_EMPTY_OBJECT]:
+   *   substitute Postgres's own internal `[]`/`{}` `jsonb` constant, never a user-supplied
+   *   expression. Verified live: `:expr` for these codes is always a `{CONST ... :constisnull
+   *   false ...}` block, so `recurse` on it is unconditionally `true` — checked anyway, defensively,
+   *   rather than special-cased to skip [PgNodeExpression.JsonExpr.onEmptyDefault]/`onErrorDefault`
+   *   entirely.
+   * - [PgNodeExpression.JSON_BEHAVIOR_DEFAULT]: the ONE code among these four backed by a genuinely
+   *   user-supplied expression (`DEFAULT expr ON EMPTY`/`ON ERROR`) — verified live to always carry
+   *   a real `:expr` block, which is why [emptyOk]/[errorOk] recurse into it rather than trusting the
+   *   behavior code alone; `DEFAULT null::int ON EMPTY` is legal and must NOT be treated as non-null.
+   *
+   * Deliberately NOT on this list: [PgNodeExpression.JSON_BEHAVIOR_NULL] (explicitly nullable by
+   * definition — the very case this whole method exists to exclude); `JSON_BEHAVIOR_TRUE`/`FALSE`/
+   * `UNKNOWN` (`JsonBehaviorType` values 3-5) — verified live that Postgres rejects all three for a
+   * `JSON_VALUE`/`JSON_QUERY` `ON EMPTY`/`ON ERROR` clause outright ("Only ERROR, NULL, or DEFAULT
+   * expression is allowed in ON EMPTY for JSON_VALUE()") — they are valid only for `JSON_EXISTS`'s
+   * own `ON ERROR`, a field this method never reads (see the `JSON_EXISTS_OP` branch above, which is
+   * unconditionally `true` regardless of that behavior for the independent reason `JSON_EXISTS`
+   * itself always returns a boolean or raises an error, documented there); and `JSON_TABLE`'s
+   * per-column `ON EMPTY`/`ON ERROR` — verified live that a `JSON_TABLE` column resolves to a plain
+   * `VAR` against an `RTE_TABLEFUNC` range-table entry in the outer query's target list, never a
+   * [PgNodeExpression.JsonExpr] node this method ever sees, so this allow-list has no bearing on it
+   * either way.
+   */
+  private fun isKnownNonNullJsonBehavior(behaviorType: Int): Boolean =
+    behaviorType == PgNodeExpression.JSON_BEHAVIOR_ERROR ||
+      behaviorType == PgNodeExpression.JSON_BEHAVIOR_EMPTY_ARRAY ||
+      behaviorType == PgNodeExpression.JSON_BEHAVIOR_EMPTY_OBJECT ||
+      behaviorType == PgNodeExpression.JSON_BEHAVIOR_DEFAULT
 
   private fun evaluateXmlExpr(expression: PgNodeExpression.XmlExpr, recurse: (PgNodeExpression) -> Boolean): Boolean =
     when (expression.op) {
