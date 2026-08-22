@@ -1891,25 +1891,30 @@ class ColumnTypeMappingTest {
     }
 
     @Test
-    fun `non-null UUID domain resultSetAction uses plain getObject, no class hint needed`() {
-      // Unlike the java.time types above, pgjdbc's plain getObject(int) already returns UUID
-      // directly for a uuid column (verified against pgjdbc's PgResultSet.internalGetObject).
+    fun `non-null UUID domain resultSetAction uses the class-qualified getObject overload`() {
+      // java.sql.ResultSet.getObject(int) is declared to return Object, so a bare getObject(index)
+      // call is statically Any in Kotlin — it will not compile as an argument to
+      // ColumnAdapter<ExternalId, UUID>.decode, even though pgjdbc's plain getObject(int) does
+      // return a java.util.UUID instance at runtime for a uuid column (verified against pgjdbc's
+      // PgResultSet.internalGetObject). The class-qualified overload fixes the static type.
       val domain = Domain(name = "external_id", baseType = "uuid")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("id", type = "external_id")
       val accessor = repository.resolveMappableType(col).resultSetAction(1)
-      assertThat(accessor.toString()).isEqualTo("externalIdAdapter.decode(getObject(1))")
+      assertThat(accessor.toString())
+        .isEqualTo("externalIdAdapter.decode(getObject(1, java.util.UUID::class.java))")
     }
 
     @Test
-    fun `nullable UUID domain resultSetAction uses a safe call`() {
+    fun `nullable UUID domain resultSetAction uses a safe call through the class-qualified getObject`() {
       val domain = Domain(name = "external_id", baseType = "uuid")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("id", type = "external_id", notNull = false)
       val accessor = repository.resolveMappableType(col).resultSetAction(1)
-      assertThat(accessor.toString()).isEqualTo("getObject(1)?.let { externalIdAdapter.decode(it) }")
+      assertThat(accessor.toString())
+        .isEqualTo("getObject(1, java.util.UUID::class.java)?.let { externalIdAdapter.decode(it) }")
     }
 
     @Test
@@ -2139,6 +2144,16 @@ class ColumnTypeMappingTest {
     }
 
     @Test
+    fun `uuid resolves to getObject and setObject with a UUID class hint`() {
+      val info = resolveJdbcTypeInfo("uuid")!!
+      assertThat(info.getterName).isEqualTo("getObject")
+      assertThat(info.setterName).isEqualTo("setObject")
+      assertThat(info.isPrimitive).isFalse()
+      assertThat(info.sqlTypeConstant).isEqualTo("OTHER")
+      assertThat(info.getterClassHint).isEqualTo(ClassName("java.util", "UUID"))
+    }
+
+    @Test
     fun `unsupported type returns null`() {
       // xml has no entry anywhere -- Norm has never mapped it to a Kotlin type, as a plain column
       // type or a domain base. bytea IS supported (see BASE_TYPE_RESOLVERS/DomainBaseTypes below) --
@@ -2163,6 +2178,29 @@ class ColumnTypeMappingTest {
     fun `every canonical base type resolveBaseType accepts has a resolveJdbcTypeInfo entry`() {
       val unsupported = BASE_TYPE_RESOLVERS.keys.filter { resolveJdbcTypeInfo(it) == null }
       assertThat(unsupported).isEmpty()
+    }
+  }
+
+  /**
+   * Regression coverage for the build-breaking bug: the `uuid` entry in [resolveJdbcTypeInfo] used
+   * the generic `"getObject"` getter with no [JdbcTypeInfo.getterClassHint], which generates a bare
+   * `getObject(index)` read. `java.sql.ResultSet.getObject(int)` is declared to return `Object`, so
+   * that read is statically `Any` in Kotlin no matter what concrete type pgjdbc's `PgResultSet`
+   * returns at runtime — it does not compile as an argument to `ColumnAdapter<Application,
+   * Wire>.decode`. This sweeps every entry [resolveJdbcTypeInfo] can produce so a future type added
+   * with the same mistake fails immediately, rather than surfacing only when a generated scenario
+   * happens to be compiled.
+   */
+  @Nested
+  inner class GetObjectReadsRequireAClassHint {
+
+    @Test
+    fun `every resolveJdbcTypeInfo entry using the generic getObject getter supplies a class hint`() {
+      val entriesMissingAClassHint = BASE_TYPE_RESOLVERS.keys
+        .mapNotNull { resolveJdbcTypeInfo(it) }
+        .filter { it.getterName == "getObject" && it.getterClassHint == null }
+
+      assertThat(entriesMissingAClassHint).isEmpty()
     }
   }
 
