@@ -28,6 +28,14 @@ public interface Queries : Transactable {
     previous_mood: Mood?,
     past_moods: Array<Mood?>?,
     scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
   ) -> T): T
 
   /**
@@ -52,6 +60,14 @@ public interface Queries : Transactable {
     previous_mood: Mood?,
     past_moods: Array<Mood?>?,
     scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
   ) -> T): Many<T>
 
   /**
@@ -75,6 +91,14 @@ public interface Queries : Transactable {
     previous_mood: Mood?,
     past_moods: Array<Mood?>?,
     scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
   ) -> T): Many<T>
 
   /**
@@ -98,6 +122,14 @@ public interface Queries : Transactable {
     previous_mood: Mood?,
     past_moods: Array<Mood?>?,
     scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
   ) -> T): Many<T>
 
   /**
@@ -106,6 +138,256 @@ public interface Queries : Transactable {
    * ```
    */
   public fun getUsersByMood(current_mood: Mood): Many<Users> = getUsersByMood(current_mood, ::Users)
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE placed_at > ?
+   * ```
+   */
+  public fun <T : Any> getUsersPlacedAfter(placed_at: OrderPlacedAt, mapper: (
+    id: Int,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
+    current_mood: Mood,
+    previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
+  ) -> T): Many<T>
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE placed_at > ?
+   * ```
+   */
+  public fun getUsersPlacedAfter(placed_at: OrderPlacedAt): Many<Users> = getUsersPlacedAfter(placed_at, ::Users)
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE external_ref = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> getUserByExternalReference(external_ref: ExternalReference, mapper: (
+    id: Int,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
+    current_mood: Mood,
+    previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
+  ) -> T): T
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE external_ref = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun getUserByExternalReference(external_ref: ExternalReference): Users = getUserByExternalReference(external_ref, ::Users)
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE preferred_date = ?
+   * ```
+   */
+  public fun <T : Any> getUsersByPreferredDate(preferred_date: PreferredDate, mapper: (
+    id: Int,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
+    current_mood: Mood,
+    previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
+  ) -> T): Many<T>
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE preferred_date = ?
+   * ```
+   */
+  public fun getUsersByPreferredDate(preferred_date: PreferredDate): Many<Users> = getUsersByPreferredDate(preferred_date, ::Users)
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE opening_time = ?
+   * ```
+   */
+  public fun <T : Any> getUsersByOpeningTime(opening_time: OpeningTime, mapper: (
+    id: Int,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
+    current_mood: Mood,
+    previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
+  ) -> T): Many<T>
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE opening_time = ?
+   * ```
+   */
+  public fun getUsersByOpeningTime(opening_time: OpeningTime): Many<Users> = getUsersByOpeningTime(opening_time, ::Users)
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE meeting_time_tz = ?
+   * ```
+   */
+  public fun <T : Any> getUsersByMeetingTimeTz(meeting_time_tz: MeetingTimeTz, mapper: (
+    id: Int,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
+    current_mood: Mood,
+    previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
+  ) -> T): Many<T>
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE meeting_time_tz = ?
+   * ```
+   */
+  public fun getUsersByMeetingTimeTz(meeting_time_tz: MeetingTimeTz): Many<Users> = getUsersByMeetingTimeTz(meeting_time_tz, ::Users)
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE created_at_local = ?
+   * ```
+   */
+  public fun <T : Any> getUsersByCreatedAtLocal(created_at_local: CreatedAtLocal, mapper: (
+    id: Int,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
+    current_mood: Mood,
+    previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
+  ) -> T): Many<T>
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE created_at_local = ?
+   * ```
+   */
+  public fun getUsersByCreatedAtLocal(created_at_local: CreatedAtLocal): Many<Users> = getUsersByCreatedAtLocal(created_at_local, ::Users)
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE large_object_ref = ?
+   * ```
+   */
+  public fun <T : Any> getUsersByLargeObjectRef(large_object_ref: LargeObjectRef, mapper: (
+    id: Int,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
+    current_mood: Mood,
+    previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
+  ) -> T): Many<T>
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE large_object_ref = ?
+   * ```
+   */
+  public fun getUsersByLargeObjectRef(large_object_ref: LargeObjectRef): Many<Users> = getUsersByLargeObjectRef(large_object_ref, ::Users)
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE thumbnail = ?
+   * ```
+   */
+  public fun <T : Any> getUsersByThumbnail(thumbnail: Thumbnail, mapper: (
+    id: Int,
+    email: Email,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
+    current_mood: Mood,
+    previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
+  ) -> T): Many<T>
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE thumbnail = ?
+   * ```
+   */
+  public fun getUsersByThumbnail(thumbnail: Thumbnail): Many<Users> = getUsersByThumbnail(thumbnail, ::Users)
 
   /**
    * ```sql

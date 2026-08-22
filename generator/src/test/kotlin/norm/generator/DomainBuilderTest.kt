@@ -137,6 +137,40 @@ class DomainBuilderTest {
     }
 
     @Test
+    fun `TIMESTAMPTZ domain generates an Instant value class`() {
+      // Regression coverage for the build-breaking bug: CREATE DOMAIN d AS timestamptz used to
+      // abort code generation entirely -- resolveJdbcTypeInfo had no entry for timestamptz even
+      // though it is one of the most common domain base types.
+      val domain = Domain(name = "occurred_at", baseType = "timestamptz", comment = "")
+      val output = generateValueClassCode(domain, "example")
+      assertThat(output).contains("import java.time.Instant")
+      assertThat(output).contains("public val `value`: Instant")
+    }
+
+    @Test
+    fun `UUID domain generates a UUID value class`() {
+      val domain = Domain(name = "external_id", baseType = "uuid", comment = "")
+      val output = generateValueClassCode(domain, "example")
+      assertThat(output).contains("import java.util.UUID")
+      assertThat(output).contains("public val `value`: UUID")
+    }
+
+    @Test
+    fun `DATE domain generates a LocalDate value class`() {
+      val domain = Domain(name = "preferred_date", baseType = "date", comment = "")
+      val output = generateValueClassCode(domain, "example")
+      assertThat(output).contains("import java.time.LocalDate")
+      assertThat(output).contains("public val `value`: LocalDate")
+    }
+
+    @Test
+    fun `BYTEA domain generates a ByteArray value class`() {
+      val domain = Domain(name = "thumbnail", baseType = "bytea", comment = "")
+      val output = generateValueClassCode(domain, "example")
+      assertThat(output).contains("public val `value`: ByteArray")
+    }
+
+    @Test
     fun `unsupported base type throws error`() {
       val exception = assertThrows<IllegalStateException> {
         domainKotlinBaseType("xml")

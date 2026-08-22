@@ -3,6 +3,7 @@ package norm.generator
 import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.doesNotContain
+import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isIn
@@ -69,6 +70,17 @@ class ColumnTypeMappingTest {
           .isIn("kotlin.Short", "kotlin.Int", "kotlin.Long")
       }
     }
+
+    @Test
+    fun `pg_catalog integer maps to Int`() {
+      // Closes a gap resolveBaseType previously had: pg_catalog.bool/varchar/bpchar were accepted,
+      // but pg_catalog.integer was not, even though the bare "integer" spelling was.
+      val statement = createStatement(
+        "SELECT val FROM t;",
+        columns = listOf(column("val", type = "pg_catalog.integer")),
+      )
+      assertThat(statement.resultRowShape.kotlinType).isEqualTo(Int::class.asTypeName())
+    }
   }
 
   @Nested
@@ -103,6 +115,17 @@ class ColumnTypeMappingTest {
           .isEqualTo(String::class.asTypeName())
       }
     }
+
+    @Test
+    fun `pg_catalog text maps to String`() {
+      // Closes a gap resolveBaseType previously had: pg_catalog.varchar/bpchar were accepted, but
+      // pg_catalog.text was not.
+      val statement = createStatement(
+        "SELECT val FROM t;",
+        columns = listOf(column("val", type = "pg_catalog.text")),
+      )
+      assertThat(statement.resultRowShape.kotlinType).isEqualTo(String::class.asTypeName())
+    }
   }
 
   @Nested
@@ -112,6 +135,17 @@ class ColumnTypeMappingTest {
       val statement = createStatement(
         "SELECT active FROM user;",
         columns = listOf(column("active", type = "bool")),
+      )
+      assertThat(statement.resultRowShape.kotlinType).isEqualTo(Boolean::class.asTypeName())
+    }
+
+    @Test
+    fun `pg_catalog boolean maps to Boolean`() {
+      // Closes a gap resolveBaseType previously had: pg_catalog.bool was accepted, but
+      // pg_catalog.boolean was not.
+      val statement = createStatement(
+        "SELECT active FROM user;",
+        columns = listOf(column("active", type = "pg_catalog.boolean")),
       )
       assertThat(statement.resultRowShape.kotlinType).isEqualTo(Boolean::class.asTypeName())
     }
@@ -949,6 +983,29 @@ class ColumnTypeMappingTest {
       assertThat(postgresArrayElementTypeName("text")).isEqualTo("text")
       assertThat(postgresArrayElementTypeName("varchar")).isEqualTo("varchar")
     }
+
+    /**
+     * Anti-drift sweep, the same shape as [DomainBaseTypeAntiDriftSweep]: every canonical type name
+     * [BASE_TYPE_RESOLVERS] accepts (the exact set [TypeRepository.resolveBaseType] accepts) must
+     * fold, via [postgresArrayElementTypeName], to a name that is ITSELF a
+     * [BASE_TYPE_RESOLVERS] key — i.e. a name [TypeRepository.resolveBaseType] would also
+     * recognize, and therefore a genuine canonical `pg_type` spelling, not a leftover SQL alias
+     * `createArrayOf` cannot look up. A future alias added to [BASE_TYPE_RESOLVERS] without a
+     * matching fold here would leave `postgresArrayElementTypeName` returning that alias verbatim,
+     * reproducing the `pg_catalog.`/SQL-spelling gap [postgresArrayElementTypeName]'s KDoc
+     * describes — this sweep catches that the moment it happens, rather than waiting for a runtime
+     * `Unable to find server array type` failure.
+     *
+     * Every fold was additionally verified against a live PostgreSQL 17 server via `SELECT typname
+     * FROM pg_type WHERE oid = to_regtype(?)` — see [postgresArrayElementTypeName]'s KDoc.
+     */
+    @Test
+    fun `every canonical base type folds to a name resolveBaseType itself would recognize`() {
+      val notFoldedToACanonicalName = BASE_TYPE_RESOLVERS.keys
+        .map { it to postgresArrayElementTypeName(it) }
+        .filter { (_, folded) -> folded !in BASE_TYPE_RESOLVERS.keys }
+      assertThat(notFoldedToACanonicalName).isEmpty()
+    }
   }
 
   @Nested
@@ -1017,6 +1074,20 @@ class ColumnTypeMappingTest {
     @Test
     fun `non-null jsonb column resolves to String`() {
       val col = column("metadata", type = "jsonb")
+      assertThat(typeRepository.resolveColumnType(col)).isEqualTo(String::class.asTypeName())
+    }
+
+    @Test
+    fun `pg_catalog jsonb column resolves to String`() {
+      // Closes a gap resolveBaseType previously had: the json/jsonb branch had no pg_catalog.-
+      // qualified literals at all, so pg_catalog.jsonb resolved to null rather than falling through.
+      val col = column("metadata", type = "pg_catalog.jsonb")
+      assertThat(typeRepository.resolveColumnType(col)).isEqualTo(String::class.asTypeName())
+    }
+
+    @Test
+    fun `pg_catalog json column resolves to String`() {
+      val col = column("payload", type = "pg_catalog.json")
       assertThat(typeRepository.resolveColumnType(col)).isEqualTo(String::class.asTypeName())
     }
 
@@ -1646,6 +1717,313 @@ class ColumnTypeMappingTest {
   }
 
   /**
+   * Regression coverage for the build-breaking bug: `CREATE DOMAIN d AS timestamptz` (or `uuid`,
+   * `date`, `time`, `timetz`, `bytea`, `oid`) aborted code generation entirely, because
+   * [resolveJdbcTypeInfo] had no entry for any of these types even though
+   * [TypeRepository.resolveBaseType] supports every one of them as a plain column type. Each read
+   * assertion below is verified against pgjdbc 42.7.13's actual `PgResultSet`/`PgPreparedStatement`
+   * source (see [resolveJdbcTypeInfo]'s KDoc for the specific methods checked), not assumed.
+   */
+  @Nested
+  inner class DomainOverJavaTimeAndOtherNonPrimitiveBaseTypes {
+
+    @Test
+    fun `DATE domain resolves to LocalDate value class`() {
+      val domain = Domain(name = "preferred_date", baseType = "date")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("day", type = "preferred_date")
+
+      assertThat(repository.resolveColumnType(col)).isEqualTo(ClassName("test", "PreferredDate"))
+    }
+
+    @Test
+    fun `non-null DATE domain resultSetAction uses the class-qualified getObject overload`() {
+      val domain = Domain(name = "preferred_date", baseType = "date")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("day", type = "preferred_date")
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString())
+        .isEqualTo("preferredDateAdapter.decode(getObject(1, java.time.LocalDate::class.java))")
+    }
+
+    @Test
+    fun `nullable DATE domain resultSetAction uses a safe call, not a wasNull check`() {
+      val domain = Domain(name = "preferred_date", baseType = "date")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("day", type = "preferred_date", notNull = false)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString())
+        .isEqualTo("getObject(1, java.time.LocalDate::class.java)?.let { preferredDateAdapter.decode(it) }")
+    }
+
+    @Test
+    fun `non-null DATE domain statementAction uses plain setObject`() {
+      val domain = Domain(name = "preferred_date", baseType = "date")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("day", type = "preferred_date")
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("day"))
+      assertThat(action.toString()).isEqualTo("setObject(1, preferredDateAdapter.encode(day))")
+    }
+
+    @Test
+    fun `nullable DATE domain statementAction uses setNull with DATE`() {
+      val domain = Domain(name = "preferred_date", baseType = "date")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("day", type = "preferred_date", notNull = false)
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("day"))
+      assertThat(action.toString()).contains("setObject(1, preferredDateAdapter.encode(it))")
+      assertThat(action.toString()).contains("setNull(1, java.sql.Types.DATE)")
+    }
+
+    @Test
+    fun `TIME domain resultSetAction uses the class-qualified getObject overload`() {
+      val domain = Domain(name = "opening_time", baseType = "time")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("start", type = "opening_time")
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString())
+        .isEqualTo("openingTimeAdapter.decode(getObject(1, java.time.LocalTime::class.java))")
+    }
+
+    @Test
+    fun `TIMETZ domain resultSetAction uses the class-qualified getObject overload`() {
+      val domain = Domain(name = "meeting_time_tz", baseType = "timetz")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("start", type = "meeting_time_tz")
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString())
+        .isEqualTo("meetingTimeTzAdapter.decode(getObject(1, java.time.OffsetTime::class.java))")
+    }
+
+    @Test
+    fun `nullable TIMETZ domain statementAction uses setNull with TIME_WITH_TIMEZONE`() {
+      val domain = Domain(name = "meeting_time_tz", baseType = "timetz")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("start", type = "meeting_time_tz", notNull = false)
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("start"))
+      assertThat(action.toString()).contains("setNull(1, java.sql.Types.TIME_WITH_TIMEZONE)")
+    }
+
+    @Test
+    fun `TIMESTAMP domain resultSetAction uses the class-qualified getObject overload`() {
+      val domain = Domain(name = "created_at_local", baseType = "timestamp")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("created", type = "created_at_local")
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString())
+        .isEqualTo("createdAtLocalAdapter.decode(getObject(1, java.time.LocalDateTime::class.java))")
+    }
+
+    @Test
+    fun `TIMESTAMPTZ domain resolves to Instant value class`() {
+      val domain = Domain(name = "occurred_at", baseType = "timestamptz")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("moment", type = "occurred_at")
+
+      assertThat(repository.resolveColumnType(col)).isEqualTo(ClassName("test", "OccurredAt"))
+    }
+
+    @Test
+    fun `non-null TIMESTAMPTZ domain resultSetAction reads OffsetDateTime and converts to Instant`() {
+      val domain = Domain(name = "occurred_at", baseType = "timestamptz")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("moment", type = "occurred_at")
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString())
+        .isEqualTo("occurredAtAdapter.decode(getObject(1, java.time.OffsetDateTime::class.java).toInstant())")
+    }
+
+    @Test
+    fun `nullable TIMESTAMPTZ domain resultSetAction chains safe calls through toInstant`() {
+      val domain = Domain(name = "occurred_at", baseType = "timestamptz")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("moment", type = "occurred_at", notNull = false)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).isEqualTo(
+        "getObject(1, java.time.OffsetDateTime::class.java)?.toInstant()?.let { occurredAtAdapter.decode(it) }",
+      )
+    }
+
+    @Test
+    fun `non-null TIMESTAMPTZ domain statementAction converts the encoded Instant back to OffsetDateTime`() {
+      val domain = Domain(name = "occurred_at", baseType = "timestamptz")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("moment", type = "occurred_at")
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("moment"))
+      assertThat(action.toString()).isEqualTo(
+        "setObject(1, java.time.OffsetDateTime.ofInstant(occurredAtAdapter.encode(moment), java.time.ZoneOffset.UTC))",
+      )
+    }
+
+    @Test
+    fun `nullable TIMESTAMPTZ domain statementAction uses setNull with TIMESTAMP_WITH_TIMEZONE`() {
+      val domain = Domain(name = "occurred_at", baseType = "timestamptz")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("moment", type = "occurred_at", notNull = false)
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("moment"))
+      assertThat(action.toString())
+        .contains("java.time.OffsetDateTime.ofInstant(occurredAtAdapter.encode(it), java.time.ZoneOffset.UTC)")
+      assertThat(action.toString()).contains("setNull(1, java.sql.Types.TIMESTAMP_WITH_TIMEZONE)")
+    }
+
+    @Test
+    fun `UUID domain resolves to UUID value class`() {
+      val domain = Domain(name = "external_id", baseType = "uuid")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("id", type = "external_id")
+
+      assertThat(repository.resolveColumnType(col)).isEqualTo(ClassName("test", "ExternalId"))
+    }
+
+    @Test
+    fun `non-null UUID domain resultSetAction uses the class-qualified getObject overload`() {
+      // java.sql.ResultSet.getObject(int) is declared to return Object, so a bare getObject(index)
+      // call is statically Any in Kotlin — it will not compile as an argument to
+      // ColumnAdapter<ExternalId, UUID>.decode, even though pgjdbc's plain getObject(int) does
+      // return a java.util.UUID instance at runtime for a uuid column (verified against pgjdbc's
+      // PgResultSet.internalGetObject). The class-qualified overload fixes the static type.
+      val domain = Domain(name = "external_id", baseType = "uuid")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("id", type = "external_id")
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString())
+        .isEqualTo("externalIdAdapter.decode(getObject(1, java.util.UUID::class.java))")
+    }
+
+    @Test
+    fun `nullable UUID domain resultSetAction uses a safe call through the class-qualified getObject`() {
+      val domain = Domain(name = "external_id", baseType = "uuid")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("id", type = "external_id", notNull = false)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString())
+        .isEqualTo("getObject(1, java.util.UUID::class.java)?.let { externalIdAdapter.decode(it) }")
+    }
+
+    @Test
+    fun `non-null UUID domain statementAction uses plain setObject`() {
+      // pgjdbc's setObject(int, Object) dispatches on UUID directly (verified against pgjdbc's
+      // PgPreparedStatement.setObject), so no Types hint is needed for the non-null case.
+      val domain = Domain(name = "external_id", baseType = "uuid")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("id", type = "external_id")
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("id"))
+      assertThat(action.toString()).isEqualTo("setObject(1, externalIdAdapter.encode(id))")
+    }
+
+    @Test
+    fun `nullable UUID domain statementAction uses setNull with OTHER`() {
+      val domain = Domain(name = "external_id", baseType = "uuid")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("id", type = "external_id", notNull = false)
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("id"))
+      assertThat(action.toString()).contains("setObject(1, externalIdAdapter.encode(it))")
+      assertThat(action.toString()).contains("setNull(1, java.sql.Types.OTHER)")
+    }
+
+    @Test
+    fun `BYTEA domain resolves to ByteArray value class`() {
+      val domain = Domain(name = "thumbnail", baseType = "bytea")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("data", type = "thumbnail")
+
+      assertThat(repository.resolveColumnType(col)).isEqualTo(ClassName("test", "Thumbnail"))
+    }
+
+    @Test
+    fun `non-null BYTEA domain resultSetAction uses getBytes`() {
+      val domain = Domain(name = "thumbnail", baseType = "bytea")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("data", type = "thumbnail")
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).isEqualTo("thumbnailAdapter.decode(getBytes(1))")
+    }
+
+    @Test
+    fun `non-null BYTEA domain statementAction uses setBytes`() {
+      val domain = Domain(name = "thumbnail", baseType = "bytea")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("data", type = "thumbnail")
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("data"))
+      assertThat(action.toString()).isEqualTo("setBytes(1, thumbnailAdapter.encode(data))")
+    }
+
+    @Test
+    fun `nullable BYTEA domain statementAction uses setNull with BINARY`() {
+      val domain = Domain(name = "thumbnail", baseType = "bytea")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("data", type = "thumbnail", notNull = false)
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("data"))
+      assertThat(action.toString()).contains("setBytes(1, thumbnailAdapter.encode(it))")
+      assertThat(action.toString()).contains("setNull(1, java.sql.Types.BINARY)")
+    }
+
+    @Test
+    fun `OID domain resolves to Blob value class`() {
+      val domain = Domain(name = "large_object_ref", baseType = "oid")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("ref", type = "large_object_ref")
+
+      assertThat(repository.resolveColumnType(col)).isEqualTo(ClassName("test", "LargeObjectRef"))
+    }
+
+    @Test
+    fun `non-null OID domain resultSetAction uses getBlob`() {
+      val domain = Domain(name = "large_object_ref", baseType = "oid")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("ref", type = "large_object_ref")
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).isEqualTo("largeObjectRefAdapter.decode(getBlob(1))")
+    }
+
+    @Test
+    fun `non-null OID domain statementAction uses setBlob`() {
+      val domain = Domain(name = "large_object_ref", baseType = "oid")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("ref", type = "large_object_ref")
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("ref"))
+      assertThat(action.toString()).isEqualTo("setBlob(1, largeObjectRefAdapter.encode(ref))")
+    }
+
+    @Test
+    fun `nullable OID domain statementAction uses setNull with BLOB`() {
+      val domain = Domain(name = "large_object_ref", baseType = "oid")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("ref", type = "large_object_ref", notNull = false)
+      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("ref"))
+      assertThat(action.toString()).contains("setBlob(1, largeObjectRefAdapter.encode(it))")
+      assertThat(action.toString()).contains("setNull(1, java.sql.Types.BLOB)")
+    }
+  }
+
+  /**
    * Direct tests for [resolveJdbcTypeInfo], verifying the JDBC method metadata
    * for each supported Postgres base type.
    *
@@ -1766,9 +2144,63 @@ class ColumnTypeMappingTest {
     }
 
     @Test
+    fun `uuid resolves to getObject and setObject with a UUID class hint`() {
+      val info = resolveJdbcTypeInfo("uuid")!!
+      assertThat(info.getterName).isEqualTo("getObject")
+      assertThat(info.setterName).isEqualTo("setObject")
+      assertThat(info.isPrimitive).isFalse()
+      assertThat(info.sqlTypeConstant).isEqualTo("OTHER")
+      assertThat(info.getterClassHint).isEqualTo(ClassName("java.util", "UUID"))
+    }
+
+    @Test
     fun `unsupported type returns null`() {
+      // xml has no entry anywhere -- Norm has never mapped it to a Kotlin type, as a plain column
+      // type or a domain base. bytea IS supported (see BASE_TYPE_RESOLVERS/DomainBaseTypes below) --
+      // it used to return null here, which is exactly the bug this fix closes: CREATE DOMAIN d AS
+      // bytea aborted code generation entirely.
       assertThat(resolveJdbcTypeInfo("xml")).isEqualTo(null)
-      assertThat(resolveJdbcTypeInfo("bytea")).isEqualTo(null)
+    }
+  }
+
+  /**
+   * Anti-drift sweep for the bug where a domain over a common base type (e.g. `CREATE DOMAIN d AS
+   * timestamptz`) aborted code generation: [resolveJdbcTypeInfo] must have an entry for EVERY
+   * canonical type name [BASE_TYPE_RESOLVERS] accepts, since [TypeRepository]'s domain resolution
+   * chains through [resolveJdbcTypeInfo] for the domain's base type. The corpus is
+   * [BASE_TYPE_RESOLVERS]'s own keys -- the exact set [TypeRepository.resolveBaseType] accepts --
+   * rather than a hand-copied list here that could independently drift from it.
+   */
+  @Nested
+  inner class DomainBaseTypeAntiDriftSweep {
+
+    @Test
+    fun `every canonical base type resolveBaseType accepts has a resolveJdbcTypeInfo entry`() {
+      val unsupported = BASE_TYPE_RESOLVERS.keys.filter { resolveJdbcTypeInfo(it) == null }
+      assertThat(unsupported).isEmpty()
+    }
+  }
+
+  /**
+   * Regression coverage for the build-breaking bug: the `uuid` entry in [resolveJdbcTypeInfo] used
+   * the generic `"getObject"` getter with no [JdbcTypeInfo.getterClassHint], which generates a bare
+   * `getObject(index)` read. `java.sql.ResultSet.getObject(int)` is declared to return `Object`, so
+   * that read is statically `Any` in Kotlin no matter what concrete type pgjdbc's `PgResultSet`
+   * returns at runtime — it does not compile as an argument to `ColumnAdapter<Application,
+   * Wire>.decode`. This sweeps every entry [resolveJdbcTypeInfo] can produce so a future type added
+   * with the same mistake fails immediately, rather than surfacing only when a generated scenario
+   * happens to be compiled.
+   */
+  @Nested
+  inner class GetObjectReadsRequireAClassHint {
+
+    @Test
+    fun `every resolveJdbcTypeInfo entry using the generic getObject getter supplies a class hint`() {
+      val entriesMissingAClassHint = BASE_TYPE_RESOLVERS.keys
+        .mapNotNull { resolveJdbcTypeInfo(it) }
+        .filter { it.getterName == "getObject" && it.getterClassHint == null }
+
+      assertThat(entriesMissingAClassHint).isEmpty()
     }
   }
 
