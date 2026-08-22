@@ -3410,6 +3410,17 @@ class SqlUtilsTest {
     }
 
     @Test
+    fun `honors a RETURNING WITH alias prologue with a comment trailing the declared alias`() {
+      // Verified against real PostgreSQL 18: a comment between the declared alias and the
+      // prologue's closing parenthesis (`RETURNING WITH (OLD AS o /*c*/) o.note`) is valid syntax
+      // and does not become part of the alias name — "o" alone refers to OLD, exactly as it would
+      // without the comment.
+      val result =
+        oldOrNewReturningColumns("UPDATE t SET note = 'x' WHERE id = 1 RETURNING WITH (OLD AS o /*c*/) o.note")
+      assertThat(result).isEqualTo(OldOrNewReturningAnalysis(itemCount = 1, forcedColumns = setOf(1)))
+    }
+
+    @Test
     fun `returns no items and no forced columns when there is no RETURNING clause at all`() {
       val result = oldOrNewReturningColumns("DELETE FROM t WHERE id = 1")
       assertThat(result).isEqualTo(OldOrNewReturningAnalysis(itemCount = 0, forcedColumns = emptySet()))
@@ -3646,6 +3657,28 @@ class SqlUtilsTest {
       // a quote that closes exactly on the last character. Naively trimming one trailing character
       // drops the real final letter of the name ("sibling" -> "siblin"), which then never matches.
       assertThat(referencesAnyName("MERGE INTO tgt USING \"sibling", listOf("sibling"))).isTrue()
+    }
+
+    @Test
+    fun `bails conservatively on a Unicode-escape double-quoted identifier`() {
+      // Verified against real PostgreSQL 17: U&"d\0061ta" resolves to the identifier "data" — the
+      // \0061 escape decodes to the letter "a". Comparing the raw, still-escaped quoted content
+      // ("d\0061ta") against the plain name "data" would never match, a false negative in the
+      // dangerous direction (a real sibling reference going undetected). Rather than decode the
+      // escape, this bails conservatively the moment it sees a U&" token at all.
+      assertThat(referencesAnyName("SELECT * FROM U&\"d\\0061ta\"", listOf("data"))).isTrue()
+    }
+
+    @Test
+    fun `bails conservatively on a lowercase Unicode-escape double-quoted identifier`() {
+      assertThat(referencesAnyName("SELECT * FROM u&\"d\\0061ta\"", listOf("data"))).isTrue()
+    }
+
+    @Test
+    fun `does not mistake an identifier merely ending in u for a Unicode escape`() {
+      // "menu" ends in "u" immediately followed by unrelated text; there is no "&\"" immediately
+      // after it, so this must not bail.
+      assertThat(referencesAnyName("SELECT * FROM menu", listOf("pre"))).isFalse()
     }
   }
 

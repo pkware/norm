@@ -513,33 +513,40 @@ internal class NodeTreeNullabilityAnalyzer(
     expression: PgNodeExpression.JsonExpr,
     recurse: (PgNodeExpression) -> Boolean,
   ): Boolean = when (expression.op) {
-    PgNodeExpression.JSON_EXISTS_OP -> true
+    PgNodeExpression.JSON_EXISTS_OP -> recurse(expression.argument) &&
+      isKnownNonNullJsonExistsErrorBehavior(
+        expression.onError,
+      )
+
     PgNodeExpression.JSON_SERIALIZE_OP -> recurse(expression.argument)
-    PgNodeExpression.JSON_VALUE_OP, PgNodeExpression.JSON_QUERY_OP -> {
+
+    PgNodeExpression.JSON_QUERY_OP -> {
       val emptyOk = isKnownNonNullJsonBehavior(expression.onEmpty) && expression.onEmptyDefault?.let(recurse) != false
       val errorOk = isKnownNonNullJsonBehavior(expression.onError) && expression.onErrorDefault?.let(recurse) != false
-      emptyOk && errorOk
+      recurse(expression.argument) && emptyOk && errorOk
     }
+
+    // JSON_VALUE unwraps a path match to an SQL/JSON `null` value into a genuine SQL NULL. That is
+    // a SUCCESSFUL match, not the "no match" (EMPTY)/"error" (ERROR) case the ON EMPTY/ON ERROR
+    // clauses control, so no combination of those codes rules the successful-match-to-JSON-null
+    // case out. Verified live (PostgreSQL 17 and 18): `JSON_VALUE('{"name": null}'::jsonb, '$.name'
+    // RETURNING TEXT ERROR ON EMPTY ERROR ON ERROR) IS NULL` is `true`.
+    PgNodeExpression.JSON_VALUE_OP -> false
 
     else -> false
   }
 
   /**
    * Returns `true` only for a `JsonBehaviorType` code POSITIVELY VERIFIED (live, PostgreSQL 17 and
-   * 18) to make a `JSON_VALUE`/`JSON_QUERY` `ON EMPTY`/`ON ERROR` clause produce a definite,
-   * non-null outcome — an ALLOW-list, not the `!= JSON_BEHAVIOR_NULL` DENY-list this replaced. The
-   * deny-list shape meant any `JsonBehaviorType` value a future Postgres version added would default
-   * to non-null-compatible the moment it existed, with no verification at all; this allow-list
-   * instead defaults an unrecognized code to nullable, the safe direction, until it is added here
-   * with its own live verification.
+   * 18) to make a `JSON_QUERY` `ON EMPTY`/`ON ERROR` clause produce a definite, non-null outcome —
+   * an ALLOW-list. An unrecognized code defaults to nullable, the safe direction.
    *
    * The four allowed codes and why each is safe:
    * - [PgNodeExpression.JSON_BEHAVIOR_ERROR]: raises a runtime error rather than returning a value at
-   *   all for the row — the same "an ERROR is fine; only a silent `null` return disqualifies a
-   *   candidate" reasoning [isNeverNullForNonNullInput]'s own KDoc documents elsewhere in this class.
-   *   Verified live: `:expr <>` (absent) for this code, so [PgNodeExpression.JsonExpr.onEmptyDefault]/
-   *   [PgNodeExpression.JsonExpr.onErrorDefault] parses to `null` here, and `null?.let(recurse) !=
-   *   false` is `true` unconditionally — no default expression exists to recurse into.
+   *   all for the row. Verified live: `:expr <>` (absent) for this code, so
+   *   [PgNodeExpression.JsonExpr.onEmptyDefault]/[PgNodeExpression.JsonExpr.onErrorDefault] parses to
+   *   `null` here, and `null?.let(recurse) != false` is `true` unconditionally — no default
+   *   expression exists to recurse into.
    * - [PgNodeExpression.JSON_BEHAVIOR_EMPTY_ARRAY]/[PgNodeExpression.JSON_BEHAVIOR_EMPTY_OBJECT]:
    *   substitute Postgres's own internal `[]`/`{}` `jsonb` constant, never a user-supplied
    *   expression. Verified live: `:expr` for these codes is always a `{CONST ... :constisnull
@@ -549,26 +556,41 @@ internal class NodeTreeNullabilityAnalyzer(
    * - [PgNodeExpression.JSON_BEHAVIOR_DEFAULT]: the ONE code among these four backed by a genuinely
    *   user-supplied expression (`DEFAULT expr ON EMPTY`/`ON ERROR`) — verified live to always carry
    *   a real `:expr` block, which is why [emptyOk]/[errorOk] recurse into it rather than trusting the
-   *   behavior code alone; `DEFAULT null::int ON EMPTY` is legal and must NOT be treated as non-null.
+   *   behavior code alone; `DEFAULT null::jsonb ON EMPTY` is legal and must NOT be treated as
+   *   non-null.
    *
    * Deliberately NOT on this list: [PgNodeExpression.JSON_BEHAVIOR_NULL] (explicitly nullable by
-   * definition — the very case this whole method exists to exclude); `JSON_BEHAVIOR_TRUE`/`FALSE`/
-   * `UNKNOWN` (`JsonBehaviorType` values 3-5) — verified live that Postgres rejects all three for a
-   * `JSON_VALUE`/`JSON_QUERY` `ON EMPTY`/`ON ERROR` clause outright ("Only ERROR, NULL, or DEFAULT
-   * expression is allowed in ON EMPTY for JSON_VALUE()") — they are valid only for `JSON_EXISTS`'s
-   * own `ON ERROR`, a field this method never reads (see the `JSON_EXISTS_OP` branch above, which is
-   * unconditionally `true` regardless of that behavior for the independent reason `JSON_EXISTS`
-   * itself always returns a boolean or raises an error, documented there); and `JSON_TABLE`'s
-   * per-column `ON EMPTY`/`ON ERROR` — verified live that a `JSON_TABLE` column resolves to a plain
-   * `VAR` against an `RTE_TABLEFUNC` range-table entry in the outer query's target list, never a
-   * [PgNodeExpression.JsonExpr] node this method ever sees, so this allow-list has no bearing on it
-   * either way.
+   * definition); `JSON_BEHAVIOR_TRUE`/`FALSE`/`UNKNOWN` — verified live that Postgres rejects all
+   * three for a `JSON_QUERY` `ON EMPTY`/`ON ERROR` clause outright, so they never appear here; and
+   * `JSON_TABLE`'s per-column `ON EMPTY`/`ON ERROR` — verified live that a `JSON_TABLE` column
+   * resolves to a plain `VAR` against an `RTE_TABLEFUNC` range-table entry in the outer query's
+   * target list, never a [PgNodeExpression.JsonExpr] node this method ever sees, so this allow-list
+   * has no bearing on it either way.
    */
   private fun isKnownNonNullJsonBehavior(behaviorType: Int): Boolean =
     behaviorType == PgNodeExpression.JSON_BEHAVIOR_ERROR ||
       behaviorType == PgNodeExpression.JSON_BEHAVIOR_EMPTY_ARRAY ||
       behaviorType == PgNodeExpression.JSON_BEHAVIOR_EMPTY_OBJECT ||
       behaviorType == PgNodeExpression.JSON_BEHAVIOR_DEFAULT
+
+  /**
+   * Returns `true` only for a `JsonBehaviorType` code POSITIVELY VERIFIED (live, PostgreSQL 17) to
+   * make `JSON_EXISTS`'s `ON ERROR` clause produce a definite, non-null (`true`/`false`) outcome, or
+   * raise an error rather than returning a value at all. `JSON_EXISTS` has no `ON EMPTY` clause.
+   *
+   * [PgNodeExpression.JSON_BEHAVIOR_TRUE]/[PgNodeExpression.JSON_BEHAVIOR_FALSE] are the codes for an
+   * explicit `TRUE`/`FALSE ON ERROR` clause. Verified live: with no `ON ERROR` clause written at
+   * all, Postgres materializes `:btype 4` ([PgNodeExpression.JSON_BEHAVIOR_FALSE]) — the SQL-standard
+   * default — so an absent clause is exactly as safe as writing `FALSE ON ERROR` explicitly.
+   * Deliberately NOT on this list: [PgNodeExpression.JSON_BEHAVIOR_UNKNOWN], which produces a
+   * genuine SQL NULL on a path error (verified live), and [PgNodeExpression.JSON_BEHAVIOR_NULL]/
+   * `EMPTY_ARRAY`/`EMPTY_OBJECT`/`DEFAULT`, which Postgres's parser rejects outright for
+   * `JSON_EXISTS`'s `ON ERROR` clause and so never appear here.
+   */
+  private fun isKnownNonNullJsonExistsErrorBehavior(behaviorType: Int): Boolean =
+    behaviorType == PgNodeExpression.JSON_BEHAVIOR_ERROR ||
+      behaviorType == PgNodeExpression.JSON_BEHAVIOR_TRUE ||
+      behaviorType == PgNodeExpression.JSON_BEHAVIOR_FALSE
 
   private fun evaluateXmlExpr(expression: PgNodeExpression.XmlExpr, recurse: (PgNodeExpression) -> Boolean): Boolean =
     when (expression.op) {

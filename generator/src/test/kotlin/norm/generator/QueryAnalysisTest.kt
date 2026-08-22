@@ -1615,7 +1615,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `JSON_EXISTS grouping key with the only Var in the PASSING clause is nullable`() {
-      assumeTrue(pgVersion.toInt() >= 17, "JSON_EXISTS PASSING requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_EXISTS PASSING requires PostgreSQL 17+")
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT PRIMARY KEY, a INT NOT NULL)",
         """
@@ -1630,7 +1630,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `JSON_VALUE with defaults and the only Var in the PASSING clause is nullable`() {
-      assumeTrue(pgVersion.toInt() >= 17, "JSON_VALUE PASSING requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_VALUE PASSING requires PostgreSQL 17+")
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT PRIMARY KEY, a INT NOT NULL)",
         """
@@ -3074,7 +3074,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `MERGE WHEN NOT MATCHED BY SOURCE THEN DELETE RETURNING source column inside a CTE`() {
-      assumeTrue(pgVersion.toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
       // WHEN NOT MATCHED BY SOURCE fires for TARGET rows with no matching source row — the
       // shape convertMergeToSelect models as a LEFT JOIN. Verified against real Postgres: a
       // target row with no matching source row returns s.name = NULL through this RETURNING.
@@ -3099,7 +3099,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `MERGE without WHEN NOT MATCHED BY SOURCE keeps source column NOT NULL`() {
-      assumeTrue(pgVersion.toInt() >= 17, "MERGE RETURNING requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "MERGE RETURNING requires PostgreSQL 17+")
       // No "WHEN NOT MATCHED BY SOURCE" clause: convertMergeToSelect models this as a plain
       // (inner) join, since every row RETURNING can see has a genuine source match. Verified
       // against real Postgres: s.name is never NULL through this RETURNING.
@@ -3202,7 +3202,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `MERGE RETURNING source column survives an unbalanced parenthesis inside a string literal`() {
-      assumeTrue(pgVersion.toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
       // Same defect as above, for MERGE: the "(" inside a SET expression's string literal must
       // not hide the real WHEN NOT MATCHED BY SOURCE clause from convertMergeToSelect. Verified
       // against real Postgres: a target row with no matching source row returns sname = NULL.
@@ -3319,7 +3319,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `MERGE WHEN NOT MATCHED BY SOURCE RETURNING star has correct column order, names, and nullability`() {
-      assumeTrue(pgVersion.toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
       // Verified against real Postgres (\gdesc plus executing the query): "RETURNING *" expands
       // SOURCE-first — sid, sname, tid, tname — regardless of which WHEN clauses are present,
       // and for a target row with no matching source row the actual returned values are
@@ -3351,7 +3351,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `literal text matching the WHEN NOT MATCHED BY SOURCE phrase does not trigger the LEFT JOIN model`() {
-      assumeTrue(pgVersion.toInt() >= 17, "MERGE RETURNING requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "MERGE RETURNING requires PostgreSQL 17+")
       // hasWhenNotMatchedBySourceClause must not misfire on a SET expression's string literal
       // that happens to contain the phrase "when not matched by source ". Verified against real
       // Postgres: with no genuine WHEN NOT MATCHED BY SOURCE clause, ms.sname is never NULL.
@@ -3482,7 +3482,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `stub path forces every column nullable when RETURNING OLD-col accompanies a real LEFT JOIN`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // PostgreSQL 18's RETURNING OLD.col forces this body onto the stub path: the structural
       // conversion builds a plain SELECT where "OLD" is not a valid range variable, so it fails
       // to prepare and validatedConversion correctly rejects it. Before the stub-path safety
@@ -3517,7 +3517,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `MERGE detects WHEN NOT MATCHED BY SOURCE despite a comment abutting NOT and MATCHED`() {
-      assumeTrue(pgVersion.toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
       // skipOptionalKeyword previously required LITERAL whitespace immediately after each
       // keyword, so a comment directly abutting NOT and MATCHED with no surrounding whitespace
       // broke clause detection entirely, choosing a plain JOIN and fabricating NOT NULL for the
@@ -3624,7 +3624,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `MERGE with a LEFT JOIN nested in its USING subquery reports the joined column nullable`() {
-      assumeTrue(pgVersion.toInt() >= 17, "merge_action() requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
       // Regression guard: hasOuterJoin previously scanned only paren depth 0, so a LEFT JOIN
       // nested inside the USING subquery went undetected — merge_action() in RETURNING already
       // forces this body onto the stub path (it isn't valid outside MERGE's own RETURNING, so
@@ -3656,7 +3656,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `DELETE RETURNING OLD-col alongside an unrelated column no longer drags it into nullable`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // FIX 1 regression guard: at e4679ff, forceAllNullable applied to the WHOLE stub once ANY
       // RETURNING item referenced OLD/NEW — so "id" (never touched by OLD/NEW at all) was
       // fabricated nullable purely because it shared a RETURNING list with "oldname". Verified
@@ -3682,7 +3682,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `UPDATE RETURNING OLD-col alongside the target's own column stays NOT NULL for the target column`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // Same regression as above, UPDATE form. Verified against real Postgres: UPDATE t SET name
       // = 'x' WHERE id = 1 RETURNING OLD.name AS oldname, t.id returns oldname = 'orig', id = 1 —
       // both genuinely NOT NULL (an UPDATE's target row always exists), but only "id" (untouched
@@ -3703,7 +3703,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `INSERT ON CONFLICT RETURNING OLD-col alongside an unrelated column stays NOT NULL for it`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // Same regression, INSERT ON CONFLICT form. Verified against real Postgres: INSERT INTO t
       // (id, bval) VALUES (1, 'new') ON CONFLICT (id) DO UPDATE SET bval = 'updated' RETURNING
       // OLD.bval, t.id returns id = 1 (NOT NULL — the conflicting row's id, always present),
@@ -3726,7 +3726,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `DELETE USING RETURNING OLD-col alongside the target's own column stays NOT NULL for it`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // Same regression, DELETE ... USING form. Verified against real Postgres: DELETE FROM t
       // USING a WHERE t.id = a.id RETURNING OLD.name AS oldname, t.id returns oldname = 'orig',
       // id = 1 — both genuinely NOT NULL — asserting only on "id" here (untouched by OLD/NEW).
@@ -3749,7 +3749,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `RETURNING star alongside an OLD reference falls back to forcing every column nullable`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // NOT independently demonstrative of FIX 1: this shape already passed at e4679ff, because
       // the OLD-only whole-body trigger already forced every column nullable there too — the star
       // exception changes nothing observable for THIS test. What it DOES confirm is that FIX 1's
@@ -3778,7 +3778,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `RETURNING WITH declared alias for OLD-NEW feeds the same per-column forcing`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // FIX 2 end-to-end: PostgreSQL 18's RETURNING WITH (OLD AS o, NEW AS n) prologue declares
       // custom names for the pseudo-relations; oldOrNewReturningColumns must recognize "o"/"n" as
       // OLD/NEW references feeding the same per-column decision as the unqualified form, leaving
@@ -3804,7 +3804,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `MERGE fed by a sibling CTE with an internal LEFT JOIN forces the joined column nullable`() {
-      assumeTrue(pgVersion.toInt() >= 17, "merge_action() requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
       // FIX 3: "pre" (a sibling CTE, not part of "m"'s own body text) contains a LEFT JOIN whose
       // null-extension is entirely invisible to any scan of "m"'s own text — "m" itself has no
       // join at all. merge_action() in RETURNING forces this body onto the stub path (not valid
@@ -3838,7 +3838,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `MERGE fed by a double-quoted sibling reference still forces the joined column nullable`() {
-      assumeTrue(pgVersion.toInt() >= 17, "merge_action() requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
       // Issue #208, Gap 1: quoting an otherwise unremarkable lowercase sibling name ("pre")
       // used to defeat referencesAnyName entirely, since its underlying scan skipped
       // double-quoted identifiers as an opaque lexical token by design. referencesAnyName now
@@ -3869,7 +3869,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `MERGE with a ROLLUP source forces the grouped column nullable`() {
-      assumeTrue(pgVersion.toInt() >= 17, "merge_action() requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
       // Issue #208, Gap 2: a ROLLUP supertotal row makes the grouped column NULL by definition,
       // matched into the target only via a COALESCE in the ON condition -- no LEFT/RIGHT/FULL
       // JOIN keyword and no WHEN NOT MATCHED BY SOURCE clause appears anywhere in the body for
@@ -3901,7 +3901,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `MERGE fed by a transitive sibling chain forces the joined column nullable`() {
-      assumeTrue(pgVersion.toInt() >= 17, "merge_action() requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
       // Issue #208, Gap 3: "m" references "mid", which has no join of its own -- the LEFT JOIN
       // lives in "j", which is "mid"'s sibling, not "m"'s. The pre-existing one-level-deep
       // sibling-danger check stopped at "mid" and never saw "j". computeDangerousSiblingNames now
@@ -3930,7 +3930,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `MERGE fed by an INSERT sibling with an internal LEFT JOIN keeps the target column NOT NULL`() {
-      assumeTrue(pgVersion.toInt() >= 17, "merge_action() requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
       // Precision guard for the seed-change half of Gap 3's fix: computeDangerousSiblingNames
       // seeds on "!isInsertBody(body) && hasNullExtendingConstruct(body)" -- an INSERT's
       // RETURNING can only expose target-table columns, whose attnotnull is authoritative
@@ -3967,7 +3967,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `MERGE fed by an INSERT ON CONFLICT sibling that RETURNS OLD-col forces the passed-through column nullable`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // Issue #208 P1 follow-up: the seed's "!isInsertBody" exclusion (added for the precision
       // guard test above) is correct for an INSERT's ORDINARY target-column RETURNING, but an
       // INSERT's RETURNING can also read OLD./NEW., whose own conditional existence attnotnull
@@ -4007,7 +4007,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `MERGE fed by an INSERT sibling using the RETURNING WITH OLD-alias prologue forces the column nullable`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // Same danger sign as the unqualified-OLD sibling test above, but via PostgreSQL 18's
       // `RETURNING WITH (OLD AS alias, ...)` prologue instead of a bare `OLD.col` reference --
       // computeDangerousSiblingNames seeds on oldOrNewReturningColumns specifically because it
@@ -4043,7 +4043,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `forward-referencing MERGE under WITH RECURSIVE fed by a later sibling with a LEFT JOIN is nullable`() {
-      assumeTrue(pgVersion.toInt() >= 17, "merge_action() requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
       // FIX 3 / genuine NEW-harm regression: "m" (declared FIRST) forward-references "pre"
       // (declared AFTER it) under WITH RECURSIVE, which makes every sibling name visible to every
       // other body regardless of declaration order. At e4679ff, this shape silently typed "bval"
@@ -4076,7 +4076,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `DELETE RETURNING OLD and NEW both report nullable — NEW is always null for a deleted row`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // PostgreSQL 18's RETURNING OLD/NEW: for a DELETE, OLD is the deleted row (always present)
       // and NEW does not exist (always NULL). Neither the join-preserving conversion (OLD/NEW
       // are not valid range variables outside RETURNING, so the converted SELECT fails to
@@ -4100,7 +4100,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `INSERT ON CONFLICT RETURNING OLD-col is nullable even though INSERT skips the join-based net`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // NOT independently demonstrative of Fix 4: checked directly against the driver
       // (PreparedStatement.getMetaData()), PostgreSQL's OWN metadata already reports
       // OLD.bval as nullable for this exact shape, with no forceAllNullable involved — so this
@@ -4541,7 +4541,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `MERGE RETURNING`() {
-      assumeTrue(pgVersion.toInt() >= 17, "MERGE RETURNING requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "MERGE RETURNING requires PostgreSQL 17+")
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT PRIMARY KEY, name TEXT NOT NULL)",
         """
@@ -4557,7 +4557,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `top-level MERGE RETURNING merge_action() does not abort generation`() {
-      assumeTrue(pgVersion.toInt() >= 17, "merge_action() requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
       // FIX 1 [P0]: convertDmlToSelect splices merge_action() into a plain SELECT verbatim, where
       // it is not valid PostgreSQL (merge_action() only works inside MERGE's own RETURNING) — so
       // the converted SELECT fails to prepare. At d1153f3, Phase 2 (the TOP-LEVEL, non-CTE
@@ -4597,7 +4597,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `top-level MERGE RETURNING merge_action-comma-star does not abort generation`() {
-      assumeTrue(pgVersion.toInt() >= 17, "merge_action() requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
       // The four plain column references (both "id"s, "aval", "tval") are NOT NULL via
       // honestly-read ResultSetMetaData. "merge_action" (a bare function call,
       // `columnNullableUnknown`) cannot be proven: star-expansion in probeUnknownColumnNullability
@@ -4626,7 +4626,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `top-level MERGE RETURNING OLD-col does not abort generation`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // Same FIX 1 crash, OLD-reference variant (also not valid outside RETURNING, same failure
       // mode as merge_action()) — rejected conversion falls through to analyzeUnconvertibleDml.
       // Verified against real Postgres (matched-row-only MERGE, so every returned row's OLD is the
@@ -4667,7 +4667,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `MERGE INTO with WHEN NOT MATCHED THEN INSERT RETURNING OLD-col is nullable for a freshly-inserted row`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // Issue #207 shape 1: a freshly INSERTed row via MERGE has no prior row, so OLD.tval is
       // genuinely NULL — before the fix, the top-level no-join-structure fallback
       // (analyzeUnconvertibleDml's predecessor) asserted it NOT NULL unconditionally. Verified
@@ -4690,7 +4690,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `MERGE INTO with WHEN MATCHED THEN DELETE RETURNING NEW-col is nullable for a deleted row`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING NEW requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING NEW requires PostgreSQL 18+")
       // Issue #207 shape 2: a deleted row has no resulting row, so NEW.tval is genuinely NULL —
       // same fallback, same fix. Verified against real Postgres (tgt has a matching row for a):
       // NEW.tval = NULL.
@@ -4711,7 +4711,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `INSERT ON CONFLICT DO UPDATE RETURNING OLD-col is nullable for a freshly-inserted row`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // Issue #207 shape 3: a fresh INSERT (no conflicting row) has no prior row, so OLD.tval is
       // genuinely NULL — a plain top-level INSERT ... ON CONFLICT with no CTE and no MERGE at all,
       // the simplest possible top-level DML shape this fix covers. Verified against real Postgres
@@ -4729,7 +4729,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `top-level MERGE RETURNING merge_action() alongside a LEFT JOIN in USING forces every column nullable`() {
-      assumeTrue(pgVersion.toInt() >= 17, "merge_action() requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
       // Issue #207 shape 4: merge_action() forces Phase 2's conversion to be rejected (not valid
       // outside MERGE's own RETURNING), so this falls to analyzeUnconvertibleDml — which now
       // detects the LEFT JOIN nested in the USING subquery via the same null-extending-construct
@@ -4839,7 +4839,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `top-level UPDATE FROM with OLD-col still finds the real LEFT JOIN in its scoped region`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // A bare `UPDATE ... FROM a LEFT JOIN b ... RETURNING t.name, b.bval` converts and validates
       // successfully via the join-aware node-tree analyzer, never reaching
       // analyzeUnconvertibleDml at all — so it cannot exercise the scoped fallback path by itself.
@@ -4870,7 +4870,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `top-level DELETE USING with OLD-col still finds the real LEFT JOIN in its scoped region`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // DELETE USING equivalent of the UPDATE FROM case above.
       val query = analyzeWithSchema(
         """
@@ -5568,7 +5568,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `parenthesized star-plus-OLD in a CTE body forces every column, not just the wrong one`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // FIX 2: "(tgt.*)" is a parenthesized star — isStarItem's regex previously only recognized
       // a bare "*"/"tbl.*", so this shape's real 2-column expansion (id, tval) was miscounted as
       // a single RETURNING item, shifting "oldv" (the genuinely OLD-dependent column) off its
@@ -5598,7 +5598,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `an ALIASED star reaches the item-count cross-check directly`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // Verified against real PostgreSQL 18.4: "RETURNING tgt.* AS whatever, OLD.id AS oldv" is
       // valid syntax, returning 3 real columns for a 2-column "tgt" (tgt.id, tgt.tval, oldv).
       // Unlike parseSelectItems, oldOrNewReturningColumns never alias-strips an item before
@@ -5633,7 +5633,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `star with whitespace around the dot is recognized by isStarItem and forces every column`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // CORRECTED (was: "not recognized by isStarItem's text heuristic"): #212's fix taught
       // isStarItem to collapse whitespace around a qualifying dot, so "tgt . *" IS now recognized
       // — verified via SqlUtilsTest's "recognizes a star item with whitespace around the
@@ -5668,7 +5668,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `an OLD reference forces every column nullable when a star recognition change loses per-column precision`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // Pins a REAL, INTENTIONAL nullability outcome change from teaching isStarItem to
       // recognize "tgt . *" — not merely a different code path reaching the same answer, unlike
       // the sibling tests above. "tgt" here has exactly ONE column, so "tgt.*"'s real expansion
@@ -5701,7 +5701,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `the same precision loss extends to one of the newly-normalized star spellings`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // Same outcome change as the test above, for one of the THREE spellings isStarItem was
       // fixed to additionally normalize (a trailing comment sitting OUTSIDE a wrapping
       // parenthesis) — confirming the precision loss extends to those spellings too, exactly as
@@ -5724,7 +5724,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `an untracked bracket can no longer cancel out a star's split error and defeat the cross-check`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // FIX 1: splitAtTopLevel previously did not track "[...]", so "ARRAY[1, 2]"'s internal comma
       // split it into two items — which, in THIS exact list, numerically canceled out the "tgt . *"
       // star's own split error: 4 real columns (id, tval, oldv, arr), and a broken split
@@ -5765,7 +5765,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `an untracked bracket alone, with no star at all, no longer corrupts the item count`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // NOT independently demonstrative of FIX 1: confirmed (via the established git-stash
       // before/after technique) that this exact shape ALREADY passed at 94b5a2d — the untracked
       // "[...]" corrupted the split into 3 items ("ARRAY[1", "2] AS arr", "OLD.tval AS oldv")
@@ -5798,7 +5798,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `an OLD reference without a star still forces only the referencing column, not the whole body`() {
-      assumeTrue(pgVersion.toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // Restores coverage lost when #212 taught isStarItem to recognize "tgt . *": every OTHER
       // test in this class now involves a star, so every one of them resolves via
       // oldOrNewReturningColumns's forcedColumns = null (a RECOGNIZED star coincides with an
@@ -5973,7 +5973,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `JSON_VALUE with default NULL behavior`() {
-      assumeTrue(pgVersion.toInt() >= 17, "JSON_VALUE requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_VALUE requires PostgreSQL 17+")
       val query = analyzeWithSchema(
         "CREATE TABLE t (data jsonb NOT NULL)",
         "SELECT JSON_VALUE(data, '\$.name') AS result FROM t",
@@ -5982,18 +5982,36 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `JSON_VALUE with DEFAULT on empty and error`() {
-      assumeTrue(pgVersion.toInt() >= 17, "JSON_VALUE requires PostgreSQL 17+")
+    fun `JSON_VALUE with DEFAULT on empty and error is still nullable`() {
+      // JSON_VALUE unwraps a path match to a JSON `null` value into a genuine SQL NULL — a
+      // successful match, not the "no match"/"error" case ON EMPTY/ON ERROR control. Verified
+      // live: `JSON_VALUE('{"name": null}'::jsonb, '$.name' RETURNING TEXT DEFAULT 'N/A' ON EMPTY
+      // DEFAULT 'ERR' ON ERROR) IS NULL` is `true`.
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_VALUE requires PostgreSQL 17+")
       val query = analyzeWithSchema(
         "CREATE TABLE t (data jsonb NOT NULL)",
         "SELECT JSON_VALUE(data, '\$.name' RETURNING TEXT DEFAULT 'N/A' ON EMPTY DEFAULT 'ERR' ON ERROR) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `JSON_QUERY with DEFAULT on empty and error is non-null for a non-null context item`() {
+      // Unlike JSON_VALUE, JSON_QUERY never unwraps a matched JSON `null` into a genuine SQL NULL
+      // — it returns the JSON text `null` instead. Verified live: `JSON_QUERY('{"a": null}'::jsonb,
+      // '$.a' EMPTY ARRAY ON EMPTY EMPTY OBJECT ON ERROR) IS NULL` is `false`, so a proven non-null
+      // context item combined with safe ON EMPTY/ON ERROR behavior is a genuinely non-null column.
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_QUERY requires PostgreSQL 17+")
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (data jsonb NOT NULL)",
+        "SELECT JSON_QUERY(data, '\$.items' EMPTY ARRAY ON EMPTY EMPTY ARRAY ON ERROR) AS result FROM t",
       )
       assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
     fun `JSON_EXISTS is non-null`() {
-      assumeTrue(pgVersion.toInt() >= 17, "JSON_EXISTS requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_EXISTS requires PostgreSQL 17+")
       val query = analyzeWithSchema(
         "CREATE TABLE t (data jsonb NOT NULL)",
         "SELECT JSON_EXISTS(data, '\$.name') AS result FROM t",
@@ -6003,7 +6021,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `JSON_QUERY with default NULL behavior`() {
-      assumeTrue(pgVersion.toInt() >= 17, "JSON_QUERY requires PostgreSQL 17+")
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_QUERY requires PostgreSQL 17+")
       val query = analyzeWithSchema(
         "CREATE TABLE t (data jsonb NOT NULL)",
         "SELECT JSON_QUERY(data, '\$.items') AS result FROM t",

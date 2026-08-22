@@ -265,7 +265,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * inside the view's own definition — computed once here and shared by both
    * [viewColumnNotNullByRelidAndAttnum]'s own subtraction step and the public,
    * schema-scoped [loadViewOuterJoinNullableColumns], so the two can never independently drift
-   * from each other's answer for the same column the way the pre-existing duplicate queries could.
+   * from each other's answer for the same column.
    *
    * Materialized views are excluded because their data is stored at refresh time; the outer-join
    * structure of the definition does not affect the persisted NOT NULL guarantee of a materialized
@@ -1208,10 +1208,14 @@ internal class PgCatalogLoader(private val connection: Connection) {
 
     // Bounded at columnCount + 1 passes — the maximum this monotone-widening loop can take to
     // reach its fixpoint (see this function's own KDoc for the termination argument) — rather
-    // than trusting that argument alone to keep this loop from ever running forever.
+    // than trusting that argument alone to keep this loop from ever running forever. columnCount
+    // itself is seedResult.size, since every branch of a UNION/set operation is required (by
+    // PostgreSQL) to have the same column count as every other branch, and the seed's is already
+    // known at this point.
     var combined = seedResult
     var previous: List<Boolean>?
     var remainingPasses = seedResult.size + 1
+    var anyBranchUnanalyzable = false
     do {
       previous = combined
       val resolvedWithSelfReference = previouslyResolved + (cteName to combined)
@@ -1219,13 +1223,25 @@ internal class PgCatalogLoader(private val connection: Connection) {
       for (branchBlock in otherBranches) {
         val branchAnalyzer = buildCteBodyAnalyzer(branchBlock, resolvedWithSelfReference, applyQualNarrowing)
         val result = branchAnalyzer.extractColumnNullability(branchBlock)
-        if (result.isNotEmpty()) branchResults.add(result)
+        // An empty result means this branch's own nullability could not be determined at all — not
+        // "this branch has zero columns" (impossible; every branch of a set operation has the same
+        // column count). Silently dropping it from the OR-combination would let the OTHER
+        // branches' (possibly narrower, even all-NOT-NULL) answer stand as if this branch
+        // contributed nothing, when in truth its contribution is simply unknown. Flagging it here
+        // forces every column nullable below instead.
+        if (result.isNotEmpty()) branchResults.add(result) else anyBranchUnanalyzable = true
       }
       val columnCount = branchResults.maxOf { it.size }
       combined = (0 until columnCount).map { col -> branchResults.any { it.getOrElse(col) { true } } }
       remainingPasses--
     } while (combined != previous && remainingPasses > 0)
-    return combined
+    // combined != previous here means the loop was cut off by remainingPasses running out while
+    // the result was still changing — i.e. it did not reach its fixpoint. Returning that
+    // still-moving intermediate value could under-report nullability (a later pass might still
+    // flip more columns to nullable), so every column is forced nullable instead, the same
+    // fallback taken for an unanalyzable branch above.
+    val didNotConverge = combined != previous
+    return if (anyBranchUnanalyzable || didNotConverge) List(combined.size) { true } else combined
   }
 
   /**
