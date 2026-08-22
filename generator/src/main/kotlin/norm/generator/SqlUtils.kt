@@ -829,6 +829,18 @@ private fun skipOptionalSetQuantifier(sql: String, position: Int): Int {
  * [skipLexicalToken], so an `AS`-like substring or an unbalanced paren inside one of those is
  * not mistaken for a real `AS` keyword or a real parenthesis.
  *
+ * Tracks `(`/`)` only, deliberately NOT `[`/`]` — unlike [splitAtTopLevel] and
+ * [findTopLevelEqualsSign], which share one depth counter across both bracket kinds. Those two
+ * scan RAW, not-yet-split clause text, where a top-level-looking `,`/`=` can sit directly inside an
+ * unsplit `ARRAY[...]` literal (see [splitAtTopLevel]'s own KDoc). [extractAlias] instead only ever
+ * receives an item [parseOutputItemsWithAlias] already split via [splitAtTopLevel] — so any
+ * `[`/`]` pair the item contains is, by construction of that prior split, already self-balanced
+ * and cannot itself hold an unmatched `(`/`)` inside it either. Tracking `[`/`]` here would
+ * therefore never change which `AS` this scan finds: PostgreSQL syntax also never lets a bare `AS`
+ * appear directly inside `[...]` (an array literal holds element expressions, not aliases) without
+ * that `AS` also sitting inside some `(...)` this scan already tracks (`ARRAY[CAST(x AS int)]`, for
+ * instance, has its `AS` inside `CAST(...)`'s own parentheses).
+ *
  * The word-boundary check on either side of a candidate `AS`/`as` uses [isIdentifierChar] — the
  * same predicate [findTopLevelKeyword] and every other keyword scanner in this file use — rather
  * than `Char.isWhitespace()`: PostgreSQL's `AS` keyword only needs to NOT be fused into a longer
@@ -888,7 +900,16 @@ private fun extractAlias(item: String): Pair<String, String?> {
     }
     when (item[i]) {
       '(' -> depth++
-      ')' -> depth--
+      ')' -> {
+        depth--
+        // A bare ')' with no matching '(' means [item] is not the well-formed, already-top-level
+        // expression this scan assumes — see findTopLevelKeyword's own KDoc on why bailing (rather
+        // than clamping depth at 0 and continuing) is the safe direction: an unbalanced scan's
+        // assumptions are already void, so a loud "no alias found" is safer than a depth count that
+        // silently recovers and may misplace a later real AS keyword. [item] is returned unsplit,
+        // the same fallback [extractAlias] already uses when no top-level AS exists at all.
+        if (depth < 0) return item to null
+      }
       'A', 'a' -> if (depth == 0 && i + 1 < item.length && (item[i + 1] == 'S' || item[i + 1] == 's')) {
         // Check it's the keyword AS (not fused into a longer identifier on either side)
         val before = i == 0 || !isIdentifierChar(item[i - 1])
@@ -1017,7 +1038,22 @@ private fun parseColumnReference(expression: String): SelectItem {
  * `valid_from`, `from_date`, `data_set`, and similar ordinary column/table names are never
  * mistaken for the keywords `FROM`/`SET` they merely contain as a substring.
  *
- * @return The index of the keyword, or `-1` if not found at the top level.
+ * A bare `)` with no matching `(` before it (`depth` going negative) means [sql] is not the
+ * well-formed, already-balanced text this scan assumes — BAILS immediately to `-1` (not found)
+ * rather than clamping `depth` at `0` and continuing. Clamping would let the scan silently recover
+ * and keep searching past the unbalanced point, which is not obviously safe either way: for a
+ * search this function's own callers (`parseSelectItems`'s KDoc for one) treat a MISSING keyword
+ * as the dangerous direction — e.g. a missing `FROM` making `parseSelectItems` fall through to
+ * `window.substring(itemsStart)`, taking MORE text as items than it should — a clamp-and-continue
+ * scan could just as easily find some LATER, wrongly-in-scope keyword instead of correctly finding
+ * none at all. An unbalanced scan's assumptions are already void by that point, so returning `-1`
+ * loudly, rather than guessing which recovery is safe, is the same policy [oldOrNewReturningColumns]'s
+ * own caller-side cross-check exists to enforce elsewhere: an honestly-wrong "not found" a caller's
+ * existing fallback already handles, over a confidently-wrong match this function cannot itself
+ * tell apart from a correct one.
+ *
+ * @return The index of the keyword, or `-1` if not found at the top level, INCLUDING when [sql]
+ *   contains an unbalanced closing parenthesis before any top-level match — see above.
  */
 internal fun findTopLevelKeyword(sql: String, keyword: String, startIndex: Int = 0): Int {
   var depth = 0
@@ -1035,6 +1071,7 @@ internal fun findTopLevelKeyword(sql: String, keyword: String, startIndex: Int =
       }
       ')' -> {
         depth--
+        if (depth < 0) return -1
         i++
       }
       else -> {
@@ -2175,7 +2212,14 @@ private fun normalizeAssignmentColumnName(text: String): String? {
  * expression that could itself contain `=` — so the first top-level `=` this scan finds can only
  * ever be the genuine assignment separator.
  *
- * @return The index of the `=` sign, or `-1` if [text] has none at the top level.
+ * A bare closing `)`/`]` with no matching opener before it (`depth` going negative) means [text]
+ * is not the well-formed, already-balanced text this scan assumes — bails immediately to `-1`
+ * (not found) rather than clamping `depth` at `0` and continuing; see [findTopLevelKeyword]'s own
+ * KDoc for why bailing, not clamping, is the safe direction once a scan's balancing assumption is
+ * already broken.
+ *
+ * @return The index of the `=` sign, or `-1` if [text] has none at the top level, INCLUDING when
+ *   [text] contains an unbalanced closing bracket before any top-level `=` — see above.
  */
 private fun findTopLevelEqualsSign(text: String): Int {
   var depth = 0
@@ -2188,7 +2232,10 @@ private fun findTopLevelEqualsSign(text: String): Int {
     }
     when (text[i]) {
       '(', '[' -> depth++
-      ')', ']' -> depth--
+      ')', ']' -> {
+        depth--
+        if (depth < 0) return -1
+      }
       '=' -> if (depth == 0) return i
     }
     i++
