@@ -266,12 +266,21 @@ internal class TypeRepository(
         // expression so it can appear in KDoc. Simple column references (e.g. crosstab output columns)
         // are excluded because echoing the column name back adds no value.
         val isComputedExpression = column.table == null && selectItem != null && selectItem.columnName == null
+        // A plain reference into a CTE's output (column.table == null, but the outer item IS a
+        // simple column reference) can still be expression-derived one level down, inside the
+        // CTE body -- see resolveCteOutputExpression's KDoc for issue #229's shape and every case
+        // it deliberately punts on rather than guessing.
+        val cteExpression = if (!isComputedExpression && column.table == null && selectItem?.columnName != null) {
+          resolveCteOutputExpression(queryText, selectItem)
+        } else {
+          null
+        }
         PropertySource(
           propertyName = column.name,
           comment = column.comment,
           sourceTable = column.table?.name,
           sourceColumn = column.originalName.ifEmpty { null },
-          expression = if (isComputedExpression) selectItem.expression else "",
+          expression = if (isComputedExpression) selectItem.expression else cteExpression ?: "",
         )
       },
       sql = queryText,
@@ -626,7 +635,7 @@ internal fun TypeSpec.Builder.addClassKdoc(
     if (documentedProperties.isNotEmpty()) {
       if (isNotEmpty()) append("\n\n")
       for ((index, property) in documentedProperties.withIndex()) {
-        append("@property ${property.propertyName} ")
+        append("@property ${property.propertyName.formatAsKdocPropertyReference()} ")
         if (property.comment.isNotEmpty()) {
           append(property.comment)
         }
@@ -649,6 +658,23 @@ internal fun TypeSpec.Builder.addClassKdoc(
  */
 private fun PropertySource.hasDocumentation(hasTableMapping: Boolean): Boolean =
   comment.isNotEmpty() || (!hasTableMapping && sourceReference() != null)
+
+/**
+ * A regular Kotlin identifier: matched WITHOUT surrounding backticks in KDoc's `@property` tag.
+ */
+private val PLAIN_KOTLIN_IDENTIFIER = Regex("[A-Za-z_][A-Za-z0-9_]*")
+
+/**
+ * Formats a Kotlin property name for use as the name token in a KDoc `@property` tag.
+ *
+ * KDoc's `@property` tag takes exactly one name token before the description text begins, so a
+ * property name containing a space or other non-identifier character (e.g. a quoted SQL column
+ * name like `"My Col"`, generated as the Kotlin property `` `My Col` ``) must be wrapped in
+ * backticks here too -- otherwise `@property My Col Some comment.` reads as a property literally
+ * named `My`, with `Col Some comment.` swallowed into the description.
+ */
+private fun String.formatAsKdocPropertyReference(): String =
+  if (PLAIN_KOTLIN_IDENTIFIER.matches(this)) this else "`$this`"
 
 /**
  * Returns a source reference string for display in KDoc, or `null` if none is available.

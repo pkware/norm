@@ -37,3 +37,16 @@ CREATE TABLE account (
 COMMENT ON COLUMN account.id IS 'Unique identifier for the account.';
 COMMENT ON COLUMN account.username IS 'Login name for the account.';
 COMMENT ON COLUMN account.password IS 'Encrypted password for the account.';
+
+-- Quoted identifiers: "Foo" (mixed case) and "My Col" (contains a space) can only ever be
+-- referenced quoted in SQL. Used to test that comment lookup for a quoted column reference
+-- resolves through the column's real name, not through an alias pgjdbc's own
+-- ResultSetMetaData.getColumnName reports instead when AS is used.
+CREATE TABLE tq (
+  id SERIAL PRIMARY KEY,
+  "Foo" TEXT NOT NULL,
+  "My Col" TEXT
+);
+
+COMMENT ON COLUMN tq."Foo" IS 'Mixed-case column, only referenceable quoted.';
+COMMENT ON COLUMN tq."My Col" IS 'Column name containing a space.';

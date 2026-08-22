@@ -411,4 +411,54 @@ public interface Queries : Transactable {
    */
   @Throws(SQLException::class)
   public fun createAccount(username: String, crypt_param1: String)
+
+  /**
+   * Quoted column reference WITH an alias: originalName must resolve through the quoted column's
+   * own name ("Foo"), not through the alias ("bar") pgjdbc's own ResultSetMetaData.getColumnName
+   * reports instead when AS is used -- otherwise comment lookup for "Foo" fails outright, since no
+   * column is actually named "bar". A second column is selected so a data class (with @property
+   * comment lines) is generated instead of a bare scalar, making the comment lookup outcome visible.
+   *
+   * ```sql
+   * SELECT id, "Foo" AS bar FROM tq WHERE id = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> getQuotedColumnWithAlias(id: Int, mapper: (id: Int, bar: String) -> T): T
+
+  /**
+   * Quoted column reference WITH an alias: originalName must resolve through the quoted column's
+   * own name ("Foo"), not through the alias ("bar") pgjdbc's own ResultSetMetaData.getColumnName
+   * reports instead when AS is used -- otherwise comment lookup for "Foo" fails outright, since no
+   * column is actually named "bar". A second column is selected so a data class (with @property
+   * comment lines) is generated instead of a bare scalar, making the comment lookup outcome visible.
+   *
+   * ```sql
+   * SELECT id, "Foo" AS bar FROM tq WHERE id = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun getQuotedColumnWithAlias(id: Int): GetQuotedColumnWithAlias = getQuotedColumnWithAlias(id, ::GetQuotedColumnWithAlias)
+
+  /**
+   * Quoted column reference containing a space, with no alias. A second column is selected for the
+   * same reason as above -- so the comment lookup outcome shows up as a @property line.
+   *
+   * ```sql
+   * SELECT id, "My Col" FROM tq WHERE id = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> getQuotedColumnWithSpace(id: Int, mapper: (id: Int, `My Col`: String?) -> T): T
+
+  /**
+   * Quoted column reference containing a space, with no alias. A second column is selected for the
+   * same reason as above -- so the comment lookup outcome shows up as a @property line.
+   *
+   * ```sql
+   * SELECT id, "My Col" FROM tq WHERE id = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun getQuotedColumnWithSpace(id: Int): GetQuotedColumnWithSpace = getQuotedColumnWithSpace(id, ::GetQuotedColumnWithSpace)
 }
