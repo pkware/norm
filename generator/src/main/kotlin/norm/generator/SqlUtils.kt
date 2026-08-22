@@ -309,7 +309,12 @@ private fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> {
   val hasFromClause: Boolean
   if (returningIndex >= 0) {
     afterKeyword = returningIndex + "RETURNING".length
-    itemsStart = afterKeyword
+    // PostgreSQL 18's `RETURNING WITH (OLD AS o, NEW AS n) o.x, n.x` prologue is not part of the
+    // first item's own expression — skip past it via parseOldNewAliasPrologue (the same helper
+    // oldOrNewReturningColumns already uses for nullability) so itemsStart lands on the real first
+    // item, not on `WITH (OLD AS o, NEW AS n) o.x` (which parseColumnReference cannot make sense
+    // of, so it would otherwise be embedded verbatim in generated KDoc as that column's expression).
+    itemsStart = parseOldNewAliasPrologue(window, afterKeyword).second
     // RETURNING clauses are terminal — no FROM keyword follows
     hasFromClause = false
   } else if (selectIndex >= 0) {
