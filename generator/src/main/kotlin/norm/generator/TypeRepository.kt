@@ -504,9 +504,9 @@ internal class TypeRepository(
    * Maps a Postgres type name to its base [SqlMappable], or `null` if not recognized.
    *
    * [typeName] may carry a `pg_catalog.` qualification (e.g. `pg_catalog.int4`); it is stripped
-   * once here rather than duplicated per literal in [BASE_TYPE_RESOLVERS] — see that map's KDoc
-   * for why the previous per-branch duplication was itself a bug (some qualified spellings were
-   * missing).
+   * once here rather than duplicated per literal in [BASE_TYPE_RESOLVERS], so every entry in that
+   * map accepts both the qualified and unqualified spelling without needing its own branch for
+   * each.
    */
   private fun resolveBaseType(typeName: String, notNull: Boolean): SqlMappable? =
     BASE_TYPE_RESOLVERS[typeName.removePrefix("pg_catalog.")]?.invoke(notNull)
@@ -520,9 +520,8 @@ internal class TypeRepository(
  * This is the single source of truth for "every type name resolveBaseType accepts": both
  * [TypeRepository.resolveBaseType] itself and [ColumnTypeMappingTest]'s domain-base-type-parity
  * sweep read from these exact keys, so a type added here without a matching [resolveJdbcTypeInfo]
- * entry fails that sweep immediately, instead of silently working for plain columns while
- * crash-aborting generation the moment the same type is used as a domain base (the bug this map
- * was introduced to close — see [resolveJdbcTypeInfo]'s KDoc).
+ * entry fails that sweep immediately — see [resolveJdbcTypeInfo]'s KDoc for the invariant this
+ * enforces between the two maps.
  *
  * Includes the `serial`/`smallserial`/`bigserial` pseudo-types even though Postgres rejects
  * `CREATE DOMAIN ... AS serial` outright (`type "serial" does not exist` — verified against a live
@@ -625,9 +624,9 @@ internal fun postgresArrayElementTypeName(typeName: String): String =
  *
  * Every key in [BASE_TYPE_RESOLVERS] has an entry here — [ColumnTypeMappingTest]'s domain-base-
  * type-parity sweep asserts this directly, rather than relying on the two lists being hand-kept in
- * sync, closing the bug where a domain over a common base type (e.g. `CREATE DOMAIN d AS
- * timestamptz`) aborted code generation entirely: [TypeRepository]'s domain resolution chains
- * through this function (see [TypeRepository.tryResolveDomainType] and
+ * sync, so a domain over any base type [TypeRepository.resolveBaseType] itself supports (e.g.
+ * `CREATE DOMAIN d AS timestamptz`) always resolves here too: [TypeRepository]'s domain resolution
+ * chains through this function (see [TypeRepository.tryResolveDomainType] and
  * [domainKotlinBaseType][norm.generator.domainKotlinBaseType]), and its `error()` calls are
  * reachable only for a base type [TypeRepository.resolveBaseType] itself does not support either
  * (e.g. `xml`, `interval`, `money` — Postgres allows a domain over any of these, but Norm has never
