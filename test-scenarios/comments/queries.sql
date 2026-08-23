@@ -55,3 +55,12 @@ SELECT id, "Foo" AS bar FROM tq WHERE id = ?;
 -- same reason as above -- so the comment lookup outcome shows up as a @property line.
 -- name: getQuotedColumnWithSpace :one
 SELECT id, "My Col" FROM tq WHERE id = ?;
+
+-- A trailing "--" comment on the query's OWN last line, with the terminating ";" appended to that
+-- same comment line. Both columns are NOT NULL per schema, unaffected by any join, so this pins
+-- the query analyzer's own nullability probe still succeeding rather than degrading every column
+-- to nullable.
+-- name: getBooksWithTrailingComment :many
+SELECT id, title FROM book
+-- only rows with a title
+;

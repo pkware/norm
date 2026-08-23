@@ -15,6 +15,7 @@ import norm.ConnectionProvider
 import norm.Many
 import norm.ManyProcessor
 import norm.NormDriver
+import norm.Query
 import norm.RealTransactable
 import norm.combineExecBatchResults
 
@@ -352,4 +353,22 @@ public class PostgresQueries(
       setInt(1, id)
     }
   }
+
+  private fun <T : Any, Return> getBooksWithTrailingComment(mapper: (id: Int, title: String) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |SELECT id, title FROM book
+        |-- only rows with a title
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        getString(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> getBooksWithTrailingComment(mapper: (id: Int, title: String) -> T): Many<T> = getBooksWithTrailingComment(mapper, driver::queryMany)
+
+  override fun <T : Any> getBooksWithTrailingCommentDynamically(mapper: (id: Int, title: String) -> T): Query<T> = getBooksWithTrailingComment(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
 }
