@@ -5,11 +5,9 @@ package norm.generator
  * live PostgreSQL 18 instance, to be TOTAL on non-null input -- proven for every combination of
  * non-null arguments, not merely "typical" ones, including infinite, empty, or unbounded edge
  * values. Backs [PgCatalogLoader.neverNullForNonNullInputOids] via
- * [PgCatalogLoader.NEVER_NULL_FUNCTION_SIGNATURES], [PgCatalogLoader.NEVER_NULL_CAST_SIGNATURES],
- * and [PgCatalogLoader.NEVER_NULL_OPERATOR_SIGNATURES] -- those companion-object properties
- * delegate here so this DATA can live in its own file, separate from [PgCatalogLoader]'s own job
- * of loading catalog metadata, while every existing qualified reference to
- * `PgCatalogLoader.NEVER_NULL_*` keeps resolving unchanged.
+ * [NEVER_NULL_FUNCTION_SIGNATURES], [NEVER_NULL_CAST_SIGNATURES], and
+ * [NEVER_NULL_OPERATOR_SIGNATURES] -- this DATA lives in its own file, separate from
+ * [PgCatalogLoader]'s own job of loading catalog metadata.
  *
  * [SafeListSweepTest] verifies this list against a live server: every listed signature actually
  * exists in `pg_catalog`, and a live sweep of representative edge-value arguments never observes a

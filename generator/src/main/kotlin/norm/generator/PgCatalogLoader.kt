@@ -162,7 +162,7 @@ internal class PgCatalogLoader(internal val connection: Connection) {
    * through.
    *
    * Functions are safe-listed by `pg_proc.proname` PLUS ARGUMENT TYPE SIGNATURE — see
-   * [NEVER_NULL_FUNCTION_SIGNATURES] — restricted to `pronamespace = 'pg_catalog'`. Keying by
+   * [NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES] — restricted to `pronamespace = 'pg_catalog'`. Keying by
    * name alone is NOT safe: `lower(anyrange)`/`upper(anyrange)`/`lower(anymultirange)`/
    * `upper(anymultirange)` share `proname` with the totally-safe `lower(text)`/`upper(text)` but
    * return `null` on a non-null, well-typed, non-empty-but-unbounded range or an empty range —
@@ -174,14 +174,14 @@ internal class PgCatalogLoader(internal val connection: Connection) {
    * just arity. `substring` itself is simply left off the list entirely rather than enumerated,
    * since its regex overloads are non-total.
    *
-   * Casts are safe-listed by (source type, target type) PAIR — see [NEVER_NULL_CAST_SIGNATURES] —
+   * Casts are safe-listed by (source type, target type) PAIR — see [NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES] —
    * rather than a class-wide blanket over every `pg_cast.castfunc` in `pg_catalog`. A blanket was
    * tried first and is FALSE: `('null'::jsonb)::int4` (and every other `jsonb` → numeric/`boolean`
    * cast) returns `null` on well-typed, non-null input with no error, because the cast function
    * special-cases the JSON literal `null` rather than raising "cannot convert". A brute-force
    * sweep against live PostgreSQL of every `jsonb`-targeting numeric/`boolean` cast confirmed this
    * for all seven overloads (`int2`, `int4`, `int8`, `numeric`, `float4`, `float8`, `bool`); none
-   * of the seven appear in [NEVER_NULL_CAST_SIGNATURES]. The same sweep also found
+   * of the seven appear in [NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES]. The same sweep also found
    * `timestamp`/`timestamptz` → `time`/`timetz` silently returns `null` for the infinite
    * (`'infinity'`/`'-infinity'`) input, rather than erroring the way `'infinity'::interval::time`
    * does — so those three pairs are excluded too. Every other pair the sweep checked (see
@@ -197,7 +197,7 @@ internal class PgCatalogLoader(internal val connection: Connection) {
    * errors rather than returning `null`.
    *
    * Operators are safe-listed by (symbol, left operand type, right operand type) TRIPLE — see
-   * [NEVER_NULL_OPERATOR_SIGNATURES] — restricted to `oprnamespace = 'pg_catalog'`, and
+   * [NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES] — restricted to `oprnamespace = 'pg_catalog'`, and
    * materialized to the OID of the implementing function via `oprcode`, the same OID space
    * [PgNodeExpression.OpExpr] and [PgNodeExpression.ScalarArrayOpExpr] (e.g. `= ANY(...)`) are
    * keyed by, so no separate operator-specific lookup is needed. Symbol alone is NOT safe: `path +
@@ -205,7 +205,7 @@ internal class PgCatalogLoader(internal val connection: Connection) {
    * `null`, not an error, when either operand is a CLOSED path (`SELECT ((0,0),(1,1),(2,0)) +
    * ((0,0),(1,1),(2,0))` on two well-typed, non-null closed paths). A brute-force sweep against
    * live PostgreSQL of every symbol-restricted-but-unrestricted-by-type combination found exactly
-   * this one bad shape; `path` is entirely absent from [NEVER_NULL_OPERATOR_SIGNATURES] as a
+   * this one bad shape; `path` is entirely absent from [NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES] as a
    * result — every triple that remains was independently swept and found total (see
    * [SafeListSweepTest]). A left or right type of `null` in a signature means the operator is
    * unary on that side (no left operand for a prefix operator, no right operand for a postfix
@@ -220,7 +220,7 @@ internal class PgCatalogLoader(internal val connection: Connection) {
    * Omitting a signature from this set only WIDENS the result to nullable — it never narrows a
    * truly nullable expression to non-null — so when in doubt about whether a specific signature is
    * total on every non-null, well-typed input (including infinite/empty/unbounded edge values, not
-   * just "typical" ones — see [NEVER_NULL_FUNCTION_SIGNATURES] for the `extract`/`date_part`
+   * just "typical" ones — see [NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES] for the `extract`/`date_part`
    * counterexample this note exists to flag), the correct default is to leave it off.
    */
   val neverNullForNonNullInputOids: Set<Int> by lazy(::loadNeverNullForNonNullInputOids)
@@ -503,7 +503,7 @@ internal class PgCatalogLoader(internal val connection: Connection) {
 
   private fun loadNeverNullForNonNullInputOids(): Set<Int> = buildSet {
     connection.createStatement().use { stmt ->
-      val safeSignatureValues = NEVER_NULL_FUNCTION_SIGNATURES.joinToString(", ") { signature ->
+      val safeSignatureValues = NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES.joinToString(", ") { signature ->
         val nameLiteral = "'${signature.name}'"
         val argumentTypesLiteral = if (signature.argumentTypeNames.isEmpty()) {
           "ARRAY[]::text[]"
@@ -536,7 +536,7 @@ internal class PgCatalogLoader(internal val connection: Connection) {
       }
     }
     connection.createStatement().use { stmt ->
-      val safeCastValues = NEVER_NULL_CAST_SIGNATURES.joinToString(", ") { signature ->
+      val safeCastValues = NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES.joinToString(", ") { signature ->
         "('${signature.sourceTypeName}', '${signature.targetTypeName}')"
       }
       stmt.executeQuery(
@@ -558,7 +558,7 @@ internal class PgCatalogLoader(internal val connection: Connection) {
       }
     }
     connection.createStatement().use { stmt ->
-      val safeOperatorValues = NEVER_NULL_OPERATOR_SIGNATURES.joinToString(", ") { signature ->
+      val safeOperatorValues = NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES.joinToString(", ") { signature ->
         val leftLiteral = signature.leftTypeName?.let { "'$it'" } ?: "NULL::text"
         val rightLiteral = signature.rightTypeName?.let { "'$it'" } ?: "NULL::text"
         "('${signature.symbol}', $leftLiteral, $rightLiteral)"
@@ -856,11 +856,11 @@ internal class PgCatalogLoader(internal val connection: Connection) {
    * Determines which result columns of [sql] can be `NULL`.
    *
    * Routes every statement — a plain `SELECT` exactly the same as a data-modifying statement or
-   * CTE — through [queryColumnNullabilityViaProsqlbody]. `prosqlbody` holds the identical
-   * post-parse-analysis `{QUERY ...}` shape `CREATE VIEW`'s `pg_rewrite.ev_action` does (see
-   * [queryColumnNullabilityViaProsqlbody]'s KDoc), so a plain `SELECT` needs no separate route of
-   * its own: a live sweep across PostgreSQL 16/17/18 of every shape `CREATE VIEW` accepts but a
-   * SQL-standard function body might plausibly reject or
+   * CTE — through [ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody]. `prosqlbody`
+   * holds the identical post-parse-analysis `{QUERY ...}` shape `CREATE VIEW`'s `pg_rewrite.ev_action`
+   * does (see that method's KDoc), so a plain `SELECT` needs no separate route of its own: a live
+   * sweep across PostgreSQL 16/17/18 of every shape `CREATE VIEW` accepts but a SQL-standard
+   * function body might plausibly reject or
    * reinterpret — `UNION`/`INTERSECT`/`EXCEPT`, `WITH RECURSIVE`, `ORDER BY`/`LIMIT`/`OFFSET`,
    * `FOR UPDATE`/`FOR SHARE`, `DISTINCT ON`, a `VALUES` list, a set-returning function in the
    * target list, `LATERAL`, `TABLESAMPLE`, `WITH ORDINALITY`, and a query selecting from another
@@ -870,17 +870,17 @@ internal class PgCatalogLoader(internal val connection: Connection) {
    * corpus, which pins the exact generated Kotlin type derived from this function's answer).
    *
    * @return one boolean per result column (`true` means nullable). If
-   *   [queryColumnNullabilityViaProsqlbody] cannot produce an answer at all — a probe failure, or
-   *   [sql] is a `MERGE` whose `USING` clause has more than one source relation of its own (see
-   *   [mergeAbsentVarnos]'s KDoc) — every real result column (via
-   *   `PreparedStatement.getMetaData()`, the only source of a column count this deep into a
-   *   fallback) is reported nullable: the safe direction, and consistent with every other
-   *   fallback in this file. A statement with no result columns at all (`INSERT`/`UPDATE`/
+   *   [ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody] cannot produce an answer at
+   *   all — a probe failure, or [sql] is a `MERGE` whose `USING` clause has more than one source
+   *   relation of its own (see [ColumnNullabilityAnalyzer]'s `mergeAbsentVarnos` KDoc) — every real
+   *   result column (via `PreparedStatement.getMetaData()`, the only source of a column count this
+   *   deep into a fallback) is reported nullable: the safe direction, and consistent with every
+   *   other fallback in this file. A statement with no result columns at all (`INSERT`/`UPDATE`/
    *   `DELETE`/`MERGE` with no `RETURNING`) naturally reports an EMPTY list here, since its real
    *   column count is `0` — there is nothing for a caller to treat as nullable OR not.
    */
   fun queryColumnNullability(@Language("PostgreSQL") sql: String): List<Boolean> =
-    queryColumnNullabilityViaProsqlbody(sql) ?: List(realColumnCount(sql)) { true }
+    nullabilityAnalyzer.queryColumnNullabilityViaProsqlbody(sql) ?: List(realColumnCount(sql)) { true }
 
   /**
    * The real number of result columns [sql] produces, via `PreparedStatement.getMetaData()` — used
@@ -893,14 +893,6 @@ internal class PgCatalogLoader(internal val connection: Connection) {
   } catch (_: SQLException) {
     0
   }
-
-  /**
-   * Delegates to [ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody] -- see its KDoc
-   * for the full contract. Exposed here (rather than only on the analyzer) because this is the
-   * entry point `queryColumnNullability` and this class's own tests call.
-   */
-  internal fun queryColumnNullabilityViaProsqlbody(@Language("PostgreSQL") sql: String): List<Boolean>? =
-    nullabilityAnalyzer.queryColumnNullabilityViaProsqlbody(sql)
 
   /**
    * Checks that the connected PostgreSQL server is version 16 or later.
@@ -969,29 +961,12 @@ internal class PgCatalogLoader(internal val connection: Connection) {
       }
     }
   }
-
-  internal companion object {
-    /**
-     * See [NeverNullSafeLists]'s own KDoc for why this DATA lives in its own file. Delegating
-     * properties, rather than a straight rename, keep every existing
-     * `PgCatalogLoader.NEVER_NULL_*` reference (qualified from outside this class, or bare from
-     * inside it) resolving exactly as before.
-     */
-    internal val NEVER_NULL_FUNCTION_SIGNATURES: List<SafeFunctionSignature>
-      get() = NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES
-
-    internal val NEVER_NULL_CAST_SIGNATURES: List<SafeCastSignature>
-      get() = NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES
-
-    internal val NEVER_NULL_OPERATOR_SIGNATURES: List<SafeOperatorSignature>
-      get() = NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES
-  }
 }
 
 /**
  * One `pg_catalog` function signature safe-listed as TOTAL on non-null input — see
- * [PgCatalogLoader.NEVER_NULL_FUNCTION_SIGNATURES] for the audited list and the reasoning behind
- * each entry.
+ * [NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES] for the audited list and the reasoning
+ * behind each entry.
  *
  * @property name The unqualified `pg_proc.proname`.
  * @property argumentTypeNames The exact, ordered list of `pg_type.typname` values for this
@@ -1002,7 +977,7 @@ internal data class SafeFunctionSignature(val name: String, val argumentTypeName
 
 /**
  * One `pg_catalog` cast signature safe-listed as TOTAL on non-null input — see
- * [PgCatalogLoader.NEVER_NULL_CAST_SIGNATURES] for the audited list and the reasoning behind each
+ * [NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES] for the audited list and the reasoning behind each
  * entry.
  *
  * @property sourceTypeName The `pg_type.typname` of `pg_cast.castsource`.
@@ -1012,7 +987,7 @@ internal data class SafeCastSignature(val sourceTypeName: String, val targetType
 
 /**
  * One `pg_catalog` operator signature safe-listed as TOTAL on non-null input — see
- * [PgCatalogLoader.NEVER_NULL_OPERATOR_SIGNATURES] for the audited list and the reasoning behind
+ * [NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES] for the audited list and the reasoning behind
  * each entry.
  *
  * @property symbol The `pg_operator.oprname`.

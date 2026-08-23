@@ -791,7 +791,7 @@ class QueryAnalysisTest {
      * P0-2 measured defect: `to_char(timestamp, text)` is STRICT but returns `null` for a
      * non-null, well-typed, EMPTY format string — `SELECT to_char(now(), '')` returns `null` with
      * no error. Verified against real PostgreSQL 18.4. `to_char` is now dropped from the safe
-     * list entirely (see [PgCatalogLoader.NEVER_NULL_FUNCTION_SIGNATURES]) rather than narrowed,
+     * list entirely (see [NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES]) rather than narrowed,
      * since the empty-format behavior is a property of every overload's shared formatting engine,
      * not of the first argument's type.
      */
@@ -946,7 +946,7 @@ class QueryAnalysisTest {
      * operand is a CLOSED path — even though both operands are non-null and well-typed. A
      * symbol-only safe-list (every `pg_catalog` overload of `+` is safe) cannot see this, because
      * `+` is also the totally-safe `int4 + int4`. See
-     * [PgCatalogLoader.NEVER_NULL_OPERATOR_SIGNATURES]'s KDoc.
+     * [NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES]'s KDoc.
      */
     @Test
     fun `path plus path is nullable, not non-null, despite both operands being NOT NULL`() {
@@ -1001,7 +1001,7 @@ class QueryAnalysisTest {
      * Regression guard for the cast blanket rule this fix replaces with signature keying:
      * `jsonb::int4` returns `null`, not an error, on the JSON literal `null` — even though the
      * source column is non-null and well-typed. A blanket "every `pg_catalog` castfunc is safe"
-     * rule cannot see this. See [PgCatalogLoader.NEVER_NULL_CAST_SIGNATURES]'s KDoc.
+     * rule cannot see this. See [NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES]'s KDoc.
      */
     @Test
     fun `jsonb cast to int4 is nullable, not non-null, despite the source column being NOT NULL`() {
@@ -6550,7 +6550,7 @@ class QueryAnalysisTest {
         }
         try {
           val catalogLoader = PgCatalogLoader(connection)
-          val result = catalogLoader.queryColumnNullabilityViaProsqlbody(
+          val result = ColumnNullabilityAnalyzer(catalogLoader).queryColumnNullabilityViaProsqlbody(
             """
             MERGE INTO t USING (VALUES (1, 'new-name')) AS s(id, name) ON t.id = s.id
             WHEN NOT MATCHED THEN INSERT (id, name) VALUES (s.id, s.name)
@@ -6580,7 +6580,7 @@ class QueryAnalysisTest {
         }
         try {
           val catalogLoader = PgCatalogLoader(connection)
-          val result = catalogLoader.queryColumnNullabilityViaProsqlbody(
+          val result = ColumnNullabilityAnalyzer(catalogLoader).queryColumnNullabilityViaProsqlbody(
             """
             SELECT id, name FROM t
             -- only active rows
@@ -6607,7 +6607,7 @@ class QueryAnalysisTest {
         }
         try {
           val catalogLoader = PgCatalogLoader(connection)
-          val result = catalogLoader.queryColumnNullabilityViaProsqlbody(
+          val result = ColumnNullabilityAnalyzer(catalogLoader).queryColumnNullabilityViaProsqlbody(
             "SELECT id, name FROM t /* only active rows */",
           )
           assertThat(result).isEqualTo(listOf(false, false))
@@ -6633,7 +6633,7 @@ class QueryAnalysisTest {
         }
         try {
           val catalogLoader = PgCatalogLoader(connection)
-          val result = catalogLoader.queryColumnNullabilityViaProsqlbody(
+          val result = ColumnNullabilityAnalyzer(catalogLoader).queryColumnNullabilityViaProsqlbody(
             """
             SELECT id, name FROM t
             /* unterminated
@@ -6659,7 +6659,7 @@ class QueryAnalysisTest {
         }
         try {
           val catalogLoader = PgCatalogLoader(connection)
-          val result = catalogLoader.queryColumnNullabilityViaProsqlbody(
+          val result = ColumnNullabilityAnalyzer(catalogLoader).queryColumnNullabilityViaProsqlbody(
             "SELECT id, name FROM t WHERE name = \$\$unterminated",
           )
           assertThat(result).isNull()
@@ -7058,7 +7058,7 @@ class QueryAnalysisTest {
       // adding its (symbol, left type, right type) triple to NEVER_NULL_OPERATOR_SIGNATURES —
       // exactly the gap a symbol-only safe-list left open for `path + path`.
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
-        val symbols = PgCatalogLoader.NEVER_NULL_OPERATOR_SIGNATURES.map { it.symbol }.toSortedSet()
+        val symbols = NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES.map { it.symbol }.toSortedSet()
           .joinToString(", ") { "'$it'" }
         val counts = connection.createStatement().use { stmt ->
           stmt.executeQuery(
@@ -7119,7 +7119,7 @@ class QueryAnalysisTest {
       // snapshot compared directly against the live server), since every OTHER signature's
       // presence is still checked live, not against a fixed count.
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
-        val names = PgCatalogLoader.NEVER_NULL_FUNCTION_SIGNATURES.map { it.name }.toSortedSet()
+        val names = NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES.map { it.name }.toSortedSet()
         val namesLiteral = names.joinToString(", ") { "'$it'" }
         val actualSignatures = connection.createStatement().use { stmt ->
           stmt.executeQuery(
@@ -7195,7 +7195,7 @@ class QueryAnalysisTest {
           "trunc(float8)", "trunc(macaddr)", "trunc(macaddr8)", "trunc(numeric)", "trunc(numeric,int4)",
           "upper(anymultirange)", "upper(anyrange)", "upper(text)",
         )
-        val safeListedSignatures = PgCatalogLoader.NEVER_NULL_FUNCTION_SIGNATURES
+        val safeListedSignatures = NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES
           .map { "${it.name}(${it.argumentTypeNames.joinToString(",")})" }
           .toSet()
         val knownNonSafeListedSignatures = knownSignatureSnapshot - safeListedSignatures
@@ -7252,7 +7252,7 @@ class QueryAnalysisTest {
       // in `actualPairs` directly, so its disappearance is a loud failure here, not an absorbed
       // one.
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
-        val sourceTypes = PgCatalogLoader.NEVER_NULL_CAST_SIGNATURES.map { it.sourceTypeName }.toSortedSet()
+        val sourceTypes = NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES.map { it.sourceTypeName }.toSortedSet()
         val sourceTypesLiteral = sourceTypes.joinToString(", ") { "'$it'" }
         val actualPairs = connection.createStatement().use { stmt ->
           stmt.executeQuery(
@@ -7302,7 +7302,7 @@ class QueryAnalysisTest {
           "timetz->timetz", "varchar->char", "varchar->name", "varchar->regclass",
           "varchar->varchar", "varchar->xml",
         )
-        val safeListedPairs = PgCatalogLoader.NEVER_NULL_CAST_SIGNATURES
+        val safeListedPairs = NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES
           .map { "${it.sourceTypeName}->${it.targetTypeName}" }
           .toSet()
         val knownNonSafeListedPairs = knownCastPairSnapshot - safeListedPairs
