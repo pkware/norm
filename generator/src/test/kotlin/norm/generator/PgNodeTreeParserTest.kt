@@ -158,4 +158,31 @@ class PgNodeTreeParserTest {
       assertThat(result.isNull).isTrue()
     }
   }
+
+  @Nested
+  inner class ConstStructuralEquality {
+
+    @Test
+    fun `two CONST blocks with the same value but different source locations are structurally equal`() {
+      // NodeTreeNullabilityAnalyzer's GROUPING SETS duplicate-key detection recognizes a
+      // syntactically-repeated grouping key expression (e.g. `concat(a, '-')` written twice in
+      // the same SELECT list — see QueryAnalysisTest.Grouping's "duplicate concat call that IS
+      // the ROLLUP key" test) by comparing parsed PgNodeExpression subtrees with `==`. Postgres
+      // assigns each occurrence of the SAME literal its OWN :location (a source-text byte
+      // offset), so this equality must hold across TWO Consts whose :location values genuinely
+      // differ — pinning this directly, rather than only through the end-to-end grouping-sets
+      // test, so a future change adding a location-like field to Const (this project already
+      // tried once, for prosqlbody's per-assignment parameter-trust check, and reverted it for
+      // exactly this reason) fails a fast, obvious, unit-level test instead of a live-database one.
+      val first = parser.parseExpression(
+        "{CONST :consttype 25 :consttypmod -1 :constcollid 100 :constlen -1 " +
+          ":constbyval false :constisnull false :location 42 :constvalue 5 [ 20 0 0 0 45 ]}",
+      )
+      val second = parser.parseExpression(
+        "{CONST :consttype 25 :consttypmod -1 :constcollid 100 :constlen -1 " +
+          ":constbyval false :constisnull false :location 137 :constvalue 5 [ 20 0 0 0 45 ]}",
+      )
+      assertThat(first).isEqualTo(second)
+    }
+  }
 }
