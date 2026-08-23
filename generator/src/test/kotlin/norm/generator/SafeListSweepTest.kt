@@ -24,8 +24,8 @@ import java.time.Duration
 
 /**
  * Brute-force verification, against a LIVE PostgreSQL instance, that every entry in
- * [PgCatalogLoader.NEVER_NULL_FUNCTION_SIGNATURES], [PgCatalogLoader.NEVER_NULL_CAST_SIGNATURES],
- * [PgCatalogLoader.NEVER_NULL_OPERATOR_SIGNATURES], and pgcrypto's `digest`/`hmac` really is TOTAL
+ * [NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES], [NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES],
+ * [NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES], and pgcrypto's `digest`/`hmac` really is TOTAL
  * on non-null input — the property [NodeTreeNullabilityAnalyzer] relies on those lists for, in
  * addition to `pg_proc.proisstrict`/an equivalent implicit-strictness check, licensing the claim
  * that a call is non-null whenever every one of its arguments is non-null.
@@ -38,7 +38,7 @@ import java.time.Duration
  * "total" claim for some `pg_catalog` overload: empty strings, `NaN`/`Infinity`/`-Infinity`,
  * PostgreSQL's `infinity`/`-infinity` date/time sentinels, zero, negative and min/max integer
  * values, empty and unbounded ranges, empty arrays and multiranges, and a CLOSED geometric path
- * (the exact shape that broke `path + path` — see [PgCatalogLoader.NEVER_NULL_OPERATOR_SIGNATURES]).
+ * (the exact shape that broke `path + path` — see [NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES]).
  *
  * A case that raises a [SQLException] is a PASS only when the exception proves the call actually
  * EVALUATED and then genuinely errored — see [isNotEvaluatedSqlState] for the syntax-error /
@@ -63,7 +63,7 @@ class SafeListSweepTest {
     val unresolvedByCatalog = mutableListOf<String>()
     var caseCount = 0
     connection.createStatement().use { stmt ->
-      for (signature in PgCatalogLoader.NEVER_NULL_FUNCTION_SIGNATURES) {
+      for (signature in NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES) {
         val description = "function ${signature.name}(${signature.argumentTypeNames.joinToString(",")})"
         val coverage = CoverageTracker()
         // A pseudo-type (anyarray/anyrange/anymultirange/anyelement) argument — e.g.
@@ -104,7 +104,7 @@ class SafeListSweepTest {
     val unresolvedByCatalog = mutableListOf<String>()
     var caseCount = 0
     connection.createStatement().use { stmt ->
-      for (signature in PgCatalogLoader.NEVER_NULL_CAST_SIGNATURES) {
+      for (signature in NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES) {
         val description = "cast ${signature.sourceTypeName}->${signature.targetTypeName}"
         val coverage = CoverageTracker()
         for (castExpression in castExpressionsFor(signature)) {
@@ -133,7 +133,7 @@ class SafeListSweepTest {
     val unresolvedByCatalog = mutableListOf<String>()
     var caseCount = 0
     connection.createStatement().use { stmt ->
-      for (signature in PgCatalogLoader.NEVER_NULL_OPERATOR_SIGNATURES) {
+      for (signature in NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES) {
         val description = "operator ${signature.symbol}(${signature.leftTypeName},${signature.rightTypeName})"
         val coverage = CoverageTracker()
         // A pseudo-type (anyarray/anyrange/anymultirange/anyelement) has no literal form of its
@@ -215,7 +215,7 @@ class SafeListSweepTest {
    * reporting BUILD SUCCESSFUL forever, even for a signature added later that is provably NOT
    * total, as long as every one of its cases happens to error. This test drives [checkTotal] and
    * [CoverageTracker] directly against `extract(text, timestamp)` — a signature deliberately never
-   * added to [PgCatalogLoader.NEVER_NULL_FUNCTION_SIGNATURES] because
+   * added to [NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES] because
    * `extract(hour FROM 'infinity'::timestamp)` returns `null` with no error (see that list's KDoc)
    * — and asserts the sweep machinery reports it as a failure. If this test ever passes without
    * failures being produced, the sweep's core safety property has silently stopped working.
@@ -642,7 +642,7 @@ class SafeListSweepTest {
      * Field-name literals for `date_trunc`/`date_part`/`extract`'s first argument — a bare
      * generic text corpus (empty string, `'abc'`) would only ever error (invalid field name),
      * never exercising the field-dependent `null`-on-infinity behavior these functions are
-     * documented (see [PgCatalogLoader.NEVER_NULL_FUNCTION_SIGNATURES]) to special-case for only
+     * documented (see [NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES]) to special-case for only
      * SOME fields. Quoted, since `date_trunc`/`date_part` take the field name as an ordinary
      * `text` argument; [functionCallExpression] strips the quotes back off for `extract`, whose
      * SQL-standard grammar takes the field name as a bare keyword instead.
@@ -762,7 +762,7 @@ class SafeListSweepTest {
      * target folds away to a no-op: `EXPLAIN (VERBOSE) SELECT v::varchar FROM t` (`v` a `varchar`
      * column) shows bare `Output: v` — no cast node at all, and `pg_cast.castfunc` is never called.
      * These entries are licensed as typmod-ENFORCEMENT casts (see
-     * [PgCatalogLoader.NEVER_NULL_CAST_SIGNATURES]'s KDoc), so sweeping them without a typmod would
+     * [NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES]'s KDoc), so sweeping them without a typmod would
      * grant coverage while never invoking the function the entry actually licenses. The target
      * side of every self-cast entry here therefore carries an explicit typmod shorter than at least
      * one of its literals, so the sweep exercises real truncation/rounding, not a no-op: `EXPLAIN
@@ -1151,7 +1151,7 @@ private class CoverageTracker(private val minimumPositiveCases: Int = 1) {
    * never as PROOF on its own. Class-42 does NOT depend only on the signature's TYPES; it also
    * depends on the swept call's FORM, which can be unparseable even for a signature that
    * genuinely resolves here. `position(text, text)` is the live counterexample: it resolves fine
-   * in `pg_proc` and ships on [PgCatalogLoader.NEVER_NULL_FUNCTION_SIGNATURES], yet the ordinary
+   * in `pg_proc` and ships on [NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES], yet the ordinary
    * function-call form `position('a'::text, 'abc'::text)` raises `42601: syntax error at or near
    * ","`, because `position`'s only valid invocation is the SQL-standard `POSITION(<substring>
    * IN <string>)` grammar, not a parenthesized comma-separated argument list.
