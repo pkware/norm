@@ -3912,6 +3912,12 @@ class QueryAnalysisTest {
       // returns oldname = 'orig', id = 1, name = 'orig' — all genuinely NOT NULL — but the safety
       // net over-approximates all three to nullable here, an accepted tradeoff (see
       // PgCatalogLoader's residual imprecision notes), not a claim of exactness.
+      // prosqlbody reads "id"/"name" as plain Vars against a real DELETE target row (never
+      // rewritten into a stub, no OLD/NEW tagging on either), so it correctly reports both NOT
+      // NULL per the schema's own constraint. "oldname" stays nullable regardless — this
+      // analyzer's OLD-forcing rule is deliberately blanket (see PgNodeExpression.Var.returningType's
+      // KDoc), over-conservative for a plain DELETE specifically (OLD always exists there) but
+      // still safe. See knownProsqlbodyImprovement's KDoc.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
         """
@@ -3920,6 +3926,7 @@ class QueryAnalysisTest {
         )
         SELECT oldname, id, name FROM d
         """.trimIndent(),
+        knownProsqlbodyImprovement = listOf(true, false, false),
       )
       assertThat(query.columns).hasSize(3)
       assertThat(query.columns[0].notNull).isFalse()
@@ -3937,6 +3944,12 @@ class QueryAnalysisTest {
       // = 'x' WHERE id = 1 RETURNING WITH (OLD AS o, NEW AS n) o.name AS oldname, n.name AS
       // newname, t.id returns oldname = 'orig', newname = 'x', id = 1 — all genuinely NOT NULL
       // for an UPDATE (target row always exists both before and after) — asserting only on "id".
+      // prosqlbody's NEW-tagged Var for "n.name" is a plain, ordinary reference for an UPDATE
+      // (forceNewNullable only applies to DELETE and a MERGE with a DELETE action — see
+      // NodeTreeNullabilityAnalyzer's own KDoc) — since "name" is declared NOT NULL, it correctly
+      // reports newname NOT NULL, unlike production's blanket OLD/NEW safety net. "oldname" stays
+      // nullable regardless, same accepted over-conservatism as the DELETE case above. See
+      // knownProsqlbodyImprovement's KDoc.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
         """
@@ -3946,6 +3959,7 @@ class QueryAnalysisTest {
         )
         SELECT oldname, newname, id FROM u
         """.trimIndent(),
+        knownProsqlbodyImprovement = listOf(true, false, false),
       )
       assertThat(query.columns).hasSize(3)
       assertThat(query.columns[0].notNull).isFalse()
@@ -4652,6 +4666,12 @@ class QueryAnalysisTest {
 
     @Test
     fun `UPDATE FROM INNER JOIN RETURNING`() {
+      // prosqlbody reads the RAW :targetList assignment directly — "nickname" is assigned
+      // `d.id::TEXT`, a cast over a NOT NULL column reached through a plain (non-outer) JOIN — so
+      // it correctly reports "nickname" NOT NULL, where today's view path falls back to
+      // convertDmlToSelect's derived-table probe, which cannot attribute the assigned expression's
+      // own provenance and reports nullable instead. Verified live: this exact UPDATE returns
+      // `nickname = '1'`, never NULL. See knownProsqlbodyImprovement's KDoc.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL, nickname TEXT); CREATE TABLE d (id INT NOT NULL, t_id INT NOT NULL)",
         """
@@ -4659,6 +4679,7 @@ class QueryAnalysisTest {
         FROM d WHERE t.id = d.t_id AND t.id = -1
         RETURNING t.*
         """.trimIndent(),
+        knownProsqlbodyImprovement = listOf(false, false, false),
       )
       assertThat(query.columns[0].notNull).isTrue()
       assertThat(query.columns[1].notNull).isTrue()
@@ -5002,6 +5023,12 @@ class QueryAnalysisTest {
       // by the same accepted over-approximation as the CTE case, oldname and name too) are forced
       // nullable — proving the scoped region still finds a join that genuinely belongs to the
       // source clause, not merely refusing to force anything at all.
+      // prosqlbody reads the RAW :targetList assignment for "name" directly (a literal 'x',
+      // untouched by either the OLD-forcing rule or the LEFT JOIN), so it correctly isolates
+      // "name" as NOT NULL — where today's view path forces EVERY column nullable, including
+      // "name", once it detects the LEFT JOIN anywhere in the body (see the accepted-imprecision
+      // CTE-scoped analog above). Verified live: this exact UPDATE returns `name = 'x'`, never
+      // NULL, for a matching row. See knownProsqlbodyImprovement's KDoc.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL);
@@ -5012,6 +5039,7 @@ class QueryAnalysisTest {
         UPDATE t SET name = 'x' FROM a LEFT JOIN b ON b.id = a.id WHERE t.id = a.id
         RETURNING OLD.name AS oldname, t.name, b.bval
         """.trimIndent(),
+        knownProsqlbodyImprovement = listOf(true, false, true),
       )
       assertThat(query.columns).hasSize(3)
       assertThat(query.columns[0].notNull).isFalse()
@@ -5022,7 +5050,11 @@ class QueryAnalysisTest {
     @Test
     fun `top-level DELETE USING with OLD-col still finds the real LEFT JOIN in its scoped region`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
-      // DELETE USING equivalent of the UPDATE FROM case above.
+      // DELETE USING equivalent of the UPDATE FROM case above. "t.name" is DELETE's own target
+      // column — read directly, never assigned — so prosqlbody correctly reports it NOT NULL
+      // (the schema's own constraint) rather than production's whole-body over-approximation.
+      // Verified live: this exact DELETE returns `name = 'orig'`, never NULL. See
+      // knownProsqlbodyImprovement's KDoc.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL);
@@ -5033,6 +5065,7 @@ class QueryAnalysisTest {
         DELETE FROM t USING a LEFT JOIN b ON b.id = a.id WHERE t.id = a.id
         RETURNING OLD.name AS oldname, t.name, b.bval
         """.trimIndent(),
+        knownProsqlbodyImprovement = listOf(true, false, true),
       )
       assertThat(query.columns).hasSize(3)
       assertThat(query.columns[0].notNull).isFalse()
@@ -5221,9 +5254,17 @@ class QueryAnalysisTest {
 
     @Test
     fun `a row-form assignment reports nullable, since its right-hand side can't be attributed to one column`() {
+      // "Can't be attributed to one column" describes the OLD text-based conversion's own
+      // limitation, not a real SQL ambiguity: PostgreSQL's own parser decomposes `(note, other) =
+      // ('x', 'y')` into two ordinary, independent :targetList entries (resno matching each
+      // column, one CONST apiece) — verified live in the raw prosqlbody text — so prosqlbody
+      // attributes 'x' to "note" exactly as cleanly as a plain `SET note = 'x'` would. Verified
+      // live: this exact UPDATE returns `n = 'x'`, never NULL. See knownProsqlbodyImprovement's
+      // KDoc.
       val query = analyzeWithSchema(
         schema,
         "UPDATE t SET (note, other) = ('x', 'y') WHERE id = 1 RETURNING lower(note) AS n",
+        knownProsqlbodyImprovement = listOf(false),
       )
       assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].notNull).isFalse()
@@ -5731,6 +5772,13 @@ class QueryAnalysisTest {
       // against real Postgres (a fresh insert via ON CONFLICT — no prior row): id = 99, tval =
       // 'x' (both genuinely NOT NULL — the just-inserted row's own columns), oldv = NULL
       // (genuinely nullable) — but the safety net over-approximates all three to nullable here.
+      // prosqlbody reports "id" NOT NULL directly off its PRIMARY KEY catalog constraint — true
+      // regardless of which INSERT/ON-CONFLICT branch actually ran. "tval" stays nullable: this
+      // analyzer does not (yet) trace a CTE-nested INSERT's own :targetList/onConflict assignment
+      // the way it does for a TOP-LEVEL one (see PgCatalogLoader.analyzeNodeTree's targetListByResno
+      // KDoc), so it falls back to tval's own (nullable) catalog constraint — safe, though not as
+      // precise as the live-verified 'x' this comment already documents. "oldv" stays nullable via
+      // the blanket OLD-forcing rule. See knownProsqlbodyImprovement's KDoc.
       val query = analyzeWithSchema(
         "CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT)",
         """
@@ -5740,6 +5788,7 @@ class QueryAnalysisTest {
         )
         SELECT * FROM u
         """.trimIndent(),
+        knownProsqlbodyImprovement = listOf(false, true, true),
       )
       assertThat(query.columns).hasSize(3)
       assertThat(query.columns[0].notNull).isFalse()
@@ -5766,6 +5815,10 @@ class QueryAnalysisTest {
       // makes the missed recognition harmless. Verified against real Postgres (a fresh insert via
       // ON CONFLICT — no prior row): id = 99, tval = 'x' (both genuinely NOT NULL), oldv = NULL
       // (genuinely nullable) — but the safety net over-approximates all three to nullable here.
+      // Same reasoning as the parenthesized-star test above: id NOT NULL via its PRIMARY KEY
+      // catalog constraint, tval nullable (CTE-nested INSERT assignment tracing not implemented —
+      // safe, not maximally precise), oldv nullable via the blanket OLD-forcing rule. See
+      // knownProsqlbodyImprovement's KDoc.
       val query = analyzeWithSchema(
         "CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT)",
         """
@@ -5775,6 +5828,7 @@ class QueryAnalysisTest {
         )
         SELECT * FROM u
         """.trimIndent(),
+        knownProsqlbodyImprovement = listOf(false, true, true),
       )
       assertThat(query.columns).hasSize(3)
       assertThat(query.columns[0].notNull).isFalse()
@@ -5801,6 +5855,7 @@ class QueryAnalysisTest {
       // Verified against real Postgres (a fresh insert via ON CONFLICT — no prior row, so OLD
       // does not exist): id = 99, tval = 'y' (both genuinely NOT NULL), oldv = NULL (genuinely
       // nullable).
+      // Same reasoning as the two star-plus-OLD tests above. See knownProsqlbodyImprovement's KDoc.
       val query = analyzeWithSchema(
         "CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT)",
         """
@@ -5810,6 +5865,7 @@ class QueryAnalysisTest {
         )
         SELECT * FROM u
         """.trimIndent(),
+        knownProsqlbodyImprovement = listOf(false, true, true),
       )
       assertThat(query.columns).hasSize(3)
       assertThat(query.columns[0].notNull).isFalse()
@@ -5835,6 +5891,9 @@ class QueryAnalysisTest {
       // precision for this specific shape, not merely a different route to an unchanged answer.
       // Verified against real Postgres (a fresh insert via ON CONFLICT — no prior row, so OLD
       // does not exist): id = 99 (genuinely NOT NULL), oldv = NULL (genuinely nullable).
+      // prosqlbody reports "id" NOT NULL directly off its PRIMARY KEY catalog constraint (the
+      // precision the pre-fix production code path happened to have here too), "oldv" nullable
+      // via the blanket OLD-forcing rule. See knownProsqlbodyImprovement's KDoc.
       val query = analyzeWithSchema(
         "CREATE TABLE tgt (id INT PRIMARY KEY)",
         """
@@ -5844,6 +5903,7 @@ class QueryAnalysisTest {
         )
         SELECT * FROM u
         """.trimIndent(),
+        knownProsqlbodyImprovement = listOf(false, true),
       )
       assertThat(query.columns).hasSize(2)
       assertThat(query.columns[0].notNull).isFalse()
@@ -5859,6 +5919,7 @@ class QueryAnalysisTest {
       // expected: any input that flips from "unrecognized" to "recognized" on a one-column
       // relation loses this same per-column precision. Verified against real Postgres 18.4: "(tgt
       // .*) -- c" is valid syntax, id = 99 (genuinely NOT NULL), oldv = NULL (genuinely nullable).
+      // Same reasoning as the test above. See knownProsqlbodyImprovement's KDoc.
       val query = analyzeWithSchema(
         "CREATE TABLE tgt (id INT PRIMARY KEY)",
         "WITH u AS (\n" +
@@ -5867,6 +5928,7 @@ class QueryAnalysisTest {
           "  , OLD.id AS oldv\n" +
           ")\n" +
           "SELECT * FROM u",
+        knownProsqlbodyImprovement = listOf(false, true),
       )
       assertThat(query.columns).hasSize(2)
       assertThat(query.columns[0].notNull).isFalse()
@@ -5897,6 +5959,10 @@ class QueryAnalysisTest {
       // tval = 'x', arr = {1,2} (all genuinely NOT NULL), oldv = NULL (genuinely nullable) — the
       // safety net still over-approximates all four to nullable, same accepted tradeoff as the
       // other star-plus-OLD tests in this file, just reached via a different branch than before.
+      // prosqlbody: id NOT NULL (PRIMARY KEY catalog constraint), tval nullable (CTE-nested
+      // assignment tracing not implemented, safe not maximal), oldv nullable (blanket OLD-forcing),
+      // arr NOT NULL — ARRAY[1, 2] is a genuine array-literal constructor, never itself NULL. See
+      // knownProsqlbodyImprovement's KDoc.
       val query = analyzeWithSchema(
         "CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT)",
         """
@@ -5906,6 +5972,7 @@ class QueryAnalysisTest {
         )
         SELECT * FROM u
         """.trimIndent(),
+        knownProsqlbodyImprovement = listOf(false, true, true, false),
       )
       assertThat(query.columns).hasSize(4)
       assertThat(query.columns[0].notNull).isFalse()
@@ -5933,6 +6000,9 @@ class QueryAnalysisTest {
       // of the metadata-probe stub itself, not of this fix. Verified against real Postgres (a
       // fresh insert via ON CONFLICT): arr = {1,2} (genuinely NOT NULL), oldv = NULL (genuinely
       // nullable — no prior row).
+      // prosqlbody structurally recognizes ARRAY[1, 2] as a genuine array-literal constructor,
+      // never itself NULL, unlike the stub path's own metadata probe — "oldv" stays nullable via
+      // the blanket OLD-forcing rule. See knownProsqlbodyImprovement's KDoc.
       val query = analyzeWithSchema(
         "CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT)",
         """
@@ -5942,6 +6012,7 @@ class QueryAnalysisTest {
         )
         SELECT * FROM u
         """.trimIndent(),
+        knownProsqlbodyImprovement = listOf(false, true),
       )
       assertThat(query.columns).hasSize(2)
       assertThat(query.columns[1].notNull).isFalse()
@@ -6279,9 +6350,14 @@ class QueryAnalysisTest {
       // value is, in fact, never itself `NULL` — but nullability analysis must be correct or
       // silent: this generic fallback has no way to recognize that specific expression shape, so
       // it reports nullable rather than assert a proof it did not actually perform.
+      // prosqlbody is NOT subject to CREATE VIEW's "column result has pseudo-type record"
+      // rejection — it correctly recognizes RowExpr as never itself NULL. Verified live: `SELECT
+      // ROW(a, b) AS result FROM t` returns `result = (1,2)` for a matching row, never NULL. See
+      // knownProsqlbodyImprovement's KDoc.
       val query = analyzeWithSchema(
         "CREATE TABLE t (a INT NOT NULL, b INT NOT NULL)",
         "SELECT ROW(a, b) AS result FROM t",
+        knownProsqlbodyImprovement = listOf(false),
       )
       assertThat(query.columns[0].notNull).isFalse()
     }
@@ -6307,12 +6383,18 @@ class QueryAnalysisTest {
       // read would fabricate NOT NULL for it), so the safe, over-nullable whole-body scan is kept
       // for any non-DML body on this path. Over-nullability here is the accepted, safe-direction
       // cost, not a bug — see PgCatalogLoader.analyzeUnconvertibleDml's own KDoc for the same note.
+      // prosqlbody is NOT subject to CREATE VIEW's ROW(...) rejection, so it correctly sees this
+      // as a plain SELECT with no data-modifying statement anywhere and no need for the
+      // metadata-only fallback at all — it reports the SAME true answer this comment already
+      // verified against real Postgres: both columns NOT NULL. See knownProsqlbodyImprovement's
+      // KDoc.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (a INT NOT NULL, b INT NOT NULL);
         CREATE TABLE u (a INT NOT NULL)
         """.trimIndent(),
         "SELECT t.a, ROW(t.a, t.b) AS result FROM t LEFT JOIN u ON u.a = t.a",
+        knownProsqlbodyImprovement = listOf(false, false),
       )
       assertThat(query.columns).hasSize(2)
       assertThat(query.columns[0].notNull).isFalse()
@@ -6457,6 +6539,44 @@ class QueryAnalysisTest {
           val catalogLoader = PgCatalogLoader(connection)
           val outerJoinNullable = catalogLoader.loadViewOuterJoinNullableColumns(schemaName)
           assertThat(outerJoinNullable.contains("mv.label")).isFalse()
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+  }
+
+  @Nested
+  inner class ProsqlbodyProbe {
+
+    @Test
+    fun `RETURNING OLD is nullable while RETURNING NEW is not, for the same NOT NULL column`() {
+      // PostgreSQL 18's RETURNING WITH (OLD AS o, NEW AS n) marks both the OLD and NEW Vars
+      // byte-identical except :varreturningtype (verified live) — including an EMPTY
+      // :varnullingrels on both — so nothing but that field distinguishes them. This MERGE's WHEN
+      // NOT MATCHED THEN INSERT action has no OLD row to read at all (the target row didn't exist
+      // before this statement ran), so o.name must be nullable regardless of "name"'s own NOT NULL
+      // constraint, while n.name — a fresh value just inserted into that same NOT NULL column, not
+      // outer-join-nulled — is genuinely proven non-null. Verified against real Postgres: querying
+      // the function's own result shows o.name = NULL, n.name = 'new-name' for the inserted row.
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING WITH (OLD AS o, NEW AS n) requires PG 18+")
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          it.execute("CREATE TABLE t (id INT PRIMARY KEY, name TEXT NOT NULL)")
+        }
+        try {
+          val catalogLoader = PgCatalogLoader(connection)
+          val result = catalogLoader.queryColumnNullabilityViaProsqlbody(
+            """
+            MERGE INTO t USING (VALUES (1, 'new-name')) AS s(id, name) ON t.id = s.id
+            WHEN NOT MATCHED THEN INSERT (id, name) VALUES (s.id, s.name)
+            RETURNING WITH (OLD AS o, NEW AS n) o.name, n.name
+            """.trimIndent(),
+          )
+          assertThat(result).isEqualTo(listOf(true, false))
         } finally {
           connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
         }
@@ -7716,8 +7836,25 @@ class QueryAnalysisTest {
   /**
    * Creates an isolated schema, runs DDL, analyzes a query, and tears down.
    * Each call gets its own schema and connection, safe for parallel execution.
+   *
+   * Also runs [assertProsqlbodyParity] against every query analyzed here — this is the Stage 1
+   * `prosqlbody`-cutover parity harness required before any production code is routed through the
+   * new path, giving the entire [QueryAnalysisTest] corpus for free rather than a hand-picked
+   * subset. Remove this call (and [assertProsqlbodyParity] itself) once the cutover reaches the
+   * stage where [PgCatalogLoader.queryColumnNullability]'s `CREATE VIEW` route is deleted —
+   * without it there is nothing left to compare against.
+   *
+   * @param knownProsqlbodyImprovement Set ONLY by a test documenting a case where
+   *   [PgCatalogLoader.queryColumnNullabilityViaProsqlbody] is MORE precise than today's `CREATE
+   *   VIEW` route on PURPOSE, not a bug in either path — see [assertProsqlbodyParity]'s KDoc for
+   *   what this changes and why every use of it must carry a live-Postgres-verified comment at the
+   *   call site.
    */
-  private fun analyzeWithSchema(@Language("PostgreSQL") ddl: String, @Language("PostgreSQL") sql: String): Query {
+  private fun analyzeWithSchema(
+    @Language("PostgreSQL") ddl: String,
+    @Language("PostgreSQL") sql: String,
+    knownProsqlbodyImprovement: List<Boolean>? = null,
+  ): Query {
     val schemaName = "test_${schemaCounter.incrementAndGet()}"
     DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
       connection.createStatement().use {
@@ -7729,11 +7866,50 @@ class QueryAnalysisTest {
         val analyzer = JdbcAnalyzer(connection)
         val catalog = analyzer.buildCatalog(listOf(schemaName))
         val parsedQuery = ParsedQuery(name = "test", command = ":one", sql = sql, comments = emptyList())
-        return analyzer.analyzeQuery(parsedQuery, catalog)
+        val query = analyzer.analyzeQuery(parsedQuery, catalog)
+        assertProsqlbodyParity(connection, sql, knownProsqlbodyImprovement)
+        return query
       } finally {
         connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
       }
     }
+  }
+
+  /**
+   * Asserts that [PgCatalogLoader.queryColumnNullabilityViaProsqlbody]'s answer for [sql] is
+   * IDENTICAL to [PgCatalogLoader.queryColumnNullability]'s (the production `CREATE VIEW` route),
+   * on the SAME connection and SAME already-applied schema — see [analyzeWithSchema]'s KDoc for why
+   * this runs for every query in this file rather than a separate hand-picked corpus.
+   *
+   * A fresh [PgCatalogLoader] is used rather than reaching into [JdbcAnalyzer]'s own private
+   * instance: both routes are pure functions of [connection]'s current `search_path`/catalog state
+   * and [sql], so a second instance computes byte-identical catalog lookups independently.
+   *
+   * Skipped for `CALL` statements — mirroring [JdbcAnalyzer.analyzeQuery]'s own guard, `CALL`
+   * never reaches [PgCatalogLoader.queryColumnNullability] in production either — and for any `sql`
+   * whose `prosqlbody` probe returns `null` (a DML statement with no `RETURNING`, which has no
+   * result columns to compare in the first place).
+   *
+   * @param knownProsqlbodyImprovement When non-`null`, [PgCatalogLoader.queryColumnNullabilityViaProsqlbody]'s
+   *   result is asserted against THIS list instead of the view path's — every one of the small,
+   *   fixed set of call sites that set it is a documented case, verified live, where the view path
+   *   itself reaches a KNOWN, ALREADY-ACCEPTED imprecision (`CREATE VIEW` rejecting a bare `ROW(...)`
+   *   pseudo-type or a plain `INNER JOIN`-derived cast, forcing a conservative metadata-only
+   *   fallback) that `prosqlbody` — never subject to `CREATE VIEW`'s restrictions — does not share.
+   *   These are NOT bugs in [PgCatalogLoader.queryColumnNullabilityViaProsqlbody]: they are exactly
+   *   the kind of precision improvement Stage 2/3 of the cutover is expected to deliver, called out
+   *   here individually rather than silently smoothed over by the parity assertion.
+   */
+  private fun assertProsqlbodyParity(
+    connection: java.sql.Connection,
+    @Language("PostgreSQL") sql: String,
+    knownProsqlbodyImprovement: List<Boolean>? = null,
+  ) {
+    if (sql.trimStart().startsWith("CALL ", ignoreCase = true)) return
+    val loader = PgCatalogLoader(connection)
+    val prosqlbodyResult = loader.queryColumnNullabilityViaProsqlbody(sql) ?: return
+    val expected = knownProsqlbodyImprovement ?: loader.queryColumnNullability(sql)
+    assertThat(prosqlbodyResult).isEqualTo(expected)
   }
 
   /**

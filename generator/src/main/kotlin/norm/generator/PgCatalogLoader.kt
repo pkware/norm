@@ -1000,64 +1000,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
           rs.getString(1)
         }
       }
-      val rangeTable = nodeTreeParser.parseRangeTable(nodeTree) // varno → relid (base tables only)
-      // GROUP BY queries use an *GROUP* RTE (rtekind 9) whose target list VARs reference the group
-      // entry varno instead of the base table varno directly. Resolve these back to their base table
-      // column so isSourceColumnNotNull can check pg_attribute.attnotnull correctly.
-      //
-      // EXCEPTION: When GROUPING SETS, CUBE, or ROLLUP is used, GROUP BY columns can receive NULL
-      // for rows where the column is not part of the current grouping set. PostgreSQL 18 enforces
-      // this via a *GROUP* RTE (rtekind 9): target list VARs reference the GROUP RTE instead of the
-      // base table, so parseRangeTable() can't find them and they fall back to nullable on their
-      // own. PostgreSQL 16/17 have no GROUP RTE, so this exception skips GROUP RTE resolution
-      // entirely; the actual nullability override for grouping keys (including EXPRESSION keys
-      // such as `ROLLUP(lower(a))`, which never produce a bare {VAR } target-list entry to remap
-      // here) is applied by NodeTreeNullabilityAnalyzer.extractColumnNullability via the
-      // hasGroupingSets flag passed to buildAnalyzer below.
-      val hasGroupingSets = nodeTreeParser.hasGroupingSets(nodeTree)
-      val groupRteMap = if (hasGroupingSets) {
-        emptyMap()
-      } else {
-        nodeTreeParser.parseGroupRteMap(nodeTree) // (groupVarno, attrPos) → (baseVarno, baseVarattno)
-      }
-      // For subquery RTEs (rtekind 1), the outer VAR's varno is not in rangeTable.
-      // Resolve their nullability by recursively analyzing each subquery's target list.
-      // The map is keyed by (varno, varattno) for direct lookup in isSourceColumnNotNull.
-      val subqueryColumnNotNull = buildSubqueryColumnNotNull(nodeTree, applyQualNarrowing)
-      val cteColumnNotNull = buildCteColumnNotNull(nodeTree, applyQualNarrowing)
-      // GROUPING SETS/CUBE/ROLLUP null-extend grouping keys AFTER the WHERE clause has already
-      // filtered rows, so a qual can never prove a grouped result column non-null. This matters
-      // even for a NOT NULL base column, because null-extension overrides the base column's own
-      // constraint. Suppress qual narrowing for the entire block rather than trying to map a
-      // (possibly expression) grouping key back to its null-extended leaf Vars — that is more
-      // machinery than this warrants, and a subtle mistake there would reintroduce an unsound
-      // narrowing. This is conservative by construction: every non-key output column of a
-      // grouping-sets query is an aggregate, so suppressing narrowing here costs nothing real.
-      val qualNotNullVars = if (applyQualNarrowing && !hasGroupingSets) {
-        NodeTreeNullabilityAnalyzer.qualProvenNonNullVars(nodeTree, isStrictFunction)
-      } else {
-        emptySet()
-      }
-      val analyzer = buildAnalyzer(hasGroupingSets = hasGroupingSets) { varno, varattno ->
-        if (isProvenByQuals(qualNotNullVars, groupRteMap, varno, varattno)) {
-          true
-        } else {
-          val relid = rangeTable[varno]
-          if (relid != null) {
-            isColumnNotNull(relid to varattno)
-          } else {
-            val baseVar = groupRteMap[varno to varattno]
-            if (baseVar != null) {
-              val baseRelid = rangeTable[baseVar.first]
-              baseRelid != null && isColumnNotNull(baseRelid to baseVar.second)
-            } else {
-              subqueryColumnNotNull[varno to varattno] == true ||
-                cteColumnNotNull[varno to varattno] == true
-            }
-          }
-        }
-      }
-      return analyzer.extractColumnNullability(nodeTree)
+      return analyzeNodeTree(nodeTree, applyQualNarrowing)
     } finally {
       connection.createStatement().use { stmt ->
         stmt.execute("DROP VIEW IF EXISTS $viewName")
@@ -1065,8 +1008,283 @@ internal class PgCatalogLoader(private val connection: Connection) {
     }
   }
 
+  /**
+   * Determines which result columns of a SQL query can be NULL, using full expression evaluation,
+   * by way of PostgreSQL's `prosqlbody` — the analyzed query tree PostgreSQL stores for a
+   * SQL-standard (`BEGIN ATOMIC ... END`) function body — rather than [analyzeViaTemporaryView]'s
+   * `CREATE VIEW`/`pg_rewrite.ev_action` route.
+   *
+   * `prosqlbody` holds the same post-parse-analysis `{QUERY ...}` node shape `pg_rewrite.ev_action`
+   * does (neither is rewriter-expanded, so nested views stay relation RTEs in both), but — unlike
+   * `CREATE VIEW` — PostgreSQL populates it for `UPDATE`/`DELETE`/`MERGE ... RETURNING` and for
+   * data-modifying CTEs, because only `CREATE VIEW` itself rejects a data-modifying statement, not
+   * a SQL-standard function body. [analyzeNodeTree] reads the same field shape either way, since
+   * [PgNodeTreeParser]'s extraction methods locate each field by a depth-one scan starting at the
+   * first unescaped `{`, ignoring whatever wrapping parentheses precede or follow it.
+   *
+   * The function is created with ZERO arguments: a real `$n` parameter would appear as a `PARAM`
+   * node in the tree, which [NodeTreeNullabilityAnalyzer] has no case for and would fall through to
+   * its `Unknown` (safe-nullable) handling for every expression that touches it — silently
+   * widening every parameter-touching column. [sql]'s own `?` placeholders are therefore replaced
+   * with typed non-null sentinel literals by the caller (mirroring [analyzeViaTemporaryView]'s own
+   * [buildViewSqlWithSentinels] use) before this method is ever invoked.
+   *
+   * A statement with no result columns at all (an `INSERT`/`UPDATE`/`DELETE`/`MERGE` without
+   * `RETURNING`) fails PostgreSQL's `RETURNS SETOF record` check on function creation — there is
+   * nothing to probe, and the [SQLException] is caught here rather than propagated.
+   *
+   * @param sql the SQL query or DML statement to analyze; any `?` parameter placeholder is
+   *   replaced with a typed non-null sentinel literal internally, the same way
+   *   [queryColumnNullability] replaces them before `CREATE VIEW` (see [buildViewSqlWithSentinels])
+   * @return one boolean per result column in `SELECT`/`RETURNING` order (`true` means nullable), or
+   *   `null` if [sql] has no result columns to probe or the probe itself failed for any reason —
+   *   the caller must treat `null` as "this path has no answer", never as "zero columns."
+   */
+  /**
+   * `true` when [nodeTree]'s outermost statement, OR any CTE it declares (recursively, so a CTE
+   * containing its own nested `WITH` is followed all the way through — `MERGE` can only ever
+   * appear as the outermost statement or a CTE body, never as a `FROM`-clause subquery, so this
+   * recursion is exhaustive), is a `MERGE` whose `:returningList` reaches an ordinary (non-`OLD`/
+   * `NEW`) `Var` outside its own target relation — see
+   * [queryColumnNullabilityViaProsqlbody]'s MERGE guard and
+   * [NodeTreeNullabilityAnalyzer.containsRiskyMergeVar]'s KDoc for why THAT specific shape, and
+   * only that shape, is unsafe. A `MERGE` whose `RETURNING` touches only its own target relation's
+   * columns (always present, whichever `WHEN` clause matched) or `OLD`/`NEW` references (already
+   * forced nullable/handled independently by [PgNodeExpression.Var.returningType]) is unaffected.
+   */
+  private fun hasUnsafeMergeReturning(nodeTree: String): Boolean {
+    if (nodeTreeParser.parseCommandType(nodeTree) == PgNodeTreeParser.COMMAND_TYPE_MERGE) {
+      val targetVarno = nodeTreeParser.parseResultRelation(nodeTree)
+      val returningEntries = nodeTreeParser.parseReturningList(nodeTree)
+      if (returningEntries.any { NodeTreeNullabilityAnalyzer.containsRiskyMergeVar(it.expression, targetVarno) }) {
+        return true
+      }
+    }
+    return nodeTreeParser.parseCteList(nodeTree).any { hasUnsafeMergeReturning(it.queryBlock) }
+  }
+
+  internal fun queryColumnNullabilityViaProsqlbody(@Language("PostgreSQL") sql: String): List<Boolean>? {
+    val substitutedSql = buildViewSqlWithSentinels(sql) ?: replaceParameterPlaceholders(sql)
+    val functionName = "norm_nullability_${UUID.randomUUID().toString().replace("-", "")}"
+    return try {
+      connection.createStatement().use { stmt ->
+        stmt.execute(
+          "CREATE FUNCTION pg_temp.$functionName() RETURNS SETOF record LANGUAGE sql " +
+            "BEGIN ATOMIC $substitutedSql; END",
+        )
+      }
+      try {
+        val nodeTree = connection.createStatement().use { stmt ->
+          stmt.executeQuery(
+            "SELECT prosqlbody::text FROM pg_proc " +
+              // "pg_temp" is a per-session ALIAS, not a literal schema name — the real catalog row
+              // is named "pg_temp_N", so 'pg_temp'::regnamespace fails to resolve at all (verified
+              // live: "ERROR: schema "pg_temp" does not exist"). pg_my_temp_schema() returns the
+              // current session's actual temp schema OID directly.
+              "WHERE proname = '$functionName' AND pronamespace = pg_my_temp_schema()",
+          ).use { rs ->
+            check(rs.next()) { "No pg_proc row found for probe function $functionName" }
+            rs.getString(1)
+          }
+        }
+        // A MERGE's RETURNING — at the top level OR nested in a CTE body — can read either the
+        // target OR the source relation, and EITHER side can be the one missing for a given result
+        // row depending on which WHEN clause matched (WHEN NOT MATCHED BY SOURCE, WHEN NOT MATCHED
+        // [BY TARGET] THEN INSERT) — verified live: a MERGE ... WHEN NOT MATCHED BY SOURCE THEN
+        // DELETE RETURNING src.col has an EMPTY :varnullingrels on src.col's Var, identical to an
+        // ordinary, always-present reference. Unlike an explicit outer JOIN, PostgreSQL's planner
+        // does not expose this match-optionality via :varnullingrels at all, so nothing in
+        // analyzeNodeTree's per-Var analysis — reading the tree via EITHER prosqlbody or ev_action
+        // — can see it. Bailing out entirely here (rather than risk a confidently wrong NOT NULL,
+        // OR the opposite, needlessly nullable, over-approximation a partial per-CTE bail produces
+        // — both verified to disagree with today's more targeted MERGE-specific text heuristics)
+        // is intentional: detecting which MERGE actions exist and reasoning about join optionality
+        // is a SEPARATE concern — planned for a later stage via EXPLAIN (FORMAT JSON), not per-Var
+        // tree analysis — that this method does not yet replicate.
+        if (hasUnsafeMergeReturning(nodeTree)) {
+          return null
+        }
+        // '?' in sql, not substitutedSql: a sentinel-substituted CONST is byte-identical to a
+        // hand-written literal once embedded in the SQL text — the parsed tree retains no memory
+        // of which one it was. trustAssignedExpressions=false whenever the ORIGINAL sql had ANY
+        // parameter blocks analyzeNodeTree's :targetList-to-:returningList substitution (see its
+        // KDoc) for the WHOLE statement, not just the specific assignment a parameter feeds,
+        // because there is no structural way from here to tell which assignment(s) it was.
+        analyzeNodeTree(nodeTree, applyQualNarrowing = true, trustAssignedExpressions = '?' !in sql)
+      } finally {
+        connection.createStatement().use { stmt ->
+          stmt.execute("DROP FUNCTION IF EXISTS pg_temp.$functionName()")
+        }
+      }
+    } catch (_: SQLException) {
+      null
+    }
+  }
+
+  /**
+   * Computes per-column nullability from [nodeTree] — the `pg_rewrite.ev_action` text of a
+   * temporary view, or the `pg_proc.prosqlbody` text of a temporary probe function; both share the
+   * same post-parse-analysis `{QUERY ...}` node shape (see [queryColumnNullabilityViaProsqlbody]'s
+   * KDoc).
+   *
+   * Reads the `:targetList` first — this covers every plain `SELECT`, including one that reaches
+   * this function only because it CONTAINS a data-modifying CTE (the outer statement is still a
+   * `SELECT`, so PostgreSQL's own `CREATE VIEW` restriction, and by extension nothing here, ever
+   * blocked it). Falls back to `:returningList` when the outer statement's OWN target list is
+   * empty — true only for a topmost `UPDATE`/`DELETE`/`MERGE ... RETURNING` reached through
+   * [queryColumnNullabilityViaProsqlbody], never through [analyzeViaTemporaryView] (a `SELECT`
+   * always has a non-empty target list, or [connection] would have rejected it as a query with no
+   * result columns before ever reaching this point).
+   *
+   * @param applyQualNarrowing See [analyzeViaTemporaryView]'s parameter of the same name.
+   */
+  private fun analyzeNodeTree(
+    nodeTree: String,
+    applyQualNarrowing: Boolean,
+    trustAssignedExpressions: Boolean = true,
+  ): List<Boolean> {
+    val rangeTable = nodeTreeParser.parseRangeTable(nodeTree) // varno → relid (base tables only)
+    // GROUP BY queries use an *GROUP* RTE (rtekind 9) whose target list VARs reference the group
+    // entry varno instead of the base table varno directly. Resolve these back to their base table
+    // column so isSourceColumnNotNull can check pg_attribute.attnotnull correctly.
+    //
+    // EXCEPTION: When GROUPING SETS, CUBE, or ROLLUP is used, GROUP BY columns can receive NULL
+    // for rows where the column is not part of the current grouping set. PostgreSQL 18 enforces
+    // this via a *GROUP* RTE (rtekind 9): target list VARs reference the GROUP RTE instead of the
+    // base table, so parseRangeTable() can't find them and they fall back to nullable on their
+    // own. PostgreSQL 16/17 have no GROUP RTE, so this exception skips GROUP RTE resolution
+    // entirely; the actual nullability override for grouping keys (including EXPRESSION keys
+    // such as `ROLLUP(lower(a))`, which never produce a bare {VAR } target-list entry to remap
+    // here) is applied by NodeTreeNullabilityAnalyzer.extractColumnNullability via the
+    // hasGroupingSets flag passed to buildAnalyzer below.
+    val hasGroupingSets = nodeTreeParser.hasGroupingSets(nodeTree)
+    val groupRteMap = if (hasGroupingSets) {
+      emptyMap()
+    } else {
+      nodeTreeParser.parseGroupRteMap(nodeTree) // (groupVarno, attrPos) → (baseVarno, baseVarattno)
+    }
+    // For subquery RTEs (rtekind 1), the outer VAR's varno is not in rangeTable.
+    // Resolve their nullability by recursively analyzing each subquery's target list.
+    // The map is keyed by (varno, varattno) for direct lookup in isSourceColumnNotNull.
+    val subqueryColumnNotNull = buildSubqueryColumnNotNull(nodeTree, applyQualNarrowing)
+    val cteColumnNotNull = buildCteColumnNotNull(nodeTree, applyQualNarrowing)
+    // A non-zero :resultRelation means this is an INSERT/UPDATE/DELETE/MERGE, not a SELECT — see
+    // parseResultRelation's KDoc. Its :targetList holds the value expressions being WRITTEN to
+    // each explicitly-assigned column of the target relation (keyed by :resno = the column's
+    // attribute number), which is exactly what a :returningList Var referencing that SAME
+    // (resultRelationVarno, attno) pair actually reads back — NOT the column's general catalog
+    // constraint, which says nothing about what THIS statement is about to write. See
+    // targetListByResno's use below.
+    val resultRelationVarno = nodeTreeParser.parseResultRelation(nodeTree)
+    val targetListByResno = if (resultRelationVarno == 0 || !trustAssignedExpressions) {
+      // !trustAssignedExpressions means the ORIGINAL sql (before sentinel substitution) contained
+      // a `?` parameter placeholder somewhere — see queryColumnNullabilityViaProsqlbody's call
+      // site KDoc. A sentinel-substituted CONST is byte-identical, in the parsed tree, to a
+      // hand-written literal: there is no structural signal left to tell "the caller supplied
+      // this at runtime, and could supply NULL" from "the query text itself guarantees this value"
+      // for any SPECIFIC assignment, so trusting :targetList at all is unsafe for the WHOLE
+      // statement once ANY parameter exists anywhere in it. Verified live: `INSERT INTO t(name)
+      // VALUES (?) RETURNING name` reports NOT NULL if the sentinel substitution is trusted here,
+      // even though the caller can bind an actual `NULL` for that exact parameter.
+      emptyMap()
+    } else {
+      // rangeTable[resultRelationVarno] is only present for an ordinary base-table target (rtekind
+      // 0) — never null for a real INSERT/UPDATE/DELETE/MERGE, since PostgreSQL requires a real
+      // relation to write to, but defensively treated as "substitution unsafe" (empty map) rather
+      // than trusting an assignment against a target this class cannot even identify.
+      val targetRelid = rangeTable[resultRelationVarno]
+      if (targetRelid != null && isSubstitutionSafeForRelation(targetRelid)) {
+        nodeTreeParser.parseTargetList(nodeTree).associate { it.resultNumber to it.expression }
+      } else {
+        emptyMap()
+      }
+    }
+    // GROUPING SETS/CUBE/ROLLUP null-extend grouping keys AFTER the WHERE clause has already
+    // filtered rows, so a qual can never prove a grouped result column non-null. This matters
+    // even for a NOT NULL base column, because null-extension overrides the base column's own
+    // constraint. Suppress qual narrowing for the entire block rather than trying to map a
+    // (possibly expression) grouping key back to its null-extended leaf Vars — that is more
+    // machinery than this warrants, and a subtle mistake there would reintroduce an unsound
+    // narrowing. This is conservative by construction: every non-key output column of a
+    // grouping-sets query is an aggregate, so suppressing narrowing here costs nothing real.
+    //
+    // A non-zero resultRelationVarno suppresses narrowing for the identical reason
+    // [analyzeViaTemporaryView]'s applyQualNarrowing=false does for a converted DML body: a qual
+    // that looks like it proves a RETURNING column non-null may in fact be testing the value the
+    // statement's own SET clause (or, for MERGE, an update/insert action) is about to overwrite.
+    val qualNotNullVars = if (applyQualNarrowing && !hasGroupingSets && resultRelationVarno == 0) {
+      NodeTreeNullabilityAnalyzer.qualProvenNonNullVars(nodeTree, isStrictFunction)
+    } else {
+      emptySet()
+    }
+    val plainIsSourceColumnNotNull = { varno: Int, varattno: Int ->
+      if (isProvenByQuals(qualNotNullVars, groupRteMap, varno, varattno)) {
+        true
+      } else {
+        val relid = rangeTable[varno]
+        if (relid != null) {
+          isColumnNotNull(relid to varattno)
+        } else {
+          val baseVar = groupRteMap[varno to varattno]
+          if (baseVar != null) {
+            val baseRelid = rangeTable[baseVar.first]
+            baseRelid != null && isColumnNotNull(baseRelid to baseVar.second)
+          } else {
+            subqueryColumnNotNull[varno to varattno] == true ||
+              cteColumnNotNull[varno to varattno] == true
+          }
+        }
+      }
+    }
+    val forceNewNullable = forcesNewNullable(nodeTree)
+    val analyzer = buildAnalyzer(
+      hasGroupingSets = hasGroupingSets,
+      forceNewNullable = forceNewNullable,
+      isSourceColumnNotNull = plainIsSourceColumnNotNull,
+    )
+    // :returningList must be checked FIRST, not as a fallback for an empty :targetList: an INSERT
+    // or UPDATE's OWN :targetList holds the value expressions being WRITTEN to each assigned
+    // column — a completely different, and typically shorter or differently-shaped, list than its
+    // RETURNING projection — so it is very often non-empty even when :returningList is what this
+    // call actually needs to read (verified live: `INSERT INTO t(name) VALUES ('test') RETURNING
+    // *` against `t(id, name)` has a one-entry :targetList for "name" alone, but a two-entry
+    // :returningList for "id, name"). A plain `SELECT` never populates :returningList at all, so
+    // this ordering never affects the [analyzeViaTemporaryView] caller, only the DML-with-RETURNING
+    // case only [queryColumnNullabilityViaProsqlbody] can ever reach at the top level.
+    val returningEntries = nodeTreeParser.parseReturningList(nodeTree)
+    if (returningEntries.isNotEmpty()) {
+      // A SEPARATE analyzer whose isSourceColumnNotNull substitutes a Var referencing
+      // (resultRelationVarno, resno) with the ASSIGNED expression's own nullability — evaluated by
+      // the PLAIN analyzer, deliberately NOT this substituting one, so a self-referencing
+      // assignment (`SET note = note || 'x'`) reads note's OLD (plain, un-substituted) value for
+      // that inner reference rather than looping back into its own substitution forever. A column
+      // the statement never assigns (no entry in targetListByResno) falls through to the identical
+      // plain catalog/qual/subquery/CTE resolution [analyzer] itself uses, which is exactly correct
+      // for that column's pass-through (unmodified) value.
+      val returningAnalyzer =
+        buildAnalyzer(hasGroupingSets = false, forceNewNullable = forceNewNullable) { varno, varattno ->
+          val assignedExpression = if (varno == resultRelationVarno) targetListByResno[varattno] else null
+          if (assignedExpression != null) {
+            analyzer.isNonNull(assignedExpression)
+          } else {
+            plainIsSourceColumnNotNull(varno, varattno)
+          }
+        }
+      return returningEntries
+        .filter { !it.isJunk }
+        .sortedBy { it.resultNumber }
+        .map { entry -> !returningAnalyzer.isNonNull(entry.expression) }
+    }
+    return analyzer.extractColumnNullability(nodeTree)
+  }
+
   private fun isColumnNotNull(key: Pair<Int, Int>): Boolean =
-    columnNotNullByRelidAndAttnum[key] == true || viewColumnNotNullByRelidAndAttnum[key] == true
+    // A negative attribute number is a SYSTEM column (ctid, xmin, xmax, cmin, cmax, tableoid) —
+    // pg_attribute rows for these are typically excluded from the catalog queries that populate
+    // columnNotNullByRelidAndAttnum/viewColumnNotNullByRelidAndAttnum (both normally filter
+    // attnum > 0), so a Var referencing one would otherwise fall through to "not found" (nullable)
+    // even though every system column is unconditionally non-null for any real, returned row.
+    key.second < 0 || columnNotNullByRelidAndAttnum[key] == true || viewColumnNotNullByRelidAndAttnum[key] == true
 
   /**
    * Creates a [NodeTreeNullabilityAnalyzer] pre-configured with this loader's catalog lookups.
@@ -1078,6 +1296,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
    */
   private fun buildAnalyzer(
     hasGroupingSets: Boolean = false,
+    forceNewNullable: Boolean = false,
     isSourceColumnNotNull: (varno: Int, varattno: Int) -> Boolean,
   ): NodeTreeNullabilityAnalyzer = NodeTreeNullabilityAnalyzer(
     isStrict = isStrictFunction,
@@ -1090,7 +1309,23 @@ internal class PgCatalogLoader(private val connection: Connection) {
     isFoldableToConst = { oid -> oid in immutableFunctionOids },
     isNonNullIffFirstArgumentNonNull = { oid -> oid in nonNullIffFirstArgumentNonNullFunctionOids },
     hasGroupingSets = hasGroupingSets,
+    forceNewNullable = forceNewNullable,
   )
+
+  /**
+   * `true` when a `RETURNING WITH (OLD AS o, NEW AS n)` reference to `NEW` in [nodeTree] must be
+   * forced nullable — see [NodeTreeNullabilityAnalyzer]'s `forceNewNullable` constructor
+   * parameter's KDoc for the full reasoning (a plain `DELETE` never has a `NEW` row at all; a
+   * `MERGE` might not, depending on which `WHEN` clause matched a given result row).
+   */
+  private fun forcesNewNullable(nodeTree: String): Boolean = when (nodeTreeParser.parseCommandType(nodeTree)) {
+    PgNodeTreeParser.COMMAND_TYPE_DELETE -> true
+    // Only a MERGE with at least one DELETE action can leave NO new row behind for SOME result
+    // row — see hasDeleteMergeAction's KDoc. A MERGE with only UPDATE/INSERT actions always
+    // writes or inserts a row, so NEW is exactly as trustworthy there as an ordinary column.
+    PgNodeTreeParser.COMMAND_TYPE_MERGE -> nodeTreeParser.hasDeleteMergeAction(nodeTree)
+    else -> false
+  }
 
   /**
    * Returns `true` when `(varno, varattno)` is proven non-null by the query's `WHERE` clause,
@@ -1116,16 +1351,10 @@ internal class PgCatalogLoader(private val connection: Connection) {
     nodeTree: String,
     applyQualNarrowing: Boolean = true,
   ): Map<Pair<Int, Int>, Boolean> {
-    val cteDefinitions = nodeTreeParser.parseCteList(nodeTree)
-    if (cteDefinitions.isEmpty()) return emptyMap()
     val cteRteMap = nodeTreeParser.parseCteRangeTableEntries(nodeTree)
     if (cteRteMap.isEmpty()) return emptyMap()
-
-    val resolvedCtes = mutableMapOf<String, List<Boolean>>()
-    for (cte in cteDefinitions) {
-      val nullabilities = analyzeCteBodyNullability(cte, resolvedCtes, applyQualNarrowing) ?: continue
-      resolvedCtes[cte.name] = nullabilities
-    }
+    val resolvedCtes = resolveCteBodies(nodeTree, applyQualNarrowing)
+    if (resolvedCtes.isEmpty()) return emptyMap()
 
     return buildMap {
       for ((varno, cteName) in cteRteMap) {
@@ -1137,6 +1366,27 @@ internal class PgCatalogLoader(private val connection: Connection) {
     }
   }
 
+  /**
+   * Analyzes every CTE declared in [nodeTree]'s OWN `:cteList` and returns each one's per-column
+   * nullability, keyed by CTE name.
+   *
+   * Shared by [buildCteColumnNotNull] (resolving a CTE reference in [nodeTree]'s OWN `:rtable`)
+   * and [buildSubqueryColumnNotNull] (resolving a CTE reference — `:ctelevelsup 1` — one level
+   * DOWN, inside a nested subquery's OWN `:rtable`): a CTE's declaration scope is [nodeTree]'s
+   * level regardless of which nesting level actually references it, so both callers resolve
+   * against the SAME set of CTE bodies.
+   */
+  private fun resolveCteBodies(nodeTree: String, applyQualNarrowing: Boolean): Map<String, List<Boolean>> {
+    val cteDefinitions = nodeTreeParser.parseCteList(nodeTree)
+    if (cteDefinitions.isEmpty()) return emptyMap()
+    val resolvedCtes = mutableMapOf<String, List<Boolean>>()
+    for (cte in cteDefinitions) {
+      val nullabilities = analyzeCteBodyNullability(cte, resolvedCtes, applyQualNarrowing) ?: continue
+      resolvedCtes[cte.name] = nullabilities
+    }
+    return resolvedCtes
+  }
+
   private fun analyzeCteBodyNullability(
     cte: NodeTreeCteDefinition,
     previouslyResolved: Map<String, List<Boolean>>,
@@ -1146,15 +1396,26 @@ internal class PgCatalogLoader(private val connection: Connection) {
       return analyzeSetOperationBranches(cte.queryBlock, previouslyResolved, cte.name, applyQualNarrowing)
     }
     val analyzer = buildCteBodyAnalyzer(cte.queryBlock, previouslyResolved, applyQualNarrowing)
-    val result = analyzer.extractColumnNullability(cte.queryBlock)
-    if (result.isNotEmpty()) return result
-    // DML CTEs store RETURNING columns in :returningList, not :targetList.
+    // :returningList must be checked FIRST, not as a fallback for an empty :targetList — see
+    // analyzeNodeTree's identical guard for the full reasoning (an INSERT/UPDATE's OWN :targetList
+    // holds the value expressions being WRITTEN, a completely different list from its RETURNING
+    // projection, and is very often non-empty even when :returningList is what must be read). A
+    // data-modifying CTE body reaches this method with its RAW, un-rewritten :returningList only
+    // via [queryColumnNullabilityViaProsqlbody] — CREATE VIEW rejects ANY data-modifying CTE
+    // outright (verified live: "views must not contain data-modifying statements in WITH"), so
+    // [analyzeViaTemporaryView] never sees this cte.queryBlock in its raw DML form at all; by the
+    // time ev_action reaches this method, transformForViewCreation has already rewritten the body
+    // into a plain SELECT with no :returningList of its own, so this ordering never affected that
+    // caller either.
     val returningEntries = nodeTreeParser.parseReturningList(cte.queryBlock)
-    if (returningEntries.isEmpty()) return null
-    return returningEntries
-      .filter { !it.isJunk }
-      .sortedBy { it.resultNumber }
-      .map { entry -> !analyzer.isNonNull(entry.expression) }
+    if (returningEntries.isNotEmpty()) {
+      return returningEntries
+        .filter { !it.isJunk }
+        .sortedBy { it.resultNumber }
+        .map { entry -> !analyzer.isNonNull(entry.expression) }
+    }
+    val result = analyzer.extractColumnNullability(cte.queryBlock)
+    return result.ifEmpty { null }
   }
 
   /**
@@ -1286,13 +1547,22 @@ internal class PgCatalogLoader(private val connection: Connection) {
     val subqueryColumnNotNull = buildSubqueryColumnNotNull(queryBlock, applyQualNarrowing)
     // See analyzeViaTemporaryView's identical guard for why qual narrowing is suppressed whenever
     // hasGroupingSets: a grouping key is exactly the thing a GROUPING SETS/CUBE/ROLLUP query
-    // null-extends after WHERE has already run.
-    val qualNotNullVars = if (applyQualNarrowing && !hasGroupingSets) {
+    // null-extends after WHERE has already run. A non-zero :resultRelation suppresses narrowing
+    // for the identical reason analyzeNodeTree's own guard does: a data-modifying CTE body's WHERE
+    // clause can prove something about a column its OWN SET clause is about to overwrite — see
+    // e.g. `WITH c AS (UPDATE t SET a = NULL FROM u WHERE u.id = t.id AND t.a IS NOT NULL
+    // RETURNING t.a) SELECT a FROM c`, verified against real Postgres to return `a = NULL`, not the
+    // value the WHERE clause proved before the SET ran.
+    val isDml = nodeTreeParser.parseResultRelation(queryBlock) != 0
+    val qualNotNullVars = if (applyQualNarrowing && !hasGroupingSets && !isDml) {
       NodeTreeNullabilityAnalyzer.qualProvenNonNullVars(queryBlock, isStrictFunction)
     } else {
       emptySet()
     }
-    return buildAnalyzer(hasGroupingSets = hasGroupingSets) { varno, varattno ->
+    return buildAnalyzer(hasGroupingSets = hasGroupingSets, forceNewNullable = forcesNewNullable(queryBlock)) {
+        varno,
+        varattno,
+      ->
       if (isProvenByQuals(qualNotNullVars, groupRteMap, varno, varattno)) {
         true
       } else {
@@ -1342,10 +1612,18 @@ internal class PgCatalogLoader(private val connection: Connection) {
     if (nodeTreeParser.hasSetOperations(nodeTree)) return emptyMap()
     val subqueryRangeTable = nodeTreeParser.parseSubqueryRangeTable(nodeTree)
     if (subqueryRangeTable.isEmpty()) return emptyMap()
+    // A subquery nested inside a DML statement's own :targetList (e.g. `INSERT INTO t(name)
+    // SELECT name FROM source RETURNING *`, where "source" is a sibling CTE) can reference a CTE
+    // declared at NODETREE'S level via `:ctelevelsup 1` — one level UP from the subquery's own
+    // scope — inside its OWN `:rtable`, not [nodeTree]'s. Resolved once here, lazily, so a
+    // [nodeTree] with no CTEs at all (the overwhelmingly common case) never pays for
+    // [resolveCteBodies]'s recursive analysis.
+    val resolvedCtes by lazy { resolveCteBodies(nodeTree, applyQualNarrowing) }
     return buildMap {
       for ((outerVarno, subqueryBlock) in subqueryRangeTable) {
         // Parse the subquery's own base-table range table for isSourceColumnNotNull.
         val subRangeTable = nodeTreeParser.parseRangeTable(subqueryBlock)
+        val subCteRteMap = nodeTreeParser.parseCteRangeTableEntries(subqueryBlock)
         // See analyzeViaTemporaryView's identical guard: GROUPING SETS/CUBE/ROLLUP can
         // null-extend a grouping key even when the base table column is NOT NULL. The actual
         // override (including EXPRESSION grouping keys) is applied by extractColumnNullability
@@ -1368,8 +1646,13 @@ internal class PgCatalogLoader(private val connection: Connection) {
           if (isProvenByQuals(subQualNotNullVars, groupRteMap, subVarno, subVarattno)) {
             true
           } else {
-            val relid = subRangeTable[subVarno] ?: return@buildAnalyzer false
-            isColumnNotNull(relid to subVarattno)
+            val relid = subRangeTable[subVarno]
+            if (relid != null) {
+              isColumnNotNull(relid to subVarattno)
+            } else {
+              val cteName = subCteRteMap[subVarno]
+              cteName != null && resolvedCtes[cteName]?.getOrNull(subVarattno - 1) == false
+            }
           }
         }
         val subNullabilities = subAnalyzer.extractColumnNullability(subqueryBlock)
@@ -2735,6 +3018,67 @@ internal class PgCatalogLoader(private val connection: Connection) {
     val (rootRelid, hasRisk) = result ?: return null
     if (rootRelid == null) return null // to_regclass could not resolve the target — bail, don't guess
     return rootRelid.takeUnless { hasRisk }
+  }
+
+  /**
+   * The [analyzeNodeTree] counterpart of [resolveTargetRelationOidIfSubstitutionSafe]: answers the
+   * SAME "can a :targetList assignment be trusted as what RETURNING actually sees" question, for
+   * the SAME reasons (a row-level `BEFORE` trigger, a rewrite rule, an `INSTEAD OF` trigger, or an
+   * FDW can each substitute a different final value — see that method's KDoc for the full risk
+   * list), but starting from [relid] directly rather than re-resolving a relation NAME parsed out
+   * of the SQL text. [analyzeNodeTree] already has the target relation's OID for free, from the
+   * SAME `:rtable` it parses everything else out of — there is no name left to re-parse.
+   *
+   * @return `true` only when [relid] and every transitive inheritance/partition descendant is a
+   *   plain table with no risky `relkind`, no mutating row-level trigger, and no non-view rewrite
+   *   rule — `false` for every other case, INCLUDING the catalog query itself failing to execute
+   *   (treated exactly like a confirmed risk: [analyzeNodeTree] must not trust the substitution
+   *   when it cannot rule the risk out).
+   */
+  private fun isSubstitutionSafeForRelation(relid: Int): Boolean = try {
+    connection.prepareStatement(
+      """
+      WITH RECURSIVE descendants(relid) AS (
+        SELECT ?::integer
+        UNION
+        SELECT i.inhrelid::integer
+        FROM pg_catalog.pg_inherits i
+        JOIN descendants d ON i.inhparent = d.relid
+      )
+      SELECT
+        EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_class c
+          JOIN descendants d ON c.oid = d.relid
+          WHERE c.relkind IN ('v', 'm', 'f')
+        ) AS has_risky_relkind,
+        EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_trigger tg
+          JOIN descendants d ON tg.tgrelid = d.relid
+          WHERE NOT tg.tgisinternal
+            AND (tg.tgtype & 1) = 1
+            AND (tg.tgtype & 2) = 2
+            AND ((tg.tgtype & 4) = 4 OR (tg.tgtype & 16) = 16)
+        ) AS has_mutating_row_trigger,
+        EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_rewrite rw
+          JOIN descendants d ON rw.ev_class = d.relid
+          WHERE rw.rulename <> '_RETURN'
+        ) AS has_non_view_rewrite_rule
+      """.trimIndent(),
+    ).use { preparedStatement ->
+      preparedStatement.setInt(1, relid)
+      preparedStatement.executeQuery().use { rs ->
+        check(rs.next()) { "Expected exactly one row from the substitution-safety EXISTS query" }
+        !rs.getBoolean("has_risky_relkind") &&
+          !rs.getBoolean("has_mutating_row_trigger") &&
+          !rs.getBoolean("has_non_view_rewrite_rule")
+      }
+    }
+  } catch (_: SQLException) {
+    false
   }
 
   /**

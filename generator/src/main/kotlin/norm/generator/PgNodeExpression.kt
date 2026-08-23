@@ -13,9 +13,25 @@ internal sealed interface PgNodeExpression {
    *   than `0` means it is an outer reference from a correlated or LATERAL subquery, and [varno]
    *   refers to an enclosing query's range table rather than the current block's, so it must not
    *   be interpreted against the current block.
+   * @property returningType `0` for an ordinary `Var` (including every `Var` on PostgreSQL versions
+   *   older than 18, which never emit `:varreturningtype` at all). `1` means this `Var` reads the
+   *   `OLD` row of a PostgreSQL 18+ `RETURNING WITH (OLD AS o, NEW AS n)` clause; `2` means `NEW`.
+   *   An `OLD`-row `Var` is byte-identical to its `NEW` counterpart except for this field — in
+   *   particular, [nullingRelations] is empty for both, because "the matched row does not exist for
+   *   this `MERGE` action" is not an outer-join null-extension the planner tracks that way. A `1`
+   *   here must therefore be treated as unconditionally nullable regardless of [nullingRelations]
+   *   or the source column's own `NOT NULL` constraint: whether a `MERGE`'s `WHEN NOT MATCHED THEN
+   *   INSERT` action fired for a given result row (leaving no `OLD` row to read) is not something
+   *   this analyzer proves one way or the other, and "cannot be proven non-null" must resolve to
+   *   nullable, never to a confidently wrong `NOT NULL`.
    */
-  data class Var(val varno: Int, val varattno: Int, val nullingRelations: Set<Int>, val levelsUp: Int = 0) :
-    PgNodeExpression
+  data class Var(
+    val varno: Int,
+    val varattno: Int,
+    val nullingRelations: Set<Int>,
+    val levelsUp: Int = 0,
+    val returningType: Int = 0,
+  ) : PgNodeExpression
 
   data class Const(val isNull: Boolean) : PgNodeExpression
 
@@ -152,6 +168,11 @@ internal sealed interface PgNodeExpression {
     // NullTestType (primnodes.h)
     const val NULL_TEST_IS_NULL: Int = 0
     const val NULL_TEST_IS_NOT_NULL: Int = 1
+
+    // VarReturningType (primnodes.h) — PostgreSQL 18+ only; see [Var.returningType]'s KDoc
+    const val VAR_RETURNING_TYPE_NORMAL: Int = 0
+    const val VAR_RETURNING_TYPE_OLD: Int = 1
+    const val VAR_RETURNING_TYPE_NEW: Int = 2
 
     // XmlExprOp (primnodes.h)
     const val XML_IS_XMLCONCAT: Int = 0
