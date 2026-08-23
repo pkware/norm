@@ -17,14 +17,10 @@ import org.junit.jupiter.api.parallel.ResourceLock
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 import org.testcontainers.containers.PostgreSQLContainer
-import org.testcontainers.containers.wait.strategy.Wait
-import org.testcontainers.containers.wait.strategy.WaitAllStrategy
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
-import org.testcontainers.utility.DockerImageName
 import java.sql.DriverManager
 import java.sql.Statement
-import java.time.Duration
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -7969,35 +7965,10 @@ class QueryAnalysisTest {
   }
 
   companion object {
-    private val pgVersion = System.getProperty("norm.test.pgVersion", "18")
     private val schemaCounter = AtomicInteger(0)
 
     @JvmField
     @Container
-    val container: PostgreSQLContainer<*> = PostgreSQLContainer(
-      DockerImageName.parse("postgres:$pgVersion-alpine").asCompatibleSubstituteFor("postgres"),
-    ).apply {
-      withDatabaseName("norm_test")
-      waitingFor(
-        WaitAllStrategy()
-          .withStrategy(Wait.forLogMessage(".*database system is ready to accept connections.*\\n", 2))
-          .withStrategy(Wait.forListeningPort())
-          .withStartupTimeout(Duration.ofSeconds(60)),
-      )
-
-      // Run entirely in RAM — no disk I/O for the throwaway database.
-      // PostgreSQL 18+ stores data in a version-specific subdirectory under /var/lib/postgresql,
-      // so the mount must be at the parent rather than /var/lib/postgresql/data.
-      withTmpFs(mapOf("/var/lib/postgresql" to "rw"))
-      // Disable durability features we don't need in a throwaway container.
-      withCommand(
-        "postgres",
-        "-c", "fsync=off",
-        "-c", "full_page_writes=off",
-        "-c", "synchronous_commit=off",
-        "-c", "max_wal_senders=0",
-        "-c", "wal_level=minimal",
-      )
-    }
+    val container: PostgreSQLContainer<*> = testPostgresContainer("norm_test", inMemory = true)
   }
 }

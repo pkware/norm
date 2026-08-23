@@ -772,9 +772,7 @@ class NormPluginTest {
 
     val secondDirectory = projectDir.resolve("migrations")
     Files.createDirectories(secondDirectory)
-    secondDirectory.resolve("V1__create_author.sql").writeText(
-      "CREATE TABLE author (id serial PRIMARY KEY, name text NOT NULL);",
-    )
+    secondDirectory.resolve("V1__create_author.sql").writeText(AUTHOR_TABLE_SCHEMA_SQL)
 
     val queries = projectDir.resolve("queries.sql")
     queries.writeText(
