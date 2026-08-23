@@ -450,6 +450,57 @@ internal class PgNodeTreeParser {
     return splitTargetEntries(content).mapNotNull { entry -> parseTargetEntry(entry) }
   }
 
+  /**
+   * Parses the outermost QUERY node's `:resultRelation` field: the 1-based `rtable` index of the
+   * table an `INSERT`/`UPDATE`/`DELETE`/`MERGE` writes to, or `0` for a plain `SELECT` (`0` is
+   * never a valid `rtable` index, so it is a safe "no target relation" sentinel for callers).
+   *
+   * [extractIntField] finds the FIRST unscoped textual occurrence of `:resultRelation` in
+   * [nodeTreeText], which is always the outermost QUERY's own field, never a nested CTE's or
+   * subquery's: `:resultRelation` is serialized immediately after `:utilityStmt` — before
+   * `:cteList` or `:rtable`, both of which is where any nested `{QUERY ...}` block would appear —
+   * on every PostgreSQL version this class supports (16, 17, 18), the same field-order argument
+   * [parseVar]'s own KDoc already relies on for `:varreturningtype`.
+   *
+   * @param nodeTreeText the raw `pg_rewrite.ev_action` or `pg_proc.prosqlbody` text, or a bare
+   *   `{QUERY ...}` block
+   * @return the 1-based `rtable` index of the target relation, or `0` if absent/unparseable
+   */
+  fun parseResultRelation(nodeTreeText: String): Int = extractIntField(nodeTreeText, ":resultRelation") ?: 0
+
+  /**
+   * Parses the outermost QUERY node's `:commandType` field (`CmdType` in `nodes/parsenodes.h`):
+   * `1` = `SELECT`, `2` = `UPDATE`, `3` = `INSERT`, `4` = `DELETE`, `5` = `MERGE`. Same "first
+   * unscoped occurrence is always the outer query's own field" reasoning as
+   * [parseResultRelation] — `:commandType` is serialized even earlier in each `QUERY` node than
+   * `:resultRelation` is.
+   *
+   * @return the outermost statement's command type, or `0` (`CMD_UNKNOWN`, never a real command
+   *   type PostgreSQL emits) if absent/unparseable
+   */
+  fun parseCommandType(nodeTreeText: String): Int = extractIntField(nodeTreeText, ":commandType") ?: 0
+
+  /**
+   * `true` when [nodeTreeText]'s outermost `MERGE` statement declares AT LEAST ONE `WHEN ... THEN
+   * DELETE` action — i.e. at least one `{MERGEACTION ...}` block in `:mergeActionList` whose OWN
+   * `:commandType` is `4` (`DELETE`, same enum as [parseCommandType]'s top-level use, but scoped
+   * here to each individual action rather than the outermost statement).
+   *
+   * A `MERGE` with no `DELETE` action anywhere — only `UPDATE`/`INSERT` actions — always leaves a
+   * written or freshly-inserted row behind for `RETURNING` to see, so its `NEW` reference is exactly
+   * as trustworthy as an ordinary column; only the presence of a `DELETE` action makes `NEW`
+   * unconditionally forced nullable (see [PgCatalogLoader.forcesNewNullable]'s caller).
+   *
+   * @return `false` for a non-`MERGE` statement (`:mergeActionList` is absent), or for a `MERGE`
+   *   with no `DELETE` action
+   */
+  fun hasDeleteMergeAction(nodeTreeText: String): Boolean {
+    val mergeActionListContent = extractOuterSectionContent(nodeTreeText, ":mergeActionList (") ?: return false
+    return splitBraceBlocks(mergeActionListContent).any { actionBlock ->
+      extractIntField(actionBlock, ":commandType") == COMMAND_TYPE_DELETE
+    }
+  }
+
   private fun parseVar(text: String): PgNodeExpression.Var {
     val varno = extractIntField(text, ":varno")
       ?: error("Missing :varno in VAR node")
@@ -457,11 +508,16 @@ internal class PgNodeTreeParser {
       ?: error("Missing :varattno in VAR node")
     val nullingRelations = extractBitmapset(text, ":varnullingrels")
     val levelsUp = extractIntField(text, ":varlevelsup") ?: 0
+    // ":varreturningtype" only appears on PostgreSQL 18+ (RETURNING WITH (OLD AS o, NEW AS n)) and
+    // is absent entirely on 16/17 — see PgNodeExpression.Var.returningType's KDoc for why 0 (never
+    // 1, "OLD") is the correct default for a missing field.
+    val returningType = extractIntField(text, ":varreturningtype") ?: 0
     return PgNodeExpression.Var(
       varno = varno,
       varattno = varattno,
       nullingRelations = nullingRelations,
       levelsUp = levelsUp,
+      returningType = returningType,
     )
   }
 
@@ -970,5 +1026,11 @@ internal class PgNodeTreeParser {
       index = braceIndex + entry.length
     }
     return entries
+  }
+
+  /** `:commandType` values — see [parseCommandType]'s KDoc. */
+  companion object {
+    const val COMMAND_TYPE_DELETE: Int = 4
+    const val COMMAND_TYPE_MERGE: Int = 5
   }
 }

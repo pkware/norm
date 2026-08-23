@@ -71,6 +71,18 @@ import norm.generator.NodeTreeNullabilityAnalyzer.Companion.extractOuterJoinNull
  *   provably immune to the grouping-set null-extension mechanism — see [isSafeFromGroupingSetNullExtension]
  *   for the reasoning. Defaults to `false` (ordinary [isNonNull] evaluation only) for query blocks
  *   without grouping sets.
+ * @param forceNewNullable `true` when a `RETURNING WITH (OLD AS o, NEW AS n)` reference to `NEW`
+ *   (`Var.returningType == `[PgNodeExpression.VAR_RETURNING_TYPE_NEW]`) must be treated as
+ *   unconditionally nullable, the same way [isNonNull]'s `Var` branch ALWAYS treats `OLD`
+ *   (`VAR_RETURNING_TYPE_OLD`) regardless of this flag. Set by the caller when the enclosing
+ *   statement is a plain `DELETE` (`NEW` never exists — the row is gone — verified live: `NEW.col`
+ *   is `NULL` for every row a `DELETE` returns) or a `MERGE` (an individual result row's `NEW` may
+ *   or may not exist depending on which `WHEN` clause matched — e.g. `WHEN MATCHED THEN DELETE`
+ *   leaves no `NEW` row — a fact this analyzer cannot isolate per-row any more than it can for an
+ *   ordinary, non-`OLD`/`NEW` `MERGE` column; see [PgCatalogLoader.hasUnsafeMergeReturning]'s
+ *   KDoc for that companion safety net). Left `false` (the default) for a plain `UPDATE`/`INSERT`,
+ *   where the row a `RETURNING` clause reports on always has BOTH an `OLD` and a `NEW` state, so
+ *   `NEW` is exactly as trustworthy as an ordinary column reference.
  */
 internal class NodeTreeNullabilityAnalyzer(
   private val isStrict: (Int) -> Boolean,
@@ -83,6 +95,7 @@ internal class NodeTreeNullabilityAnalyzer(
   private val isFoldableToConst: (Int) -> Boolean = { false },
   private val isNonNullIffFirstArgumentNonNull: (Int) -> Boolean = { false },
   private val hasGroupingSets: Boolean = false,
+  private val forceNewNullable: Boolean = false,
 ) {
 
   private val parser = PgNodeTreeParser()
@@ -439,8 +452,17 @@ internal class NodeTreeNullabilityAnalyzer(
     if (depth <= 0) return false
     val recurse = { expr: PgNodeExpression -> isNonNull(expr, depth - 1) }
     return when (expression) {
-      is PgNodeExpression.Var -> !isOuterJoinNullable(expression.nullingRelations) &&
-        isSourceColumnNotNull(expression.varno, expression.varattno)
+      is PgNodeExpression.Var ->
+        // A PostgreSQL 18+ RETURNING WITH (OLD AS o, ...) reference to the OLD row must never be
+        // treated as non-null on the strength of the source column's own NOT NULL constraint or
+        // outer-join structure — see PgNodeExpression.Var.returningType's KDoc for why the OLD row
+        // itself may not exist for this result row at all (e.g. a MERGE ... WHEN NOT MATCHED THEN
+        // INSERT action), a fact neither of those signals captures. The same applies to NEW
+        // whenever forceNewNullable says so — see that constructor parameter's KDoc.
+        expression.returningType != PgNodeExpression.VAR_RETURNING_TYPE_OLD &&
+          !(expression.returningType == PgNodeExpression.VAR_RETURNING_TYPE_NEW && forceNewNullable) &&
+          !isOuterJoinNullable(expression.nullingRelations) &&
+          isSourceColumnNotNull(expression.varno, expression.varattno)
 
       is PgNodeExpression.Const -> !expression.isNull
       is PgNodeExpression.FuncExpr ->
@@ -704,6 +726,80 @@ internal class NodeTreeNullabilityAnalyzer(
       val whereQuals = parser.parseWhereQuals(nodeTreeText) ?: return emptySet()
       return buildSet {
         collectConjunctProvenVars(whereQuals, this, isStrict, MAX_EXPRESSION_DEPTH)
+      }
+    }
+
+    /**
+     * `true` if [expression] contains an ORDINARY `Var` (`returningType == 0` — i.e. NOT an `OLD`
+     * or `NEW` reference, which carry their own independent, already-safe handling — see
+     * [PgNodeExpression.Var.returningType]'s KDoc) whose `varno` is anything OTHER THAN
+     * [alwaysPresentVarno].
+     *
+     * Used by [PgCatalogLoader]'s `MERGE` safety guard: a `MERGE`'s target relation
+     * (`:resultRelation`/`:mergeTargetRelation`) is present for every result row regardless of
+     * which `WHEN` clause matched, but any OTHER relation a plain `Var` reaches — the source
+     * relation, or anything joined into the `USING` clause — may be entirely absent for that row
+     * (`WHEN NOT MATCHED BY SOURCE`, `WHEN NOT MATCHED [BY TARGET] THEN INSERT`), a fact PostgreSQL
+     * does not expose via `:varnullingrels` (verified live — see
+     * [PgCatalogLoader.queryColumnNullabilityViaProsqlbody]'s MERGE guard for the full
+     * explanation). Exhausts every [PgNodeExpression] variant explicitly (mirrors, rather than
+     * reuses, the traversal [NodeTreeNullabilityAnalyzer.safetyWalkChildren] already performs for
+     * an unrelated purpose) so the compiler's own exhaustiveness check over the sealed
+     * [PgNodeExpression] hierarchy guarantees no node type is silently skipped — a skipped type
+     * here would mean a risky `Var` going undetected, not merely a missed optimization.
+     *
+     * @param depth remaining recursion budget; exhausting it answers `true` (risky) rather than
+     *   `false`, the same fail-toward-conservative default every depth guard in this file uses
+     */
+    internal fun containsRiskyMergeVar(
+      expression: PgNodeExpression,
+      alwaysPresentVarno: Int,
+      depth: Int = MAX_EXPRESSION_DEPTH,
+    ): Boolean {
+      if (depth <= 0) return true
+      val recurse = { expr: PgNodeExpression -> containsRiskyMergeVar(expr, alwaysPresentVarno, depth - 1) }
+      return when (expression) {
+        is PgNodeExpression.Var ->
+          expression.returningType == PgNodeExpression.VAR_RETURNING_TYPE_NORMAL &&
+            expression.varno != alwaysPresentVarno
+
+        is PgNodeExpression.Const,
+        is PgNodeExpression.Aggref,
+        is PgNodeExpression.GroupingFunc,
+        is PgNodeExpression.SqlValueFunction,
+        is PgNodeExpression.NextValExpr,
+        is PgNodeExpression.JsonExpr,
+        is PgNodeExpression.Unknown,
+        -> false
+
+        is PgNodeExpression.FuncExpr -> expression.arguments.any(recurse)
+        is PgNodeExpression.OpExpr -> expression.arguments.any(recurse)
+        is PgNodeExpression.ScalarArrayOpExpr -> expression.arguments.any(recurse)
+        is PgNodeExpression.CoalesceExpr -> expression.arguments.any(recurse)
+        is PgNodeExpression.NullIfExpr -> expression.arguments.any(recurse)
+        is PgNodeExpression.MinMaxExpr -> expression.arguments.any(recurse)
+        is PgNodeExpression.WindowFunc -> expression.arguments.any(recurse)
+        is PgNodeExpression.SubLink -> expression.outerOperand?.let(recurse) == true
+        is PgNodeExpression.CaseExpr ->
+          expression.resultExpressions.any(recurse) ||
+            listOfNotNull(expression.defaultResult, expression.testExpression).any(recurse) ||
+            expression.whenConditions.any(recurse)
+
+        is PgNodeExpression.BoolExpr -> expression.arguments.any(recurse)
+        is PgNodeExpression.RelabelType -> recurse(expression.argument)
+        is PgNodeExpression.CoerceViaIo -> recurse(expression.argument)
+        is PgNodeExpression.ArrayCoerceExpr -> recurse(expression.argument)
+        is PgNodeExpression.CollateExpr -> recurse(expression.argument)
+        is PgNodeExpression.CoerceToDomain -> recurse(expression.argument)
+        is PgNodeExpression.NullTest -> recurse(expression.argument)
+        is PgNodeExpression.BooleanTest -> recurse(expression.argument)
+        is PgNodeExpression.DistinctExpr -> expression.arguments.any(recurse)
+        is PgNodeExpression.ArrayExpr -> expression.elements.any(recurse)
+        is PgNodeExpression.RowExpr -> expression.arguments.any(recurse)
+        is PgNodeExpression.FieldSelect -> recurse(expression.argument)
+        is PgNodeExpression.JsonIsPredicate -> recurse(expression.argument)
+        is PgNodeExpression.JsonConstructorExpr -> expression.arguments.any(recurse)
+        is PgNodeExpression.XmlExpr -> expression.arguments.any(recurse)
       }
     }
 
