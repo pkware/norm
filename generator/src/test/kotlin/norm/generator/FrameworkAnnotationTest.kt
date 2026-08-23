@@ -80,7 +80,7 @@ class FrameworkAnnotationTest {
           ),
         ),
       )
-      val files = generateCode(catalog, listOf(query), TEST_PACKAGE, frameworks)
+      val files = generateCode(catalog, listOf(query), TEST_PACKAGE, frameworks, emptySet())
       val postgresQueriesFile = files.first { it.name.endsWith("PostgresQueries.kt") }
       return postgresQueriesFile.contents
     }
@@ -104,7 +104,7 @@ class FrameworkAnnotationTest {
         "user_account",
         table.columns,
       )
-      val files = generateCode(catalog, listOf(query), TEST_PACKAGE, frameworks)
+      val files = generateCode(catalog, listOf(query), TEST_PACKAGE, frameworks, emptySet())
       return files.map { it.contents }.joinToString("\n")
     }
 
@@ -126,7 +126,7 @@ class FrameworkAnnotationTest {
           ),
         ),
       )
-      val files = generateCode(catalog, listOf(query), TEST_PACKAGE, frameworks)
+      val files = generateCode(catalog, listOf(query), TEST_PACKAGE, frameworks, emptySet())
       val queriesInterfaceFile = files.first { it.name.endsWith("/Queries.kt") }
       return queriesInterfaceFile.contents
     }

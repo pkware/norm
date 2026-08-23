@@ -147,7 +147,14 @@ class GenerateCodeTest {
     val typeMappings = parseTypeMappings(scenarioProperties)
 
     val effectivePackageName = scenarioProperties.getProperty("packageName") ?: packageName
-    val result = generateCode(catalog, analyzedQueries, effectivePackageName, frameworks, typeMappings)
+    val result = generateCode(
+      catalog,
+      analyzedQueries,
+      effectivePackageName,
+      frameworks,
+      analyzer.fetchReservedWords(),
+      typeMappings,
+    )
     val createdFiles = result.associate { spec ->
       Pair(spec.name, spec.contents)
     }.toMutableMap()

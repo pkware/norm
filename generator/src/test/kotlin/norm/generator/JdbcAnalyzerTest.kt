@@ -8,7 +8,9 @@ import assertk.assertions.hasSize
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
+import assertk.assertions.isNotEmpty
 import assertk.assertions.isNotNull
+import assertk.assertions.isNull
 import assertk.assertions.isTrue
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
@@ -1050,6 +1052,53 @@ class JdbcAnalyzerTest {
     assertThat(reservedWords).doesNotContain("name")
     assertThat(reservedWords).doesNotContain("value")
     assertThat(reservedWords).doesNotContain("id")
+  }
+
+  @Test
+  fun `fetchReservedWords matches an independently issued pg_get_keywords query against the same connection`() {
+    // Proves fetchReservedWords() genuinely round-trips to the CONNECTED server on every call
+    // rather than returning a hardcoded snapshot — a membership assertion over a fixed list (as
+    // the two tests above use) cannot tell a live query apart from a hardcoded set that happens to
+    // contain those few words. This test instead issues its OWN pg_get_keywords() query, entirely
+    // independent of fetchReservedWords()'s own implementation, against the SAME live connection,
+    // and compares the two results for EXACT set equality. A hardcoded set baked into
+    // fetchReservedWords() would have to happen to match this exact connection's live keyword set
+    // byte-for-byte to pass this comparison — any staleness, transcription slip, or drift from a
+    // PostgreSQL version whose reserved set differs (verified: system_user became reserved only in
+    // PostgreSQL 16, and a hardcoded set predating that change once missed it silently) fails here
+    // outright. Run at every PostgreSQL major version this project supports (-Dnorm.test.pgVersion)
+    // so a hardcoded snapshot has no single version left where staleness could hide.
+    val fromFetchReservedWords = analyzer.fetchReservedWords()
+    val fromIndependentLiveQuery = connection.createStatement().use { statement ->
+      statement.executeQuery("SELECT word FROM pg_get_keywords() WHERE catcode IN ('R', 'T')").use { resultSet ->
+        buildSet { while (resultSet.next()) add(resultSet.getString(1)) }
+      }
+    }
+
+    assertThat(fromFetchReservedWords).isEqualTo(fromIndependentLiveQuery)
+  }
+
+  @Test
+  fun `resolveCteOutputExpression rejects a bare reference to every word the live server reports as reserved`() {
+    // Closes the loop between fetchReservedWords()'s own liveness (proven above) and
+    // resolveCteOutputExpression's consumption of it: sweeps the FULL live-fetched set — never a
+    // fixed subset — through the same CTE-wrapped-reserved-word shape SqlUtilsTest exercises
+    // per-word, proving the plumbing genuinely threads this connection's live result all the way
+    // through rather than silently falling back to resolveCteOutputExpression's own test-only
+    // emptySet() default (which would make every one of these wrongly resolve to "UPPER(a)"
+    // instead of null).
+    val liveReservedWords = analyzer.fetchReservedWords()
+    assertThat(liveReservedWords).isNotEmpty()
+
+    for (word in liveReservedWords) {
+      val sql = """
+        WITH c AS (SELECT UPPER(a) AS "$word" FROM t)
+        SELECT $word FROM c
+      """.trimIndent()
+      val selectItem = SelectItem(expression = word, columnName = word, tableName = null)
+
+      assertThat(resolveCteOutputExpression(sql, selectItem, liveReservedWords)).isNull()
+    }
   }
 
   @Test

@@ -371,10 +371,11 @@ private fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> {
  *
  * Resolves ONLY when ALL of the following hold; `null` for every other case:
  * - [selectItem] has a non-`null` [SelectItem.columnName] — see the paragraph above.
- * - The outer reference is NOT an unquoted bare [PG_RESERVED_KEYWORDS] name (`user`, `true`,
- *   `system_user`, ...) — see that constant's own KDoc for why PostgreSQL never resolves one of
- *   these to a column, no matter how confidently everything else about this shape lines up, so an
- *   outer `user` can never denote a body item aliased `AS user`.
+ * - The outer reference is NOT an unquoted bare [reservedWords] name (`user`, `true`,
+ *   `system_user`, ...) — PostgreSQL never resolves one of these to a column, no matter how
+ *   confidently everything else about this shape lines up, so an outer `user` can never denote a
+ *   body item aliased `AS user`; see [reservedWords]' own KDoc for why the FULL reserved category
+ *   is checked rather than only the keywords currently known to be niladic.
  * - [sql] has a `WITH` clause (not `WITH RECURSIVE`) declaring EXACTLY ONE CTE, AND the main
  *   query's `FROM` clause is EXACTLY that CTE's own name and nothing else — no alias, no `JOIN`,
  *   no additional comma-separated source, no derived table. BOTH checks are required, not either:
@@ -433,19 +434,43 @@ private fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> {
  * [extractAlias]'s own text-slicing) are stripped from the returned expression via
  * [stripComments] before it is returned — the emitted KDoc must never carry raw comment text.
  *
+ * @param reservedWords PostgreSQL's reserved keyword set — every keyword the CONNECTED server's
+ *   `pg_get_keywords()` categorizes `R` ("reserved") or `T` ("reserved, can be function or type
+ *   name"), lowercased; normally [JdbcAnalyzer.fetchReservedWords]' live result, threaded down
+ *   from wherever that was already queried for this generator run, NEVER a hardcoded snapshot.
+ *   Membership means a bare, UNQUOTED outer reference of that name is rejected outright rather
+ *   than fold-compared against a body alias: PostgreSQL either resolves it to a runtime VALUE
+ *   instead (a niladic keyword like `user`, or a literal like `true`/`false`/`null` — verified
+ *   directly: `WITH c AS (SELECT 'x' AS user) SELECT user FROM c` returns the session user, e.g.
+ *   `postgres`, never `'x'`), or the word cannot appear as a bare, unaliased select-list item AT
+ *   ALL (`select`, `from`, `where`, ...) — a real query containing one could never have reached
+ *   this far through the pipeline, so covering that half of the set costs nothing. The FULL
+ *   reserved category is checked, not only the keywords currently known to be niladic: this is
+ *   what a real, live query buys over a hand-maintained list — reserved-word status is per-server,
+ *   per-version state (verified: `system_user` became niladic in PostgreSQL 16, so a keyword list
+ *   snapshotted against an older server would wrongly let it resolve through a CTE body alias on a
+ *   PostgreSQL 16+ server), and a generator run can target more than one database, so this must
+ *   never be cached across runs. Defaults to `emptySet()` ONLY for callers that never construct a
+ *   `sql` containing a `WITH` clause aliasing a reserved word at all — every real production
+ *   caller (`TypeRepository.buildTypeProjectionForQuery`) passes the connected server's actual set
+ *   explicitly; relying on the default there would silently widen this function's resolution past
+ *   what PostgreSQL itself allows for a bare reserved-word reference.
  * @return The CTE body's expression text (e.g. `UPPER(description)`), or `null` if any
  *   precondition above fails to hold.
  */
-internal fun resolveCteOutputExpression(sql: String, selectItem: SelectItem): String? {
+internal fun resolveCteOutputExpression(
+  sql: String,
+  selectItem: SelectItem,
+  reservedWords: Set<String> = emptySet(),
+): String? {
   val outputName = selectItem.columnName ?: return null
-  // A bare PostgreSQL reserved word is never resolved as a column -- see PG_RESERVED_KEYWORDS'
-  // own KDoc -- but ONLY when unquoted: quoting suppresses that entirely (a quoted "user" is an
-  // ordinary column reference), so this must gate on selectItem.isColumnNameQuoted explicitly
-  // rather than fold-comparing regardless of it -- outputName is a LOGICAL value (see
-  // SelectItem.columnName's own KDoc) that could coincidentally already be lowercase even when
-  // quoted, which a fold-without-gating would wrongly treat as matching the (all-lowercase)
-  // reserved set.
-  if (!selectItem.isColumnNameQuoted && foldIdentifier(outputName, isQuoted = false) in PG_RESERVED_KEYWORDS) {
+  // A bare PostgreSQL reserved word is never resolved as a column -- see reservedWords' own KDoc
+  // -- but ONLY when unquoted: quoting suppresses that entirely (a quoted "user" is an ordinary
+  // column reference), so this must gate on selectItem.isColumnNameQuoted explicitly rather than
+  // fold-comparing regardless of it -- outputName is a LOGICAL value (see SelectItem.columnName's
+  // own KDoc) that could coincidentally already be lowercase even when quoted, which a
+  // fold-without-gating would wrongly treat as matching the (all-lowercase) reserved set.
+  if (!selectItem.isColumnNameQuoted && foldIdentifier(outputName, isQuoted = false) in reservedWords) {
     return null
   }
 
@@ -606,74 +631,6 @@ private fun isQuotedIdentifier(rawIdentifier: String): Boolean {
   val trimmed = rawIdentifier.trim()
   return trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')
 }
-
-/**
- * PostgreSQL's full RESERVED keyword set — every keyword `pg_get_keywords()` categorizes `R`
- * ("reserved") or `T` ("reserved, can be function or type name"), lowercased. Verified against a
- * live PostgreSQL 18.4 (`SELECT word FROM pg_get_keywords() WHERE catcode IN ('R', 'T')`); ~100
- * entries, listed below by category for anyone re-verifying against a future version.
- *
- * Used by [resolveCteOutputExpression] to reject a bare outer reference matching one of these:
- * PostgreSQL never resolves a bare, UNQUOTED reserved word to a column, no matter what a CTE body
- * happens to alias — either it resolves to a runtime VALUE instead (a niladic keyword like
- * `user`, or a literal like `true`/`false`/`null` — verified directly: `WITH c AS (SELECT 'x' AS
- * user) SELECT user FROM c` returns the session user, e.g. `postgres`, never `'x'`; same for
- * `system_user`, added as a niladic keyword in PostgreSQL 16), or the word cannot appear as a
- * bare, unaliased select-list item AT ALL (`select`, `from`, `where`, ...) — a real query
- * containing one could never have reached this far through the pipeline in the first place, so
- * covering that half of the set costs nothing and simply can never fire. Quoting suppresses ALL of
- * this (`SELECT "user"` remains an ordinary column reference), but [resolveCteOutputExpression]
- * does not need to check for it explicitly: [SelectItem.columnName] is always an UNQUOTED
- * identifier already (see [foldIdentifier]'s KDoc), so a quoted reference never reaches this
- * comparison with quotes still attached in the first place.
- *
- * WHY THE FULL RESERVED SET, not just the handful of keywords known to be niladic today: for a
- * wrong emission, the bare outer name must be parseable by PostgreSQL as a value expression on
- * its own — which only a niladic keyword or a bare literal can be. A reserved word that is
- * NEITHER of those cannot appear as a bare select-list item at all (a syntax error), so including
- * it here is free insurance, not a guess. Listing only the keywords currently known to be niladic
- * (as the previous, narrower version of this set did) left a genuine gap: `system_user` became
- * niladic in PostgreSQL 16 without this set being updated, and was missed until reported.
- * Covering the WHOLE reserved category absorbs any future niladic addition automatically, without
- * requiring this set to be revisited every time PostgreSQL adds one.
- *
- * RESIDUAL DRIFT RISK: this is still a lowercased snapshot of one version's `pg_get_keywords()`
- * output, not a live query against the target PostgreSQL server — if a future PostgreSQL version
- * either reserves a genuinely new word (rare) or, in the other direction, DE-reserves one of these
- * (rarer still), this set would be stale until manually re-verified and updated. That risk is
- * accepted as unlikely enough, and the failure mode cheap enough (an extra, unnecessary `null`,
- * never a wrong value), to not warrant a live keyword query from this string-based analysis layer.
- *
- * Category `R` — reserved (cannot be an identifier at all unless quoted):
- * `all`, `analyse`, `analyze`, `and`, `any`, `array`, `as`, `asc`, `asymmetric`, `both`, `case`,
- * `cast`, `check`, `collate`, `column`, `constraint`, `create`, `current_catalog`,
- * `current_date`, `current_role`, `current_time`, `current_timestamp`, `current_user`, `default`,
- * `deferrable`, `desc`, `distinct`, `do`, `else`, `end`, `except`, `false`, `fetch`, `for`,
- * `foreign`, `from`, `grant`, `group`, `having`, `in`, `initially`, `intersect`, `into`,
- * `lateral`, `leading`, `limit`, `localtime`, `localtimestamp`, `not`, `null`, `offset`, `on`,
- * `only`, `or`, `order`, `placing`, `primary`, `references`, `returning`, `select`,
- * `session_user`, `some`, `symmetric`, `system_user`, `table`, `then`, `to`, `trailing`, `true`,
- * `union`, `unique`, `user`, `using`, `variadic`, `when`, `where`, `window`, `with`.
- *
- * Category `T` — reserved, but can also be used as a function or type name:
- * `authorization`, `binary`, `collation`, `concurrently`, `cross`, `current_schema`, `freeze`,
- * `full`, `ilike`, `inner`, `is`, `isnull`, `join`, `left`, `like`, `natural`, `notnull`, `outer`,
- * `overlaps`, `right`, `similar`, `tablesample`, `verbose`.
- */
-private val PG_RESERVED_KEYWORDS = setOf(
-  "all", "analyse", "analyze", "and", "any", "array", "as", "asc", "asymmetric", "both", "case",
-  "cast", "check", "collate", "column", "constraint", "create", "current_catalog",
-  "current_date", "current_role", "current_time", "current_timestamp", "current_user", "default",
-  "deferrable", "desc", "distinct", "do", "else", "end", "except", "false", "fetch", "for",
-  "foreign", "from", "grant", "group", "having", "in", "initially", "intersect", "into",
-  "lateral", "leading", "limit", "localtime", "localtimestamp", "not", "null", "offset", "on",
-  "only", "or", "order", "placing", "primary", "references", "returning", "select",
-  "session_user", "some", "symmetric", "system_user", "table", "then", "to", "trailing", "true",
-  "union", "unique", "user", "using", "variadic", "when", "where", "window", "with",
-  "authorization", "binary", "collation", "concurrently", "cross", "current_schema", "freeze",
-  "full", "ilike", "inner", "is", "isnull", "join", "left", "like", "natural", "notnull", "outer",
-  "overlaps", "right", "similar", "tablesample", "verbose",
-)
 
 /**
  * Whether [window] is a plain `SELECT` main query — specifically, NOT DML (`INSERT`/`UPDATE`/
