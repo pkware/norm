@@ -12,7 +12,10 @@ import org.intellij.lang.annotations.Language
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.parallel.ResourceLock
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.MethodSource
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.containers.wait.strategy.Wait
 import org.testcontainers.containers.wait.strategy.WaitAllStrategy
@@ -23,6 +26,21 @@ import java.sql.DriverManager
 import java.sql.Statement
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicInteger
+
+/**
+ * One window function's expected result-column nullability, against the fixed one-row-per-group
+ * shape `SELECT id, <window function> OVER(...) AS alias FROM t` -- [schema] defaults to a single
+ * `NOT NULL` `id` column, overridden only by the two `LAG`/`LEAD` cases that need a nullable
+ * `fallback` argument column too.
+ */
+internal data class WindowFunctionCase(
+  val description: String,
+  val schema: String = "CREATE TABLE t (id INT NOT NULL)",
+  val sql: String,
+  val expectedNotNull: Boolean,
+) {
+  override fun toString() = description
+}
 
 /**
  * End-to-end tests that verify query analysis against real PostgreSQL output.
@@ -2230,163 +2248,118 @@ class QueryAnalysisTest {
   }
 
   @Nested
-  inner class WindowFunctions {
+  @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+  internal inner class WindowFunctions {
 
     @Test
-    fun `ROW_NUMBER is non-null`() {
+    fun `a plain source column stays non-null alongside a window function`() {
+      // Not itself a window-function nullability fact -- "id" here is NOT NULL by its own
+      // column definition and untouched by the window function beside it. Kept as a sanity
+      // check that a window function's presence never widens an unrelated column's own answer.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id, row_number() OVER() AS rn FROM t",
       )
       assertThat(query.columns[0].notNull).isTrue()
-      assertThat(query.columns[1].notNull).isTrue()
     }
 
-    @Test
-    fun `RANK is non-null`() {
-      val query = analyzeWithSchema(
-        "CREATE TABLE t (id INT NOT NULL)",
-        "SELECT id, rank() OVER(ORDER BY id) AS rnk FROM t",
-      )
-      assertThat(query.columns[1].notNull).isTrue()
-    }
-
-    @Test
-    fun `DENSE_RANK is non-null`() {
-      val query = analyzeWithSchema(
-        "CREATE TABLE t (id INT NOT NULL)",
-        "SELECT id, dense_rank() OVER(ORDER BY id) AS drnk FROM t",
-      )
-      assertThat(query.columns[1].notNull).isTrue()
-    }
-
-    @Test
-    fun `NTILE is non-null`() {
-      val query = analyzeWithSchema(
-        "CREATE TABLE t (id INT NOT NULL)",
-        "SELECT id, ntile(4) OVER(ORDER BY id) AS bucket FROM t",
-      )
-      assertThat(query.columns[1].notNull).isTrue()
-    }
-
-    @Test
-    fun `PERCENT_RANK is non-null`() {
-      val query = analyzeWithSchema(
-        "CREATE TABLE t (id INT NOT NULL)",
-        "SELECT id, percent_rank() OVER(ORDER BY id) AS pr FROM t",
-      )
-      assertThat(query.columns[1].notNull).isTrue()
-    }
-
-    @Test
-    fun `CUME_DIST is non-null`() {
-      val query = analyzeWithSchema(
-        "CREATE TABLE t (id INT NOT NULL)",
-        "SELECT id, cume_dist() OVER(ORDER BY id) AS cd FROM t",
-      )
-      assertThat(query.columns[1].notNull).isTrue()
-    }
-
-    @Test
-    fun `COUNT OVER is non-null`() {
-      val query = analyzeWithSchema(
-        "CREATE TABLE t (id INT NOT NULL)",
-        "SELECT id, count(*) OVER() AS cnt FROM t",
-      )
-      assertThat(query.columns[1].notNull).isTrue()
-    }
-
-    @Test
-    fun `SUM OVER is nullable`() {
-      val query = analyzeWithSchema(
-        "CREATE TABLE t (id INT NOT NULL)",
-        "SELECT id, sum(id) OVER() AS total FROM t",
-      )
-      assertThat(query.columns[1].notNull).isFalse()
-    }
-
-    @Test
-    fun `LAG without default is nullable`() {
-      val query = analyzeWithSchema(
-        "CREATE TABLE t (id INT NOT NULL)",
-        "SELECT id, lag(id) OVER(ORDER BY id) AS prev FROM t",
-      )
-      assertThat(query.columns[1].notNull).isFalse()
-    }
-
-    @Test
-    fun `LAG with default is non-null`() {
-      val query = analyzeWithSchema(
-        "CREATE TABLE t (id INT NOT NULL)",
-        "SELECT id, lag(id, 1, 0) OVER(ORDER BY id) AS prev FROM t",
-      )
-      assertThat(query.columns[1].notNull).isTrue()
-    }
-
-    @Test
-    fun `LAG with nullable default argument is nullable`() {
-      val query = analyzeWithSchema(
-        "CREATE TABLE t (id INT NOT NULL, fallback INT)",
-        "SELECT id, lag(id, 1, fallback) OVER(ORDER BY id) AS prev FROM t",
-      )
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("windowFunctionCases")
+    fun `computes the correct nullability for a window function's own result column`(testCase: WindowFunctionCase) {
+      val query = analyzeWithSchema(testCase.schema, testCase.sql)
       assertThat(query.columns).hasSize(2)
-      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isEqualTo(testCase.expectedNotNull)
     }
 
-    @Test
-    fun `LEAD without default is nullable`() {
-      val query = analyzeWithSchema(
-        "CREATE TABLE t (id INT NOT NULL)",
-        "SELECT id, lead(id) OVER(ORDER BY id) AS nxt FROM t",
-      )
-      assertThat(query.columns[1].notNull).isFalse()
-    }
-
-    @Test
-    fun `LEAD with default is non-null`() {
-      val query = analyzeWithSchema(
-        "CREATE TABLE t (id INT NOT NULL)",
-        "SELECT id, lead(id, 1, 0) OVER(ORDER BY id) AS nxt FROM t",
-      )
-      assertThat(query.columns[1].notNull).isTrue()
-    }
-
-    @Test
-    fun `LEAD with nullable default argument is nullable`() {
-      val query = analyzeWithSchema(
-        "CREATE TABLE t (id INT NOT NULL, fallback INT)",
-        "SELECT id, lead(id, 1, fallback) OVER(ORDER BY id) AS nxt FROM t",
-      )
-      assertThat(query.columns).hasSize(2)
-      assertThat(query.columns[1].notNull).isFalse()
-    }
-
-    @Test
-    fun `FIRST_VALUE is nullable`() {
-      val query = analyzeWithSchema(
-        "CREATE TABLE t (id INT NOT NULL)",
-        "SELECT id, first_value(id) OVER(ORDER BY id) AS fv FROM t",
-      )
-      assertThat(query.columns[1].notNull).isFalse()
-    }
-
-    @Test
-    fun `LAST_VALUE is nullable`() {
-      val query = analyzeWithSchema(
-        "CREATE TABLE t (id INT NOT NULL)",
-        "SELECT id, last_value(id) OVER(ORDER BY id) AS lv FROM t",
-      )
-      assertThat(query.columns[1].notNull).isFalse()
-    }
-
-    @Test
-    fun `NTH_VALUE is nullable`() {
-      val query = analyzeWithSchema(
-        "CREATE TABLE t (id INT NOT NULL)",
-        "SELECT id, nth_value(id, 2) OVER(ORDER BY id) AS nv FROM t",
-      )
-      assertThat(query.columns[1].notNull).isFalse()
-    }
+    fun windowFunctionCases(): List<WindowFunctionCase> = listOf(
+      WindowFunctionCase(
+        description = "ROW_NUMBER is non-null",
+        sql = "SELECT id, row_number() OVER() AS rn FROM t",
+        expectedNotNull = true,
+      ),
+      WindowFunctionCase(
+        description = "RANK is non-null",
+        sql = "SELECT id, rank() OVER(ORDER BY id) AS rnk FROM t",
+        expectedNotNull = true,
+      ),
+      WindowFunctionCase(
+        description = "DENSE_RANK is non-null",
+        sql = "SELECT id, dense_rank() OVER(ORDER BY id) AS drnk FROM t",
+        expectedNotNull = true,
+      ),
+      WindowFunctionCase(
+        description = "NTILE is non-null",
+        sql = "SELECT id, ntile(4) OVER(ORDER BY id) AS bucket FROM t",
+        expectedNotNull = true,
+      ),
+      WindowFunctionCase(
+        description = "PERCENT_RANK is non-null",
+        sql = "SELECT id, percent_rank() OVER(ORDER BY id) AS pr FROM t",
+        expectedNotNull = true,
+      ),
+      WindowFunctionCase(
+        description = "CUME_DIST is non-null",
+        sql = "SELECT id, cume_dist() OVER(ORDER BY id) AS cd FROM t",
+        expectedNotNull = true,
+      ),
+      WindowFunctionCase(
+        description = "COUNT OVER is non-null",
+        sql = "SELECT id, count(*) OVER() AS cnt FROM t",
+        expectedNotNull = true,
+      ),
+      WindowFunctionCase(
+        description = "SUM OVER is nullable",
+        sql = "SELECT id, sum(id) OVER() AS total FROM t",
+        expectedNotNull = false,
+      ),
+      WindowFunctionCase(
+        description = "LAG without default is nullable",
+        sql = "SELECT id, lag(id) OVER(ORDER BY id) AS prev FROM t",
+        expectedNotNull = false,
+      ),
+      WindowFunctionCase(
+        description = "LAG with default is non-null",
+        sql = "SELECT id, lag(id, 1, 0) OVER(ORDER BY id) AS prev FROM t",
+        expectedNotNull = true,
+      ),
+      WindowFunctionCase(
+        description = "LAG with nullable default argument is nullable",
+        schema = "CREATE TABLE t (id INT NOT NULL, fallback INT)",
+        sql = "SELECT id, lag(id, 1, fallback) OVER(ORDER BY id) AS prev FROM t",
+        expectedNotNull = false,
+      ),
+      WindowFunctionCase(
+        description = "LEAD without default is nullable",
+        sql = "SELECT id, lead(id) OVER(ORDER BY id) AS nxt FROM t",
+        expectedNotNull = false,
+      ),
+      WindowFunctionCase(
+        description = "LEAD with default is non-null",
+        sql = "SELECT id, lead(id, 1, 0) OVER(ORDER BY id) AS nxt FROM t",
+        expectedNotNull = true,
+      ),
+      WindowFunctionCase(
+        description = "LEAD with nullable default argument is nullable",
+        schema = "CREATE TABLE t (id INT NOT NULL, fallback INT)",
+        sql = "SELECT id, lead(id, 1, fallback) OVER(ORDER BY id) AS nxt FROM t",
+        expectedNotNull = false,
+      ),
+      WindowFunctionCase(
+        description = "FIRST_VALUE is nullable",
+        sql = "SELECT id, first_value(id) OVER(ORDER BY id) AS fv FROM t",
+        expectedNotNull = false,
+      ),
+      WindowFunctionCase(
+        description = "LAST_VALUE is nullable",
+        sql = "SELECT id, last_value(id) OVER(ORDER BY id) AS lv FROM t",
+        expectedNotNull = false,
+      ),
+      WindowFunctionCase(
+        description = "NTH_VALUE is nullable",
+        sql = "SELECT id, nth_value(id, 2) OVER(ORDER BY id) AS nv FROM t",
+        expectedNotNull = false,
+      ),
+    )
   }
 
   @Nested
