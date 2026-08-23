@@ -271,9 +271,7 @@ internal class TypeRepository(
     // several columns) -- see parseSelectItems' KDoc for why it has no independent cross-check of
     // its own. Treating the mismatch as if parsing had failed outright (the documented empty-list
     // fail-safe) avoids a wrong, shifted mapping of names/comments/expressions onto columns they
-    // don't belong to. oldOrNewReturningColumns' callers (SqlUtils.kt/PgCatalogLoader.kt) and
-    // probeUnknownColumnNullability apply the identical real-column-count cross-check for the same
-    // reason.
+    // don't belong to.
     val rawSelectItems = parseSelectItems(queryText)
     val selectItems = if (rawSelectItems.isNotEmpty() && rawSelectItems.size != queryResults.size) {
       emptyList()

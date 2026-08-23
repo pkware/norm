@@ -204,9 +204,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
     // star item expanding to several columns) -- see parseSelectItems' KDoc for why it has no
     // independent cross-check of its own. Treating the mismatch as if parsing had failed outright
     // (the documented empty-list fail-safe) avoids a wrong, shifted mapping of names/comments onto
-    // columns they don't belong to. oldOrNewReturningColumns' callers and
-    // probeUnknownColumnNullability apply the identical real-column-count cross-check for the same
-    // reason.
+    // columns they don't belong to.
     val rawSelectItems = parseSelectItems(sql)
     val selectItems = if (rawSelectItems.isNotEmpty() && rawSelectItems.size != rsmd.columnCount) {
       emptyList()

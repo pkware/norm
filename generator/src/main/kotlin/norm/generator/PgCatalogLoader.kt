@@ -854,13 +854,11 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * Determines which result columns of [sql] can be `NULL`.
    *
    * Routes every statement — a plain `SELECT` exactly the same as a data-modifying statement or
-   * CTE — through [queryColumnNullabilityViaProsqlbody]. Before Stage 4 of the `prosqlbody`
-   * cutover, a plain `SELECT` went through `CREATE VIEW`/`pg_rewrite.ev_action` instead (a
-   * separate, since-deleted route, `analyzeViaTemporaryView`) purely because `CREATE VIEW` was
-   * the FIRST mechanism this file learned to read a node tree from, not because it saw anything
-   * `prosqlbody` doesn't: both hold the identical post-parse-analysis `{QUERY ...}` shape (see
-   * [queryColumnNullabilityViaProsqlbody]'s KDoc), and a live sweep across PostgreSQL 16/17/18 of
-   * every shape `CREATE VIEW` accepts but a SQL-standard function body might plausibly reject or
+   * CTE — through [queryColumnNullabilityViaProsqlbody]. `prosqlbody` holds the identical
+   * post-parse-analysis `{QUERY ...}` shape `CREATE VIEW`'s `pg_rewrite.ev_action` does (see
+   * [queryColumnNullabilityViaProsqlbody]'s KDoc), so a plain `SELECT` needs no separate route of
+   * its own: a live sweep across PostgreSQL 16/17/18 of every shape `CREATE VIEW` accepts but a
+   * SQL-standard function body might plausibly reject or
    * reinterpret — `UNION`/`INTERSECT`/`EXCEPT`, `WITH RECURSIVE`, `ORDER BY`/`LIMIT`/`OFFSET`,
    * `FOR UPDATE`/`FOR SHARE`, `DISTINCT ON`, a `VALUES` list, a set-returning function in the
    * target list, `LATERAL`, `TABLESAMPLE`, `WITH ORDINALITY`, and a query selecting from another
@@ -932,18 +930,15 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * the full reasoning for why `EXPLAIN`'s own join type answers this precisely instead.
    *
    * @param sql the EXACT (already sentinel-substituted) statement text to run `EXPLAIN` against —
-   *   the WHOLE top-level statement, including any leading `WITH` clause: `EXPLAIN` on the whole
-   *   statement produces a plan containing every nested `MERGE`'s own subplan, and
-   *   [explainMergeSideNullability] searches every join node in it, not just a top-level one — so
-   *   the SAME call correctly resolves a `MERGE` nested inside a CTE too, keyed by ITS OWN target/
-   *   source relation names, without needing to `EXPLAIN` each CTE body in isolation
+   *   the WHOLE top-level statement, including any leading `WITH` clause, so a `MERGE` nested
+   *   inside a CTE resolves through the SAME call as a top-level one, keyed by ITS OWN
+   *   target/source relation names
    * @return an EMPTY map when [nodeTree]'s own outermost statement is not a `MERGE` at all; a map
    *   from varno to whether THAT relation can be entirely absent (containing the target and/or
    *   source varno, per [MergeSideNullability]) when it IS a `MERGE` and `EXPLAIN` successfully
    *   attributed the join; `null` when it's a `MERGE` but `EXPLAIN` could not resolve it (e.g. a
    *   `USING` clause with more than one relation of its own) — the caller must then treat this
-   *   `MERGE` as entirely untrustworthy, the same as the removed `hasUnsafeMergeReturning`'s own
-   *   bail-out did, never guessing at a partial answer
+   *   `MERGE` as entirely untrustworthy, never guessing at a partial answer
    */
   private fun mergeAbsentVarnos(
     nodeTree: String,
