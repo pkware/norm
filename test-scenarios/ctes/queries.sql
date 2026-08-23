@@ -1,6 +1,4 @@
--- Reproduces #202: a chained data-modifying CTE ("new_child") references an earlier
--- data-modifying CTE ("new_parent"), and a trailing CTE ("audit_entry") is data-modifying
--- with no RETURNING clause at all.
+-- Creates a parent, a child of that parent, and an audit entry for the child.
 -- name: createParentWithChildAndAuditEntry :many
 WITH new_parent AS (
   INSERT INTO parent (name) VALUES (?) RETURNING id, name
@@ -17,8 +15,7 @@ audit_entry AS (
 )
 SELECT id, parent_id, name FROM new_child;
 
--- Reproduces #203: a data-modifying CTE ("new_parent") references a CTE declared LATER
--- in the same WITH RECURSIVE clause ("parent_name").
+-- Creates a parent whose name is seeded from another CTE in the same statement.
 -- name: createParentFromLaterCte :many
 WITH RECURSIVE new_parent AS (
   INSERT INTO parent (name) SELECT label FROM parent_name RETURNING id, name
@@ -28,10 +25,7 @@ parent_name AS (
 )
 SELECT id, name FROM new_parent;
 
--- Reproduces #205: a CTE body ("parent_and_child") starts with its own nested WITH clause
--- ("helper") and contains a LEFT JOIN, alongside a sibling data-modifying CTE ("new_parent").
--- The nested WITH must not cause the LEFT JOIN's nullability to be lost — child_name is
--- nullable (child may not exist for a parent), parent_name stays NOT NULL.
+-- Lists parents with their child's name, if any; child_name is `null` when a parent has no child.
 -- name: listParentsWithOptionalChildAlongsideInsert :many
 WITH parent_and_child AS (
   WITH helper AS (SELECT 1)
@@ -43,54 +37,29 @@ new_parent AS (
 )
 SELECT parent_id, parent_name, child_name FROM parent_and_child;
 
--- Reproduces #204: a data-modifying CTE ("new_parent") RETURNs a nullable column
--- ("description") under a quoted, mixed-case alias, referenced by the outer query with the
--- same quoting. Before the fix, PgCatalogLoader's stub emitted the alias unquoted, letting
--- PostgreSQL fold it to lowercase and causing the outer reference to fail to resolve
--- ("column new_parent.parentDescription does not exist") when creating the temporary view
--- used for nullability analysis. That failure is caught and silently degrades to asserting
--- every column of "new_parent" NOT NULL — so "parentDescription", genuinely nullable, would
--- be wrongly reported NOT NULL. description is deliberately used (rather than "name", which
--- is NOT NULL and would pass either way, masking the bug) so this scenario actually fails
--- pre-fix instead of coincidentally matching.
+-- Creates a parent, returning its id and description under quoted, mixed-case aliases.
 -- name: createParentReturningQuotedAlias :many
 WITH new_parent AS (
   INSERT INTO parent (name) VALUES (?) RETURNING id AS "parentId", description AS "parentDescription"
 )
 SELECT new_parent."parentId", new_parent."parentDescription" FROM new_parent;
 
--- Reproduces #226: a top-level DELETE's RETURNING list computes an expression
--- ("UPPER(description)") over a nullable column. Before the fix,
--- PgCatalogLoader.analyzeUnconvertibleDml unconditionally treated
--- ResultSetMetaData.columnNullableUnknown as NOT NULL for this shape, wrongly reporting
--- description_upper NOT NULL even though description has no NOT NULL constraint.
+-- Deletes a parent, returning its name and uppercased description.
 -- name: deleteParentReturningDescriptionUpper :many
 DELETE FROM parent WHERE id = ? RETURNING id, name, UPPER(description) AS description_upper;
 
--- CTE-wrapped form of the same RETURNING expression as the query above, demonstrating that the
--- top-level probe path (#226) and the existing CTE-body stub path agree on description_upper's
--- nullability.
+-- CTE-wrapped form of deleteParentReturningDescriptionUpper above.
 -- name: deleteParentReturningDescriptionUpperViaCte :many
 WITH deleted_parent AS (
   DELETE FROM parent WHERE id = ? RETURNING id, name, UPPER(description) AS description_upper
 )
 SELECT id, name, description_upper FROM deleted_parent;
 
--- Reproduces #228: an UPDATE's SET clause assigns a non-null literal to a nullable column
--- ("description"), and RETURNING computes an expression over that same column
--- ("UPPER(description)"). Before the fix, PgCatalogLoader.probeUnknownColumnNullability
--- evaluated the RETURNING expression against the bare, pre-assignment target relation, so it
--- had no way to see the SET-assigned value and wrongly reported description_upper nullable —
--- even though "description" can only ever be the literal 'UPDATED' in this result.
+-- Updates a parent's description to a fixed value, returning its name and uppercased description.
 -- name: updateParentReturningDescriptionUpper :many
 UPDATE parent SET description = 'UPDATED' WHERE id = ? RETURNING id, name, UPPER(description) AS description_upper;
 
--- Quoted-alias variant of deleteParentReturningDescriptionUpperViaCte above: the CTE body's own
--- RETURNING alias is quoted, mixed-case ("descriptionUpper" instead of description_upper), and
--- the outer reference to it is the same quoted, mixed-case form. Demonstrates that a quoted
--- reference into a CTE's own expression-derived output resolves the underlying SQL expression
--- through resolveCteOutputExpression, the same way the unquoted sibling query already does,
--- rather than being classified a computed expression and echoing the quoted outer name back.
+-- Quoted-alias variant of deleteParentReturningDescriptionUpperViaCte above.
 -- name: deleteParentReturningQuotedDescriptionUpperViaCte :many
 WITH deleted_parent AS (
   DELETE FROM parent WHERE id = ? RETURNING id, name, UPPER(description) AS "descriptionUpper"

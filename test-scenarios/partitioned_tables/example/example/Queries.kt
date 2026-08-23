@@ -16,7 +16,7 @@ import norm.Transactable
 
 public interface Queries : Transactable {
   /**
-   * Star projection against a partitioned table.
+   * Returns an event by id and creation timestamp.
    *
    * ```sql
    * SELECT * FROM event WHERE id = ? AND created_at = ?
@@ -38,7 +38,7 @@ public interface Queries : Transactable {
   ): T
 
   /**
-   * Star projection against a partitioned table.
+   * Returns an event by id and creation timestamp.
    *
    * ```sql
    * SELECT * FROM event WHERE id = ? AND created_at = ?

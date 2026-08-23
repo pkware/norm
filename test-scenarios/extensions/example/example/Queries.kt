@@ -18,7 +18,7 @@ import norm.inputValue
 
 public interface Queries : Transactable {
   /**
-   * Query using pgcrypto for password hashing
+   * Creates a user with a hashed password.
    *
    * ```sql
    * INSERT INTO user_credentials (username, password_hash, nullable_password_hash)
@@ -45,7 +45,7 @@ public interface Queries : Transactable {
   ): IntArray
 
   /**
-   * Query using pgcrypto for password hashing
+   * Creates a user with a hashed password.
    *
    * ```sql
    * INSERT INTO user_credentials (username, password_hash, nullable_password_hash)
@@ -73,7 +73,7 @@ public interface Queries : Transactable {
   ): IntArray = createUser(stream, username, crypt_param1, crypt2_param1, 100)
 
   /**
-   * Query using pgcrypto for password hashing
+   * Creates a user with a hashed password.
    *
    * ```sql
    * INSERT INTO user_credentials (username, password_hash, nullable_password_hash)
@@ -88,7 +88,7 @@ public interface Queries : Transactable {
   )
 
   /**
-   * Query using pgcrypto for password verification
+   * Returns whether the given username and password match a stored credential.
    *
    * ```sql
    * SELECT EXISTS(
@@ -106,7 +106,7 @@ public interface Queries : Transactable {
   ): T
 
   /**
-   * Query using pgcrypto for password verification
+   * Returns whether the given username and password match a stored credential.
    *
    * ```sql
    * SELECT EXISTS(
@@ -120,7 +120,7 @@ public interface Queries : Transactable {
   public fun verifyPassword(username: String, crypt_param1: String): Boolean = verifyPassword(username, crypt_param1, ::inputValue)
 
   /**
-   * Query using settings table (for potential tablefunc pivot)
+   * Lists a user's settings as key-value pairs.
    *
    * ```sql
    * SELECT setting_key, setting_value
@@ -131,7 +131,7 @@ public interface Queries : Transactable {
   public fun <T : Any> getUserSettings(user_id: Int, mapper: (setting_key: String, setting_value: String?) -> T): Many<T>
 
   /**
-   * Query using settings table (for potential tablefunc pivot)
+   * Lists a user's settings as key-value pairs.
    *
    * ```sql
    * SELECT setting_key, setting_value
@@ -212,9 +212,7 @@ public interface Queries : Transactable {
   )
 
   /**
-   * Test: Simple digest function with 2 parameters returning bytea
-   * Function: digest(data text, algorithm text) → bytea
-   * Expected: Parameters (String, String), Return ByteArray
+   * Computes a cryptographic digest of the given data.
    *
    * ```sql
    * SELECT digest(?, ?) AS hash
@@ -228,9 +226,7 @@ public interface Queries : Transactable {
   ): T
 
   /**
-   * Test: Simple digest function with 2 parameters returning bytea
-   * Function: digest(data text, algorithm text) → bytea
-   * Expected: Parameters (String, String), Return ByteArray
+   * Computes a cryptographic digest of the given data.
    *
    * ```sql
    * SELECT digest(?, ?) AS hash
@@ -240,9 +236,7 @@ public interface Queries : Transactable {
   public fun computeDigest(digest_param1: String, digest_param2: String): ByteArray = computeDigest(digest_param1, digest_param2, ::inputValue)
 
   /**
-   * Test: HMAC function with 3 parameters (text, bytea, text) returning bytea
-   * Function: hmac(data text, key bytea, algorithm text) → bytea
-   * Expected: Parameters (String, ByteArray, String), Return ByteArray
+   * Computes an HMAC signature of the given data.
    *
    * ```sql
    * SELECT hmac(?, ?, ?) AS signature
@@ -257,9 +251,7 @@ public interface Queries : Transactable {
   ): T
 
   /**
-   * Test: HMAC function with 3 parameters (text, bytea, text) returning bytea
-   * Function: hmac(data text, key bytea, algorithm text) → bytea
-   * Expected: Parameters (String, ByteArray, String), Return ByteArray
+   * Computes an HMAC signature of the given data.
    *
    * ```sql
    * SELECT hmac(?, ?, ?) AS signature
@@ -273,9 +265,7 @@ public interface Queries : Transactable {
   ): ByteArray = computeHmac(hmac_param1, hmac_param2, hmac_param3, ::inputValue)
 
   /**
-   * Test: Nested function calls - encode(digest(...))
-   * Functions: digest(text, text) → bytea, encode(bytea, text) → text
-   * Expected: Parameters (String, String, String), Return String
+   * Computes a cryptographic digest of the given data and hex-encodes it.
    *
    * ```sql
    * SELECT encode(digest(?, ?), ?) AS encoded_hash
@@ -290,9 +280,7 @@ public interface Queries : Transactable {
   ): T
 
   /**
-   * Test: Nested function calls - encode(digest(...))
-   * Functions: digest(text, text) → bytea, encode(bytea, text) → text
-   * Expected: Parameters (String, String, String), Return String
+   * Computes a cryptographic digest of the given data and hex-encodes it.
    *
    * ```sql
    * SELECT encode(digest(?, ?), ?) AS encoded_hash
@@ -306,9 +294,7 @@ public interface Queries : Transactable {
   ): String = computeEncodedHash(digest_param1, digest_param2, encode_param2, ::inputValue)
 
   /**
-   * Test: decode function - reverse of encode
-   * Function: decode(data text, format text) → bytea
-   * Expected: Parameters (String, String), Return ByteArray
+   * Decodes the given encoded data.
    *
    * ```sql
    * SELECT decode(?, ?) AS decoded
@@ -322,9 +308,7 @@ public interface Queries : Transactable {
   ): T
 
   /**
-   * Test: decode function - reverse of encode
-   * Function: decode(data text, format text) → bytea
-   * Expected: Parameters (String, String), Return ByteArray
+   * Decodes the given encoded data.
    *
    * ```sql
    * SELECT decode(?, ?) AS decoded
@@ -334,9 +318,7 @@ public interface Queries : Transactable {
   public fun decodeData(decode_param1: String, decode_param2: String): ByteArray = decodeData(decode_param1, decode_param2, ::inputValue)
 
   /**
-   * Test: Set-returning function normal_rand with 3 numeric parameters
-   * Function: normal_rand(num_rows int, mean float8, stddev float8) → setof float8
-   * Expected: Parameters (Int, Double, Double), Return Many<Double>
+   * Generates normally distributed random numbers.
    *
    * ```sql
    * SELECT * FROM normal_rand(?, ?, ?)
@@ -350,9 +332,7 @@ public interface Queries : Transactable {
   ): Many<T>
 
   /**
-   * Test: Set-returning function normal_rand with 3 numeric parameters
-   * Function: normal_rand(num_rows int, mean float8, stddev float8) → setof float8
-   * Expected: Parameters (Int, Double, Double), Return Many<Double>
+   * Generates normally distributed random numbers.
    *
    * ```sql
    * SELECT * FROM normal_rand(?, ?, ?)
@@ -365,9 +345,7 @@ public interface Queries : Transactable {
   ): Many<Double?> = generateRandomNumbers(normal_rand_param1, normal_rand_param2, normal_rand_param3, ::inputValue)
 
   /**
-   * Test: crosstab with single parameter and explicit column definitions
-   * Function: crosstab(sql text) → setof record
-   * Expected: Parameters (String), Return Many with structured result
+   * Pivots a user's settings into named columns.
    *
    * ```sql
    * SELECT user_id, setting1, setting2
@@ -381,9 +359,7 @@ public interface Queries : Transactable {
   ) -> T): Many<T>
 
   /**
-   * Test: crosstab with single parameter and explicit column definitions
-   * Function: crosstab(sql text) → setof record
-   * Expected: Parameters (String), Return Many with structured result
+   * Pivots a user's settings into named columns.
    *
    * ```sql
    * SELECT user_id, setting1, setting2
@@ -393,9 +369,7 @@ public interface Queries : Transactable {
   public fun getUserSettingsPivot(crosstab_param1: String): Many<GetUserSettingsPivot> = getUserSettingsPivot(crosstab_param1, ::GetUserSettingsPivot)
 
   /**
-   * Test: crosstab with 2 parameters - source and category SQLs
-   * Function: crosstab(source_sql text, category_sql text) → setof record
-   * Expected: Parameters (String, String), Return Many with structured result
+   * Pivots settings by category into named columns.
    *
    * ```sql
    * SELECT row_name, category1, category2, category3
@@ -414,9 +388,7 @@ public interface Queries : Transactable {
   ): Many<T>
 
   /**
-   * Test: crosstab with 2 parameters - source and category SQLs
-   * Function: crosstab(source_sql text, category_sql text) → setof record
-   * Expected: Parameters (String, String), Return Many with structured result
+   * Pivots settings by category into named columns.
    *
    * ```sql
    * SELECT row_name, category1, category2, category3

@@ -108,8 +108,6 @@ public interface Queries {
   public fun addAuthor(name: String, email: String?)
 
   /**
-   * Note: publisher is NOT queried
-   *
    * ```sql
    * SELECT * FROM person WHERE id = ?
    * ```
@@ -124,8 +122,6 @@ public interface Queries {
   ) -> T): T
 
   /**
-   * Note: publisher is NOT queried
-   *
    * ```sql
    * SELECT * FROM person WHERE id = ?
    * ```

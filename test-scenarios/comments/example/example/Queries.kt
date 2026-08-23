@@ -40,7 +40,7 @@ public interface Queries : Transactable {
   public fun getAuthorById(id: Int): Author = getAuthorById(id, ::Author)
 
   /**
-   * Ad-hoc projection: only some columns returned, so generates a query-specific type.
+   * Returns a book's title and publication year.
    *
    * ```sql
    * SELECT title, published_year FROM book WHERE id = ?
@@ -52,7 +52,7 @@ public interface Queries : Transactable {
   public fun <T : Any> getBookTitleAndYear(id: Int, mapper: (title: String, published_year: Int?) -> T): T
 
   /**
-   * Ad-hoc projection: only some columns returned, so generates a query-specific type.
+   * Returns a book's title and publication year.
    *
    * ```sql
    * SELECT title, published_year FROM book WHERE id = ?
@@ -126,7 +126,7 @@ public interface Queries : Transactable {
   public fun addAuthor(name: String, bio: String?)
 
   /**
-   * Cross-table join: projection columns come from two different tables.
+   * Returns a book's title, publication year, and author name.
    *
    * ```sql
    * SELECT book.title, book.published_year, author.name AS author_name
@@ -145,7 +145,7 @@ public interface Queries : Transactable {
   ) -> T): T
 
   /**
-   * Cross-table join: projection columns come from two different tables.
+   * Returns a book's title, publication year, and author name.
    *
    * ```sql
    * SELECT book.title, book.published_year, author.name AS author_name
@@ -160,7 +160,7 @@ public interface Queries : Transactable {
   public fun getBookWithAuthorName(id: Int): GetBookWithAuthorName = getBookWithAuthorName(id, ::GetBookWithAuthorName)
 
   /**
-   * Function result: COUNT has no source table or column.
+   * Returns the number of books by an author.
    *
    * ```sql
    * SELECT author.name, COUNT(*) AS book_count
@@ -176,7 +176,7 @@ public interface Queries : Transactable {
   public fun <T : Any> countBooksByAuthor(id: Int, mapper: (name: String, book_count: Long) -> T): T
 
   /**
-   * Function result: COUNT has no source table or column.
+   * Returns the number of books by an author.
    *
    * ```sql
    * SELECT author.name, COUNT(*) AS book_count
@@ -192,7 +192,7 @@ public interface Queries : Transactable {
   public fun countBooksByAuthor(id: Int): CountBooksByAuthor = countBooksByAuthor(id, ::CountBooksByAuthor)
 
   /**
-   * UPDATE: SET params and WHERE params both get column comments.
+   * Updates a book's title.
    *
    * ```sql
    * UPDATE book SET title = ? WHERE id = ?
@@ -219,7 +219,7 @@ public interface Queries : Transactable {
   ): IntArray
 
   /**
-   * UPDATE: SET params and WHERE params both get column comments.
+   * Updates a book's title.
    *
    * ```sql
    * UPDATE book SET title = ? WHERE id = ?
@@ -247,7 +247,7 @@ public interface Queries : Transactable {
   ): IntArray = updateBookTitle(stream, title, id, 100)
 
   /**
-   * UPDATE: SET params and WHERE params both get column comments.
+   * Updates a book's title.
    *
    * ```sql
    * UPDATE book SET title = ? WHERE id = ?
@@ -261,8 +261,6 @@ public interface Queries : Transactable {
   public fun updateBookTitle(title: String, id: Int): Int
 
   /**
-   * Column with no COMMENT ON: isbn should not produce a @param tag.
-   *
    * ```sql
    * SELECT * FROM book WHERE isbn = ?
    * ```
@@ -277,8 +275,6 @@ public interface Queries : Transactable {
   ) -> T): T
 
   /**
-   * Column with no COMMENT ON: isbn should not produce a @param tag.
-   *
    * ```sql
    * SELECT * FROM book WHERE isbn = ?
    * ```
@@ -287,8 +283,6 @@ public interface Queries : Transactable {
   public fun getBookByIsbn(isbn: String): Book = getBookByIsbn(isbn, ::Book)
 
   /**
-   * :many with parameters: verify params flow through the Many code path.
-   *
    * ```sql
    * SELECT * FROM book WHERE author_id = ?
    * ```
@@ -304,8 +298,6 @@ public interface Queries : Transactable {
   ) -> T): Many<T>
 
   /**
-   * :many with parameters: verify params flow through the Many code path.
-   *
    * ```sql
    * SELECT * FROM book WHERE author_id = ?
    * ```
@@ -315,7 +307,7 @@ public interface Queries : Transactable {
   public fun listBooksByAuthor(author_id: Int): Many<Book> = listBooksByAuthor(author_id, ::Book)
 
   /**
-   * Range: two params on the same column get deduplicated names and both get comments.
+   * Lists books published within a year range.
    *
    * ```sql
    * SELECT * FROM book WHERE published_year >= ? AND published_year <= ?
@@ -337,7 +329,7 @@ public interface Queries : Transactable {
   ): Many<T>
 
   /**
-   * Range: two params on the same column get deduplicated names and both get comments.
+   * Lists books published within a year range.
    *
    * ```sql
    * SELECT * FROM book WHERE published_year >= ? AND published_year <= ?
@@ -349,7 +341,7 @@ public interface Queries : Transactable {
   public fun listBooksByYearRange(published_year: Int, published_year2: Int): Many<Book> = listBooksByYearRange(published_year, published_year2, ::Book)
 
   /**
-   * Function-wrapped parameter: the param maps to the column despite being inside crypt().
+   * Creates an account with a hashed password.
    *
    * ```sql
    * INSERT INTO account (username, password) VALUES (?, crypt(?, gen_salt('bf')))
@@ -375,7 +367,7 @@ public interface Queries : Transactable {
   ): IntArray
 
   /**
-   * Function-wrapped parameter: the param maps to the column despite being inside crypt().
+   * Creates an account with a hashed password.
    *
    * ```sql
    * INSERT INTO account (username, password) VALUES (?, crypt(?, gen_salt('bf')))
@@ -402,7 +394,7 @@ public interface Queries : Transactable {
   ): IntArray = createAccount(stream, username, crypt_param1, 100)
 
   /**
-   * Function-wrapped parameter: the param maps to the column despite being inside crypt().
+   * Creates an account with a hashed password.
    *
    * ```sql
    * INSERT INTO account (username, password) VALUES (?, crypt(?, gen_salt('bf')))
@@ -414,11 +406,7 @@ public interface Queries : Transactable {
   public fun createAccount(username: String, crypt_param1: String)
 
   /**
-   * Quoted column reference WITH an alias: originalName must resolve through the quoted column's
-   * own name ("Foo"), not through the alias ("bar") pgjdbc's own ResultSetMetaData.getColumnName
-   * reports instead when AS is used -- otherwise comment lookup for "Foo" fails outright, since no
-   * column is actually named "bar". A second column is selected so a data class (with @property
-   * comment lines) is generated instead of a bare scalar, making the comment lookup outcome visible.
+   * Returns a row's id and its quoted "Foo" column, aliased as bar.
    *
    * ```sql
    * SELECT id, "Foo" AS bar FROM tq WHERE id = ?
@@ -428,11 +416,7 @@ public interface Queries : Transactable {
   public fun <T : Any> getQuotedColumnWithAlias(id: Int, mapper: (id: Int, bar: String) -> T): T
 
   /**
-   * Quoted column reference WITH an alias: originalName must resolve through the quoted column's
-   * own name ("Foo"), not through the alias ("bar") pgjdbc's own ResultSetMetaData.getColumnName
-   * reports instead when AS is used -- otherwise comment lookup for "Foo" fails outright, since no
-   * column is actually named "bar". A second column is selected so a data class (with @property
-   * comment lines) is generated instead of a bare scalar, making the comment lookup outcome visible.
+   * Returns a row's id and its quoted "Foo" column, aliased as bar.
    *
    * ```sql
    * SELECT id, "Foo" AS bar FROM tq WHERE id = ?
@@ -442,8 +426,7 @@ public interface Queries : Transactable {
   public fun getQuotedColumnWithAlias(id: Int): GetQuotedColumnWithAlias = getQuotedColumnWithAlias(id, ::GetQuotedColumnWithAlias)
 
   /**
-   * Quoted column reference containing a space, with no alias. A second column is selected for the
-   * same reason as above -- so the comment lookup outcome shows up as a @property line.
+   * Returns a row's id and its quoted "My Col" column.
    *
    * ```sql
    * SELECT id, "My Col" FROM tq WHERE id = ?
@@ -453,8 +436,7 @@ public interface Queries : Transactable {
   public fun <T : Any> getQuotedColumnWithSpace(id: Int, mapper: (id: Int, `My Col`: String?) -> T): T
 
   /**
-   * Quoted column reference containing a space, with no alias. A second column is selected for the
-   * same reason as above -- so the comment lookup outcome shows up as a @property line.
+   * Returns a row's id and its quoted "My Col" column.
    *
    * ```sql
    * SELECT id, "My Col" FROM tq WHERE id = ?
@@ -464,10 +446,7 @@ public interface Queries : Transactable {
   public fun getQuotedColumnWithSpace(id: Int): GetQuotedColumnWithSpace = getQuotedColumnWithSpace(id, ::GetQuotedColumnWithSpace)
 
   /**
-   * A trailing "--" comment on the query's OWN last line, with the terminating ";" appended to that
-   * same comment line. Both columns are NOT NULL per schema, unaffected by any join, so this pins
-   * the query analyzer's own nullability probe still succeeding rather than degrading every column
-   * to nullable.
+   * Lists book ids and titles.
    *
    * ```sql
    * SELECT id, title FROM book
@@ -477,10 +456,7 @@ public interface Queries : Transactable {
   public fun <T : Any> getBooksWithTrailingComment(mapper: (id: Int, title: String) -> T): Many<T>
 
   /**
-   * A trailing "--" comment on the query's OWN last line, with the terminating ";" appended to that
-   * same comment line. Both columns are NOT NULL per schema, unaffected by any join, so this pins
-   * the query analyzer's own nullability probe still succeeding rather than degrading every column
-   * to nullable.
+   * Lists book ids and titles.
    *
    * ```sql
    * SELECT id, title FROM book

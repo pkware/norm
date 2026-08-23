@@ -1,8 +1,5 @@
 -- name: getTwoConsecutiveEmbeds :one
--- Two consecutive embeds
--- Expected indices:
---   1-2: author (id, name)
---   3-5: publisher (id, company_name, country)
+-- Returns a book's author and publisher, each embedded as a nested object.
 SELECT
   sqlc.embed(author),
   sqlc.embed(publisher)
@@ -12,12 +9,7 @@ JOIN publisher ON b.publisher_id = publisher.id
 WHERE b.id = ?;
 
 -- name: getThreeConsecutiveEmbeds :one
--- Three consecutive embeds - tests cumulative offset errors
--- Expected indices:
---   1-2: author (id, name)
---   3-5: publisher (id, company_name, country)
---   6-7: reviewer (id, reviewer_name)
--- BUG HYPOTHESIS: Second and third embeds may start at wrong indices
+-- Returns a book's author, publisher, and reviewer, each embedded as a nested object.
 SELECT
   sqlc.embed(author),
   sqlc.embed(publisher),
@@ -29,11 +21,7 @@ JOIN reviewer ON b.reviewer_id = reviewer.id
 WHERE b.id = ?;
 
 -- name: getEmbedRegularEmbed :one
--- Embed, regular, embed pattern
--- Expected indices:
---   1-2: author (id, name)
---   3: b.title
---   4-6: publisher (id, company_name, country)
+-- Returns a book's title, with its author and publisher each embedded as a nested object.
 SELECT
   sqlc.embed(author),
   b.title,

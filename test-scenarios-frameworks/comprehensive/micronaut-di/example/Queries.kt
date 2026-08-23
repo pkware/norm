@@ -109,8 +109,6 @@ public interface Queries : Transactable {
   public fun addAuthor(name: String, email: String?)
 
   /**
-   * Note: publisher is NOT queried
-   *
    * ```sql
    * SELECT * FROM person WHERE id = ?
    * ```
@@ -125,8 +123,6 @@ public interface Queries : Transactable {
   ) -> T): T
 
   /**
-   * Note: publisher is NOT queried
-   *
    * ```sql
    * SELECT * FROM person WHERE id = ?
    * ```

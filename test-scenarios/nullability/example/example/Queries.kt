@@ -43,8 +43,7 @@ public interface Queries : Transactable {
   public fun findClaimingRuns(deploymentId: UUID, runLimit: Long): Many<FindClaimingRuns> = findClaimingRuns(deploymentId, runLimit, ::FindClaimingRuns)
 
   /**
-   * Rule: ROLLUP null-extends a grouping key that is NOT NULL in the schema — name must be
-   * reported nullable even though department.name carries a NOT NULL constraint.
+   * Returns headcount per department name; name is `null` on the ROLLUP subtotal row.
    *
    * ```sql
    * SELECT name, COUNT(*) AS headcount
@@ -55,8 +54,7 @@ public interface Queries : Transactable {
   public fun <T : Any> departmentHeadcountByRollup(mapper: (name: String?, headcount: Long) -> T): Many<T>
 
   /**
-   * Rule: ROLLUP null-extends a grouping key that is NOT NULL in the schema — name must be
-   * reported nullable even though department.name carries a NOT NULL constraint.
+   * Returns headcount per department name; name is `null` on the ROLLUP subtotal row.
    *
    * ```sql
    * SELECT name, COUNT(*) AS headcount
@@ -71,8 +69,7 @@ public interface Queries : Transactable {
   public fun departmentHeadcountByRollupDynamically(): Query<DepartmentHeadcountByRollup> = departmentHeadcountByRollupDynamically(::DepartmentHeadcountByRollup)
 
   /**
-   * Rule: an expression grouping key (#236) is null-extended too — ROLLUP(lower(name)) nulls
-   * out the re-evaluated lower(name) in the target list, not just a bare grouping Var.
+   * Returns lowercased department names; name_lower is `null` on the ROLLUP subtotal row.
    *
    * ```sql
    * SELECT lower(name) AS name_lower
@@ -83,8 +80,7 @@ public interface Queries : Transactable {
   public fun <T> departmentNameLowerByRollup(mapper: (name_lower: String?) -> T): Many<T>
 
   /**
-   * Rule: an expression grouping key (#236) is null-extended too — ROLLUP(lower(name)) nulls
-   * out the re-evaluated lower(name) in the target list, not just a bare grouping Var.
+   * Returns lowercased department names; name_lower is `null` on the ROLLUP subtotal row.
    *
    * ```sql
    * SELECT lower(name) AS name_lower
@@ -99,8 +95,7 @@ public interface Queries : Transactable {
   public fun departmentNameLowerByRollupDynamically(): Query<String?> = departmentNameLowerByRollupDynamically(::inputValue)
 
   /**
-   * Rule: a NOT NULL column from the optional side of a LEFT JOIN is nullable — full_name can
-   * be null-extended when a department has no matching employee.
+   * Lists employees by department; full_name is `null` when a department has no employees.
    *
    * ```sql
    * SELECT department.id, employee.full_name
@@ -111,8 +106,7 @@ public interface Queries : Transactable {
   public fun <T : Any> employeesByDepartment(mapper: (id: Long, full_name: String?) -> T): Many<T>
 
   /**
-   * Rule: a NOT NULL column from the optional side of a LEFT JOIN is nullable — full_name can
-   * be null-extended when a department has no matching employee.
+   * Lists employees by department; full_name is `null` when a department has no employees.
    *
    * ```sql
    * SELECT department.id, employee.full_name
@@ -127,9 +121,7 @@ public interface Queries : Transactable {
   public fun employeesByDepartmentDynamically(): Query<EmployeesByDepartment> = employeesByDepartmentDynamically(::EmployeesByDepartment)
 
   /**
-   * Rule: the outer-join nullability check runs first and Norm does not narrow it — full_name
-   * is reported nullable even though the WHERE clause means no null-extended row can actually
-   * survive. This pins deliberate analyzer conservatism, not a semantic necessity.
+   * Lists employees whose full_name is not `null`; the type stays nullable, since Norm doesn't narrow across outer joins.
    *
    * ```sql
    * SELECT employee.full_name
@@ -141,9 +133,7 @@ public interface Queries : Transactable {
   public fun <T> employeesByDepartmentFiltered(mapper: (full_name: String?) -> T): Many<T>
 
   /**
-   * Rule: the outer-join nullability check runs first and Norm does not narrow it — full_name
-   * is reported nullable even though the WHERE clause means no null-extended row can actually
-   * survive. This pins deliberate analyzer conservatism, not a semantic necessity.
+   * Lists employees whose full_name is not `null`; the type stays nullable, since Norm doesn't narrow across outer joins.
    *
    * ```sql
    * SELECT employee.full_name
@@ -159,11 +149,7 @@ public interface Queries : Transactable {
   public fun employeesByDepartmentFilteredDynamically(): Query<String?> = employeesByDepartmentFilteredDynamically(::inputValue)
 
   /**
-   * Rule: WHERE narrows through a strict function chain — lower(code) = :code proves code
-   * non-null for any surviving row, even though widget.code carries no NOT NULL constraint.
-   * (Selecting only `code`, rather than every widget column, avoids the single-table
-   * "returns every column" projection that would reuse the table's schema-level type instead
-   * of this query's narrowed one — see SqlStatement.isSingleTableStarProjection.)
+   * Returns non-`null` widget codes; the WHERE clause proves code non-null even though the column allows `null`.
    *
    * ```sql
    * SELECT code
@@ -174,11 +160,7 @@ public interface Queries : Transactable {
   public fun <T : Any> widgetByLowerCode(code: String, mapper: (code: String) -> T): Many<T>
 
   /**
-   * Rule: WHERE narrows through a strict function chain — lower(code) = :code proves code
-   * non-null for any surviving row, even though widget.code carries no NOT NULL constraint.
-   * (Selecting only `code`, rather than every widget column, avoids the single-table
-   * "returns every column" projection that would reuse the table's schema-level type instead
-   * of this query's narrowed one — see SqlStatement.isSingleTableStarProjection.)
+   * Returns non-`null` widget codes; the WHERE clause proves code non-null even though the column allows `null`.
    *
    * ```sql
    * SELECT code
@@ -189,8 +171,7 @@ public interface Queries : Transactable {
   public fun widgetByLowerCode(code: String): Many<String> = widgetByLowerCode(code, ::inputValue)
 
   /**
-   * Rule: a DML-to-SELECT conversion drops the SET clause but keeps WHERE — narrowing must
-   * stay suppressed because WHERE's proof about `note` doesn't survive the SET that nulls it out.
+   * Clears an account's note; the returned note is always `null`, reflecting the value just set.
    *
    * ```sql
    * UPDATE account
@@ -202,8 +183,7 @@ public interface Queries : Transactable {
   public fun <T> clearAccountNote(mapper: (note: String?) -> T): Many<T>
 
   /**
-   * Rule: a DML-to-SELECT conversion drops the SET clause but keeps WHERE — narrowing must
-   * stay suppressed because WHERE's proof about `note` doesn't survive the SET that nulls it out.
+   * Clears an account's note; the returned note is always `null`, reflecting the value just set.
    *
    * ```sql
    * UPDATE account

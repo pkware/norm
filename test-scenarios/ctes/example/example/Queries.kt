@@ -9,9 +9,7 @@ import norm.Transactable
 
 public interface Queries : Transactable {
   /**
-   * Reproduces #202: a chained data-modifying CTE ("new_child") references an earlier
-   * data-modifying CTE ("new_parent"), and a trailing CTE ("audit_entry") is data-modifying
-   * with no RETURNING clause at all.
+   * Creates a parent, a child of that parent, and an audit entry for the child.
    *
    * ```sql
    * WITH new_parent AS (
@@ -41,9 +39,7 @@ public interface Queries : Transactable {
   ): Many<T>
 
   /**
-   * Reproduces #202: a chained data-modifying CTE ("new_child") references an earlier
-   * data-modifying CTE ("new_parent"), and a trailing CTE ("audit_entry") is data-modifying
-   * with no RETURNING clause at all.
+   * Creates a parent, a child of that parent, and an audit entry for the child.
    *
    * ```sql
    * WITH new_parent AS (
@@ -65,8 +61,7 @@ public interface Queries : Transactable {
   public fun createParentWithChildAndAuditEntry(name: String, p2: String): Many<Child> = createParentWithChildAndAuditEntry(name, p2, ::Child)
 
   /**
-   * Reproduces #203: a data-modifying CTE ("new_parent") references a CTE declared LATER
-   * in the same WITH RECURSIVE clause ("parent_name").
+   * Creates a parent whose name is seeded from another CTE in the same statement.
    *
    * ```sql
    * WITH RECURSIVE new_parent AS (
@@ -81,8 +76,7 @@ public interface Queries : Transactable {
   public fun <T : Any> createParentFromLaterCte(mapper: (id: UUID, name: String) -> T): Many<T>
 
   /**
-   * Reproduces #203: a data-modifying CTE ("new_parent") references a CTE declared LATER
-   * in the same WITH RECURSIVE clause ("parent_name").
+   * Creates a parent whose name is seeded from another CTE in the same statement.
    *
    * ```sql
    * WITH RECURSIVE new_parent AS (
@@ -101,10 +95,7 @@ public interface Queries : Transactable {
   public fun createParentFromLaterCteDynamically(): Query<CreateParentFromLaterCte> = createParentFromLaterCteDynamically(::CreateParentFromLaterCte)
 
   /**
-   * Reproduces #205: a CTE body ("parent_and_child") starts with its own nested WITH clause
-   * ("helper") and contains a LEFT JOIN, alongside a sibling data-modifying CTE ("new_parent").
-   * The nested WITH must not cause the LEFT JOIN's nullability to be lost — child_name is
-   * nullable (child may not exist for a parent), parent_name stays NOT NULL.
+   * Lists parents with their child's name, if any; child_name is `null` when a parent has no child.
    *
    * ```sql
    * WITH parent_and_child AS (
@@ -125,10 +116,7 @@ public interface Queries : Transactable {
   ) -> T): Many<T>
 
   /**
-   * Reproduces #205: a CTE body ("parent_and_child") starts with its own nested WITH clause
-   * ("helper") and contains a LEFT JOIN, alongside a sibling data-modifying CTE ("new_parent").
-   * The nested WITH must not cause the LEFT JOIN's nullability to be lost — child_name is
-   * nullable (child may not exist for a parent), parent_name stays NOT NULL.
+   * Lists parents with their child's name, if any; child_name is `null` when a parent has no child.
    *
    * ```sql
    * WITH parent_and_child AS (
@@ -153,16 +141,7 @@ public interface Queries : Transactable {
   public fun listParentsWithOptionalChildAlongsideInsertDynamically(): Query<ListParentsWithOptionalChildAlongsideInsert> = listParentsWithOptionalChildAlongsideInsertDynamically(::ListParentsWithOptionalChildAlongsideInsert)
 
   /**
-   * Reproduces #204: a data-modifying CTE ("new_parent") RETURNs a nullable column
-   * ("description") under a quoted, mixed-case alias, referenced by the outer query with the
-   * same quoting. Before the fix, PgCatalogLoader's stub emitted the alias unquoted, letting
-   * PostgreSQL fold it to lowercase and causing the outer reference to fail to resolve
-   * ("column new_parent.parentDescription does not exist") when creating the temporary view
-   * used for nullability analysis. That failure is caught and silently degrades to asserting
-   * every column of "new_parent" NOT NULL — so "parentDescription", genuinely nullable, would
-   * be wrongly reported NOT NULL. description is deliberately used (rather than "name", which
-   * is NOT NULL and would pass either way, masking the bug) so this scenario actually fails
-   * pre-fix instead of coincidentally matching.
+   * Creates a parent, returning its id and description under quoted, mixed-case aliases.
    *
    * ```sql
    * WITH new_parent AS (
@@ -174,16 +153,7 @@ public interface Queries : Transactable {
   public fun <T : Any> createParentReturningQuotedAlias(name: String, mapper: (parentId: UUID, parentDescription: String?) -> T): Many<T>
 
   /**
-   * Reproduces #204: a data-modifying CTE ("new_parent") RETURNs a nullable column
-   * ("description") under a quoted, mixed-case alias, referenced by the outer query with the
-   * same quoting. Before the fix, PgCatalogLoader's stub emitted the alias unquoted, letting
-   * PostgreSQL fold it to lowercase and causing the outer reference to fail to resolve
-   * ("column new_parent.parentDescription does not exist") when creating the temporary view
-   * used for nullability analysis. That failure is caught and silently degrades to asserting
-   * every column of "new_parent" NOT NULL — so "parentDescription", genuinely nullable, would
-   * be wrongly reported NOT NULL. description is deliberately used (rather than "name", which
-   * is NOT NULL and would pass either way, masking the bug) so this scenario actually fails
-   * pre-fix instead of coincidentally matching.
+   * Creates a parent, returning its id and description under quoted, mixed-case aliases.
    *
    * ```sql
    * WITH new_parent AS (
@@ -195,11 +165,7 @@ public interface Queries : Transactable {
   public fun createParentReturningQuotedAlias(name: String): Many<CreateParentReturningQuotedAlias> = createParentReturningQuotedAlias(name, ::CreateParentReturningQuotedAlias)
 
   /**
-   * Reproduces #226: a top-level DELETE's RETURNING list computes an expression
-   * ("UPPER(description)") over a nullable column. Before the fix,
-   * PgCatalogLoader.analyzeUnconvertibleDml unconditionally treated
-   * ResultSetMetaData.columnNullableUnknown as NOT NULL for this shape, wrongly reporting
-   * description_upper NOT NULL even though description has no NOT NULL constraint.
+   * Deletes a parent, returning its name and uppercased description.
    *
    * ```sql
    * DELETE FROM parent WHERE id = ? RETURNING id, name, UPPER(description) AS description_upper
@@ -212,11 +178,7 @@ public interface Queries : Transactable {
   ) -> T): Many<T>
 
   /**
-   * Reproduces #226: a top-level DELETE's RETURNING list computes an expression
-   * ("UPPER(description)") over a nullable column. Before the fix,
-   * PgCatalogLoader.analyzeUnconvertibleDml unconditionally treated
-   * ResultSetMetaData.columnNullableUnknown as NOT NULL for this shape, wrongly reporting
-   * description_upper NOT NULL even though description has no NOT NULL constraint.
+   * Deletes a parent, returning its name and uppercased description.
    *
    * ```sql
    * DELETE FROM parent WHERE id = ? RETURNING id, name, UPPER(description) AS description_upper
@@ -225,9 +187,7 @@ public interface Queries : Transactable {
   public fun deleteParentReturningDescriptionUpper(id: UUID): Many<DeleteParentReturningDescriptionUpper> = deleteParentReturningDescriptionUpper(id, ::DeleteParentReturningDescriptionUpper)
 
   /**
-   * CTE-wrapped form of the same RETURNING expression as the query above, demonstrating that the
-   * top-level probe path (#226) and the existing CTE-body stub path agree on description_upper's
-   * nullability.
+   * CTE-wrapped form of deleteParentReturningDescriptionUpper above.
    *
    * ```sql
    * WITH deleted_parent AS (
@@ -243,9 +203,7 @@ public interface Queries : Transactable {
   ) -> T): Many<T>
 
   /**
-   * CTE-wrapped form of the same RETURNING expression as the query above, demonstrating that the
-   * top-level probe path (#226) and the existing CTE-body stub path agree on description_upper's
-   * nullability.
+   * CTE-wrapped form of deleteParentReturningDescriptionUpper above.
    *
    * ```sql
    * WITH deleted_parent AS (
@@ -257,12 +215,7 @@ public interface Queries : Transactable {
   public fun deleteParentReturningDescriptionUpperViaCte(id: UUID): Many<DeleteParentReturningDescriptionUpperViaCte> = deleteParentReturningDescriptionUpperViaCte(id, ::DeleteParentReturningDescriptionUpperViaCte)
 
   /**
-   * Reproduces #228: an UPDATE's SET clause assigns a non-null literal to a nullable column
-   * ("description"), and RETURNING computes an expression over that same column
-   * ("UPPER(description)"). Before the fix, PgCatalogLoader.probeUnknownColumnNullability
-   * evaluated the RETURNING expression against the bare, pre-assignment target relation, so it
-   * had no way to see the SET-assigned value and wrongly reported description_upper nullable —
-   * even though "description" can only ever be the literal 'UPDATED' in this result.
+   * Updates a parent's description to a fixed value, returning its name and uppercased description.
    *
    * ```sql
    * UPDATE parent SET description = 'UPDATED' WHERE id = ? RETURNING id, name, UPPER(description) AS description_upper
@@ -275,12 +228,7 @@ public interface Queries : Transactable {
   ) -> T): Many<T>
 
   /**
-   * Reproduces #228: an UPDATE's SET clause assigns a non-null literal to a nullable column
-   * ("description"), and RETURNING computes an expression over that same column
-   * ("UPPER(description)"). Before the fix, PgCatalogLoader.probeUnknownColumnNullability
-   * evaluated the RETURNING expression against the bare, pre-assignment target relation, so it
-   * had no way to see the SET-assigned value and wrongly reported description_upper nullable —
-   * even though "description" can only ever be the literal 'UPDATED' in this result.
+   * Updates a parent's description to a fixed value, returning its name and uppercased description.
    *
    * ```sql
    * UPDATE parent SET description = 'UPDATED' WHERE id = ? RETURNING id, name, UPPER(description) AS description_upper
@@ -289,12 +237,7 @@ public interface Queries : Transactable {
   public fun updateParentReturningDescriptionUpper(id: UUID): Many<UpdateParentReturningDescriptionUpper> = updateParentReturningDescriptionUpper(id, ::UpdateParentReturningDescriptionUpper)
 
   /**
-   * Quoted-alias variant of deleteParentReturningDescriptionUpperViaCte above: the CTE body's own
-   * RETURNING alias is quoted, mixed-case ("descriptionUpper" instead of description_upper), and
-   * the outer reference to it is the same quoted, mixed-case form. Demonstrates that a quoted
-   * reference into a CTE's own expression-derived output resolves the underlying SQL expression
-   * through resolveCteOutputExpression, the same way the unquoted sibling query already does,
-   * rather than being classified a computed expression and echoing the quoted outer name back.
+   * Quoted-alias variant of deleteParentReturningDescriptionUpperViaCte above.
    *
    * ```sql
    * WITH deleted_parent AS (
@@ -310,12 +253,7 @@ public interface Queries : Transactable {
   ) -> T): Many<T>
 
   /**
-   * Quoted-alias variant of deleteParentReturningDescriptionUpperViaCte above: the CTE body's own
-   * RETURNING alias is quoted, mixed-case ("descriptionUpper" instead of description_upper), and
-   * the outer reference to it is the same quoted, mixed-case form. Demonstrates that a quoted
-   * reference into a CTE's own expression-derived output resolves the underlying SQL expression
-   * through resolveCteOutputExpression, the same way the unquoted sibling query already does,
-   * rather than being classified a computed expression and echoing the quoted outer name back.
+   * Quoted-alias variant of deleteParentReturningDescriptionUpperViaCte above.
    *
    * ```sql
    * WITH deleted_parent AS (
