@@ -872,3 +872,24 @@ private fun PropertySource.sourceReference(): String? = when {
   expression.isNotEmpty() -> "`$expression`"
   else -> null
 }
+
+/**
+ * Collapses the cosmetic whitespace [stripComments]' own single-space substitution can leave
+ * behind in an expression about to be embedded VERBATIM in generated KDoc — a comment sitting
+ * directly after an opening parenthesis or before a closing one (`UPPER(/* x */a)` strips to
+ * `UPPER( a)`) reads oddly there, even though inserting that space is exactly right for
+ * [stripComments]' OWN purpose of never fusing two tokens a comment used to separate.
+ *
+ * Applied ONLY at the point [resolveCteOutputExpression] returns an expression for KDoc, never
+ * inside [stripComments] itself: [stripComments]' OTHER caller
+ * ([mainQueryFromIsExactlyThisCte]'s own `fromText`) needs the inserted space PRESERVED, to keep
+ * the token boundaries that caller's own exact-text comparison depends on intact.
+ *
+ * Collapses any run of whitespace to a single space, then removes a single space immediately
+ * after `(` or immediately before `)` — whitespace directly adjacent to a parenthesis is never
+ * semantically significant in SQL, so removing it here can never change what the expression means.
+ */
+internal fun collapseCosmeticWhitespace(text: String): String {
+  val singleSpaced = text.trim().replace(Regex("\\s+"), " ")
+  return singleSpaced.replace("( ", "(").replace(" )", ")")
+}
