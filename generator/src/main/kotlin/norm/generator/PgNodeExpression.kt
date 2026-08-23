@@ -33,7 +33,29 @@ internal sealed interface PgNodeExpression {
     val returningType: Int = 0,
   ) : PgNodeExpression
 
-  data class Const(val isNull: Boolean) : PgNodeExpression
+  /**
+   * @property location the byte offset into the SQL text this `CONST` was parsed from (`ev_action`
+   *   or `prosqlbody`, whichever produced it), or `-1` when PostgreSQL did not record one.
+   *   Verified live: PostgreSQL 16/17 record a real offset for an ordinary literal; PostgreSQL 18
+   *   reports `-1` for EVERY `CONST` in this position, on `ev_action` AND `prosqlbody` alike (not
+   *   a `prosqlbody`-specific regression) — a caller comparing this against a known text range to
+   *   decide whether a value is caller-suppliable (see [PgCatalogLoader]'s per-assignment
+   *   parameter-trust use) must therefore treat `-1` as "cannot rule out", never as "safe".
+   *
+   *   Deliberately excluded from [equals]/[hashCode]: two syntactically-identical `CONST`s parsed
+   *   from different source positions (e.g. `concat(a, '-')` written twice in the same `SELECT`
+   *   list) must remain STRUCTURALLY EQUAL for [NodeTreeNullabilityAnalyzer]'s grouping-set
+   *   duplicate-key detection, which compares parsed expressions with `==` — including `location`
+   *   in that comparison broke it (two textually-identical `'-'` literals at different offsets
+   *   stopped being recognized as the same key). A plain (non-`data`) class with manually written
+   *   [equals]/[hashCode]/[toString] based on [isNull] alone is used for exactly this reason — a
+   *   `data class` cannot have a constructor parameter excluded from its generated equality.
+   */
+  class Const(val isNull: Boolean, val location: Int = -1) : PgNodeExpression {
+    override fun equals(other: Any?): Boolean = other is Const && other.isNull == isNull
+    override fun hashCode(): Int = isNull.hashCode()
+    override fun toString(): String = "Const(isNull=$isNull)"
+  }
 
   /**
    * @property isVariadic `true` when the call uses `VARIADIC` (e.g. `concat(VARIADIC arr)`) —

@@ -62,29 +62,12 @@ class ProsqlbodyParityScenarioTest {
     val loader = PgCatalogLoader(connection)
     for (parsedQuery in parsedQueries) {
       val prosqlbodyResult = loader.queryColumnNullabilityViaProsqlbody(parsedQuery.sql) ?: continue
-      val expected = KNOWN_ACCEPTED_DIFFERENCES[parsedQuery.name] ?: loader.queryColumnNullability(parsedQuery.sql)
+      val expected = knownAcceptedDifference(parsedQuery.name) ?: loader.queryColumnNullability(parsedQuery.sql)
       assertThat(prosqlbodyResult, "query '${parsedQuery.name}' in $scenarioDirectory").isEqualTo(expected)
     }
   }
 
   companion object {
-    /**
-     * Documented, individually-verified exceptions to the strict parity assertion above, keyed by
-     * [ParsedQuery.name] — see [QueryAnalysisTest]'s identical `knownProsqlbodyImprovement`
-     * mechanism for the general idea. Every entry here is the OPPOSITE direction from that one:
-     * `updateParentReturningDescriptionUpper`'s `WHERE id = ?` disables
-     * [PgCatalogLoader.queryColumnNullabilityViaProsqlbody]'s `:targetList`-substitution for the
-     * WHOLE statement (see that method's `trustAssignedExpressions` KDoc — the gate is
-     * per-statement, not per-assignment, because there is no structural way from here to tell
-     * WHICH assignment a parameter feeds), even though the assignment `description_upper` actually
-     * depends on (`description = 'UPDATED'`) is a plain literal, unrelated to the parameter. This
-     * makes prosqlbody's answer here SAFE but LESS precise than production's (nullable vs. the
-     * true, verified-live NOT NULL) — the accepted cost of a whole-statement safety gate, not a bug.
-     */
-    private val KNOWN_ACCEPTED_DIFFERENCES: Map<String, List<Boolean>> = mapOf(
-      "updateParentReturningDescriptionUpper" to listOf(false, false, true),
-    )
-
     // Embed scenarios use sqlc.embed(), a marker function with no real pg_proc definition — the
     // SQL never prepares against a live connection at all, on EITHER path, the same reason
     // GenerateCodeTest.EMBED_SCENARIOS excludes them from its own scenario list.
@@ -127,5 +110,25 @@ class ProsqlbodyParityScenarioTest {
       .filter(Files::isDirectory)
       .filter { it.fileName.toString() !in EMBED_SCENARIOS }
       .sorted()
+
+    /**
+     * Documented, individually-verified exception to the strict parity assertion above for
+     * `updateParentReturningDescriptionUpper` (`WHERE id = ?`), ONLY on PostgreSQL 17+ — see
+     * [QueryAnalysisTest]'s identical `knownProsqlbodyImprovement` mechanism for the general idea.
+     * This is the OPPOSITE direction from that one: [PgCatalogLoader]'s per-assignment parameter
+     * trust (see `queryColumnNullabilityViaProsqlbody`'s KDoc) recovers full precision here on
+     * PostgreSQL 16, where a `CONST`'s `:location` is a real, usable byte offset — verified live,
+     * this query now resolves EXACTLY like production (no override needed) there. PostgreSQL 17
+     * and 18 report `:location -1` for EVERY `CONST` in this position (verified live, identically
+     * on `ev_action` and `prosqlbody` — not a `prosqlbody`-specific regression), which the
+     * per-assignment check must treat as "cannot rule out being a parameter", degrading it back to
+     * the same whole-statement caution a purely boolean gate would apply: `description_upper`
+     * (truly depending only on the literal `description = 'UPDATED'`, unrelated to the `?` in
+     * `WHERE id = ?`) stays nullable rather than the verified-live-correct NOT NULL.
+     */
+    private fun knownAcceptedDifference(queryName: String): List<Boolean>? {
+      if (queryName != "updateParentReturningDescriptionUpper") return null
+      return if (pgVersion.substringBefore('.').toInt() >= 17) listOf(false, false, true) else null
+    }
   }
 }

@@ -804,6 +804,76 @@ internal class NodeTreeNullabilityAnalyzer(
     }
 
     /**
+     * `true` if [expression] contains a `Const` [isUnsafeLocation] flags as possibly
+     * caller-suppliable rather than genuinely written in the query's own text.
+     *
+     * Used by [PgCatalogLoader]'s PER-ASSIGNMENT parameter-trust decision (see
+     * `queryColumnNullabilityViaProsqlbody`'s KDoc): a sentinel-substituted `CONST` is
+     * byte-identical, in the parsed tree, to a hand-written literal, so the ONLY way to tell them
+     * apart is [PgNodeExpression.Const.location] — a byte offset into the exact SQL text sent to
+     * `BEGIN ATOMIC`/`CREATE VIEW` — checked by the caller against the character ranges its own
+     * sentinel substitution inserted. [isUnsafeLocation] must itself treat an unknown location
+     * (`-1`, which PostgreSQL 18 reports for EVERY `CONST` in this position — see
+     * [PgNodeExpression.Const.location]'s KDoc) as unsafe, never as proof of safety.
+     *
+     * Exhausts every [PgNodeExpression] variant explicitly, the same reasoning
+     * [containsRiskyMergeVar]'s KDoc gives for doing the same: a skipped node type here would mean
+     * a risky `Const` going undetected, not merely a missed optimization.
+     *
+     * @param depth remaining recursion budget; exhausting it answers `true` (unsafe) rather than
+     *   `false`, the same fail-toward-conservative default every depth guard in this file uses
+     */
+    internal fun containsUnsafeConst(
+      expression: PgNodeExpression,
+      isUnsafeLocation: (Int) -> Boolean,
+      depth: Int = MAX_EXPRESSION_DEPTH,
+    ): Boolean {
+      if (depth <= 0) return true
+      val recurse = { expr: PgNodeExpression -> containsUnsafeConst(expr, isUnsafeLocation, depth - 1) }
+      return when (expression) {
+        is PgNodeExpression.Const -> isUnsafeLocation(expression.location)
+
+        is PgNodeExpression.Var,
+        is PgNodeExpression.Aggref,
+        is PgNodeExpression.GroupingFunc,
+        is PgNodeExpression.SqlValueFunction,
+        is PgNodeExpression.NextValExpr,
+        is PgNodeExpression.JsonExpr,
+        is PgNodeExpression.Unknown,
+        -> false
+
+        is PgNodeExpression.FuncExpr -> expression.arguments.any(recurse)
+        is PgNodeExpression.OpExpr -> expression.arguments.any(recurse)
+        is PgNodeExpression.ScalarArrayOpExpr -> expression.arguments.any(recurse)
+        is PgNodeExpression.CoalesceExpr -> expression.arguments.any(recurse)
+        is PgNodeExpression.NullIfExpr -> expression.arguments.any(recurse)
+        is PgNodeExpression.MinMaxExpr -> expression.arguments.any(recurse)
+        is PgNodeExpression.WindowFunc -> expression.arguments.any(recurse)
+        is PgNodeExpression.SubLink -> expression.outerOperand?.let(recurse) == true
+        is PgNodeExpression.CaseExpr ->
+          expression.resultExpressions.any(recurse) ||
+            listOfNotNull(expression.defaultResult, expression.testExpression).any(recurse) ||
+            expression.whenConditions.any(recurse)
+
+        is PgNodeExpression.BoolExpr -> expression.arguments.any(recurse)
+        is PgNodeExpression.RelabelType -> recurse(expression.argument)
+        is PgNodeExpression.CoerceViaIo -> recurse(expression.argument)
+        is PgNodeExpression.ArrayCoerceExpr -> recurse(expression.argument)
+        is PgNodeExpression.CollateExpr -> recurse(expression.argument)
+        is PgNodeExpression.CoerceToDomain -> recurse(expression.argument)
+        is PgNodeExpression.NullTest -> recurse(expression.argument)
+        is PgNodeExpression.BooleanTest -> recurse(expression.argument)
+        is PgNodeExpression.DistinctExpr -> expression.arguments.any(recurse)
+        is PgNodeExpression.ArrayExpr -> expression.elements.any(recurse)
+        is PgNodeExpression.RowExpr -> expression.arguments.any(recurse)
+        is PgNodeExpression.FieldSelect -> recurse(expression.argument)
+        is PgNodeExpression.JsonIsPredicate -> recurse(expression.argument)
+        is PgNodeExpression.JsonConstructorExpr -> expression.arguments.any(recurse)
+        is PgNodeExpression.XmlExpr -> expression.arguments.any(recurse)
+      }
+    }
+
+    /**
      * Collects `Var`s proven non-null by [expression] when [expression] is a top-level `WHERE`
      * conjunct (i.e. it must evaluate to TRUE for the row to survive).
      */

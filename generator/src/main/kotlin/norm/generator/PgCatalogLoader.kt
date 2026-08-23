@@ -949,6 +949,31 @@ internal class PgCatalogLoader(private val connection: Connection) {
   }
 
   /**
+   * [buildViewSqlWithSentinels]'s counterpart for
+   * [queryColumnNullabilityViaProsqlbody]'s per-assignment parameter-trust decision: identical
+   * substitution, but ALSO returns the substituted SQL's own character ranges each sentinel
+   * occupies — see [replaceParameterPlaceholdersWithSentinelsTracked]'s KDoc.
+   *
+   * @return `null` if [sql] contains `?` but parameter metadata cannot be obtained (caller falls
+   *   back to NULL replacement, same as [buildViewSqlWithSentinels]); `sql` paired with an EMPTY
+   *   range list if [sql] has no `?` at all
+   */
+  private fun buildViewSqlWithSentinelsTracked(sql: String): Pair<String, List<IntRange>>? {
+    if ('?' !in sql) return sql to emptyList()
+    return try {
+      val sentinels = connection.prepareStatement(sql).use { preparedStatement ->
+        val parameterMetaData = preparedStatement.parameterMetaData
+        (1..parameterMetaData.parameterCount).map { index ->
+          nonNullSentinel(parameterMetaData.getParameterTypeName(index))
+        }
+      }
+      replaceParameterPlaceholdersWithSentinelsTracked(sql, sentinels)
+    } catch (_: SQLException) {
+      null
+    }
+  }
+
+  /**
    * Creates a temporary view from [viewSql], reads its node tree from `pg_rewrite`,
    * and returns per-column nullability using full expression analysis.
    *
@@ -1064,14 +1089,23 @@ internal class PgCatalogLoader(private val connection: Connection) {
   }
 
   internal fun queryColumnNullabilityViaProsqlbody(@Language("PostgreSQL") sql: String): List<Boolean>? {
-    val substitutedSql = buildViewSqlWithSentinels(sql) ?: replaceParameterPlaceholders(sql)
+    val (substitutedSql, sentinelRanges) = buildViewSqlWithSentinelsTracked(sql)
+      ?: (replaceParameterPlaceholders(sql) to emptyList())
     val functionName = "norm_nullability_${UUID.randomUUID().toString().replace("-", "")}"
+    // A CONST's :location is a byte offset into THIS EXACT statement text (verified live: sending
+    // the CREATE FUNCTION as its OWN isolated protocol message — exactly what connection.execute
+    // below does — makes :location relative to this string alone, not to any earlier statement on
+    // the same connection/session, unlike a psql -c argument bundling multiple ;-separated
+    // statements into one message). sentinelRanges is relative to substitutedSql alone (position 0
+    // = its own first character), so every range must be shifted by this prefix's length before
+    // being compared against a real :location value.
+    val functionPrefix = "CREATE FUNCTION pg_temp.$functionName() RETURNS SETOF record LANGUAGE sql BEGIN ATOMIC "
+    val adjustedSentinelRanges = sentinelRanges.map { range ->
+      (range.first + functionPrefix.length)..(range.last + functionPrefix.length)
+    }
     return try {
       connection.createStatement().use { stmt ->
-        stmt.execute(
-          "CREATE FUNCTION pg_temp.$functionName() RETURNS SETOF record LANGUAGE sql " +
-            "BEGIN ATOMIC $substitutedSql; END",
-        )
+        stmt.execute("$functionPrefix$substitutedSql; END")
       }
       try {
         val nodeTree = connection.createStatement().use { stmt ->
@@ -1104,13 +1138,11 @@ internal class PgCatalogLoader(private val connection: Connection) {
         if (hasUnsafeMergeReturning(nodeTree)) {
           return null
         }
-        // '?' in sql, not substitutedSql: a sentinel-substituted CONST is byte-identical to a
-        // hand-written literal once embedded in the SQL text — the parsed tree retains no memory
-        // of which one it was. trustAssignedExpressions=false whenever the ORIGINAL sql had ANY
-        // parameter blocks analyzeNodeTree's :targetList-to-:returningList substitution (see its
-        // KDoc) for the WHOLE statement, not just the specific assignment a parameter feeds,
-        // because there is no structural way from here to tell which assignment(s) it was.
-        analyzeNodeTree(nodeTree, applyQualNarrowing = true, trustAssignedExpressions = '?' !in sql)
+        // sentinelRanges is empty whenever sql had no '?' at all — the overwhelmingly common case
+        // — in which case analyzeNodeTree trusts every :targetList assignment unconditionally
+        // (see its unsafeConstLocationRanges parameter's KDoc for the per-assignment check this
+        // enables when it is NOT empty).
+        analyzeNodeTree(nodeTree, applyQualNarrowing = true, unsafeConstLocationRanges = adjustedSentinelRanges)
       } finally {
         connection.createStatement().use { stmt ->
           stmt.execute("DROP FUNCTION IF EXISTS pg_temp.$functionName()")
@@ -1138,10 +1170,25 @@ internal class PgCatalogLoader(private val connection: Connection) {
    *
    * @param applyQualNarrowing See [analyzeViaTemporaryView]'s parameter of the same name.
    */
+  /**
+   * @param unsafeConstLocationRanges The character ranges, within [nodeTree]'s own source SQL
+   *   text, that a caller-supplied sentinel occupies — see
+   *   [replaceParameterPlaceholdersWithSentinelsTracked]'s KDoc. Gates the `:targetList`-to-
+   *   `:returningList` substitution described below on a PER-ASSIGNMENT basis: a specific
+   *   `:targetList` entry is trusted only when [NodeTreeNullabilityAnalyzer.containsUnsafeConst]
+   *   finds no `Const` whose `:location` falls inside one of these ranges (a sentinel-substituted
+   *   value — potentially `NULL` at runtime) OR is `-1` (unknown — cannot rule out being one,
+   *   which PostgreSQL 18 reports for EVERY `Const` in this position regardless of the range list,
+   *   degrading this to the SAME whole-statement caution the previous, purely boolean gate applied
+   *   whenever this parameter is non-empty; verified live that this is NOT a `prosqlbody`-specific
+   *   regression — `CREATE VIEW`'s own `ev_action` reports the identical `-1` on PostgreSQL 18).
+   *   Empty — the overwhelmingly common case, whenever the statement has no parameter at all —
+   *   trusts every assignment unconditionally, regardless of PostgreSQL version.
+   */
   private fun analyzeNodeTree(
     nodeTree: String,
     applyQualNarrowing: Boolean,
-    trustAssignedExpressions: Boolean = true,
+    unsafeConstLocationRanges: List<IntRange> = emptyList(),
   ): List<Boolean> {
     val rangeTable = nodeTreeParser.parseRangeTable(nodeTree) // varno → relid (base tables only)
     // GROUP BY queries use an *GROUP* RTE (rtekind 9) whose target list VARs reference the group
@@ -1176,16 +1223,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
     // constraint, which says nothing about what THIS statement is about to write. See
     // targetListByResno's use below.
     val resultRelationVarno = nodeTreeParser.parseResultRelation(nodeTree)
-    val targetListByResno = if (resultRelationVarno == 0 || !trustAssignedExpressions) {
-      // !trustAssignedExpressions means the ORIGINAL sql (before sentinel substitution) contained
-      // a `?` parameter placeholder somewhere — see queryColumnNullabilityViaProsqlbody's call
-      // site KDoc. A sentinel-substituted CONST is byte-identical, in the parsed tree, to a
-      // hand-written literal: there is no structural signal left to tell "the caller supplied
-      // this at runtime, and could supply NULL" from "the query text itself guarantees this value"
-      // for any SPECIFIC assignment, so trusting :targetList at all is unsafe for the WHOLE
-      // statement once ANY parameter exists anywhere in it. Verified live: `INSERT INTO t(name)
-      // VALUES (?) RETURNING name` reports NOT NULL if the sentinel substitution is trusted here,
-      // even though the caller can bind an actual `NULL` for that exact parameter.
+    val targetListByResno = if (resultRelationVarno == 0) {
       emptyMap()
     } else {
       // rangeTable[resultRelationVarno] is only present for an ordinary base-table target (rtekind
@@ -1194,7 +1232,25 @@ internal class PgCatalogLoader(private val connection: Connection) {
       // than trusting an assignment against a target this class cannot even identify.
       val targetRelid = rangeTable[resultRelationVarno]
       if (targetRelid != null && isSubstitutionSafeForRelation(targetRelid)) {
-        nodeTreeParser.parseTargetList(nodeTree).associate { it.resultNumber to it.expression }
+        nodeTreeParser.parseTargetList(nodeTree)
+          // A specific assignment is untrustworthy, on its own, whenever its expression reaches a
+          // Const the caller could have supplied — see unsafeConstLocationRanges' KDoc. Filtered
+          // OUT here (rather than passed through and trusted) — excluding it from the map falls
+          // back to that column's ordinary catalog/qual/subquery/CTE resolution, exactly as if the
+          // statement never assigned it at all, which is always the safe direction. Skipped
+          // entirely when unsafeConstLocationRanges is empty (no parameter anywhere in the
+          // statement), the overwhelmingly common case, so every assignment stays trusted there
+          // regardless of PostgreSQL version.
+          .filterNot { entry ->
+            unsafeConstLocationRanges.isNotEmpty() &&
+              NodeTreeNullabilityAnalyzer.containsUnsafeConst(
+                expression = entry.expression,
+                isUnsafeLocation = { location ->
+                  location == -1 || unsafeConstLocationRanges.any { range -> location in range }
+                },
+              )
+          }
+          .associate { it.resultNumber to it.expression }
       } else {
         emptyMap()
       }

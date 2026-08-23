@@ -3845,6 +3845,91 @@ internal fun replaceParameterPlaceholdersWithSentinels(sql: String, sentinels: L
 }
 
 /**
+ * Identical substitution to [replaceParameterPlaceholdersWithSentinels], but ALSO returns the
+ * OUTPUT string's character range each inserted sentinel occupies.
+ *
+ * A sentinel-substituted `CONST` is byte-identical, in a `pg_node_tree`, to a hand-written
+ * literal — nothing in the parsed tree says "this came from a caller-suppliable parameter, not
+ * the query's own text". [PgCatalogLoader]'s per-assignment trust decision (see
+ * `queryColumnNullabilityViaProsqlbody`'s KDoc) recovers that distinction from OUTSIDE the tree
+ * instead: a `CONST` node's own `:location` field is a byte offset into this SAME output string,
+ * so checking whether it falls inside one of the ranges returned here tells the caller whether
+ * THAT SPECIFIC value was caller-supplied.
+ *
+ * @param sql The SQL text with `?` parameter placeholders.
+ * @param sentinels Non-null sentinel expressions in parameter order (e.g., `"0::int4"`, `"''::text"`).
+ * @return The substituted SQL (identical to [replaceParameterPlaceholdersWithSentinels]'s own
+ *   result for the same arguments) paired with one [IntRange] per inserted sentinel, in the same
+ *   order sentinels are consumed.
+ */
+internal fun replaceParameterPlaceholdersWithSentinelsTracked(
+  sql: String,
+  sentinels: List<String>,
+): Pair<String, List<IntRange>> {
+  if ('?' !in sql) return sql to emptyList()
+  val result = StringBuilder(sql.length + sentinels.sumOf { it.length })
+  val sentinelRanges = mutableListOf<IntRange>()
+  var characterIndex = 0
+  var sentinelIndex = 0
+  while (characterIndex < sql.length) {
+    when {
+      sql[characterIndex] == '\'' -> {
+        result.append('\'')
+        characterIndex++
+        while (characterIndex < sql.length) {
+          if (sql[characterIndex] == '\'') {
+            result.append('\'')
+            characterIndex++
+            if (characterIndex < sql.length && sql[characterIndex] == '\'') {
+              result.append('\'')
+              characterIndex++
+            } else {
+              break
+            }
+          } else {
+            result.append(sql[characterIndex])
+            characterIndex++
+          }
+        }
+      }
+      sql[characterIndex] == '-' && characterIndex + 1 < sql.length && sql[characterIndex + 1] == '-' -> {
+        val endOfLine = sql.indexOf('\n', characterIndex)
+        if (endOfLine < 0) {
+          result.append(sql, characterIndex, sql.length)
+          characterIndex = sql.length
+        } else {
+          result.append(sql, characterIndex, endOfLine + 1)
+          characterIndex = endOfLine + 1
+        }
+      }
+      sql[characterIndex] == '/' && characterIndex + 1 < sql.length && sql[characterIndex + 1] == '*' -> {
+        val close = sql.indexOf("*/", characterIndex + 2)
+        if (close < 0) {
+          result.append(sql, characterIndex, sql.length)
+          characterIndex = sql.length
+        } else {
+          result.append(sql, characterIndex, close + 2)
+          characterIndex = close + 2
+        }
+      }
+      sql[characterIndex] == '?' -> {
+        val sentinelText = sentinels.getOrElse(sentinelIndex) { "NULL" }
+        val sentinelStart = result.length
+        result.append(sentinelText)
+        sentinelRanges.add(sentinelStart until result.length)
+        sentinelIndex++
+        characterIndex++
+      }
+      else -> {
+        result.append(sql[characterIndex])
+        characterIndex++
+      }
+    }
+  }
+  return result.toString() to sentinelRanges
+}
+
+/**
  * Returns a non-null SQL literal expression for the given PostgreSQL type name.
  *
  * Used to replace `?` parameter placeholders with typed non-null constants when creating

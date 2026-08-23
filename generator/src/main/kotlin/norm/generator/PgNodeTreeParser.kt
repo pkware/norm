@@ -528,7 +528,8 @@ internal class PgNodeTreeParser {
     // malformed/absent read degrades to, and it must fail toward nullable, never toward a confidently
     // wrong NOT NULL.
     val isNull = extractBoolField(text, ":constisnull") ?: true
-    return PgNodeExpression.Const(isNull = isNull)
+    val location = extractIntField(text, ":location") ?: -1
+    return PgNodeExpression.Const(isNull = isNull, location = location)
   }
 
   /**
