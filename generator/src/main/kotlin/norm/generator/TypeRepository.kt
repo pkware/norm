@@ -297,8 +297,8 @@ internal class TypeRepository(
         val isComputedExpression = column.table == null && selectItem != null && selectItem.columnName == null
         // A plain reference into a CTE's output (column.table == null, but the outer item IS a
         // simple column reference) can still be expression-derived one level down, inside the
-        // CTE body -- see resolveCteOutputExpression's KDoc for issue #229's shape and every case
-        // it deliberately punts on rather than guessing.
+        // CTE body -- see resolveCteOutputExpression's KDoc for the shape it resolves and every
+        // case it deliberately punts on rather than guessing.
         val cteExpression = if (!isComputedExpression && column.table == null && selectItem?.columnName != null) {
           resolveCteOutputExpression(queryText, selectItem, reservedWords)
         } else {
