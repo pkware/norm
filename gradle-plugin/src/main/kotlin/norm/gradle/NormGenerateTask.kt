@@ -133,6 +133,7 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
           analyzedQueries,
           database.packageName.get(),
           database.frameworks.get(),
+          analyzer.fetchReservedWords(),
           database.typeMappings.get(),
         )
 

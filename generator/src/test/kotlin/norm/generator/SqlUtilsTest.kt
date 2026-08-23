@@ -2334,7 +2334,7 @@ class SqlUtilsTest {
       """.trimIndent()
       val selectItem = SelectItem(expression = "user", columnName = "user", tableName = null)
 
-      assertThat(resolveCteOutputExpression(sql, selectItem)).isNull()
+      assertThat(resolveCteOutputExpression(sql, selectItem, reservedWords = setOf("user"))).isNull()
     }
 
     @Test
@@ -2345,7 +2345,7 @@ class SqlUtilsTest {
       """.trimIndent()
       val selectItem = SelectItem(expression = "current_date", columnName = "current_date", tableName = null)
 
-      assertThat(resolveCteOutputExpression(sql, selectItem)).isNull()
+      assertThat(resolveCteOutputExpression(sql, selectItem, reservedWords = setOf("current_date"))).isNull()
     }
 
     @Test
@@ -2356,7 +2356,7 @@ class SqlUtilsTest {
       """.trimIndent()
       val selectItem = SelectItem(expression = "CURRENT_USER", columnName = "CURRENT_USER", tableName = null)
 
-      assertThat(resolveCteOutputExpression(sql, selectItem)).isNull()
+      assertThat(resolveCteOutputExpression(sql, selectItem, reservedWords = setOf("current_user"))).isNull()
     }
 
     // No test for a quoted `"user"` outer reference resolving: parseColumnReference (via
@@ -2376,7 +2376,7 @@ class SqlUtilsTest {
       """.trimIndent()
       val selectItem = SelectItem(expression = "system_user", columnName = "system_user", tableName = null)
 
-      assertThat(resolveCteOutputExpression(sql, selectItem)).isNull()
+      assertThat(resolveCteOutputExpression(sql, selectItem, reservedWords = setOf("system_user"))).isNull()
     }
 
     @Test
@@ -2387,7 +2387,7 @@ class SqlUtilsTest {
       """.trimIndent()
       val selectItem = SelectItem(expression = "SYSTEM_USER", columnName = "SYSTEM_USER", tableName = null)
 
-      assertThat(resolveCteOutputExpression(sql, selectItem)).isNull()
+      assertThat(resolveCteOutputExpression(sql, selectItem, reservedWords = setOf("system_user"))).isNull()
     }
 
     @Test
@@ -2398,7 +2398,7 @@ class SqlUtilsTest {
       """.trimIndent()
       val selectItem = SelectItem(expression = "true", columnName = "true", tableName = null)
 
-      assertThat(resolveCteOutputExpression(sql, selectItem)).isNull()
+      assertThat(resolveCteOutputExpression(sql, selectItem, reservedWords = setOf("true"))).isNull()
     }
 
     @Test
@@ -2409,7 +2409,7 @@ class SqlUtilsTest {
       """.trimIndent()
       val selectItem = SelectItem(expression = "false", columnName = "false", tableName = null)
 
-      assertThat(resolveCteOutputExpression(sql, selectItem)).isNull()
+      assertThat(resolveCteOutputExpression(sql, selectItem, reservedWords = setOf("false"))).isNull()
     }
 
     @Test
@@ -2420,22 +2420,23 @@ class SqlUtilsTest {
       """.trimIndent()
       val selectItem = SelectItem(expression = "null", columnName = "null", tableName = null)
 
-      assertThat(resolveCteOutputExpression(sql, selectItem)).isNull()
+      assertThat(resolveCteOutputExpression(sql, selectItem, reservedWords = setOf("null"))).isNull()
     }
 
     @Test
     fun `an unquoted bare reference to the non-niladic reserved word select returns null`() {
       // "select" can never appear as a bare, unaliased select-list item in real PostgreSQL (a
       // syntax error), so this exact query could never reach this function in practice -- but the
-      // guard covers the whole reserved set for free, per PG_RESERVED_KEYWORDS' own KDoc, and
-      // must not be fooled by an alias/reference that merely LOOKS like this shape.
+      // guard covers the whole reserved set for free, per resolveCteOutputExpression's own
+      // reservedWords parameter doc, and must not be fooled by an alias/reference that merely
+      // LOOKS like this shape.
       val sql = """
         WITH c AS (SELECT UPPER(a) AS "select" FROM t)
         SELECT select FROM c
       """.trimIndent()
       val selectItem = SelectItem(expression = "select", columnName = "select", tableName = null)
 
-      assertThat(resolveCteOutputExpression(sql, selectItem)).isNull()
+      assertThat(resolveCteOutputExpression(sql, selectItem, reservedWords = setOf("select"))).isNull()
     }
 
     @Test
@@ -2446,7 +2447,7 @@ class SqlUtilsTest {
       """.trimIndent()
       val selectItem = SelectItem(expression = "join", columnName = "join", tableName = null)
 
-      assertThat(resolveCteOutputExpression(sql, selectItem)).isNull()
+      assertThat(resolveCteOutputExpression(sql, selectItem, reservedWords = setOf("join"))).isNull()
     }
 
     @Test
@@ -2457,7 +2458,7 @@ class SqlUtilsTest {
       """.trimIndent()
       val selectItem = SelectItem(expression = "localtime", columnName = "localtime", tableName = null)
 
-      assertThat(resolveCteOutputExpression(sql, selectItem)).isNull()
+      assertThat(resolveCteOutputExpression(sql, selectItem, reservedWords = setOf("localtime"))).isNull()
     }
 
     @Test
@@ -2602,7 +2603,7 @@ class SqlUtilsTest {
       """.trimIndent()
       val selectItem = parseSelectItems("SELECT \"user\" FROM c").single()
 
-      assertThat(resolveCteOutputExpression(sql, selectItem)).isEqualTo("UPPER(a)")
+      assertThat(resolveCteOutputExpression(sql, selectItem, reservedWords = setOf("user"))).isEqualTo("UPPER(a)")
     }
 
     @Test

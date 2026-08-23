@@ -47,11 +47,19 @@ private val ENUM_JDBC_TYPE_INFO =
  * @param catalog Postgres catalog to use when resolving projection information.
  * @param typeMappings User-configured type/column overrides. Type-level overrides take precedence
  *   over auto-generated enums/domains; column-level overrides take precedence over everything.
+ * @param reservedWords The connected PostgreSQL server's reserved keywords (see
+ *   [resolveCteOutputExpression]'s own `reservedWords` parameter doc), forwarded verbatim to it
+ *   when resolving a CTE-wrapped column's provenance. Defaults to `emptySet()` for callers (mostly
+ *   tests building an in-memory [Catalog] with no live connection) whose queries never alias a
+ *   reserved word inside a `WITH` clause; [generateCode] — the real production entry point — always
+ *   supplies [JdbcAnalyzer.fetchReservedWords]'s live result explicitly instead of relying on this
+ *   default.
  */
 internal class TypeRepository(
   private val packageName: String,
   private val catalog: Catalog,
   private val typeMappings: List<TypeMapping> = emptyList(),
+  private val reservedWords: Set<String> = emptySet(),
 ) {
 
   /**
@@ -292,7 +300,7 @@ internal class TypeRepository(
         // CTE body -- see resolveCteOutputExpression's KDoc for issue #229's shape and every case
         // it deliberately punts on rather than guessing.
         val cteExpression = if (!isComputedExpression && column.table == null && selectItem?.columnName != null) {
-          resolveCteOutputExpression(queryText, selectItem)
+          resolveCteOutputExpression(queryText, selectItem, reservedWords)
         } else {
           null
         }
