@@ -79,7 +79,7 @@ import norm.generator.NodeTreeNullabilityAnalyzer.Companion.extractOuterJoinNull
  *   is `NULL` for every row a `DELETE` returns) or a `MERGE` (an individual result row's `NEW` may
  *   or may not exist depending on which `WHEN` clause matched — e.g. `WHEN MATCHED THEN DELETE`
  *   leaves no `NEW` row — a fact this analyzer cannot isolate per-row any more than it can for an
- *   ordinary, non-`OLD`/`NEW` `MERGE` column; see [PgCatalogLoader.hasUnsafeMergeReturning]'s
+ *   ordinary, non-`OLD`/`NEW` `MERGE` column; see [PgCatalogLoader.mergeAbsentVarnos]'s
  *   KDoc for that companion safety net). Left `false` (the default) for a plain `UPDATE`/`INSERT`,
  *   where the row a `RETURNING` clause reports on always has BOTH an `OLD` and a `NEW` state, so
  *   `NEW` is exactly as trustworthy as an ordinary column reference.
@@ -733,35 +733,37 @@ internal class NodeTreeNullabilityAnalyzer(
      * `true` if [expression] contains an ORDINARY `Var` (`returningType == 0` — i.e. NOT an `OLD`
      * or `NEW` reference, which carry their own independent, already-safe handling — see
      * [PgNodeExpression.Var.returningType]'s KDoc) whose `varno` is anything OTHER THAN
-     * [alwaysPresentVarno].
+     * [relationVarno].
      *
-     * Used by [PgCatalogLoader]'s `MERGE` safety guard: a `MERGE`'s target relation
-     * (`:resultRelation`/`:mergeTargetRelation`) is present for every result row regardless of
-     * which `WHEN` clause matched, but any OTHER relation a plain `Var` reaches — the source
-     * relation, or anything joined into the `USING` clause — may be entirely absent for that row
-     * (`WHEN NOT MATCHED BY SOURCE`, `WHEN NOT MATCHED [BY TARGET] THEN INSERT`), a fact PostgreSQL
-     * does not expose via `:varnullingrels` (verified live — see
-     * [PgCatalogLoader.queryColumnNullabilityViaProsqlbody]'s MERGE guard for the full
-     * explanation). Exhausts every [PgNodeExpression] variant explicitly (mirrors, rather than
-     * reuses, the traversal [NodeTreeNullabilityAnalyzer.safetyWalkChildren] already performs for
-     * an unrelated purpose) so the compiler's own exhaustiveness check over the sealed
-     * [PgNodeExpression] hierarchy guarantees no node type is silently skipped — a skipped type
-     * here would mean a risky `Var` going undetected, not merely a missed optimization.
+     * Used by [PgCatalogLoader.mergeAbsentVarnos]'s caller to decide whether a `MERGE`'s
+     * `RETURNING` list needs per-relation match-optionality resolved AT ALL: a `RETURNING` that
+     * only reads the target relation's own columns (always present, whichever `WHEN` clause
+     * matched) or `OLD`/`NEW` references (already forced nullable/handled independently by
+     * [PgNodeExpression.Var.returningType]) never needs [PgCatalogLoader.mergeAbsentVarnos]'s
+     * `EXPLAIN` resolution at all — which matters because that resolution can itself fail to
+     * attribute a `MERGE`'s join (e.g. a non-table `USING` source, such as a `VALUES` list) even
+     * when the `RETURNING` list never actually depended on knowing which side that join favors.
      *
-     * @param depth remaining recursion budget; exhausting it answers `true` (risky) rather than
-     *   `false`, the same fail-toward-conservative default every depth guard in this file uses
+     * Exhausts every [PgNodeExpression] variant explicitly so the compiler's own exhaustiveness
+     * check over the sealed [PgNodeExpression] hierarchy guarantees no node type is silently
+     * skipped — a skipped type here would mean a genuine dependency on `EXPLAIN` resolution going
+     * undetected, not merely a missed optimization.
+     *
+     * @param depth remaining recursion budget; exhausting it answers `true` (needs resolving)
+     *   rather than `false`, the same fail-toward-conservative default every depth guard in this
+     *   file uses
      */
-    internal fun containsRiskyMergeVar(
+    internal fun containsVarOutsideRelation(
       expression: PgNodeExpression,
-      alwaysPresentVarno: Int,
+      relationVarno: Int,
       depth: Int = MAX_EXPRESSION_DEPTH,
     ): Boolean {
       if (depth <= 0) return true
-      val recurse = { expr: PgNodeExpression -> containsRiskyMergeVar(expr, alwaysPresentVarno, depth - 1) }
+      val recurse = { expr: PgNodeExpression -> containsVarOutsideRelation(expr, relationVarno, depth - 1) }
       return when (expression) {
         is PgNodeExpression.Var ->
           expression.returningType == PgNodeExpression.VAR_RETURNING_TYPE_NORMAL &&
-            expression.varno != alwaysPresentVarno
+            expression.varno != relationVarno
 
         is PgNodeExpression.Const,
         is PgNodeExpression.Aggref,

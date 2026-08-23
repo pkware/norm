@@ -17,7 +17,7 @@ internal data class MergeSideNullability(val targetCanBeAbsent: Boolean, val sou
  * `:mergeActionList`/text inspection.
  *
  * A `MERGE`'s match-optionality is invisible to `:varnullingrels` (verified live — see
- * [PgCatalogLoader.hasUnsafeMergeReturning]'s KDoc): `WHEN NOT MATCHED BY SOURCE` and `WHEN NOT
+ * [PgCatalogLoader.mergeAbsentVarnos]'s KDoc): `WHEN NOT MATCHED BY SOURCE` and `WHEN NOT
  * MATCHED [BY TARGET] THEN INSERT` each mean one side of the `MERGE`'s underlying target/source
  * comparison may have no matching row, but PostgreSQL's `Var` nodes for either relation carry an
  * EMPTY nulling-relations set regardless. The planner, however, MUST decide how to execute that
@@ -38,11 +38,14 @@ internal data class MergeSideNullability(val targetCanBeAbsent: Boolean, val sou
  *   parsed query tree's own `:rtable`/`relid`, e.g. through [PgCatalogLoader]'s catalog lookups,
  *   never by re-parsing the SQL text) of the `MERGE`'s target relation
  * @param sourceRelationName the REAL table name of the `MERGE`'s source relation
- * @return `null` when `EXPLAIN` fails, its JSON cannot be parsed, no join node is found in the
- *   plan, or the plan's shape does not let [targetRelationName] and [sourceRelationName] each be
- *   attributed to exactly one, DIFFERENT side of that join (e.g. the `USING` clause has more than
- *   one relation of its own, so the top-level join found is not simply target-vs-source) — the
- *   caller must treat `null` as "cannot determine", never as "neither side is nullable"
+ * @return `null` when `EXPLAIN` fails, its JSON cannot be parsed, or NO join node anywhere in the
+ *   plan lets [targetRelationName] and [sourceRelationName] each be attributed to exactly one,
+ *   DIFFERENT side (e.g. the `USING` clause has more than one relation of its own, so no single
+ *   join is simply target-vs-source) — the caller must treat `null` as "cannot determine", never
+ *   as "neither side is nullable". EVERY join node in the plan is checked, not just the first —
+ *   a `MERGE` nested in a CTE sits inside a larger overall plan that may contain other, unrelated
+ *   joins the outer statement introduces (e.g. `SELECT ... FROM the_merge_cte JOIN other_table`),
+ *   and the first join found by a naive top-down search need not be the `MERGE`'s own.
  */
 internal fun explainMergeSideNullability(
   connection: Connection,
@@ -67,8 +70,20 @@ internal fun explainMergeSideNullability(
   } catch (_: IllegalArgumentException) {
     return null
   }
-  val joinNode = findFirstJoinNode(planNode) ?: return null
+  for (joinNode in findAllJoinNodes(planNode)) {
+    val mapping = attributeJoinToSides(joinNode, targetRelationName, sourceRelationName)
+    if (mapping != null) return mapping
+  }
+  return null
+}
+
+private fun attributeJoinToSides(
+  joinNode: JsonValue.JsonObject,
+  targetRelationName: String,
+  sourceRelationName: String,
+): MergeSideNullability? {
   val joinType = (joinNode.fields["Join Type"] as? JsonValue.JsonString)?.value ?: return null
+  if (joinType != "Inner" && joinType != "Left" && joinType != "Right" && joinType != "Full") return null
   val childPlans = (joinNode.fields["Plans"] as? JsonValue.JsonArray)
     ?.items
     ?.filterIsInstance<JsonValue.JsonObject>()
@@ -81,12 +96,12 @@ internal fun explainMergeSideNullability(
   val sourceIsOuter = sourceRelationName in outerRelationNames
   val sourceIsInner = sourceRelationName in innerRelationNames
   // Each relation must appear on EXACTLY ONE side, and target/source must be on DIFFERENT sides —
-  // otherwise this join isn't simply "target vs. source" (e.g. a multi-relation USING clause) and
-  // this method cannot safely attribute the join type to either one.
+  // otherwise this ISN'T the join being searched for (e.g. it's an unrelated join the outer
+  // statement introduces, or the USING clause has more than one relation of its own) and this
+  // join cannot safely be attributed to either one.
   if (targetIsOuter == targetIsInner || sourceIsOuter == sourceIsInner || targetIsOuter == sourceIsOuter) {
     return null
   }
-  if (joinType != "Inner" && joinType != "Left" && joinType != "Right" && joinType != "Full") return null
   val outerCanBeAbsent = joinType == "Right" || joinType == "Full"
   val innerCanBeAbsent = joinType == "Left" || joinType == "Full"
   return MergeSideNullability(
@@ -95,18 +110,12 @@ internal fun explainMergeSideNullability(
   )
 }
 
-/**
- * Depth-first search for the first descendant of [node] (including [node] itself) carrying a
- * `"Join Type"` field — the node describing how the plan combines its two child relations.
- */
-private fun findFirstJoinNode(node: JsonValue.JsonObject): JsonValue.JsonObject? {
-  if (node.fields.containsKey("Join Type")) return node
-  val children = (node.fields["Plans"] as? JsonValue.JsonArray)?.items?.filterIsInstance<JsonValue.JsonObject>()
-    ?: return null
-  for (child in children) {
-    findFirstJoinNode(child)?.let { return it }
+/** Every descendant of [node] (including [node] itself) carrying a `"Join Type"` field. */
+private fun findAllJoinNodes(node: JsonValue.JsonObject): List<JsonValue.JsonObject> = buildList {
+  if (node.fields.containsKey("Join Type")) add(node)
+  (node.fields["Plans"] as? JsonValue.JsonArray)?.items?.filterIsInstance<JsonValue.JsonObject>()?.forEach {
+    addAll(findAllJoinNodes(it))
   }
-  return null
 }
 
 /** Every `"Relation Name"` reachable from [node], including [node] itself, at any depth. */

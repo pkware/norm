@@ -223,7 +223,7 @@ public class PostgresQueries(
     mapper: (
       id: UUID,
       name: String,
-      description_upper: String,
+      description_upper: String?,
     ) -> T,
     processor: ManyProcessor<T, Return>,
   ): Return {
@@ -244,7 +244,7 @@ public class PostgresQueries(
   override fun <T : Any> updateParentReturningDescriptionUpper(id: UUID, mapper: (
     id: UUID,
     name: String,
-    description_upper: String,
+    description_upper: String?,
   ) -> T): Many<T> = updateParentReturningDescriptionUpper(id, mapper, driver::queryMany)
 
   private fun <T : Any, Return> deleteParentReturningQuotedDescriptionUpperViaCte(

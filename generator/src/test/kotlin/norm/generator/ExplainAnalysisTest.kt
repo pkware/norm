@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * Stage 2 of the `prosqlbody` cutover: proves `EXPLAIN (FORMAT JSON)` never executes the
  * statement it plans, and that it correctly reports a `MERGE`'s per-relation match-optionality —
- * the one thing [PgCatalogLoader.hasUnsafeMergeReturning]'s KDoc documents as invisible to
+ * the one thing [PgCatalogLoader.mergeAbsentVarnos]'s KDoc documents as invisible to
  * `:varnullingrels` on EITHER the `CREATE VIEW`/`ev_action` or `prosqlbody` route.
  */
 @Testcontainers
@@ -91,6 +91,52 @@ class ExplainAnalysisTest {
         """.trimIndent(),
       )
       assertThat(query).isEqualTo(MergeSideNullability(targetCanBeAbsent = true, sourceCanBeAbsent = true))
+    }
+
+    @Test
+    fun `WHEN NOT MATCHED BY SOURCE alone reports only source can be absent, through a CTE with an outer JOIN`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
+      // A MERGE nested in a CTE sits inside a LARGER plan the outer statement can add its own,
+      // UNRELATED joins to. The CTE's own write plan is attached to that outer join as a THIRD,
+      // "InitPlan" sibling (verified live) — not a join child — so the outer join's OWN 2-children
+      // check correctly rejects it, and the search must continue into the MERGE's own nested join
+      // to find the real one. This MERGE also flips which side is preserved relative to the
+      // "WHEN NOT MATCHED THEN INSERT" tests above: with no INSERT action, the TARGET row always
+      // exists (every result row IS an existing target row); only the SOURCE can be missing.
+      // Verified live (target id=2 has no matching source row): id=2, sval=NULL, id=1, sval='x'.
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          it.execute(
+            """
+            CREATE TABLE tgt (id INT PRIMARY KEY, name TEXT NOT NULL);
+            CREATE TABLE src (id INT NOT NULL, sval TEXT NOT NULL);
+            CREATE TABLE other (id INT NOT NULL, label TEXT NOT NULL)
+            """.trimIndent(),
+          )
+        }
+        try {
+          val result = explainMergeSideNullability(
+            connection,
+            """
+            WITH m AS (
+              MERGE INTO tgt USING src ON tgt.id = src.id
+              WHEN MATCHED THEN UPDATE SET name = src.sval
+              WHEN NOT MATCHED BY SOURCE THEN DELETE
+              RETURNING tgt.id, src.sval
+            )
+            SELECT m.id, m.sval, other.label FROM m JOIN other ON other.id = m.id
+            """.trimIndent(),
+            targetRelationName = "tgt",
+            sourceRelationName = "src",
+          )
+          assertThat(result).isEqualTo(MergeSideNullability(targetCanBeAbsent = false, sourceCanBeAbsent = true))
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
     }
 
     @Test
