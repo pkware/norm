@@ -279,4 +279,37 @@ class SqlParameterInferrerTest {
       assertThat(result.getValue(1)).isFalse()
     }
   }
+
+  @Nested
+  inner class FunctionCallStartTest {
+
+    @Test
+    fun `captures the whole dollar-containing function name, not just the run after the dollar sign`() {
+      // FUNCTION_CALL_START previously used a bare "\w+", which excludes "$" -- "\w+" cannot match
+      // "my$fn" as one run, so findAll instead matched the shorter run "fn" immediately before the
+      // "(", handing SqlParameterInferrer.extractFunctionCalls the WRONG function name. Verified
+      // against a real PostgreSQL 18.4: "my$fn" is a legal unquoted function name (CREATE FUNCTION
+      // "my$fn"(...) and the unquoted call my$fn(...) resolve to the same function).
+      val match = FUNCTION_CALL_START.find("SELECT my\$fn(?)")
+      assertThat(match!!.groupValues[1]).isEqualTo("my\$fn")
+    }
+
+    @Test
+    fun `captures a function name continuing with a non-ASCII character`() {
+      // "\w+" is ASCII-only, so it also excludes any ">= 0x80" character -- verified against a
+      // real PostgreSQL 18.4: an unquoted function named "fn€" is legal and callable unquoted.
+      val match = FUNCTION_CALL_START.find("SELECT fn€(?)")
+      assertThat(match!!.groupValues[1]).isEqualTo("fn€")
+    }
+
+    @Test
+    fun `does not capture a digit as the start of a function name`() {
+      // Verified against a real PostgreSQL 18.4: "2fn(...)" is rejected outright ("trailing junk
+      // after numeric literal") -- a digit may never START an identifier. The regex's own
+      // leading-character restriction means a match beginning with "2" is impossible; the only
+      // match found here starts at "f".
+      val match = FUNCTION_CALL_START.find("SELECT 2fn(?)")
+      assertThat(match!!.groupValues[1]).isEqualTo("fn")
+    }
+  }
 }
