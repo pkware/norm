@@ -575,7 +575,7 @@ private fun collapseCosmeticWhitespace(text: String): String {
  * folding depends on. Use the two-argument overload below for those instead, passing
  * [SelectItem.isColumnNameQuoted]/[SelectItem.isTableNameQuoted] explicitly.
  */
-private fun foldIdentifier(rawIdentifier: String): String {
+internal fun foldIdentifier(rawIdentifier: String): String {
   val trimmed = rawIdentifier.trim()
   return if (isQuotedIdentifier(trimmed)) unescapeQuotedIdentifier(trimmed) else foldAsciiCase(trimmed)
 }
@@ -593,7 +593,7 @@ private fun foldIdentifier(rawIdentifier: String): String {
  * single-argument overload's own KDoc for why passing a logical value there instead would silently
  * discard the quoted/unquoted distinction.
  */
-private fun foldIdentifier(logicalValue: String, isQuoted: Boolean): String =
+internal fun foldIdentifier(logicalValue: String, isQuoted: Boolean): String =
   if (isQuoted) logicalValue else foldAsciiCase(logicalValue)
 
 /**
@@ -614,7 +614,7 @@ private fun foldIdentifier(logicalValue: String, isQuoted: Boolean): String =
  * prevent, one level up. Do NOT "fix" this back to `String.lowercase()` — the narrower, ASCII-only
  * behavior is deliberate PostgreSQL parity, not an oversight.
  */
-private fun foldAsciiCase(text: String): String {
+internal fun foldAsciiCase(text: String): String {
   val builder = StringBuilder(text.length)
   for (character in text) {
     builder.append(if (character in 'A'..'Z') character.lowercaseChar() else character)
@@ -627,7 +627,7 @@ private fun foldAsciiCase(text: String): String {
  * surrounded by a `"` on both ends, with at least the two quote characters themselves present.
  * Used by [foldIdentifier] to decide whether to fold or compare exactly.
  */
-private fun isQuotedIdentifier(rawIdentifier: String): Boolean {
+internal fun isQuotedIdentifier(rawIdentifier: String): Boolean {
   val trimmed = rawIdentifier.trim()
   return trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')
 }
@@ -1332,7 +1332,7 @@ private val COLUMN_REFERENCE = Regex(
  * with `"`, with at least those two characters present. Passing anything else is a caller bug,
  * not a value this function attempts to handle gracefully.
  */
-private fun unescapeQuotedIdentifier(rawQuotedToken: String): String =
+internal fun unescapeQuotedIdentifier(rawQuotedToken: String): String =
   rawQuotedToken.substring(1, rawQuotedToken.length - 1).replace("\"\"", "\"")
 
 /**
