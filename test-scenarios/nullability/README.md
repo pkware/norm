@@ -14,3 +14,9 @@ Concretely: a nullability regression whose only interesting property is an infer
 absence of one) goes here; a construct-specific bug whose symptom happens to be wrong nullability
 goes in that construct's bucket — a CTE bug goes in `ctes`, which already carries
 nullability-through-RETURNING goldens.
+
+## Fixture note
+
+`widgetByLowerCode` selects only `code`, not `*`. A single-table `SELECT *` reuses the table's own
+schema-level type instead of this query's WHERE-narrowed one, which would silently stop the query
+from exercising the narrowing rule it exists to pin.

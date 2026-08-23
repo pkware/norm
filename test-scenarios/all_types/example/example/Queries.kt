@@ -420,8 +420,6 @@ public interface Queries : Transactable {
   public fun updateAllStrings(string_type: String): Int
 
   /**
-   * Execrows without parameters.
-   *
    * ```sql
    * DELETE FROM type
    * ```
@@ -432,8 +430,6 @@ public interface Queries : Transactable {
   public fun deleteAll(): Int
 
   /**
-   * Execrows with 1 parameter.
-   *
    * ```sql
    * DELETE FROM type WHERE serial_type = ?
    * ```
@@ -456,8 +452,6 @@ public interface Queries : Transactable {
   ): IntArray
 
   /**
-   * Execrows with 1 parameter.
-   *
    * ```sql
    * DELETE FROM type WHERE serial_type = ?
    * ```
@@ -478,8 +472,6 @@ public interface Queries : Transactable {
   public fun <Input : Any> deleteById(stream: Iterable<Input>, serial_type: (Input) -> Int): IntArray = deleteById(stream, serial_type, 100)
 
   /**
-   * Execrows with 1 parameter.
-   *
    * ```sql
    * DELETE FROM type WHERE serial_type = ?
    * ```
@@ -490,7 +482,7 @@ public interface Queries : Transactable {
   public fun deleteById(serial_type: Int): Int
 
   /**
-   * Exec without parameters.
+   * Resets the type table to its initial state.
    *
    * ```sql
    * CALL reset_type_table()
@@ -500,7 +492,7 @@ public interface Queries : Transactable {
   public fun resetTypes()
 
   /**
-   * Exec with parameters.
+   * Updates string_type for the given row via a stored procedure.
    *
    * ```sql
    * CALL update_string_type(?, ?)
@@ -525,7 +517,7 @@ public interface Queries : Transactable {
   ): IntArray
 
   /**
-   * Exec with parameters.
+   * Updates string_type for the given row via a stored procedure.
    *
    * ```sql
    * CALL update_string_type(?, ?)
@@ -551,7 +543,7 @@ public interface Queries : Transactable {
   ): IntArray = updateStringType(stream, p_id, p_new_value, 100)
 
   /**
-   * Exec with parameters.
+   * Updates string_type for the given row via a stored procedure.
    *
    * ```sql
    * CALL update_string_type(?, ?)
@@ -561,8 +553,6 @@ public interface Queries : Transactable {
   public fun updateStringType(p_id: Int, p_new_value: String)
 
   /**
-   * :many with a parameter: verify params flow through the Many code path.
-   *
    * ```sql
    * SELECT * FROM type WHERE string_type = ?
    * ```
@@ -667,8 +657,6 @@ public interface Queries : Transactable {
   ) -> T): Many<T>
 
   /**
-   * :many with a parameter: verify params flow through the Many code path.
-   *
    * ```sql
    * SELECT * FROM type WHERE string_type = ?
    * ```
@@ -676,8 +664,6 @@ public interface Queries : Transactable {
   public fun filterByStringType(string_type: String): Many<Type> = filterByStringType(string_type, ::Type)
 
   /**
-   * Query against a view (pass-through columns preserve nullability from base table).
-   *
    * ```sql
    * SELECT * FROM not_null_view
    * ```
@@ -689,8 +675,6 @@ public interface Queries : Transactable {
   ) -> T): Many<T>
 
   /**
-   * Query against a view (pass-through columns preserve nullability from base table).
-   *
    * ```sql
    * SELECT * FROM not_null_view
    * ```
@@ -706,7 +690,7 @@ public interface Queries : Transactable {
   public fun listNotNullViewDynamically(): Query<NotNullView> = listNotNullViewDynamically(::NotNullView)
 
   /**
-   * Query against a materialized view with computed columns (aggregates are nullable).
+   * Returns aggregate summary statistics for the given string_type.
    *
    * ```sql
    * SELECT * FROM type_summary WHERE string_type = ?
@@ -720,7 +704,7 @@ public interface Queries : Transactable {
   ) -> T): T
 
   /**
-   * Query against a materialized view with computed columns (aggregates are nullable).
+   * Returns aggregate summary statistics for the given string_type.
    *
    * ```sql
    * SELECT * FROM type_summary WHERE string_type = ?
@@ -730,7 +714,8 @@ public interface Queries : Transactable {
   public fun getTypeSummary(string_type: String): TypeSummary = getTypeSummary(string_type, ::TypeSummary)
 
   /**
-   * LEFT JOIN: right side NOT NULL columns become nullable (#58).
+   * Lists each department alongside an employee's name and nickname, which are `null` when the
+   * department has no employees.
    *
    * ```sql
    * SELECT d.id, d.name AS dept_name, e.name AS employee_name, e.nickname
@@ -746,7 +731,8 @@ public interface Queries : Transactable {
   ) -> T): Many<T>
 
   /**
-   * LEFT JOIN: right side NOT NULL columns become nullable (#58).
+   * Lists each department alongside an employee's name and nickname, which are `null` when the
+   * department has no employees.
    *
    * ```sql
    * SELECT d.id, d.name AS dept_name, e.name AS employee_name, e.nickname
@@ -766,7 +752,7 @@ public interface Queries : Transactable {
   public fun departmentEmployeesDynamically(): Query<DepartmentEmployees> = departmentEmployeesDynamically(::DepartmentEmployees)
 
   /**
-   * UNION ALL: node tree has no VAR at top level, nullability from JDBC metadata.
+   * Lists all department and employee names together.
    *
    * ```sql
    * SELECT name FROM department
@@ -777,7 +763,7 @@ public interface Queries : Transactable {
   public fun <T> allNames(mapper: (name: String?) -> T): Many<T>
 
   /**
-   * UNION ALL: node tree has no VAR at top level, nullability from JDBC metadata.
+   * Lists all department and employee names together.
    *
    * ```sql
    * SELECT name FROM department
@@ -792,7 +778,7 @@ public interface Queries : Transactable {
   public fun allNamesDynamically(): Query<String?> = allNamesDynamically(::inputValue)
 
   /**
-   * Reused named parameter in :execrows — exercises batch body codegen.
+   * Updates both string_type and text_type for a given row.
    *
    * ```sql
    * UPDATE type SET string_type = ?, text_type = ? WHERE serial_type = ?
@@ -817,7 +803,7 @@ public interface Queries : Transactable {
   ): IntArray
 
   /**
-   * Reused named parameter in :execrows — exercises batch body codegen.
+   * Updates both string_type and text_type for a given row.
    *
    * ```sql
    * UPDATE type SET string_type = ?, text_type = ? WHERE serial_type = ?
@@ -843,7 +829,7 @@ public interface Queries : Transactable {
   ): IntArray = updateBothStrings(stream, string_type, serial_type, 100)
 
   /**
-   * Reused named parameter in :execrows — exercises batch body codegen.
+   * Updates both string_type and text_type for a given row.
    *
    * ```sql
    * UPDATE type SET string_type = ?, text_type = ? WHERE serial_type = ?
@@ -855,7 +841,7 @@ public interface Queries : Transactable {
   public fun updateBothStrings(string_type: String, serial_type: Int): Int
 
   /**
-   * Reused named parameter in :one — exercises buildOne body codegen.
+   * Finds a row where string_type and text_type both equal the given value.
    *
    * ```sql
    * SELECT * FROM type WHERE string_type = ? AND text_type = ?
@@ -962,7 +948,7 @@ public interface Queries : Transactable {
   ) -> T): T
 
   /**
-   * Reused named parameter in :one — exercises buildOne body codegen.
+   * Finds a row where string_type and text_type both equal the given value.
    *
    * ```sql
    * SELECT * FROM type WHERE string_type = ? AND text_type = ?
@@ -972,7 +958,7 @@ public interface Queries : Transactable {
   public fun findByMatchingStrings(`value`: String): Type = findByMatchingStrings(`value`, ::Type)
 
   /**
-   * Reused named parameter in :many — exercises queryBinder body codegen.
+   * Lists rows where string_type and text_type both equal the given value.
    *
    * ```sql
    * SELECT * FROM type WHERE string_type = ? AND text_type = ?
@@ -1078,7 +1064,7 @@ public interface Queries : Transactable {
   ) -> T): Many<T>
 
   /**
-   * Reused named parameter in :many — exercises queryBinder body codegen.
+   * Lists rows where string_type and text_type both equal the given value.
    *
    * ```sql
    * SELECT * FROM type WHERE string_type = ? AND text_type = ?
@@ -1087,7 +1073,7 @@ public interface Queries : Transactable {
   public fun filterByMatchingStrings(`value`: String): Many<Type> = filterByMatchingStrings(`value`, ::Type)
 
   /**
-   * Plain (adapterless) jsonb bound as a parameter: pins setObject(index, value, Types.OTHER) (#187).
+   * Updates the jsonb_type column for a given row.
    *
    * ```sql
    * UPDATE type SET jsonb_type = ? WHERE string_type = ?
@@ -1112,7 +1098,7 @@ public interface Queries : Transactable {
   ): IntArray
 
   /**
-   * Plain (adapterless) jsonb bound as a parameter: pins setObject(index, value, Types.OTHER) (#187).
+   * Updates the jsonb_type column for a given row.
    *
    * ```sql
    * UPDATE type SET jsonb_type = ? WHERE string_type = ?
@@ -1138,7 +1124,7 @@ public interface Queries : Transactable {
   ): IntArray = updateJsonb(stream, jsonb_type, string_type, 100)
 
   /**
-   * Plain (adapterless) jsonb bound as a parameter: pins setObject(index, value, Types.OTHER) (#187).
+   * Updates the jsonb_type column for a given row.
    *
    * ```sql
    * UPDATE type SET jsonb_type = ? WHERE string_type = ?
@@ -1150,8 +1136,7 @@ public interface Queries : Transactable {
   public fun updateJsonb(jsonb_type: String?, string_type: String): Int
 
   /**
-   * Plain (adapterless) json bound as a parameter: json takes the same binding as jsonb, so this pins
-   * setObject(index, value, Types.OTHER) rather than setString (#191).
+   * Updates the json_type column for a given row.
    *
    * ```sql
    * UPDATE type SET json_type = ? WHERE string_type = ?
@@ -1176,8 +1161,7 @@ public interface Queries : Transactable {
   ): IntArray
 
   /**
-   * Plain (adapterless) json bound as a parameter: json takes the same binding as jsonb, so this pins
-   * setObject(index, value, Types.OTHER) rather than setString (#191).
+   * Updates the json_type column for a given row.
    *
    * ```sql
    * UPDATE type SET json_type = ? WHERE string_type = ?
@@ -1203,8 +1187,7 @@ public interface Queries : Transactable {
   ): IntArray = updateJson(stream, json_type, string_type, 100)
 
   /**
-   * Plain (adapterless) json bound as a parameter: json takes the same binding as jsonb, so this pins
-   * setObject(index, value, Types.OTHER) rather than setString (#191).
+   * Updates the json_type column for a given row.
    *
    * ```sql
    * UPDATE type SET json_type = ? WHERE string_type = ?
@@ -1216,10 +1199,7 @@ public interface Queries : Transactable {
   public fun updateJson(json_type: String?, string_type: String): Int
 
   /**
-   * Plain (adapterless) arrays bound as parameters: pins setArray(index, value.toSqlArray(connection,
-   * "<element type>")) for every element type, and the element-wise reads on the way back out through
-   * `all` (#190, #192). Each group binds a nullable column and its NOT NULL sibling so both the
-   * setArray and the setNull-fallback branches are pinned.
+   * Updates the int and text array columns for a given row.
    *
    * ```sql
    * UPDATE type SET
@@ -1252,10 +1232,7 @@ public interface Queries : Transactable {
   ): IntArray
 
   /**
-   * Plain (adapterless) arrays bound as parameters: pins setArray(index, value.toSqlArray(connection,
-   * "<element type>")) for every element type, and the element-wise reads on the way back out through
-   * `all` (#190, #192). Each group binds a nullable column and its NOT NULL sibling so both the
-   * setArray and the setNull-fallback branches are pinned.
+   * Updates the int and text array columns for a given row.
    *
    * ```sql
    * UPDATE type SET
@@ -1289,10 +1266,7 @@ public interface Queries : Transactable {
   ): IntArray = updateIntTextArrays(stream, int_array_type, int_array_notnull_type, text_array_type, text_array_notnull_type, string_type, 100)
 
   /**
-   * Plain (adapterless) arrays bound as parameters: pins setArray(index, value.toSqlArray(connection,
-   * "<element type>")) for every element type, and the element-wise reads on the way back out through
-   * `all` (#190, #192). Each group binds a nullable column and its NOT NULL sibling so both the
-   * setArray and the setNull-fallback branches are pinned.
+   * Updates the int and text array columns for a given row.
    *
    * ```sql
    * UPDATE type SET
@@ -1675,9 +1649,7 @@ public interface Queries : Transactable {
   ): Int
 
   /**
-   * Plain (adapterless) oid[] bound as a parameter: pins setArray(index, value.toSqlArray(connection,
-   * "oid")) and the getLong(2).takeUnless { wasNull() } element read, distinct from the scalar oid ->
-   * Blob mapping (#196).
+   * Updates the oid array columns for a given row.
    *
    * ```sql
    * UPDATE type SET
@@ -1706,9 +1678,7 @@ public interface Queries : Transactable {
   ): IntArray
 
   /**
-   * Plain (adapterless) oid[] bound as a parameter: pins setArray(index, value.toSqlArray(connection,
-   * "oid")) and the getLong(2).takeUnless { wasNull() } element read, distinct from the scalar oid ->
-   * Blob mapping (#196).
+   * Updates the oid array columns for a given row.
    *
    * ```sql
    * UPDATE type SET
@@ -1738,9 +1708,7 @@ public interface Queries : Transactable {
   ): IntArray = updateOidArray(stream, oid_array_type, oid_array_notnull_type, string_type, 100)
 
   /**
-   * Plain (adapterless) oid[] bound as a parameter: pins setArray(index, value.toSqlArray(connection,
-   * "oid")) and the getLong(2).takeUnless { wasNull() } element read, distinct from the scalar oid ->
-   * Blob mapping (#196).
+   * Updates the oid array columns for a given row.
    *
    * ```sql
    * UPDATE type SET

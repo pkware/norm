@@ -1,4 +1,4 @@
--- Star projection against a partitioned table.
+-- Returns an event by id and creation timestamp.
 -- name: getEventById :one
 SELECT * FROM event WHERE id = ? AND created_at = ?;
 

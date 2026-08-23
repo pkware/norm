@@ -18,12 +18,7 @@ INSERT INTO documents (payload, doc) VALUES (?, ?);
 UPDATE users SET preferences = ? WHERE id = ?
 RETURNING id, preferences AS old_preferences;
 
--- Reproduces #212: an INSERT ... SELECT ... RETURNING statement whose RETURNING clause aliases
--- "preferences", a column with a configured column-level type override (users.preferences ->
--- com.example.UserPreferences). Before the fix, parseSelectItems read the INSERT's own SELECT
--- source list instead of the RETURNING clause, so the RETURNING alias's second item borrowed
--- "age" as its originalName instead of "preferences" — missing the (users, preferences) override
--- key entirely and falling back to the type-level jsonb override (com.example.JsonData) instead.
+-- Duplicates a user's row, returning the new row's id and preferences under an alias.
 -- name: duplicateUserReturningAliasedPreferences :many
 INSERT INTO users (email, age, current_mood, metadata, preferences)
 SELECT email, age, current_mood, metadata, preferences FROM users WHERE id = ?

@@ -21,7 +21,7 @@ import norm.inputValue
 
 public interface Queries : Transactable {
   /**
-   * User-defined query with the same name as a synthetic one (should take priority)
+   * Lists authors by name, overriding the synthesized CRUD query of the same name.
    *
    * ```sql
    * SELECT id, name FROM author ORDER BY name
@@ -30,7 +30,7 @@ public interface Queries : Transactable {
   public fun <T : Any> findAllAuthor(mapper: (id: Int, name: String) -> T): Many<T>
 
   /**
-   * User-defined query with the same name as a synthetic one (should take priority)
+   * Lists authors by name, overriding the synthesized CRUD query of the same name.
    *
    * ```sql
    * SELECT id, name FROM author ORDER BY name
@@ -43,7 +43,7 @@ public interface Queries : Transactable {
   public fun findAllAuthorDynamically(): Query<FindAllAuthor> = findAllAuthorDynamically(::FindAllAuthor)
 
   /**
-   * A normal user query that doesn't conflict
+   * Returns an author by name.
    *
    * ```sql
    * SELECT * FROM author WHERE name = ?
@@ -58,7 +58,7 @@ public interface Queries : Transactable {
   ) -> T): T
 
   /**
-   * A normal user query that doesn't conflict
+   * Returns an author by name.
    *
    * ```sql
    * SELECT * FROM author WHERE name = ?

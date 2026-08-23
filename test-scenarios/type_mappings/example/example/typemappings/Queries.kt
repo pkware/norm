@@ -268,12 +268,7 @@ public interface Queries : Transactable {
   public fun updatePreferences(preferences: UserPreferences, id: Int): Many<UpdatePreferences> = updatePreferences(preferences, id, ::UpdatePreferences)
 
   /**
-   * Reproduces #212: an INSERT ... SELECT ... RETURNING statement whose RETURNING clause aliases
-   * "preferences", a column with a configured column-level type override (users.preferences ->
-   * com.example.UserPreferences). Before the fix, parseSelectItems read the INSERT's own SELECT
-   * source list instead of the RETURNING clause, so the RETURNING alias's second item borrowed
-   * "age" as its originalName instead of "preferences" — missing the (users, preferences) override
-   * key entirely and falling back to the type-level jsonb override (com.example.JsonData) instead.
+   * Duplicates a user's row, returning the new row's id and preferences under an alias.
    *
    * ```sql
    * INSERT INTO users (email, age, current_mood, metadata, preferences)
@@ -284,12 +279,7 @@ public interface Queries : Transactable {
   public fun <T : Any> duplicateUserReturningAliasedPreferences(p1: Int, mapper: (id: Int, duplicated_preferences: UserPreferences) -> T): Many<T>
 
   /**
-   * Reproduces #212: an INSERT ... SELECT ... RETURNING statement whose RETURNING clause aliases
-   * "preferences", a column with a configured column-level type override (users.preferences ->
-   * com.example.UserPreferences). Before the fix, parseSelectItems read the INSERT's own SELECT
-   * source list instead of the RETURNING clause, so the RETURNING alias's second item borrowed
-   * "age" as its originalName instead of "preferences" — missing the (users, preferences) override
-   * key entirely and falling back to the type-level jsonb override (com.example.JsonData) instead.
+   * Duplicates a user's row, returning the new row's id and preferences under an alias.
    *
    * ```sql
    * INSERT INTO users (email, age, current_mood, metadata, preferences)
