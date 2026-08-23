@@ -38,14 +38,13 @@ internal data class MergeSideNullability(val targetCanBeAbsent: Boolean, val sou
  *   parsed query tree's own `:rtable`/`relid`, e.g. through [PgCatalogLoader]'s catalog lookups,
  *   never by re-parsing the SQL text) of the `MERGE`'s target relation
  * @param sourceRelationName the REAL table name of the `MERGE`'s source relation
- * @return `null` when `EXPLAIN` fails, its JSON cannot be parsed, or NO join node anywhere in the
- *   plan lets [targetRelationName] and [sourceRelationName] each be attributed to exactly one,
- *   DIFFERENT side (e.g. the `USING` clause has more than one relation of its own, so no single
- *   join is simply target-vs-source) — the caller must treat `null` as "cannot determine", never
- *   as "neither side is nullable". EVERY join node in the plan is checked, not just the first —
- *   a `MERGE` nested in a CTE sits inside a larger overall plan that may contain other, unrelated
- *   joins the outer statement introduces (e.g. `SELECT ... FROM the_merge_cte JOIN other_table`),
- *   and the first join found by a naive top-down search need not be the `MERGE`'s own.
+ * @return `null` when `EXPLAIN` fails, its JSON cannot be parsed, no plan node is UNIQUELY
+ *   identifiable as the `ModifyTable` implementing this `MERGE` (see
+ *   [findMergeModifyTableNode]'s KDoc), or NO join node within that node's own join tree (see
+ *   [findOwnJoinNodes]'s KDoc) lets [targetRelationName] and [sourceRelationName] each be
+ *   attributed to exactly one, DIFFERENT side (e.g. the `USING` clause has more than one relation
+ *   of its own, so no single join is simply target-vs-source) — the caller must treat `null` as
+ *   "cannot determine", never as "neither side is nullable".
  */
 internal fun explainMergeSideNullability(
   connection: Connection,
@@ -70,7 +69,8 @@ internal fun explainMergeSideNullability(
   } catch (_: IllegalArgumentException) {
     return null
   }
-  for (joinNode in findAllJoinNodes(planNode)) {
+  val mergeModifyTableNode = findMergeModifyTableNode(planNode, targetRelationName) ?: return null
+  for (joinNode in findOwnJoinNodes(mergeModifyTableNode)) {
     val mapping = attributeJoinToSides(joinNode, targetRelationName, sourceRelationName)
     if (mapping != null) return mapping
   }
@@ -110,12 +110,55 @@ private fun attributeJoinToSides(
   )
 }
 
-/** Every descendant of [node] (including [node] itself) carrying a `"Join Type"` field. */
-private fun findAllJoinNodes(node: JsonValue.JsonObject): List<JsonValue.JsonObject> = buildList {
-  if (node.fields.containsKey("Join Type")) add(node)
-  (node.fields["Plans"] as? JsonValue.JsonArray)?.items?.filterIsInstance<JsonValue.JsonObject>()?.forEach {
-    addAll(findAllJoinNodes(it))
+/**
+ * The plan node that IS the `MERGE` targeting [targetRelationName]: a `"ModifyTable"` node whose
+ * `"Operation"` is `"Merge"` and whose OWN `"Relation Name"` equals [targetRelationName] —
+ * PostgreSQL sets a `MERGE`'s `ModifyTable` node's `"Relation Name"` to its target table's real
+ * name, verified live on PostgreSQL 16, 17, and 18. Searches the WHOLE plan at any depth, not just
+ * the top level, so a `MERGE` nested inside a CTE is found the same way a top-level one is; a
+ * `MERGE` elsewhere in the SAME plan targeting a DIFFERENT table (e.g. `WITH x AS (MERGE INTO
+ * other ...) MERGE INTO target ...`) is excluded by the relation-name match, never confused with
+ * this one.
+ *
+ * @return `null` when no such node exists, or when more than one does (e.g. two `MERGE`s in the
+ *   same plan targeting the SAME table) — either way there is no single node this method can
+ *   safely treat as THE merge being searched for.
+ */
+private fun findMergeModifyTableNode(
+  planRoot: JsonValue.JsonObject,
+  targetRelationName: String,
+): JsonValue.JsonObject? {
+  val matches = buildList {
+    fun walk(node: JsonValue.JsonObject) {
+      val operation = (node.fields["Operation"] as? JsonValue.JsonString)?.value
+      val relationName = (node.fields["Relation Name"] as? JsonValue.JsonString)?.value
+      if (operation == "Merge" && relationName == targetRelationName) add(node)
+      (node.fields["Plans"] as? JsonValue.JsonArray)?.items?.filterIsInstance<JsonValue.JsonObject>()?.forEach(::walk)
+    }
+    walk(planRoot)
   }
+  return matches.singleOrNull()
+}
+
+/**
+ * Every join node reachable from [mergeModifyTableNode] while descending ONLY through children
+ * whose `"Parent Relationship"` is `"Outer"` or `"Inner"` — i.e. the `MERGE`'s own join tree,
+ * never an `"InitPlan"` or `"SubPlan"` sibling. An uncorrelated `EXISTS`/`IN` inside a `WHEN`
+ * condition plans as an `"InitPlan"`; a correlated one plans as a `"SubPlan"` — both are
+ * independent subplans PostgreSQL attaches alongside the `MERGE`'s real join, not part of it, and
+ * EITHER can itself contain a join over the exact same target/source relation names (verified
+ * live), which is why [explainMergeSideNullability] must not simply take the first join found
+ * anywhere under the `ModifyTable` node.
+ */
+private fun findOwnJoinNodes(mergeModifyTableNode: JsonValue.JsonObject): List<JsonValue.JsonObject> = buildList {
+  fun walk(node: JsonValue.JsonObject) {
+    if (node.fields.containsKey("Join Type")) add(node)
+    (node.fields["Plans"] as? JsonValue.JsonArray)?.items?.filterIsInstance<JsonValue.JsonObject>()?.forEach { child ->
+      val parentRelationship = (child.fields["Parent Relationship"] as? JsonValue.JsonString)?.value
+      if (parentRelationship == "Outer" || parentRelationship == "Inner") walk(child)
+    }
+  }
+  walk(mergeModifyTableNode)
 }
 
 /** Every `"Relation Name"` reachable from [node], including [node] itself, at any depth. */

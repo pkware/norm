@@ -13,6 +13,7 @@ import org.testcontainers.containers.wait.strategy.WaitAllStrategy
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.utility.DockerImageName
+import java.sql.Connection
 import java.sql.DriverManager
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicInteger
@@ -140,6 +141,112 @@ class ExplainAnalysisTest {
     }
 
     @Test
+    fun `an unrelated join in a WHEN condition over the same relation names does not win the MERGE's own join`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
+      // The WHEN MATCHED condition's own EXISTS plans as an InitPlan sibling of the MERGE's real
+      // join, built from the SAME two tables the merge itself joins (tgt/src) — verified live: a
+      // naive first-join-found search picks this Inner join (tgt outer, src inner) over the real
+      // Left join, wrongly reporting neither side can be absent. Verified live (target id=2 has no
+      // matching source row): id=2, name=NULL.
+      val result = withMergeSideNullabilitySchema { connection ->
+        explainMergeSideNullability(
+          connection,
+          """
+          MERGE INTO tgt USING src ON tgt.id = src.id
+            WHEN MATCHED AND EXISTS (SELECT 1 FROM tgt t2 JOIN src s2 ON t2.id = s2.id) THEN UPDATE SET name = src.name
+            WHEN NOT MATCHED BY SOURCE THEN DELETE
+          """.trimIndent(),
+          targetRelationName = "tgt",
+          sourceRelationName = "src",
+        )
+      }
+      assertThat(result).isEqualTo(MergeSideNullability(targetCanBeAbsent = false, sourceCanBeAbsent = true))
+    }
+
+    @Test
+    fun `the same MERGE without the EXISTS condition still reports only the source can be absent`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
+      val result = withMergeSideNullabilitySchema { connection ->
+        explainMergeSideNullability(
+          connection,
+          """
+          MERGE INTO tgt USING src ON tgt.id = src.id
+            WHEN MATCHED THEN UPDATE SET name = src.name
+            WHEN NOT MATCHED BY SOURCE THEN DELETE
+          """.trimIndent(),
+          targetRelationName = "tgt",
+          sourceRelationName = "src",
+        )
+      }
+      assertThat(result).isEqualTo(MergeSideNullability(targetCanBeAbsent = false, sourceCanBeAbsent = true))
+    }
+
+    @Test
+    fun `a MERGE nested in a CTE keeps its own attribution despite its own unrelated join and an outer JOIN`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
+      // Combines two distractions at once: the CTE's OWN WHEN condition has an unrelated join over
+      // tgt/src (the same hazard as the top-level test above, reached this time through the
+      // CTE-nested code path), AND the outer SELECT adds a real JOIN of its own against a THIRD
+      // table. Neither may cause this MERGE's target/source attribution to waver.
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          it.execute(
+            """
+            CREATE TABLE tgt (id INT PRIMARY KEY, name TEXT NOT NULL);
+            CREATE TABLE src (id INT PRIMARY KEY, name TEXT NOT NULL);
+            CREATE TABLE other (id INT NOT NULL, label TEXT NOT NULL)
+            """.trimIndent(),
+          )
+        }
+        try {
+          val result = explainMergeSideNullability(
+            connection,
+            """
+            WITH m AS (
+              MERGE INTO tgt USING src ON tgt.id = src.id
+                WHEN MATCHED AND EXISTS (SELECT 1 FROM tgt t2 JOIN src s2 ON t2.id = s2.id) THEN UPDATE SET name = src.name
+                WHEN NOT MATCHED BY SOURCE THEN DELETE
+              RETURNING tgt.id, src.name
+            )
+            SELECT m.id, m.name, other.label FROM m JOIN other ON other.id = m.id
+            """.trimIndent(),
+            targetRelationName = "tgt",
+            sourceRelationName = "src",
+          )
+          assertThat(result).isEqualTo(MergeSideNullability(targetCanBeAbsent = false, sourceCanBeAbsent = true))
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    @Test
+    fun `a MERGE whose own plan contains multiple joins still attributes the real one`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
+      // TWO separate WHEN-condition EXISTS clauses each plan as their OWN InitPlan join over
+      // tgt/src, sitting alongside the merge's real join -- three join nodes total inside the
+      // ModifyTable's own subtree, only one of which is the merge's own.
+      val result = withMergeSideNullabilitySchema { connection ->
+        explainMergeSideNullability(
+          connection,
+          """
+          MERGE INTO tgt USING src ON tgt.id = src.id
+            WHEN MATCHED AND EXISTS (SELECT 1 FROM tgt t2 JOIN src s2 ON t2.id = s2.id)
+              AND EXISTS (SELECT 1 FROM tgt t3 JOIN src s3 ON t3.id = s3.id AND t3.name = s3.name)
+            THEN UPDATE SET name = src.name
+            WHEN NOT MATCHED BY SOURCE THEN DELETE
+          """.trimIndent(),
+          targetRelationName = "tgt",
+          sourceRelationName = "src",
+        )
+      }
+      assertThat(result).isEqualTo(MergeSideNullability(targetCanBeAbsent = false, sourceCanBeAbsent = true))
+    }
+
+    @Test
     fun `returns null when EXPLAIN fails against invalid SQL`() {
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
@@ -155,6 +262,30 @@ class ExplainAnalysisTest {
             sourceRelationName = "nonexistent_source",
           )
           assertThat(result).isNull()
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    /** A `tgt(id, name)`/`src(id, name)` schema, both primary-keyed on `id`, for [explainSql]. */
+    private fun withMergeSideNullabilitySchema(
+      explainSql: (Connection) -> MergeSideNullability?,
+    ): MergeSideNullability? {
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          it.execute(
+            """
+            CREATE TABLE tgt (id INT PRIMARY KEY, name TEXT NOT NULL);
+            CREATE TABLE src (id INT PRIMARY KEY, name TEXT NOT NULL)
+            """.trimIndent(),
+          )
+        }
+        try {
+          return explainSql(connection)
         } finally {
           connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
         }
