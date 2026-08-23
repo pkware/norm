@@ -17,7 +17,11 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.asTypeName
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.assertThrows
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.Arguments
+import org.junit.jupiter.params.provider.MethodSource
 import java.sql.Blob
 import java.time.Instant
 import java.time.LocalDate
@@ -939,50 +943,42 @@ class ColumnTypeMappingTest {
   }
 
   @Nested
+  @TestInstance(TestInstance.Lifecycle.PER_CLASS)
   inner class PostgresArrayElementTypeNames {
 
-    @Test
-    fun `strips the pg_catalog prefix`() {
-      assertThat(postgresArrayElementTypeName("pg_catalog.timestamptz")).isEqualTo("timestamptz")
+    @ParameterizedTest(name = "{0} folds to {1}")
+    @MethodSource("foldCases")
+    fun `folds a SQL-spelling alias, or a pg_catalog-prefixed name, to its canonical pg_type name`(
+      sqlSpelling: String,
+      canonicalName: String,
+    ) {
+      assertThat(postgresArrayElementTypeName(sqlSpelling)).isEqualTo(canonicalName)
     }
 
-    @Test
-    fun `folds integer spellings to int4`() {
-      assertThat(postgresArrayElementTypeName("integer")).isEqualTo("int4")
-      assertThat(postgresArrayElementTypeName("int")).isEqualTo("int4")
-      assertThat(postgresArrayElementTypeName("pg_catalog.int4")).isEqualTo("int4")
-    }
-
-    @Test
-    fun `folds smallint and bigint`() {
-      assertThat(postgresArrayElementTypeName("smallint")).isEqualTo("int2")
-      assertThat(postgresArrayElementTypeName("bigint")).isEqualTo("int8")
-    }
-
-    @Test
-    fun `folds float spellings`() {
-      assertThat(postgresArrayElementTypeName("real")).isEqualTo("float4")
-      assertThat(postgresArrayElementTypeName("double precision")).isEqualTo("float8")
-      assertThat(postgresArrayElementTypeName("float")).isEqualTo("float8")
-    }
-
-    @Test
-    fun `folds boolean and string`() {
-      assertThat(postgresArrayElementTypeName("boolean")).isEqualTo("bool")
-      assertThat(postgresArrayElementTypeName("string")).isEqualTo("text")
-    }
-
-    @Test
-    fun `passes canonical names through unchanged`() {
-      assertThat(postgresArrayElementTypeName("json")).isEqualTo("json")
-      assertThat(postgresArrayElementTypeName("jsonb")).isEqualTo("jsonb")
-      assertThat(postgresArrayElementTypeName("timetz")).isEqualTo("timetz")
-      assertThat(postgresArrayElementTypeName("uuid")).isEqualTo("uuid")
-      assertThat(postgresArrayElementTypeName("bytea")).isEqualTo("bytea")
-      assertThat(postgresArrayElementTypeName("numeric")).isEqualTo("numeric")
-      assertThat(postgresArrayElementTypeName("text")).isEqualTo("text")
-      assertThat(postgresArrayElementTypeName("varchar")).isEqualTo("varchar")
-    }
+    fun foldCases(): List<Arguments> = listOf(
+      // A pg_catalog-qualified name is stripped to its bare type name, whether or not that bare
+      // name itself also needs folding (see "pg_catalog.int4" below).
+      Arguments.of("pg_catalog.timestamptz", "timestamptz"),
+      Arguments.of("integer", "int4"),
+      Arguments.of("int", "int4"),
+      Arguments.of("pg_catalog.int4", "int4"),
+      Arguments.of("smallint", "int2"),
+      Arguments.of("bigint", "int8"),
+      Arguments.of("real", "float4"),
+      Arguments.of("double precision", "float8"),
+      Arguments.of("float", "float8"),
+      Arguments.of("boolean", "bool"),
+      Arguments.of("string", "text"),
+      // Already-canonical names must pass through unchanged.
+      Arguments.of("json", "json"),
+      Arguments.of("jsonb", "jsonb"),
+      Arguments.of("timetz", "timetz"),
+      Arguments.of("uuid", "uuid"),
+      Arguments.of("bytea", "bytea"),
+      Arguments.of("numeric", "numeric"),
+      Arguments.of("text", "text"),
+      Arguments.of("varchar", "varchar"),
+    )
 
     /**
      * Anti-drift sweep for [postgresArrayElementTypeName], the same intent as

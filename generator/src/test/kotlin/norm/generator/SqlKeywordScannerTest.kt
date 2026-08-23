@@ -7,6 +7,24 @@ import assertk.assertions.hasSize
 import assertk.assertions.isEqualTo
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestInstance
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.MethodSource
+
+/**
+ * One [findTopLevelKeyword] input: [sql] and the [keyword] to search for. [expected] is a function
+ * of the (already-evaluated) [sql] string rather than a plain `Int` so a case can assert either a
+ * fixed `-1` or a position computed from [sql] itself (e.g. `sql.indexOf("FROM a")`) without
+ * duplicating the substring being searched for.
+ */
+internal data class KeywordScanCase(
+  val description: String,
+  val sql: String,
+  val keyword: String,
+  val expected: (String) -> Int,
+) {
+  override fun toString() = description
+}
 
 class SqlKeywordScannerTest {
 
@@ -91,139 +109,142 @@ class SqlKeywordScannerTest {
   }
 
   @Nested
-  inner class FindTopLevelKeywordTest {
+  @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+  internal inner class FindTopLevelKeywordTest {
 
-    @Test
-    fun `does not match a keyword inside a single-quoted string literal`() {
-      val result = findTopLevelKeyword("UPDATE t SET name = 'copied from source' WHERE id = 1", "FROM")
-      assertThat(result).isEqualTo(-1)
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("keywordScanCases")
+    fun `scans for a keyword the same way regardless of what surrounds it`(testCase: KeywordScanCase) {
+      assertThat(findTopLevelKeyword(testCase.sql, testCase.keyword)).isEqualTo(testCase.expected(testCase.sql))
     }
 
-    @Test
-    fun `does not match a keyword inside an E-string with a backslash-escaped quote`() {
+    fun keywordScanCases(): List<KeywordScanCase> = listOf(
+      KeywordScanCase(
+        description = "does not match a keyword inside a single-quoted string literal",
+        sql = "UPDATE t SET name = 'copied from source' WHERE id = 1",
+        keyword = "FROM",
+        expected = { -1 },
+      ),
       // "\\'" inside an E-string is an escaped quote, not the string's terminator. A scanner
       // that (wrongly) treats it as the terminator would see the string as ending right there,
       // exposing " FROM here'" as ordinary top-level text — including a false-positive "FROM".
-      val result = findTopLevelKeyword(E_STRING_WITH_ESCAPED_QUOTE_CONTAINING_FROM, "FROM")
-      assertThat(result).isEqualTo(-1)
-    }
-
-    @Test
-    fun `does not match a keyword inside a dollar-quoted string`() {
-      val result = findTopLevelKeyword("UPDATE t SET name = \$\$copied from source\$\$ WHERE id = 1", "FROM")
-      assertThat(result).isEqualTo(-1)
-    }
-
-    @Test
-    fun `does not match a keyword inside a tagged dollar-quoted string`() {
-      val result = findTopLevelKeyword("UPDATE t SET name = \$tag\$copied from source\$tag\$ WHERE id = 1", "FROM")
-      assertThat(result).isEqualTo(-1)
-    }
-
-    @Test
-    fun `does not match a keyword inside a double-quoted identifier`() {
-      val result = findTopLevelKeyword("""UPDATE t SET "from column" = 1 WHERE id = 2""", "FROM")
-      assertThat(result).isEqualTo(-1)
-    }
-
-    @Test
-    fun `does not match a keyword inside a line comment`() {
-      val result = findTopLevelKeyword("UPDATE t SET name = 'x' -- copied FROM elsewhere\nWHERE id = 1", "FROM")
-      assertThat(result).isEqualTo(-1)
-    }
-
-    @Test
-    fun `does not match a keyword inside a block comment`() {
-      val result = findTopLevelKeyword("UPDATE t /* set FROM the caller */ SET name = 'x'", "FROM")
-      assertThat(result).isEqualTo(-1)
-    }
-
-    @Test
-    fun `still finds a real top-level keyword after a string literal containing the keyword text`() {
-      val sql = "UPDATE t SET name = 'copied from source' FROM a WHERE id = 1"
-      val result = findTopLevelKeyword(sql, "FROM")
-      assertThat(result).isEqualTo(sql.indexOf("FROM a"))
-    }
-
-    @Test
-    fun `does not match WHEN NOT MATCHED BY SOURCE inside a string literal`() {
+      KeywordScanCase(
+        description = "does not match a keyword inside an E-string with a backslash-escaped quote",
+        sql = E_STRING_WITH_ESCAPED_QUOTE_CONTAINING_FROM,
+        keyword = "FROM",
+        expected = { -1 },
+      ),
+      KeywordScanCase(
+        description = "does not match a keyword inside a dollar-quoted string",
+        sql = "UPDATE t SET name = \$\$copied from source\$\$ WHERE id = 1",
+        keyword = "FROM",
+        expected = { -1 },
+      ),
+      KeywordScanCase(
+        description = "does not match a keyword inside a tagged dollar-quoted string",
+        sql = "UPDATE t SET name = \$tag\$copied from source\$tag\$ WHERE id = 1",
+        keyword = "FROM",
+        expected = { -1 },
+      ),
+      KeywordScanCase(
+        description = "does not match a keyword inside a double-quoted identifier",
+        sql = """UPDATE t SET "from column" = 1 WHERE id = 2""",
+        keyword = "FROM",
+        expected = { -1 },
+      ),
+      KeywordScanCase(
+        description = "does not match a keyword inside a line comment",
+        sql = "UPDATE t SET name = 'x' -- copied FROM elsewhere\nWHERE id = 1",
+        keyword = "FROM",
+        expected = { -1 },
+      ),
+      KeywordScanCase(
+        description = "does not match a keyword inside a block comment",
+        sql = "UPDATE t /* set FROM the caller */ SET name = 'x'",
+        keyword = "FROM",
+        expected = { -1 },
+      ),
+      KeywordScanCase(
+        description = "still finds a real top-level keyword after a string literal containing the keyword text",
+        sql = "UPDATE t SET name = 'copied from source' FROM a WHERE id = 1",
+        keyword = "FROM",
+        expected = { it.indexOf("FROM a") },
+      ),
       // The literal keyword text 'when not matched by source ' must not be mistaken for the
       // real clause — this is exactly the input hasWhenNotMatchedBySourceClause scans, via
       // repeated findTopLevelKeyword("WHEN", ...) calls.
-      val result = findTopLevelKeyword("SET tname = 'when not matched by source '", "WHEN")
-      assertThat(result).isEqualTo(-1)
-    }
-
-    @Test
-    fun `does not match FROM inside the identifier valid_from`() {
+      KeywordScanCase(
+        description = "does not match WHEN NOT MATCHED BY SOURCE inside a string literal",
+        sql = "SET tname = 'when not matched by source '",
+        keyword = "WHEN",
+        expected = { -1 },
+      ),
       // Before the word-boundary fix, "_" did not count as an identifier character, so the
       // character after "FROM" in "valid_from" ("_" is not letterOrDigit) was wrongly treated as
       // a valid word boundary, matching "FROM" inside the column name itself.
-      val sql = "UPDATE t SET valid_from = 'x' FROM a"
-      val result = findTopLevelKeyword(sql, "FROM")
-      assertThat(result).isEqualTo(sql.indexOf("FROM a"))
-    }
-
-    @Test
-    fun `does not match FROM inside the identifier from_date`() {
-      val sql = "UPDATE t SET from_date = 'x' FROM a"
-      val result = findTopLevelKeyword(sql, "FROM")
-      assertThat(result).isEqualTo(sql.indexOf("FROM a"))
-    }
-
-    @Test
-    fun `does not match SET inside the identifier data_set`() {
+      KeywordScanCase(
+        description = "does not match FROM inside the identifier valid_from",
+        sql = "UPDATE t SET valid_from = 'x' FROM a",
+        keyword = "FROM",
+        expected = { it.indexOf("FROM a") },
+      ),
+      KeywordScanCase(
+        description = "does not match FROM inside the identifier from_date",
+        sql = "UPDATE t SET from_date = 'x' FROM a",
+        keyword = "FROM",
+        expected = { it.indexOf("FROM a") },
+      ),
       // "data_set" as a TABLE name ends in "_set" — the character before "set" is "_", which
       // must count as an identifier character so the real "SET" keyword afterward is what's found.
-      val sql = "UPDATE data_set SET x = 1"
-      val result = findTopLevelKeyword(sql, "SET")
-      assertThat(result).isEqualTo(sql.indexOf("SET x"))
-    }
-
-    @Test
-    fun `does not match RETURNING inside the identifier returning_note`() {
-      val sql = "UPDATE t SET returning_note = 'x' RETURNING id"
-      val result = findTopLevelKeyword(sql, "RETURNING")
-      assertThat(result).isEqualTo(sql.indexOf("RETURNING id"))
-    }
-
-    @Test
-    fun `does not match USING inside the identifier using_note`() {
-      val sql = "DELETE FROM using_note USING a"
-      val result = findTopLevelKeyword(sql, "USING")
-      assertThat(result).isEqualTo(sql.indexOf("USING a"))
-    }
-
-    @Test
-    fun `does not match SET as a standalone keyword when it is only the prefix of set_at`() {
-      val result = findTopLevelKeyword("SELECT set_at FROM t", "SET")
-      assertThat(result).isEqualTo(-1)
-    }
-
-    @Test
-    fun `does not match FROM inside an identifier containing a dollar sign`() {
+      KeywordScanCase(
+        description = "does not match SET inside the identifier data_set",
+        sql = "UPDATE data_set SET x = 1",
+        keyword = "SET",
+        expected = { it.indexOf("SET x") },
+      ),
+      KeywordScanCase(
+        description = "does not match RETURNING inside the identifier returning_note",
+        sql = "UPDATE t SET returning_note = 'x' RETURNING id",
+        keyword = "RETURNING",
+        expected = { it.indexOf("RETURNING id") },
+      ),
+      KeywordScanCase(
+        description = "does not match USING inside the identifier using_note",
+        sql = "DELETE FROM using_note USING a",
+        keyword = "USING",
+        expected = { it.indexOf("USING a") },
+      ),
+      KeywordScanCase(
+        description = "does not match SET as a standalone keyword when it is only the prefix of set_at",
+        sql = "SELECT set_at FROM t",
+        keyword = "SET",
+        expected = { -1 },
+      ),
       // PostgreSQL allows "$" inside (not at the start of) an unquoted identifier — it must
       // count as an identifier character for word-boundary purposes, the same as "_".
-      val sql = "UPDATE t SET x\$from = 1 FROM a"
-      val result = findTopLevelKeyword(sql, "FROM")
-      assertThat(result).isEqualTo(sql.indexOf("FROM a"))
-    }
-
-    @Test
-    fun `does not match FROM when immediately followed by a non-ASCII identifier-continuation character`() {
+      KeywordScanCase(
+        description = "does not match FROM inside an identifier containing a dollar sign",
+        sql = "UPDATE t SET x\$from = 1 FROM a",
+        keyword = "FROM",
+        expected = { it.indexOf("FROM a") },
+      ),
       // Issue #219: PostgreSQL's lexer admits any byte >= 0x80 inside an unquoted identifier, so
       // "from€" is a single identifier, not the keyword FROM followed by a stray "€".
-      val result = findTopLevelKeyword("SELECT * FROM€ t", "FROM")
-      assertThat(result).isEqualTo(-1)
-    }
-
-    @Test
-    fun `does not match FROM when immediately preceded by a non-ASCII identifier-continuation character`() {
+      KeywordScanCase(
+        description = "does not match FROM when immediately followed by a non-ASCII identifier-continuation character",
+        sql = "SELECT * FROM€ t",
+        keyword = "FROM",
+        expected = { -1 },
+      ),
       // Same fact, leading side: "€from" is a single identifier, not a stray "€" followed by the
       // keyword FROM.
-      val result = findTopLevelKeyword("SELECT * €FROM t", "FROM")
-      assertThat(result).isEqualTo(-1)
-    }
+      KeywordScanCase(
+        description = "does not match FROM when immediately preceded by a non-ASCII identifier-continuation character",
+        sql = "SELECT * €FROM t",
+        keyword = "FROM",
+        expected = { -1 },
+      ),
+    )
 
     @Test
     fun `bails to not-found once an unmatched closing parenthesis drives depth negative`() {

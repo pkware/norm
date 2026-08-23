@@ -10,7 +10,21 @@ import assertk.assertions.isNull
 import assertk.assertions.isTrue
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestInstance
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.MethodSource
 
+/** One SQL input that must still trip [isStarItem]'s star guard, dropping to an empty list. */
+internal data class StarGuardCase(val description: String, val sql: String) {
+  override fun toString() = description
+}
+
+/** One SQL input that must NOT trip the star guard, resolving to [expected] instead. */
+internal data class NotStarGuardCase(val description: String, val sql: String, val expected: List<SelectItem>) {
+  override fun toString() = description
+}
+
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class SqlOutputClauseTest {
 
   @Nested
@@ -520,998 +534,895 @@ class SqlOutputClauseTest {
       assertThat(result).isEmpty()
     }
 
-    @Test
-    fun `star alongside another item returns empty list to avoid shifting later items`() {
-      val result = parseSelectItems("SELECT *, id FROM t")
-      assertThat(result).isEmpty()
-    }
+    @Nested
+    @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+    internal inner class StarGuard {
 
-    @Test
-    fun `items strictly before a later star are kept, not discarded`() {
-      // Regression guard: an earlier version of the star guard discarded the ENTIRE list whenever
-      // a star shared it with another item, even for an item like "id" here, whose mapping is
-      // positionally exact regardless of the star's own unknown expansion width.
-      val result = parseSelectItems("SELECT id AS ident, t.* FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("id", "id", null),
+      @ParameterizedTest(name = "{0}")
+      @MethodSource("starGuardCases")
+      fun `still triggers the star guard`(testCase: StarGuardCase) {
+        assertThat(parseSelectItems(testCase.sql)).isEmpty()
+      }
+
+      fun starGuardCases(): List<StarGuardCase> = listOf(
+        StarGuardCase(
+          description = "star alongside another item returns empty list to avoid shifting later items",
+          sql = "SELECT *, id FROM t",
+        ),
+        // Verified against real PostgreSQL: "(tgt.*)" is valid syntax, equivalent to "tgt.*". The
+        // star is the FIRST item here, so nothing precedes it to keep.
+        StarGuardCase(
+          description = "parenthesized star as the first item drops the whole list",
+          sql = "SELECT (tgt.*), id AS ident FROM tgt",
+        ),
+        StarGuardCase(
+          description = "star with a trailing block comment as the first item drops the whole list",
+          sql = "SELECT tgt.* /*c*/, id AS ident FROM tgt",
+        ),
+        StarGuardCase(
+          description = "star with a trailing line comment as the first item drops the whole list",
+          sql = "SELECT tgt.* -- c\n, id AS ident FROM tgt",
+        ),
+        StarGuardCase(
+          description = "star with whitespace around the qualifying dot as the first item drops the whole list",
+          sql = "SELECT tgt . *, id AS ident FROM tgt",
+        ),
+        // Verified against real PostgreSQL 18: "SELECT t.* AS whatever, 7 AS id FROM t" returns
+        // 3 columns (a, b, id) for a two-column "t". Before this guard checked the alias-stripped
+        // expression rather than the raw item text, the star's own "AS whatever" alias defeated
+        // recognition entirely, so the guard never fired and the later "id" item stayed in the
+        // list — positionally misattributed to whichever real column followed t's expansion. This
+        // is the #212 failure mode itself, not merely the truncation trade-off documented on
+        // parseSelectItems: a WRONG mapping survives, rather than degrading to no mapping at all.
+        StarGuardCase(
+          description = "an aliased star still triggers the star guard",
+          sql = "SELECT t.* AS whatever, 7 AS id FROM t",
+        ),
+        StarGuardCase(
+          description = "an aliased star in RETURNING still triggers the star guard",
+          sql = "UPDATE t SET x = 1 RETURNING t.* AS whatever, 7 AS id",
+        ),
+        // Verified against real PostgreSQL 18.4: valid syntax, returns every column of "tgt". An
+        // earlier version of isStarItem stripped wrapping parentheses BEFORE stripping comments, so
+        // this comment — sitting OUTSIDE the parentheses, on the far side of the closing ")" — was
+        // never removed, "(tgt.*) -- c" never reduced to "tgt.*", and the guard never fired: the
+        // #212 failure mode (a later item shifted onto the wrong ResultSetMetaData column) survived
+        // for exactly this spelling.
+        StarGuardCase(
+          description = "a trailing line comment outside a wrapping parenthesis still triggers the star guard",
+          sql = "SELECT (tgt.*) -- c\n, id AS ident FROM tgt",
+        ),
+        // Verified against real PostgreSQL 18.4: valid syntax, same defect as the line-comment case
+        // above.
+        StarGuardCase(
+          description = "a trailing block comment outside a wrapping parenthesis still triggers the star guard",
+          sql = "SELECT (tgt.*) /*c*/, id AS ident FROM tgt",
+        ),
+        // Verified against real PostgreSQL 18.4: valid syntax. An earlier version of isStarItem
+        // only collapsed WHITESPACE around the dot, not a comment sitting between the dot and the
+        // star, so "tgt./*c*/ *" was never recognized.
+        StarGuardCase(
+          description = "a comment between the dot and the star still triggers the star guard",
+          sql = "SELECT tgt./*c*/ *, id AS ident FROM tgt",
+        ),
+        // An implicit alias (no "AS") is valid PostgreSQL syntax on a star ("u.* whatever" —
+        // identical in meaning to "u.* AS whatever"; "u" aliases "users" to make the star
+        // unambiguous). "SELECT u.* whatever, preferences FROM users u" returns every column of
+        // "users" plus a trailing "preferences" item. Before
+        // candidate 2 (the expression minus its trailing whitespace-separated token) was checked,
+        // "u.* whatever" as a whole does not end in ".*", so the guard never fired and "preferences"
+        // (a later, unrelated item) stayed in the list — positionally misattributed to whichever
+        // real column followed u's expansion, applying a real column-level type override meant for
+        // a different column entirely. This is the #212 failure mode itself.
+        StarGuardCase(
+          description = "an implicit alias on a star still triggers the star guard",
+          sql = "SELECT u.* whatever, preferences FROM users u",
+        ),
+        StarGuardCase(
+          description = "an explicit AS alias on a star keeps working alongside the implicit-alias check",
+          sql = "SELECT u.* AS whatever, preferences FROM users u",
+        ),
+        // Verified against real PostgreSQL 18.4: a double-quoted implicit alias is valid syntax.
+        // The whitespace INSIDE the quoted identifier ("My Col") must not be mistaken for the
+        // boundary before it — only the whitespace between "u.*" and the quoted identifier counts.
+        StarGuardCase(
+          description = "a quoted implicit alias on a star still triggers the star guard",
+          sql = """SELECT u.* "My Col", preferences FROM users u""",
+        ),
+        // "u.* whatever -- c" is valid PostgreSQL syntax (an implicit alias on a star, with a
+        // trailing comment). stripCommentsAndWhitespace removes both the whitespace AND the comment
+        // outright, normalizing this to "u.*whatever" — the same shape as the zero-separator case,
+        // which isStarItem's structural check already recognizes as a star (qualifier "u.", implicit
+        // alias "whatever").
+        StarGuardCase(
+          description = "an implicit alias followed by a line comment still triggers the star guard",
+          sql = "SELECT u.* whatever -- c\n, preferences FROM users u",
+        ),
+        // Same defect as the line-comment case above, block-comment form.
+        StarGuardCase(
+          description = "an implicit alias followed by a block comment still triggers the star guard",
+          sql = "SELECT u.* whatever /*c*/, preferences FROM users u",
+        ),
+        // Fixes #215 shape 2: verified against a real PostgreSQL 18.4 container, "SELECT
+        // u.*/*c*/whatever, preferences FROM users u" returns 5 columns against a 4-column "users"
+        // (the star's own expansion plus "preferences") — the comment is just as much a
+        // non-separator as no separator at all. isStarItem's structural check finds the star, its
+        // qualifier ("u."), and its implicit alias ("whatever") purely by walking identifier/quote
+        // structure once stripCommentsAndWhitespace has removed the comment outright, so it no
+        // longer matters that there was never any whitespace boundary to find.
+        StarGuardCase(
+          description =
+          "a comment abutting an implicit alias with no surrounding whitespace now triggers the star guard",
+          sql = "SELECT u.*/*c*/whatever, preferences FROM users u",
+        ),
+        // Fixes #215 shape 2, line-comment form: verified against a real PostgreSQL 18 container,
+        // "SELECT t.*-- c\nwhatever, id FROM t" against a 3-column "t" is valid and returns 4 real
+        // columns (t's own 3 plus "id") — a star. The old text-only guard needed a literal
+        // whitespace run outside any comment to find a trailing-token boundary at all, which a line
+        // comment's own terminating newline (consumed as part of the comment token) can never
+        // leave behind; the new structural check needs no such boundary.
+        StarGuardCase(
+          description = "a line comment abutting an implicit alias now triggers the star guard",
+          sql = "SELECT t.*-- c\nwhatever, id FROM t",
+        ),
+        // Fixes #215 shape 1: verified against a real PostgreSQL 18.4 container, "SELECT
+        // u.*whatever, preferences FROM users u" returns 5 columns against a 4-column "users" — the
+        // star's own expansion plus "preferences" — with the implicit alias "whatever" ignored.
+        StarGuardCase(
+          description = "a zero-separator implicit alias abutting a star now triggers the star guard",
+          sql = "SELECT u.*whatever, preferences FROM users u",
+        ),
+        // Regression guard: the double-quoted identifier "my*table" (a table literally named that)
+        // contains a "*" character that is NOT the star item's own "*" token. isStarItem's alias
+        // search recognizes the WHOLE quoted identifier as one lexical segment (via skipLexicalToken)
+        // when walking forward, so it is never mistaken for two separate tokens split around the
+        // internal "*", and the star immediately after the qualifying "." is found correctly.
+        // Verified against a real PostgreSQL 18.4 container: `SELECT "my*table".*z, c FROM
+        // "my*table"` is valid and returns 3 columns (the star's own 2 plus "c"), implicit alias "z"
+        // ignored.
+        StarGuardCase(
+          description =
+          "a star qualified by a double-quoted identifier containing a literal star character is found lexically",
+          sql = """SELECT "my*table".*z, c FROM "my*table"""",
+        ),
+        // Same regression guard as above, without the trailing implicit alias.
+        StarGuardCase(
+          description = "a star qualified by a double-quoted identifier containing a literal star character, no alias",
+          sql = """SELECT "my*table".*, c FROM "my*table"""",
+        ),
+        // Verified against a real PostgreSQL 18.4 container: "SELECT DISTINCT ON (a) t.*, a FROM t"
+        // returns 3 columns (t's own 2 plus "a") against a 2-column "t" — a star, with no implicit
+        // alias here. parseSelectItems' skipOptionalSetQuantifier strips "DISTINCT ON (a) " before
+        // isStarItem ever sees the item text, so isStarItem is handed the plain "t.*" — ending in the
+        // literal ".*" — needing no special understanding of DISTINCT ON at all.
+        StarGuardCase(
+          description = "a DISTINCT ON prefix before a qualified star still triggers the star guard",
+          sql = "SELECT DISTINCT ON (a) t.*, a FROM t",
+        ),
+        // Verified against a real PostgreSQL 18.4 container: "SELECT (t).*, a FROM t" returns 3
+        // columns (t's own 2 plus "a") — PostgreSQL's composite-value-expansion idiom, distinct from
+        // the wrapping-parenthesis case ("(tgt.*)") this guard already handled: here only "(t)" is
+        // parenthesized, not the whole item, so the wrapping-paren unwrap loop never fires and the
+        // item's full text ends in ".*" directly, matching the plain pre-existing suffix check.
+        StarGuardCase(
+          description = "a parenthesized composite expansion still triggers the star guard",
+          sql = "SELECT (t).*, a FROM t",
+        ),
+        // Same idiom as above, with a function call instead of a bare relation alias — verified
+        // against a real PostgreSQL 18.4 container: "SELECT (f2(1)).*, a FROM t" returns 3 columns
+        // ("f2" is a real function returning a row of "t"'s shape).
+        StarGuardCase(
+          description = "a parenthesized composite expansion of a function call still triggers the star guard",
+          sql = "SELECT (f2(1)).*, a FROM t",
+        ),
+        StarGuardCase(
+          description = "a parenthesized composite expansion in RETURNING still triggers the star guard",
+          sql = "UPDATE t SET a = a RETURNING (t).*, a",
+        ),
+        // Verified against a real PostgreSQL 18.4 container: `SELECT U&"my*table".*, c FROM
+        // "my*table"` returns 3 columns (the star's own 2 plus "c") -- the "U&" Unicode-escape prefix
+        // on the quoted identifier is ordinary PostgreSQL syntax, not something this guard needs to
+        // understand specially: the item's full text ends in ".*" directly (the quoted identifier
+        // itself is copied through verbatim by stripCommentsAndWhitespace), matching the plain
+        // pre-existing suffix check.
+        StarGuardCase(
+          description = "a Unicode-escape quoted identifier qualifying a star still triggers the star guard",
+          sql = """SELECT U&"my*table".*, c FROM "my*table"""",
+        ),
+        // Unlike the no-alias form above, "(t).*x" does NOT end in the literal ".*" (it ends in
+        // "x"), so path 1 fails and this only reaches path 2: isStarItem finds "x" as the trailing
+        // alias segment, leaving the prefix "(t).*" — which DOES end in ".*", with a qualifier
+        // "(t)." whose character immediately before the final "." is ")", not an identifier
+        // character at all, so isStarQualifierAcceptable accepts it (an EMPTY identifier run before
+        // the dot is always accepted — see its KDoc).
+        StarGuardCase(
+          description = "an implicit alias on a parenthesized composite expansion still triggers the star guard",
+          sql = "SELECT (t).*x, a FROM t",
+        ),
+        // Same as the no-alias DISTINCT ON case above: skipOptionalSetQuantifier strips
+        // "DISTINCT ON (a) " before isStarItem ever runs, so isStarItem is handed the plain "t.*x" —
+        // the same ordinary qualified-star-with-implicit-alias shape as "u.*whatever", needing no
+        // special understanding of DISTINCT ON.
+        StarGuardCase(
+          description = "an implicit alias on a DISTINCT ON qualified star still triggers the star guard",
+          sql = "SELECT DISTINCT ON (a) t.*x, a FROM t",
+        ),
+        StarGuardCase(
+          description = "a Unicode-escape quoted identifier with an implicit alias still triggers the star guard",
+          sql = """SELECT U&"my*table".*z, c FROM "my*table"""",
+        ),
+        // Verified against a real PostgreSQL 18.4 container: "SELECT (t.*::t).* whatever, a FROM t"
+        // returns 3 columns (t's own 2 plus "a") against a 2-column "t". The qualifier "(t.*::t)."
+        // contains its OWN star (inside the cast expression, a leftover "t.*" that Postgres accepts
+        // as an argument to the composite cast) — isStarItem's alias search is not misled by it: it
+        // finds "whatever" as the trailing segment regardless of how many "*" characters sit earlier
+        // in the text, since it walks FORWARD tracking only the LAST segment, never searching for a
+        // "*" character directly at all.
+        StarGuardCase(
+          description =
+          "a star qualifier that itself contains a star via a parenthesized cast still triggers the star guard",
+          sql = "SELECT (t.*::t).* whatever, a FROM t",
+        ),
+        // Verified against a real PostgreSQL 18.4 container: "SELECT (ARRAY[t.*])[1].* whatever, a
+        // FROM t" returns 3 columns (t's own 2 plus "a"). The qualifier "(ARRAY[t.*])[1]." contains
+        // its own star inside the ARRAY literal, harmless to the alias search (see the cast case
+        // above); the array-subscript close "]" immediately before the qualifier's final "." is not
+        // an identifier character, so isStarQualifierAcceptable accepts the (empty) run before it.
+        StarGuardCase(
+          description =
+          "a star qualifier that itself contains a star via an ARRAY subscript still triggers the star guard",
+          sql = "SELECT (ARRAY[t.*])[1].* whatever, a FROM t",
+        ),
+        // Verified against a real PostgreSQL 18.4 container: "SELECT (f(a*2)).* z, a FROM t" returns
+        // 3 columns (t's own 2 plus "a") — "f" is a real function returning a row of "t"'s shape. The
+        // qualifier "(f(a*2))." contains an unrelated multiplication star inside the function call's
+        // own argument.
+        StarGuardCase(
+          description = "a star qualifier containing a star via multiplication inside a function call " +
+            "still triggers the star guard",
+          sql = "SELECT (f(a*2)).* z, a FROM t",
+        ),
+        // Same shape as the ARRAY-subscript case above, with no separator before the implicit alias
+        // — issue shape 1 for this qualifier. Verified against a real PostgreSQL 18.4 container:
+        // "SELECT (ARRAY[t.*])[1].*whatever, a FROM t" returns the same 3 columns.
+        StarGuardCase(
+          description =
+          "a zero-separator implicit alias on a star qualifier containing its own star still triggers the star guard",
+          sql = "SELECT (ARRAY[t.*])[1].*whatever, a FROM t",
+        ),
+        // Fixes a regression: the old wrapping-parenthesis unwrap loop required the ENTIRE
+        // normalized text to end in ")", so "(u.*)whatever" (only "u.*" is parenthesized, not the
+        // trailing alias) never unwrapped and was missed. Verified against a real PostgreSQL 18.4
+        // container: "SELECT (u.*) whatever, preferences FROM users u" returns 5 columns against a
+        // 4-column "users" (the star's own expansion plus "preferences"). isStarItem's alias search
+        // finds "whatever" as the trailing segment, leaving the prefix "(u.*)", which unwraps to
+        // "u.*" and matches the plain suffix check.
+        StarGuardCase(
+          description = "a star wrapped only up to its implicit alias still triggers the star guard",
+          sql = "SELECT (u.*) whatever, preferences FROM users u",
+        ),
+        // Verified against a real PostgreSQL 18.4 container: "SELECT ((t.*)) x, a FROM t" returns 3
+        // columns (t's own 2 plus "a") against a 2-column "t". unwrapWrappingParentheses strips BOTH
+        // layers of the prefix "((t.*))" in two passes, down to "t.*".
+        StarGuardCase(
+          description = "a doubly-wrapped star with an implicit alias still triggers the star guard",
+          sql = "SELECT ((t.*)) x, a FROM t",
+        ),
+        // Verified against a real PostgreSQL 18.4 container: "UPDATE t SET a = 1 RETURNING (t.*) x,
+        // a" returns 3 columns (t's own 2 plus "a").
+        StarGuardCase(
+          description = "a wrapped star with an implicit alias in RETURNING still triggers the star guard",
+          sql = "UPDATE t SET a = 1 RETURNING (t.*) x, a",
+        ),
+        // The U&-lookahead ORDERING GUARD: this is the exact shape that breaks if the bare-identifier
+        // rule is tried before the Unicode-escape rule when searching for the trailing alias segment
+        // — a naive forward walk would match "U" alone as a one-character identifier segment, then
+        // separately match "\"a\"" as a later segment, making the alias appear to end at the quoted
+        // identifier while leaving a dangling "U&" attached to the prefix (`u.*U&`), which is not
+        // star-shaped at all. Trying the Unicode-escape rule FIRST consumes "U&\"a\"" as ONE segment,
+        // so the prefix correctly reduces to "u.*". Verified against a real PostgreSQL 18.4
+        // container: `SELECT u.* U&"a", preferences FROM users u` returns 5 columns against a
+        // 4-column "users".
+        StarGuardCase(
+          description = "a Unicode-escape identifier as the implicit alias itself still triggers the star guard",
+          sql = """SELECT u.* U&"a", preferences FROM users u""",
+        ),
+        // Verified against a real PostgreSQL 18.4 container: `SELECT t.* U&"d!0061t" UESCAPE '!', a
+        // FROM t` returns 3 columns (t's own 2 plus "a") against a 2-column "t" — PostgreSQL merges
+        // the Unicode-escape identifier, the UESCAPE keyword, and its single-quoted escape-character
+        // string into ONE lexical unit (here spelling the same identifier "U&\"data\"" would, via the
+        // custom "!" escape character), so the whole thing is the implicit alias.
+        StarGuardCase(
+          description = "a Unicode-escape alias with a UESCAPE clause still triggers the star guard",
+          sql = """SELECT t.* U&"d!0061t" UESCAPE '!', a FROM t""",
+        ),
+        // Verified against a real PostgreSQL 18.4 container: `SELECT U&"!0074" UESCAPE '!'.* x, a
+        // FROM t` returns 3 columns (t's own 2 plus "a"). Here the UESCAPE-extended Unicode-escape
+        // identifier is the QUALIFIER, not the alias — its closing "'" (from the escape-character
+        // string) sits immediately before the star's qualifying ".", which is not an identifier
+        // character, so isStarQualifierAcceptable accepts the (empty) run before it.
+        StarGuardCase(
+          description = "a Unicode-escape qualifier with a UESCAPE clause still triggers the star guard",
+          sql = """SELECT U&"!0074" UESCAPE '!'.* x, a FROM t""",
+        ),
+        // Verified against a real PostgreSQL 18.4 container: "SELECT ALL t.* x, a FROM t" returns 3
+        // columns (t's own 2 plus "a"). parseSelectItems' skipOptionalSetQuantifier strips "ALL "
+        // before splitting the clause into items, so isStarItem is handed the plain "t.* x" — never
+        // seeing the quantifier fused onto it.
+        StarGuardCase(
+          description =
+          "an ALL quantifier before a qualified star with an implicit alias still triggers the star guard",
+          sql = "SELECT ALL t.* x, a FROM t",
+        ),
+        // Verified against a real PostgreSQL 18.4 container: "SELECT all2.* a, p FROM all2" returns 3
+        // columns (all2's own 2 plus "p") against a real table named "all2". skipOptionalKeyword's own
+        // word-boundary check is what keeps "ALL" from matching the first 3 letters of "all2" — the
+        // character immediately after ("2") is still an identifier character, so it isn't a real
+        // standalone "ALL" keyword — leaving "all2.* a" as the untouched item text.
+        StarGuardCase(
+          description =
+          "a star on a table whose name starts with the letters of the ALL quantifier still triggers the star guard",
+          sql = "SELECT all2.* a, p FROM all2",
+        ),
+        // Written as a Kotlin unicode escape (\u0301, COMBINING ACUTE ACCENT) so the intent survives
+        // any editor, and so a precomposed character (which already works and would not exercise this
+        // fix) never sneaks in: the alias is "p", "r", "e", COMBINING ACUTE ACCENT (U+0301), "f", "s"
+        // -- the NFD spelling of "prefs" with an accent on the "e" -- NOT the single precomposed
+        // "e-acute" codepoint. PostgreSQL's lexer accepts any byte >= 0x80 in an unquoted identifier;
+        // a combining mark (Unicode category Mn) is one such byte, but is not a Unicode "letter"
+        // (Char.isLetter() rejects it). Verified against a real PostgreSQL 18.4 container (via
+        // psql -f, to avoid shell/encoding mangling the input): this exact alias (NFD) on "users"
+        // returns 5 columns against a 4-column "users".
+        StarGuardCase(
+          description = "an implicit alias written in NFD with a combining mark still triggers the star guard",
+          sql = "SELECT u.* pre\u0301fs, preferences FROM users u",
+        ),
+        // Written as a Kotlin unicode escape (\u20AC, the Euro sign). Verified against a real
+        // PostgreSQL 18.4 container: this exact query returns 3 columns (t's own 2 plus "a") against
+        // a 2-column "t" -- a currency sign is Unicode category Sc (symbol), not a letter, but
+        // PostgreSQL's lexer still accepts it (any byte >= 0x80) as an unquoted identifier character.
+        StarGuardCase(
+          description = "an implicit alias containing a currency symbol still triggers the star guard",
+          sql = "SELECT t.* \u20ACtotal, a FROM t",
+        ),
+        // Written as a Kotlin unicode escape (\u00A9, the copyright sign). Verified against a real
+        // PostgreSQL 18.4 container: this exact query returns 3 columns (t's own 2 plus "a") -- the
+        // copyright sign (Unicode category So, symbol/other) is, on its own, a complete legal
+        // unquoted identifier in PostgreSQL.
+        StarGuardCase(
+          description = "an implicit alias that is a bare symbol still triggers the star guard",
+          sql = "SELECT t.* \u00A9, a FROM t",
+        ),
+        // Written as a Kotlin unicode escape surrogate pair (\uD83D\uDE80, the rocket emoji,
+        // U+1F680 -- a supplementary-plane character). Verified against a real PostgreSQL 18.4
+        // container: this exact query returns 5 columns against a 4-column "users". A
+        // supplementary-plane character is a SURROGATE PAIR in a Kotlin/UTF-16 String -- both code
+        // units are >= 0x80, so no special surrogate-aware handling is needed for the per-character
+        // loop to consume it correctly.
+        StarGuardCase(
+          description = "an implicit alias that is a supplementary-plane character still triggers the star guard",
+          sql = "SELECT u.* \uD83D\uDE80, preferences FROM users u",
+        ),
+        // Same alias as the SELECT currency-symbol case above, RETURNING form. Verified against a
+        // real PostgreSQL 18.4 container: this exact statement returns 3 columns (t's own 2 plus
+        // "a").
+        StarGuardCase(
+          description = "an implicit alias containing a currency symbol in RETURNING still triggers the star guard",
+          sql = "UPDATE t SET a = 1 RETURNING t.* \u20ACtotal, a",
+        ),
+        // Issue #215 shape 1 for a non-ASCII alias -- unfixed in BOTH the pre-existing code and every
+        // earlier round of this fix until now, since none of them recognized a combining mark as an
+        // identifier character at all, separator or not. Written as a Kotlin unicode escape
+        // (\u0301, COMBINING ACUTE ACCENT): the alias is "c", "a", "f", "e", COMBINING ACUTE ACCENT
+        // (U+0301) -- the NFD spelling of "cafe" with an accent on the "e" -- NOT the precomposed
+        // codepoint. Verified against a real PostgreSQL 18.4 container: this exact query returns 3
+        // columns (t's own 2 plus "a").
+        StarGuardCase(
+          description = "a zero-separator NFD alias still triggers the star guard",
+          sql = "SELECT t.*cafe\u0301, a FROM t",
+        ),
+        // Regression guard: isStarQualifierAcceptable used to reject via Char.isDigit(), which is
+        // Unicode-aware and therefore ALSO matched non-ASCII digits (Unicode category Nd) -- but
+        // PostgreSQL numeric literals use ASCII digits exclusively, so a non-ASCII digit starting a
+        // qualifier's run can only be an identifier's first character, never a numeral. The table
+        // here is literally named \u0663 (ARABIC-INDIC DIGIT THREE), written as a Kotlin unicode
+        // escape. Verified against a real PostgreSQL 18.4 container with a real table named \u0663:
+        // "SELECT \u0663.* x, a FROM \u0663" returns 3 columns (\u0663's own 2 plus "a").
+        StarGuardCase(
+          description = "a qualifier starting with a non-ASCII digit still triggers the star guard",
+          sql = "SELECT \u0663.* x, a FROM \u0663",
+        ),
+        // Same regression guard as above, zero-separator implicit-alias form. Verified against a
+        // real PostgreSQL 18.4 container: "SELECT \u0663.*x, a FROM \u0663" returns the same 3
+        // columns.
+        StarGuardCase(
+          description =
+          "a zero-separator alias on a qualifier starting with a non-ASCII digit still triggers the star guard",
+          sql = "SELECT \u0663.*x, a FROM \u0663",
+        ),
+        // Regression guard, third instance of one root cause: isStarQualifierAcceptable used to scan
+        // the run before the qualifying "." with isIdentifierChar alone, which rejects "\u20AC" (the
+        // Euro sign, >= 0x80 but neither a letter nor a digit). Scanning backward from the ASCII
+        // digit "9" therefore stopped AT "\u20AC", leaving "9" looking like the run's own start and
+        // wrongly rejecting the whole qualifier as numeric -- when the real run is "x\u20AC9"
+        // (letter-led, correctly acceptable). isIdentifierChar (shared with
+        // matchTrailingAliasSegment) runs past "\u20AC" instead. The table alias here is "x",
+        // "\u20AC", "9", written as Kotlin unicode escapes. Verified against a real PostgreSQL 18.4
+        // container: "SELECT x\u20AC9.* w, preferences FROM users x\u20AC9" returns 5 columns
+        // against a 4-column "users".
+        StarGuardCase(
+          description =
+          "a qualifier containing a currency symbol followed by an ASCII digit still triggers the star guard",
+          sql = "SELECT x\u20AC9.* w, preferences FROM users x\u20AC9",
+        ),
+        // Same regression guard as above, with a different >= 0x80-but-not-letter-or-digit character:
+        // "\u00B9" (SUPERSCRIPT ONE, Unicode category No -- number, other -- still not a letter or a
+        // digit per isIdentifierChar's isLetterOrDigit()). The table alias here is "x", "\u00B9",
+        // "9", written as Kotlin unicode escapes. Verified against a real PostgreSQL 18.4 container:
+        // "SELECT x¹9.* w, a FROM t x¹9" returns 3 columns (t's own 2 plus "a").
+        StarGuardCase(
+          description =
+          "a qualifier containing a superscript digit followed by an ASCII digit still triggers the star guard",
+          sql = "SELECT x\u00B99.* w, a FROM t x\u00B99",
+        ),
+        // Same regression guard again, with a combining mark instead of a symbol: the qualifier is
+        // "c", "a", "f", "e", COMBINING ACUTE ACCENT (\u0301), "2" -- the NFD spelling of "cafe" with
+        // an accent on the "e", followed by an ASCII digit, written as Kotlin unicode escapes.
+        // Verified against a real PostgreSQL 18.4 container: "SELECT café2.* w, a FROM t café2" (NFD)
+        // returns 3 columns (t's own 2 plus "a").
+        StarGuardCase(
+          description = "a qualifier written in NFD followed by an ASCII digit still triggers the star guard",
+          sql = "SELECT cafe\u03012.* w, a FROM t cafe\u03012",
+        ),
+        // Regression guard for the fail-safe answer, now grounded in OriginalAdjacency rather than
+        // an incidental character-class exclusion: "x€ E'a\'b'" (a real space between "€" and the
+        // standalone "E") strips to "x€E'a\'b'", and skipSingleQuotedString's standalone-E lookback
+        // gates its "was € really continuing an identifier into E" check on whether € and E were
+        // ADJACENT in the original text -- they were not (the character stripping removed there was
+        // a real separator) -- so E is correctly recognized as standalone regardless of what
+        // character stripping happened to fuse in front of it (see that function's own KDoc). With E
+        // correctly standalone, the whole "E'a\'b'" is scanned as ONE backslash-escaped string, so
+        // isStarItem correctly reaches and recognizes the trailing ".* y" — this item IS star-shaped,
+        // and parseSelectItems drops it and everything after it, giving the fail-safe emptyList()
+        // this test asserts.
+        //
+        // Verified directly (by running this exact input against the pre-#223 code too): this query
+        // already returned emptyList() before OriginalAdjacency existed, via the narrower
+        // letter/digit/underscore-only class from issue #222 — which also happens to exclude "€" —
+        // reaching the SAME star recognition for a narrower, coincidental reason. What changed is
+        // that recognizing "E" as standalone here no longer depends on an accident of "€" failing
+        // that narrow class; it depends on the actual structural fact that "€" was never truly
+        // adjacent to "E" in the original query.
+        StarGuardCase(
+          description =
+          "a typed-literal call with a standalone E before a backslash-quote does not manufacture a star item",
+          sql = "SELECT (f(x€ E'a\\'b')).* y, id FROM t",
+        ),
+        // "1 - -1" (two independently-lexed "-" tokens, genuinely separated by a space) strips to
+        // "1--1", which skipLexicalToken would otherwise read as a "--" line comment that was never
+        // in the query — skipLineComment then jumps to the end of the stripped text, so no segment
+        // ends exactly at text.length, findTrailingImplicitAliasStart returns null, and isStarItem
+        // answers false — the DANGEROUS direction (a later item silently shifts onto the wrong
+        // ResultSetMetaData column). Verified against a real PostgreSQL 18.4 container: this query
+        // returns 4 columns (f1, f2, id, name) against a 2-column "t" — the star and everything
+        // before it must be dropped, since two items come after it.
+        StarGuardCase(
+          description =
+          "a negative literal subtraction inside a ROW composite star qualifier does not manufacture a --comment",
+          sql = "SELECT (ROW(1, 2 - -1)).* y, id, name FROM t",
+        ),
+        // Same fusion class as the ROW case above, inside a function call's own argument instead of
+        // a ROW constructor. Verified against a real PostgreSQL 18.4 container: this query returns 3
+        // columns (f1, f2, id) — f(int) returns a 2-column composite.
+        StarGuardCase(
+          description =
+          "a negative literal subtraction inside a function-call star qualifier does not manufacture a --comment",
+          sql = "SELECT (f(1 - -1)).* y, id FROM t",
+        ),
+        // Same fusion class, inside a CAST's ROW argument. Verified against a real PostgreSQL 18.4
+        // container: this query returns 3 columns (f1, f2, id).
+        StarGuardCase(
+          description = "a negative literal subtraction inside a CAST star qualifier does not manufacture a --comment",
+          sql = "SELECT (CAST(ROW(1 - -1, 2) AS pair)).* y, id FROM t",
+        ),
+        // Same fusion class, inside an ARRAY subscript. Verified against a real PostgreSQL 18.4
+        // container: this query returns 3 columns (id, name, id) — "t.*" expands to id/name, then
+        // the trailing bare "id" is a separate item after the star.
+        StarGuardCase(
+          description =
+          "a negative literal subtraction inside an array-subscript star qualifier does not manufacture a --comment",
+          sql = "SELECT (ARRAY[t])[1 - -1].* y, id FROM t",
+        ),
+        // "xq E'...'" ("xq" — a domain over text — used as a type name in PostgreSQL's own
+        // "typename Sconst" typed-literal form, genuinely separated from the following E-string by a
+        // space) strips to "xqE'...'". Without gating the standalone-E lookback on original
+        // adjacency, the "q" immediately before "E" would look like it continues "xq" into the "E",
+        // wrongly denying the escape string its backslash-escape processing and letting the
+        // backslash-quote inside it terminate the string early, garbling everything scanned after.
+        // Verified against a real PostgreSQL 18.4 container: this query returns 3 columns (f1, f2,
+        // id) — f(xq) returns a 2-column composite.
+        StarGuardCase(
+          description = "a space-separated E-string typed literal is not fused into a standalone-E escape string",
+          sql = "SELECT (f(xq E'a\\'b')).* y, id FROM t",
+        ),
+        // "xq \$q\$...\$q\$" strips to "xq\$q\$...\$q\$" — without gating the dollar-quote identifier
+        // lookback on original adjacency, the "q" immediately before "$" would look like it
+        // continues the "xq" identifier (PostgreSQL allows "$" inside an unquoted identifier), so the
+        // "$" would never be recognized as opening a dollar-quoted string at all, and its body —
+        // including the "'" it contains — would be scanned as ordinary SQL. Verified against a real
+        // PostgreSQL 18.4 container: this query returns 3 columns (f1, f2, id).
+        StarGuardCase(
+          description = "a space-separated dollar-quoted typed literal is not fused into the identifier before it",
+          sql = "SELECT (f(xq \$q\$a'b\$q\$)).* y, id FROM t",
+        ),
       )
-    }
 
-    @Test
-    fun `RETURNING items strictly before a later star are kept, not discarded`() {
-      val result = parseSelectItems("UPDATE t SET x = 1 RETURNING id AS ident, t.*")
-      assertThat(result).containsExactly(
-        SelectItem("id", "id", null),
+      @ParameterizedTest(name = "{0}")
+      @MethodSource("notMistakenForStarGuardCases")
+      fun `is not mistaken for the star guard`(testCase: NotStarGuardCase) {
+        assertThat(parseSelectItems(testCase.sql)).containsExactly(*testCase.expected.toTypedArray())
+      }
+
+      fun notMistakenForStarGuardCases(): List<NotStarGuardCase> = listOf(
+        // Regression guard: an earlier version of the star guard discarded the ENTIRE list whenever
+        // a star shared it with another item, even for an item like "id" here, whose mapping is
+        // positionally exact regardless of the star's own unknown expansion width.
+        NotStarGuardCase(
+          description = "items strictly before a later star are kept, not discarded",
+          sql = "SELECT id AS ident, t.* FROM t",
+          expected = listOf(
+            SelectItem("id", "id", null),
+          ),
+        ),
+        NotStarGuardCase(
+          description = "RETURNING items strictly before a later star are kept, not discarded",
+          sql = "UPDATE t SET x = 1 RETURNING id AS ident, t.*",
+          expected = listOf(
+            SelectItem("id", "id", null),
+          ),
+        ),
+        // Regression guard: a looser normalizer that strips ALL whitespace (needed to recognize
+        // "tgt . *") must not also start recognizing "count( * )" as a star merely because it
+        // contains the character "*" once whitespace is gone ("count(*)") — the trailing ")"
+        // still rules it out. This is only true because "count(*)" does not ALSO look like a
+        // wrapping parenthesis around a star: isStarItem's parenthesis-stripping loop only strips a
+        // pair that wraps the ENTIRE remaining text (verified via findMatchingCloseParenthesis, not
+        // merely the first/last characters), and "count(*)" does not start with "(" at all — its
+        // first character is "c", and the real "(" is the 6th character (index 5) — so the loop's
+        // own startsWith("(") check never fires and the trailing ")" is decisive. (A genuine wrapping
+        // case like "(tgt.*)" normalizes to itself first — still ending in ")" — and only becomes a
+        // recognized star AFTER the stripping loop removes that wrapping pair, leaving "tgt.*".)
+        NotStarGuardCase(
+          description = "count star is not mistaken for the star guard even with internal whitespace",
+          sql = "SELECT count( * ) AS total, id FROM t",
+          expected = listOf(
+            SelectItem("count( * )", null, null),
+            SelectItem("id", "id", null),
+          ),
+        ),
+        // Regression guard: "t.*::text" ends in neither "*" nor ".*" after normalization (it ends
+        // in "text"), so it must keep its current classification as a computed expression, not a
+        // star, regardless of how aggressively comments/whitespace are stripped elsewhere in it.
+        NotStarGuardCase(
+          description = "a cast on a star-shaped expression is not mistaken for the star guard",
+          sql = "SELECT t.*::text AS whatever, id FROM t",
+          expected = listOf(
+            SelectItem("t.*::text", null, null),
+            SelectItem("id", "id", null),
+          ),
+        ),
+        // The shape most likely to be broken by a looser implicit-alias check: candidate 2 for
+        // "count(*) total" is "count(*)", which still does not end in ".*" (it ends in ")"), so
+        // this must NOT be treated as a star.
+        NotStarGuardCase(
+          description = "count star with an implicit alias is not mistaken for the star guard",
+          sql = "SELECT count(*) total, id FROM t",
+          expected = listOf(
+            SelectItem("count(*) total", null, null),
+            SelectItem("id", "id", null),
+          ),
+        ),
+        // "t.*::text" has no top-level whitespace, so candidate 1 and candidate 2 are identical —
+        // classification is unchanged from before the implicit-alias check existed.
+        NotStarGuardCase(
+          description = "a cast on a star with no whitespace is unaffected by the implicit-alias check",
+          sql = "SELECT t.*::text, id FROM t",
+          expected = listOf(
+            SelectItem("t.*::text", null, null),
+            SelectItem("id", "id", null),
+          ),
+        ),
+        // Regression guard: stripCommentsAndWhitespace removes the comment OUTRIGHT, with nothing
+        // put in its place, so "t.*/*c*/::text" normalizes to "t.*::text" — not "t.* ::text" or
+        // anything else with a boundary in it. isStarItem's alias search finds "text" as the trailing
+        // segment (a valid identifier), leaving the prefix "t.*::" — which does NOT end in the
+        // literal ".*" (it ends in "::"), so this is correctly rejected as not a star.
+        NotStarGuardCase(
+          description = "a cast on a star with a comment immediately before it is not mistaken for the star guard",
+          sql = "SELECT t.*/*c*/::text, a FROM t",
+          expected = listOf(
+            SelectItem("t.*/*c*/::text", null, null),
+            SelectItem("a", "a", null),
+          ),
+        ),
+        // Verified against a real PostgreSQL 18 container: "SELECT t.* ::text, a FROM t" is valid
+        // and returns 2 columns (t, a), with NO star expansion. stripCommentsAndWhitespace removes
+        // ALL whitespace, so this normalizes to the same "t.*::text" as the comment-abutting case
+        // above, and is rejected the same way (prefix "t.*::" does not end in ".*").
+        NotStarGuardCase(
+          description = "a whitespace-separated cast on a star is not mistaken for an implicit alias",
+          sql = "SELECT t.* ::text, a FROM t",
+          expected = listOf(
+            SelectItem("t.* ::text", null, null),
+            SelectItem("a", "a", null),
+          ),
+        ),
+        // A different spaced-cast shape from the string-text case above, to confirm the "::" check
+        // is not narrowly tied to one particular cast target type.
+        NotStarGuardCase(
+          description = "a whitespace-separated array cast on a star is not mistaken for an implicit alias",
+          sql = "SELECT t.* ::integer[], a FROM t",
+          expected = listOf(
+            SelectItem("t.* ::integer[]", null, null),
+            SelectItem("a", "a", null),
+          ),
+        ),
+        // Verified against a real PostgreSQL 18 container: "SELECT t.*-- c\n::text, a FROM t" is
+        // valid and returns 2 columns (t, a), with NO star expansion. This already resolved
+        // correctly before this round's "::" fix — skipLineComment consumes the whole "-- c\n" span
+        // (including its terminating newline) as ONE opaque token, so none of the three candidates
+        // ever finds a top-level whitespace boundary to strip a trailing token at here at all; "::"
+        // stays attached to "t.*" regardless. It had no dedicated test pinning it, though.
+        NotStarGuardCase(
+          description = "a line comment between a star and its cast is not mistaken for an implicit alias",
+          sql = "SELECT t.*-- c\n::text, a FROM t",
+          expected = listOf(
+            SelectItem("t.*-- c\n::text", null, null),
+            SelectItem("a", "a", null),
+          ),
+        ),
+        // A single item short-circuits the star guard entirely (there is nothing after it to
+        // shift), so this is unaffected by the ordering fix either way — included to confirm the
+        // whole clause still parses correctly rather than the comment swallowing anything past it.
+        NotStarGuardCase(
+          description = "an implicit alias followed by a comment with no following item is unaffected by truncation",
+          sql = "SELECT u.* whatever -- c\nFROM users u",
+          expected = listOf(
+            SelectItem("u.* whatever -- c", null, null),
+          ),
+        ),
+        // Regression guard: PostgreSQL identifiers cannot start with a digit, so "2." is not a valid
+        // qualifier — this is ordinary multiplication ("2 * 3"), with "3 lbl" an implicit alias on
+        // the numeric literal "3" (verified against a real PostgreSQL 18.4 container: "SELECT
+        // 2.*3 lbl, a FROM t" returns 2 columns). A qualifier check based on `\w` (ASCII word
+        // characters) rather than "letter or underscore, then identifier characters" would wrongly
+        // accept "2." as a qualifier here.
+        NotStarGuardCase(
+          description = "a digit-leading qualifier before a star is arithmetic, not a star",
+          sql = "SELECT 2.*3 lbl, a FROM t",
+          expected = listOf(
+            SelectItem("2.*3 lbl", null, null),
+            SelectItem("a", "a", null),
+          ),
+        ),
+        NotStarGuardCase(
+          description = "a digit-leading qualifier before a star with explicit whitespace is arithmetic, not a star",
+          sql = "SELECT 2. * 3 AS x, a FROM t",
+          expected = listOf(
+            SelectItem("2. * 3", null, null),
+            SelectItem("a", "a", null),
+          ),
+        ),
+        // Negative guard confirming isStarQualifierAcceptable's digit-leading rejection still fires
+        // regardless of whether an implicit alias follows the star: "2." is rejected because the
+        // identifier-character run immediately before its final "." is "2", and that run's first
+        // character is a digit. Verified against a real PostgreSQL 18.4 container: "SELECT 2.*a lbl,
+        // a FROM t" is valid arithmetic ("2 * a AS lbl"), returning 2 columns.
+        NotStarGuardCase(
+          description = "a digit-leading qualifier before a star with an implicit alias remains arithmetic, not a star",
+          sql = "SELECT 2.*a lbl, a FROM t",
+          expected = listOf(
+            SelectItem("2.*a lbl", null, null),
+            SelectItem("a", "a", null),
+          ),
+        ),
+        // Negative guard confirming the alias-first design did not break the ordinary case where an
+        // EARLIER part of the expression contains a star ("count(*)"). Verified against a real
+        // PostgreSQL 18.4 container: "SELECT count(*) * 2 tot, (SELECT 1) AS id FROM t" returns 2
+        // columns (tot, id) — isStarItem finds "tot" as the trailing alias segment, leaving the
+        // prefix "count(*)*2", which does not end in the literal ".*" (it ends in "*2"), so this is
+        // correctly rejected without needing to reason about the "*" inside "count(*)" at all.
+        NotStarGuardCase(
+          description = "an aggregate star multiplied by a constant is not mistaken for the star guard",
+          sql = "SELECT count(*) * 2 tot, (SELECT 1) AS id FROM t",
+          expected = listOf(
+            SelectItem("count(*) * 2 tot", null, null),
+            SelectItem("(SELECT 1)", null, null),
+          ),
+        ),
+        // Negative guard for the point where skipOptionalSetQuantifier matters most: after
+        // isStarItem's own whitespace-stripping, "ALL 2.*a" and a genuine star on a table named
+        // "all2" would normalize IDENTICALLY ("all2.*a") if the quantifier were stripped inside
+        // isStarItem itself rather than beforehand in parseSelectItems, using the still-whitespace-
+        // intact clause text. Verified against a real PostgreSQL 18.4 container: "SELECT ALL 2.*a
+        // lbl, b FROM t" is valid arithmetic ("ALL 2 * a AS lbl"), returning 2 columns.
+        NotStarGuardCase(
+          description = "an ALL quantifier fused with a digit-leading qualifier is still arithmetic, not a star",
+          sql = "SELECT ALL 2.*a lbl, b FROM t",
+          expected = listOf(
+            SelectItem("2.*a lbl", null, null),
+            SelectItem("b", "b", null),
+          ),
+        ),
+        // Pins the point-4 behavior change: previously the quantifier text was glued onto the first
+        // item's expression. Verified against a real PostgreSQL 18.4 container: "SELECT DISTINCT a, b
+        // FROM t" returns 2 columns (a, b) — a plain DISTINCT with no ON (...) clause. The first
+        // item's expression/columnName must now be the bare "a", not "DISTINCTa".
+        NotStarGuardCase(
+          description = "a DISTINCT quantifier with no ON clause is stripped from the first item",
+          sql = "SELECT DISTINCT a, b FROM t",
+          expected = listOf(
+            SelectItem("a", "a", null),
+            SelectItem("b", "b", null),
+          ),
+        ),
+        // This is a DESIGN regression guard, not coverage of any Unicode relaxation: it pins that
+        // isStarQualifierAcceptable still rejects an ASCII-digit-led qualifier run ("2") at all --
+        // i.e. that the digit check has not been silently dropped or weakened to "always accept" --
+        // regardless of what the TRAILING alias is made of (here an "x" followed by a COMBINING ACUTE
+        // ACCENT, \u0301, written as a Kotlin unicode escape). It does NOT discriminate between any
+        // version of the qualifier-side fix, past or present: a non-ASCII digit like "\u0663" starting
+        // the qualifier's OWN run (which Char.isDigit() used to wrongly reject, and which the shared
+        // isIdentifierChar predicate now correctly runs past) is a DIFFERENT shape -- see the
+        // "\u0663" tests below for that discriminating coverage. Verified against a
+        // real PostgreSQL 18.4 container using a temporary table (this literal identifier isn't a
+        // real column anywhere, so a plain SELECT against "t" can't execute to confirm a row, only a
+        // parse): creating a temp table with an "a" column and a column named by this exact
+        // identifier, then "SELECT 2.*<that identifier> lbl, a FROM temp_check" returns 2 columns
+        // (lbl, a) -- ordinary arithmetic, not a star, matching the identically-shaped (ASCII)
+        // "2.*a lbl, a FROM t" case already pinned above.
+        NotStarGuardCase(
+          description =
+          "a digit-leading qualifier before a star with an NFD implicit alias remains arithmetic, not a star",
+          sql = "SELECT 2.*x\u0301 lbl, a FROM t",
+          expected = listOf(
+            SelectItem("2.*x\u0301 lbl", null, null),
+            SelectItem("a", "a", null),
+          ),
+        ),
+        NotStarGuardCase(
+          description = "a multiplication expression with a trailing line comment is not mistaken for the star guard",
+          sql = "SELECT a * b -- c\n, id FROM t",
+          expected = listOf(
+            SelectItem("a * b -- c", null, null),
+            SelectItem("id", "id", null),
+          ),
+        ),
+        NotStarGuardCase(
+          description =
+          "a multiplication expression with an implicit alias and internal block comment is not mistaken as a star",
+          sql = "SELECT 2 * x /*c*/ total, id FROM t",
+          expected = listOf(
+            SelectItem("2 * x /*c*/ total", null, null),
+            SelectItem("id", "id", null),
+          ),
+        ),
+        NotStarGuardCase(
+          description =
+          "a function-call multiplication expression with a trailing line comment is not mistaken for the star guard",
+          sql = "SELECT sum(x) * 2 -- c\n, id FROM t",
+          expected = listOf(
+            SelectItem("sum(x) * 2 -- c", null, null),
+            SelectItem("id", "id", null),
+          ),
+        ),
+        NotStarGuardCase(
+          description = "a cast on a star with a trailing line comment is not mistaken for the star guard",
+          sql = "SELECT t.*::text -- c\n, id FROM t",
+          expected = listOf(
+            SelectItem("t.*::text -- c", null, null),
+            SelectItem("id", "id", null),
+          ),
+        ),
+        NotStarGuardCase(
+          description =
+          "count star with an implicit alias and a trailing line comment is not mistaken for the star guard",
+          sql = "SELECT count(*) total -- c\n, id FROM t",
+          expected = listOf(
+            SelectItem("count(*) total -- c", null, null),
+            SelectItem("id", "id", null),
+          ),
+        ),
+        NotStarGuardCase(
+          description =
+          "a multiplication expression split across a line comment and a newline is not mistaken for the star guard",
+          sql = "SELECT a * -- c\n b, id FROM t",
+          expected = listOf(
+            SelectItem("a * -- c\n b", null, null),
+            SelectItem("id", "id", null),
+          ),
+        ),
+        NotStarGuardCase(
+          description = "a parenthesized cast with an implicit alias is not mistaken for the star guard",
+          sql = "SELECT (a*b)::int lbl, id FROM t",
+          expected = listOf(
+            SelectItem("(a*b)::int lbl", null, null),
+            SelectItem("id", "id", null),
+          ),
+        ),
+        NotStarGuardCase(
+          description = "a string literal containing a star with an implicit alias is not mistaken for the star guard",
+          sql = "SELECT 'lit *' foo, id FROM t",
+          expected = listOf(
+            SelectItem("'lit *' foo", null, null),
+            SelectItem("id", "id", null),
+          ),
+        ),
+        NotStarGuardCase(
+          description =
+          "an array-indexed multiplication expression with an implicit alias is not mistaken for the star guard",
+          sql = "SELECT arr[1] * 2 tot, id FROM t",
+          expected = listOf(
+            SelectItem("arr[1] * 2 tot", null, null),
+            SelectItem("id", "id", null),
+          ),
+        ),
+        NotStarGuardCase(
+          description = "a lone star with no implicit alias is unaffected by the implicit-alias check",
+          sql = "SELECT * FROM t",
+          expected = listOf(
+            SelectItem("*", null, null),
+          ),
+        ),
+        NotStarGuardCase(
+          description = "a lone qualified star with no implicit alias is unaffected by the implicit-alias check",
+          sql = "SELECT t.* FROM t",
+          expected = listOf(
+            SelectItem("t.*", null, null),
+          ),
+        ),
+        // "preferences prefs" is a real implicit alias (no "AS"), but NEITHER candidate 1
+        // ("preferences prefs") NOR candidate 2 ("preferences") is star-shaped, so the guard does
+        // not fire and both items survive. columnName is null for the FIRST item specifically
+        // because parseColumnReference's own regex requires the ENTIRE (unstripped) expression to
+        // match a bare or qualified identifier — "preferences prefs" contains a space, so the whole
+        // match fails — NOT because this function mistakes it for something else. This is a LOST
+        // name (parseColumnReference simply cannot see past the implicit alias it wasn't taught to
+        // strip), not a WRONG one: the resulting `emptyList()`-style fallback in JdbcAnalyzer
+        // degrades to metadata, exactly as documented on parseSelectItems for any expression this
+        // function cannot resolve.
+        NotStarGuardCase(
+          description =
+          "an implicit alias on a non-star column is not mistaken for the star guard, but loses its column name",
+          sql = "SELECT preferences prefs, id FROM t",
+          expected = listOf(
+            SelectItem("preferences prefs", null, null),
+            SelectItem("id", "id", null),
+          ),
+        ),
+        // columnName is null for the bare literal "5", not "5" itself: PostgreSQL would never lex a
+        // digit-leading token as an identifier (it's a numeric literal), so COLUMN_REFERENCE's
+        // leading-character restriction correctly rejects it — see COLUMN_REFERENCE's own KDoc.
+        NotStarGuardCase(
+          description = "WITH clause main query with no FROM clause",
+          sql = "WITH c AS (SELECT 1) SELECT 5, 'x'",
+          expected = listOf(
+            SelectItem("5", null, null),
+            SelectItem("'x'", null, null),
+          ),
+        ),
+        // Regression guard, not a #212 reproduction: this already passed before the fix — the old
+        // implementation's naive first-SELECT-anywhere search happens to find the same, correct
+        // SELECT here, since there is no WITH clause and this branch's SELECT is the first in the
+        // statement either way.
+        NotStarGuardCase(
+          description = "UNION picks the first branch's columns",
+          sql = "SELECT a FROM x UNION SELECT b FROM y",
+          expected = listOf(
+            SelectItem("a", "a", null),
+          ),
+        ),
       )
-    }
-
-    @Test
-    fun `parenthesized star as the first item drops the whole list`() {
-      // Verified against real PostgreSQL: "(tgt.*)" is valid syntax, equivalent to "tgt.*". The
-      // star is the FIRST item here, so nothing precedes it to keep.
-      val result = parseSelectItems("SELECT (tgt.*), id AS ident FROM tgt")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `star with a trailing block comment as the first item drops the whole list`() {
-      val result = parseSelectItems("SELECT tgt.* /*c*/, id AS ident FROM tgt")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `star with a trailing line comment as the first item drops the whole list`() {
-      val result = parseSelectItems("SELECT tgt.* -- c\n, id AS ident FROM tgt")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `star with whitespace around the qualifying dot as the first item drops the whole list`() {
-      val result = parseSelectItems("SELECT tgt . *, id AS ident FROM tgt")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `an aliased star still triggers the star guard`() {
-      // Verified against real PostgreSQL 18: "SELECT t.* AS whatever, 7 AS id FROM t" returns
-      // 3 columns (a, b, id) for a two-column "t". Before this guard checked the alias-stripped
-      // expression rather than the raw item text, the star's own "AS whatever" alias defeated
-      // recognition entirely, so the guard never fired and the later "id" item stayed in the
-      // list — positionally misattributed to whichever real column followed t's expansion. This
-      // is the #212 failure mode itself, not merely the truncation trade-off documented on
-      // parseSelectItems: a WRONG mapping survives, rather than degrading to no mapping at all.
-      val result = parseSelectItems("SELECT t.* AS whatever, 7 AS id FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `an aliased star in RETURNING still triggers the star guard`() {
-      val result = parseSelectItems("UPDATE t SET x = 1 RETURNING t.* AS whatever, 7 AS id")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a trailing line comment outside a wrapping parenthesis still triggers the star guard`() {
-      // Verified against real PostgreSQL 18.4: valid syntax, returns every column of "tgt". An
-      // earlier version of isStarItem stripped wrapping parentheses BEFORE stripping comments, so
-      // this comment — sitting OUTSIDE the parentheses, on the far side of the closing ")" — was
-      // never removed, "(tgt.*) -- c" never reduced to "tgt.*", and the guard never fired: the
-      // #212 failure mode (a later item shifted onto the wrong ResultSetMetaData column) survived
-      // for exactly this spelling.
-      val result = parseSelectItems("SELECT (tgt.*) -- c\n, id AS ident FROM tgt")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a trailing block comment outside a wrapping parenthesis still triggers the star guard`() {
-      // Verified against real PostgreSQL 18.4: valid syntax, same defect as the line-comment case
-      // above.
-      val result = parseSelectItems("SELECT (tgt.*) /*c*/, id AS ident FROM tgt")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a comment between the dot and the star still triggers the star guard`() {
-      // Verified against real PostgreSQL 18.4: valid syntax. An earlier version of isStarItem
-      // only collapsed WHITESPACE around the dot, not a comment sitting between the dot and the
-      // star, so "tgt./*c*/ *" was never recognized.
-      val result = parseSelectItems("SELECT tgt./*c*/ *, id AS ident FROM tgt")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `count star is not mistaken for the star guard even with internal whitespace`() {
-      // Regression guard: a looser normalizer that strips ALL whitespace (needed to recognize
-      // "tgt . *") must not also start recognizing "count( * )" as a star merely because it
-      // contains the character "*" once whitespace is gone ("count(*)") — the trailing ")"
-      // still rules it out. This is only true because "count(*)" does not ALSO look like a
-      // wrapping parenthesis around a star: isStarItem's parenthesis-stripping loop only strips a
-      // pair that wraps the ENTIRE remaining text (verified via findMatchingCloseParenthesis, not
-      // merely the first/last characters), and "count(*)" does not start with "(" at all — its
-      // first character is "c", and the real "(" is the 6th character (index 5) — so the loop's
-      // own startsWith("(") check never fires and the trailing ")" is decisive. (A genuine wrapping
-      // case like "(tgt.*)" normalizes to itself first — still ending in ")" — and only becomes a
-      // recognized star AFTER the stripping loop removes that wrapping pair, leaving "tgt.*".)
-      val result = parseSelectItems("SELECT count( * ) AS total, id FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("count( * )", null, null),
-        SelectItem("id", "id", null),
-      )
-    }
-
-    @Test
-    fun `a cast on a star-shaped expression is not mistaken for the star guard`() {
-      // Regression guard: "t.*::text" ends in neither "*" nor ".*" after normalization (it ends
-      // in "text"), so it must keep its current classification as a computed expression, not a
-      // star, regardless of how aggressively comments/whitespace are stripped elsewhere in it.
-      val result = parseSelectItems("SELECT t.*::text AS whatever, id FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("t.*::text", null, null),
-        SelectItem("id", "id", null),
-      )
-    }
-
-    @Test
-    fun `an implicit alias on a star still triggers the star guard`() {
-      // An implicit alias (no "AS") is valid PostgreSQL syntax on a star ("u.* whatever" —
-      // identical in meaning to "u.* AS whatever"; "u" aliases "users" to make the star
-      // unambiguous). "SELECT u.* whatever, preferences FROM users u" returns every column of
-      // "users" plus a trailing "preferences" item. Before
-      // candidate 2 (the expression minus its trailing whitespace-separated token) was checked,
-      // "u.* whatever" as a whole does not end in ".*", so the guard never fired and "preferences"
-      // (a later, unrelated item) stayed in the list — positionally misattributed to whichever
-      // real column followed u's expansion, applying a real column-level type override meant for
-      // a different column entirely. This is the #212 failure mode itself.
-      val result = parseSelectItems("SELECT u.* whatever, preferences FROM users u")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `an explicit AS alias on a star keeps working alongside the implicit-alias check`() {
-      val result = parseSelectItems("SELECT u.* AS whatever, preferences FROM users u")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `count star with an implicit alias is not mistaken for the star guard`() {
-      // The shape most likely to be broken by a looser implicit-alias check: candidate 2 for
-      // "count(*) total" is "count(*)", which still does not end in ".*" (it ends in ")"), so
-      // this must NOT be treated as a star.
-      val result = parseSelectItems("SELECT count(*) total, id FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("count(*) total", null, null),
-        SelectItem("id", "id", null),
-      )
-    }
-
-    @Test
-    fun `a cast on a star with no whitespace is unaffected by the implicit-alias check`() {
-      // "t.*::text" has no top-level whitespace, so candidate 1 and candidate 2 are identical —
-      // classification is unchanged from before the implicit-alias check existed.
-      val result = parseSelectItems("SELECT t.*::text, id FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("t.*::text", null, null),
-        SelectItem("id", "id", null),
-      )
-    }
-
-    @Test
-    fun `a cast on a star with a comment immediately before it is not mistaken for the star guard`() {
-      // Regression guard: stripCommentsAndWhitespace removes the comment OUTRIGHT, with nothing
-      // put in its place, so "t.*/*c*/::text" normalizes to "t.*::text" — not "t.* ::text" or
-      // anything else with a boundary in it. isStarItem's alias search finds "text" as the trailing
-      // segment (a valid identifier), leaving the prefix "t.*::" — which does NOT end in the
-      // literal ".*" (it ends in "::"), so this is correctly rejected as not a star.
-      val result = parseSelectItems("SELECT t.*/*c*/::text, a FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("t.*/*c*/::text", null, null),
-        SelectItem("a", "a", null),
-      )
-    }
-
-    @Test
-    fun `a whitespace-separated cast on a star is not mistaken for an implicit alias`() {
-      // Verified against a real PostgreSQL 18 container: "SELECT t.* ::text, a FROM t" is valid
-      // and returns 2 columns (t, a), with NO star expansion. stripCommentsAndWhitespace removes
-      // ALL whitespace, so this normalizes to the same "t.*::text" as the comment-abutting case
-      // above, and is rejected the same way (prefix "t.*::" does not end in ".*").
-      val result = parseSelectItems("SELECT t.* ::text, a FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("t.* ::text", null, null),
-        SelectItem("a", "a", null),
-      )
-    }
-
-    @Test
-    fun `a whitespace-separated array cast on a star is not mistaken for an implicit alias`() {
-      // A different spaced-cast shape from the string-text case above, to confirm the "::" check
-      // is not narrowly tied to one particular cast target type.
-      val result = parseSelectItems("SELECT t.* ::integer[], a FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("t.* ::integer[]", null, null),
-        SelectItem("a", "a", null),
-      )
-    }
-
-    @Test
-    fun `a line comment between a star and its cast is not mistaken for an implicit alias`() {
-      // Verified against a real PostgreSQL 18 container: "SELECT t.*-- c\n::text, a FROM t" is
-      // valid and returns 2 columns (t, a), with NO star expansion. This already resolved
-      // correctly before this round's "::" fix — skipLineComment consumes the whole "-- c\n" span
-      // (including its terminating newline) as ONE opaque token, so none of the three candidates
-      // ever finds a top-level whitespace boundary to strip a trailing token at here at all; "::"
-      // stays attached to "t.*" regardless. It had no dedicated test pinning it, though.
-      val result = parseSelectItems("SELECT t.*-- c\n::text, a FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("t.*-- c\n::text", null, null),
-        SelectItem("a", "a", null),
-      )
-    }
-
-    @Test
-    fun `a quoted implicit alias on a star still triggers the star guard`() {
-      // Verified against real PostgreSQL 18.4: a double-quoted implicit alias is valid syntax.
-      // The whitespace INSIDE the quoted identifier ("My Col") must not be mistaken for the
-      // boundary before it — only the whitespace between "u.*" and the quoted identifier counts.
-      val result = parseSelectItems("""SELECT u.* "My Col", preferences FROM users u""")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `an implicit alias followed by a line comment still triggers the star guard`() {
-      // "u.* whatever -- c" is valid PostgreSQL syntax (an implicit alias on a star, with a
-      // trailing comment). stripCommentsAndWhitespace removes both the whitespace AND the comment
-      // outright, normalizing this to "u.*whatever" — the same shape as the zero-separator case,
-      // which isStarItem's structural check already recognizes as a star (qualifier "u.", implicit
-      // alias "whatever").
-      val result = parseSelectItems("SELECT u.* whatever -- c\n, preferences FROM users u")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `an implicit alias followed by a block comment still triggers the star guard`() {
-      // Same defect as the line-comment case above, block-comment form.
-      val result = parseSelectItems("SELECT u.* whatever /*c*/, preferences FROM users u")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `an implicit alias followed by a comment with no following item is unaffected by truncation`() {
-      // A single item short-circuits the star guard entirely (there is nothing after it to
-      // shift), so this is unaffected by the ordering fix either way — included to confirm the
-      // whole clause still parses correctly rather than the comment swallowing anything past it.
-      val result = parseSelectItems("SELECT u.* whatever -- c\nFROM users u")
-      assertThat(result).containsExactly(
-        SelectItem("u.* whatever -- c", null, null),
-      )
-    }
-
-    @Test
-    fun `a comment abutting an implicit alias with no surrounding whitespace now triggers the star guard`() {
-      // Fixes #215 shape 2: verified against a real PostgreSQL 18.4 container, "SELECT
-      // u.*/*c*/whatever, preferences FROM users u" returns 5 columns against a 4-column "users"
-      // (the star's own expansion plus "preferences") — the comment is just as much a
-      // non-separator as no separator at all. isStarItem's structural check finds the star, its
-      // qualifier ("u."), and its implicit alias ("whatever") purely by walking identifier/quote
-      // structure once stripCommentsAndWhitespace has removed the comment outright, so it no
-      // longer matters that there was never any whitespace boundary to find.
-      val result = parseSelectItems("SELECT u.*/*c*/whatever, preferences FROM users u")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a line comment abutting an implicit alias now triggers the star guard`() {
-      // Fixes #215 shape 2, line-comment form: verified against a real PostgreSQL 18 container,
-      // "SELECT t.*-- c\nwhatever, id FROM t" against a 3-column "t" is valid and returns 4 real
-      // columns (t's own 3 plus "id") — a star. The old text-only guard needed a literal
-      // whitespace run outside any comment to find a trailing-token boundary at all, which a line
-      // comment's own terminating newline (consumed as part of the comment token) can never
-      // leave behind; the new structural check needs no such boundary.
-      val result = parseSelectItems("SELECT t.*-- c\nwhatever, id FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a zero-separator implicit alias abutting a star now triggers the star guard`() {
-      // Fixes #215 shape 1: verified against a real PostgreSQL 18.4 container, "SELECT
-      // u.*whatever, preferences FROM users u" returns 5 columns against a 4-column "users" — the
-      // star's own expansion plus "preferences" — with the implicit alias "whatever" ignored.
-      val result = parseSelectItems("SELECT u.*whatever, preferences FROM users u")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a star qualified by a double-quoted identifier containing a literal star character is found lexically`() {
-      // Regression guard: the double-quoted identifier "my*table" (a table literally named that)
-      // contains a "*" character that is NOT the star item's own "*" token. isStarItem's alias
-      // search recognizes the WHOLE quoted identifier as one lexical segment (via skipLexicalToken)
-      // when walking forward, so it is never mistaken for two separate tokens split around the
-      // internal "*", and the star immediately after the qualifying "." is found correctly.
-      // Verified against a real PostgreSQL 18.4 container: `SELECT "my*table".*z, c FROM
-      // "my*table"` is valid and returns 3 columns (the star's own 2 plus "c"), implicit alias "z"
-      // ignored.
-      val result = parseSelectItems("""SELECT "my*table".*z, c FROM "my*table"""")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a star qualified by a double-quoted identifier containing a literal star character, no alias`() {
-      // Same regression guard as above, without the trailing implicit alias.
-      val result = parseSelectItems("""SELECT "my*table".*, c FROM "my*table"""")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a digit-leading qualifier before a star is arithmetic, not a star`() {
-      // Regression guard: PostgreSQL identifiers cannot start with a digit, so "2." is not a valid
-      // qualifier — this is ordinary multiplication ("2 * 3"), with "3 lbl" an implicit alias on
-      // the numeric literal "3" (verified against a real PostgreSQL 18.4 container: "SELECT
-      // 2.*3 lbl, a FROM t" returns 2 columns). A qualifier check based on `\w` (ASCII word
-      // characters) rather than "letter or underscore, then identifier characters" would wrongly
-      // accept "2." as a qualifier here.
-      val result = parseSelectItems("SELECT 2.*3 lbl, a FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("2.*3 lbl", null, null),
-        SelectItem("a", "a", null),
-      )
-    }
-
-    @Test
-    fun `a digit-leading qualifier before a star with explicit whitespace is arithmetic, not a star`() {
-      val result = parseSelectItems("SELECT 2. * 3 AS x, a FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("2. * 3", null, null),
-        SelectItem("a", "a", null),
-      )
-    }
-
-    @Test
-    fun `a DISTINCT ON prefix before a qualified star still triggers the star guard`() {
-      // Verified against a real PostgreSQL 18.4 container: "SELECT DISTINCT ON (a) t.*, a FROM t"
-      // returns 3 columns (t's own 2 plus "a") against a 2-column "t" — a star, with no implicit
-      // alias here. parseSelectItems' skipOptionalSetQuantifier strips "DISTINCT ON (a) " before
-      // isStarItem ever sees the item text, so isStarItem is handed the plain "t.*" — ending in the
-      // literal ".*" — needing no special understanding of DISTINCT ON at all.
-      val result = parseSelectItems("SELECT DISTINCT ON (a) t.*, a FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a parenthesized composite expansion still triggers the star guard`() {
-      // Verified against a real PostgreSQL 18.4 container: "SELECT (t).*, a FROM t" returns 3
-      // columns (t's own 2 plus "a") — PostgreSQL's composite-value-expansion idiom, distinct from
-      // the wrapping-parenthesis case ("(tgt.*)") this guard already handled: here only "(t)" is
-      // parenthesized, not the whole item, so the wrapping-paren unwrap loop never fires and the
-      // item's full text ends in ".*" directly, matching the plain pre-existing suffix check.
-      val result = parseSelectItems("SELECT (t).*, a FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a parenthesized composite expansion of a function call still triggers the star guard`() {
-      // Same idiom as above, with a function call instead of a bare relation alias — verified
-      // against a real PostgreSQL 18.4 container: "SELECT (f2(1)).*, a FROM t" returns 3 columns
-      // ("f2" is a real function returning a row of "t"'s shape).
-      val result = parseSelectItems("SELECT (f2(1)).*, a FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a parenthesized composite expansion in RETURNING still triggers the star guard`() {
-      val result = parseSelectItems("UPDATE t SET a = a RETURNING (t).*, a")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a Unicode-escape quoted identifier qualifying a star still triggers the star guard`() {
-      // Verified against a real PostgreSQL 18.4 container: `SELECT U&"my*table".*, c FROM
-      // "my*table"` returns 3 columns (the star's own 2 plus "c") — the "U&" Unicode-escape prefix
-      // on the quoted identifier is ordinary PostgreSQL syntax, not something this guard needs to
-      // understand specially: the item's full text ends in ".*" directly (the quoted identifier
-      // itself is copied through verbatim by stripCommentsAndWhitespace), matching the plain
-      // pre-existing suffix check.
-      val result = parseSelectItems("""SELECT U&"my*table".*, c FROM "my*table"""")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `an implicit alias on a parenthesized composite expansion still triggers the star guard`() {
-      // Unlike the no-alias form above, "(t).*x" does NOT end in the literal ".*" (it ends in
-      // "x"), so path 1 fails and this only reaches path 2: isStarItem finds "x" as the trailing
-      // alias segment, leaving the prefix "(t).*" — which DOES end in ".*", with a qualifier
-      // "(t)." whose character immediately before the final "." is ")", not an identifier
-      // character at all, so isStarQualifierAcceptable accepts it (an EMPTY identifier run before
-      // the dot is always accepted — see its KDoc).
-      val result = parseSelectItems("SELECT (t).*x, a FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `an implicit alias on a DISTINCT ON qualified star still triggers the star guard`() {
-      // Same as the no-alias DISTINCT ON case above: skipOptionalSetQuantifier strips
-      // "DISTINCT ON (a) " before isStarItem ever runs, so isStarItem is handed the plain "t.*x" —
-      // the same ordinary qualified-star-with-implicit-alias shape as "u.*whatever", needing no
-      // special understanding of DISTINCT ON.
-      val result = parseSelectItems("SELECT DISTINCT ON (a) t.*x, a FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a Unicode-escape quoted identifier with an implicit alias still triggers the star guard`() {
-      val result = parseSelectItems("""SELECT U&"my*table".*z, c FROM "my*table"""")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a digit-leading qualifier before a star with an implicit alias remains arithmetic, not a star`() {
-      // Negative guard confirming isStarQualifierAcceptable's digit-leading rejection still fires
-      // regardless of whether an implicit alias follows the star: "2." is rejected because the
-      // identifier-character run immediately before its final "." is "2", and that run's first
-      // character is a digit. Verified against a real PostgreSQL 18.4 container: "SELECT 2.*a lbl,
-      // a FROM t" is valid arithmetic ("2 * a AS lbl"), returning 2 columns.
-      val result = parseSelectItems("SELECT 2.*a lbl, a FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("2.*a lbl", null, null),
-        SelectItem("a", "a", null),
-      )
-    }
-
-    @Test
-    fun `a star qualifier that itself contains a star via a parenthesized cast still triggers the star guard`() {
-      // Verified against a real PostgreSQL 18.4 container: "SELECT (t.*::t).* whatever, a FROM t"
-      // returns 3 columns (t's own 2 plus "a") against a 2-column "t". The qualifier "(t.*::t)."
-      // contains its OWN star (inside the cast expression, a leftover "t.*" that Postgres accepts
-      // as an argument to the composite cast) — isStarItem's alias search is not misled by it: it
-      // finds "whatever" as the trailing segment regardless of how many "*" characters sit earlier
-      // in the text, since it walks FORWARD tracking only the LAST segment, never searching for a
-      // "*" character directly at all.
-      val result = parseSelectItems("SELECT (t.*::t).* whatever, a FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a star qualifier that itself contains a star via an ARRAY subscript still triggers the star guard`() {
-      // Verified against a real PostgreSQL 18.4 container: "SELECT (ARRAY[t.*])[1].* whatever, a
-      // FROM t" returns 3 columns (t's own 2 plus "a"). The qualifier "(ARRAY[t.*])[1]." contains
-      // its own star inside the ARRAY literal, harmless to the alias search (see the cast case
-      // above); the array-subscript close "]" immediately before the qualifier's final "." is not
-      // an identifier character, so isStarQualifierAcceptable accepts the (empty) run before it.
-      val result = parseSelectItems("SELECT (ARRAY[t.*])[1].* whatever, a FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a star qualifier containing a star via multiplication inside a function call still triggers the star guard`() {
-      // Verified against a real PostgreSQL 18.4 container: "SELECT (f(a*2)).* z, a FROM t" returns
-      // 3 columns (t's own 2 plus "a") — "f" is a real function returning a row of "t"'s shape. The
-      // qualifier "(f(a*2))." contains an unrelated multiplication star inside the function call's
-      // own argument.
-      val result = parseSelectItems("SELECT (f(a*2)).* z, a FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a zero-separator implicit alias on a star qualifier containing its own star still triggers the star guard`() {
-      // Same shape as the ARRAY-subscript case above, with no separator before the implicit alias
-      // — issue shape 1 for this qualifier. Verified against a real PostgreSQL 18.4 container:
-      // "SELECT (ARRAY[t.*])[1].*whatever, a FROM t" returns the same 3 columns.
-      val result = parseSelectItems("SELECT (ARRAY[t.*])[1].*whatever, a FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `an aggregate star multiplied by a constant is not mistaken for the star guard`() {
-      // Negative guard confirming the alias-first design did not break the ordinary case where an
-      // EARLIER part of the expression contains a star ("count(*)"). Verified against a real
-      // PostgreSQL 18.4 container: "SELECT count(*) * 2 tot, (SELECT 1) AS id FROM t" returns 2
-      // columns (tot, id) — isStarItem finds "tot" as the trailing alias segment, leaving the
-      // prefix "count(*)*2", which does not end in the literal ".*" (it ends in "*2"), so this is
-      // correctly rejected without needing to reason about the "*" inside "count(*)" at all.
-      val result = parseSelectItems("SELECT count(*) * 2 tot, (SELECT 1) AS id FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("count(*) * 2 tot", null, null),
-        SelectItem("(SELECT 1)", null, null),
-      )
-    }
-
-    @Test
-    fun `a star wrapped only up to its implicit alias still triggers the star guard`() {
-      // Fixes a regression: the old wrapping-parenthesis unwrap loop required the ENTIRE
-      // normalized text to end in ")", so "(u.*)whatever" (only "u.*" is parenthesized, not the
-      // trailing alias) never unwrapped and was missed. Verified against a real PostgreSQL 18.4
-      // container: "SELECT (u.*) whatever, preferences FROM users u" returns 5 columns against a
-      // 4-column "users" (the star's own expansion plus "preferences"). isStarItem's alias search
-      // finds "whatever" as the trailing segment, leaving the prefix "(u.*)", which unwraps to
-      // "u.*" and matches the plain suffix check.
-      val result = parseSelectItems("SELECT (u.*) whatever, preferences FROM users u")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a doubly-wrapped star with an implicit alias still triggers the star guard`() {
-      // Verified against a real PostgreSQL 18.4 container: "SELECT ((t.*)) x, a FROM t" returns 3
-      // columns (t's own 2 plus "a") against a 2-column "t". unwrapWrappingParentheses strips BOTH
-      // layers of the prefix "((t.*))" in two passes, down to "t.*".
-      val result = parseSelectItems("SELECT ((t.*)) x, a FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a wrapped star with an implicit alias in RETURNING still triggers the star guard`() {
-      // Verified against a real PostgreSQL 18.4 container: "UPDATE t SET a = 1 RETURNING (t.*) x,
-      // a" returns 3 columns (t's own 2 plus "a").
-      val result = parseSelectItems("UPDATE t SET a = 1 RETURNING (t.*) x, a")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a Unicode-escape identifier as the implicit alias itself still triggers the star guard`() {
-      // The U&-lookahead ORDERING GUARD: this is the exact shape that breaks if the bare-identifier
-      // rule is tried before the Unicode-escape rule when searching for the trailing alias segment
-      // — a naive forward walk would match "U" alone as a one-character identifier segment, then
-      // separately match "\"a\"" as a later segment, making the alias appear to end at the quoted
-      // identifier while leaving a dangling "U&" attached to the prefix (`u.*U&`), which is not
-      // star-shaped at all. Trying the Unicode-escape rule FIRST consumes "U&\"a\"" as ONE segment,
-      // so the prefix correctly reduces to "u.*". Verified against a real PostgreSQL 18.4
-      // container: `SELECT u.* U&"a", preferences FROM users u` returns 5 columns against a
-      // 4-column "users".
-      val result = parseSelectItems("""SELECT u.* U&"a", preferences FROM users u""")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a Unicode-escape alias with a UESCAPE clause still triggers the star guard`() {
-      // Verified against a real PostgreSQL 18.4 container: `SELECT t.* U&"d!0061t" UESCAPE '!', a
-      // FROM t` returns 3 columns (t's own 2 plus "a") against a 2-column "t" — PostgreSQL merges
-      // the Unicode-escape identifier, the UESCAPE keyword, and its single-quoted escape-character
-      // string into ONE lexical unit (here spelling the same identifier "U&\"data\"" would, via the
-      // custom "!" escape character), so the whole thing is the implicit alias.
-      val result = parseSelectItems("""SELECT t.* U&"d!0061t" UESCAPE '!', a FROM t""")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a Unicode-escape qualifier with a UESCAPE clause still triggers the star guard`() {
-      // Verified against a real PostgreSQL 18.4 container: `SELECT U&"!0074" UESCAPE '!'.* x, a
-      // FROM t` returns 3 columns (t's own 2 plus "a"). Here the UESCAPE-extended Unicode-escape
-      // identifier is the QUALIFIER, not the alias — its closing "'" (from the escape-character
-      // string) sits immediately before the star's qualifying ".", which is not an identifier
-      // character, so isStarQualifierAcceptable accepts the (empty) run before it.
-      val result = parseSelectItems("""SELECT U&"!0074" UESCAPE '!'.* x, a FROM t""")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `an ALL quantifier before a qualified star with an implicit alias still triggers the star guard`() {
-      // Verified against a real PostgreSQL 18.4 container: "SELECT ALL t.* x, a FROM t" returns 3
-      // columns (t's own 2 plus "a"). parseSelectItems' skipOptionalSetQuantifier strips "ALL "
-      // before splitting the clause into items, so isStarItem is handed the plain "t.* x" — never
-      // seeing the quantifier fused onto it.
-      val result = parseSelectItems("SELECT ALL t.* x, a FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a star on a table whose name starts with the letters of the ALL quantifier still triggers the star guard`() {
-      // Verified against a real PostgreSQL 18.4 container: "SELECT all2.* a, p FROM all2" returns 3
-      // columns (all2's own 2 plus "p") against a real table named "all2". skipOptionalKeyword's own
-      // word-boundary check is what keeps "ALL" from matching the first 3 letters of "all2" — the
-      // character immediately after ("2") is still an identifier character, so it isn't a real
-      // standalone "ALL" keyword — leaving "all2.* a" as the untouched item text.
-      val result = parseSelectItems("SELECT all2.* a, p FROM all2")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `an ALL quantifier fused with a digit-leading qualifier is still arithmetic, not a star`() {
-      // Negative guard for the point where skipOptionalSetQuantifier matters most: after
-      // isStarItem's own whitespace-stripping, "ALL 2.*a" and a genuine star on a table named
-      // "all2" would normalize IDENTICALLY ("all2.*a") if the quantifier were stripped inside
-      // isStarItem itself rather than beforehand in parseSelectItems, using the still-whitespace-
-      // intact clause text. Verified against a real PostgreSQL 18.4 container: "SELECT ALL 2.*a
-      // lbl, b FROM t" is valid arithmetic ("ALL 2 * a AS lbl"), returning 2 columns.
-      val result = parseSelectItems("SELECT ALL 2.*a lbl, b FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("2.*a lbl", null, null),
-        SelectItem("b", "b", null),
-      )
-    }
-
-    @Test
-    fun `a DISTINCT quantifier with no ON clause is stripped from the first item`() {
-      // Pins the point-4 behavior change: previously the quantifier text was glued onto the first
-      // item's expression. Verified against a real PostgreSQL 18.4 container: "SELECT DISTINCT a, b
-      // FROM t" returns 2 columns (a, b) — a plain DISTINCT with no ON (...) clause. The first
-      // item's expression/columnName must now be the bare "a", not "DISTINCTa".
-      val result = parseSelectItems("SELECT DISTINCT a, b FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("a", "a", null),
-        SelectItem("b", "b", null),
-      )
-    }
-
-    @Test
-    fun `an implicit alias written in NFD with a combining mark still triggers the star guard`() {
-      // Written as a Kotlin unicode escape (\u0301, COMBINING ACUTE ACCENT) so the intent survives
-      // any editor, and so a precomposed character (which already works and would not exercise this
-      // fix) never sneaks in: the alias is "p", "r", "e", COMBINING ACUTE ACCENT (U+0301), "f", "s"
-      // -- the NFD spelling of "prefs" with an accent on the "e" -- NOT the single precomposed
-      // "e-acute" codepoint. PostgreSQL's lexer accepts any byte >= 0x80 in an unquoted identifier;
-      // a combining mark (Unicode category Mn) is one such byte, but is not a Unicode "letter"
-      // (Char.isLetter() rejects it). Verified against a real PostgreSQL 18.4 container (via
-      // psql -f, to avoid shell/encoding mangling the input): this exact alias (NFD) on "users"
-      // returns 5 columns against a 4-column "users".
-      val result = parseSelectItems("SELECT u.* pre\u0301fs, preferences FROM users u")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `an implicit alias containing a currency symbol still triggers the star guard`() {
-      // Written as a Kotlin unicode escape (\u20AC, the Euro sign). Verified against a real
-      // PostgreSQL 18.4 container: this exact query returns 3 columns (t's own 2 plus "a") against
-      // a 2-column "t" -- a currency sign is Unicode category Sc (symbol), not a letter, but
-      // PostgreSQL's lexer still accepts it (any byte >= 0x80) as an unquoted identifier character.
-      val result = parseSelectItems("SELECT t.* \u20ACtotal, a FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `an implicit alias that is a bare symbol still triggers the star guard`() {
-      // Written as a Kotlin unicode escape (\u00A9, the copyright sign). Verified against a real
-      // PostgreSQL 18.4 container: this exact query returns 3 columns (t's own 2 plus "a") -- the
-      // copyright sign (Unicode category So, symbol/other) is, on its own, a complete legal
-      // unquoted identifier in PostgreSQL.
-      val result = parseSelectItems("SELECT t.* \u00A9, a FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `an implicit alias that is a supplementary-plane character still triggers the star guard`() {
-      // Written as a Kotlin unicode escape surrogate pair (\uD83D\uDE80, the rocket emoji,
-      // U+1F680 -- a supplementary-plane character). Verified against a real PostgreSQL 18.4
-      // container: this exact query returns 5 columns against a 4-column "users". A
-      // supplementary-plane character is a SURROGATE PAIR in a Kotlin/UTF-16 String -- both code
-      // units are >= 0x80, so no special surrogate-aware handling is needed for the per-character
-      // loop to consume it correctly.
-      val result = parseSelectItems("SELECT u.* \uD83D\uDE80, preferences FROM users u")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `an implicit alias containing a currency symbol in RETURNING still triggers the star guard`() {
-      // Same alias as the SELECT currency-symbol case above, RETURNING form. Verified against a
-      // real PostgreSQL 18.4 container: this exact statement returns 3 columns (t's own 2 plus
-      // "a").
-      val result = parseSelectItems("UPDATE t SET a = 1 RETURNING t.* \u20ACtotal, a")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a zero-separator NFD alias still triggers the star guard`() {
-      // Issue #215 shape 1 for a non-ASCII alias -- unfixed in BOTH the pre-existing code and every
-      // earlier round of this fix until now, since none of them recognized a combining mark as an
-      // identifier character at all, separator or not. Written as a Kotlin unicode escape
-      // (\u0301, COMBINING ACUTE ACCENT): the alias is "c", "a", "f", "e", COMBINING ACUTE ACCENT
-      // (U+0301) -- the NFD spelling of "cafe" with an accent on the "e" -- NOT the precomposed
-      // codepoint. Verified against a real PostgreSQL 18.4 container: this exact query returns 3
-      // columns (t's own 2 plus "a").
-      val result = parseSelectItems("SELECT t.*cafe\u0301, a FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a digit-leading qualifier before a star with an NFD implicit alias remains arithmetic, not a star`() {
-      // This is a DESIGN regression guard, not coverage of any Unicode relaxation: it pins that
-      // isStarQualifierAcceptable still rejects an ASCII-digit-led qualifier run ("2") at all --
-      // i.e. that the digit check has not been silently dropped or weakened to "always accept" --
-      // regardless of what the TRAILING alias is made of (here an "x" followed by a COMBINING ACUTE
-      // ACCENT, \u0301, written as a Kotlin unicode escape). It does NOT discriminate between any
-      // version of the qualifier-side fix, past or present: a non-ASCII digit like "\u0663" starting
-      // the qualifier's OWN run (which Char.isDigit() used to wrongly reject, and which the shared
-      // isIdentifierChar predicate now correctly runs past) is a DIFFERENT shape -- see the
-      // "\u0663" tests below for that discriminating coverage. Verified against a
-      // real PostgreSQL 18.4 container using a temporary table (this literal identifier isn't a
-      // real column anywhere, so a plain SELECT against "t" can't execute to confirm a row, only a
-      // parse): creating a temp table with an "a" column and a column named by this exact
-      // identifier, then "SELECT 2.*<that identifier> lbl, a FROM temp_check" returns 2 columns
-      // (lbl, a) -- ordinary arithmetic, not a star, matching the identically-shaped (ASCII)
-      // "2.*a lbl, a FROM t" case already pinned above.
-      val result = parseSelectItems("SELECT 2.*x\u0301 lbl, a FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("2.*x\u0301 lbl", null, null),
-        SelectItem("a", "a", null),
-      )
-    }
-
-    @Test
-    fun `a qualifier starting with a non-ASCII digit still triggers the star guard`() {
-      // Regression guard: isStarQualifierAcceptable used to reject via Char.isDigit(), which is
-      // Unicode-aware and therefore ALSO matched non-ASCII digits (Unicode category Nd) -- but
-      // PostgreSQL numeric literals use ASCII digits exclusively, so a non-ASCII digit starting a
-      // qualifier's run can only be an identifier's first character, never a numeral. The table
-      // here is literally named \u0663 (ARABIC-INDIC DIGIT THREE), written as a Kotlin unicode
-      // escape. Verified against a real PostgreSQL 18.4 container with a real table named \u0663:
-      // "SELECT \u0663.* x, a FROM \u0663" returns 3 columns (\u0663's own 2 plus "a").
-      val result = parseSelectItems("SELECT \u0663.* x, a FROM \u0663")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a zero-separator alias on a qualifier starting with a non-ASCII digit still triggers the star guard`() {
-      // Same regression guard as above, zero-separator implicit-alias form. Verified against a
-      // real PostgreSQL 18.4 container: "SELECT \u0663.*x, a FROM \u0663" returns the same 3
-      // columns.
-      val result = parseSelectItems("SELECT \u0663.*x, a FROM \u0663")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a qualifier containing a currency symbol followed by an ASCII digit still triggers the star guard`() {
-      // Regression guard, third instance of one root cause: isStarQualifierAcceptable used to scan
-      // the run before the qualifying "." with isIdentifierChar alone, which rejects "\u20AC" (the
-      // Euro sign, >= 0x80 but neither a letter nor a digit). Scanning backward from the ASCII
-      // digit "9" therefore stopped AT "\u20AC", leaving "9" looking like the run's own start and
-      // wrongly rejecting the whole qualifier as numeric -- when the real run is "x\u20AC9"
-      // (letter-led, correctly acceptable). isIdentifierChar (shared with
-      // matchTrailingAliasSegment) runs past "\u20AC" instead. The table alias here is "x",
-      // "\u20AC", "9", written as Kotlin unicode escapes. Verified against a real PostgreSQL 18.4
-      // container: "SELECT x\u20AC9.* w, preferences FROM users x\u20AC9" returns 5 columns
-      // against a 4-column "users".
-      val result = parseSelectItems("SELECT x\u20AC9.* w, preferences FROM users x\u20AC9")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a qualifier containing a superscript digit followed by an ASCII digit still triggers the star guard`() {
-      // Same regression guard as above, with a different >= 0x80-but-not-letter-or-digit character:
-      // "\u00B9" (SUPERSCRIPT ONE, Unicode category No -- number, other -- still not a letter or a
-      // digit per isIdentifierChar's isLetterOrDigit()). The table alias here is "x", "\u00B9",
-      // "9", written as Kotlin unicode escapes. Verified against a real PostgreSQL 18.4 container:
-      // "SELECT x¹9.* w, a FROM t x¹9" returns 3 columns (t's own 2 plus "a").
-      val result = parseSelectItems("SELECT x\u00B99.* w, a FROM t x\u00B99")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a qualifier written in NFD followed by an ASCII digit still triggers the star guard`() {
-      // Same regression guard again, with a combining mark instead of a symbol: the qualifier is
-      // "c", "a", "f", "e", COMBINING ACUTE ACCENT (\u0301), "2" -- the NFD spelling of "cafe" with
-      // an accent on the "e", followed by an ASCII digit, written as Kotlin unicode escapes.
-      // Verified against a real PostgreSQL 18.4 container: "SELECT café2.* w, a FROM t café2" (NFD)
-      // returns 3 columns (t's own 2 plus "a").
-      val result = parseSelectItems("SELECT cafe\u03012.* w, a FROM t cafe\u03012")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a multiplication expression with a trailing line comment is not mistaken for the star guard`() {
-      val result = parseSelectItems("SELECT a * b -- c\n, id FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("a * b -- c", null, null),
-        SelectItem("id", "id", null),
-      )
-    }
-
-    @Test
-    fun `a multiplication expression with an implicit alias and internal block comment is not mistaken as a star`() {
-      val result = parseSelectItems("SELECT 2 * x /*c*/ total, id FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("2 * x /*c*/ total", null, null),
-        SelectItem("id", "id", null),
-      )
-    }
-
-    @Test
-    fun `a function-call multiplication expression with a trailing line comment is not mistaken for the star guard`() {
-      val result = parseSelectItems("SELECT sum(x) * 2 -- c\n, id FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("sum(x) * 2 -- c", null, null),
-        SelectItem("id", "id", null),
-      )
-    }
-
-    @Test
-    fun `a cast on a star with a trailing line comment is not mistaken for the star guard`() {
-      val result = parseSelectItems("SELECT t.*::text -- c\n, id FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("t.*::text -- c", null, null),
-        SelectItem("id", "id", null),
-      )
-    }
-
-    @Test
-    fun `count star with an implicit alias and a trailing line comment is not mistaken for the star guard`() {
-      val result = parseSelectItems("SELECT count(*) total -- c\n, id FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("count(*) total -- c", null, null),
-        SelectItem("id", "id", null),
-      )
-    }
-
-    @Test
-    fun `a multiplication expression split across a line comment and a newline is not mistaken for the star guard`() {
-      val result = parseSelectItems("SELECT a * -- c\n b, id FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("a * -- c\n b", null, null),
-        SelectItem("id", "id", null),
-      )
-    }
-
-    @Test
-    fun `a parenthesized cast with an implicit alias is not mistaken for the star guard`() {
-      val result = parseSelectItems("SELECT (a*b)::int lbl, id FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("(a*b)::int lbl", null, null),
-        SelectItem("id", "id", null),
-      )
-    }
-
-    @Test
-    fun `a string literal containing a star with an implicit alias is not mistaken for the star guard`() {
-      val result = parseSelectItems("SELECT 'lit *' foo, id FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("'lit *' foo", null, null),
-        SelectItem("id", "id", null),
-      )
-    }
-
-    @Test
-    fun `an array-indexed multiplication expression with an implicit alias is not mistaken for the star guard`() {
-      val result = parseSelectItems("SELECT arr[1] * 2 tot, id FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("arr[1] * 2 tot", null, null),
-        SelectItem("id", "id", null),
-      )
-    }
-
-    @Test
-    fun `a lone star with no implicit alias is unaffected by the implicit-alias check`() {
-      val result = parseSelectItems("SELECT * FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("*", null, null),
-      )
-    }
-
-    @Test
-    fun `a lone qualified star with no implicit alias is unaffected by the implicit-alias check`() {
-      val result = parseSelectItems("SELECT t.* FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("t.*", null, null),
-      )
-    }
-
-    @Test
-    fun `an implicit alias on a non-star column is not mistaken for the star guard, but loses its column name`() {
-      // "preferences prefs" is a real implicit alias (no "AS"), but NEITHER candidate 1
-      // ("preferences prefs") NOR candidate 2 ("preferences") is star-shaped, so the guard does
-      // not fire and both items survive. columnName is null for the FIRST item specifically
-      // because parseColumnReference's own regex requires the ENTIRE (unstripped) expression to
-      // match a bare or qualified identifier — "preferences prefs" contains a space, so the whole
-      // match fails — NOT because this function mistakes it for something else. This is a LOST
-      // name (parseColumnReference simply cannot see past the implicit alias it wasn't taught to
-      // strip), not a WRONG one: the resulting `emptyList()`-style fallback in JdbcAnalyzer
-      // degrades to metadata, exactly as documented on parseSelectItems for any expression this
-      // function cannot resolve.
-      val result = parseSelectItems("SELECT preferences prefs, id FROM t")
-      assertThat(result).containsExactly(
-        SelectItem("preferences prefs", null, null),
-        SelectItem("id", "id", null),
-      )
-    }
-
-    @Test
-    fun `WITH clause main query with no FROM clause`() {
-      // columnName is null for the bare literal "5", not "5" itself: PostgreSQL would never lex a
-      // digit-leading token as an identifier (it's a numeric literal), so COLUMN_REFERENCE's
-      // leading-character restriction correctly rejects it — see COLUMN_REFERENCE's own KDoc.
-      val result = parseSelectItems("WITH c AS (SELECT 1) SELECT 5, 'x'")
-      assertThat(result).containsExactly(
-        SelectItem("5", null, null),
-        SelectItem("'x'", null, null),
-      )
-    }
-
-    @Test
-    fun `UNION picks the first branch's columns`() {
-      // Regression guard, not a #212 reproduction: this already passed before the fix — the old
-      // implementation's naive first-SELECT-anywhere search happens to find the same, correct
-      // SELECT here, since there is no WITH clause and this branch's SELECT is the first in the
-      // statement either way.
-      val result = parseSelectItems("SELECT a FROM x UNION SELECT b FROM y")
-      assertThat(result).containsExactly(
-        SelectItem("a", "a", null),
-      )
-    }
-
-    @Test
-    fun `a typed-literal call with a standalone E before a backslash-quote does not manufacture a star item`() {
-      // Regression guard for the fail-safe answer, now grounded in OriginalAdjacency rather than
-      // an incidental character-class exclusion: "x€ E'a\'b'" (a real space between "€" and the
-      // standalone "E") strips to "x€E'a\'b'", and skipSingleQuotedString's standalone-E lookback
-      // gates its "was € really continuing an identifier into E" check on whether € and E were
-      // ADJACENT in the original text -- they were not (the character stripping removed there was
-      // a real separator) -- so E is correctly recognized as standalone regardless of what
-      // character stripping happened to fuse in front of it (see that function's own KDoc). With E
-      // correctly standalone, the whole "E'a\'b'" is scanned as ONE backslash-escaped string, so
-      // isStarItem correctly reaches and recognizes the trailing ".* y" — this item IS star-shaped,
-      // and parseSelectItems drops it and everything after it, giving the fail-safe emptyList()
-      // this test asserts.
-      //
-      // Verified directly (by running this exact input against the pre-#223 code too): this query
-      // already returned emptyList() before OriginalAdjacency existed, via the narrower
-      // letter/digit/underscore-only class from issue #222 — which also happens to exclude "€" —
-      // reaching the SAME star recognition for a narrower, coincidental reason. What changed is
-      // that recognizing "E" as standalone here no longer depends on an accident of "€" failing
-      // that narrow class; it depends on the actual structural fact that "€" was never truly
-      // adjacent to "E" in the original query.
-      val result = parseSelectItems("SELECT (f(x€ E'a\\'b')).* y, id FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a negative literal subtraction inside a ROW composite star qualifier does not manufacture a --comment`() {
-      // "1 - -1" (two independently-lexed "-" tokens, genuinely separated by a space) strips to
-      // "1--1", which skipLexicalToken would otherwise read as a "--" line comment that was never
-      // in the query — skipLineComment then jumps to the end of the stripped text, so no segment
-      // ends exactly at text.length, findTrailingImplicitAliasStart returns null, and isStarItem
-      // answers false — the DANGEROUS direction (a later item silently shifts onto the wrong
-      // ResultSetMetaData column). Verified against a real PostgreSQL 18.4 container: this query
-      // returns 4 columns (f1, f2, id, name) against a 2-column "t" — the star and everything
-      // before it must be dropped, since two items come after it.
-      val result = parseSelectItems("SELECT (ROW(1, 2 - -1)).* y, id, name FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a negative literal subtraction inside a function-call star qualifier does not manufacture a --comment`() {
-      // Same fusion class as the ROW case above, inside a function call's own argument instead of
-      // a ROW constructor. Verified against a real PostgreSQL 18.4 container: this query returns 3
-      // columns (f1, f2, id) — f(int) returns a 2-column composite.
-      val result = parseSelectItems("SELECT (f(1 - -1)).* y, id FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a negative literal subtraction inside a CAST star qualifier does not manufacture a --comment`() {
-      // Same fusion class, inside a CAST's ROW argument. Verified against a real PostgreSQL 18.4
-      // container: this query returns 3 columns (f1, f2, id).
-      val result = parseSelectItems("SELECT (CAST(ROW(1 - -1, 2) AS pair)).* y, id FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a negative literal subtraction inside an array-subscript star qualifier does not manufacture a --comment`() {
-      // Same fusion class, inside an ARRAY subscript. Verified against a real PostgreSQL 18.4
-      // container: this query returns 3 columns (id, name, id) — "t.*" expands to id/name, then
-      // the trailing bare "id" is a separate item after the star.
-      val result = parseSelectItems("SELECT (ARRAY[t])[1 - -1].* y, id FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a space-separated E-string typed literal is not fused into a standalone-E escape string`() {
-      // "xq E'...'" ("xq" — a domain over text — used as a type name in PostgreSQL's own
-      // "typename Sconst" typed-literal form, genuinely separated from the following E-string by a
-      // space) strips to "xqE'...'". Without gating the standalone-E lookback on original
-      // adjacency, the "q" immediately before "E" would look like it continues "xq" into the "E",
-      // wrongly denying the escape string its backslash-escape processing and letting the
-      // backslash-quote inside it terminate the string early, garbling everything scanned after.
-      // Verified against a real PostgreSQL 18.4 container: this query returns 3 columns (f1, f2,
-      // id) — f(xq) returns a 2-column composite.
-      val result = parseSelectItems("SELECT (f(xq E'a\\'b')).* y, id FROM t")
-      assertThat(result).isEmpty()
-    }
-
-    @Test
-    fun `a space-separated dollar-quoted typed literal is not fused into the identifier before it`() {
-      // "xq \$q\$...\$q\$" strips to "xq\$q\$...\$q\$" — without gating the dollar-quote identifier
-      // lookback on original adjacency, the "q" immediately before "$" would look like it
-      // continues the "xq" identifier (PostgreSQL allows "$" inside an unquoted identifier), so the
-      // "$" would never be recognized as opening a dollar-quoted string at all, and its body —
-      // including the "'" it contains — would be scanned as ordinary SQL. Verified against a real
-      // PostgreSQL 18.4 container: this query returns 3 columns (f1, f2, id).
-      val result = parseSelectItems("SELECT (f(xq \$q\$a'b\$q\$)).* y, id FROM t")
-      assertThat(result).isEmpty()
     }
   }
 
