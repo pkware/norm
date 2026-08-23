@@ -1,7 +1,6 @@
 package norm.e2e
 
 import assertk.assertThat
-import assertk.assertions.hasSize
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import example.crud.PostgresQueries
@@ -76,38 +75,38 @@ class BatchExecE2ETest : PostgresTestBase() {
     }
 
     @Test
-    fun `stream smaller than batchSize returns one entry per element`() {
+    fun `stream smaller than batchSize returns one successful insert count per element`() {
       val results = insertOrderItems(orderItems(3))
 
-      assertThat(results).hasSize(3)
+      assertThat(results.toList()).isEqualTo(List(3) { 1 })
       assertThat(queries.countOrderItem()).isEqualTo(3L)
     }
 
     @Test
-    fun `stream sized to exactly batchSize returns one entry per element`() {
+    fun `stream sized to exactly batchSize returns one successful insert count per element`() {
       val results = insertOrderItems(orderItems(BATCH_SIZE))
 
-      assertThat(results).hasSize(BATCH_SIZE)
+      assertThat(results.toList()).isEqualTo(List(BATCH_SIZE) { 1 })
       assertThat(queries.countOrderItem()).isEqualTo(BATCH_SIZE.toLong())
     }
 
     @Test
-    fun `stream sized to twice batchSize returns one entry per element`() {
+    fun `stream sized to twice batchSize returns one successful insert count per element`() {
       val count = 2 * BATCH_SIZE
 
       val results = insertOrderItems(orderItems(count))
 
-      assertThat(results).hasSize(count)
+      assertThat(results.toList()).isEqualTo(List(count) { 1 })
       assertThat(queries.countOrderItem()).isEqualTo(count.toLong())
     }
 
     @Test
-    fun `stream spanning several batches with a partial final batch returns one entry per element`() {
+    fun `stream spanning several batches with a partial final batch returns one successful insert count per element`() {
       val count = 2 * BATCH_SIZE + 3
 
       val results = insertOrderItems(orderItems(count))
 
-      assertThat(results).hasSize(count)
+      assertThat(results.toList()).isEqualTo(List(count) { 1 })
       assertThat(queries.countOrderItem()).isEqualTo(count.toLong())
     }
   }

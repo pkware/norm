@@ -7690,10 +7690,12 @@ class QueryAnalysisTest {
     // prove the column non-null. On PostgreSQL 18 (GROUP RTE present), the target-list Var's
     // varno differs from the base varno, which happens to prevent the same collision
     // independently of this guard — so these four tests only exercise the true regression when
-    // run against PostgreSQL 16/17.
+    // run against PostgreSQL 16/17, and are skipped outright on 18+ (see the identical situation,
+    // and its identical fix, for the EXPRESSION-grouping-key cluster below).
 
     @Test
     fun `subquery ROLLUP grouping set guard is not defeated by a proving WHERE clause`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() < 18, "only exercises the guard pre-GROUP-RTE")
       val query = analyzeWithSchema(
         schema,
         "SELECT x FROM (SELECT a AS x FROM t WHERE a IS NOT NULL GROUP BY ROLLUP(a)) s",
@@ -7704,6 +7706,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `subquery GROUPING SETS guard is not defeated by a proving WHERE clause`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() < 18, "only exercises the guard pre-GROUP-RTE")
       val query = analyzeWithSchema(
         schema,
         "SELECT x FROM (SELECT a AS x FROM t WHERE a IS NOT NULL GROUP BY GROUPING SETS ((a), ())) s",
@@ -7714,6 +7717,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `CTE ROLLUP grouping set guard is not defeated by a proving WHERE clause`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() < 18, "only exercises the guard pre-GROUP-RTE")
       val query = analyzeWithSchema(
         schema,
         "WITH c AS (SELECT a FROM t WHERE a IS NOT NULL GROUP BY ROLLUP(a)) SELECT a FROM c",
@@ -7724,6 +7728,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `CTE GROUPING SETS guard is not defeated by a proving WHERE clause`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() < 18, "only exercises the guard pre-GROUP-RTE")
       val query = analyzeWithSchema(
         schema,
         "WITH c AS (SELECT a FROM t WHERE a IS NOT NULL GROUP BY GROUPING SETS ((a), ())) SELECT a FROM c",
@@ -7736,13 +7741,16 @@ class QueryAnalysisTest {
     // target-list entry pointing straight at a base column, so resolving these correctly here
     // depends entirely on suppressing qual narrowing for the whole query block whenever
     // hasGroupingSets (the key's own nullability is handled independently, and unconditionally on
-    // every PostgreSQL version, by NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension). These
-    // four tests only catch the qual-narrowing regression on PostgreSQL 16/17: on PostgreSQL 18,
-    // the GROUP RTE independently blocks qual narrowing from reaching the leaf Var, so they pass
-    // there regardless of whether this suppression is present.
+    // every PostgreSQL version, by NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension).
+    // These four tests only catch the qual-narrowing regression on PostgreSQL 16/17: on PostgreSQL
+    // 18, the GROUP RTE independently blocks qual narrowing from reaching the leaf Var, so they
+    // would pass there regardless of whether this suppression is present -- each is therefore
+    // skipped outright on 18+ rather than kept as a check that cannot fail on the default test
+    // configuration.
 
     @Test
     fun `expression ROLLUP grouping key guard is not defeated by a proving WHERE clause`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() < 18, "only exercises the guard pre-GROUP-RTE")
       val query = analyzeWithSchema(
         schema,
         "SELECT lower(a) FROM t WHERE a IS NOT NULL GROUP BY ROLLUP(lower(a))",
@@ -7753,6 +7761,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `concatenation ROLLUP grouping key guard is not defeated by a proving WHERE clause`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() < 18, "only exercises the guard pre-GROUP-RTE")
       val query = analyzeWithSchema(
         schema,
         "SELECT a || 'z' FROM t WHERE a IS NOT NULL GROUP BY ROLLUP(a || 'z')",
@@ -7763,6 +7772,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `subquery expression ROLLUP grouping key guard is not defeated by a proving WHERE clause`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() < 18, "only exercises the guard pre-GROUP-RTE")
       val query = analyzeWithSchema(
         schema,
         """
@@ -7777,6 +7787,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `CTE expression ROLLUP grouping key guard is not defeated by a proving WHERE clause`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() < 18, "only exercises the guard pre-GROUP-RTE")
       val query = analyzeWithSchema(
         schema,
         """
