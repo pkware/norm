@@ -2,7 +2,6 @@ package norm.generator
 
 import org.intellij.lang.annotations.Language
 import java.sql.Connection
-import java.sql.ResultSetMetaData
 import java.sql.SQLException
 import java.util.UUID
 
@@ -852,63 +851,27 @@ internal class PgCatalogLoader(private val connection: Connection) {
   }
 
   /**
-   * Determines which result columns of a SQL query can be NULL, using full expression evaluation.
-   *
-   * Creates a temporary view wrapping the query, reads the analyzed query tree from
-   * `pg_rewrite.ev_action`, and evaluates each output column's expression for nullability.
-   * This covers outer-join-induced nullability, aggregate return values, strict-function
-   * propagation, and more.
-   *
-   * Parameter placeholders (`?`) are replaced with typed non-null sentinel values before view
-   * creation (views cannot contain parameters). The sentinel type is determined via
-   * `PreparedStatement.getParameterMetaData()`. Using non-null sentinels instead of `NULL`
-   * ensures that strict functions wrapping parameters (e.g., `digest(?, ?)`) correctly evaluate
-   * as non-null in the node tree. If parameter metadata is unavailable, `NULL` is used as a
-   * safe fallback (the column becomes conservatively nullable).
-   *
-   * When the SQL contains data-modifying statements (INSERT/UPDATE/DELETE/MERGE in CTEs or as
-   * the outer statement), PostgreSQL rejects view creation. In that case, the SQL is transformed
-   * into an equivalent SELECT that preserves the join structure — see [transformForViewCreation]
-   * for the full picture, summarized here:
-   * - A data-modifying CTE body is, WHEREVER POSSIBLE, converted to an equivalent
-   *   join-preserving `SELECT` (the same conversion `UPDATE ... FROM`/`DELETE ... USING`/`MERGE
-   *   ... RETURNING` outer DML already uses — see [convertDmlCteBodyToSelect]) and validated
-   *   against the original body's own column metadata before being trusted; only when that
-   *   fails is the body replaced with a `SELECT NULL::<type> AS <name>, ... WHERE FALSE` stub
-   *   built from `PreparedStatement.getMetaData()` on the original body.
-   * - `UPDATE ... FROM ... RETURNING`, `DELETE ... USING ... RETURNING`, and `MERGE ...
-   *   RETURNING` (outer DML, not inside a CTE) are converted to equivalent SELECT statements
-   *   that preserve the join structure.
-   * - For DML shapes [transformForViewCreation] cannot convert at all — plain `INSERT`, `UPDATE`
-   *   without `FROM`, `DELETE` without `USING`, `MERGE` without `RETURNING`, or a top-level
-   *   conversion this file could not validate — this function returns
-   *   [analyzeUnconvertibleDml]'s result: real `ResultSetMetaData.isNullable` for every column,
-   *   OR'd with the same [forcedNullabilityPredicate] safety net the CTE-body stub path applies
-   *   (an outer join, a `RETURNING OLD`/`NEW` reference, or a reference to a dangerous CTE the
-   *   statement itself declares). See [analyzeUnconvertibleDml]'s KDoc for exactly what it can and
-   *   cannot see — in particular, it is still blind to a null-extending construct this file's
-   *   scanners don't recognize (see [hasNullExtendingConstruct]'s KDoc).
-   *
-   * @param sql The SQL query or DML statement to analyze.
-   * @return A list of booleans, one per result column in SELECT order. `true` means the
-   *   column can be NULL; `false` means it is guaranteed non-null.
-   */
-  /**
    * Determines which result columns of [sql] can be `NULL`.
    *
-   * Tries [analyzeViaTemporaryView]'s `CREATE VIEW`/`pg_rewrite.ev_action` route first — the ONLY
-   * route for a plain `SELECT` (Stage 4 of the `prosqlbody` cutover moves this to `prosqlbody`
-   * too; until then, `CREATE VIEW` remains the primary route for every `SELECT`, since it costs
-   * nothing extra for the overwhelming majority of queries that hit it). `CREATE VIEW` rejects a
-   * data-modifying statement ANYWHERE in [sql] — at the top level or nested in a CTE, verified
-   * live: "views must not contain data-modifying statements in WITH" — which is the ONLY reason
-   * this ever falls through to [queryColumnNullabilityViaProsqlbody] instead: a `SQLException`
-   * here is never actually about ambiguous or unreadable SQL, since [sql] already came from a real
-   * prepared statement elsewhere in the analysis pipeline.
+   * Routes every statement — a plain `SELECT` exactly the same as a data-modifying statement or
+   * CTE — through [queryColumnNullabilityViaProsqlbody]. Before Stage 4 of the `prosqlbody`
+   * cutover, a plain `SELECT` went through `CREATE VIEW`/`pg_rewrite.ev_action` instead (a
+   * separate, since-deleted route, `analyzeViaTemporaryView`) purely because `CREATE VIEW` was
+   * the FIRST mechanism this file learned to read a node tree from, not because it saw anything
+   * `prosqlbody` doesn't: both hold the identical post-parse-analysis `{QUERY ...}` shape (see
+   * [queryColumnNullabilityViaProsqlbody]'s KDoc), and a live sweep across PostgreSQL 16/17/18 of
+   * every shape `CREATE VIEW` accepts but a SQL-standard function body might plausibly reject or
+   * reinterpret — `UNION`/`INTERSECT`/`EXCEPT`, `WITH RECURSIVE`, `ORDER BY`/`LIMIT`/`OFFSET`,
+   * `FOR UPDATE`/`FOR SHARE`, `DISTINCT ON`, a `VALUES` list, a set-returning function in the
+   * target list, `LATERAL`, `TABLESAMPLE`, `WITH ORDINALITY`, and a query selecting from another
+   * view — found no disagreement on any of them (see [QueryAnalysisTest]'s `SELECT DISTINCT ON`
+   * and `TABLESAMPLE` cases, the two shapes the corpus had no other coverage for; every other
+   * shape is exercised elsewhere in [QueryAnalysisTest] and in the `test-scenarios` golden-file
+   * corpus, which pins the exact generated Kotlin type derived from this function's answer).
    *
-   * @return one boolean per result column (`true` means nullable). If NEITHER route can produce
-   *   an answer — [queryColumnNullabilityViaProsqlbody] itself failed, or [sql] is a `MERGE` whose
-   *   `USING` clause has more than one source relation of its own (see
+   * @return one boolean per result column (`true` means nullable). If
+   *   [queryColumnNullabilityViaProsqlbody] cannot produce an answer at all — a probe failure, or
+   *   [sql] is a `MERGE` whose `USING` clause has more than one source relation of its own (see
    *   [mergeAbsentVarnos]'s KDoc) — every real result column (via
    *   `PreparedStatement.getMetaData()`, the only source of a column count this deep into a
    *   fallback) is reported nullable: the safe direction, and consistent with every other
@@ -916,14 +879,8 @@ internal class PgCatalogLoader(private val connection: Connection) {
    *   `DELETE`/`MERGE` with no `RETURNING`) naturally reports an EMPTY list here, since its real
    *   column count is `0` — there is nothing for a caller to treat as nullable OR not.
    */
-  fun queryColumnNullability(@Language("PostgreSQL") sql: String): List<Boolean> {
-    val viewSql = buildViewSqlWithSentinels(sql) ?: replaceParameterPlaceholders(sql)
-    return try {
-      analyzeViaTemporaryView(viewSql)
-    } catch (_: SQLException) {
-      queryColumnNullabilityViaProsqlbody(sql) ?: List(realColumnCount(sql)) { true }
-    }
-  }
+  fun queryColumnNullability(@Language("PostgreSQL") sql: String): List<Boolean> =
+    queryColumnNullabilityViaProsqlbody(sql) ?: List(realColumnCount(sql)) { true }
 
   /**
    * The real number of result columns [sql] produces, via `PreparedStatement.getMetaData()` — used
@@ -961,98 +918,6 @@ internal class PgCatalogLoader(private val connection: Connection) {
     }
   }
 
-  /**
-   * Creates a temporary view from [viewSql], reads its node tree from `pg_rewrite`,
-   * and returns per-column nullability using full expression analysis.
-   *
-   * @param applyQualNarrowing When `false`, disables `WHERE`-clause qual narrowing
-   *   ([NodeTreeNullabilityAnalyzer.qualProvenNonNullVars]) for this entire call — the top-level
-   *   query AND every nested CTE body and subquery reached from it. Must be `false` whenever
-   *   [viewSql] passed through a DML-to-SELECT conversion (`transformForViewCreation`): that
-   *   conversion drops the `SET`/`MERGE ... WHEN` clause but keeps the original `WHERE`/`ON`
-   *   predicate, so a qual that looks like it proves a `RETURNING` column non-null may in fact be
-   *   testing a value the statement is about to overwrite. Suppressing narrowing for the whole
-   *   call is conservative by construction — it can only WIDEN a result to nullable, never narrow
-   *   one incorrectly — and loses nothing relative to before qual narrowing existed at all.
-   */
-  private fun analyzeViaTemporaryView(viewSql: String, applyQualNarrowing: Boolean = true): List<Boolean> {
-    val viewName = "norm_nullability_${UUID.randomUUID().toString().replace("-", "")}"
-    try {
-      try {
-        connection.createStatement().use { stmt ->
-          stmt.execute("CREATE TEMPORARY VIEW $viewName AS $viewSql")
-        }
-      } catch (originalError: SQLException) {
-        // Queries with duplicate column names (e.g., SELECT d.id, e.id FROM d JOIN e ...)
-        // fail view creation. Retry with explicit column aliases to make names unique.
-        val columnCount = try {
-          connection.prepareStatement(viewSql).use { it.metaData?.columnCount ?: 0 }
-        } catch (_: SQLException) {
-          0
-        }
-        if (columnCount > 0) {
-          val columnList = (1..columnCount).joinToString(", ") { "c$it" }
-          try {
-            connection.createStatement().use { stmt ->
-              stmt.execute("CREATE TEMPORARY VIEW $viewName($columnList) AS $viewSql")
-            }
-          } catch (_: SQLException) {
-            throw originalError
-          }
-        } else {
-          throw originalError
-        }
-      }
-      val nodeTree = connection.createStatement().use { stmt ->
-        stmt.executeQuery(
-          "SELECT rw.ev_action::text FROM pg_rewrite rw " +
-            "JOIN pg_class c ON c.oid = rw.ev_class " +
-            "WHERE c.relname = '$viewName' AND c.relkind = 'v' AND rw.ev_type = '1'",
-        ).use { rs ->
-          check(rs.next()) { "No rewrite rule found for temporary view $viewName" }
-          rs.getString(1)
-        }
-      }
-      return analyzeNodeTree(nodeTree, applyQualNarrowing, viewSql)
-    } finally {
-      connection.createStatement().use { stmt ->
-        stmt.execute("DROP VIEW IF EXISTS $viewName")
-      }
-    }
-  }
-
-  /**
-   * Determines which result columns of a SQL query can be NULL, using full expression evaluation,
-   * by way of PostgreSQL's `prosqlbody` — the analyzed query tree PostgreSQL stores for a
-   * SQL-standard (`BEGIN ATOMIC ... END`) function body — rather than [analyzeViaTemporaryView]'s
-   * `CREATE VIEW`/`pg_rewrite.ev_action` route.
-   *
-   * `prosqlbody` holds the same post-parse-analysis `{QUERY ...}` node shape `pg_rewrite.ev_action`
-   * does (neither is rewriter-expanded, so nested views stay relation RTEs in both), but — unlike
-   * `CREATE VIEW` — PostgreSQL populates it for `UPDATE`/`DELETE`/`MERGE ... RETURNING` and for
-   * data-modifying CTEs, because only `CREATE VIEW` itself rejects a data-modifying statement, not
-   * a SQL-standard function body. [analyzeNodeTree] reads the same field shape either way, since
-   * [PgNodeTreeParser]'s extraction methods locate each field by a depth-one scan starting at the
-   * first unescaped `{`, ignoring whatever wrapping parentheses precede or follow it.
-   *
-   * The function is created with ZERO arguments: a real `$n` parameter would appear as a `PARAM`
-   * node in the tree, which [NodeTreeNullabilityAnalyzer] has no case for and would fall through to
-   * its `Unknown` (safe-nullable) handling for every expression that touches it — silently
-   * widening every parameter-touching column. [sql]'s own `?` placeholders are therefore replaced
-   * with typed non-null sentinel literals by the caller (mirroring [analyzeViaTemporaryView]'s own
-   * [buildViewSqlWithSentinels] use) before this method is ever invoked.
-   *
-   * A statement with no result columns at all (an `INSERT`/`UPDATE`/`DELETE`/`MERGE` without
-   * `RETURNING`) fails PostgreSQL's `RETURNS SETOF record` check on function creation — there is
-   * nothing to probe, and the [SQLException] is caught here rather than propagated.
-   *
-   * @param sql the SQL query or DML statement to analyze; any `?` parameter placeholder is
-   *   replaced with a typed non-null sentinel literal internally, the same way
-   *   [queryColumnNullability] replaces them before `CREATE VIEW` (see [buildViewSqlWithSentinels])
-   * @return one boolean per result column in `SELECT`/`RETURNING` order (`true` means nullable), or
-   *   `null` if [sql] has no result columns to probe or the probe itself failed for any reason —
-   *   the caller must treat `null` as "this path has no answer", never as "zero columns."
-   */
   /**
    * For [nodeTree]'s OWN outermost statement — never recursing into a CTE it declares; each CTE's
    * own body resolves its own MERGE independently (see [analyzeCteBodyNullability]) — determines
@@ -1113,6 +978,36 @@ internal class PgCatalogLoader(private val connection: Connection) {
     }
   }
 
+  /**
+   * Determines which result columns of a SQL query can be NULL, using full expression evaluation,
+   * by way of PostgreSQL's `prosqlbody` — the analyzed query tree PostgreSQL stores for a
+   * SQL-standard (`BEGIN ATOMIC ... END`) function body.
+   *
+   * `prosqlbody` holds the same post-parse-analysis `{QUERY ...}` node shape `pg_rewrite.ev_action`
+   * does (neither is rewriter-expanded, so nested views stay relation RTEs in both), but — unlike
+   * `CREATE VIEW` — PostgreSQL populates it for `UPDATE`/`DELETE`/`MERGE ... RETURNING` and for
+   * data-modifying CTEs, because only `CREATE VIEW` itself rejects a data-modifying statement, not
+   * a SQL-standard function body. [analyzeNodeTree] reads the same field shape either way, since
+   * [PgNodeTreeParser]'s extraction methods locate each field by a depth-one scan starting at the
+   * first unescaped `{`, ignoring whatever wrapping parentheses precede or follow it.
+   *
+   * The function is created with ZERO arguments: a real `$n` parameter would appear as a `PARAM`
+   * node in the tree, which [NodeTreeNullabilityAnalyzer] has no case for and would fall through to
+   * its `Unknown` (safe-nullable) handling for every expression that touches it — silently
+   * widening every parameter-touching column. [sql]'s own `?` placeholders are therefore replaced
+   * with typed non-null sentinel literals internally, via [buildViewSqlWithSentinels], before this
+   * method is ever invoked.
+   *
+   * A statement with no result columns at all (an `INSERT`/`UPDATE`/`DELETE`/`MERGE` without
+   * `RETURNING`) fails PostgreSQL's `RETURNS SETOF record` check on function creation — there is
+   * nothing to probe, and the [SQLException] is caught here rather than propagated.
+   *
+   * @param sql the SQL query or DML statement to analyze; any `?` parameter placeholder is
+   *   replaced with a typed non-null sentinel literal internally (see [buildViewSqlWithSentinels])
+   * @return one boolean per result column in `SELECT`/`RETURNING` order (`true` means nullable), or
+   *   `null` if [sql] has no result columns to probe or the probe itself failed for any reason —
+   *   the caller must treat `null` as "this path has no answer", never as "zero columns."
+   */
   internal fun queryColumnNullabilityViaProsqlbody(@Language("PostgreSQL") sql: String): List<Boolean>? {
     val substitutedSql = buildViewSqlWithSentinels(sql) ?: replaceParameterPlaceholders(sql)
     val functionName = "norm_nullability_${UUID.randomUUID().toString().replace("-", "")}"
@@ -1172,12 +1067,15 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * this function only because it CONTAINS a data-modifying CTE (the outer statement is still a
    * `SELECT`, so PostgreSQL's own `CREATE VIEW` restriction, and by extension nothing here, ever
    * blocked it). Falls back to `:returningList` when the outer statement's OWN target list is
-   * empty — true only for a topmost `UPDATE`/`DELETE`/`MERGE ... RETURNING` reached through
-   * [queryColumnNullabilityViaProsqlbody], never through [analyzeViaTemporaryView] (a `SELECT`
+   * empty — true only for a topmost `UPDATE`/`DELETE`/`MERGE ... RETURNING`: a plain `SELECT`
    * always has a non-empty target list, or [connection] would have rejected it as a query with no
-   * result columns before ever reaching this point).
+   * result columns before ever reaching this point.
    *
-   * @param applyQualNarrowing See [analyzeViaTemporaryView]'s parameter of the same name.
+   * @param applyQualNarrowing When `false`, disables `WHERE`-clause qual narrowing
+   *   ([NodeTreeNullabilityAnalyzer.qualProvenNonNullVars]) for this entire call — the top-level
+   *   query AND every nested CTE body and subquery reached from it. Threaded through rather than a
+   *   fixed `true` so a future caller with a rewritten body whose `WHERE`/`ON` predicate no longer
+   *   corresponds to what `RETURNING` sees can suppress it; every current caller passes `true`.
    */
   private fun analyzeNodeTree(
     nodeTree: String,
@@ -1251,10 +1149,10 @@ internal class PgCatalogLoader(private val connection: Connection) {
     // narrowing. This is conservative by construction: every non-key output column of a
     // grouping-sets query is an aggregate, so suppressing narrowing here costs nothing real.
     //
-    // A non-zero resultRelationVarno suppresses narrowing for the identical reason
-    // [analyzeViaTemporaryView]'s applyQualNarrowing=false does for a converted DML body: a qual
-    // that looks like it proves a RETURNING column non-null may in fact be testing the value the
-    // statement's own SET clause (or, for MERGE, an update/insert action) is about to overwrite.
+    // A non-zero resultRelationVarno (an UPDATE/DELETE/MERGE) suppresses narrowing for a similar
+    // reason: a qual that looks like it proves a RETURNING column non-null may in fact be testing
+    // the value the statement's own SET clause (or, for MERGE, an update/insert action) is about
+    // to overwrite.
     val qualNotNullVars = if (applyQualNarrowing && !hasGroupingSets && resultRelationVarno == 0) {
       NodeTreeNullabilityAnalyzer.qualProvenNonNullVars(nodeTree, isStrictFunction)
     } else {
@@ -1299,8 +1197,8 @@ internal class PgCatalogLoader(private val connection: Connection) {
     // call actually needs to read (verified live: `INSERT INTO t(name) VALUES ('test') RETURNING
     // *` against `t(id, name)` has a one-entry :targetList for "name" alone, but a two-entry
     // :returningList for "id, name"). A plain `SELECT` never populates :returningList at all, so
-    // this ordering never affects the [analyzeViaTemporaryView] caller, only the DML-with-RETURNING
-    // case only [queryColumnNullabilityViaProsqlbody] can ever reach at the top level.
+    // this ordering only ever matters for the DML-with-RETURNING case
+    // [queryColumnNullabilityViaProsqlbody] reaches at the top level.
     val returningEntries = nodeTreeParser.parseReturningList(nodeTree)
     if (returningEntries.isNotEmpty()) {
       // A SEPARATE analyzer whose isSourceColumnNotNull substitutes a Var referencing
@@ -1394,7 +1292,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * Builds a map from `(varno, varattno)` to `true` for CTE result columns that are guaranteed
    * non-null. Analyzes each CTE body with a sub-analyzer using the CTE's own range table.
    *
-   * @param applyQualNarrowing See [analyzeViaTemporaryView]'s parameter of the same name. Threaded
+   * @param applyQualNarrowing See [analyzeNodeTree]'s parameter of the same name. Threaded
    *   through unchanged to every CTE body analyzed here.
    */
   private fun buildCteColumnNotNull(
@@ -1464,12 +1362,9 @@ internal class PgCatalogLoader(private val connection: Connection) {
     // holds the value expressions being WRITTEN, a completely different list from its RETURNING
     // projection, and is very often non-empty even when :returningList is what must be read). A
     // data-modifying CTE body reaches this method with its RAW, un-rewritten :returningList only
-    // via [queryColumnNullabilityViaProsqlbody] — CREATE VIEW rejects ANY data-modifying CTE
-    // outright (verified live: "views must not contain data-modifying statements in WITH"), so
-    // [analyzeViaTemporaryView] never sees this cte.queryBlock in its raw DML form at all; by the
-    // time ev_action reaches this method, transformForViewCreation has already rewritten the body
-    // into a plain SELECT with no :returningList of its own, so this ordering never affected that
-    // caller either.
+    // via [queryColumnNullabilityViaProsqlbody] — `prosqlbody` is the only mechanism that ever
+    // populates a node tree for a data-modifying CTE in the first place (see that function's
+    // KDoc), so there is no other caller shape this ordering needs to account for.
     val returningEntries = nodeTreeParser.parseReturningList(cte.queryBlock)
     if (returningEntries.isNotEmpty()) {
       return returningEntries
@@ -1588,7 +1483,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
   }
 
   /**
-   * @param applyQualNarrowing See [analyzeViaTemporaryView]'s parameter of the same name.
+   * @param applyQualNarrowing See [analyzeNodeTree]'s parameter of the same name.
    * @param mergeAbsentVarnos See [analyzeNodeTree]'s parameter of the same name — [queryBlock]'s
    *   OWN varno-to-canBeAbsent map when [queryBlock] itself is a `MERGE` (resolved by
    *   [analyzeCteBodyNullability] before ever calling this method), empty otherwise.
@@ -1608,7 +1503,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
     @Language("PostgreSQL") sql: String = "",
   ): NodeTreeNullabilityAnalyzer {
     val cteRangeTable = nodeTreeParser.parseRangeTable(queryBlock)
-    // See analyzeViaTemporaryView's identical guard: GROUPING SETS/CUBE/ROLLUP can null-extend a
+    // See analyzeNodeTree's identical guard: GROUPING SETS/CUBE/ROLLUP can null-extend a
     // grouping key even when the underlying base table column is NOT NULL, and even when the
     // WHERE clause proved it non-null before aggregation. The actual override (including
     // EXPRESSION grouping keys) is applied by extractColumnNullability via hasGroupingSets below.
@@ -1620,7 +1515,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
     }
     val innerCteNotNull = buildInnerCteNotNull(queryBlock, previouslyResolved)
     val subqueryColumnNotNull = buildSubqueryColumnNotNull(queryBlock, applyQualNarrowing, sql)
-    // See analyzeViaTemporaryView's identical guard for why qual narrowing is suppressed whenever
+    // See analyzeNodeTree's identical guard for why qual narrowing is suppressed whenever
     // hasGroupingSets: a grouping key is exactly the thing a GROUPING SETS/CUBE/ROLLUP query
     // null-extends after WHERE has already run. A non-zero :resultRelation suppresses narrowing
     // for the identical reason analyzeNodeTree's own guard does: a data-modifying CTE body's WHERE
@@ -1676,7 +1571,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * because the subquery RTE has no `relid` in the outer range table.
    *
    * @param nodeTree the `pg_rewrite.ev_action` text of the outer query's temporary view
-   * @param applyQualNarrowing See [analyzeViaTemporaryView]'s parameter of the same name.
+   * @param applyQualNarrowing See [analyzeNodeTree]'s parameter of the same name.
    * @return A map from `(varno, varattno)` pairs to `true` when the subquery column is non-null
    */
   private fun buildSubqueryColumnNotNull(
@@ -1704,7 +1599,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
         // Parse the subquery's own base-table range table for isSourceColumnNotNull.
         val subRangeTable = nodeTreeParser.parseRangeTable(subqueryBlock)
         val subCteRteMap = nodeTreeParser.parseCteRangeTableEntries(subqueryBlock)
-        // See analyzeViaTemporaryView's identical guard: GROUPING SETS/CUBE/ROLLUP can
+        // See analyzeNodeTree's identical guard: GROUPING SETS/CUBE/ROLLUP can
         // null-extend a grouping key even when the base table column is NOT NULL. The actual
         // override (including EXPRESSION grouping keys) is applied by extractColumnNullability
         // via hasGroupingSets below.
@@ -1714,7 +1609,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
         } else {
           nodeTreeParser.parseGroupRteMap(subqueryBlock)
         }
-        // See analyzeViaTemporaryView's identical guard: suppress qual narrowing whenever
+        // See analyzeNodeTree's identical guard: suppress qual narrowing whenever
         // hasGroupingSets, because those are exactly what GROUPING SETS/CUBE/ROLLUP null-extends
         // after WHERE has already filtered rows.
         val subQualNotNullVars = if (applyQualNarrowing && !hasGroupingSets) {
@@ -1745,1369 +1640,10 @@ internal class PgCatalogLoader(private val connection: Connection) {
   }
 
   /**
-   * Transforms SQL containing data-modifying statements into an equivalent SELECT
-   * that preserves the join structure for outer join nullability analysis.
-   *
-   * Two transformations are applied:
-   * 1. **Data-modifying CTE bodies** (a leading `INSERT`, `UPDATE`, `DELETE`, `MERGE`, or a
-   *    nested `WITH`) are converted to an equivalent join-preserving `SELECT` via
-   *    [convertDmlCteBodyToSelect] wherever possible — the same transformation "Outer DML"
-   *    (transformation 2, below) already uses for TOP-LEVEL DML — so the real FROM/USING/MERGE
-   *    join structure sits in front of the node-tree analyzer that already computes outer-join
-   *    nullability correctly, rather than approximating it. The conversion is then validated
-   *    against the original body's own column metadata via [validatedConversion] before it is
-   *    trusted (see its KDoc for why this check is necessary independently of how well
-   *    [convertDmlCteBodyToSelect] itself is written). Only when conversion or validation fails
-   *    does this fall back to a metadata PROBE — and there is more than one distinct reason that
-   *    can happen, not just the shapes [convertDmlCteBodyToSelect] itself returns `null` for:
-   *    - An intentional `null` from [convertDmlCteBodyToSelect]: a plain `INSERT` (whose
-   *      `RETURNING` sees only the just-inserted row and has no join to preserve),
-   *      `UPDATE`/`DELETE` with no `FROM`/`USING` clause, or `MERGE` with no `RETURNING` clause.
-   *    - [validatedConversion] REJECTING a syntactically-built conversion that fails to prepare
-   *      or doesn't reproduce the original's column signature — most notably a `RETURNING` that
-   *      reads PostgreSQL 18's `OLD`/`NEW` pseudo-relations (not valid range variables outside
-   *      `RETURNING`, so the converted plain `SELECT` fails to prepare) or a `MERGE`'s
-   *      `merge_action()` (not valid outside `MERGE`'s own `RETURNING`, same failure mode).
-   *    - A lexer limitation the scanners in `SqlUtils.kt` haven't yet been taught to handle.
-   *    The stub is a `SELECT NULL::<type> AS <name> ... WHERE FALSE` built from
-   *    `PreparedStatement.getMetaData()` on the original body. That probe reports base-table
-   *    `attnotnull`, NOT real join-aware nullability — see [buildSelectStub]'s KDoc for exactly
-   *    what it can and cannot see, and for the SAFETY NET (the `forceNullableColumn` predicate
-   *    threaded through it) that now covers every danger sign this file can detect regardless of
-   *    WHY conversion was rejected: a detectable outer join in an `UPDATE`/`DELETE`/`MERGE`
-   *    body — but never `INSERT`, whose `RETURNING` cannot be null-extended by anything in its
-   *    own source, see [isInsertBody]'s KDoc; a `RETURNING` that reads `OLD.`/`NEW.`, which
-   *    applies regardless of statement kind, `INSERT` included (e.g. `INSERT ... ON CONFLICT DO
-   *    UPDATE ... RETURNING OLD.col`, where `OLD` is `NULL` exactly when there was no conflict);
-   *    a reference, by name, to a sibling CTE that is itself dangerous; or an `OLD`/`NEW`
-   *    item-to-column mapping this file cannot confirm is reliable.
-   *    **Non-data-modifying CTE bodies** (a leading `SELECT`, `TABLE`, or `VALUES`) are kept
-   *    verbatim: they resolve their own references (including outer joins nested inside the
-   *    body, whose induced nullability a stub built from base-table `attnotnull` cannot
-   *    reproduce), and PostgreSQL only allows data-modifying statements directly under a
-   *    top-level `WITH`, so a `SELECT`/`TABLE`/`VALUES` body cannot hide DML.
-   * 2. **Outer DML** (`UPDATE ... FROM`, `DELETE ... USING`, `MERGE ... RETURNING`) is converted
-   *    to an equivalent SELECT that preserves the join structure, via [convertDmlToSelect].
-   *
-   * A data-modifying CTE with no `RETURNING` clause (e.g. `INSERT ... ON CONFLICT DO NOTHING`)
-   * has no result columns. PostgreSQL still rejects such a statement in `CREATE VIEW`, so its
-   * body is replaced with a one-column stub (`SELECT NULL::int4 AS norm_stub WHERE FALSE`)
-   * rather than being dropped entirely. PostgreSQL guarantees nothing outside the CTE can
-   * reference a no-RETURNING data-modifying CTE, so the fabricated column is never read.
-   *
-   * @return The transformed SQL, or `null` if the DML has no join structure (or Phase 2's
-   *   conversion could not be validated) — see [queryColumnNullability]'s KDoc for what the
-   *   caller actually does with `null`: [analyzeUnconvertibleDml]'s result (real
-   *   `ResultSetMetaData.isNullable` OR'd with [forcedNullabilityPredicate]), not an empty
-   *   nullability list.
-   */
-  private fun transformForViewCreation(sql: String): String? {
-    // Phase 1: Convert data-modifying CTE bodies to join-preserving SELECTs where possible,
-    // falling back to a metadata probe/stub otherwise; keep SELECT/TABLE/VALUES bodies verbatim,
-    // since their internal join structure (e.g. a LEFT JOIN inside the CTE) affects the
-    // nullability of the CTE's own output columns and neither approach reproduces it as well as
-    // just leaving the body alone.
-    val cteClause = parseCteClause(sql)
-    val result: String
-    val mainQueryStart: Int
-    if (cteClause != null) {
-      // Build the result by concatenating segments: original text between CTE bodies stays,
-      // CTE bodies are replaced with their conversion or a stub. This avoids index invalidation
-      // from length changes. The full WITH clause (through the last CTE's closing ')') is one
-      // candidate probe prefix for the stub fallback: it is the original statement with only the
-      // main query swapped out, so every name that resolves in the original resolves in the
-      // probe. Whether it is tried before or after the preceding-definitions-only prefix depends
-      // on cteClause.isRecursive — see buildSelectStub's KDoc for why.
-      val fullWithClausePrefix = sql.substring(0, cteClause.definitions.last().bodyCloseParenthesis + 1)
-      val dangerousSiblingNames = computeDangerousSiblingNames(sql, cteClause.definitions)
-      result = buildString {
-        var lastEnd = 0
-        for ((index, cte) in cteClause.definitions.withIndex()) {
-          append(sql, lastEnd, cte.bodyOpenParenthesis + 1) // Include the opening '('
-          val body = sql.substring(cte.bodyOpenParenthesis + 1, cte.bodyCloseParenthesis)
-          if (isNonDataModifyingCteBody(body)) {
-            append(body) // Keep verbatim — resolves its own references, cannot hide DML.
-          } else {
-            // Use the ORIGINAL sql text (not the partially-stubbed builder content) as the
-            // prefix, so preceding CTEs are prepared exactly as the user wrote them.
-            val precedingDefinitionsPrefix = if (index > 0) {
-              sql.substring(0, cteClause.definitions[index - 1].bodyCloseParenthesis + 1)
-            } else {
-              ""
-            }
-            // Order matters: it must mirror PostgreSQL's own name-visibility rules, or a probe
-            // could resolve a reference to the wrong thing (e.g. a later CTE shadowing a base
-            // table) and fabricate incorrect nullability instead of merely failing to prepare.
-            // No bare-body ("") candidate here: for index 0, precedingDefinitionsPrefix IS the
-            // empty prefix (correct — there is nothing preceding), but for index > 0 a bare-body
-            // probe has known-wrong scope, so it is never tried; buildSelectStub's own
-            // true-scope fallback covers the case where both precision prefixes fail.
-            val prefixes = if (cteClause.isRecursive) {
-              listOf(fullWithClausePrefix, precedingDefinitionsPrefix)
-            } else {
-              listOf(precedingDefinitionsPrefix, fullWithClausePrefix)
-            }.distinct()
-            // Try the structural conversion FIRST, but never trust it blindly: validate it
-            // against the original body's own column metadata (count, names, types) before
-            // using it, since a converted SELECT that doesn't match is worse than no conversion
-            // at all — it would reach CREATE VIEW as plausible-looking but wrong SQL. See
-            // validatedConversion's KDoc for why this check exists independently of correctness
-            // fixes made elsewhere (e.g. the lexer fix in SqlUtils.kt, or the MERGE column-order
-            // fix): defense in depth against future or undiscovered conversion bugs.
-            val convertedBody = convertDmlCteBodyToSelect(body)?.let {
-              validatedConversion(prefixes, body, it, fullWithClausePrefix, cte.rawName)
-            }
-            val stubOrBody = convertedBody ?: run {
-              // Last-resort safety net for the stub fallback: force specific columns (or, for the
-              // whole-body triggers, every column) nullable rather than trust base-table
-              // attnotnull (which cannot see any of these dangers). See buildSelectStub's and
-              // tryPrepareStub's KDoc:
-              // - A RETURNING item that reads OLD./NEW. (PostgreSQL 18, including via a
-              //   RETURNING WITH (OLD AS alias, ...) declared alias) has its own conditional
-              //   existence no join structure is needed to explain — this applies regardless of
-              //   statement kind, INSERT included (e.g. INSERT ... ON CONFLICT DO UPDATE
-              //   ... RETURNING OLD.col, where OLD is NULL exactly when there was no conflict).
-              //   Forced PER COLUMN — see oldOrNewReturningColumns's KDoc — but ONLY once its
-              //   assumed item count is cross-checked against the real column count from this
-              //   probe's own metadata: a star item (`*`, `tbl.*`) this text-only analysis failed
-              //   to recognize expands to more columns than items, silently shifting every
-              //   later item's real index — trusting an index without this check was itself a
-              //   regression (`RETURNING (tgt.*), OLD.tval AS oldv` forced the wrong column, the
-              //   second half of `tgt.*`'s expansion, leaving the real OLD-referencing column on
-              //   unchecked metadata). A mismatch forces every column, same as a RECOGNIZED star.
-              // - A null-extending construct in body's own text (an outer join, a MERGE with WHEN
-              //   NOT MATCHED BY SOURCE, or a grouping-set construct's supertotal row — see
-              //   hasNullExtendingConstruct's KDoc) — but NEVER for a plain INSERT, whose
-              //   RETURNING sees only the just-inserted row (confirmed against real PostgreSQL: a
-              //   LEFT JOIN in an INSERT's own SELECT source does not make its RETURNING columns
-              //   nullable), so INSERT bodies are excluded from this trigger specifically.
-              // - body referencing, BY NAME, a sibling CTE that is dangerous — either directly (its
-              //   own body has one of the same danger signs) or TRANSITIVELY (it in turn
-              //   references a further sibling that is dangerous, computed as a fixpoint over the
-              //   whole WITH clause by computeDangerousSiblingNames, once per statement, not once
-              //   per CTE): that sibling's danger is invisible to any scan of body's own text (see
-              //   transformForViewCreation's KDoc). A quoted reference to the sibling's name (e.g.
-              //   USING "pre") is matched too — see referencesAnyName's KDoc. Scoped to siblings
-              //   that are THEMSELVES dangerous — not every sibling reference — so an ordinary
-              //   forward/backward reference to a plain, join-free sibling (e.g. `later AS
-              //   (SELECT 'q'::TEXT AS lbl)`) does not lose its real NOT NULL columns to this
-              //   safety net.
-              val forceNullableColumn = forcedNullabilityPredicate(body, dangerousSiblingNames - cte.name)
-              buildSelectStub(prefixes, body, fullWithClausePrefix, cte.rawName, forceNullableColumn) ?: body
-            }
-            append(stubOrBody)
-          }
-          lastEnd = cte.bodyCloseParenthesis // Will include the closing ')' next iteration
-        }
-        append(sql, lastEnd, sql.length)
-      }
-      // mainQueryStart is adjusted by the total length change from all replacements.
-      mainQueryStart = cteClause.mainQueryStart + (result.length - sql.length)
-    } else {
-      result = sql
-      mainQueryStart = 0
-    }
-
-    // Phase 2: If the outer statement is DML, convert to an equivalent SELECT — but, exactly like
-    // a CTE body's conversion (Phase 1), only once validated against the ORIGINAL mainQuery's own
-    // column signature. Without this gate, a conversion that embeds something invalid outside its
-    // origin (MERGE's own RETURNING, e.g. `merge_action()`, or PostgreSQL 18's `OLD`/`NEW`) would
-    // reach CREATE VIEW as plausible-looking but unpreparable SQL — and unlike a CTE body's own
-    // rejection (which still has the stub/probe fallback to try), a rejected TOP-LEVEL conversion
-    // simply falls through to the same "no join structure" `null` this function already returns
-    // for INSERT/no-FROM/no-RETURNING shapes, which the caller turns into the all-non-nullable
-    // fallback (see [queryColumnNullability]'s KDoc — that fallback ASSERTS every column NOT
-    // NULL, the unsafe direction, not a safe deferral) — never a crash.
-    val mainQuery = result.substring(mainQueryStart)
-    val topLevelPrefix = result.substring(0, mainQueryStart)
-    val selectEquivalent = convertDmlToSelect(mainQuery)?.let { converted ->
-      val originalProbe = if (topLevelPrefix.isEmpty()) mainQuery else "$topLevelPrefix $mainQuery"
-      tryGetColumnSignature(originalProbe)?.let { originalSignature ->
-        acceptIfSignatureMatches(topLevelPrefix, converted, originalSignature)
-      }
-    }
-
-    return if (selectEquivalent != null) {
-      result.substring(0, mainQueryStart) + selectEquivalent
-    } else if (cteClause != null && cteClause.definitions.isNotEmpty()) {
-      // CTEs were replaced but outer statement is SELECT (or non-transformable DML).
-      // If it's SELECT, the transformed SQL should work as a view.
-      // If it's INSERT/MERGE (no join structure in RETURNING), return null.
-      val afterCte = skipWhitespaceAndComments(mainQuery, 0)
-      if (mainQuery.regionMatches(afterCte, "SELECT", 0, 6, ignoreCase = true) ||
-        mainQuery.regionMatches(afterCte, "TABLE", 0, 5, ignoreCase = true) ||
-        mainQuery.regionMatches(afterCte, "VALUES", 0, 6, ignoreCase = true)
-      ) {
-        result
-      } else {
-        null // Outer DML with no join structure (INSERT, MERGE)
-      }
-    } else {
-      null // No CTEs, outer DML with no join structure
-    }
-  }
-
-  /**
-   * Computes the full, TRANSITIVE set of CTE names in [definitions] that are dangerous to another
-   * sibling's stub-path safety net (see [buildSelectStub]'s KDoc on the sibling-CTE trigger) —
-   * computed ONCE per `WITH` clause, not once per CTE, since the result is the same for every
-   * sibling in the clause.
-   *
-   * Seeded with definitions whose OWN body is dangerous, from either of two INDEPENDENT reasons:
-   * - It references `OLD`/`NEW` at all (via [oldOrNewReturningColumns], which already understands
-   *   the `RETURNING WITH (OLD AS alias, ...)` prologue — not a bare [referencesOldOrNew] call,
-   *   which would miss an aliased reference). This applies REGARDLESS of statement kind, `INSERT`
-   *   included: an `INSERT`'s ordinary target-column `RETURNING` is authoritative against base
-   *   table `attnotnull` (see [isInsertBody]'s KDoc), but `RETURNING OLD.col` is a DIFFERENT
-   *   claim — `OLD`'s own conditional existence (`NULL` for a freshly inserted row with no prior
-   *   conflict) is not something `attnotnull` can see, `INSERT` or not. Confirmed against real
-   *   PostgreSQL (issue #208 P1 follow-up): `WITH ins AS (INSERT INTO it2(id, val) SELECT a.id,
-   *   'v' FROM a LEFT JOIN b ON b.id = a.id ON CONFLICT (id) DO UPDATE SET val = 'w' RETURNING id,
-   *   OLD.val AS oldval), m AS (MERGE INTO tgt USING ins ON ins.id = tgt.id WHEN MATCHED THEN
-   *   UPDATE SET tval = 'z' RETURNING merge_action() AS act, ins.oldval AS ov, tgt.id) SELECT *
-   *   FROM m` returns `ov = NULL` for a fresh insert (no prior conflict row) — an earlier version
-   *   of this seed, which excluded EVERY `INSERT` body regardless of why it was dangerous, missed
-   *   this and fabricated `ov` NOT NULL.
-   * - [hasNullExtendingConstruct] finds a detectable outer join, `WHEN NOT MATCHED BY SOURCE`, or
-   *   grouping-set construct in its OWN body — but ONLY for a non-`INSERT` body: an `INSERT`'s
-   *   `RETURNING` of an ordinary target-table column can only ever see the just-inserted row
-   *   (see [isInsertBody]'s KDoc), so a join in the `INSERT`'s own `SELECT` source cannot
-   *   null-extend it. Seeding on that join anyway would propagate a false alarm down every
-   *   sibling that references the `INSERT`.
-   *
-   * Propagation (below) does NOT apply the `INSERT` exclusion from the second bullet — this is a
-   * deliberate over-approximation, mirroring the own-body trigger's own unconditional
-   * sibling-reference arm (`referencesAnyName(body, dangerousSiblingNames - cte.name)`, which
-   * fires for an `INSERT` body exactly like any other statement kind), not a claim that every
-   * `INSERT` referencing a dangerous sibling is genuinely exposed to its null-extension.
-   * Confirmed against real PostgreSQL that it is NOT always exposed: `WITH j AS (SELECT a.id,
-   * b.bval FROM a LEFT JOIN b ON b.id = a.id), ins AS (INSERT INTO ins_target(id, val) SELECT
-   * j.id, 'v' FROM j RETURNING id, val), m AS (MERGE INTO tgt USING ins ON ins.id = tgt.id WHEN
-   * MATCHED THEN UPDATE SET tval = 'z' RETURNING merge_action(), ins.val AS mv, tgt.id) SELECT *
-   * FROM m` returns `mv = 'v'` — a literal, never touched by `j`'s join — yet this is reported
-   * nullable, because `ins` joins the dangerous set via propagation (it references `j`) and `m`
-   * then references `ins`. The cost is specifically that the `INSERT` precision guard (seeding on
-   * `!isInsertBody`, see the seed bullets above) is NOT recovered once the dangerous source is a
-   * referenced CTE rather than a join inline in the `INSERT`'s own text — same safe-direction
-   * tradeoff every other over-approximation in this file makes.
-   *
-   * Then propagated to a FIXPOINT: any definition (of any statement kind) that
-   * [referencesAnyName] a name already in the dangerous set joins it, and this repeats until a
-   * full pass over [definitions] adds nothing. This is what makes a multi-hop chain like `j` (has
-   * the join) -> `mid` (references only `j`, no join of its own) -> `m` (references only `mid`,
-   * never `j` directly) detected: `mid` joins the dangerous set on the first pass (it references
-   * `j`), then `m` joins on the second pass (it references `mid`, now dangerous) — a one-level
-   * check stops after the first hop and never reaches `m`. Confirmed against real PostgreSQL
-   * (issue #208, Gap 3): `m`'s `bval`, passed through `mid` from `j`'s own `LEFT JOIN`, is
-   * genuinely `NULL` for the row whose join found no match.
-   *
-   * The fixpoint is inherently cycle-safe without a separate visited set: adding a name is
-   * monotonic (the set only grows) and a pass that adds nothing terminates the loop, so a cycle
-   * (`x` references `y`, `y` references `x`) can add at most every name in [definitions] before a
-   * pass finds nothing left to add.
-   */
-  private fun computeDangerousSiblingNames(sql: String, definitions: List<CteDefinition>): Set<String> {
-    fun bodyOf(definition: CteDefinition) =
-      sql.substring(definition.bodyOpenParenthesis + 1, definition.bodyCloseParenthesis)
-
-    // null forcedColumns means a recognized star item coincides with an OLD/NEW reference (danger
-    // regardless of index); a non-null, non-empty set means specific items reference OLD/NEW; an
-    // empty set means no OLD/NEW reference at all. Either of the first two counts as "references
-    // OLD/NEW" for seeding purposes here — which SPECIFIC column doesn't matter yet, only whether
-    // the body has this danger sign at all.
-    fun referencesOldOrNewAnywhere(body: String) =
-      oldOrNewReturningColumns(body).forcedColumns.let { it == null || it.isNotEmpty() }
-
-    val dangerous = definitions
-      .filter { definition ->
-        val body = bodyOf(definition)
-        referencesOldOrNewAnywhere(body) || (!isInsertBody(body) && hasNullExtendingConstruct(body))
-      }
-      .mapTo(mutableSetOf()) { it.name }
-
-    var addedDuringLastPass = true
-    while (addedDuringLastPass) {
-      addedDuringLastPass = false
-      for (definition in definitions) {
-        if (definition.name in dangerous) continue
-        if (referencesAnyName(bodyOf(definition), dangerous)) {
-          dangerous.add(definition.name)
-          addedDuringLastPass = true
-        }
-      }
-    }
-    return dangerous
-  }
-
-  /**
-   * Checks whether a CTE [body] is non-data-modifying — i.e. it starts with `SELECT`, `TABLE`,
-   * or `VALUES` (skipping leading whitespace, comments, and any leading `(` — a body may be
-   * parenthesized, e.g. `((SELECT ...))` or `(SELECT ...) UNION ALL (SELECT ...)`). Such bodies
-   * must be kept verbatim rather than replaced with a stub, since PostgreSQL only allows
-   * data-modifying statements directly under a top-level `WITH` — never parenthesized — so a
-   * leading `(` can only wrap a `SELECT`, and a `SELECT`/`TABLE`/`VALUES` body cannot itself
-   * contain `INSERT`/`UPDATE`/`DELETE`/`MERGE`. Skipping leading parens therefore cannot
-   * misclassify a data-modifying body as non-data-modifying.
-   *
-   * A body may instead start with its OWN nested `WITH` clause (e.g. `WITH inner_cte AS (SELECT
-   * 1) SELECT ...`). Text-only keyword matching cannot see past that nested clause, so this
-   * strips it (via [stripLeadingNestedWithClause]) and classifies the nested clause's own main
-   * statement instead — looping, since that main statement can itself start with a further
-   * nested `WITH`. This is safe because PostgreSQL only permits a data-modifying statement
-   * directly under a TOP-level `WITH`; a nested `WITH`'s main statement is never itself
-   * data-modifying, so whatever it resolves to (`SELECT`/`TABLE`/`VALUES`, or — for a body like
-   * `WITH helper AS (...) UPDATE ... RETURNING ...` — the `UPDATE`/`DELETE`/`MERGE` itself)
-   * correctly determines the whole body's classification. The loop terminates when stripping
-   * makes no further progress (no leading `WITH` left to strip), at which point a remaining
-   * `SELECT`/`TABLE`/`VALUES` classifies as non-data-modifying and anything else (a
-   * data-modifying statement, or unparseable text) classifies as data-modifying.
-   *
-   * @param body A SQL statement (the CTE body text, without surrounding parentheses).
-   */
-  private fun isNonDataModifyingCteBody(body: String): Boolean {
-    var remainder = body
-    while (true) {
-      var position = skipWhitespaceAndComments(remainder, 0)
-      while (position < remainder.length && remainder[position] == '(') {
-        position = skipWhitespaceAndComments(remainder, position + 1)
-      }
-      if (remainder.regionMatches(position, "SELECT", 0, 6, ignoreCase = true) ||
-        remainder.regionMatches(position, "TABLE", 0, 5, ignoreCase = true) ||
-        remainder.regionMatches(position, "VALUES", 0, 6, ignoreCase = true)
-      ) {
-        return true
-      }
-      if (!remainder.regionMatches(position, "WITH", 0, 4, ignoreCase = true)) {
-        return false
-      }
-      val nestedMainStatement = remainder.substring(position)
-      val stripped = stripLeadingNestedWithClause(nestedMainStatement)
-      if (stripped == nestedMainStatement) {
-        return false
-      }
-      remainder = stripped
-    }
-  }
-
-  /**
-   * Converts a data-modifying CTE [body] into an equivalent join-preserving `SELECT`, via
-   * [convertDmlToSelect] — reusing the exact transformation that already gives correct
-   * outer-join nullability for TOP-LEVEL `UPDATE ... FROM`/`DELETE ... USING`/`MERGE ...
-   * RETURNING` (see [transformForViewCreation]). Converting the body keeps its true join
-   * structure in front of the node-tree analyzer used elsewhere in this file, instead of asking
-   * `PreparedStatement.getMetaData()` a question it structurally cannot answer: base-table
-   * `attnotnull` says nothing about whether an outer join null-extends that column at runtime.
-   * [buildSelectStub]'s probe/stub fallback (used when this returns `null`) has exactly that
-   * blind spot — see its KDoc.
-   *
-   * If [body] carries its OWN leading nested `WITH` clause (e.g. `WITH helper AS (...) UPDATE
-   * ...`), [convertDmlToSelect] is applied to the DML statement AFTER that nested clause, and
-   * the nested clause is reattached verbatim in front of the converted `SELECT`.
-   * `convertDmlToSelect` only recognizes a statement starting with `UPDATE`/`DELETE`/`MERGE`, so
-   * without this a nested `WITH` would make every such body look unrecognized and silently fall
-   * back to the probe/stub chain instead — the exact shape the true-scope probe in
-   * [buildSelectStub] exists to cover, which resolves NAMES correctly for that shape but not
-   * outer-join NULLABILITY.
-   *
-   * @return The converted SELECT (with any nested `WITH` clause reattached), or `null` if
-   *   [body] has no join structure [convertDmlToSelect] can convert — a plain `INSERT` (whose
-   *   `RETURNING` sees only the just-inserted row: no join can null-extend it),
-   *   `UPDATE`/`DELETE` without a `FROM`/`USING` clause, or `MERGE` without a `RETURNING`
-   *   clause — or if the nested `WITH` clause itself fails to parse.
-   */
-  private fun convertDmlCteBodyToSelect(body: String): String? {
-    val nestedCteClause = parseCteClause(body) ?: return convertDmlToSelect(body)
-    val nestedWithClausePrefix = body.substring(0, nestedCteClause.definitions.last().bodyCloseParenthesis + 1)
-    val innerDml = body.substring(nestedCteClause.mainQueryStart)
-    return convertDmlToSelect(innerDml)?.let { "$nestedWithClausePrefix $it" }
-  }
-
-  /**
-   * A CTE body or converted SELECT's result-column shape, for comparing a structural conversion
-   * against the DML statement it claims to replace. Deliberately excludes nullability: the whole
-   * point of [validatedConversion] is to check the conversion BEFORE trusting its nullability —
-   * comparing nullability here would be circular.
-   */
-  private data class ColumnSignature(val names: List<String>, val typeNames: List<String>)
-
-  /**
-   * Prepares [probeSql] and, if it succeeds, captures its result columns' names and type names
-   * (in order) via `PreparedStatement.getMetaData()`.
-   *
-   * @return The signature, or `null` if [probeSql] could not be prepared.
-   */
-  private fun tryGetColumnSignature(probeSql: String): ColumnSignature? = try {
-    connection.prepareStatement(probeSql).use { preparedStatement ->
-      val metadata = preparedStatement.metaData
-      if (metadata == null) {
-        ColumnSignature(emptyList(), emptyList())
-      } else {
-        ColumnSignature(
-          names = (1..metadata.columnCount).map { metadata.getColumnName(it) },
-          typeNames = (1..metadata.columnCount).map { metadata.getColumnTypeName(it) },
-        )
-      }
-    }
-  } catch (_: SQLException) {
-    null
-  }
-
-  /**
-   * Confirms that [convertedBody] — [convertDmlCteBodyToSelect]'s output for [originalBody] —
-   * has the SAME result columns, in the SAME order, as [originalBody] itself, before trusting it
-   * enough to replace [originalBody] in the SQL sent to `CREATE VIEW`.
-   *
-   * This check exists independently of any particular conversion bug: string-based SQL
-   * transformation (this file, and [convertDmlToSelect] in `SqlUtils.kt`) can never be proven
-   * exhaustively correct for every input shape, so a converted SELECT that doesn't reproduce the
-   * original's real column set — wrong count, wrong names, or wrong types — must be discarded
-   * rather than reaching `CREATE VIEW` as plausible-looking but wrong SQL (silently fabricating
-   * nullability, or — worse — aborting generation on SQL that PostgreSQL itself accepts fine, a
-   * real regression this check specifically guards against). It is NOT sufficient on its own to
-   * catch every conversion bug: if the target and source relations happen to share column names
-   * and types in a way that makes a transposed order indistinguishable (e.g. both sides project
-   * `id, val`), this check cannot tell a correct conversion from one with the columns in the
-   * wrong order — the conversion itself must independently get column order right (see
-   * `convertMergeToSelect` in `SqlUtils.kt` for exactly this case with MERGE's source/target
-   * column ordering).
-   *
-   * [originalBody]'s signature is resolved via the same prefix chain [buildSelectStub] uses:
-   * [precisionPrefixes] each as `<prefix> <originalBody>`, then — if [originalBody] carries its
-   * own nested `WITH` clause, making every precision-prefix candidate a syntax error — a
-   * true-scope probe (`<fullWithClausePrefix> SELECT * FROM <rawName>`). [convertedBody]'s
-   * signature is resolved using THAT SAME successful prefix, wrapping it as a derived table
-   * (`<prefix> SELECT * FROM (<convertedBody>) AS ...`) so it can be probed regardless of
-   * whether [convertedBody] itself starts with a reattached nested `WITH` (a parenthesized
-   * subquery may legally start with `WITH`; a bare statement may not have two).
-   *
-   * A `RETURNING OLD.col`/`NEW.col` reference (PostgreSQL 18) is one shape this catches
-   * incidentally: [convertDmlToSelect] splices it into a plain `SELECT`, where `OLD`/`NEW` are
-   * not valid range variables, so the converted probe fails to prepare and the conversion is
-   * discarded here — falling back to the probe/stub path, which has the same known blind spot
-   * to `OLD`/`NEW` (see [transformForViewCreation]'s KDoc) but at least doesn't abort outright.
-   *
-   * @return [convertedBody] if validated, or `null` if it could not be validated (discard the
-   *   conversion and use the probe/stub fallback instead).
-   */
-  private fun validatedConversion(
-    precisionPrefixes: List<String>,
-    originalBody: String,
-    convertedBody: String,
-    fullWithClausePrefix: String,
-    rawName: String,
-  ): String? {
-    for (prefix in precisionPrefixes) {
-      val originalProbe = if (prefix.isEmpty()) originalBody else "$prefix $originalBody"
-      val originalSignature = tryGetColumnSignature(originalProbe) ?: continue
-      return acceptIfSignatureMatches(prefix, convertedBody, originalSignature)
-    }
-    // Every precision prefix failed to prepare the ORIGINAL body — the only way that happens is
-    // a body with its own nested WITH clause (see buildSelectStub's KDoc). Resolve its real
-    // signature via the same true-scope probe buildSelectStub falls back to in that case.
-    val trueScopeSignature = tryGetColumnSignature("$fullWithClausePrefix SELECT * FROM $rawName") ?: return null
-    return acceptIfSignatureMatches(fullWithClausePrefix, convertedBody, trueScopeSignature)
-  }
-
-  /**
-   * Prepares [convertedBody] as a derived table under [prefix] and returns [convertedBody] if
-   * its column signature matches [originalSignature] exactly (same names, same types, same
-   * order) — or `null` if it fails to prepare, or its signature doesn't match.
-   */
-  private fun acceptIfSignatureMatches(
-    prefix: String,
-    convertedBody: String,
-    originalSignature: ColumnSignature,
-  ): String? {
-    val convertedProbe = buildString {
-      if (prefix.isNotEmpty()) append(prefix).append(' ')
-      append("SELECT * FROM (").append(convertedBody).append(") AS norm_conversion_check")
-    }
-    val convertedSignature = tryGetColumnSignature(convertedProbe)
-    return if (convertedSignature == originalSignature) convertedBody else null
-  }
-
-  /**
-   * Builds a SELECT stub that produces the same result columns as the given SQL body, using
-   * PostgreSQL's own parser to determine column metadata via `PreparedStatement.getMetaData()`.
-   *
-   * NOT NULL columns use non-null sentinels (e.g., `0::int4`) so that CTE body analysis correctly
-   * identifies them as non-null. Nullable columns use `NULL::type` so they evaluate as nullable.
-   * The `WHERE FALSE` ensures no rows are returned (the stub is for type/nullability metadata only).
-   *
-   * FUNDAMENTAL LIMITATION — read before adding a new caller: `ResultSetMetaData.isNullable` is
-   * PostgreSQL's ORIGIN tracking for the projected column (ultimately, base-table
-   * `pg_attribute.attnotnull`). It has no idea whether an outer join upstream of that column can
-   * null-extend it at runtime, nor whether the column is one of PostgreSQL 18's `OLD`/`NEW`
-   * pseudo-relations, whose own existence is conditional. A column that is genuinely `NOT NULL`
-   * in its source table, but is read through a `LEFT JOIN` that produced no matching row, is
-   * reported here as NOT NULL — this is unsafe, a real fabricated-NOT-NULL defect, not a
-   * theoretical one (confirmed against running PostgreSQL: `UPDATE t SET ... FROM a LEFT JOIN b
-   * ON ... RETURNING b.val` inside a CTE reported `NOT NULL` for a column real PostgreSQL
-   * returns `NULL` for). This function is intended to be reached ONLY when `body` provably has
-   * no danger of either kind: [transformForViewCreation] tries [convertDmlCteBodyToSelect] first
-   * (which converts every body that HAS a `FROM`/`USING`/`MERGE` join into a real `SELECT`
-   * handled by the join-aware node-tree analyzer instead) and validates that conversion via
-   * [validatedConversion] before trusting it — see [transformForViewCreation]'s KDoc for the
-   * full enumeration of reasons conversion or validation can fail (INSERT/no-FROM/no-RETURNING
-   * shapes, a rejected `OLD`/`NEW`/`merge_action()` conversion, or a lexer limitation). That
-   * intent is enforced by the CALLERS' current logic, not by anything provable about arbitrary
-   * input — a future conversion bug, or a body shape neither the converter nor the validator
-   * recognizes, could still land a genuinely dangerous body here.
-   *
-   * As a LAST-RESORT SAFETY NET for exactly that "could still land here" case, the caller builds
-   * [forceNullableColumn] (see [tryPrepareStub]'s parameter KDoc) to force specific columns
-   * nullable — or, for the whole-body danger signs below, every column — whenever a danger sign
-   * is detected in `body`. Whole-body over-approximation is deliberate for these: identifying
-   * precisely which columns a join affects isn't possible from metadata alone (see
-   * [tryPrepareStub]'s KDoc):
-   * - A detectable null-extending construct in `body`'s own text ([hasNullExtendingConstruct]: a
-   *   `LEFT`/`RIGHT`/`FULL JOIN` at ANY nesting depth, a `MERGE` with `WHEN NOT MATCHED BY
-   *   SOURCE`, or a grouping-set construct — `ROLLUP`, `CUBE`, `GROUPING SETS` — whose supertotal
-   *   row makes a grouped column `NULL` by definition) — but NEVER for a plain `INSERT`: confirmed
-   *   against running PostgreSQL, `INSERT INTO b(id, bval) SELECT a.id, 'v' FROM a LEFT JOIN b2 ON
-   *   b2.id = a.id RETURNING id, bval` returns non-null values for both columns despite the `LEFT
-   *   JOIN` in its own source, because an `INSERT`'s `RETURNING` can only ever see the row that
-   *   was (or wasn't) actually inserted — see [isInsertBody]'s KDoc. Forcing nullability here for
-   *   an `INSERT` was ITSELF a real over-nullability regression this exclusion fixes: it broke
-   *   generated code that legitimately relied on a non-null type.
-   * - `body` referencing, BY NAME, another CTE in the same `WITH` clause (a sibling) that is
-   *   dangerous — either directly (its own body has one of the constructs above) or TRANSITIVELY
-   *   (it in turn references a further sibling that is dangerous, any number of hops away): that
-   *   danger can null-extend a column this body's `RETURNING` merely passes through, and no scan
-   *   of `body`'s own text can see it — the null-extension lives entirely outside it. The
-   *   transitive set is computed once per `WITH` clause as a fixpoint — see
-   *   `computeDangerousSiblingNames`'s KDoc — so a chain like `j` (has the join) -> `mid`
-   *   (references only `j`) -> `m` (references only `mid`) is followed all the way through, not
-   *   just one hop. The reference itself may be UNQUOTED or double-quoted (`USING "pre"` matches
-   *   exactly like `USING pre` — see [referencesAnyName]'s KDoc). Confirmed against running
-   *   PostgreSQL: `WITH pre AS (SELECT a.id, b.bval FROM a LEFT JOIN b ON b.id = a.id), m AS
-   *   (MERGE INTO tgt USING pre ON pre.id = tgt.id WHEN MATCHED THEN UPDATE SET tval = 'z'
-   *   RETURNING merge_action(), pre.bval, tgt.id) SELECT * FROM m` returns `bval = NULL` for a
-   *   target row whose matching `pre` row came from `b`'s nullable side of the join — invisible to
-   *   `m`'s own text, which has no join at all. Scoping this to siblings that are themselves
-   *   dangerous — rather than firing for ANY sibling reference at all — matters: an ordinary
-   *   forward reference to a plain, join-free sibling (e.g. `later AS (SELECT 'q'::TEXT AS lbl)`,
-   *   used purely to supply a literal value) must not lose its own real NOT NULL columns to this
-   *   safety net.
-   *
-   * A `RETURNING` that reads `OLD.`/`NEW.` (PostgreSQL 18) — this one DOES apply to `INSERT` too
-   * (e.g. `INSERT ... ON CONFLICT DO UPDATE ... RETURNING OLD.col`, where `OLD` is `NULL` exactly
-   * when there was no conflict), independently of whether any join is present — is instead forced
-   * PER COLUMN: see [oldOrNewReturningColumns]'s KDoc for why whole-body forcing here was itself
-   * a regression (`RETURNING OLD.name, t.id` fabricated `t.id` nullable despite `t.id` never
-   * being touched by `OLD`/`NEW` at all).
-   *
-   * RESIDUAL IMPRECISION, accepted rather than solved: for `MERGE`, the whole-body triggers still
-   * demote TARGET columns that are actually always present (e.g. the target's primary key)
-   * whenever a `MERGE`'s conversion is rejected AND one of them fires — the stub has no way to
-   * isolate which returned columns come from the join's/sibling's null-extended side from which
-   * come from the always-present target row. Per-column isolation was considered and rejected
-   * (twice) for the outer-join case specifically: `ResultSetMetaData.getTableName` reports the
-   * base RELATION, not the alias used in the query, so a self-join makes the join side and the
-   * target side indistinguishable by name alone anyway. Over-nullable is the safe direction, so
-   * this is left as-is.
-   *
-   * NOT CLAIMED: a body whose null-extension originates entirely outside it — in a base table's
-   * own view definition, a function it calls, or anything else this file cannot see — is not
-   * caught by any of the above and may still be reported NOT NULL. Nothing in this file claims to
-   * enumerate every way nullability can leak into a body from outside its own text — only the
-   * shapes verified against real PostgreSQL and listed here. In particular,
-   * [hasNullExtendingConstruct] only recognizes an outer join, `WHEN NOT MATCHED BY SOURCE`, and a
-   * grouping-set construct as reasons a `MERGE`'s matched source row can be conditionally
-   * absent-valued — this is the RESIDUAL part of issue #208's Gap 2 that remains unfixed: a
-   * `MERGE` whose matched source row is conditionally absent-valued for some OTHER reason (an
-   * arbitrary `ON` condition — such as `ON tgt.id = COALESCE(s.id, 2)` — sitting over some other
-   * NULL-producing source shape that isn't an outer join, `WHEN NOT MATCHED BY SOURCE`, or a
-   * grouping set) is still not recognized, and its `RETURNING` columns may still be fabricated NOT
-   * NULL.
-   *
-   * EVERYTHING ABOVE IN THIS KDOC WAS ONCE SCOPED ONLY TO THIS FUNCTION'S CALLERS — the CTE-body
-   * path (Phase 1 of `transformForViewCreation`) — with the TOP-LEVEL (non-CTE) DML path (Phase 2)
-   * having no equivalent safety net at all: `queryColumnNullability`'s fallback for a Phase-2
-   * conversion that failed or was rejected used to assert EVERY column NOT NULL, unconditionally,
-   * discarding the real `ResultSetMetaData.isNullable` it had already read. Issue #207 fixed this:
-   * `analyzeUnconvertibleDml` now applies the SAME [forcedNullabilityPredicate] this function
-   * builds for a CTE body — built instead from the top-level statement's own main-query text and
-   * whatever dangerous CTE names its own `WITH` clause declares — OR'd with real
-   * `ResultSetMetaData.isNullable`, rather than discarding both. [hasWhenNotMatchedBySourceClause]
-   * is DIFFERENT from this shared safety net: it IS consulted for a top-level `MERGE`, via
-   * `convertMergeToSelect` (called from `convertDmlToSelect`, which Phase 2 calls directly) — not
-   * as a fallback trigger, but as part of the conversion itself, to choose `RIGHT JOIN` over a
-   * plain `JOIN` when modeling the `MERGE`'s shape. When that conversion succeeds and validates, a
-   * top-level `WHEN NOT MATCHED BY SOURCE` `MERGE` is analyzed ACCURATELY by the join-aware
-   * node-tree analyzer, not approximated.
-   *
-   * Five shapes confirmed against real PostgreSQL to have fabricated NOT NULL before issue #207's
-   * fix, all now correctly reported nullable via `analyzeUnconvertibleDml`'s shared safety net
-   * (see `QueryAnalysisTest.DmlReturning` for the regression tests):
-   * - `MERGE INTO tgt USING a ON a.id = tgt.id WHEN NOT MATCHED THEN INSERT (id, tval) VALUES
-   *   (a.id, a.aval) RETURNING OLD.tval AS oldv` — a freshly `INSERT`ed row via `MERGE` has no
-   *   prior row, so `OLD.tval` is genuinely `NULL`; now forced nullable by the `OLD`/`NEW`
-   *   per-column trigger, regardless of statement kind.
-   * - `MERGE INTO tgt USING a ON a.id = tgt.id WHEN MATCHED THEN DELETE RETURNING NEW.tval` — a
-   *   deleted row has no resulting row, so `NEW.tval` is genuinely `NULL`; same trigger.
-   * - `INSERT INTO tgt VALUES (99, 'x') ON CONFLICT (id) DO UPDATE SET tval = 'y' RETURNING
-   *   OLD.tval` (top-level, no CTE) — a fresh insert (no conflict) has no prior row; same trigger.
-   * - `MERGE INTO tgt USING (SELECT a.id, b.bval FROM a LEFT JOIN b ON b.id = a.id) s ON s.id =
-   *   tgt.id WHEN MATCHED THEN UPDATE SET tval = 'z' RETURNING merge_action() AS act, s.bval` —
-   *   `b`'s `LEFT JOIN` genuinely null-extends `s.bval`; now forced nullable by the
-   *   null-extending-construct trigger (which — same as the CTE-body case — forces EVERY column,
-   *   `act` included, not just `bval`; see this KDoc's own over-approximation notes above).
-   * - The everyday, no-`OLD`/`NEW`/`MERGE` case: a plain `DELETE FROM t WHERE id = ? RETURNING id,
-   *   name, note` or `UPDATE ... RETURNING ..., docn`, where `note`/`docn` is a genuinely nullable
-   *   column — a plain `DELETE`/`UPDATE` with no `FROM`/`USING` clause has no join structure for
-   *   [convertDmlToSelect] to convert in the first place (see its KDoc), so it goes straight to
-   *   `analyzeUnconvertibleDml`, which now consults `ResultSetMetaData.isNullable` instead of
-   *   discarding it. This is the single most likely of these five shapes to affect a real user: it
-   *   requires no `MERGE`, no PostgreSQL 18, and no CTE avoidance — just an ordinary top-level
-   *   `DELETE`/`UPDATE ... RETURNING` of a nullable column.
-   *
-   * The residual gap noted above ([hasNullExtendingConstruct] missing an arbitrary `ON` condition
-   * over some other NULL-producing source shape) applies equally to `analyzeUnconvertibleDml`'s
-   * top-level use of the same predicate — this fix closes the "no safety net at all" gap, not
-   * every gap in what the safety net itself can detect.
-   *
-   * [precisionPrefixes] are tried first, in order, each as `prefix + " " + body` (or `body`
-   * alone for an empty prefix — correct precisely when `body` is the first CTE, since then there
-   * is nothing preceding to include). This is needed because `body` may reference another CTE in
-   * the same `WITH` clause by name — including, under `WITH RECURSIVE`, one declared LATER in
-   * the clause — and a prefix that omits that CTE fails to prepare. A prefix that fails to
-   * prepare (e.g. it references a name not yet in scope) throws `SQLException`, which is caught
-   * so the next candidate is tried; a prefix that prepares successfully but yields no result
-   * columns is a SUCCESS (see below), not a failure.
-   *
-   * Order among [precisionPrefixes] is significant, not just a performance tuning choice: it
-   * must mirror which names PostgreSQL actually makes visible to `body` in the real
-   * (untransformed) statement, or a probe could silently resolve a reference to the wrong thing.
-   * The full `WITH` clause prefix resolves every name visible under `WITH RECURSIVE`, including
-   * forward references — but under a plain `WITH`, it also makes visible CTEs declared AFTER
-   * `body` that the real statement does NOT see. If one of those later CTEs happens to share a
-   * name with a base table or outer reference `body` uses, trying the full clause first would
-   * resolve that reference to the later CTE instead — preparing successfully, but against the
-   * wrong table, fabricating incorrect nullability rather than merely failing. Callers therefore
-   * order [precisionPrefixes] to match `cteClause.isRecursive`: preceding-definitions-only first
-   * for a plain `WITH`, full clause first for `WITH RECURSIVE` (where it is the only prefix that
-   * can resolve a genuine forward reference).
-   *
-   * If `body` itself carries a nested `WITH` (e.g. `ins AS (WITH helper AS (...) INSERT ...
-   * RETURNING ...)`), EVERY [precisionPrefixes] candidate is a syntax error — `<prefix> <body>`
-   * becomes `WITH ... WITH helper AS (...) INSERT ...`, and PostgreSQL does not allow a second
-   * top-level `WITH`. Splicing `body`'s nested `WITH` into the prefix instead of probing it as a
-   * body was considered and rejected: promoting a body's own `WITH RECURSIVE` into the prefix
-   * would change a plain sibling's semantics (e.g. a sibling `src AS (SELECT ... FROM src)`
-   * referencing the base table `src` would become a recursive self-reference). Instead, once
-   * every [precisionPrefixes] candidate fails, this falls back to a TRUE-SCOPE probe: [rawName]
-   * is looked up through the unmodified [fullWithClausePrefix] — `<fullWithClausePrefix> SELECT
-   * * FROM <rawName>` — keeping `body`'s own nested `WITH` exactly where PostgreSQL expects it.
-   * Data-modifying CTEs are legal there (only `CREATE VIEW` rejects them), `getMetaData()` is
-   * Describe-only so nothing executes (the same reliance the precision prefixes already have on
-   * unmodified sibling DML bodies), and name resolution is byte-identical to the real statement
-   * — including nested `WITH`, `RECURSIVE`, shadowing, and quoted names ([rawName] preserves the
-   * user's exact quoting, unlike the quote-stripped `CteDefinition.name`). PostgreSQL's
-   * target-list origin tracking traces a bare column reference back through `SELECT * FROM
-   * <cte>` to its ultimate source column (so `ResultSetMetaData.isNullable`/`getTableName` is
-   * often exact even here, and the tracing itself can also lose the thread when an expression
-   * breaks the chain — PostgreSQL then reports nullability as "unknown", which the check below
-   * treats as nullable). Neither of those is the real risk of this fallback, though: see the
-   * FUNDAMENTAL LIMITATION note at the top of this KDoc — origin tracking is blind to
-   * outer-join null extension regardless of whether it successfully traces to a source column,
-   * so this probe is INTENDED to be reached only for `body` shapes with no join to be blind to
-   * — a guarantee enforced by the callers' current logic, not one this function can verify about
-   * its own input.
-   *
-   * If `body` has no `RETURNING` clause at all, `SELECT * FROM <rawName>` itself fails to
-   * prepare (PostgreSQL: no `RETURNING` clause on that CTE), which is indistinguishable here
-   * from the `WITH` clause being unsound for some other reason — so a further probe,
-   * `<fullWithClausePrefix> SELECT 1`, checks the clause alone (with a trivial main query that
-   * doesn't reference [rawName] at all). If that prepares, the clause is fine and `body` is
-   * simply unreferenceable, so the standard no-`RETURNING` stub (see below) is returned; if it
-   * doesn't, every avenue has failed and `null` is returned as before.
-   *
-   * If preparing succeeds but the statement has no result columns (a data-modifying CTE with no
-   * `RETURNING` clause, e.g. `INSERT ... ON CONFLICT DO NOTHING`), a single fabricated column
-   * (`SELECT NULL::int4 AS norm_stub WHERE FALSE` — nullable, since the literal is `NULL`) is
-   * returned instead of `null`. PostgreSQL rejects any reference to a no-`RETURNING`
-   * data-modifying CTE, so this column is provably unreferenced by the rest of the query — it
-   * exists only so the CTE body is a valid, DML-free `SELECT` that `CREATE VIEW` will accept.
-   *
-   * FORCED NULLABILITY: [forceNullableColumn] is consulted for every 1-based result column index
-   * (together with the probe's total column count); wherever it returns `true`, that column is
-   * built as `NULL::<type>` regardless of what `ResultSetMetaData.isNullable` reports — see
-   * [tryPrepareStub]'s parameter KDoc for why callers force specific columns (an `OLD`/`NEW`
-   * reference — see [oldOrNewReturningColumns]) or every column (an outer join, a reference to a
-   * sibling CTE, or an unreliable `OLD`/`NEW` item-to-column mapping) this way.
-   *
-   * @param precisionPrefixes Candidate prefixes to try first, in order, as original SQL text
-   *   ending in `)`.
-   * @param body A SQL statement (the CTE body text, without surrounding parentheses).
-   * @param fullWithClausePrefix The entire original `WITH` clause (through the last CTE's
-   *   closing `)`), used for the true-scope fallback probes.
-   * @param rawName The CTE's name exactly as written in the original SQL (quotes included, if
-   *   any), used verbatim in the true-scope fallback probe's `FROM` clause.
-   * @param forceNullableColumn See FORCED NULLABILITY above and [tryPrepareStub]'s KDoc.
-   * @return The SELECT stub, or `null` if the statement could not be prepared by any means.
-   */
-  private fun buildSelectStub(
-    precisionPrefixes: List<String>,
-    body: String,
-    fullWithClausePrefix: String,
-    rawName: String,
-    forceNullableColumn: (columnIndex: Int, totalColumnCount: Int) -> Boolean,
-  ): String? {
-    for (prefix in precisionPrefixes) {
-      val probeSql = if (prefix.isEmpty()) body else "$prefix $body"
-      val stub = tryPrepareStub(probeSql, forceNullableColumn)
-      if (stub != null) return stub
-    }
-    tryPrepareStub("$fullWithClausePrefix SELECT * FROM $rawName", forceNullableColumn)?.let { return it }
-    val withClauseAloneIsSound = try {
-      connection.prepareStatement("$fullWithClausePrefix SELECT 1").use { it.metaData }
-      true
-    } catch (_: SQLException) {
-      false
-    }
-    return if (withClauseAloneIsSound) "SELECT NULL::int4 AS norm_stub WHERE FALSE" else null
-  }
-
-  /**
-   * Prepares [probeSql] and, if it succeeds, builds a SELECT stub from its result column
-   * metadata (or the standard no-`RETURNING` stub if it has no result columns).
-   *
-   * @param forceNullableColumn Given a 1-based result column index and the probe's total column
-   *   count, `true` if that column should be built as `NULL::<type>` regardless of
-   *   `ResultSetMetaData.isNullable`. The caller has determined that `body` might contain an
-   *   outer join (`LEFT`/`RIGHT`/`FULL JOIN`, or a `MERGE` with `WHEN NOT MATCHED BY SOURCE`),
-   *   reference a sibling CTE by name, have a `RETURNING` item that reads `OLD`/`NEW`, or have an
-   *   `OLD`/`NEW` item-to-column mapping this file cannot confirm is reliable (an unrecognized
-   *   star item shifting every later item's real index — see [oldOrNewReturningColumns]'s KDoc,
-   *   which is why the total column count is passed here at all: callers cross-check it against
-   *   their own assumed item count) — and base-table `attnotnull` (which is all `isNullable` can
-   *   ever report — see this function's caller's KDoc, "FUNDAMENTAL LIMITATION") cannot see any
-   *   of those. For the outer-join, sibling-CTE, and unreliable-mapping triggers, callers pass a
-   *   lambda returning `true` for every column rather than trying to identify which specific ones
-   *   are affected: `ResultSetMetaData.getTableName` reports the base RELATION, not the alias used
-   *   in the query, so a self-join (`FROM t LEFT JOIN t2 ...` where `t2` is another instance of
-   *   the SAME table as the target) makes the join side and the always-present target side
-   *   indistinguishable by relation name alone. This also confines the over-nullability to
-   *   exactly the bodies that already reached this fallback (conversion unavailable or
-   *   rejected) — a body that converts successfully still gets exact nullability from the
-   *   join-aware node-tree analyzer, never this approximation.
-   * @return The stub, or `null` if [probeSql] could not be prepared.
-   */
-  private fun tryPrepareStub(
-    probeSql: String,
-    forceNullableColumn: (columnIndex: Int, totalColumnCount: Int) -> Boolean,
-  ): String? = try {
-    connection.prepareStatement(probeSql).use { preparedStatement ->
-      val metadata = preparedStatement.metaData
-      if (metadata == null || metadata.columnCount == 0) {
-        "SELECT NULL::int4 AS norm_stub WHERE FALSE"
-      } else {
-        buildString {
-          append("SELECT ")
-          for (i in 1..metadata.columnCount) {
-            if (i > 1) append(", ")
-            val typeName = when (metadata.getColumnTypeName(i)) {
-              "serial" -> "int4"
-              "smallserial", "serial2" -> "int2"
-              "bigserial", "serial8" -> "int8"
-              else -> metadata.getColumnTypeName(i)
-            }
-            val isNullable = forceNullableColumn(i, metadata.columnCount) ||
-              metadata.isNullable(i) != ResultSetMetaData.columnNoNulls
-            if (isNullable) {
-              append("NULL::").append(typeName)
-            } else {
-              append(nonNullSentinel(typeName))
-            }
-            append(" AS ").append(quoteStubColumnAlias(metadata.getColumnName(i)))
-          }
-          append(" WHERE FALSE")
-        }
-      }
-    }
-  } catch (_: SQLException) {
-    null
-  }
-
-  /**
-   * Double-quotes [name] for use as a stub column alias, doubling any embedded `"`.
-   *
-   * `ResultSetMetaData.getColumnName` reports the `RETURNING` alias exactly as PostgreSQL
-   * resolved it — case-exact, and not necessarily a valid bare identifier at all (e.g.
-   * `?column?` for a nameless item like `RETURNING 1`). Emitting it unquoted would let
-   * PostgreSQL fold any mixed-case name to lowercase, so a quoted, mixed-case original alias
-   * (e.g. `RETURNING id AS "myId"`) would silently become `myid` on the stub built here — and
-   * the outer query's `"myId"`-quoted reference to the CTE would then fail to resolve against
-   * it (`column ins.myId does not exist`) when this stub is used to create the temporary view
-   * [analyzeViaTemporaryView] reads nullability from. That failure never escapes as a build
-   * error: [queryColumnNullability] catches it around its own [analyzeViaTemporaryView] calls
-   * (see its inline "never an abort" note) and silently degrades to [analyzeUnconvertibleDml],
-   * which reads real `ResultSetMetaData.isNullable` OR'd with [forcedNullabilityPredicate] rather
-   * than the join-aware node-tree analyzer this quoting bug prevented from running — so the CTE's
-   * exact nullability is lost in favor of this coarser, still-safe approximation. This stub is
-   * throwaway SQL used only to
-   * probe nullability, so quoting unconditionally (unlike
-   * `JdbcAnalyzer.buildIdentifierQuoter`'s conditional quoting, which matters for generated,
-   * user-facing SQL) is always valid and also handles names like `?column?` that aren't valid
-   * bare identifiers to begin with.
-   */
-  private fun quoteStubColumnAlias(name: String): String = "\"" + name.replace("\"", "\"\"") + "\""
-
-  /**
-   * Determines result-column nullability for [sql] when [transformForViewCreation] found no join
-   * structure to convert (or its conversion attempt failed to prepare) — the top-level (non-CTE)
-   * counterpart of the CTE-body stub path's [forcedNullabilityPredicate] safety net.
-   *
-   * Used for DML shapes with no join structure for [convertDmlToSelect] to convert in the first
-   * place (a plain `INSERT`, `UPDATE`/`DELETE` without `FROM`/`USING`, or `MERGE` without
-   * `RETURNING`), and for a top-level conversion this file attempted but could not validate (e.g.
-   * a `RETURNING` that reads PostgreSQL 18's `OLD`/`NEW`, or a `MERGE`'s `merge_action()`).
-   *
-   * Reads real `ResultSetMetaData` directly from [sql] itself and ORs two independent signals per
-   * column: `ResultSetMetaData.isNullable` (base-table `attnotnull`, blind to outer-join null
-   * extension) and [forcedNullabilityPredicate] (the same OLD/NEW and dangerous-sibling-CTE
-   * triggers the CTE-body path applies). The OR is monotone in the safe direction: the predicate
-   * can only flip a column from NOT NULL toward nullable, never the reverse.
-   *
-   * UNLIKE the CTE-body path, this caller passes `scopeNullExtendingScanToDmlSourceClause = true`:
-   * the null-extending-construct arm (an outer join, or a `MERGE`'s grouping-set supertotal row)
-   * is scanned only over [sql]'s own `FROM`/`USING`/`USING ... ON` source clause (see
-   * [dmlSourceClauseRegion]), not the whole statement text — a flat whole-body scan would force a
-   * column nullable because of a `LEFT JOIN` sitting inside an unrelated `WHERE ... IN (SELECT
-   * ...)` subquery that cannot null-extend `RETURNING` at all.
-   *
-   * [forcedNullabilityPredicate] is built from [sql]'s own main-query text (after any leading
-   * `WITH` clause, matching what the CTE-body path passes for its own body) and, when [sql] has a
-   * `WITH` clause of its own, the [computeDangerousSiblingNames] of its CTEs — so a top-level
-   * statement that references one of its OWN dangerous CTEs by name (e.g. a plain `INSERT`, which
-   * has no join structure for Phase 2 to convert but can still read a dangerous sibling's output)
-   * is covered the same way a CTE referencing another CTE's danger is.
-   *
-   * `ResultSetMetaData.columnNullableUnknown` counts as NULLABLE here ONLY AS A FALLBACK — the
-   * answer used when [probeUnknownColumnNullability] cannot resolve the column's real nullability
-   * at all. Nullability analysis must be correct or silent: when this file cannot PROVE a column
-   * non-null, it reports nullable, even for a shape (a literal `RETURNING` item, `merge_action()`)
-   * that happens to always be non-null in practice — proving that would require recognizing the
-   * specific expression shape, which the fallback, by construction, does not attempt.
-   * [probeUnknownColumnNullability] is the mechanism that DOES prove it, wherever it can: it builds
-   * a throwaway `SELECT <returning items> FROM <target relation>` from [sql] itself and reads its
-   * exact nullability through [analyzeViaTemporaryView]'s join-aware [NodeTreeNullabilityAnalyzer]
-   * — the same machinery this file already trusts for a plain `SELECT` or a convertible DML body —
-   * closing the gap for an expression built over a source column (`RETURNING lower(note)`,
-   * `RETURNING COALESCE(note, 'x')`, a scalar subquery, a `CASE`, a cast). The probe is skipped or
-   * discarded — falling back to this function's own nullable default — for a specific set of
-   * shapes it cannot trust: no `RETURNING` clause; a `RETURNING` star item the catalog can't expand
-   * into an explicit column list (see [probeUnknownColumnNullability]'s KDoc); the resulting item
-   * count disagreeing with the real column count; no recognizable target relation
-   * ([dmlTargetRelationReference] returns `null`); or the probe SQL failing to prepare or its
-   * temporary view failing to create (e.g. `merge_action()`/`OLD`/`NEW` outside `RETURNING`, or a
-   * bare `ROW(a, b)` composite `CREATE TEMPORARY VIEW` refuses to expose).
-   *
-   * [tryPrepareStub]'s CTE-body stub path already treats `columnNullableUnknown` as nullable
-   * unconditionally and is untouched by this function.
-   *
-   * @param sql The already `?`-sentinel-substituted (or `?`-free) form of the statement — see
-   *   [buildViewSqlWithSentinels]/[replaceParameterPlaceholders] upstream — safe to `PREPARE` and
-   *   to `CREATE TEMPORARY VIEW` from directly.
-   * @param originalSql The statement exactly as [queryColumnNullability] received it, BEFORE any
-   *   `?`-sentinel substitution. Passed through, unchanged, to [probeUnknownColumnNullability] so
-   *   its own `UPDATE ... SET` analysis can see a genuine `?` parameter placeholder that [sql]'s
-   *   sentinel substitution has already erased — see that function's KDoc for why this
-   *   distinction matters (issue #228).
-   * @return An empty list if [sql] cannot be prepared or has no result columns — [JdbcAnalyzer]
-   *   treats a missing index as nullable (the safe default), so this is a safe, not merely
-   *   convenient, degradation.
-   */
-  private fun analyzeUnconvertibleDml(
-    @Language("PostgreSQL") sql: String,
-    @Language("PostgreSQL") originalSql: String,
-  ): List<Boolean> {
-    val cteClause = parseCteClause(sql)
-    val dangerousSiblingNames = cteClause?.let { computeDangerousSiblingNames(sql, it.definitions) }.orEmpty()
-    val mainQueryText = cteClause?.let { sql.substring(it.mainQueryStart) } ?: sql
-    val forceNullableColumn = forcedNullabilityPredicate(
-      mainQueryText,
-      dangerousSiblingNames,
-      scopeNullExtendingScanToDmlSourceClause = true,
-    )
-    return try {
-      connection.prepareStatement(sql).use { preparedStatement ->
-        val metadata = preparedStatement.metaData ?: return emptyList()
-        val hasUnknownColumn = (1..metadata.columnCount).any {
-          metadata.isNullable(it) == ResultSetMetaData.columnNullableUnknown
-        }
-        val probeResult = if (hasUnknownColumn) {
-          probeUnknownColumnNullability(sql, metadata.columnCount, originalSql)
-        } else {
-          null
-        }
-        List(metadata.columnCount) { index ->
-          val columnIndex = index + 1
-          val metadataNullable = when (metadata.isNullable(columnIndex)) {
-            ResultSetMetaData.columnNullable -> true
-            ResultSetMetaData.columnNoNulls -> false
-            else -> probeResult?.get(index) ?: true
-          }
-          forceNullableColumn(columnIndex, metadata.columnCount) || metadataNullable
-        }
-      }
-    } catch (_: SQLException) {
-      emptyList()
-    }
-  }
-
-  /**
-   * Attempts to resolve the EXACT nullability of every result column of an unconvertible DML
-   * [sql] statement, for use only on the columns [analyzeUnconvertibleDml] found reporting
-   * `ResultSetMetaData.columnNullableUnknown` — an expression PostgreSQL's own metadata cannot
-   * itself classify (e.g. a function call, a cast, or a scalar subquery in `RETURNING`).
-   *
-   * Builds a throwaway `SELECT <returning items> FROM <target relation>` from [sql]'s own
-   * `RETURNING` list and target relation — see [dmlTargetRelationReference] — and reads that
-   * probe's real per-column nullability through [analyzeViaTemporaryView]'s join-aware
-   * [NodeTreeNullabilityAnalyzer], the SAME machinery this file already trusts for a plain
-   * `SELECT` or a convertible DML body. A plain `SELECT` over the same target relation and the
-   * same `RETURNING` expressions has identical nullability to the real `RETURNING` list itself:
-   * neither an `UPDATE`/`DELETE`'s own row-filtering (`WHERE`) nor the fact that a row was
-   * modified changes what a source column, or an expression over it, evaluates to for that row.
-   *
-   * Every gate below returns `null` — never a wrong or half-computed answer — whenever this
-   * probe cannot be trusted, so [analyzeUnconvertibleDml] can safely fall back to its own nullable
-   * default:
-   * - no top-level `RETURNING` clause on [sql] at all;
-   * - no recognizable target relation ([dmlTargetRelationReference] returns `null`) — needed
-   *   before a star item can even be expanded, since expansion reads [target]'s own column list;
-   * - a `RETURNING` star item ([isStarItem]) that [expandStarReturningItems] cannot expand — its
-   *   real column list can't be read from [target] (the only relation in scope for the DML shapes
-   *   that reach this function: a plain `INSERT`, `UPDATE`/`DELETE` without `FROM`/`USING`, or a
-   *   rejected `MERGE` conversion — so a star item here can only mean [target]'s own columns);
-   * - the (possibly star-expanded) item count still does not equal [expectedColumnCount] — e.g. a
-   *   `MERGE`'s `RETURNING *`, which spans every relation in the `MERGE`'s `USING` clause, not just
-   *   [target] alone, so expansion against [target] alone under-counts and this gate catches it;
-   * - the probe SQL cannot be prepared, or its temporary view cannot be created (a `SQLException`
-   *   from either) — see [analyzeUnconvertibleDml]'s KDoc for exactly which real-world shapes hit
-   *   this (`merge_action()`, `OLD`/`NEW`, a bare `ROW(...)`/`(a, b)` composite);
-   * - the probe's own result size does not equal [expectedColumnCount] (defense in depth against
-   *   the same expansion risk the item-count gate above targets).
-   *
-   * For a plain `UPDATE ... SET` (never an `UPDATE ... FROM` — that has join structure of its own
-   * and is converted long before this function is ever reached), the bare `FROM <target relation>`
-   * above is upgraded to a `SET`-assignment-aware derived table by
-   * [buildUpdateSetAwareFromClause] — see its KDoc for exactly what that upgrade can and cannot
-   * see (issue #228): it closes the specific gap where a `RETURNING` expression is built over a
-   * column the statement's OWN `SET` clause just assigned a provably non-null value to (`UPDATE t
-   * SET note = 'x' RETURNING lower(note)`, where `note` is nullable in the catalog but can never
-   * be `NULL` in this particular result). [buildUpdateSetAwareFromClause] returns `null` — falling
-   * back to the bare `FROM <target>` unchanged — for every case it cannot confidently upgrade, so
-   * this function's own answer is never LESS safe than before that upgrade existed, only
-   * sometimes more precise.
-   *
-   * @param sql The unconvertible top-level DML statement (already parameter-sentinel-substituted
-   *   by the caller — see [buildViewSqlWithSentinels]/[replaceParameterPlaceholders] upstream —
-   *   so this function's own [buildViewSqlWithSentinels] call over the freshly-built probe SQL is
-   *   only a defensive re-check, not the primary `?` removal).
-   * @param expectedColumnCount The real result column count, from [sql]'s own
-   *   `ResultSetMetaData.getColumnCount()`.
-   * @param originalSql [sql] before `?`-sentinel substitution — see [buildUpdateSetAwareFromClause]'s
-   *   KDoc for why a `SET` assignment's right-hand side must be inspected in THIS form, not [sql]'s.
-   * @return One nullability value per `RETURNING` item, in order, or `null` if the probe could not
-   *   be built, prepared, or trusted.
-   */
-  private fun probeUnknownColumnNullability(
-    @Language("PostgreSQL") sql: String,
-    expectedColumnCount: Int,
-    @Language("PostgreSQL") originalSql: String,
-  ): List<Boolean>? {
-    val dml = stripLeadingNestedWithClause(sql)
-    val returningIndex = findTopLevelReturningKeyword(dml)
-    if (returningIndex < 0) return null
-
-    val rawReturningText = dml.substring(returningIndex + "RETURNING".length).trim().trimEnd(';')
-    val rawItems = splitAtTopLevel(rawReturningText, ',')
-
-    val target = dmlTargetRelationReference(sql) ?: return null
-    val items = expandStarReturningItems(rawItems, target) ?: return null
-    if (items.size != expectedColumnCount) return null
-    val returningText = items.joinToString(", ")
-
-    val bareFromClause = "FROM $target"
-    val setAwareFromClause = buildUpdateSetAwareFromClause(sql, originalSql, target, returningText)
-
-    // The SET-aware FROM clause is a strict refinement, never a replacement of last resort: try
-    // it first ONLY when it exists, but if it fails to prepare, fails to build its temporary
-    // view, or comes back with the wrong column count, fall back to the bare `FROM <target>`
-    // probe — never surface a construction failure this wrapping introduced as a `null` (which
-    // degrades precision to `analyzeUnconvertibleDml`'s nullable default) when the unwrapped probe
-    // would have answered correctly.
-    val setAwareResult = setAwareFromClause?.let { runNullabilityProbe(returningText, it, expectedColumnCount) }
-    return setAwareResult ?: runNullabilityProbe(returningText, bareFromClause, expectedColumnCount)
-  }
-
-  /**
-   * Expands each `*` / `<alias>.*` item in [items] into the explicit, quoted column names of
-   * [target], so [probeUnknownColumnNullability]'s positional item-count cross-check against the
-   * real result column count is trustworthy instead of guessing a star's width.
-   *
-   * [target] is the only relation this expansion considers, because it is the only relation in
-   * scope for the DML shapes that reach [probeUnknownColumnNullability] at all — a plain `INSERT`,
-   * an `UPDATE`/`DELETE` with no `FROM`/`USING` clause, or a rejected `MERGE` conversion. A `MERGE`
-   * whose `RETURNING *` actually spans its `USING` source too, not just [target], is not silently
-   * mis-expanded by this assumption: the resulting item count simply won't match
-   * [expectedColumnCount], and [probeUnknownColumnNullability]'s own size check bails to nullable
-   * the same way it already does for any other count mismatch.
-   *
-   * @return [items] unchanged if none is a star; the expanded list if every star item resolves
-   *   against [target]'s real column list; or `null` if that column list itself can't be read
-   *   ([target] fails to prepare as `SELECT * FROM <target>`, or reports no columns at all) — the
-   *   caller then bails to nullable, same as every other gate in [probeUnknownColumnNullability].
-   */
-  private fun expandStarReturningItems(items: List<String>, target: String): List<String>? {
-    if (items.none(::isStarItem)) return items
-    val columnNames = try {
-      connection.prepareStatement("SELECT * FROM $target").use { preparedStatement ->
-        preparedStatement.metaData?.let { metadata -> (1..metadata.columnCount).map { metadata.getColumnName(it) } }
-      }
-    } catch (_: SQLException) {
-      null
-    }
-    if (columnNames.isNullOrEmpty()) return null
-    return items.flatMap { item ->
-      if (isStarItem(item)) columnNames.map(::quoteStubColumnAlias) else listOf(item)
-    }
-  }
-
-  /**
-   * Runs a single `SELECT <returningText> FROM <fromClause>` nullability probe through
-   * [analyzeViaTemporaryView], returning `null` — never a wrong or half-computed answer —
-   * whenever the probe cannot be trusted: it fails to `PREPARE`, its temporary view fails to
-   * create (either surfaces as a `SQLException`), or its result size does not equal
-   * [expectedColumnCount]. Factored out of [probeUnknownColumnNullability] so that function can
-   * run this same logic twice — once for its SET-aware [fromClause], once for the bare
-   * `FROM <target>` fallback — without duplicating the probe-construction or exception-handling
-   * logic between the two attempts.
-   *
-   * @param returningText The already-extracted `RETURNING` list text (no leading `RETURNING`
-   *   keyword), verbatim from [probeUnknownColumnNullability].
-   * @param fromClause A complete `FROM ...` clause — either the bare `FROM <target>` or the
-   *   `SET`-aware derived-table form from [buildUpdateSetAwareFromClause].
-   * @param expectedColumnCount The real result column count the probe's own result must match.
-   * @return One nullability value per `RETURNING` item, in order, or `null` if the probe could
-   *   not be built, prepared, or trusted.
-   */
-  private fun runNullabilityProbe(
-    returningText: String,
-    fromClause: String,
-    expectedColumnCount: Int,
-  ): List<Boolean>? {
-    // A newline, not a space, separates the RETURNING text from FROM: a trailing `--` line
-    // comment on the last RETURNING item (e.g. "RETURNING id, lower(note) AS n -- lowercased")
-    // has no line terminator of its own to stop at when returningText is the LAST thing before
-    // FROM on one line — it would otherwise swallow the FROM clause into the comment, making the
-    // probe fail to prepare (a `SQLException`, caught below) and silently degrading to today's
-    // nullable default instead of the real answer. Putting FROM on its own line means the comment
-    // can only ever consume up to that line's own end, never past it.
-    val probeSql = "SELECT $returningText\n$fromClause"
-    val viewSql = buildViewSqlWithSentinels(probeSql) ?: if ('?' in probeSql) return null else probeSql
-
-    return try {
-      analyzeViaTemporaryView(viewSql).takeIf { it.size == expectedColumnCount }
-    } catch (_: SQLException) {
-      null
-    }
-  }
-
-  /**
-   * Builds `FROM (SELECT <col-list> FROM <target>) AS <alias>` for a plain `UPDATE ... SET`
-   * statement — the `SET`-assignment-aware upgrade [probeUnknownColumnNullability] applies to its
-   * own bare `FROM <target>` (issue #228). Wrapping the target in a derived table whose column
-   * list already carries the `SET`-assigned expressions lets the SAME node-tree analysis
-   * [probeUnknownColumnNullability] already trusts resolve every identifier itself — no
-   * hand-rolled rewriting of the `RETURNING` text is needed. For `UPDATE t SET note = 'x'
-   * RETURNING lower(note)`, this turns the probe's `FROM t` into `FROM (SELECT id, ('x') AS
-   * "note" FROM t) AS t`, so `note` inside the `RETURNING` expression now evaluates against the
-   * literal `'x'` rather than `note`'s own (nullable) catalog column.
-   *
-   * An assigned column's own expression may reference OTHER target columns by their OLD
-   * (pre-update) value (`SET note = note || 'x'`): inside the inner `SELECT`, an unqualified
-   * `note` resolves against the bare `<target>` — the OLD row — which is exactly what an
-   * `UPDATE`'s `SET`-list semantics already mean, so the substituted expression is spliced in
-   * VERBATIM with no extra handling.
-   *
-   * [parseSetAssignments] is run TWICE — once over [originalSql] (before `?`-sentinel
-   * substitution), once over [sql] (after) — and the two are reconciled BY COLUMN NAME, never by
-   * position, so the two texts never need to align positionally (see [parseSetAssignments]'s own
-   * KDoc for why a `?` sentinel's different length could otherwise desynchronize them). A column
-   * keeps its bare, unsubstituted form in the derived table — deferring to the pre-existing,
-   * already-safe catalog-`attnotnull` answer for that one column — whenever ANY of the following
-   * holds:
-   * - it has no plain (single-column) assignment in [originalSql] at all — this covers both an
-   *   untouched column and the row form `SET (a, b) = (...)`, whose right-hand side cannot be
-   *   safely attributed to any one of its several target columns;
-   * - its [originalSql] assignment's right-hand side is exactly the keyword `DEFAULT` — an
-   *   unknown, possibly-`null` value this function makes no attempt to resolve;
-   * - its [originalSql] assignment's right-hand side contains a lexical `?` — by the time [sql]
-   *   reaches this function, [buildViewSqlWithSentinels] has already replaced every `?` parameter
-   *   placeholder with a typed NON-NULL sentinel (`0::int4`, `''::text`, …), so trusting [sql]'s
-   *   own substituted expression here would silently assert NOT NULL for a value a real caller
-   *   can bind `NULL` to at runtime — the exact regression issue #228 exists to close. Only
-   *   [originalSql]'s pre-sentinel text still carries the bare `?`, so only it can catch this;
-   * - it has no matching plain assignment in [sql]'s own parse — should not happen when [sql] and
-   *   [originalSql] are truly the sentinel/pre-sentinel forms of the same statement, but kept as
-   *   a defensive check: with no [sql]-side expression there is nothing trustworthy to splice.
-   *
-   * Before any of the above, this function bails outright — without even attempting to parse the
-   * `SET` list — whenever the target relation is one where `RETURNING` can see a tuple something
-   * OTHER than this statement's own `SET` clause rewrote between assignment and return. `RETURNING`
-   * always reflects the FINAL, post-trigger, post-rule tuple, never the `SET` expression's raw
-   * value, so substituting that raw value is only safe when nothing else in the pipeline can have
-   * changed it. See [resolveTargetRelationOidIfSubstitutionSafe] for the exact catalog-based
-   * check.
-   *
-   * Also bails when [returningText] references PostgreSQL 18's `OLD`/`NEW` `RETURNING`
-   * pseudo-relations (via [referencesOldOrNew]): `OLD.col` must see the PRE-update value, which is
-   * exactly the opposite of what this function's substitution would splice in for a column `OLD`
-   * qualifies.
-   *
-   * @param returningText The already-extracted `RETURNING` list text (no leading `RETURNING`
-   *   keyword) [probeUnknownColumnNullability] parsed from [sql] — checked for an `OLD`/`NEW`
-   *   pseudo-relation reference before any substitution is attempted.
-   * @return `null` — the caller's signal to keep its own bare `FROM <target>` unchanged — when
-   *   [sql] (after stripping any leading nested `WITH` clause) is not a plain `UPDATE`; when
-   *   [target]'s own alias can't be confidently derived (see [deriveDmlTargetAlias]); when
-   *   `SELECT * FROM <target>` fails to prepare (so the real column list can't be read); when the
-   *   `SET` list fails to parse in either [sql] or [originalSql] (see [parseSetAssignments]'s KDoc
-   *   for why a partial parse is never trusted either); when [returningText] references `OLD`/`NEW`;
-   *   or when [resolveTargetRelationOidIfSubstitutionSafe] reports the target relation unsafe.
-   */
-  private fun buildUpdateSetAwareFromClause(
-    @Language("PostgreSQL") sql: String,
-    @Language("PostgreSQL") originalSql: String,
-    target: String,
-    returningText: String,
-  ): String? {
-    val dml = stripLeadingNestedWithClause(sql)
-    val trimmedStart = skipWhitespaceAndComments(dml, 0)
-    if (skipOptionalKeyword(dml, trimmedStart, "UPDATE") == trimmedStart) return null
-
-    if (referencesOldOrNew(returningText)) return null
-    val relationOid = resolveTargetRelationOidIfSubstitutionSafe(target) ?: return null
-
-    val alias = deriveDmlTargetAlias(target) ?: return null
-
-    val columnNames = try {
-      connection.prepareStatement("SELECT * FROM $target").use { preparedStatement ->
-        preparedStatement.metaData?.let { metadata -> (1..metadata.columnCount).map { metadata.getColumnName(it) } }
-      }
-    } catch (_: SQLException) {
-      null
-    }
-    if (columnNames.isNullOrEmpty()) return null
-
-    val originalAssignments = parseSetAssignments(stripLeadingNestedWithClause(originalSql)) ?: return null
-    val sentinelAssignments = parseSetAssignments(dml) ?: return null
-
-    val originalPlainByColumn = originalAssignments.filter { !it.isRowForm }
-      .associate { it.columnNames.single() to it.expression }
-    val originalRowFormColumns = originalAssignments.filter { it.isRowForm }
-      .flatMapTo(mutableSetOf()) { it.columnNames }
-    val sentinelPlainByColumn = sentinelAssignments.filter { !it.isRowForm }
-      .associate { it.columnNames.single() to it.expression }
-
-    // Never trusted from any other source: an untyped literal or expression spliced bare into the
-    // derived table's column list is typed `text` by PostgreSQL there (issue #226's original bug,
-    // resurfacing as a #228-fix regression) — a DIFFERENT type than the real column's, which can
-    // resolve a RETURNING function call against a completely different, sometimes safe-listed,
-    // overload than the real statement would ever use (`lower(int4range)` vs. the real
-    // `lower(text)` is exactly this). Casting to the column's own declared type — typmod included,
-    // via `format_type` — makes the derived table's column type IDENTICAL to the real one, so
-    // whatever overload the real statement resolves is the same one this probe resolves too.
-    val declaredTypesByColumn = lookupDeclaredColumnTypes(relationOid) ?: emptyMap()
-
-    val innerColumnList = columnNames.joinToString(", ") { columnName ->
-      val originalExpression = originalPlainByColumn[columnName]
-      val sentinelExpression = sentinelPlainByColumn[columnName]
-      val declaredType = declaredTypesByColumn[columnName]
-      val eligible = columnName !in originalRowFormColumns &&
-        originalExpression != null &&
-        sentinelExpression != null &&
-        !isDefaultKeyword(originalExpression) &&
-        !containsLexicalPlaceholder(originalExpression) &&
-        declaredType != null
-      if (eligible) {
-        "($sentinelExpression)::$declaredType AS ${quoteStubColumnAlias(columnName)}"
-      } else {
-        quoteStubColumnAlias(columnName)
-      }
-    }
-
-    return "FROM (SELECT $innerColumnList FROM $target) AS $alias"
-  }
-
-  /**
-   * Looks up the declared type — base type AND typmod (length, precision/scale, array dimensions,
-   * domain identity, etc.) — of every column of [relationOid], via `format_type(atttypid,
-   * atttypmod)` over `pg_attribute`. [buildUpdateSetAwareFromClause] casts each substituted `SET`
-   * expression to this exact string so the derived table's column type is indistinguishable from
-   * the real table's — see that function's own KDoc for why a bare, uncast substitution can
-   * silently resolve a DIFFERENT (and sometimes wrongly safe-listed) function overload than the
-   * real statement would.
-   *
-   * `format_type` itself produces a re-parsable type name — already quoted or schema-qualified
-   * wherever PostgreSQL would otherwise misparse it — so its result is spliced directly after `::`
-   * with no additional quoting from this function.
-   *
-   * @param relationOid The OID [resolveTargetRelationOidIfSubstitutionSafe] already resolved for
-   *   this same target relation — never re-resolved here, so the two functions can never
-   *   disagree about which relation they mean.
-   * @return A map from column name to its declared type text, or `null` if the catalog query
-   *   itself fails to execute — treated by the caller exactly like every column being absent from
-   *   the map: no column becomes eligible for substitution, and each keeps its bare, unsubstituted
-   *   form, deferring to the pre-existing, already-safe catalog-`attnotnull` answer.
-   */
-  private fun lookupDeclaredColumnTypes(relationOid: Int): Map<String, String>? = try {
-    connection.prepareStatement(
-      """
-      SELECT attname, format_type(atttypid, atttypmod) AS declared_type
-      FROM pg_catalog.pg_attribute
-      WHERE attrelid = ? AND attnum > 0 AND NOT attisdropped
-      """.trimIndent(),
-    ).use { preparedStatement ->
-      preparedStatement.setInt(1, relationOid)
-      preparedStatement.executeQuery().use { rs ->
-        buildMap {
-          while (rs.next()) {
-            put(rs.getString("attname"), rs.getString("declared_type"))
-          }
-        }
-      }
-    }
-  } catch (_: SQLException) {
-    null
-  }
-
-  /**
-   * Checks whether [target] — a plain `UPDATE ... SET` statement's target relation, exactly as
-   * [dmlTargetRelationReference] extracted it — is one where `RETURNING` can see a FINAL tuple
-   * that differs from what this statement's own `SET` clause assigned, making
-   * [buildUpdateSetAwareFromClause]'s substitution (issue #228's fix) itself unsafe: `RETURNING`
-   * always reflects the tuple actually stored (or, for `DO INSTEAD`, whatever the replacing query
-   * produces), never the raw `SET` expression, so a row-level `BEFORE` trigger, a rewrite rule, an
-   * `INSTEAD OF` trigger on a view, or an FDW's own write path can each substitute a completely
-   * different value for the very column [buildUpdateSetAwareFromClause] would otherwise splice in
-   * as provably non-null.
-   *
-   * Resolves [target] to an OID via `to_regclass` and returns that SAME OID to the caller on
-   * success — [buildUpdateSetAwareFromClause] reuses it to look up each column's declared type
-   * (see [lookupDeclaredColumnTypes]) rather than resolving [target] to an OID a second time.
-   * Answers "unsafe" (`null`, bail, don't substitute) when ANY of the following hold:
-   * 1. [target] cannot be resolved to an OID at all — an ambiguous, unparseable, or unknown
-   *    relation reference. Never guessed at: an unresolvable target is treated exactly as unsafe
-   *    as one known to be unsafe.
-   * 2. The relation, OR ANY transitive inheritance descendant or partition (recursed via
-   *    `pg_inherits`), has a `pg_class.relkind` of view (`v`), materialized view (`m`), or foreign
-   *    table (`f`). An `INSTEAD OF` trigger or a foreign data wrapper's own `UPDATE` path can
-   *    produce any tuple it likes, independent of this statement's `SET` clause — including an
-   *    auto-updatable view, whose write routes through a base table whose OWN triggers then apply;
-   *    this function does not attempt to chase that base table, it simply bails on the view itself.
-   *    Checking every descendant, not just the root, matters because a partitioned table's
-   *    partition — or a plain inheritance child — can itself be a foreign table even when the root
-   *    relation is an ordinary local table: `UPDATE parent SET ... RETURNING ...` can still route a
-   *    given row through a foreign partition's own remote write path.
-   * 3. The relation, or ANY transitive inheritance descendant or partition (recursed via
-   *    `pg_inherits`), has a row-level `BEFORE` trigger for `UPDATE` OR `INSERT`, excluding
-   *    internal constraint triggers (`tgisinternal`). `INSERT` matters alongside `UPDATE` because a
-   *    partitioned table's cross-partition `UPDATE` is internally re-routed as a `DELETE` on the
-   *    source partition plus an `INSERT` on the destination partition, whose own `BEFORE INSERT`
-   *    trigger can rewrite the tuple `RETURNING` ultimately sees — a risk that exists for the
-   *    partitioned table as a whole regardless of which specific row this statement touches, so
-   *    ANY descendant carrying such a trigger bails the WHOLE relation, not just that descendant's
-   *    own rows. A statement-level trigger, or an `AFTER` trigger of either level, does not affect
-   *    the tuple `RETURNING` observes and is deliberately NOT matched here.
-   * 4. The relation, or any transitive descendant, has any rewrite rule in `pg_rewrite` other than
-   *    a view's own implicit `_RETURN` `SELECT` rule (identified by `rulename`). A `DO INSTEAD`
-   *    rule can replace the statement wholesale with a query this function has no visibility into.
-   *
-   * Deliberately does NOT bail for a generated or identity column (PostgreSQL rejects those as
-   * `SET` targets outright, so they can never appear as a plain assignment in the first place) or
-   * for a domain constraint on an assigned column (a constraint violation aborts the statement
-   * rather than silently rewriting its value) — neither can produce the RETURNING-sees-something-
-   * else risk this function exists to catch.
-   *
-   * @return `null` — meaning [buildUpdateSetAwareFromClause] must bail and keep the caller's bare,
-   *   unwrapped `FROM <target>` probe — whenever any of the above cannot be ruled out, INCLUDING
-   *   when the catalog query itself fails to execute (treated the same as "can't confirm this
-   *   substitution is safe"). Otherwise, [target]'s resolved relation OID — every condition above
-   *   checked and none matched — for [buildUpdateSetAwareFromClause] to proceed and reuse.
-   */
-  private fun resolveTargetRelationOidIfSubstitutionSafe(target: String): Int? {
-    val relationName = dmlTargetRelationName(target) ?: return null
-
-    val result = try {
-      connection.prepareStatement(
-        """
-        WITH RECURSIVE root(relid) AS (
-          SELECT to_regclass(?)::integer
-        ),
-        descendants(relid) AS (
-          SELECT relid FROM root WHERE relid IS NOT NULL
-          UNION
-          SELECT i.inhrelid::integer
-          FROM pg_catalog.pg_inherits i
-          JOIN descendants d ON i.inhparent = d.relid
-        )
-        SELECT
-          (SELECT relid FROM root) AS root_relid,
-          EXISTS (
-            SELECT 1
-            FROM pg_catalog.pg_class c
-            JOIN descendants d ON c.oid = d.relid
-            WHERE c.relkind IN ('v', 'm', 'f')
-          ) AS has_risky_relkind,
-          EXISTS (
-            SELECT 1
-            FROM pg_catalog.pg_trigger tg
-            JOIN descendants d ON tg.tgrelid = d.relid
-            WHERE NOT tg.tgisinternal
-              AND (tg.tgtype & 1) = 1
-              AND (tg.tgtype & 2) = 2
-              AND ((tg.tgtype & 4) = 4 OR (tg.tgtype & 16) = 16)
-          ) AS has_mutating_row_trigger,
-          EXISTS (
-            SELECT 1
-            FROM pg_catalog.pg_rewrite rw
-            JOIN descendants d ON rw.ev_class = d.relid
-            WHERE rw.rulename <> '_RETURN'
-          ) AS has_non_view_rewrite_rule
-        """.trimIndent(),
-      ).use { preparedStatement ->
-        preparedStatement.setString(1, relationName)
-        preparedStatement.executeQuery().use { rs ->
-          if (!rs.next()) return@use null
-          val rootRelid = rs.getInt("root_relid").takeUnless { rs.wasNull() }
-          val hasRisk = rs.getBoolean("has_risky_relkind") ||
-            rs.getBoolean("has_mutating_row_trigger") ||
-            rs.getBoolean("has_non_view_rewrite_rule")
-          rootRelid to hasRisk
-        }
-      }
-    } catch (_: SQLException) {
-      null
-    }
-
-    val (rootRelid, hasRisk) = result ?: return null
-    if (rootRelid == null) return null // to_regclass could not resolve the target — bail, don't guess
-    return rootRelid.takeUnless { hasRisk }
-  }
-
-  /**
-   * The [analyzeNodeTree] counterpart of [resolveTargetRelationOidIfSubstitutionSafe]: answers the
-   * SAME "can a :targetList assignment be trusted as what RETURNING actually sees" question, for
-   * the SAME reasons (a row-level `BEFORE` trigger, a rewrite rule, an `INSTEAD OF` trigger, or an
-   * FDW can each substitute a different final value — see that method's KDoc for the full risk
-   * list), but starting from [relid] directly rather than re-resolving a relation NAME parsed out
-   * of the SQL text. [analyzeNodeTree] already has the target relation's OID for free, from the
-   * SAME `:rtable` it parses everything else out of — there is no name left to re-parse.
+   * Answers, for [analyzeNodeTree]'s own `:targetList`-to-`:returningList` substitution, whether a
+   * `RETURNING` item that merely reads back a `:targetList` assignment can be trusted as what
+   * `RETURNING` actually sees for [relid] — `false` whenever a row-level `BEFORE` trigger, a
+   * rewrite rule, an `INSTEAD OF` trigger, or an FDW could substitute a different final value.
    *
    * @return `true` only when [relid] and every transitive inheritance/partition descendant is a
    *   plain table with no risky `relkind`, no mutating row-level trigger, and no non-view rewrite

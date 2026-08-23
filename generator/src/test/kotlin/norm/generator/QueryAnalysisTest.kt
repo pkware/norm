@@ -132,6 +132,28 @@ class QueryAnalysisTest {
     }
 
     @Test
+    fun `SELECT DISTINCT ON preserves schema nullability`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL, name TEXT)",
+        "SELECT DISTINCT ON (id) id, name FROM t ORDER BY id, name",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `TABLESAMPLE preserves schema nullability`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL, name TEXT)",
+        "SELECT id, name FROM t TABLESAMPLE BERNOULLI (50)",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
     fun `ORDER BY and LIMIT preserve schema nullability`() {
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL)",
@@ -5711,10 +5733,8 @@ class QueryAnalysisTest {
 
   /**
    * Regression guard belonging to the same fix as [DmlReturning]'s three `merge_action()`/`OLD`
-   * abort guards, but exercising the STUB-path fail-safe specifically (see
-   * [oldOrNewReturningColumns]'s and [PgCatalogLoader.buildSelectStub]'s KDoc): that mechanism
-   * only runs for a data-modifying CTE body, not bare top-level DML, so this needs the `WITH`
-   * wrapper the other three tests intentionally omit.
+   * abort guards, but exercising a data-modifying CTE body specifically, hence the `WITH` wrapper
+   * the other three tests intentionally omit.
    *
    * NOTE on coverage of PgCatalogLoader's item-count-vs-real-column-count cross-check
    * (`oldOrNewColumns.isNotEmpty() && oldOrNewAnalysis.itemCount != totalColumnCount`): this
@@ -7796,17 +7816,6 @@ class QueryAnalysisTest {
   /**
    * Creates an isolated schema, runs DDL, analyzes a query, and tears down.
    * Each call gets its own schema and connection, safe for parallel execution.
-   *
-   * Also runs [assertProsqlbodyParity] against every query analyzed here — the ongoing
-   * `prosqlbody`-cutover parity harness, giving the entire [QueryAnalysisTest] corpus for free
-   * rather than a hand-picked subset. As of Stage 3, [PgCatalogLoader.queryColumnNullability]
-   * itself calls [PgCatalogLoader.queryColumnNullabilityViaProsqlbody] as its OWN fallback for any
-   * DML/CTE-containing statement `CREATE VIEW` rejects, so [assertProsqlbodyParity] is comparing
-   * prosqlbody against itself for those cases (a harmless tautology, not a bug in the harness) —
-   * it remains a REAL, independent check for a plain `SELECT`, which still resolves via `CREATE
-   * VIEW` until Stage 4 moves it too. Remove this call (and [assertProsqlbodyParity] itself) once
-   * that stage deletes the `CREATE VIEW` route entirely — without it there is nothing left to
-   * compare against.
    */
   private fun analyzeWithSchema(@Language("PostgreSQL") ddl: String, @Language("PostgreSQL") sql: String): Query {
     val schemaName = "test_${schemaCounter.incrementAndGet()}"
@@ -7820,37 +7829,11 @@ class QueryAnalysisTest {
         val analyzer = JdbcAnalyzer(connection)
         val catalog = analyzer.buildCatalog(listOf(schemaName))
         val parsedQuery = ParsedQuery(name = "test", command = ":one", sql = sql, comments = emptyList())
-        val query = analyzer.analyzeQuery(parsedQuery, catalog)
-        assertProsqlbodyParity(connection, sql)
-        return query
+        return analyzer.analyzeQuery(parsedQuery, catalog)
       } finally {
         connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
       }
     }
-  }
-
-  /**
-   * Asserts that [PgCatalogLoader.queryColumnNullabilityViaProsqlbody]'s answer for [sql] is
-   * IDENTICAL to [PgCatalogLoader.queryColumnNullability]'s (the production entry point) on the
-   * SAME connection and SAME already-applied schema — see [analyzeWithSchema]'s KDoc for why this
-   * runs for every query in this file rather than a separate hand-picked corpus, and for why it is
-   * a tautology (not a bug) for the DML/CTE cases `queryColumnNullability` already routes through
-   * `prosqlbody` itself.
-   *
-   * A fresh [PgCatalogLoader] is used rather than reaching into [JdbcAnalyzer]'s own private
-   * instance: both routes are pure functions of [connection]'s current `search_path`/catalog state
-   * and [sql], so a second instance computes byte-identical catalog lookups independently.
-   *
-   * Skipped for `CALL` statements — mirroring [JdbcAnalyzer.analyzeQuery]'s own guard, `CALL`
-   * never reaches [PgCatalogLoader.queryColumnNullability] in production either — and for any `sql`
-   * whose `prosqlbody` probe returns `null` (a DML statement with no `RETURNING`, which has no
-   * result columns to compare in the first place).
-   */
-  private fun assertProsqlbodyParity(connection: java.sql.Connection, @Language("PostgreSQL") sql: String) {
-    if (sql.trimStart().startsWith("CALL ", ignoreCase = true)) return
-    val loader = PgCatalogLoader(connection)
-    val prosqlbodyResult = loader.queryColumnNullabilityViaProsqlbody(sql) ?: return
-    assertThat(prosqlbodyResult).isEqualTo(loader.queryColumnNullability(sql))
   }
 
   /**

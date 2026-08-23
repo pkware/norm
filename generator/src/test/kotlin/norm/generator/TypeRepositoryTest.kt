@@ -21,8 +21,7 @@ class TypeRepositoryTest {
    * mis-recognizes -- most concretely, an unrecognized star item that expands to several real
    * columns -- degrades SILENTLY to a shifted, wrong mapping of names/expressions onto columns
    * they don't belong to, rather than the documented empty-list fail-safe, unless the caller
-   * cross-checks the count itself. [oldOrNewReturningColumns]'s callers apply the identical
-   * real-column-count cross-check for the same reason.
+   * cross-checks the count itself.
    *
    * The mismatch here is constructed directly at [TypeRepository.buildTypeProjectionForQuery]'s
    * own seam (a [queryText] whose select-item count disagrees with the passed `queryResults`)
