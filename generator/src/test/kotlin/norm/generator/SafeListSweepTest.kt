@@ -11,16 +11,12 @@ import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.testcontainers.containers.PostgreSQLContainer
-import org.testcontainers.containers.wait.strategy.Wait
-import org.testcontainers.containers.wait.strategy.WaitAllStrategy
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
-import org.testcontainers.utility.DockerImageName
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.SQLException
 import java.sql.Statement
-import java.time.Duration
 
 /**
  * Brute-force verification, against a LIVE PostgreSQL instance, that every entry in
@@ -620,21 +616,9 @@ class SafeListSweepTest {
   }
 
   companion object {
-    private val pgVersion = System.getProperty("norm.test.pgVersion", "18")
-
     @JvmField
     @Container
-    val container: PostgreSQLContainer<*> = PostgreSQLContainer(
-      DockerImageName.parse("postgres:$pgVersion-alpine").asCompatibleSubstituteFor("postgres"),
-    ).apply {
-      withDatabaseName("norm_test")
-      waitingFor(
-        WaitAllStrategy()
-          .withStrategy(Wait.forLogMessage(".*database system is ready to accept connections.*\\n", 2))
-          .withStrategy(Wait.forListeningPort())
-          .withStartupTimeout(Duration.ofSeconds(60)),
-      )
-    }
+    val container: PostgreSQLContainer<*> = testPostgresContainer("norm_test")
 
     private lateinit var connection: Connection
 

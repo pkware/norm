@@ -11,16 +11,12 @@ import org.junit.jupiter.api.parallel.ExecutionMode
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 import org.testcontainers.containers.PostgreSQLContainer
-import org.testcontainers.containers.wait.strategy.Wait
-import org.testcontainers.containers.wait.strategy.WaitAllStrategy
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
-import org.testcontainers.utility.DockerImageName
 import java.nio.file.Files
 import java.nio.file.Path
 import java.sql.Connection
 import java.sql.DriverManager
-import java.time.Duration
 import java.util.Properties
 import kotlin.io.path.Path
 import kotlin.io.path.exists
@@ -177,21 +173,9 @@ class GenerateCodeTest {
     private val EMBED_SCENARIOS =
       setOf("basic_embeds", "complex_embed_mixing", "consecutive_embeds", "nested_joins_embeds")
 
-    private val pgVersion = System.getProperty("norm.test.pgVersion", "18")
-
     @JvmField
     @Container
-    val container: PostgreSQLContainer<*> = PostgreSQLContainer(
-      DockerImageName.parse("postgres:$pgVersion-alpine").asCompatibleSubstituteFor("postgres"),
-    ).apply {
-      withDatabaseName("norm_generate_test")
-      waitingFor(
-        WaitAllStrategy()
-          .withStrategy(Wait.forLogMessage(".*database system is ready to accept connections.*\\n", 2))
-          .withStrategy(Wait.forListeningPort())
-          .withStartupTimeout(Duration.ofSeconds(60)),
-      )
-    }
+    val container: PostgreSQLContainer<*> = testPostgresContainer("norm_generate_test")
 
     private lateinit var connection: Connection
 
