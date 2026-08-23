@@ -372,6 +372,44 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
 }
 
 /**
+ * Matches `func_name(` to find the start of function calls — the captured name is a PostgreSQL
+ * unquoted identifier ([COLUMN_REFERENCE_IDENTIFIER_START] followed by zero or more
+ * [COLUMN_REFERENCE_IDENTIFIER_CONTINUATION] characters, the same identifier shape
+ * [COLUMN_REFERENCE] uses), never a bare `\w+`: `\w` excludes both `$` and any `>= 0x80`
+ * character, both of which PostgreSQL admits after an identifier's first character (see
+ * [isIdentifierChar]). For `SELECT my$fn(?)`, `\w+` cannot match `my$fn` as one run (`$` breaks
+ * it), so `findAll` instead matches the shorter run `fn` immediately before the `(` — handing
+ * `SqlParameterInferrer.extractFunctionCalls` the wrong function name, `fn` instead of `my$fn`.
+ * Verified against a real PostgreSQL 18.4: `CREATE FUNCTION "my$fn"(...)` and the unquoted call
+ * `my$fn(...)` both resolve to the same function, and an unquoted `>= 0x80`-named function
+ * (`fn€(...)`) is likewise legal, while a digit-led name (`2fn(...)`) is rejected outright
+ * ("trailing junk after numeric literal") — exactly the identifier shape this regex now encodes.
+ */
+internal val FUNCTION_CALL_START = Regex(
+  """($COLUMN_REFERENCE_IDENTIFIER_START$COLUMN_REFERENCE_IDENTIFIER_CONTINUATION*)\(""",
+)
+
+/** SQL keywords to exclude when matching function calls. */
+internal val SQL_KEYWORDS = setOf(
+  "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET",
+  "DELETE", "JOIN", "LEFT", "RIGHT", "INNER", "OUTER", "CROSS", "ON",
+  "GROUP", "ORDER", "HAVING", "LIMIT", "OFFSET", "UNION", "EXCEPT",
+  "INTERSECT", "AS", "AND", "OR", "NOT", "IN", "EXISTS", "BETWEEN",
+  "CASE", "WHEN", "THEN", "ELSE", "END", "CAST", "IS", "LIKE", "ILIKE",
+  "CALL", "DO", "WITH", "RETURNING", "CONFLICT",
+)
+
+/**
+ * Finds the best matching [FunctionOverload] for a call with [argCount] arguments.
+ *
+ * Prefers an exact match by argument count. Falls back to overloads with more arguments
+ * (default parameters) or overloads with no named arguments (variadic/generic).
+ */
+internal fun findOverload(overloads: List<FunctionOverload>, argCount: Int): FunctionOverload? =
+  overloads.find { it.argNames.size == argCount || it.argNames.isEmpty() }
+    ?: overloads.find { it.argNames.size >= argCount }
+
+/**
  * Index mapping each `?` character position in a SQL string to its 1-based parameter number.
  */
 private class ParamIndex(sql: String) {
