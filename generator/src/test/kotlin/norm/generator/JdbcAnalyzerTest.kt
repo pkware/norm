@@ -1101,6 +1101,112 @@ class JdbcAnalyzerTest {
     }
   }
 
+  @Nested
+  inner class FoldIdentifierParseIdentDifferentialTest {
+
+    /**
+     * The live server's own single-element [parse_ident] result for an unqualified (no-dot)
+     * identifier — the exact value [foldIdentifier]'s own `rawIdentifier` overload aims to
+     * produce for the same input. Uses a bound parameter (never string concatenation) so the raw
+     * identifier text, doubled quotes and all, reaches PostgreSQL exactly as written.
+     */
+    private fun liveParseIdent(rawIdentifier: String): String {
+      connection.prepareStatement("SELECT parse_ident(?)").use { statement ->
+        statement.setString(1, rawIdentifier)
+        statement.executeQuery().use { resultSet ->
+          resultSet.next()
+          val components = resultSet.getArray(1).array as Array<*>
+          return components.single() as String
+        }
+      }
+    }
+
+    @Test
+    fun `foldIdentifier matches the live server's parse_ident across a representative identifier corpus`() {
+      // Each pair's second value is what live parse_ident ALREADY reported when this corpus was
+      // written (verified against PostgreSQL 18.4) -- re-querying it here, rather than trusting
+      // that literal, is what makes this a genuine differential test: it fails if THIS run's
+      // connected server (any of PG16/17/18 -- see -Dnorm.test.pgVersion) disagrees with either
+      // the recorded expectation or foldIdentifier's own answer, not merely with a fixed list.
+      val corpus = listOf(
+        "foo" to "foo", // ASCII lowercase, unquoted
+        "FooBar" to "foobar", // ASCII mixed case, unquoted -- folds
+        "FOO" to "foo", // ASCII uppercase, unquoted -- folds
+        "\"FooBar\"" to "FooBar", // quoted -- case preserved, never folded
+        "\"He\"\"llo\"" to "He\"llo", // quoted, doubled-quote escape collapsed
+        "Ü" to "Ü", // non-ASCII uppercase, unquoted -- NOT folded (see foldAsciiCase's own KDoc)
+        "ü" to "ü", // non-ASCII lowercase, unquoted -- unchanged
+        "\"2fn\"" to "2fn", // quoted leading-digit -- legal only when quoted
+        "\"select\"" to "select", // quoted reserved keyword
+        "select" to "select", // bare reserved keyword -- neither side validates keyword-ness
+        "user" to "user", // bare niladic keyword
+        "\"My Table\"" to "My Table", // quoted, contains a space
+        "my\$col" to "my\$col", // unquoted, `$` continuation character
+        "\"foo\\bar\"" to "foo\\bar", // quoted, literal backslash preserved (no escape meaning)
+        "ABC_def123" to "abc_def123", // mixed alphanumeric plus underscore, unquoted
+        "\"Has Space And \"\"Quote\"\"\"" to "Has Space And \"Quote\"", // nested doubled-quote escape
+      )
+
+      for ((rawIdentifier, expectedFold) in corpus) {
+        val live = liveParseIdent(rawIdentifier)
+        assertThat(live).isEqualTo(expectedFold)
+        assertThat(foldIdentifier(rawIdentifier)).isEqualTo(live)
+      }
+    }
+
+    @Test
+    fun `foldIdentifier's divergences from parse_ident are all unreachable via this file's own token capture`() {
+      // These are DOCUMENTED, not fixed -- each has a reason it can never bite through any actual
+      // foldIdentifier call site in this file. This test exists so the corpus test above is never
+      // read as claiming universal agreement.
+
+      // 1. Empty quoted identifier: real PostgreSQL rejects this outright ("zero-length delimited
+      //    identifier"), and parse_ident agrees ("Quoted identifier must not be empty" -- verified
+      //    directly). foldIdentifier has no such guard, but its own real caller,
+      //    parseColumnReference, already treats an empty logical value as no match at all (see
+      //    that function's own KDoc), so an empty result here never reaches a real comparison.
+      assertThat(
+        runCatching { liveParseIdent("\"\"") }.isFailure,
+      ).isTrue()
+      assertThat(foldIdentifier("\"\"")).isEqualTo("")
+
+      // 2. A syntactically invalid UNQUOTED identifier (leading digit, leading `$`): parse_ident
+      //    rejects both outright (verified directly). foldIdentifier does not validate identifier
+      //    shape at all -- but neither input can ever reach it as a whole raw token in the first
+      //    place: every regex in this file that captures a raw identifier token
+      //    (COLUMN_REFERENCE_IDENTIFIER_START and its uses) already requires a legal start
+      //    character for the unquoted alternative, so a leading-digit or leading-`$` token is
+      //    never captured as an unquoted identifier to begin with.
+      assertThat(foldIdentifier("2fn")).isEqualTo("2fn")
+      assertThat(foldIdentifier("\$foo")).isEqualTo("\$foo")
+
+      // 3. A Unicode-escape identifier (U&"..."): parse_ident does not understand this syntax at
+      //    all ("string is not a valid identifier" -- verified directly). isQuotedIdentifier also
+      //    rejects it (it only recognizes a PLAIN "..." token), so foldIdentifier would, if ever
+      //    handed one, wrongly ASCII-fold the literal "U&..." text instead of resolving the
+      //    escape -- but QUOTED_IDENTIFIER (the only pattern that ever captures a raw
+      //    table/column/alias/CTE-name token in this file) matches a plain quote only, so
+      //    foldIdentifier never actually receives a U&"..." token from any real call site.
+      assertThat(runCatching { liveParseIdent("U&\"foo\"") }.isFailure).isTrue()
+
+      // 4. NAMEDATALEN truncation: a real, overlong (>63-byte) identifier is silently truncated to
+      //    63 bytes once it becomes a genuine catalog object (verified directly:
+      //    "CREATE TEMP TABLE t AS SELECT 1 AS <100 a's>" truncates the real column to 63 a's).
+      //    parse_ident itself does NOT reproduce that truncation for EITHER a quoted or an
+      //    unquoted overlong name (verified directly: parse_ident(repeat('a', 100)) returns all
+      //    100 a's, on PostgreSQL 16, 17, and 18 alike) -- so foldIdentifier agrees with
+      //    parse_ident here (neither truncates); both merely disagree with what a REAL, already-
+      //    created 100-character column would actually be named. That residual gap has no
+      //    reachable call site in the current codebase: every foldIdentifier comparison in this
+      //    file is between two RAW-TEXT-parsed values read from the SAME query text (a CTE body
+      //    alias vs. an outer reference) -- never against a JDBC-reported, already-truncated real
+      //    column name.
+      val overlongName = "a".repeat(100)
+      assertThat(liveParseIdent(overlongName)).isEqualTo(overlongName)
+      assertThat(foldIdentifier(overlongName)).isEqualTo(overlongName)
+    }
+  }
+
   @Test
   fun `buildIdentifierQuoter quotes reserved words`() {
     val quoter = analyzer.buildIdentifierQuoter()
