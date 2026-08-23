@@ -17,5 +17,5 @@ import kotlin.jvm.JvmRecord
 public data class UpdateParentReturningDescriptionUpper(
   public val id: UUID,
   public val name: String,
-  public val description_upper: String,
+  public val description_upper: String?,
 )

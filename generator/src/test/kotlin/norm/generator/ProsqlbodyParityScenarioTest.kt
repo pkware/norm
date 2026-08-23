@@ -23,17 +23,18 @@ import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.readText
 
 /**
- * Stage 1 `prosqlbody`-cutover parity harness for the `queries.sql` corpus under `test-scenarios`.
+ * `prosqlbody`-cutover parity harness for the `queries.sql` corpus under `test-scenarios`.
  *
  * For every named query in every scenario's `queries.sql`, asserts that
  * [PgCatalogLoader.queryColumnNullabilityViaProsqlbody] agrees EXACTLY with
- * [PgCatalogLoader.queryColumnNullability] (the production `CREATE VIEW` route), against the
- * scenario's own real `schema.sql`. This is the second half of the required Stage 1 evidence — see
- * [QueryAnalysisTest.assertProsqlbodyParity]'s KDoc for the first half, which covers every test in
- * [QueryAnalysisTest] itself.
+ * [PgCatalogLoader.queryColumnNullability] (the production entry point). As of Stage 3,
+ * `queryColumnNullability` itself calls `queryColumnNullabilityViaProsqlbody` as its own fallback
+ * for any DML/CTE-containing statement `CREATE VIEW` rejects — see
+ * [QueryAnalysisTest.analyzeWithSchema]'s KDoc for why that makes this comparison a tautology for
+ * those queries (harmless, not a bug) while remaining a REAL, independent check for a plain
+ * `SELECT`, which still resolves via `CREATE VIEW` until Stage 4 moves it too.
  *
- * Remove this file once the cutover reaches the stage where
- * [PgCatalogLoader.queryColumnNullability]'s `CREATE VIEW` route is deleted — without it there is
+ * Remove this file once Stage 4 deletes the `CREATE VIEW` route entirely — without it there is
  * nothing left to compare against.
  */
 @Testcontainers
@@ -62,29 +63,12 @@ class ProsqlbodyParityScenarioTest {
     val loader = PgCatalogLoader(connection)
     for (parsedQuery in parsedQueries) {
       val prosqlbodyResult = loader.queryColumnNullabilityViaProsqlbody(parsedQuery.sql) ?: continue
-      val expected = KNOWN_ACCEPTED_DIFFERENCES[parsedQuery.name] ?: loader.queryColumnNullability(parsedQuery.sql)
-      assertThat(prosqlbodyResult, "query '${parsedQuery.name}' in $scenarioDirectory").isEqualTo(expected)
+      assertThat(prosqlbodyResult, "query '${parsedQuery.name}' in $scenarioDirectory")
+        .isEqualTo(loader.queryColumnNullability(parsedQuery.sql))
     }
   }
 
   companion object {
-    /**
-     * Documented, individually-verified exceptions to the strict parity assertion above, keyed by
-     * [ParsedQuery.name] — see [QueryAnalysisTest]'s identical `knownProsqlbodyImprovement`
-     * mechanism for the general idea. Every entry here is the OPPOSITE direction from that one:
-     * `updateParentReturningDescriptionUpper`'s `WHERE id = ?` disables
-     * [PgCatalogLoader.queryColumnNullabilityViaProsqlbody]'s `:targetList`-substitution for the
-     * WHOLE statement (see that method's `trustAssignedExpressions` KDoc — the gate is
-     * per-statement, not per-assignment, because there is no structural way from here to tell
-     * WHICH assignment a parameter feeds), even though the assignment `description_upper` actually
-     * depends on (`description = 'UPDATED'`) is a plain literal, unrelated to the parameter. This
-     * makes prosqlbody's answer here SAFE but LESS precise than production's (nullable vs. the
-     * true, verified-live NOT NULL) — the accepted cost of a whole-statement safety gate, not a bug.
-     */
-    private val KNOWN_ACCEPTED_DIFFERENCES: Map<String, List<Boolean>> = mapOf(
-      "updateParentReturningDescriptionUpper" to listOf(false, false, true),
-    )
-
     // Embed scenarios use sqlc.embed(), a marker function with no real pg_proc definition — the
     // SQL never prepares against a live connection at all, on EITHER path, the same reason
     // GenerateCodeTest.EMBED_SCENARIOS excludes them from its own scenario list.

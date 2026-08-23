@@ -271,7 +271,7 @@ public interface Queries : Transactable {
   public fun <T : Any> updateParentReturningDescriptionUpper(id: UUID, mapper: (
     id: UUID,
     name: String,
-    description_upper: String,
+    description_upper: String?,
   ) -> T): Many<T>
 
   /**

@@ -893,35 +893,48 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * @return A list of booleans, one per result column in SELECT order. `true` means the
    *   column can be NULL; `false` means it is guaranteed non-null.
    */
+  /**
+   * Determines which result columns of [sql] can be `NULL`.
+   *
+   * Tries [analyzeViaTemporaryView]'s `CREATE VIEW`/`pg_rewrite.ev_action` route first — the ONLY
+   * route for a plain `SELECT` (Stage 4 of the `prosqlbody` cutover moves this to `prosqlbody`
+   * too; until then, `CREATE VIEW` remains the primary route for every `SELECT`, since it costs
+   * nothing extra for the overwhelming majority of queries that hit it). `CREATE VIEW` rejects a
+   * data-modifying statement ANYWHERE in [sql] — at the top level or nested in a CTE, verified
+   * live: "views must not contain data-modifying statements in WITH" — which is the ONLY reason
+   * this ever falls through to [queryColumnNullabilityViaProsqlbody] instead: a `SQLException`
+   * here is never actually about ambiguous or unreadable SQL, since [sql] already came from a real
+   * prepared statement elsewhere in the analysis pipeline.
+   *
+   * @return one boolean per result column (`true` means nullable). If NEITHER route can produce
+   *   an answer — [queryColumnNullabilityViaProsqlbody] itself failed, or [sql] is a `MERGE` whose
+   *   `USING` clause has more than one source relation of its own (see
+   *   [mergeAbsentVarnos]'s KDoc) — every real result column (via
+   *   `PreparedStatement.getMetaData()`, the only source of a column count this deep into a
+   *   fallback) is reported nullable: the safe direction, and consistent with every other
+   *   fallback in this file. A statement with no result columns at all (`INSERT`/`UPDATE`/
+   *   `DELETE`/`MERGE` with no `RETURNING`) naturally reports an EMPTY list here, since its real
+   *   column count is `0` — there is nothing for a caller to treat as nullable OR not.
+   */
   fun queryColumnNullability(@Language("PostgreSQL") sql: String): List<Boolean> {
     val viewSql = buildViewSqlWithSentinels(sql) ?: replaceParameterPlaceholders(sql)
-
-    // Fast path: try creating a view directly (works for all SELECT-only SQL).
     return try {
       analyzeViaTemporaryView(viewSql)
     } catch (_: SQLException) {
-      // View creation failed — SQL contains data-modifying statements.
-      // Transform the SQL to remove DML while preserving join structure.
-      val transformedSql = transformForViewCreation(viewSql)
-        // No join structure was found (or convertible) — fall back to a metadata-based probe: see
-        // analyzeUnconvertibleDml's KDoc for what it can and cannot see.
-        ?: return analyzeUnconvertibleDml(viewSql, sql)
-      // transformForViewCreation validates every conversion it makes against the original SQL's
-      // own column signature before returning it (see its KDoc), so this SHOULD always prepare.
-      // Caught anyway, not re-thrown, as defense in depth: an `SQLException` escaping from here
-      // would propagate out of queryColumnNullability entirely — nothing else on the call stack
-      // catches it — turning a nullability-analysis gap into a build failure on SQL PostgreSQL
-      // itself accepts fine. A future conversion bug this file's validation doesn't catch must
-      // degrade to the same fallback as "no join structure found" above, never an abort.
-      try {
-        // applyQualNarrowing = false: transformedSql came from a DML-to-SELECT conversion (see
-        // analyzeViaTemporaryView's KDoc on this parameter), which drops SET/MERGE-action clauses
-        // while keeping the original WHERE/ON predicate.
-        analyzeViaTemporaryView(transformedSql, applyQualNarrowing = false)
-      } catch (_: SQLException) {
-        analyzeUnconvertibleDml(viewSql, sql)
-      }
+      queryColumnNullabilityViaProsqlbody(sql) ?: List(realColumnCount(sql)) { true }
     }
+  }
+
+  /**
+   * The real number of result columns [sql] produces, via `PreparedStatement.getMetaData()` — used
+   * ONLY by [queryColumnNullability]'s final, otherwise-blind fallback to size its all-nullable
+   * default correctly (in particular, `0` for a `RETURNING`-less `INSERT`/`UPDATE`/`DELETE`/
+   * `MERGE`, which must report an EMPTY list, not a list of one `true` per some guessed count).
+   */
+  private fun realColumnCount(@Language("PostgreSQL") sql: String): Int = try {
+    connection.prepareStatement(sql).use { it.metaData?.columnCount ?: 0 }
+  } catch (_: SQLException) {
+    0
   }
 
   /**
@@ -1000,7 +1013,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
           rs.getString(1)
         }
       }
-      return analyzeNodeTree(nodeTree, applyQualNarrowing)
+      return analyzeNodeTree(nodeTree, applyQualNarrowing, viewSql)
     } finally {
       connection.createStatement().use { stmt ->
         stmt.execute("DROP VIEW IF EXISTS $viewName")
@@ -1041,26 +1054,63 @@ internal class PgCatalogLoader(private val connection: Connection) {
    *   the caller must treat `null` as "this path has no answer", never as "zero columns."
    */
   /**
-   * `true` when [nodeTree]'s outermost statement, OR any CTE it declares (recursively, so a CTE
-   * containing its own nested `WITH` is followed all the way through — `MERGE` can only ever
-   * appear as the outermost statement or a CTE body, never as a `FROM`-clause subquery, so this
-   * recursion is exhaustive), is a `MERGE` whose `:returningList` reaches an ordinary (non-`OLD`/
-   * `NEW`) `Var` outside its own target relation — see
-   * [queryColumnNullabilityViaProsqlbody]'s MERGE guard and
-   * [NodeTreeNullabilityAnalyzer.containsRiskyMergeVar]'s KDoc for why THAT specific shape, and
-   * only that shape, is unsafe. A `MERGE` whose `RETURNING` touches only its own target relation's
-   * columns (always present, whichever `WHEN` clause matched) or `OLD`/`NEW` references (already
-   * forced nullable/handled independently by [PgNodeExpression.Var.returningType]) is unaffected.
+   * For [nodeTree]'s OWN outermost statement — never recursing into a CTE it declares; each CTE's
+   * own body resolves its own MERGE independently (see [analyzeCteBodyNullability]) — determines
+   * which of its two base-table relations (identified by `:rtable` varno) can be entirely absent
+   * for some result row, via [explainMergeSideNullability] rather than `:mergeActionList`/text
+   * inspection.
+   *
+   * A `MERGE`'s match-optionality (`WHEN NOT MATCHED BY SOURCE`, `WHEN NOT MATCHED [BY TARGET]
+   * THEN INSERT`) is invisible to `:varnullingrels` — verified live: a `MERGE ... WHEN NOT MATCHED
+   * BY SOURCE THEN DELETE RETURNING src.col` has an EMPTY `:varnullingrels` on `src.col`'s `Var`,
+   * identical to an ordinary, always-present reference. [explainMergeSideNullability]'s KDoc has
+   * the full reasoning for why `EXPLAIN`'s own join type answers this precisely instead.
+   *
+   * @param sql the EXACT (already sentinel-substituted) statement text to run `EXPLAIN` against —
+   *   the WHOLE top-level statement, including any leading `WITH` clause: `EXPLAIN` on the whole
+   *   statement produces a plan containing every nested `MERGE`'s own subplan, and
+   *   [explainMergeSideNullability] searches every join node in it, not just a top-level one — so
+   *   the SAME call correctly resolves a `MERGE` nested inside a CTE too, keyed by ITS OWN target/
+   *   source relation names, without needing to `EXPLAIN` each CTE body in isolation
+   * @return an EMPTY map when [nodeTree]'s own outermost statement is not a `MERGE` at all; a map
+   *   from varno to whether THAT relation can be entirely absent (containing the target and/or
+   *   source varno, per [MergeSideNullability]) when it IS a `MERGE` and `EXPLAIN` successfully
+   *   attributed the join; `null` when it's a `MERGE` but `EXPLAIN` could not resolve it (e.g. a
+   *   `USING` clause with more than one relation of its own) — the caller must then treat this
+   *   `MERGE` as entirely untrustworthy, the same as the removed `hasUnsafeMergeReturning`'s own
+   *   bail-out did, never guessing at a partial answer
    */
-  private fun hasUnsafeMergeReturning(nodeTree: String): Boolean {
-    if (nodeTreeParser.parseCommandType(nodeTree) == PgNodeTreeParser.COMMAND_TYPE_MERGE) {
-      val targetVarno = nodeTreeParser.parseResultRelation(nodeTree)
-      val returningEntries = nodeTreeParser.parseReturningList(nodeTree)
-      if (returningEntries.any { NodeTreeNullabilityAnalyzer.containsRiskyMergeVar(it.expression, targetVarno) }) {
-        return true
-      }
+  private fun mergeAbsentVarnos(
+    nodeTree: String,
+    rangeTable: Map<Int, Int>,
+    @Language("PostgreSQL") sql: String,
+  ): Map<Int, Boolean>? {
+    if (nodeTreeParser.parseCommandType(nodeTree) != PgNodeTreeParser.COMMAND_TYPE_MERGE) return emptyMap()
+    val targetVarno = nodeTreeParser.parseResultRelation(nodeTree)
+    // A RETURNING list that only reads the target relation's own columns, or OLD/NEW references,
+    // never needs EXPLAIN's resolution at all — see containsVarOutsideRelation's KDoc. Skipping it
+    // here matters beyond saving an EXPLAIN round trip: a MERGE whose USING source is not a plain
+    // base table (e.g. a VALUES list or a subquery) can never be resolved below, but that must not
+    // block a RETURNING list that never depended on knowing which side of that join is nullable.
+    val returningEntries = nodeTreeParser.parseReturningList(nodeTree)
+    if (returningEntries.none { NodeTreeNullabilityAnalyzer.containsVarOutsideRelation(it.expression, targetVarno) }) {
+      return emptyMap()
     }
-    return nodeTreeParser.parseCteList(nodeTree).any { hasUnsafeMergeReturning(it.queryBlock) }
+    val targetRelid = rangeTable[targetVarno] ?: return null
+    // A simple `MERGE INTO target USING source ON ...` has exactly one OTHER base-table :rtable
+    // entry besides the target — the source. A `USING` clause with more than one relation of its
+    // own (e.g. a join or subquery source) has no single relation this method can attribute a
+    // join side to, so it bails rather than guess.
+    val sourceEntries = rangeTable.filterKeys { it != targetVarno }
+    if (sourceEntries.size != 1) return null
+    val (sourceVarno, sourceRelid) = sourceEntries.entries.single()
+    val targetName = resolveTableName(targetRelid) ?: return null
+    val sourceName = resolveTableName(sourceRelid) ?: return null
+    val mapping = explainMergeSideNullability(connection, sql, targetName, sourceName) ?: return null
+    return buildMap {
+      put(targetVarno, mapping.targetCanBeAbsent)
+      put(sourceVarno, mapping.sourceCanBeAbsent)
+    }
   }
 
   internal fun queryColumnNullabilityViaProsqlbody(@Language("PostgreSQL") sql: String): List<Boolean>? {
@@ -1087,30 +1137,21 @@ internal class PgCatalogLoader(private val connection: Connection) {
             rs.getString(1)
           }
         }
-        // A MERGE's RETURNING — at the top level OR nested in a CTE body — can read either the
-        // target OR the source relation, and EITHER side can be the one missing for a given result
-        // row depending on which WHEN clause matched (WHEN NOT MATCHED BY SOURCE, WHEN NOT MATCHED
-        // [BY TARGET] THEN INSERT) — verified live: a MERGE ... WHEN NOT MATCHED BY SOURCE THEN
-        // DELETE RETURNING src.col has an EMPTY :varnullingrels on src.col's Var, identical to an
-        // ordinary, always-present reference. Unlike an explicit outer JOIN, PostgreSQL's planner
-        // does not expose this match-optionality via :varnullingrels at all, so nothing in
-        // analyzeNodeTree's per-Var analysis — reading the tree via EITHER prosqlbody or ev_action
-        // — can see it. Bailing out entirely here (rather than risk a confidently wrong NOT NULL,
-        // OR the opposite, needlessly nullable, over-approximation a partial per-CTE bail produces
-        // — both verified to disagree with today's more targeted MERGE-specific text heuristics)
-        // is intentional: detecting which MERGE actions exist and reasoning about join optionality
-        // is a SEPARATE concern — planned for a later stage via EXPLAIN (FORMAT JSON), not per-Var
-        // tree analysis — that this method does not yet replicate.
-        if (hasUnsafeMergeReturning(nodeTree)) {
-          return null
-        }
+        val rangeTable = nodeTreeParser.parseRangeTable(nodeTree)
+        val mergeAbsent = mergeAbsentVarnos(nodeTree, rangeTable, substitutedSql) ?: return null
         // '?' in sql, not substitutedSql: a sentinel-substituted CONST is byte-identical to a
         // hand-written literal once embedded in the SQL text — the parsed tree retains no memory
         // of which one it was. trustAssignedExpressions=false whenever the ORIGINAL sql had ANY
         // parameter blocks analyzeNodeTree's :targetList-to-:returningList substitution (see its
         // KDoc) for the WHOLE statement, not just the specific assignment a parameter feeds,
         // because there is no structural way from here to tell which assignment(s) it was.
-        analyzeNodeTree(nodeTree, applyQualNarrowing = true, trustAssignedExpressions = '?' !in sql)
+        analyzeNodeTree(
+          nodeTree,
+          applyQualNarrowing = true,
+          sql = substitutedSql,
+          trustAssignedExpressions = '?' !in sql,
+          mergeAbsentVarnos = mergeAbsent,
+        )
       } finally {
         connection.createStatement().use { stmt ->
           stmt.execute("DROP FUNCTION IF EXISTS pg_temp.$functionName()")
@@ -1141,7 +1182,9 @@ internal class PgCatalogLoader(private val connection: Connection) {
   private fun analyzeNodeTree(
     nodeTree: String,
     applyQualNarrowing: Boolean,
+    @Language("PostgreSQL") sql: String,
     trustAssignedExpressions: Boolean = true,
+    mergeAbsentVarnos: Map<Int, Boolean> = emptyMap(),
   ): List<Boolean> {
     val rangeTable = nodeTreeParser.parseRangeTable(nodeTree) // varno → relid (base tables only)
     // GROUP BY queries use an *GROUP* RTE (rtekind 9) whose target list VARs reference the group
@@ -1166,8 +1209,8 @@ internal class PgCatalogLoader(private val connection: Connection) {
     // For subquery RTEs (rtekind 1), the outer VAR's varno is not in rangeTable.
     // Resolve their nullability by recursively analyzing each subquery's target list.
     // The map is keyed by (varno, varattno) for direct lookup in isSourceColumnNotNull.
-    val subqueryColumnNotNull = buildSubqueryColumnNotNull(nodeTree, applyQualNarrowing)
-    val cteColumnNotNull = buildCteColumnNotNull(nodeTree, applyQualNarrowing)
+    val subqueryColumnNotNull = buildSubqueryColumnNotNull(nodeTree, applyQualNarrowing, sql)
+    val cteColumnNotNull = buildCteColumnNotNull(nodeTree, applyQualNarrowing, sql)
     // A non-zero :resultRelation means this is an INSERT/UPDATE/DELETE/MERGE, not a SELECT — see
     // parseResultRelation's KDoc. Its :targetList holds the value expressions being WRITTEN to
     // each explicitly-assigned column of the target relation (keyed by :resno = the column's
@@ -1218,7 +1261,14 @@ internal class PgCatalogLoader(private val connection: Connection) {
       emptySet()
     }
     val plainIsSourceColumnNotNull = { varno: Int, varattno: Int ->
-      if (isProvenByQuals(qualNotNullVars, groupRteMap, varno, varattno)) {
+      if (mergeAbsentVarnos[varno] == true) {
+        // A MERGE relation EXPLAIN determined can be entirely absent for some result row (see
+        // mergeAbsentVarnos' KDoc) can never be proven non-null here, regardless of what a qual or
+        // this column's own catalog constraint would otherwise say — those both describe the
+        // relation's rows WHEN PRESENT, which says nothing about whether this specific result row
+        // has one at all.
+        false
+      } else if (isProvenByQuals(qualNotNullVars, groupRteMap, varno, varattno)) {
         true
       } else {
         val relid = rangeTable[varno]
@@ -1350,10 +1400,11 @@ internal class PgCatalogLoader(private val connection: Connection) {
   private fun buildCteColumnNotNull(
     nodeTree: String,
     applyQualNarrowing: Boolean = true,
+    @Language("PostgreSQL") sql: String,
   ): Map<Pair<Int, Int>, Boolean> {
     val cteRteMap = nodeTreeParser.parseCteRangeTableEntries(nodeTree)
     if (cteRteMap.isEmpty()) return emptyMap()
-    val resolvedCtes = resolveCteBodies(nodeTree, applyQualNarrowing)
+    val resolvedCtes = resolveCteBodies(nodeTree, applyQualNarrowing, sql)
     if (resolvedCtes.isEmpty()) return emptyMap()
 
     return buildMap {
@@ -1376,26 +1427,38 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * level regardless of which nesting level actually references it, so both callers resolve
    * against the SAME set of CTE bodies.
    */
-  private fun resolveCteBodies(nodeTree: String, applyQualNarrowing: Boolean): Map<String, List<Boolean>> {
+  private fun resolveCteBodies(
+    nodeTree: String,
+    applyQualNarrowing: Boolean,
+    @Language("PostgreSQL") sql: String,
+  ): Map<String, List<Boolean>> {
     val cteDefinitions = nodeTreeParser.parseCteList(nodeTree)
     if (cteDefinitions.isEmpty()) return emptyMap()
     val resolvedCtes = mutableMapOf<String, List<Boolean>>()
     for (cte in cteDefinitions) {
-      val nullabilities = analyzeCteBodyNullability(cte, resolvedCtes, applyQualNarrowing) ?: continue
+      val nullabilities = analyzeCteBodyNullability(cte, resolvedCtes, applyQualNarrowing, sql) ?: continue
       resolvedCtes[cte.name] = nullabilities
     }
     return resolvedCtes
   }
 
+  /**
+   * @param sql See [mergeAbsentVarnos]'s parameter of the same name — passed through unchanged so
+   *   a MERGE nested in [cte]'s own body can be resolved by the SAME EXPLAIN call this parameter
+   *   documents, keyed by ITS OWN target/source relation names.
+   */
   private fun analyzeCteBodyNullability(
     cte: NodeTreeCteDefinition,
     previouslyResolved: Map<String, List<Boolean>>,
     applyQualNarrowing: Boolean = true,
+    @Language("PostgreSQL") sql: String,
   ): List<Boolean>? {
     if (nodeTreeParser.hasSetOperations(cte.queryBlock)) {
       return analyzeSetOperationBranches(cte.queryBlock, previouslyResolved, cte.name, applyQualNarrowing)
     }
-    val analyzer = buildCteBodyAnalyzer(cte.queryBlock, previouslyResolved, applyQualNarrowing)
+    val cteRangeTable = nodeTreeParser.parseRangeTable(cte.queryBlock)
+    val mergeAbsent = mergeAbsentVarnos(cte.queryBlock, cteRangeTable, sql) ?: return null
+    val analyzer = buildCteBodyAnalyzer(cte.queryBlock, previouslyResolved, applyQualNarrowing, mergeAbsent, sql)
     // :returningList must be checked FIRST, not as a fallback for an empty :targetList — see
     // analyzeNodeTree's identical guard for the full reasoning (an INSERT/UPDATE's OWN :targetList
     // holds the value expressions being WRITTEN, a completely different list from its RETURNING
@@ -1526,11 +1589,23 @@ internal class PgCatalogLoader(private val connection: Connection) {
 
   /**
    * @param applyQualNarrowing See [analyzeViaTemporaryView]'s parameter of the same name.
+   * @param mergeAbsentVarnos See [analyzeNodeTree]'s parameter of the same name — [queryBlock]'s
+   *   OWN varno-to-canBeAbsent map when [queryBlock] itself is a `MERGE` (resolved by
+   *   [analyzeCteBodyNullability] before ever calling this method), empty otherwise.
+   * @param sql See [mergeAbsentVarnos]'s (the method, not this parameter) `sql` parameter — passed
+   *   through only so a subquery WITHIN [queryBlock] that references a CTE declared in
+   *   [queryBlock]'s OWN nested `WITH` clause can resolve THAT (deeper) CTE's `MERGE`, if it has
+   *   one, through [buildSubqueryColumnNotNull]. Defaults to an empty string for the (`SELECT`-only,
+   *   never `MERGE`-shaped) set-operation branch callers in [analyzeSetOperationBranches], where an
+   *   empty `EXPLAIN` target simply fails harmlessly (caught, treated as "cannot resolve") for the
+   *   narrow, deeper case of a subquery nested that deep referencing ITS OWN local `MERGE` CTE.
    */
   private fun buildCteBodyAnalyzer(
     queryBlock: String,
     previouslyResolved: Map<String, List<Boolean>>,
     applyQualNarrowing: Boolean = true,
+    mergeAbsentVarnos: Map<Int, Boolean> = emptyMap(),
+    @Language("PostgreSQL") sql: String = "",
   ): NodeTreeNullabilityAnalyzer {
     val cteRangeTable = nodeTreeParser.parseRangeTable(queryBlock)
     // See analyzeViaTemporaryView's identical guard: GROUPING SETS/CUBE/ROLLUP can null-extend a
@@ -1544,7 +1619,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
       nodeTreeParser.parseGroupRteMap(queryBlock)
     }
     val innerCteNotNull = buildInnerCteNotNull(queryBlock, previouslyResolved)
-    val subqueryColumnNotNull = buildSubqueryColumnNotNull(queryBlock, applyQualNarrowing)
+    val subqueryColumnNotNull = buildSubqueryColumnNotNull(queryBlock, applyQualNarrowing, sql)
     // See analyzeViaTemporaryView's identical guard for why qual narrowing is suppressed whenever
     // hasGroupingSets: a grouping key is exactly the thing a GROUPING SETS/CUBE/ROLLUP query
     // null-extends after WHERE has already run. A non-zero :resultRelation suppresses narrowing
@@ -1563,7 +1638,11 @@ internal class PgCatalogLoader(private val connection: Connection) {
         varno,
         varattno,
       ->
-      if (isProvenByQuals(qualNotNullVars, groupRteMap, varno, varattno)) {
+      if (mergeAbsentVarnos[varno] == true) {
+        // See analyzeNodeTree's identical guard: a MERGE relation EXPLAIN determined can be
+        // entirely absent for some result row can never be proven non-null here.
+        false
+      } else if (isProvenByQuals(qualNotNullVars, groupRteMap, varno, varattno)) {
         true
       } else {
         val relid = cteRangeTable[varno]
@@ -1603,6 +1682,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
   private fun buildSubqueryColumnNotNull(
     nodeTree: String,
     applyQualNarrowing: Boolean = true,
+    @Language("PostgreSQL") sql: String = "",
   ): Map<Pair<Int, Int>, Boolean> {
     // Set-operation queries (UNION ALL, INTERSECT, EXCEPT) store their branches as rtekind=1
     // subquery RTEs. Tracing through them would incorrectly report the first branch's nullability
@@ -1618,7 +1698,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
     // scope — inside its OWN `:rtable`, not [nodeTree]'s. Resolved once here, lazily, so a
     // [nodeTree] with no CTEs at all (the overwhelmingly common case) never pays for
     // [resolveCteBodies]'s recursive analysis.
-    val resolvedCtes by lazy { resolveCteBodies(nodeTree, applyQualNarrowing) }
+    val resolvedCtes by lazy { resolveCteBodies(nodeTree, applyQualNarrowing, sql) }
     return buildMap {
       for ((outerVarno, subqueryBlock) in subqueryRangeTable) {
         // Parse the subquery's own base-table range table for isSourceColumnNotNull.
@@ -3079,6 +3159,25 @@ internal class PgCatalogLoader(private val connection: Connection) {
     }
   } catch (_: SQLException) {
     false
+  }
+
+  /**
+   * The bare (unqualified) table name for [relid], via `pg_class.relname` — used to attribute
+   * an `EXPLAIN` plan's `"Relation Name"` fields (which are always the REAL table name, never an
+   * alias) back to a specific `:rtable` entry this class already resolved structurally, without
+   * ever re-parsing the SQL text for a table name or alias. See [mergeAbsentVarnos]'s only caller.
+   *
+   * @return `null` if [relid] cannot be resolved (should not happen for a real, structural
+   *   `:rtable` entry, but treated the same as any other "cannot confirm" case: the caller must
+   *   fall back to its own safe default rather than guess)
+   */
+  private fun resolveTableName(relid: Int): String? = try {
+    connection.prepareStatement("SELECT relname FROM pg_catalog.pg_class WHERE oid = ?").use { preparedStatement ->
+      preparedStatement.setInt(1, relid)
+      preparedStatement.executeQuery().use { rs -> if (rs.next()) rs.getString(1) else null }
+    }
+  } catch (_: SQLException) {
+    null
   }
 
   /**
