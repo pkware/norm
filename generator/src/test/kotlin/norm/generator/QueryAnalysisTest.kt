@@ -6,6 +6,7 @@ import assertk.assertions.containsExactly
 import assertk.assertions.hasSize
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
+import assertk.assertions.isNull
 import assertk.assertions.isTrue
 import org.intellij.lang.annotations.Language
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -6557,6 +6558,111 @@ class QueryAnalysisTest {
             """.trimIndent(),
           )
           assertThat(result).isEqualTo(listOf(true, false))
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    @Test
+    fun `a trailing line comment does not swallow the probe function's terminator`() {
+      // A trailing "--" comment with nothing after it is an ordinary, syntactically COMPLETE SQL
+      // statement on its own — the same query text a "queries.sql" file could legitimately end
+      // with. The probe wraps it as "BEGIN ATOMIC <sql>; END": without a newline separating <sql>
+      // from "; END", the trailing line comment extends over the appended terminator too, and the
+      // whole CREATE FUNCTION statement fails with a syntax error instead of probing anything.
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          it.execute("CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)")
+        }
+        try {
+          val catalogLoader = PgCatalogLoader(connection)
+          val result = catalogLoader.queryColumnNullabilityViaProsqlbody(
+            """
+            SELECT id, name FROM t
+            -- only active rows
+            """.trimIndent(),
+          )
+          assertThat(result).isEqualTo(listOf(false, false))
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    @Test
+    fun `a trailing terminated block comment never needed the newline fix`() {
+      // Unlike a "--" line comment, a "/* ... */" block comment closes itself before the appended
+      // "; END" regardless of a newline — verified live. Pinned here so a future change to the
+      // terminator-safety fix cannot silently start relying on this shape needing help it doesn't.
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          it.execute("CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)")
+        }
+        try {
+          val catalogLoader = PgCatalogLoader(connection)
+          val result = catalogLoader.queryColumnNullabilityViaProsqlbody(
+            "SELECT id, name FROM t /* only active rows */",
+          )
+          assertThat(result).isEqualTo(listOf(false, false))
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    @Test
+    fun `an unterminated block comment fails the probe safely instead of throwing`() {
+      // Never reachable through the real pipeline — a SQL statement with an unterminated block
+      // comment cannot itself be prepared for column metadata before queryColumnNullability is
+      // ever invoked, so this input never reaches this method in practice. Pinned anyway as a
+      // direct-call safety net: the probe's own SQLException catch must degrade to `null`, not
+      // propagate or misbehave, for input this malformed.
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          it.execute("CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)")
+        }
+        try {
+          val catalogLoader = PgCatalogLoader(connection)
+          val result = catalogLoader.queryColumnNullabilityViaProsqlbody(
+            """
+            SELECT id, name FROM t
+            /* unterminated
+            """.trimIndent(),
+          )
+          assertThat(result).isNull()
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    @Test
+    fun `a body ending inside an unterminated dollar-quoted string fails the probe safely instead of throwing`() {
+      // Never reachable through the real pipeline, for the same reason as the unterminated block
+      // comment above — pinned as a direct-call safety net only.
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          it.execute("CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)")
+        }
+        try {
+          val catalogLoader = PgCatalogLoader(connection)
+          val result = catalogLoader.queryColumnNullabilityViaProsqlbody(
+            "SELECT id, name FROM t WHERE name = \$\$unterminated",
+          )
+          assertThat(result).isNull()
         } finally {
           connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
         }

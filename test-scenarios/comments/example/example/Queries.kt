@@ -11,6 +11,7 @@ import kotlin.String
 import kotlin.collections.Iterable
 import kotlin.jvm.Throws
 import norm.Many
+import norm.Query
 import norm.Transactable
 
 public interface Queries : Transactable {
@@ -461,4 +462,34 @@ public interface Queries : Transactable {
    */
   @Throws(SQLException::class)
   public fun getQuotedColumnWithSpace(id: Int): GetQuotedColumnWithSpace = getQuotedColumnWithSpace(id, ::GetQuotedColumnWithSpace)
+
+  /**
+   * A trailing "--" comment on the query's OWN last line, with the terminating ";" appended to that
+   * same comment line. Both columns are NOT NULL per schema, unaffected by any join, so this pins
+   * the query analyzer's own nullability probe still succeeding rather than degrading every column
+   * to nullable.
+   *
+   * ```sql
+   * SELECT id, title FROM book
+   * -- only rows with a title
+   * ```
+   */
+  public fun <T : Any> getBooksWithTrailingComment(mapper: (id: Int, title: String) -> T): Many<T>
+
+  /**
+   * A trailing "--" comment on the query's OWN last line, with the terminating ";" appended to that
+   * same comment line. Both columns are NOT NULL per schema, unaffected by any join, so this pins
+   * the query analyzer's own nullability probe still succeeding rather than degrading every column
+   * to nullable.
+   *
+   * ```sql
+   * SELECT id, title FROM book
+   * -- only rows with a title
+   * ```
+   */
+  public fun getBooksWithTrailingComment(): Many<GetBooksWithTrailingComment> = getBooksWithTrailingComment(::GetBooksWithTrailingComment)
+
+  public fun <T : Any> getBooksWithTrailingCommentDynamically(mapper: (id: Int, title: String) -> T): Query<T>
+
+  public fun getBooksWithTrailingCommentDynamically(): Query<GetBooksWithTrailingComment> = getBooksWithTrailingCommentDynamically(::GetBooksWithTrailingComment)
 }

@@ -1010,7 +1010,12 @@ internal class PgCatalogLoader(private val connection: Connection) {
       connection.createStatement().use { stmt ->
         stmt.execute(
           "CREATE FUNCTION pg_temp.$functionName() RETURNS SETOF record LANGUAGE sql " +
-            "BEGIN ATOMIC $substitutedSql; END",
+            // The newline before "; END" is load-bearing, not style: [substitutedSql] is caller-
+            // supplied SQL text that can legitimately end in a trailing `--` line comment (ordinary
+            // in a queries.sql), which extends to end of LINE. Without a newline separating it from
+            // "; END", the comment swallows the terminator too, and PostgreSQL sees unterminated
+            // input instead of a syntax error naming the real cause. Verified live.
+            "BEGIN ATOMIC $substitutedSql\n; END",
         )
       }
       try {
