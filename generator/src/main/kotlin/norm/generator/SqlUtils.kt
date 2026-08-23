@@ -109,55 +109,27 @@ internal fun findOverload(overloads: List<FunctionOverload>, argCount: Int): Fun
  * never interleaves them invalidly (a `[` is always closed by its own `]` before any enclosing
  * `(` closes, and vice versa), so treating `(`/`[` as "one level deeper" and `)`/`]` as "one level
  * shallower" — regardless of which bracket kind opened that level — is sufficient to find the
- * REAL top-level delimiters. Square brackets were NOT tracked here originally: an `ARRAY[1, 2]`
- * item split into two, both because it introduces a delimiter-looking comma with no enclosing
- * `(...)` to hide it (`ARRAY[1, 2] AS arr, OLD.tval AS oldv` — verified against real Postgres to
- * split 2 real columns into 3 items) and, worse, because that error could silently CANCEL OUT a
- * separate star-caused split error elsewhere in the same list, making a real-column-count
- * cross-check see a coincidentally-matching count and trust a garbled, wrongly-indexed split
- * (`tgt . *, OLD.tval AS oldv, ARRAY[1, 2] AS arr` —
- * verified against real Postgres to split into 4 items against 4 real columns, the SAME count,
- * while the split itself is `["tgt . *", "OLD.tval AS oldv", "ARRAY[1", "2] AS arr"]` — nothing
- * about that split's actual items corresponds to the real 4 columns).
+ * REAL top-level delimiters. Leaving square brackets untracked would split an `ARRAY[1, 2]` item
+ * into two, since its internal comma is not hidden by any enclosing `(...)` (`ARRAY[1, 2] AS arr,
+ * OLD.tval AS oldv` — verified against real Postgres to split 2 real columns into 3 items); worse,
+ * that error can silently CANCEL OUT a separate star-caused split error elsewhere in the same
+ * list, making a real-column-count cross-check see a coincidentally-matching count and trust a
+ * garbled, wrongly-indexed split (`tgt . *, OLD.tval AS oldv, ARRAY[1, 2] AS arr` — verified
+ * against real Postgres to split into 4 items against 4 real columns, the SAME count, while the
+ * split itself is `["tgt . *", "OLD.tval AS oldv", "ARRAY[1", "2] AS arr"]` — nothing about that
+ * split's actual items corresponds to the real 4 columns).
  *
  * Skips string literals, quoted identifiers, dollar-quoted strings, and comments via
  * [skipLexicalToken], so a `(`/`)`/`[`/`]`/[delimiter] that only appears inside one of those (e.g.
  * a string literal containing a stray `,` or unbalanced bracket) is not mistaken for a real one.
  *
- * USER-VISIBLE EFFECT OF TRACKING `[...]` (beyond the nullability fixes above): this function is
- * also used by `SqlParameterInferrer.extractFunctionCalls` (a function call's comma-separated
- * arguments) and `SqlParameterInferrer.extractValuesExpressions` (an `INSERT ... VALUES (...)`
- * clause's comma-separated expressions) to attribute each `?` placeholder to its argument/column
- * position for parameter-NAME inference. The precondition for a naming change is: a multi-element
- * `ARRAY[...]` literal (2+ placeholders inside it) shares an argument list or `VALUES` list with
- * ANY other placeholder — INCLUDING placeholders INSIDE the array itself, and regardless of
- * whether any placeholder follows the array at all:
- * - `INSERT INTO arrs2(id, tags) VALUES (?, ARRAY[?, ?])` (nothing follows the array) still
- *   renames: `id, tags, p3` (`main`) → `id, tags, tags2` (`HEAD`, after
- *   `SqlStatement.deduplicatedParameterNames` suffixes the repeated `tags`).
- * - `array_position(ARRAY[?::int, ?::int], 5)` (no placeholder anywhere outside the array) still
- *   renames: `array_position_param1, array_position_param2` (`main`) → `p1, p2` (`HEAD`).
- * - `array_position(ARRAY[?::int, ?::int], ?::int)` renames ALL THREE, not just the one after the
- *   array: `array_position_param{1,2,3}` (`main`) → `p1, p2, array_position_param2` (`HEAD`).
- *
- * This is a BREAKING change for named-argument callers of generated code for any query matching
- * that precondition — but it is NOT simply "old wrong, new right" for every renamed placeholder.
- * For a `VALUES` list feeding real target-table columns, `HEAD` is unambiguously more correct
- * (real column names, not a generic `pN` shifted onto the wrong column, or a name that collides
- * with — and gets suffixed after — an earlier one). For placeholders INSIDE the array argument to
- * a function call, `main`'s naming was an ACCIDENT of the same split bug the nullability fixes
- * closed: the broken split treated `ARRAY[?::int, ?::int]` as two separate one-placeholder
- * "arguments", so `SqlParameterInferrer.inferFunctionArgNames`'s `paramPositions.size == 1` check
- * (see its KDoc) happened to fire for both, minting a function-context name
- * (`array_position_param1`/`param2`) for each — structurally WRONG, since `array_position` only
- * has two real arguments, not three. `HEAD` correctly sees ONE argument containing two
- * placeholders, for which that check does not fire at all (it has no strategy for naming multiple
- * placeholders sharing one argument slot), so those two placeholders fall through to the generic
- * positional default (`p1`, `p2`) — an honest "no name available" rather than a confidently wrong
- * one, but also a loss of the (accidental) function-context `main` provided. The ONE real
- * remaining top-level argument (the scalar `5`/`?::int`) gets `array_position_param2` on `HEAD` —
- * correctly its true argument index — where `main` numbered it `param3`, one too high, because it
- * believed the array contributed two arguments instead of one.
+ * This function is also used by `SqlParameterInferrer.extractFunctionCalls` (a function call's
+ * comma-separated arguments) and `SqlParameterInferrer.extractValuesExpressions` (an `INSERT ...
+ * VALUES (...)` clause's comma-separated expressions) to attribute each `?` placeholder to its
+ * argument/column position for parameter-NAME inference: a multi-element `ARRAY[...]` literal
+ * (2+ placeholders inside it) must be tracked as ONE argument/column slot, not split into several
+ * by its own internal commas, or every placeholder sharing that argument list or `VALUES` list —
+ * including ones inside the array itself — gets attributed to the wrong position.
  */
 internal fun splitAtTopLevel(text: String, delimiter: Char): List<String> {
   val items = mutableListOf<String>()
@@ -345,10 +317,10 @@ private fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> {
 /**
  * Resolves the SQL expression text that produced a CTE-wrapped result column, when the outer
  * query's own select item is a plain reference into a CTE's output (rather than a computed
- * expression itself). This is the missing half of provenance for issue #229's shape: a result
- * column that is BOTH CTE-wrapped AND expression-derived — [parseSelectItems] only ever looks at
- * the OUTER select list, where such a column is a bare name (`description_upper`), never the
- * `UPPER(description)` expression that actually produced it inside the CTE body.
+ * expression itself). This is the missing half of provenance for a result column that is BOTH
+ * CTE-wrapped AND expression-derived — [parseSelectItems] only ever looks at the OUTER select
+ * list, where such a column is a bare name (`description_upper`), never the `UPPER(description)`
+ * expression that actually produced it inside the CTE body.
  *
  * [selectItem] must be the outer item — i.e. what [parseSelectItems] returned for this column's
  * position in the outer query's own output clause. This function re-parses [sql]'s `WITH` clause
@@ -393,11 +365,11 @@ private fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> {
  *   keyword, since one is among [SELECT_FROM_TERMINATOR_KEYWORDS] — so the FROM check alone would
  *   otherwise wrongly PASS for `SELECT ux FROM c UNION ALL SELECT b FROM other`, since branch one's
  *   FROM really is just `c`) only ever sees the first branch. The CTE body being DML with its own
- *   `RETURNING` clause is fine and expected — that is issue #229's own reported shape.
+ *   `RETURNING` clause is fine and expected.
  * - The main query is a plain `SELECT`, not DML (`INSERT`/`UPDATE`/`DELETE`/`MERGE`) — a DML main
  *   query's `RETURNING` list resolves against its OWN target relation plus any `USING`/`FROM`
  *   sources, which reintroduces exactly the DML-target-vs-CTE-name confusion this function exists
- *   to avoid, for marginal benefit (issue #229 never asked for that shape).
+ *   to avoid.
  * - The outer reference, if qualified, folds (see [foldIdentifier]) to the same name as the CTE
  *   itself, compared via [CteDefinition.rawName] — NEVER [CteDefinition.name], which has already
  *   had its quotes stripped and so can no longer tell a quoted `"Foo"` apart from an unquoted
@@ -565,8 +537,8 @@ private fun collapseCosmeticWhitespace(text: String): String {
  * `foo`, a DIFFERENT relation in PostgreSQL; see [CteDefinition.rawName]'s own KDoc).
  * [CteDefinition.rawName] itself is NOT `""`-escape-aware — [parseSingleCteDefinition]'s own
  * quoted-name reading stops at the first `"` — so an escaped CTE name (`"He""llo"`) is already
- * truncated before it ever reaches this function; that specific gap is issue #238's, deliberately
- * unrelated to and unfixed by this function's own escape handling.
+ * truncated before it ever reaches this function, a known gap unrelated to and unfixed by this
+ * function's own escape handling.
  *
  * A [SelectItem.tableName]/[SelectItem.columnName], in CONTRAST, is a LOGICAL value with its
  * quotes already removed by [parseColumnReference] (see [SelectItem]'s own KDoc) — passing one of
@@ -806,37 +778,25 @@ private fun skipOptionalSetQuantifier(sql: String, position: Int): Int {
  * no whitespace, and `)` is not an identifier character, so this is the real keyword. Conversely
  * `SELECT 1 AS$b` returns column `as$b`, a SINGLE implicit alias identifier — `$` is a valid
  * identifier-continuation character (see [isIdentifierChar]), so `AS$b` is one word, not the
- * keyword `AS` followed by `$b`, and the whitespace-based check happened to reject this case for
- * the same reason (`$` is not whitespace either), while the identifier-based check rejects it for
- * the actually-correct reason (`$` continues an identifier). Before this fix, requiring literal
- * whitespace was STRICTER than PostgreSQL's own grammar: whenever `AS` abutted a non-whitespace,
- * non-identifier character such as `)` or a closing quote with no separating space, the keyword
- * went unrecognized, so the alias was never split off — the raw, unsplit item (e.g. `(age)AS b`)
- * was returned as the `expression` half verbatim, instead of the correctly-split `(age)`.
+ * keyword `AS` followed by `$b`.
  *
- * This DOES change `columnName`, and for the better, whenever the glued alias prevents the
- * pre-`AS` text from matching [COLUMN_REFERENCE] on its own but the split-off expression matches
- * it once separated. `columnName` is derived by [parseOutputItemsWithAlias] from the split
- * `expression` via [parseColumnReference] — [parseOutputItemsWithAlias] is this function's only
- * caller, and does `val (expression, alias) = extractAlias(item)`, keeping the alias half (unlike
- * [parseSelectItems], which discards it) — so whatever the split changes `expression` to feeds
- * directly into that derivation. Verified against PostgreSQL
- * 18.4: `SELECT a AS"b", id FROM t` is valid (columns `b`, `id`; PostgreSQL reports `a` as the
- * source column of the first result column). On `main`, the boundary check requires literal
- * whitespace after `AS`, so `AS"b"` (no space before the quote) is not recognized as the keyword —
- * the whole glued item `a AS"b"` is returned as `expression` unsplit, which does not match
- * [COLUMN_REFERENCE] (it contains a space and an embedded quote), giving `columnName=null`. On this
- * branch, the identifier-character boundary check correctly recognizes `AS` here (`"` is not an
- * identifier character, so the right-hand boundary holds without requiring whitespace), splitting
- * the item into `expression="a"`, which DOES match [COLUMN_REFERENCE], giving `columnName="a"` —
- * the name PostgreSQL itself reports. Not every glued case benefits this way: a glued expression
- * like `(age)AS b` still fails to match [COLUMN_REFERENCE] once split, because the split-off
- * `expression` (`(age)`) contains parentheses regardless of the split, so `columnName` stays `null`
- * for that shape either way. The effect on `expression` itself is unconditional, independent of
- * `columnName`: `TypeRepository.buildTypeProjectionForQuery` embeds `expression` verbatim in
- * generated KDoc for a computed expression (`selectItem.columnName == null && column.table ==
- * null`), so that embedded text now reflects the correctly-split SQL (`(age)`) instead of the
- * alias-contaminated one (`(age)AS b`) for that boundary shape.
+ * This affects `columnName` whenever a glued alias would otherwise prevent the pre-`AS` text from
+ * matching [COLUMN_REFERENCE] on its own, but the split-off expression matches it once separated.
+ * `columnName` is derived by [parseOutputItemsWithAlias] from the split `expression` via
+ * [parseColumnReference] — [parseOutputItemsWithAlias] is this function's only caller, and does
+ * `val (expression, alias) = extractAlias(item)`, keeping the alias half (unlike [parseSelectItems],
+ * which discards it) — so whatever the split changes `expression` to feeds directly into that
+ * derivation. Verified against PostgreSQL 18.4: `SELECT a AS"b", id FROM t` is valid (columns `b`,
+ * `id`; PostgreSQL reports `a` as the source column of the first result column) — `AS"b"` (no
+ * space before the quote) is recognized as the keyword here, since `"` is not an identifier
+ * character, so the right-hand boundary holds without requiring whitespace; the item splits into
+ * `expression="a"`, which matches [COLUMN_REFERENCE], giving `columnName="a"`, the name PostgreSQL
+ * itself reports. Not every glued case benefits this way: a glued expression like `(age)AS b`
+ * still fails to match [COLUMN_REFERENCE] once split, because the split-off `expression` (`(age)`)
+ * contains parentheses regardless of the split, so `columnName` stays `null` for that shape either
+ * way. The effect on `expression` itself is unconditional, independent of `columnName`:
+ * `TypeRepository.buildTypeProjectionForQuery` embeds `expression` verbatim in generated KDoc for
+ * a computed expression (`selectItem.columnName == null && column.table == null`).
  *
  * @return A pair of (expression, alias). `alias` is `null` when there is no `AS` keyword at all,
  *   AND when there is one but [parseAliasToken] finds nothing that legitimately looks like an
@@ -893,9 +853,9 @@ private fun extractAlias(item: String): Pair<String, String?> {
  * whitespace/comments after it (`AS ux -- trailing note`, `AS ux /* c */`). [extractAlias]'s own
  * KDoc documents `AS"ux"` (no separating whitespace before a quoted alias) already being
  * recognized as the `AS` keyword itself; this function is what turns whatever textually follows
- * it into the CLEAN alias [foldIdentifier] expects — not the raw, unbounded remainder of the item
- * [extractAlias] used to return verbatim, which silently swallowed a trailing comment into the
- * "alias" and made it fold-compare unequal to any real name.
+ * it into the CLEAN alias [foldIdentifier] expects, rather than [extractAlias] returning the raw,
+ * unbounded remainder of the item verbatim — which would silently swallow a trailing comment into
+ * the "alias" and make it fold-compare unequal to any real name.
  *
  * The quoted branch is escape-aware — via the SAME [QUOTED_IDENTIFIER_PATTERN] compiled pattern
  * [COLUMN_REFERENCE] itself uses, not a second, independently-written scanner — so a doubled `""`
@@ -1068,11 +1028,11 @@ internal fun findTopLevelKeyword(sql: String, keyword: String, startIndex: Int =
  * parenthesis, comma, or operator) clears the state, since none of those can be the word `AS`
  * either. Word-boundary handling is inherently correct here, unlike a substring search would be,
  * because the walk consumes whole words at a time via [isIdentifierChar] — an ordinary identifier
- * like `returning_batch`, or one continuing with a `>= 0x80` character like `returning€`, is read
- * as ONE word, never mistaken for the bare keyword (issue #219: `returning€` is a legal PostgreSQL
- * column name — PostgreSQL's lexer admits any byte `>= 0x80` inside an unquoted identifier — so
- * stopping the word scan at `€` and seeing the bare word `returning` misidentified the alias
- * position as the real clause).
+ * like `returning_batch`, or one continuing with a `>= 0x80` character like `returning€` (a legal
+ * PostgreSQL column name — PostgreSQL's lexer admits any byte `>= 0x80` inside an unquoted
+ * identifier), is read as ONE word, never mistaken for the bare keyword. Stopping the word scan at
+ * `€` instead would see the bare word `returning` and misidentify the alias position as the real
+ * clause.
  *
  * The identifier branch is checked BEFORE the whitespace branch, deliberately: Kotlin's
  * `Char.isWhitespace()` is `true` for several `>= 0x80` characters PostgreSQL does NOT treat as
@@ -1143,59 +1103,12 @@ internal fun findTopLevelReturningKeyword(sql: String): Int {
  * see [isIdentifierStartChar] for the first character itself), and [COLUMN_REFERENCE]'s
  * continuation character class — deliberately ONE predicate everywhere: a real PostgreSQL keyword
  * can never legitimately abut a `>= 0x80` character outside a string literal, a quoted identifier,
- * a dollar-quoted string, or a comment (all already skipped by [skipLexicalToken]).
- *
- * Widening a boundary check is NOT unconditionally the fail-safe direction — rejecting a keyword
- * match a narrower predicate would have found can itself make a caller do something WORSE.
- * [findTopLevelKeyword] rejecting a `FROM` match, for instance, makes [parseSelectItems] fall
- * through to treating the REST of the window as items (`window.substring(itemsStart)`), producing
- * MORE items than before — the direction that same function's own KDoc calls dangerous.
- * Demonstrated directly: `SELECT src.name AS c ©FROM t, src, helper` parses to 1 item on `main`
- * and 3 items on this branch (the `©` immediately before `FROM`, both `>= 0x80`-adjacent, fuses
- * into the boundary check and hides the keyword) — but real PostgreSQL 18.4 rejects that exact
- * input outright, so this is not a shipped regression, only a fact about the predicate's own
- * behavior in isolation.
- *
- * The widening also changes behavior on VALID SQL, and does so correctly. Demonstrated directly:
- * `INSERT INTO t (a) SELECT 1 AS 𝐀returning RETURNING a, b` executes on PostgreSQL 18.4 and returns
- * 2 columns (`a`, `b`). [findTopLevelReturningKeyword] scans word runs with this predicate and
- * matches the first run equal to `"RETURNING"` (case-insensitive). With the widening reverted,
- * neither UTF-16 code unit of `𝐀` (a supplementary-plane character, written as a surrogate pair) is
- * an identifier character, so the run started by `𝐀` ends after zero characters — the scan then
- * restarts at the immediately-following ASCII text and reads a NEW word, `returning`, in isolation.
- * That word matches `"RETURNING"` case-insensitively, so [findTopLevelReturningKeyword] returns the
- * position of the alias's own lowercase suffix instead of the real, later `RETURNING` keyword,
- * and `parseSelectItems` treats everything from there on as the `RETURNING` list:
- * `[RETURNING a(null), b]` — 2 items, but the first is `"RETURNING a"` (unparsed, `columnName=null`)
- * because the genuine keyword got absorbed into it. With the widening in place, both surrogate
- * halves are identifier characters, so `𝐀returning` is scanned as ONE word (not equal to
- * `"RETURNING"`), and the scan correctly finds the real keyword further on: `[a(a), b(b)]` —
- * matching what PostgreSQL itself reports. (Verified directly: reverting only this line to drop the
- * `>= 0x80` disjunct reproduces the `[RETURNING a(null), b]` result on this exact input.)
- *
- * So the honest claim is not "no valid input is affected" — this example is valid input, and IS
- * affected — but something narrower: on valid SQL, the cases this widening changes are corrections,
- * and on SQL PostgreSQL rejects, it may change the result in either direction (as the `©FROM`
- * example above shows). The evidence for that is empirical, over a corpus, not a proof: an
- * 11,542-input differential run comparing this whole change against the code it replaced found that
- * every input where the item COUNT INCREASED was SQL PostgreSQL itself rejects, and every one of the
- * 484 distinct column/table names this branch assigns across that same differential is a legal
- * unquoted PostgreSQL identifier that re-lexes correctly. Valid SQL does change count in the other
- * direction: roughly 55 valid statements drop to zero items, all of them star shapes — e.g. `SELECT
- * t.*café, a FROM t`, which PostgreSQL expands to 15 columns while the narrower predicate produced 2
- * items, so pairing `a` against column 2 (`name`) would have reported a WRONG name. Dropping to zero
- * is the fail-safe answer: callers fall back to `ResultSetMetaData.getColumnName`. No structural
- * guarantee follows from any of this — only that the corpus exercised did not turn up a
- * counterexample.
- *
- * Keeping a narrower ASCII-only predicate for keyword boundaries "in sync by convention" with a
- * wider one for identifier-run scanning already caused three separate regressions in the other
- * direction: whenever only one side was widened, a PostgreSQL-legal, `>= 0x80` character truncated
- * a run or a word at the wrong place — e.g. `returning€` (a legal column name) read as the bare
- * keyword `RETURNING` plus a stray `€` (issue #219), or `x€9.` (stopping at `€` instead of
- * continuing through it left `9` looking like a qualifier's own start, misclassifying the whole
- * thing as a numeric literal). Calling the same function from every call site makes that symmetry
- * structural, not a comment to remember to keep in sync.
+ * a dollar-quoted string, or a comment (all already skipped by [skipLexicalToken]), so a keyword
+ * boundary check and an identifier-run scan must always agree on where an identifier ends —
+ * otherwise a PostgreSQL-legal `>= 0x80` character can truncate a run or a word at the wrong place
+ * (e.g. `returning€`, a legal column name, misread as the bare keyword `RETURNING` plus a stray
+ * `€`, or `x€9.`, where stopping at `€` instead of continuing through it leaves `9` looking like a
+ * qualifier's own start and misclassifies the whole thing as a numeric literal).
  */
 private fun isIdentifierChar(character: Char): Boolean =
   character.isLetterOrDigit() || character == '_' || character == '$' || character.code >= 0x80
@@ -1222,11 +1135,9 @@ private fun isIdentifierChar(character: Char): Boolean =
  * [parseSingleCteDefinition] (an unquoted CTE name's first character), and [skipDollarQuotedString]
  * (a dollar-quote tag's first character) all call this function directly, and
  * [COLUMN_REFERENCE_IDENTIFIER_START] is the same rule expressed as a regex character class for
- * [COLUMN_REFERENCE] and [FUNCTION_CALL_START] to embed. Before [parseSingleCteDefinition] was
- * changed to call this function, it used [isIdentifierChar] — the CONTINUATION predicate — for a
- * CTE name's first character too, wrongly accepting a `$`-led name (`WITH $x AS (...)`, which
- * PostgreSQL rejects outright) — the exact "two positions collapsed onto one class" mistake this
- * predicate's existence, split from [isIdentifierChar], exists to prevent.
+ * [COLUMN_REFERENCE] and [FUNCTION_CALL_START] to embed — deliberately kept separate from
+ * [isIdentifierChar] (the CONTINUATION predicate), since using it for a CTE name's first character
+ * would wrongly accept a `$`-led name (`WITH $x AS (...)`, which PostgreSQL rejects outright).
  */
 private fun isIdentifierStartChar(character: Char): Boolean =
   character.isLetter() || character == '_' || character.code >= 0x80
@@ -1443,8 +1354,7 @@ private fun parseSingleCteDefinition(sql: String, startPosition: Int): Pair<CteD
   // Read CTE name: an unquoted identifier (isIdentifierStartChar, then a run of isIdentifierChar
   // characters), or a double-quoted one. The FIRST character is gated by isIdentifierStartChar,
   // not isIdentifierChar — a leading digit or "$" is not a legal identifier start (see
-  // isIdentifierStartChar's KDoc; issue #219 originally used isIdentifierChar for the whole run,
-  // which wrongly accepted "$x" as a CTE name — PostgreSQL rejects "WITH $x AS (...)" outright).
+  // isIdentifierStartChar's KDoc).
   val nameStart = position
   if (position < sql.length && sql[position] == '"') {
     position++ // skip opening quote
@@ -1666,11 +1576,10 @@ internal class StrippedText(private val text: String, private val originalOffset
  *
  * Two paths, tried in order:
  *
- * PATH 1 — the ORIGINAL `text == "*" || text.endsWith(".*")` check (via
- * [unwrapWrappingParentheses] then a literal suffix comparison), preserved BYTE-FOR-BYTE. For
- * [isStarItem], `false` is the DANGEROUS answer (an unrecognized star lets a later item survive at
- * its raw list position, silently shifted onto the wrong `ResultSetMetaData` column — the
- * #212/#215 failure mode) and `true` is the SAFE one (later items are dropped, falling back to
+ * PATH 1 — the `text == "*" || text.endsWith(".*")` check (via [unwrapWrappingParentheses] then a
+ * literal suffix comparison). For [isStarItem], `false` is the DANGEROUS answer (an unrecognized
+ * star lets a later item survive at its raw list position, silently shifted onto the wrong
+ * `ResultSetMetaData` column) and `true` is the SAFE one (later items are dropped, falling back to
  * metadata names instead of a wrong mapping), so a rule that already answers `true` for some text
  * must never be replaced by one that answers `false` for that same text — only new `true` answers
  * may be ADDED on top, never removed. This path alone already covers every shape whose NORMALIZED
@@ -1687,9 +1596,9 @@ internal class StrippedText(private val text: String, private val originalOffset
  * alias is always the FINAL token of a select item, so anchoring on "the last segment reaches
  * exactly the end of the text" is grammar-backed, unlike enumerating everything that may
  * legitimately precede a star's qualifying dot (parentheses, brackets, quotes, a `DISTINCT ON`
- * prefix, a Unicode-escape identifier...) — an earlier version of this function tried exactly that
- * enumeration and missed a new qualifier shape on each of three separate review passes. With the
- * alias located, [unwrapWrappingParentheses] is applied to the PREFIX (the text with that alias
+ * prefix, a Unicode-escape identifier...), which is fragile against a qualifier shape not yet on
+ * the list. With the alias located, [unwrapWrappingParentheses] is applied to the PREFIX (the text
+ * with that alias
  * removed), and the SAME path-1 logic is re-run on it: accept if the unwrapped prefix is `*`, or if
  * it ends in `.*` AND [isStarQualifierAcceptable] accepts the qualifier (everything before that
  * final `.`) — the ONLY additional check path 2 needs beyond path 1's, since a digit-leading run
@@ -1699,15 +1608,13 @@ internal class StrippedText(private val text: String, private val originalOffset
  * accepted rather than enumerated.
  *
  * Verified against PostgreSQL 18.4: `SELECT u.*whatever, preferences FROM users u` and `SELECT
- * u.*`/*c*/`whatever, preferences FROM users u` both return 5 columns (star expands, implicit alias
- * ignored) — an earlier version of this function required a whitespace- or comment-shaped
- * separator between the star and its implicit alias to even attempt recognizing one, so an alias
- * directly ABUTTING the star (no separator at all, comment or otherwise) went unrecognized,
- * letting the #212 failure mode (a later item shifted onto the wrong `ResultSetMetaData` column)
- * survive for exactly that spelling. `SELECT *whatever, a FROM t` (a BARE star with an abutting
- * alias) is, by contrast, a genuine PostgreSQL syntax error — a bare `*` cannot itself take an
- * alias — so this function's willingness to call it a star for an empty qualifier is unreachable
- * on real input, not a gap that needs closing.
+ * u.*`/*c*/`whatever, preferences FROM users u` both return 5 columns (star expands, implicit
+ * alias ignored) — an alias directly ABUTTING the star (no separator at all, comment or otherwise)
+ * must still be recognized as an implicit alias, not just one separated by whitespace or a
+ * comment. `SELECT *whatever, a FROM t` (a BARE star with an abutting alias) is, by contrast, a
+ * genuine PostgreSQL syntax error — a bare `*` cannot itself take an alias — so this function's
+ * willingness to call it a star for an empty qualifier is unreachable on real input, not a gap
+ * that needs closing.
  *
  * NOT claimed exhaustive: [parseSelectItems] has no independent real-column-count to cross-check
  * against at the point it runs, so a spelling this function fails to recognize there degrades
@@ -1885,13 +1792,12 @@ private fun matchUnicodeEscapeIdentifierSegment(text: StrippedText, start: Int):
 
 /**
  * Checks that [qualifierEndingInDot] (the qualifier before a star recognized on path 2 of
- * [isStarItem], guaranteed by its caller to end in `.`) is acceptable — INVERTED relative to an
- * earlier version of this check, which enumerated every character that may legitimately precede
- * the dot (`"`, `)`, `]`, an identifier run) and missed a new shape on each of three separate
- * review passes (a `DISTINCT ON (...)` prefix, a parenthesized composite expansion, an array
- * subscript, a Unicode-escape identifier with a `UESCAPE` clause...). Enumerating acceptable
- * endings is backwards: `false` is the DANGEROUS answer here (see [isStarItem]'s KDoc), so it must
- * be EARNED, not handed out by default whenever a new qualifier shape isn't yet on the list.
+ * [isStarItem], guaranteed by its caller to end in `.`) is acceptable. Deliberately NOT an
+ * enumeration of every character that may legitimately precede the dot (`"`, `)`, `]`, an
+ * identifier run, a `DISTINCT ON (...)` prefix, a parenthesized composite expansion, an array
+ * subscript, a Unicode-escape identifier with a `UESCAPE` clause...): `false` is the DANGEROUS
+ * answer here (see [isStarItem]'s KDoc), so it must be EARNED by an actual disqualifying shape,
+ * not handed out by default whenever a new qualifier shape isn't yet on an enumerated list.
  *
  * Rejects ONLY when the run of [isIdentifierChar] characters immediately preceding the final `.`
  * is NON-EMPTY and its first character is an ASCII digit (`'0'..'9'`, NOT `Char.isDigit()`) — a
@@ -1910,8 +1816,7 @@ private fun matchUnicodeEscapeIdentifierSegment(text: StrippedText, start: Int):
  * before it looking like the run's own start (`x€9.`: scanning backward with a letter-or-digit-only
  * check stops at `€`, making `9` look like the run's start and wrongly rejecting the whole thing as
  * numeric, when the real run is `x€9` — letter-led, and correctly acceptable). Sharing one
- * predicate makes that symmetry STRUCTURAL rather than a comment to remember to keep in sync — a
- * "keep these two in sync" convention note is exactly what failed here, three separate times.
+ * predicate makes that symmetry STRUCTURAL rather than a comment to remember to keep in sync.
  *
  * Accepts in every other case, INCLUDING an empty run (the character immediately before the dot is
  * `"`, `)`, `]`, or anything else that isn't an identifier-continuation character at all) — this
@@ -2070,32 +1975,16 @@ internal fun skipLexicalToken(sql: String, position: Int, adjacency: OriginalAdj
  * always consumes the following character as a literal, so it can never end the string).
  *
  * The "standalone" check — the character before that `E`/`e`, if any, is not itself a letter,
- * digit, or `_` — now uses [isIdentifierChar], the SAME predicate every other word-boundary check
- * in this file uses, GATED on [adjacency] (see [OriginalAdjacency]'s KDoc). It did not always: this
- * file's own generator round for issue #219 established (against real PostgreSQL 18.4) that
- * [isStarItem] normalizes a select item through [stripCommentsAndWhitespace] and then RE-LEXES the
- * stripped string — so deleting a separator PostgreSQL actually lexed on can manufacture tokens
- * that were never in the query. Widening this lookback to [isIdentifierChar] WITHOUT a gate made
- * `x E'a\'b'` (valid PostgreSQL: the `AexprConst: func_name Sconst` typed-literal form, `func_name`
- * here being the ordinary identifier `x`) normalize to `xE'a\'b'` — the space PostgreSQL lexed as a
- * separator between two tokens is gone — which then mis-lexed as a SINGLE standalone-`E` escape
- * string, turning `parseSelectItems("SELECT (f(x€ E'a\\'b')).* y, id FROM t")` from `[]` on the
- * pre-#219 code — the fail-safe answer, since callers fall back to
- * `ResultSetMetaData.getColumnName` — into 2 items, a WRONG positional split that misapplies a
- * column-level type override. That regression, issue #222, is what led to reverting this lookback
- * to a narrow letter/digit/`_` class — which does NOT match PostgreSQL's lexer for raw SQL (it
- * misses `$` and any `>= 0x80` character, both legal identifier-continuation characters) — pending
- * a fix to the root cause: [stripCommentsAndWhitespace] returning an index map back to the original
- * text, so this lookback (like the `--` line-comment and `/* */` block-comment openers and the `$`
- * dollar-quote identifier lookback in [skipLexicalToken], and the `''` doubled-quote check just
- * below) could be gated on ORIGINAL adjacency instead of a narrower character class. That fix has
- * now landed — [OriginalAdjacency] — so the widening is safe: for the same `x€ E'a\'b'` shape,
- * `adjacency.wereAdjacent` on the character position immediately before `E` reports `false` (the
- * space that used to separate `€` and `E` is gone from the stripped text, but that fusion is not
- * something stripping is entitled to manufacture), so `E` is STILL recognized as standalone
- * regardless of what character stripping happened to fuse in front of it — see [isIdentifierChar]'s
- * own KDoc for why a widened check here is otherwise the MORE faithful one to PostgreSQL's real
- * lexer.
+ * digit, or `_` — uses [isIdentifierChar], the SAME predicate every other word-boundary check in
+ * this file uses, GATED on [adjacency] (see [OriginalAdjacency]'s KDoc): [isStarItem] normalizes a
+ * select item through [stripCommentsAndWhitespace] and then RE-LEXES the stripped string, so a
+ * lookback using the full [isIdentifierChar] class (which admits `$` and any `>= 0x80` character,
+ * both legal PostgreSQL identifier-continuation characters that a narrower letter/digit/`_` check
+ * would miss) must be gated on whether the character immediately before `E`/`e` was genuinely
+ * adjacent in the ORIGINAL text — otherwise a separator stripping removed (e.g. the space in
+ * `x€ E'a\'b'`) could fuse into `E` and manufacture a standalone-`E` escape string match that was
+ * never in the query, mis-lexing a valid typed-literal call (`x E'a\'b'`, PostgreSQL's
+ * `AexprConst: func_name Sconst` form) as something else entirely.
  *
  * @param adjacency See [OriginalAdjacency]'s KDoc. Gates both the "is the character immediately
  *   before the opening quote genuinely `E`/`e`" check and, when it is, the standalone lookback one
