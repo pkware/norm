@@ -53,10 +53,10 @@ internal fun explainMergeSideNullability(
   sourceRelationName: String,
 ): MergeSideNullability? {
   val explainJsonText = try {
-    connection.createStatement().use { stmt ->
-      stmt.executeQuery("EXPLAIN (FORMAT JSON) $sql").use { rs ->
-        if (!rs.next()) return null
-        rs.getString(1)
+    connection.createStatement().use { statement ->
+      statement.executeQuery("EXPLAIN (FORMAT JSON) $sql").use { resultSet ->
+        if (!resultSet.next()) return null
+        resultSet.getString(1)
       }
     }
   } catch (_: SQLException) {

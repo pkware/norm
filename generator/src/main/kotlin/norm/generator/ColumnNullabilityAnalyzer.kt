@@ -144,8 +144,8 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     val substitutedSql = buildViewSqlWithSentinels(sql) ?: replaceParameterPlaceholders(sql)
     val functionName = "norm_nullability_${UUID.randomUUID().toString().replace("-", "")}"
     return try {
-      connection.createStatement().use { stmt ->
-        stmt.execute(
+      connection.createStatement().use { statement ->
+        statement.execute(
           "CREATE FUNCTION pg_temp.$functionName() RETURNS SETOF record LANGUAGE sql " +
             // The newline before "; END" is load-bearing, not style: [substitutedSql] is caller-
             // supplied SQL text that can legitimately end in a trailing `--` line comment (ordinary
@@ -156,17 +156,17 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
         )
       }
       try {
-        val nodeTree = connection.createStatement().use { stmt ->
-          stmt.executeQuery(
+        val nodeTree = connection.createStatement().use { statement ->
+          statement.executeQuery(
             "SELECT prosqlbody::text FROM pg_proc " +
               // "pg_temp" is a per-session ALIAS, not a literal schema name — the real catalog row
               // is named "pg_temp_N", so 'pg_temp'::regnamespace fails to resolve at all (verified
               // live: "ERROR: schema "pg_temp" does not exist"). pg_my_temp_schema() returns the
               // current session's actual temp schema OID directly.
               "WHERE proname = '$functionName' AND pronamespace = pg_my_temp_schema()",
-          ).use { rs ->
-            check(rs.next()) { "No pg_proc row found for probe function $functionName" }
-            rs.getString(1)
+          ).use { resultSet ->
+            check(resultSet.next()) { "No pg_proc row found for probe function $functionName" }
+            resultSet.getString(1)
           }
         }
         val rangeTable = nodeTreeParser.parseRangeTable(nodeTree)
@@ -185,8 +185,8 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
           mergeAbsentVarnos = mergeAbsent,
         )
       } finally {
-        connection.createStatement().use { stmt ->
-          stmt.execute("DROP FUNCTION IF EXISTS pg_temp.$functionName()")
+        connection.createStatement().use { statement ->
+          statement.execute("DROP FUNCTION IF EXISTS pg_temp.$functionName()")
         }
       }
     } catch (_: SQLException) {
@@ -823,11 +823,11 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
       """.trimIndent(),
     ).use { preparedStatement ->
       preparedStatement.setInt(1, relid)
-      preparedStatement.executeQuery().use { rs ->
-        check(rs.next()) { "Expected exactly one row from the substitution-safety EXISTS query" }
-        !rs.getBoolean("has_risky_relkind") &&
-          !rs.getBoolean("has_mutating_row_trigger") &&
-          !rs.getBoolean("has_non_view_rewrite_rule")
+      preparedStatement.executeQuery().use { resultSet ->
+        check(resultSet.next()) { "Expected exactly one row from the substitution-safety EXISTS query" }
+        !resultSet.getBoolean("has_risky_relkind") &&
+          !resultSet.getBoolean("has_mutating_row_trigger") &&
+          !resultSet.getBoolean("has_non_view_rewrite_rule")
       }
     }
   } catch (_: SQLException) {
@@ -847,7 +847,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
   private fun resolveTableName(relid: Int): String? = try {
     connection.prepareStatement("SELECT relname FROM pg_catalog.pg_class WHERE oid = ?").use { preparedStatement ->
       preparedStatement.setInt(1, relid)
-      preparedStatement.executeQuery().use { rs -> if (rs.next()) rs.getString(1) else null }
+      preparedStatement.executeQuery().use { resultSet -> if (resultSet.next()) resultSet.getString(1) else null }
     }
   } catch (_: SQLException) {
     null

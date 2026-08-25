@@ -765,7 +765,9 @@ internal class NodeTreeNullabilityAnalyzer(
       depth: Int = MAX_EXPRESSION_DEPTH,
     ): Boolean {
       if (depth <= 0) return true
-      val recurse = { expr: PgNodeExpression -> containsVarOutsideRelation(expr, relationVarno, depth - 1) }
+      val recurse = { childExpression: PgNodeExpression ->
+        containsVarOutsideRelation(childExpression, relationVarno, depth - 1)
+      }
       return when (expression) {
         is PgNodeExpression.Var ->
           expression.returningType == PgNodeExpression.VAR_RETURNING_TYPE_NORMAL &&
