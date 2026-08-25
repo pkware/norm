@@ -160,6 +160,90 @@ class PgNodeTreeParserTest {
   }
 
   @Nested
+  inner class GroupRteExpressionParsing {
+
+    @Test
+    fun `a PostgreSQL 18 GROUP RTE's groupexprs entry parses into the expression it describes`() {
+      // Shape verified live against a real PostgreSQL 18 pg_rewrite.ev_action for
+      // `SELECT count(*) + 0::bigint AS c, 0::bigint AS k FROM t GROUP BY ROLLUP((0::bigint))`: the
+      // GROUP RTE (rtekind 9) is the SECOND :rtable entry, so its varno is 2, and its :groupexprs
+      // holds one FUNCEXPR (the implicit int4->int8 cast of the literal 0) wrapping one CONST.
+      val text = """
+        {QUERY :rtable (
+          {RANGETBLENTRY :rtekind 0 :relid 24819 :relkind r}
+          {RANGETBLENTRY :eref {ALIAS :aliasname *GROUP* :colnames ("k")} :rtekind 9 :groupexprs (
+            {FUNCEXPR :funcid 481 :funcresulttype 20 :funcretset false :funcvariadic false
+             :funcformat 0 :funccollid 0 :inputcollid 0 :args (
+               {CONST :consttype 20 :consttypmod -1 :constcollid 0 :constlen 8 :constbyval true
+                :constisnull false :location -1 :constvalue 8 [ 0 0 0 0 0 0 0 0 ]}
+             ) :location -1}
+          )}
+        )}
+      """.trimIndent()
+      val result = parser.parseGroupRteExpressions(text)
+      assertThat(result).hasSize(1)
+      val groupExpressions = result.getValue(2)
+      assertThat(groupExpressions).hasSize(1)
+      val functionCall = groupExpressions.single() as PgNodeExpression.FuncExpr
+      assertThat(functionCall.functionOid).isEqualTo(481)
+      val argument = functionCall.arguments.single() as PgNodeExpression.Const
+      assertThat(argument.isNull).isFalse()
+    }
+
+    @Test
+    fun `a PostgreSQL 16-shaped rtable with no GROUP RTE returns an empty map`() {
+      // No :rtekind 9 entry anywhere — the shape every PostgreSQL 16/17 tree has, and the shape a
+      // PostgreSQL 18 tree without GROUP BY has too.
+      val text = """
+        {QUERY :rtable (
+          {RANGETBLENTRY :rtekind 0 :relid 24819 :relkind r}
+          {RANGETBLENTRY :rtekind 1 :relid 0}
+        )}
+      """.trimIndent()
+      assertThat(parser.parseGroupRteExpressions(text)).hasSize(0)
+    }
+
+    @Test
+    fun `a truncated groupexprs list returns an empty map without throwing`() {
+      // The :groupexprs opening parenthesis is present but its content is cut off mid-block —
+      // extractOuterSectionContent's balanced-parenthesis scan can never find a matching close, so
+      // this GROUP RTE contributes nothing rather than parsing a truncated fragment.
+      val text = """
+        {QUERY :rtable (
+          {RANGETBLENTRY :eref {ALIAS :aliasname *GROUP* :colnames ("k")} :rtekind 9 :groupexprs (
+            {FUNCEXPR :funcid 481 :args (
+      """.trimIndent()
+      assertThat(parser.parseGroupRteExpressions(text)).hasSize(0)
+    }
+
+    @Test
+    fun `multiple groupexprs entries parse in declaration order`() {
+      // Two grouping keys — a bare VAR (varattno 1 in the base table) and a CONST — must resolve
+      // at list indices 0 and 1 respectively, matching their :groupexprs declaration order, so a
+      // target-list Var with :varattno 2 (1-based) indexes the CONST, never the VAR.
+      val text = """
+        {QUERY :rtable (
+          {RANGETBLENTRY :rtekind 0 :relid 24819 :relkind r}
+          {RANGETBLENTRY :eref {ALIAS :aliasname *GROUP* :colnames ("a" "b")} :rtekind 9 :groupexprs (
+            {VAR :varno 1 :varattno 2 :vartype 25 :vartypmod -1 :varcollid 100 :varnullingrels (b)
+             :varlevelsup 0 :varnosyn 1 :varattnosyn 2 :location -1}
+            {CONST :consttype 20 :consttypmod -1 :constcollid 0 :constlen 8 :constbyval true
+             :constisnull false :location -1 :constvalue 8 [ 5 0 0 0 0 0 0 0 ]}
+          )}
+        )}
+      """.trimIndent()
+      val result = parser.parseGroupRteExpressions(text)
+      val groupExpressions = result.getValue(2)
+      assertThat(groupExpressions).hasSize(2)
+      val first = groupExpressions[0] as PgNodeExpression.Var
+      assertThat(first.varno).isEqualTo(1)
+      assertThat(first.varattno).isEqualTo(2)
+      val second = groupExpressions[1] as PgNodeExpression.Const
+      assertThat(second.isNull).isFalse()
+    }
+  }
+
+  @Nested
   inner class ConstStructuralEquality {
 
     @Test

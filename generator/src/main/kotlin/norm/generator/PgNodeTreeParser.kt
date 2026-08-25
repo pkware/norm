@@ -153,6 +153,45 @@ internal class PgNodeTreeParser {
   }
 
   /**
+   * Parses GROUP RTE (`rtekind 9`) group expressions — the FULLY PARSED counterpart to
+   * [parseGroupRteMap] — from a full `pg_node_tree` text.
+   *
+   * PostgreSQL 18 introduced an `RTE_GROUP` range-table entry (`:rtekind 9`, alias `*GROUP*`) that
+   * carries a `:groupexprs` list of the query's grouping-key expressions, and rewrites EVERY
+   * target-list occurrence of a grouping-key expression (not merely the one PostgreSQL assigns
+   * `:ressortgroupref` to) into a bare `Var` referencing this RTE. PostgreSQL 16 and 17 have no
+   * such RTE — no `:rtable` entry there ever has `:rtekind 9` — so on those versions this method's
+   * return value is always an empty map, and the original expression is left in place in the
+   * target list for [parseTargetList] to see directly.
+   *
+   * Unlike [parseGroupRteMap], which only resolves a GROUP RTE entry that is itself a bare `VAR`
+   * (mapping it back to a `(baseVarno, baseVarattno)` pair), this method parses the `:groupexprs`
+   * entry into a full [PgNodeExpression] — a grouping key can be an arbitrary expression (e.g.
+   * `lower(a)`, a literal, or a `Var` carrying outer-join `:varnullingrels`), not only a bare
+   * column reference. See [substituteGroupRteVars] for how a target-list `Var` referencing this
+   * RTE is substituted back to the expression this method returns.
+   *
+   * @return a map from the GROUP RTE's 1-based `varno` (its position in `:rtable`) to its parsed
+   *   `:groupexprs` list, in declaration order — a target-list `Var` whose `:varno` is a key here
+   *   resolves to `list[varattno - 1]` (1-based `:varattno` indexing into the 0-based list). Empty
+   *   when [nodeTreeText] is malformed, absent, or contains no GROUP RTE (including every
+   *   PostgreSQL 16/17 tree, and any PostgreSQL 18+ tree for a query with no `GROUP BY`).
+   */
+  fun parseGroupRteExpressions(nodeTreeText: String): Map<Int, List<PgNodeExpression>> {
+    val rtableContent = extractOuterSectionContent(nodeTreeText, ":rtable (") ?: return emptyMap()
+    return buildMap {
+      splitBraceBlocks(rtableContent).forEachIndexed { index, rangeTableEntry ->
+        val rtekind = extractIntField(rangeTableEntry, ":rtekind") ?: return@forEachIndexed
+        if (rtekind != 9) return@forEachIndexed
+        val groupVarno = index + 1
+        val groupExprsContent = extractOuterSectionContent(rangeTableEntry, ":groupexprs (")
+          ?: return@forEachIndexed
+        put(groupVarno, splitBraceBlocks(groupExprsContent).map(::parseExpression))
+      }
+    }
+  }
+
+  /**
    * Returns `true` if the outermost QUERY node in [nodeTreeText] has a `:setOperations` field.
    *
    * PostgreSQL represents `UNION ALL`, `INTERSECT`, and `EXCEPT` queries by adding a `:setOperations`
