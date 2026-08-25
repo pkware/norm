@@ -2181,6 +2181,296 @@ class QueryAnalysisTest {
       assertThat(query.columns[2].notNull).isTrue()
     }
 
+    // A `?` parameter is replaced with a typed non-null sentinel literal before this analysis ever
+    // runs (see ColumnNullabilityAnalyzer.buildViewSqlWithSentinels), so the parsed tree hands the
+    // two tests above a genuine, hand-written Const — indistinguishable from one that stands in for
+    // a `?`. Under a GENERIC plan (PostgreSQL's plan_cache_mode reaching it on its own after enough
+    // executions with identical bindings, or SET plan_cache_mode = force_generic_plan), the value
+    // behind that sentinel is a real, unfolded Param — verified live on PostgreSQL 16 and 17 (see
+    // the ground-truth test below) — so it DOES get null-extended in the un-ref'd duplicate
+    // occurrence too, unlike the literal case above. ColumnNullabilityAnalyzer has no structural way
+    // to tell the two apart once a `?` exists anywhere in the statement, so hasParameterPlaceholder
+    // disables the exclusion/legs these tests exercise UNCONDITIONALLY, on every PostgreSQL version
+    // — including 18, where the real runtime does not reproduce this divergence (verified live: PG18
+    // still shows the un-ref'd occurrence with its real value) — because Norm's analysis-time
+    // container version never pins the connecting application's actual server version.
+    //
+    // The resulting over-widening is broader than "a duplicate of the grouping key": once
+    // hasParameterPlaceholder is set, ANY Const-bearing or constant-folding expression anywhere in
+    // the SAME grouping-sets query block loses its non-null verdict, including one with no
+    // structural relationship to the grouping key at all — see the two accepted-trade tests below.
+    // A narrower fix (disabling only the groupingKeyExpressions duplicate-of-the-key exclusion,
+    // leaving isSafeFromGroupingSetNullExtension's foldsToConst/Const legs enabled) was considered
+    // and rejected: see the key-derived-expression test below for the live-verified counterexample
+    // that alternative gets wrong, and hasParameterPlaceholder's own KDoc for the full reasoning.
+
+    @Test
+    fun `a ? parameter reused as a ROLLUP key leaves the un-ref'd duplicate occurrence nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
+        "SELECT ?::text AS u1, ?::text AS u2, count(*) AS c FROM gs_t GROUP BY ROLLUP(?::text)",
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `upper of a ? parameter reused as a ROLLUP key leaves the un-ref'd duplicate occurrence nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
+        "SELECT upper(?::text) AS u1, upper(?::text) AS u2, count(*) AS c " +
+          "FROM gs_t GROUP BY ROLLUP(upper(?::text))",
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `a ? parameter reused as a ROLLUP key inside a CTE leaves the duplicate nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
+        """
+        WITH c AS (
+          SELECT ?::text AS u1, ?::text AS u2, count(*) AS n FROM gs_t GROUP BY ROLLUP(?::text)
+        )
+        SELECT u1, u2, n FROM c
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `a ? parameter reused as a ROLLUP key inside a subquery leaves the duplicate nullable`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
+        """
+        SELECT u1, u2, n FROM (
+          SELECT ?::text AS u1, ?::text AS u2, count(*) AS n FROM gs_t GROUP BY ROLLUP(?::text)
+        ) s
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `a hand-written duplicate literal over-widens to nullable once the statement has any ? -- accepted trade`() {
+      // Same shape as "duplicate bare Const grouping key stays non-null in the un-ref'd occurrence"
+      // above, except this statement also has an unrelated ? in its WHERE clause. Once ANY ? exists
+      // anywhere in the statement, ColumnNullabilityAnalyzer cannot tell "l2 is a genuine literal,
+      // never null-extended" from "l2 stands in for a ? sentinel, which IS null-extended under a
+      // generic plan" -- see hasParameterPlaceholder's KDoc. l2 therefore over-widens to nullable
+      // here, unlike its identical-shaped sibling above. This is deliberate: a wrong NOT NULL is
+      // categorically worse than an over-widening, and there is no structural signal left to recover
+      // the narrower answer once the flag is set.
+      val query = analyzeWithSchema(
+        "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
+        "SELECT 'ALL'::text AS l1, 'ALL'::text AS l2, count(*) AS c " +
+          "FROM gs_t WHERE b = ? GROUP BY ROLLUP('ALL'::text)",
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `an unrelated literal over-widens to nullable once the statement has any ? -- accepted trade`() {
+      // lit has no structural relationship to the ROLLUP key (a) at all -- it is not a duplicate of
+      // it, and it is not derived from it. Real PostgreSQL never null-extends lit for any reason.
+      // This pins that the over-widening hasParameterPlaceholder causes is broader than "a duplicate
+      // of the grouping key": ANY Const in a grouping-sets query block loses its non-null verdict
+      // once ANY ? exists anywhere in the statement -- see hasParameterPlaceholder's own KDoc.
+      val query = analyzeWithSchema(
+        "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
+        "SELECT 'X'::text AS lit, a, count(*) AS c FROM gs_t WHERE b = ? GROUP BY ROLLUP(a)",
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `aggregate arithmetic over a literal over-widens to nullable once the statement has any ? -- accepted trade`() {
+      // The parameter-free sibling of this exact shape -- "count concatenated with a Const stays
+      // non-null alongside a nullable expression key" -- keeps c1 non-null: count(*) never returns
+      // null, and the OpExpr wrapping it is on the isNeverNullForNonNullInput safe-list, so the
+      // Const 1 argument's own safety (normally trivial via the now-disabled Const leg) is all that
+      // stood between c1 and its precise verdict. Once ANY ? exists anywhere in the statement, that
+      // Const leg is gone, so c1 loses its precise verdict too, even though it has nothing to do
+      // with the grouping key or with the statement's actual parameter.
+      val query = analyzeWithSchema(
+        "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
+        "SELECT count(*) + 1 AS c1, a FROM gs_t WHERE b = ? GROUP BY ROLLUP(a)",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `a key-derived expression stays nullable -- the counterexample the rejected narrower fix gets wrong`() {
+      // Ground truth (verified live, PostgreSQL 16 and 17, force_generic_plan): d IS NULL in the
+      // ROLLUP summary row. A narrower fix was considered and rejected -- disabling ONLY
+      // groupingKeyExpressions' duplicate-of-the-key exclusion, while leaving
+      // isSafeFromGroupingSetNullExtension's foldsToConst/Const legs enabled (which would keep the
+      // two accepted-trade tests above at their precise, non-null verdict). That alternative gets
+      // this shape wrong: upper(?) || 'x' constant-folds as a WHOLE expression once ? is replaced by
+      // its sentinel (upper and || are both IMMUTABLE), so foldsToConst would call it safe and this
+      // column would be reported NOT NULL -- a WRONG NOT NULL, since the grouping key upper(?) it is
+      // built on is a live Param that DOES get null-extended under a generic plan, taking d down
+      // with it via PostgreSQL's structural matching. This is the same mechanism "expression derived
+      // from a Var-free grouping key is nullable" pins for the STABLE, parameter-free case above. A
+      // wrong NOT NULL is categorically worse than an over-widening, so every leg stays disabled --
+      // see hasParameterPlaceholder's own KDoc for the full reasoning.
+      val query = analyzeWithSchema(
+        "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
+        "SELECT upper(?::text) || 'x' AS d, upper(?::text) AS k FROM gs_t GROUP BY ROLLUP(upper(?::text))",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `ground truth -- PostgreSQL 16 and 17's generic plan null-extends the un-ref'd sentinel duplicate`() {
+      // Anchors the runtime behavior the four tests above assume, rather than trusting a
+      // description of it: under a GENERIC plan (a real, unfolded Param, not a literal), PostgreSQL
+      // 16 and 17 null-extend BOTH occurrences of a duplicated parameter used as a ROLLUP key -- not
+      // only the one PostgreSQL assigns :ressortgroupref to, unlike the hand-written-literal case
+      // pinned above. force_generic_plan (unlike the plan-cache default, which only reaches the
+      // generic plan after several executions) forces the generic plan from the very FIRST
+      // execution, so no execution-count warm-up is needed. PostgreSQL 18 does not reproduce this
+      // divergence (verified live), which is exactly why the fix above cannot be version-branched --
+      // see its own comment for the reasoning -- so this ground truth is skipped there.
+      assumeTrue(pgVersion.substringBefore('.').toInt() < 18, "PostgreSQL 18 does not reproduce this divergence")
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use { statement ->
+          statement.execute("CREATE SCHEMA $schemaName")
+          statement.execute("SET search_path TO $schemaName")
+          statement.execute("CREATE TABLE ground_truth_probe (a TEXT NOT NULL)")
+          statement.execute("INSERT INTO ground_truth_probe VALUES ('a')")
+          statement.execute(
+            "PREPARE ground_truth_stmt(text) AS SELECT \$1 AS u1, \$1 AS u2, grouping(\$1) AS g " +
+              "FROM ground_truth_probe GROUP BY ROLLUP(\$1)",
+          )
+          statement.execute("SET plan_cache_mode = force_generic_plan")
+        }
+        try {
+          connection.createStatement().use { statement ->
+            statement.executeQuery("EXECUTE ground_truth_stmt('a')").use { resultSet ->
+              var sawSummaryRow = false
+              while (resultSet.next()) {
+                if (resultSet.getInt("g") == 1) {
+                  sawSummaryRow = true
+                  assertThat(resultSet.getString("u1")).isNull()
+                  assertThat(resultSet.getString("u2")).isNull()
+                }
+              }
+              assertThat(sawSummaryRow).isTrue()
+            }
+          }
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    // hasParameterPlaceholder is computed via replaceParameterPlaceholders(sql) != sql -- the SAME
+    // literal/comment-aware scan the sentinel substitution itself is built on (see
+    // SqlPlaceholders.kt) -- rather than a naive '?' in sql substring test, which would wrongly
+    // treat a `?` inside a string literal or a comment as a genuine parameter and needlessly widen
+    // an unrelated literal to nullable. The three tests below pin those false positives are fixed.
+
+    @Test
+    fun `a ? inside a string literal is not mistaken for a parameter placeholder`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
+        "SELECT 'is it?'::text AS l1, 'is it?'::text AS l2, count(*) AS c " +
+          "FROM gs_t GROUP BY ROLLUP('is it?'::text)",
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `a ? inside a line comment is not mistaken for a parameter placeholder`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
+        "SELECT 'ALL'::text AS l1, 'ALL'::text AS l2, -- is this a parameter?\n" +
+          "  count(*) AS c FROM gs_t GROUP BY ROLLUP('ALL'::text)",
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `a ? inside a block comment is not mistaken for a parameter placeholder`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
+        "SELECT 'ALL'::text AS l1, 'ALL'::text AS l2, count(*) AS c " +
+          "FROM gs_t /* is this a parameter? */ GROUP BY ROLLUP('ALL'::text)",
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `a jsonb ? existence operator is unanalyzable end-to-end, well before hasParameterPlaceholder`() {
+      // Unlike the three lexical false positives above, this one is NOT fixed by
+      // replaceParameterPlaceholders(sql) != sql, and it is a DIFFERENT (worse) failure mode than
+      // "l2 over-widens": going through analyzeWithSchema (JdbcAnalyzer.analyzeQuery), pgJDBC's OWN
+      // PreparedStatement.getMetaData()/getParameterMetaData() rewrite the `?` in `data ? 'x'` to
+      // `$1` before ever sending the query to the server -- the identical, well-known pgJDBC/jsonb
+      // gotcha the JDBC ecosystem requires `??` or jsonb_exists() to work around -- and PostgreSQL
+      // then rejects `data $1 'x'` outright (a parameter placeholder cannot stand in for an
+      // OPERATOR token), throwing PSQLException("syntax error at or near \"$1\"") straight out of
+      // JdbcAnalyzer.analyzeQuery, UNCAUGHT, before Norm's own nullability analysis -- and therefore
+      // hasParameterPlaceholder -- is ever reached. Verified live: this reproduces even with no
+      // GROUP BY/ROLLUP in the query at all, so it is wholly unrelated to grouping sets or to this
+      // fix, and out of scope to solve here (see ColumnNullabilityAnalyzer.buildViewSqlWithSentinels'
+      // own KDoc). ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody, called directly
+      // (bypassing JdbcAnalyzer.analyzeQuery's own failing prepareStatement call, the same way
+      // `an unterminated block comment fails the probe safely` above does), degrades to `null`
+      // instead of throwing -- the SQLException is caught internally at every step this class
+      // controls, exactly as it is for any other malformed input this class cannot analyze.
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          it.execute("CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL, data JSONB NOT NULL)")
+        }
+        try {
+          val catalogLoader = PgCatalogLoader(connection)
+          val result = ColumnNullabilityAnalyzer(catalogLoader).queryColumnNullabilityViaProsqlbody(
+            "SELECT 'ALL'::text AS l1, 'ALL'::text AS l2, count(*) AS c " +
+              "FROM gs_t WHERE data ? 'x' GROUP BY ROLLUP('ALL'::text)",
+          )
+          assertThat(result).isNull()
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
     @Test
     fun `duplicate STABLE call is null-extended in BOTH occurrences — the sharpest proof matching is structural`() {
       // date_trunc('month', current_date) is STABLE, not IMMUTABLE, so — unlike upper('a') above —

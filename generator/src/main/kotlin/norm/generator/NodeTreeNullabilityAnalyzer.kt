@@ -83,6 +83,57 @@ import norm.generator.NodeTreeNullabilityAnalyzer.Companion.extractOuterJoinNull
  *   KDoc for that companion safety net). Left `false` (the default) for a plain `UPDATE`/`INSERT`,
  *   where the row a `RETURNING` clause reports on always has BOTH an `OLD` and a `NEW` state, so
  *   `NEW` is exactly as trustworthy as an ordinary column reference.
+ * @param hasParameterPlaceholder `true` when the ORIGINAL SQL text — before
+ *   [ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody] replaced every `?` with a typed
+ *   non-null sentinel literal — contained at least one genuine `?` parameter placeholder ANYWHERE
+ *   in the statement, computed via `replaceParameterPlaceholders(sql) != sql` (the SAME
+ *   literal/comment-aware scan the sentinel substitution itself is built on — see
+ *   `SqlPlaceholders.kt`), NOT a naive `'?' in sql` substring test: a `?` appearing only inside a
+ *   string literal or a `--`/`/* */` comment must not set this flag merely because the character
+ *   appears in the text. The jsonb `?` (key-exists) operator (e.g. `data ? 'key'`) is a DIFFERENT,
+ *   unrelated case this fix does not need to worry about: a query using it never reaches this class
+ *   at all through the real pipeline — verified live, with no `GROUP BY`/`ROLLUP` involved — because
+ *   pgJDBC's own `PreparedStatement` rewrites that `?` to `$1` before the statement is ever sent to
+ *   the server, which PostgreSQL then rejects outright (a parameter placeholder cannot stand in for
+ *   an operator token), throwing straight out of `JdbcAnalyzer.analyzeQuery` before nullability
+ *   analysis begins (see [ColumnNullabilityAnalyzer]'s `buildViewSqlWithSentinels` KDoc for the one
+ *   path — a direct call bypassing `JdbcAnalyzer.analyzeQuery` — that DOES reach this class, and
+ *   degrades to "cannot analyze" there instead). Finer granularity than "ANYWHERE in the statement"
+ *   for the placeholder case this flag DOES need to handle — narrowing it to only the specific
+ *   `Const` a `?` actually fed — is structurally impossible: a sentinel-substituted `Const` is
+ *   byte-identical to a hand-written literal by the time it reaches this class (see
+ *   [ColumnNullabilityAnalyzer]'s `trustAssignedExpressions` argument and its call site comment for
+ *   the identical granularity limit, though that argument now uses a different, less precise test
+ *   than this one does). This class never derives the flag itself; it stays a pure function of its
+ *   parsed tree plus its constructor flags, and provenance stays entirely in
+ *   [ColumnNullabilityAnalyzer].
+ *
+ *   When `true`, [extractColumnNullability]'s `groupingKeyExpressions` exclusion and
+ *   [isSafeFromGroupingSetNullExtension]'s [foldsToConst] and `Const` legs are all disabled — see
+ *   those methods' own KDocs for why a `Const` can no longer be trusted as genuinely a literal the
+ *   moment ANY `?` exists anywhere in the statement, even one entirely unrelated to the specific
+ *   `Const` being evaluated. The resulting over-widening is broader than "a duplicate of the
+ *   grouping key": ANY `Const`-bearing or constant-folding expression anywhere in a grouping-sets
+ *   query block loses its non-null verdict once this flag is set, including one with no structural
+ *   relationship to the grouping key at all — e.g. an unrelated literal column, or `count(*) + 1`
+ *   (an aggregate result whose `+ 1` argument is a `Const` that would otherwise be trivially safe;
+ *   see `QueryAnalysisTest`'s accepted-trade tests for both shapes).
+ *
+ *   A narrower alternative was considered and rejected: disabling ONLY the `groupingKeyExpressions`
+ *   exclusion (so a duplicate-of-the-key `Const` is caught) while leaving
+ *   [isSafeFromGroupingSetNullExtension]'s [foldsToConst]/`Const` legs enabled (so `count(*) + 1`
+ *   keeps its precise verdict). That alternative reintroduces a wrong NOT NULL for a key-DERIVED
+ *   expression such as `upper(?) || 'x'` where the grouping key is `upper(?)`: the whole expression
+ *   constant-folds once `?` is replaced by its sentinel (`upper` and `||` are both IMMUTABLE), so
+ *   [foldsToConst] would call it safe — yet verified live (PostgreSQL 16 and 17, `force_generic_plan`)
+ *   the inner `upper(?)` is a genuine, unfolded `Param` that DOES get null-extended by PostgreSQL's
+ *   structural matching, taking the whole `|| 'x'` result down with it (the same mechanism
+ *   `QueryAnalysisTest`'s `expression derived from a Var-free grouping key is nullable` pins for the
+ *   STABLE, parameter-free case — see that test's own KDoc). A wrong NOT NULL is categorically worse
+ *   than an over-widening in this codebase, so every leg stays disabled, not just the one the
+ *   original two repros happened to need. Defaults to `false` (every leg behaves exactly as it did
+ *   before this flag existed) for the overwhelmingly common case of a query block with no parameter
+ *   at all.
  */
 internal class NodeTreeNullabilityAnalyzer(
   private val isStrict: (Int) -> Boolean,
@@ -96,6 +147,7 @@ internal class NodeTreeNullabilityAnalyzer(
   private val isNonNullIffFirstArgumentNonNull: (Int) -> Boolean = { false },
   private val hasGroupingSets: Boolean = false,
   private val forceNewNullable: Boolean = false,
+  private val hasParameterPlaceholder: Boolean = false,
 ) {
 
   private val parser = PgNodeTreeParser()
@@ -143,7 +195,17 @@ internal class NodeTreeNullabilityAnalyzer(
       entries
         .filter { it.sortGroupRef != 0 && it.sortGroupRef in groupingSortGroupRefs }
         .map { it.expression }
-        .filterNot { it is PgNodeExpression.Const || foldsToConst(it) }
+        .let { keyExpressions ->
+          // See hasParameterPlaceholder's KDoc: a sentinel-substituted Const is byte-identical to a
+          // hand-written literal, so this exclusion cannot distinguish "genuinely a literal grouping
+          // key, never null-extended" from "a ? parameter's sentinel, which DOES get null-extended
+          // under a generic plan" once ANY ? exists anywhere in the statement.
+          if (hasParameterPlaceholder) {
+            keyExpressions
+          } else {
+            keyExpressions.filterNot { it is PgNodeExpression.Const || foldsToConst(it) }
+          }
+        }
         .toSet()
     } else {
       emptySet()
@@ -204,6 +266,12 @@ internal class NodeTreeNullabilityAnalyzer(
    *   rescues them identically on every supported version — see `QueryAnalysisTest`'s `duplicate
    *   bare Const grouping key stays non-null...` and `duplicate IMMUTABLE-folding call stays
    *   non-null...` tests, which pin this as an unconditional (not version-branched) assertion.
+   *
+   *   This whole exclusion assumes `entry`'s `Const` is genuinely a literal from the SQL text — true
+   *   only when [hasParameterPlaceholder] is `false`. A sentinel standing in for a `?` parameter is a
+   *   byte-identical `Const` that does NOT fold before PostgreSQL's grouping-key substitution runs
+   *   under a generic plan (the substitution sees a live `Param`, not a literal), so the exclusion is
+   *   entirely disabled whenever [hasParameterPlaceholder] — see that constructor parameter's KDoc.
    */
   private fun isEffectivelyNonNull(
     entry: TargetEntry,
@@ -323,6 +391,13 @@ internal class NodeTreeNullabilityAnalyzer(
    * is exactly the scenario this leg exists to guard against for the (much narrower) functions
    * that ARE on [isAlwaysNonNull]'s list.
    *
+   * Both the [foldsToConst] leg and the `Const` leg below are disabled outright whenever
+   * [hasParameterPlaceholder] — see that constructor parameter's KDoc and [foldsToConst]'s own KDoc
+   * for why: each depends on `expression` being a genuine literal from the SQL text, a premise a
+   * sentinel-substituted `Const` breaks the moment ANY `?` exists anywhere in the statement. The
+   * `isAlwaysNonNull` `FuncExpr` leg is NOT disabled — its soundness (a function tolerating a `null`
+   * ARGUMENT) never depended on whether any `Const` anywhere in the tree was a real literal.
+   *
    * @param depth remaining recursion budget, mirroring [MAX_EXPRESSION_DEPTH]; returns `false`
    *   (safe: assume UNSAFE — i.e. possibly null-extended) once exhausted
    */
@@ -331,13 +406,13 @@ internal class NodeTreeNullabilityAnalyzer(
     depth: Int = MAX_EXPRESSION_DEPTH,
   ): Boolean {
     if (depth <= 0) return false
-    if (foldsToConst(expression, depth)) return true
+    if (!hasParameterPlaceholder && foldsToConst(expression, depth)) return true
     if (expression is PgNodeExpression.FuncExpr && !expression.isVariadic && isAlwaysNonNull(expression.functionOid)) {
       return true
     }
     return when (expression) {
       is PgNodeExpression.Aggref, is PgNodeExpression.GroupingFunc -> true
-      is PgNodeExpression.Const -> true
+      is PgNodeExpression.Const -> !hasParameterPlaceholder
       is PgNodeExpression.JsonExpr, is PgNodeExpression.Unknown -> false
       is PgNodeExpression.WindowFunc ->
         safetyWalkChildren(expression).all { isSafeFromGroupingSetNullExtension(it, depth - 1) }
@@ -379,6 +454,14 @@ internal class NodeTreeNullabilityAnalyzer(
    * of them as folding would be an unverified guess. This matters concretely for
    * [PgNodeExpression.CoerceViaIo]: an I/O-based cast function can itself be STABLE (e.g.
    * `timestamptz`'s output function depends on the session's `TimeZone` setting).
+   *
+   * This entire premise assumes a [PgNodeExpression.Const] leaf really is a literal from the SQL
+   * text, so that "folds to a `Const`" and "already IS a `Const`" are the same, provably-safe thing.
+   * That assumption breaks for a sentinel standing in for a `?` parameter — byte-identical to a
+   * literal in the parsed tree, yet backed by a live `Param` that does NOT fold under a generic plan
+   * (verified live: it survives to become a genuine, matchable subexpression exactly like a STABLE
+   * call). Every caller of this method therefore skips it entirely whenever [hasParameterPlaceholder]
+   * — see that constructor parameter's KDoc.
    *
    * @param depth remaining recursion budget, mirroring [MAX_EXPRESSION_DEPTH]; returns `false` (not
    *   provably folding) once exhausted

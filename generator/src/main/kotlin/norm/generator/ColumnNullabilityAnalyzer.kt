@@ -35,6 +35,22 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    * Uses `PreparedStatement.getParameterMetaData()` to determine the PostgreSQL type of each
    * parameter, then builds a non-null literal of that type (e.g., `0::int4`, `''::text`).
    *
+   * Known, unfixed limitation: the jsonb `?` (key-exists) operator (e.g. `data ? 'key'`) uses the
+   * identical `?` character a bind parameter does, in a position neither pgJDBC's own client-side
+   * query rewriting nor [replaceParameterPlaceholders]'s lexical scan can distinguish from a real
+   * placeholder — both require understanding PostgreSQL operator grammar, not just string-literal/
+   * comment lexing, to tell the two apart. In practice this never reaches THIS method at all: pgJDBC
+   * rewrites that `?` to `$1` inside `JdbcAnalyzer.analyzeQuery`'s own `PreparedStatement` calls,
+   * BEFORE Norm's nullability analysis is ever invoked, and PostgreSQL rejects the rewritten text
+   * outright (verified live, with no `GROUP BY`/`ROLLUP` involved) — an uncaught `SQLException` that
+   * fails the whole query analysis, not merely this method. Only a caller that bypasses
+   * `JdbcAnalyzer.analyzeQuery` and invokes [queryColumnNullabilityViaProsqlbody] directly reaches
+   * this method's OWN `prepareStatement` call for such a query, and the SAME rewrite-then-reject
+   * happens there too — caught by this method's `catch` below, degrading gracefully to `null`
+   * exactly like any other malformed input this class cannot analyze. Fixing the underlying
+   * ambiguity would require understanding PostgreSQL operator grammar, not just string-literal/
+   * comment lexing, and is out of scope here.
+   *
    * @return The SQL with `?` replaced by typed sentinels, or `null` if parameter metadata
    *   cannot be obtained (caller should fall back to NULL replacement).
    */
@@ -177,12 +193,21 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
         // parameter blocks analyzeNodeTree's :targetList-to-:returningList substitution (see its
         // KDoc) for the WHOLE statement, not just the specific assignment a parameter feeds,
         // because there is no structural way from here to tell which assignment(s) it was.
+        //
+        // hasParameterPlaceholder deliberately does NOT reuse '?' in sql: that naive substring test
+        // is a false positive for a `?` inside a string literal (`'is it?'`), a `--`/`/* */` comment,
+        // or the jsonb `?` (key-exists) operator — none of those are ever replaced with a sentinel,
+        // so none of them should widen this analysis. replaceParameterPlaceholders(sql) != sql reuses
+        // the SAME literal/comment-aware scan buildViewSqlWithSentinels' own sentinel substitution is
+        // built on (see SqlPlaceholders.kt), so "did this SQL actually get a sentinel substituted
+        // into it" is answered precisely rather than approximated.
         analyzeNodeTree(
           nodeTree,
           applyQualNarrowing = true,
           sql = substitutedSql,
           trustAssignedExpressions = '?' !in sql,
           mergeAbsentVarnos = mergeAbsent,
+          hasParameterPlaceholder = replaceParameterPlaceholders(sql) != sql,
         )
       } finally {
         connection.createStatement().use { statement ->
@@ -213,6 +238,14 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    *   query AND every nested CTE body and subquery reached from it. Threaded through rather than a
    *   fixed `true` so a future caller with a rewritten body whose `WHERE`/`ON` predicate no longer
    *   corresponds to what `RETURNING` sees can suppress it; every current caller passes `true`.
+   * @param hasParameterPlaceholder See [NodeTreeNullabilityAnalyzer]'s constructor parameter of the
+   *   same name — computed once, identically to [trustAssignedExpressions] (`'?' !in sql`, negated),
+   *   at [queryColumnNullabilityViaProsqlbody]'s call site, and threaded unchanged through every
+   *   nested CTE body and subquery reached from here (via [buildCteColumnNotNull],
+   *   [buildSubqueryColumnNotNull], and their own recursive callers), so a `?` anywhere in the
+   *   ORIGINAL statement — even one nested arbitrarily deep inside a CTE or subquery — disables the
+   *   same `Const`-provenance-dependent legs everywhere in the tree, not just at the level the `?`
+   *   textually appears.
    */
   private fun analyzeNodeTree(
     nodeTree: String,
@@ -220,6 +253,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     @Language("PostgreSQL") sql: String,
     trustAssignedExpressions: Boolean = true,
     mergeAbsentVarnos: Map<Int, Boolean> = emptyMap(),
+    hasParameterPlaceholder: Boolean = false,
   ): List<Boolean> {
     val rangeTable = nodeTreeParser.parseRangeTable(nodeTree) // varno → relid (base tables only)
     // GROUP BY queries use an *GROUP* RTE (rtekind 9) whose target list VARs reference the group
@@ -244,8 +278,8 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     // For subquery RTEs (rtekind 1), the outer VAR's varno is not in rangeTable.
     // Resolve their nullability by recursively analyzing each subquery's target list.
     // The map is keyed by (varno, varattno) for direct lookup in isSourceColumnNotNull.
-    val subqueryColumnNotNull = buildSubqueryColumnNotNull(nodeTree, applyQualNarrowing, sql)
-    val cteColumnNotNull = buildCteColumnNotNull(nodeTree, applyQualNarrowing, sql)
+    val subqueryColumnNotNull = buildSubqueryColumnNotNull(nodeTree, applyQualNarrowing, sql, hasParameterPlaceholder)
+    val cteColumnNotNull = buildCteColumnNotNull(nodeTree, applyQualNarrowing, sql, hasParameterPlaceholder)
     // A non-zero :resultRelation means this is an INSERT/UPDATE/DELETE/MERGE, not a SELECT — see
     // parseResultRelation's KDoc. Its :targetList holds the value expressions being WRITTEN to
     // each explicitly-assigned column of the target relation (keyed by :resno = the column's
@@ -325,6 +359,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     val analyzer = buildAnalyzer(
       hasGroupingSets = hasGroupingSets,
       forceNewNullable = forceNewNullable,
+      hasParameterPlaceholder = hasParameterPlaceholder,
       isSourceColumnNotNull = plainIsSourceColumnNotNull,
     )
     // :returningList must be checked FIRST, not as a fallback for an empty :targetList: an INSERT
@@ -347,7 +382,11 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
       // plain catalog/qual/subquery/CTE resolution [analyzer] itself uses, which is exactly correct
       // for that column's pass-through (unmodified) value.
       val returningAnalyzer =
-        buildAnalyzer(hasGroupingSets = false, forceNewNullable = forceNewNullable) { varno, varattno ->
+        buildAnalyzer(
+          hasGroupingSets = false,
+          forceNewNullable = forceNewNullable,
+          hasParameterPlaceholder = hasParameterPlaceholder,
+        ) { varno, varattno ->
           val assignedExpression = if (varno == resultRelationVarno) targetListByResno[varattno] else null
           if (assignedExpression != null) {
             analyzer.isNonNull(assignedExpression)
@@ -382,6 +421,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
   private fun buildAnalyzer(
     hasGroupingSets: Boolean = false,
     forceNewNullable: Boolean = false,
+    hasParameterPlaceholder: Boolean = false,
     isSourceColumnNotNull: (varno: Int, varattno: Int) -> Boolean,
   ): NodeTreeNullabilityAnalyzer = NodeTreeNullabilityAnalyzer(
     isStrict = isStrictFunction,
@@ -395,6 +435,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     isNonNullIffFirstArgumentNonNull = { oid -> oid in nonNullIffFirstArgumentNonNullFunctionOids },
     hasGroupingSets = hasGroupingSets,
     forceNewNullable = forceNewNullable,
+    hasParameterPlaceholder = hasParameterPlaceholder,
   )
 
   /**
@@ -431,15 +472,18 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    *
    * @param applyQualNarrowing See [analyzeNodeTree]'s parameter of the same name. Threaded
    *   through unchanged to every CTE body analyzed here.
+   * @param hasParameterPlaceholder See [analyzeNodeTree]'s parameter of the same name. Threaded
+   *   through unchanged to every CTE body analyzed here.
    */
   private fun buildCteColumnNotNull(
     nodeTree: String,
     applyQualNarrowing: Boolean = true,
     @Language("PostgreSQL") sql: String,
+    hasParameterPlaceholder: Boolean = false,
   ): Map<Pair<Int, Int>, Boolean> {
     val cteRteMap = nodeTreeParser.parseCteRangeTableEntries(nodeTree)
     if (cteRteMap.isEmpty()) return emptyMap()
-    val resolvedCtes = resolveCteBodies(nodeTree, applyQualNarrowing, sql)
+    val resolvedCtes = resolveCteBodies(nodeTree, applyQualNarrowing, sql, hasParameterPlaceholder)
     if (resolvedCtes.isEmpty()) return emptyMap()
 
     return buildMap {
@@ -466,12 +510,14 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     nodeTree: String,
     applyQualNarrowing: Boolean,
     @Language("PostgreSQL") sql: String,
+    hasParameterPlaceholder: Boolean = false,
   ): Map<String, List<Boolean>> {
     val cteDefinitions = nodeTreeParser.parseCteList(nodeTree)
     if (cteDefinitions.isEmpty()) return emptyMap()
     val resolvedCtes = mutableMapOf<String, List<Boolean>>()
     for (cte in cteDefinitions) {
-      val nullabilities = analyzeCteBodyNullability(cte, resolvedCtes, applyQualNarrowing, sql) ?: continue
+      val nullabilities =
+        analyzeCteBodyNullability(cte, resolvedCtes, applyQualNarrowing, sql, hasParameterPlaceholder) ?: continue
       resolvedCtes[cte.name] = nullabilities
     }
     return resolvedCtes
@@ -481,19 +527,34 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    * @param sql See [mergeAbsentVarnos]'s parameter of the same name — passed through unchanged so
    *   a MERGE nested in [cte]'s own body can be resolved by the SAME EXPLAIN call this parameter
    *   documents, keyed by ITS OWN target/source relation names.
+   * @param hasParameterPlaceholder See [analyzeNodeTree]'s parameter of the same name.
    */
   private fun analyzeCteBodyNullability(
     cte: NodeTreeCteDefinition,
     previouslyResolved: Map<String, List<Boolean>>,
     applyQualNarrowing: Boolean = true,
     @Language("PostgreSQL") sql: String,
+    hasParameterPlaceholder: Boolean = false,
   ): List<Boolean>? {
     if (nodeTreeParser.hasSetOperations(cte.queryBlock)) {
-      return analyzeSetOperationBranches(cte.queryBlock, previouslyResolved, cte.name, applyQualNarrowing)
+      return analyzeSetOperationBranches(
+        cte.queryBlock,
+        previouslyResolved,
+        cte.name,
+        applyQualNarrowing,
+        hasParameterPlaceholder,
+      )
     }
     val cteRangeTable = nodeTreeParser.parseRangeTable(cte.queryBlock)
     val mergeAbsent = mergeAbsentVarnos(cte.queryBlock, cteRangeTable, sql) ?: return null
-    val analyzer = buildCteBodyAnalyzer(cte.queryBlock, previouslyResolved, applyQualNarrowing, mergeAbsent, sql)
+    val analyzer = buildCteBodyAnalyzer(
+      cte.queryBlock,
+      previouslyResolved,
+      applyQualNarrowing,
+      mergeAbsent,
+      sql,
+      hasParameterPlaceholder,
+    )
     // :returningList must be checked FIRST, not as a fallback for an empty :targetList — see
     // analyzeNodeTree's identical guard for the full reasoning (an INSERT/UPDATE's OWN :targetList
     // holds the value expressions being WRITTEN, a completely different list from its RETURNING
@@ -538,6 +599,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    * changes nothing and the loop stops), which the `while` condition below checks directly rather
    * than trusting an iteration-count bound alone.
    *
+   * @param hasParameterPlaceholder See [analyzeNodeTree]'s parameter of the same name.
    * @return `null` if [queryBlock] has no analyzable subquery branches at all, or if the seed
    *   branch itself could not be analyzed (an empty result — see [extractColumnNullability]'s
    *   contract). Otherwise, one nullability value per output column, in `SELECT` order.
@@ -547,6 +609,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     previouslyResolved: Map<String, List<Boolean>>,
     cteName: String,
     applyQualNarrowing: Boolean = true,
+    hasParameterPlaceholder: Boolean = false,
   ): List<Boolean>? {
     val subqueryBranches = nodeTreeParser.parseSubqueryRangeTable(queryBlock).values.toList()
     if (subqueryBranches.isEmpty()) return null
@@ -555,7 +618,12 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     // PostgreSQL rejects a self-reference in the non-recursive term — so its nullability never
     // depends on the fixpoint loop below and is computed exactly once.
     val seedBlock = subqueryBranches.first()
-    val seedAnalyzer = buildCteBodyAnalyzer(seedBlock, previouslyResolved, applyQualNarrowing)
+    val seedAnalyzer = buildCteBodyAnalyzer(
+      seedBlock,
+      previouslyResolved,
+      applyQualNarrowing,
+      hasParameterPlaceholder = hasParameterPlaceholder,
+    )
     val seedResult = seedAnalyzer.extractColumnNullability(seedBlock)
     if (seedResult.isEmpty()) return null
 
@@ -577,7 +645,12 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
       val resolvedWithSelfReference = previouslyResolved + (cteName to combined)
       val branchResults = mutableListOf(seedResult)
       for (branchBlock in otherBranches) {
-        val branchAnalyzer = buildCteBodyAnalyzer(branchBlock, resolvedWithSelfReference, applyQualNarrowing)
+        val branchAnalyzer = buildCteBodyAnalyzer(
+          branchBlock,
+          resolvedWithSelfReference,
+          applyQualNarrowing,
+          hasParameterPlaceholder = hasParameterPlaceholder,
+        )
         val result = branchAnalyzer.extractColumnNullability(branchBlock)
         // An empty result means this branch's own nullability could not be determined at all — not
         // "this branch has zero columns" (impossible; every branch of a set operation has the same
@@ -631,6 +704,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    *   never `MERGE`-shaped) set-operation branch callers in [analyzeSetOperationBranches], where an
    *   empty `EXPLAIN` target simply fails harmlessly (caught, treated as "cannot resolve") for the
    *   narrow, deeper case of a subquery nested that deep referencing ITS OWN local `MERGE` CTE.
+   * @param hasParameterPlaceholder See [analyzeNodeTree]'s parameter of the same name.
    */
   private fun buildCteBodyAnalyzer(
     queryBlock: String,
@@ -638,6 +712,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     applyQualNarrowing: Boolean = true,
     mergeAbsentVarnos: Map<Int, Boolean> = emptyMap(),
     @Language("PostgreSQL") sql: String = "",
+    hasParameterPlaceholder: Boolean = false,
   ): NodeTreeNullabilityAnalyzer {
     val cteRangeTable = nodeTreeParser.parseRangeTable(queryBlock)
     // See analyzeNodeTree's identical guard: GROUPING SETS/CUBE/ROLLUP can null-extend a
@@ -651,7 +726,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
       nodeTreeParser.parseGroupRteMap(queryBlock)
     }
     val innerCteNotNull = buildInnerCteNotNull(queryBlock, previouslyResolved)
-    val subqueryColumnNotNull = buildSubqueryColumnNotNull(queryBlock, applyQualNarrowing, sql)
+    val subqueryColumnNotNull = buildSubqueryColumnNotNull(queryBlock, applyQualNarrowing, sql, hasParameterPlaceholder)
     // See analyzeNodeTree's identical guard for why qual narrowing is suppressed whenever
     // hasGroupingSets: a grouping key is exactly the thing a GROUPING SETS/CUBE/ROLLUP query
     // null-extends after WHERE has already run. A non-zero :resultRelation suppresses narrowing
@@ -666,7 +741,11 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     } else {
       emptySet()
     }
-    return buildAnalyzer(hasGroupingSets = hasGroupingSets, forceNewNullable = forcesNewNullable(queryBlock)) {
+    return buildAnalyzer(
+      hasGroupingSets = hasGroupingSets,
+      forceNewNullable = forcesNewNullable(queryBlock),
+      hasParameterPlaceholder = hasParameterPlaceholder,
+    ) {
         varno,
         varattno,
       ->
@@ -709,12 +788,14 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    *
    * @param nodeTree the `pg_rewrite.ev_action` text of the outer query's temporary view
    * @param applyQualNarrowing See [analyzeNodeTree]'s parameter of the same name.
+   * @param hasParameterPlaceholder See [analyzeNodeTree]'s parameter of the same name.
    * @return A map from `(varno, varattno)` pairs to `true` when the subquery column is non-null
    */
   private fun buildSubqueryColumnNotNull(
     nodeTree: String,
     applyQualNarrowing: Boolean = true,
     @Language("PostgreSQL") sql: String = "",
+    hasParameterPlaceholder: Boolean = false,
   ): Map<Pair<Int, Int>, Boolean> {
     // Set-operation queries (UNION ALL, INTERSECT, EXCEPT) store their branches as rtekind=1
     // subquery RTEs. Tracing through them would incorrectly report the first branch's nullability
@@ -730,7 +811,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     // scope — inside its OWN `:rtable`, not [nodeTree]'s. Resolved once here, lazily, so a
     // [nodeTree] with no CTEs at all (the overwhelmingly common case) never pays for
     // [resolveCteBodies]'s recursive analysis.
-    val resolvedCtes by lazy { resolveCteBodies(nodeTree, applyQualNarrowing, sql) }
+    val resolvedCtes by lazy { resolveCteBodies(nodeTree, applyQualNarrowing, sql, hasParameterPlaceholder) }
     return buildMap {
       for ((outerVarno, subqueryBlock) in subqueryRangeTable) {
         // Parse the subquery's own base-table range table for isSourceColumnNotNull.
@@ -754,7 +835,10 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
         } else {
           emptySet()
         }
-        val subAnalyzer = buildAnalyzer(hasGroupingSets = hasGroupingSets) { subVarno, subVarattno ->
+        val subAnalyzer = buildAnalyzer(
+          hasGroupingSets = hasGroupingSets,
+          hasParameterPlaceholder = hasParameterPlaceholder,
+        ) { subVarno, subVarattno ->
           if (isProvenByQuals(subQualNotNullVars, groupRteMap, subVarno, subVarattno)) {
             true
           } else {
