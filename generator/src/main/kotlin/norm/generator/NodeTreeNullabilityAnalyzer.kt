@@ -107,6 +107,18 @@ internal class NodeTreeNullabilityAnalyzer(
    * [isNonNull] for accurate expression-level nullability. Returns `true` (nullable) when
    * `isNonNull` returns `false`.
    *
+   * Before any of that, every target-list entry's expression is run through
+   * [substituteGroupRteVars] against [PgNodeTreeParser.parseGroupRteExpressions]'s result. On
+   * PostgreSQL 16 and 17 that map is always empty (no GROUP RTE exists), so this is a no-op and
+   * every entry's expression is exactly what [PgNodeTreeParser.parseTargetList] parsed. On
+   * PostgreSQL 18+, this restores the same tree shape 16/17 already have — the real grouping-key
+   * expression, not a `Var` referencing the synthesized `*GROUP*` RTE — so every rule below
+   * ([groupingSortGroupRefs], [groupingKeyExpressions], [isEffectivelyNonNull],
+   * [isSafeFromGroupingSetNullExtension], [isNonNull]) runs identically regardless of which
+   * PostgreSQL version produced [nodeTreeText]. This applies to a PLAIN `GROUP BY` exactly as much
+   * as to `GROUPING SETS`/`CUBE`/`ROLLUP` — PostgreSQL 18 creates a GROUP RTE for a plain `GROUP BY`
+   * too (verified live) — regardless of [hasGroupingSets].
+   *
    * CTE column resolution is handled by the caller through the [isSourceColumnNotNull] callback.
    * The caller must include CTE column not-null information in this callback so that VAR nodes
    * referencing CTE RTEs resolve correctly via the standard [isNonNull] Var evaluation path.
@@ -116,8 +128,16 @@ internal class NodeTreeNullabilityAnalyzer(
    *   be `null`
    */
   fun extractColumnNullability(nodeTreeText: String): List<Boolean> {
-    val entries = parser.parseTargetList(nodeTreeText)
-    if (entries.isEmpty()) return emptyList()
+    val parsedEntries = parser.parseTargetList(nodeTreeText)
+    if (parsedEntries.isEmpty()) return emptyList()
+    val groupRteExpressions = parser.parseGroupRteExpressions(nodeTreeText)
+    val entries = if (groupRteExpressions.isEmpty()) {
+      parsedEntries
+    } else {
+      parsedEntries.map { entry ->
+        entry.copy(expression = substituteGroupRteVars(entry.expression, groupRteExpressions))
+      }
+    }
     val groupingSortGroupRefs = if (hasGroupingSets) parser.parseGroupingSortGroupRefs(nodeTreeText) else emptySet()
     val groupingKeyExpressions = if (hasGroupingSets) {
       entries
@@ -175,16 +195,15 @@ internal class NodeTreeNullabilityAnalyzer(
    *   wrongly forced nullable for `l2` — verified live on every supported version that `l2` stays
    *   `'ALL'`, never `NULL`, even though `l1` (the ref'd occurrence) does become `NULL`.
    *
-   *   On PostgreSQL 18 specifically, this exclusion cannot rescue `u2`/`l2` in PRACTICE, even
-   *   though the reasoning above still holds: PostgreSQL 18's parse-analysis phase pre-resolves
-   *   every occurrence of a grouping-key expression — ref'd or not, foldable or not — into an
-   *   identical bare `*GROUP*`-RTE `Var` before Norm's analyzer ever inspects the tree, so the
-   *   Const-vs-key distinction this exclusion depends on is unavailable at analysis time. `u2`/`l2`
-   *   are forced nullable on PostgreSQL 18 despite their genuine runtime value never being `NULL`
-   *   on any version — an accepted over-widening (correct-or-silent, never wrong-and-confident),
-   *   not a bug in this exclusion. See the PostgreSQL-18-scoped assertions in
-   *   `QueryAnalysisTest`'s `duplicate bare Const grouping key stays non-null...` and `duplicate
-   *   IMMUTABLE-folding call stays non-null...` tests, which pin this divergence per version.
+   *   On PostgreSQL 18, [entry] arrives here already having been run through
+   *   [substituteGroupRteVars] (see [extractColumnNullability]'s own KDoc) — every target-list
+   *   `Var` that PostgreSQL 18's parse-analysis phase rewrote into a reference to the synthesized
+   *   `*GROUP*` RTE has already been resolved back to the real expression it stands for, restoring
+   *   the same tree shape PostgreSQL 16/17 produce directly. `u2`/`l2` therefore arrive here as the
+   *   genuine `FuncExpr`/`Const` PostgreSQL 16/17 always showed, not a bare `Var`, so this exclusion
+   *   rescues them identically on every supported version — see `QueryAnalysisTest`'s `duplicate
+   *   bare Const grouping key stays non-null...` and `duplicate IMMUTABLE-folding call stays
+   *   non-null...` tests, which pin this as an unconditional (not version-branched) assertion.
    */
   private fun isEffectivelyNonNull(
     entry: TargetEntry,

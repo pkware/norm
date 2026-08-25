@@ -2132,7 +2132,7 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `duplicate bare Const grouping key stays non-null in the un-ref'd occurrence on PostgreSQL 16 and 17`() {
+    fun `duplicate bare Const grouping key stays non-null in the un-ref'd occurrence`() {
       // GROUP BY ROLLUP('ALL') matches the FIRST 'ALL'::text occurrence (l1) by ressortgroupref.
       // Verified live on EVERY supported version (16, 17, and 18): l1 is NULL, l2 stays 'ALL', in
       // the ROLLUP summary row — PostgreSQL's structural null-extension (setrefs.c) explicitly
@@ -2141,28 +2141,24 @@ class QueryAnalysisTest {
       // asymmetry groupingKeyExpressions' Const/foldsToConst exclusion depends on — including l2
       // in that set would wrongly force it nullable.
       //
-      // On PostgreSQL 18 specifically, Norm's own analysis cannot see this: verified live via
-      // pg_rewrite.ev_action, PostgreSQL 18's parse-analysis phase (not the planner) pre-resolves
-      // BOTH l1 and l2 into the IDENTICAL bare `{VAR :varno 2 :varattno 1 :varnullingrels (2)}`
-      // referencing a synthesized "*GROUP*" RTE, before Norm's analyzer ever inspects the tree —
-      // ressortgroupref (1 for l1, 0 for l2) still differs, but that isn't consulted by the
-      // ordinary Var-nullability check, and the Const-vs-key distinction that rescues l2 on
-      // PostgreSQL 16/17 is resolved later, during planning, which pg_rewrite.ev_action never
-      // reflects. This is a genuine data-availability gap on PostgreSQL 18, not a bug this fix's
-      // groupingKeyExpressions check could close — an accepted over-widening pinned separately
-      // below, not silenced by asserting the same (imprecise) answer here for every version.
+      // Unconditional across every supported version: the GroupRteSubstitution fix restores the
+      // PostgreSQL 16/17 tree shape on PostgreSQL 18 too — both l1 and l2 arrive at
+      // groupingKeyExpressions as the genuine bare Const '"ALL"' PostgreSQL 16/17 always showed
+      // directly, not a Var referencing the synthesized "*GROUP*" RTE, so the Const-vs-key
+      // distinction this exclusion depends on is available on every version, not lost to PG18's
+      // pre-resolution.
       val query = analyzeWithSchema(
         "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
         "SELECT 'ALL'::text AS l1, 'ALL'::text AS l2, count(*) AS c FROM gs_t GROUP BY ROLLUP('ALL'::text)",
       )
       assertThat(query.columns).hasSize(3)
       assertThat(query.columns[0].notNull).isFalse()
-      assertThat(query.columns[1].notNull).isEqualTo(pgVersion.substringBefore('.').toInt() < 18)
+      assertThat(query.columns[1].notNull).isTrue()
       assertThat(query.columns[2].notNull).isTrue()
     }
 
     @Test
-    fun `duplicate IMMUTABLE-folding call stays non-null in the un-ref'd occurrence on PostgreSQL 16 and 17`() {
+    fun `duplicate IMMUTABLE-folding call stays non-null in the un-ref'd occurrence`() {
       // upper('a') is IMMUTABLE over a literal argument, so PostgreSQL's early constant folding
       // (eval_const_expressions, well before setrefs.c's null-extension substitution) reduces
       // BOTH occurrences to a bare Const('A') before the substitution pass ever runs. Verified
@@ -2171,18 +2167,17 @@ class QueryAnalysisTest {
       // same shape, which does NOT fold and IS null-extended in both occurrences — see the
       // date_trunc case below).
       //
-      // On PostgreSQL 18 specifically, as with the bare-Const case above, Norm's analysis cannot
-      // see this: its parse-analysis phase pre-resolves both u1 and u2 into the identical bare
-      // "*GROUP*" RTE Var before Norm's analyzer ever runs, independently of whether the original
-      // expression was foldable — an accepted over-widening, verified live and pinned above for
-      // the bare-Const case this shares its root cause with.
+      // Unconditional across every supported version — same reasoning as the bare-Const case
+      // above: the GroupRteSubstitution fix resolves both u1 and u2's target-list Var back to the
+      // real upper('a') FuncExpr before groupingKeyExpressions ever runs, so both fold to the same
+      // bare Const('A') on PostgreSQL 18 exactly as they always did on 16/17.
       val query = analyzeWithSchema(
         "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
         "SELECT upper('a') AS u1, upper('a') AS u2, count(*) AS c FROM gs_t GROUP BY ROLLUP(upper('a'))",
       )
       assertThat(query.columns).hasSize(3)
       assertThat(query.columns[0].notNull).isFalse()
-      assertThat(query.columns[1].notNull).isEqualTo(pgVersion.substringBefore('.').toInt() < 18)
+      assertThat(query.columns[1].notNull).isTrue()
       assertThat(query.columns[2].notNull).isTrue()
     }
 
@@ -2195,6 +2190,14 @@ class QueryAnalysisTest {
       // duplicate) alike — this is the same mechanism, applied to a non-Const, non-folding
       // expression, that the concat bug this fix addresses exploited. Verified live (PostgreSQL 16
       // and 17): BOTH d1 and d2 are NULL in the ROLLUP summary row.
+      //
+      // PostgreSQL 18's own RUNTIME actually diverges here (verified live): only d1 (the entry
+      // PostgreSQL assigned :ressortgroupref to) is NULL in the summary row; d2 keeps its real
+      // value. Norm deliberately does NOT chase that: after GroupRteSubstitution, d2's target-list
+      // Var resolves to the SAME structural expression as d1's — indistinguishable from the
+      // ressortgroupref-carrying occurrence once resolved — so d2 is reported nullable on every
+      // version, including 18. This is a safe, accepted over-widening (matches the true PG16/17
+      // runtime, and is never wrong in the PG18-confident-NOT-NULL direction), not an oversight.
       val query = analyzeWithSchema(
         "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
         """
@@ -2240,6 +2243,171 @@ class QueryAnalysisTest {
       )
       assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    // GitHub issue #241: on PostgreSQL 18, an RTE_GROUP range-table entry (:rtekind 9, alias
+    // *GROUP*) rewrites EVERY target-list occurrence of a grouping-key expression — not merely the
+    // one entry PostgreSQL assigns :ressortgroupref to — into a bare Var referencing that RTE. Prior
+    // to the GroupRteSubstitution fix, the aggregate side of these two queries (c below) fell
+    // through to "source column not found" for that buried Var and was wrongly reported nullable on
+    // PostgreSQL 18 whenever the SAME literal/alias appeared on both the aggregate and the key side
+    // — exactly what these two tests use, unlike the pre-existing tests elsewhere in this class that
+    // deliberately used a DIFFERENT literal to sidestep the bug. These are the issue's own repro
+    // shapes and must be unconditionally correct on every supported PostgreSQL version.
+
+    @Test
+    fun `issue 241 — the aggregate side stays non-null when the ROLLUP key reuses the identical literal`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT count(*) + 0::bigint AS c, 0::bigint AS k FROM t GROUP BY ROLLUP((0::bigint))",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `issue 241 — the aggregate side stays non-null when the ROLLUP key reuses the identical output alias`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT 1 AS one, count(*) + 1 AS cp FROM t GROUP BY ROLLUP(one)",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `a plain GROUP BY on a constant-folding key is non-null — no ROLLUP, still a GROUP RTE on PostgreSQL 18`() {
+      // A GROUP RTE is created for a PLAIN GROUP BY too, not only GROUPING SETS/CUBE/ROLLUP
+      // (verified live). hasGroupingSets is false here — parseGroupRteMap alone cannot resolve this
+      // key, because its groupexprs entry is a FUNCEXPR/CONST, not a bare VAR (see that method's
+      // KDoc) — so this exercises the substitution fix on the code path GROUPING SETS tests never
+      // touch.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT 0::bigint AS k, count(*) AS n FROM t GROUP BY 0::bigint",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `plain GROUP BY on the nullable side of a LEFT JOIN is nullable — the wrong-NOT-NULL regression`() {
+      // Before the GroupRteSubstitution fix, this was a CONFIDENTLY WRONG NOT NULL on PostgreSQL 18,
+      // not merely an over-widening: the target-list Var wrapping the GROUP RTE reference carries an
+      // EMPTY :varnullingrels (PostgreSQL does not propagate the outer join's nulling relations onto
+      // it), while parseGroupRteMap's coarser VAR-only resolution maps it back to the base column by
+      // (varno, varattno) alone and discards the GROUP RTE's OWN :groupexprs entry — the one that
+      // actually carries the correct, non-empty nulling relations from the LEFT JOIN. x is NOT NULL
+      // by schema, but the join can still leave it absent for an unmatched t row.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL);
+        CREATE TABLE u (id INT PRIMARY KEY, x TEXT NOT NULL)
+        """.trimIndent(),
+        "SELECT b.x, count(*) AS n FROM t LEFT JOIN u b ON b.id = t.id GROUP BY b.x",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `ROLLUP on the nullable side of a LEFT JOIN is nullable — same wrong-NOT-NULL regression under ROLLUP`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL);
+        CREATE TABLE u (id INT PRIMARY KEY, x TEXT NOT NULL)
+        """.trimIndent(),
+        "SELECT b.x, count(*) AS n FROM t LEFT JOIN u b ON b.id = t.id GROUP BY ROLLUP(b.x)",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `a second ROLLUP key at varattno 2 resolves its own groupexprs entry, not the first key's`() {
+      // Two grouping keys means the GROUP RTE's :groupexprs has two entries: index 0 for u.x (the
+      // FIRST key, join-nullable), index 1 for the literal 5::bigint (the SECOND key, always
+      // non-null). c's aggregate arithmetic reuses the literal 5, so PostgreSQL rewrites THAT
+      // occurrence to a Var whose :varattno is 2 (1-based) — resolving it correctly requires
+      // picking groupexprs[1] (the Const), not groupexprs[0] (u.x). A duplicate-of-a-raw-Var
+      // detection shortcut (matching k1's own un-substituted Var structurally) cannot rescue this
+      // case the way it does for a bare duplicate key — c's Var sits inside an OpExpr, a
+      // structurally DIFFERENT shape from k1's bare Var, so only correct varattno-to-list-index
+      // resolution can prove c non-null. The columns[0] (c) assertion is the ONLY one that
+      // discriminates an off-by-one or reversed-order bug in either the parser or the substitution:
+      // such a bug would resolve c's buried Var to u.x instead of the Const — genuinely nullable via
+      // the LEFT JOIN — and wrongly report c nullable instead of non-null. columns[1] (k1) is NOT a
+      // discriminator despite also referencing u.x: k1 IS the grouping key itself (its own
+      // :ressortgroupref is 1, in groupingSortGroupRefs), so isEffectivelyNonNull's first condition
+      // (NodeTreeNullabilityAnalyzer.kt's groupingSortGroupRefs check) forces it nullable before its
+      // substituted expression is ever consulted — an off-by-one bug could resolve k1 to the WRONG
+      // groupexprs entry and it would still come out nullable regardless. columns[1]/[2] are kept as
+      // controls (proving both keys are still correctly nullable), not because they catch this bug.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL);
+        CREATE TABLE u (id INT PRIMARY KEY, x TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        SELECT count(*) + 5::bigint AS c, u.x AS k1, 5::bigint AS k2
+        FROM t LEFT JOIN u ON u.id = t.id
+        GROUP BY ROLLUP(u.x, 5::bigint)
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isFalse()
+    }
+
+    // Negative controls: the substitution fix must not accidentally rescue any of these from the
+    // nullability GROUP BY ROLLUP genuinely imposes on them — each is a case the fix touches (a
+    // grouping-key expression that appears more than once, or in more than one shape) but that must
+    // stay exactly as nullable after the fix as before it.
+
+    @Test
+    fun `duplicate bare Var grouping key stays nullable in both occurrences`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT a AS k1, a AS k2, count(*) AS c FROM t GROUP BY ROLLUP(a)",
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `duplicate lower(a) expression key stays nullable in both occurrences`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT lower(a) AS k1, lower(a) AS k2, count(*) AS c FROM t GROUP BY ROLLUP(lower(a))",
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `the key column and a derived expression over it both stay nullable`() {
+      // k is the grouping key itself (sortGroupRef match); d is a DIFFERENT expression built on top
+      // of the same key (upper(lower(a)), not lower(a) itself) — d's own sortGroupRef is 0 and it
+      // only matches structurally, deep inside upper(...), which only isSafeFromGroupingSetNullExtension's
+      // tree walk over the SUBSTITUTED expression can catch.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL)",
+        "SELECT lower(a) AS k, upper(lower(a)) AS d, count(*) AS c FROM t GROUP BY ROLLUP(lower(a))",
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isTrue()
     }
   }
 
@@ -7705,6 +7873,11 @@ class QueryAnalysisTest {
       // The `()` grouping set emits a null row for `a` regardless of what WHERE proved about the
       // rows that fed the aggregation — this is the regression test for the single worst failure
       // mode of this change.
+      //
+      // This test cannot currently fail on any supported PostgreSQL version, for the same reason as
+      // the eight further down this class named "... guard is not defeated by a proving WHERE
+      // clause" — see the comment above the first of those eight for the full explanation and the
+      // coverage gap it documents.
       val query = analyzeWithSchema(
         schema,
         "SELECT a FROM t WHERE a IS NOT NULL GROUP BY GROUPING SETS ((a), ())",
@@ -7775,18 +7948,44 @@ class QueryAnalysisTest {
       assertThat(query.columns[0].notNull).isFalse()
     }
 
-    // On PostgreSQL 16/17 (no GROUP RTE), a subquery's or CTE's own target-list Var for a
-    // grouping key IS the base Var, so without suppressing qual narrowing for the whole query
-    // block whenever hasGroupingSets, the proving WHERE clause would collide with it and wrongly
-    // prove the column non-null. On PostgreSQL 18 (GROUP RTE present), the target-list Var's
-    // varno differs from the base varno, which happens to prevent the same collision
-    // independently of this guard — so these four tests only exercise the true regression when
-    // run against PostgreSQL 16/17, and are skipped outright on 18+ (see the identical situation,
-    // and its identical fix, for the EXPRESSION-grouping-key cluster below).
+    // This test and the eight below it (including "GROUPING SETS guard is not defeated by a proving
+    // WHERE clause" earlier in this class) are named as regression tests for the qual-narrowing
+    // suppression guard — the three `!hasGroupingSets` conditions in ColumnNullabilityAnalyzer
+    // (currently at lines 293, 664, and 752) that stop a WHERE clause from wrongly proving a
+    // GROUPING SETS/CUBE/ROLLUP result column non-null. None of these nine currently CAN fail,
+    // on any supported PostgreSQL version, so none of them actually exercises that guard today.
+    //
+    // Verified empirically: temporarily removing NodeTreeNullabilityAnalyzer.isEffectivelyNonNull's
+    // `if (hasGroupingSets) { ... }` early return (so nullability falls through to plain `isNonNull`
+    // evaluation) makes exactly these nine tests fail, on PostgreSQL 18 — no other test in this class
+    // is affected, confirming the enumeration here is complete. With that early return intact (the
+    // real, current behavior) and the three qual-narrowing suppressions ALSO temporarily defeated
+    // (`applyQualNarrowing && !hasGroupingSets && ...` changed to `applyQualNarrowing && ...` at all
+    // three sites), all nine still PASS — on PostgreSQL 18 and on PostgreSQL 16 alike.
+    //
+    // The reason: every query below selects a column that is EXACTLY its own GROUPING SETS/ROLLUP
+    // grouping key (e.g. `a` under `GROUP BY ROLLUP(a)`, `lower(a)` under `GROUP BY
+    // ROLLUP(lower(a))`). Such a column's target-list entry gets a non-zero `:ressortgroupref`
+    // matching the key, so `isEffectivelyNonNull`'s `isGroupingKey` check (`entry.sortGroupRef != 0
+    // && ... in groupingSortGroupRefs`) ALREADY forces it nullable unconditionally, before `isNonNull`
+    // — and therefore before any qual-narrowing collision — is ever reached. (Independently, none of
+    // these columns has an Aggref/GroupingFunc/WindowFunc descendant either, so
+    // `isSafeFromGroupingSetNullExtension` would ALSO force it nullable even if the sortGroupRef check
+    // did not — a second, equally version-independent reason isNonNull is never reached here.)
+    //
+    // This is a real, currently-unfilled coverage gap, not a resolved one: the qual-narrowing
+    // suppression these nine tests are named for is not actually protected by any test in this suite.
+    // Closing it needs a query where a GROUPING SETS/ROLLUP grouping key's own WHERE-narrowable
+    // column is read WITHOUT being (or textually matching) the grouping key itself — e.g. narrowing
+    // a NON-key column that WHERE also proves something about, in the presence of a grouping set that
+    // could null-extend a DIFFERENT column while leaving this one's `isEffectivelyNonNull` path
+    // actually reach `isNonNull`. No such query exists in this suite yet. These nine tests are left
+    // in place, unmodified beyond removing their now-inapplicable PostgreSQL-18 skip guards, as
+    // scaffolding: if `isEffectivelyNonNull`'s `hasGroupingSets` early return is ever narrowed or
+    // removed, at least these nine will fail immediately rather than the gap staying silent.
 
     @Test
     fun `subquery ROLLUP grouping set guard is not defeated by a proving WHERE clause`() {
-      assumeTrue(pgVersion.substringBefore('.').toInt() < 18, "only exercises the guard pre-GROUP-RTE")
       val query = analyzeWithSchema(
         schema,
         "SELECT x FROM (SELECT a AS x FROM t WHERE a IS NOT NULL GROUP BY ROLLUP(a)) s",
@@ -7797,7 +7996,6 @@ class QueryAnalysisTest {
 
     @Test
     fun `subquery GROUPING SETS guard is not defeated by a proving WHERE clause`() {
-      assumeTrue(pgVersion.substringBefore('.').toInt() < 18, "only exercises the guard pre-GROUP-RTE")
       val query = analyzeWithSchema(
         schema,
         "SELECT x FROM (SELECT a AS x FROM t WHERE a IS NOT NULL GROUP BY GROUPING SETS ((a), ())) s",
@@ -7808,7 +8006,6 @@ class QueryAnalysisTest {
 
     @Test
     fun `CTE ROLLUP grouping set guard is not defeated by a proving WHERE clause`() {
-      assumeTrue(pgVersion.substringBefore('.').toInt() < 18, "only exercises the guard pre-GROUP-RTE")
       val query = analyzeWithSchema(
         schema,
         "WITH c AS (SELECT a FROM t WHERE a IS NOT NULL GROUP BY ROLLUP(a)) SELECT a FROM c",
@@ -7819,7 +8016,6 @@ class QueryAnalysisTest {
 
     @Test
     fun `CTE GROUPING SETS guard is not defeated by a proving WHERE clause`() {
-      assumeTrue(pgVersion.substringBefore('.').toInt() < 18, "only exercises the guard pre-GROUP-RTE")
       val query = analyzeWithSchema(
         schema,
         "WITH c AS (SELECT a FROM t WHERE a IS NOT NULL GROUP BY GROUPING SETS ((a), ())) SELECT a FROM c",
@@ -7828,20 +8024,19 @@ class QueryAnalysisTest {
       assertThat(query.columns[0].notNull).isFalse()
     }
 
-    // An EXPRESSION grouping key — as opposed to the bare-Var keys above — never matches a {VAR}
-    // target-list entry pointing straight at a base column, so resolving these correctly here
-    // depends entirely on suppressing qual narrowing for the whole query block whenever
-    // hasGroupingSets (the key's own nullability is handled independently, and unconditionally on
-    // every PostgreSQL version, by NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension).
-    // These four tests only catch the qual-narrowing regression on PostgreSQL 16/17: on PostgreSQL
-    // 18, the GROUP RTE independently blocks qual narrowing from reaching the leaf Var, so they
-    // would pass there regardless of whether this suppression is present -- each is therefore
-    // skipped outright on 18+ rather than kept as a check that cannot fail on the default test
-    // configuration.
+    // These four EXPRESSION-grouping-key tests are four of the nine covered by the comment above
+    // the `subquery ROLLUP grouping set guard...` test earlier in this class: none of the nine can
+    // currently fail, on any supported PostgreSQL version, and the qual-narrowing suppression they
+    // are named for is not actually protected by any test in this suite. Here the grouping key is an
+    // EXPRESSION (e.g. `lower(a)`) rather than a bare column, but the same two reasons apply: the
+    // target-list entry for `lower(a)` structurally IS the grouping key, so it gets the ROLLUP's own
+    // `:ressortgroupref`, and it also has no Aggref/GroupingFunc/WindowFunc descendant — so both
+    // `isGroupingKey` and `isSafeFromGroupingSetNullExtension` independently force it nullable before
+    // `isNonNull` is ever reached, exactly as for the bare-Var cluster. See that comment for the full
+    // explanation, the empirical verification, and what a query that actually closes the gap needs.
 
     @Test
     fun `expression ROLLUP grouping key guard is not defeated by a proving WHERE clause`() {
-      assumeTrue(pgVersion.substringBefore('.').toInt() < 18, "only exercises the guard pre-GROUP-RTE")
       val query = analyzeWithSchema(
         schema,
         "SELECT lower(a) FROM t WHERE a IS NOT NULL GROUP BY ROLLUP(lower(a))",
@@ -7852,7 +8047,6 @@ class QueryAnalysisTest {
 
     @Test
     fun `concatenation ROLLUP grouping key guard is not defeated by a proving WHERE clause`() {
-      assumeTrue(pgVersion.substringBefore('.').toInt() < 18, "only exercises the guard pre-GROUP-RTE")
       val query = analyzeWithSchema(
         schema,
         "SELECT a || 'z' FROM t WHERE a IS NOT NULL GROUP BY ROLLUP(a || 'z')",
@@ -7863,7 +8057,6 @@ class QueryAnalysisTest {
 
     @Test
     fun `subquery expression ROLLUP grouping key guard is not defeated by a proving WHERE clause`() {
-      assumeTrue(pgVersion.substringBefore('.').toInt() < 18, "only exercises the guard pre-GROUP-RTE")
       val query = analyzeWithSchema(
         schema,
         """
@@ -7878,7 +8071,6 @@ class QueryAnalysisTest {
 
     @Test
     fun `CTE expression ROLLUP grouping key guard is not defeated by a proving WHERE clause`() {
-      assumeTrue(pgVersion.substringBefore('.').toInt() < 18, "only exercises the guard pre-GROUP-RTE")
       val query = analyzeWithSchema(
         schema,
         """
