@@ -131,6 +131,7 @@ private class JsonParser(private val text: String) {
             'r' -> result.append('\r')
             't' -> result.append('\t')
             'u' -> {
+              require(index + 4 < text.length) { "Truncated JSON unicode escape at index $index" }
               val hex = text.substring(index + 1, index + 5)
               result.append(hex.toInt(16).toChar())
               index += 4

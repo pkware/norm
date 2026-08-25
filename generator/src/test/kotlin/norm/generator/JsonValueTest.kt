@@ -137,5 +137,20 @@ class JsonValueTest {
     fun `throws on trailing garbage after a valid value`() {
       assertThrows<IllegalArgumentException> { JsonValue.parse("""{"a": 1} garbage""") }
     }
+
+    @Test
+    fun `throws IllegalArgumentException on a truncated unicode escape`() {
+      assertThrows<IllegalArgumentException> { JsonValue.parse("\"\\u12\"") }
+    }
+
+    @Test
+    fun `throws on a backslash at the end of input`() {
+      assertThrows<IllegalArgumentException> { JsonValue.parse("\"abc\\") }
+    }
+
+    @Test
+    fun `throws on an unterminated array`() {
+      assertThrows<IllegalArgumentException> { JsonValue.parse("[1, 2") }
+    }
   }
 }
