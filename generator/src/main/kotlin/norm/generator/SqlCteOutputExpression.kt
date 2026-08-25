@@ -57,11 +57,9 @@ package norm.generator
  *   sources, which reintroduces exactly the DML-target-vs-CTE-name confusion this function exists
  *   to avoid.
  * - The outer reference, if qualified, folds (see [foldIdentifier]) to the same name as the CTE
- *   itself, compared via [CteDefinition.rawName] — NEVER [CteDefinition.name], which has already
- *   had its quotes stripped and so can no longer tell a quoted `"Foo"` apart from an unquoted
- *   `foo` (a DIFFERENT relation in PostgreSQL); see [CteDefinition.rawName]'s own KDoc. This is
- *   the only name the FROM clause makes it addressable as, per the first bullet above (also
- *   compared via `rawName`, for the same reason).
+ *   itself, compared via [CteDefinition.rawName] — never [CteDefinition.name]; see
+ *   [CteDefinition.rawName]'s own KDoc for why. This is the only name the FROM clause makes it
+ *   addressable as, per the first bullet above (also compared via `rawName`, for the same reason).
  * - NO TWO items in the CTE body's own output list have an EXPLICIT `AS <alias>` (via
  *   [extractAlias]) that fold to the SAME name as each other — checked across ALL aliased items
  *   in the body, not only the two (if any) that happen to fold to the outer reference's own name.
@@ -138,11 +136,7 @@ internal fun resolveCteOutputExpression(
   val cte = cteClause.definitions.singleOrNull() ?: return null
   if (cte.hasColumnList) return null
 
-  // Compared via cte.rawName, NOT cte.name -- CteDefinition.name has already had its quotes
-  // stripped, so folding IT loses the quoted/unquoted distinction PostgreSQL's own identifier
-  // resolution depends on: it would wrongly let an unquoted "foo" match a CTE declared as "Foo"
-  // (a DIFFERENT relation in PostgreSQL) and wrongly reject a quoted "Foo" reference to that same
-  // CTE. See CteDefinition.rawName's own KDoc for why it, not name, is the field to use here.
+  // Compared via cte.rawName, NOT cte.name -- see CteDefinition.rawName's own KDoc for why.
   // selectItem.tableName is folded via its OWN isTableNameQuoted flag (it is a LOGICAL value, not
   // raw text -- see SelectItem's own KDoc), while cte.rawName still folds via the raw-text
   // overload, since CteDefinition never adopted the logical-value/quoted-flag split.
@@ -212,8 +206,7 @@ private val SELECT_FROM_TERMINATOR_KEYWORDS = listOf(
  * a `JOIN` keyword.
  *
  * @param cteRawName MUST be [CteDefinition.rawName], never [CteDefinition.name] — see
- *   [foldIdentifier]'s KDoc for why folding the already-quote-stripped `name` would wrongly equate
- *   a quoted CTE with a differently-quoted or unquoted relation of the same letters.
+ *   [CteDefinition.rawName]'s own KDoc for why.
  * @return `false` if [window] has no top-level `SELECT`/`FROM` at all.
  */
 private fun mainQueryFromIsExactlyThisCte(window: String, cteRawName: String): Boolean {

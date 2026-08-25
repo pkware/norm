@@ -166,14 +166,25 @@ internal class NodeTreeNullabilityAnalyzer(
    *   (`search_indexed_tlist_for_non_var` in `setrefs.c`) explicitly refuses to match a `Const`
    *   node (see [isSafeFromGroupingSetNullExtension]'s KDoc), and an expression that folds to a
    *   `Const` before that matching pass runs (e.g. `upper('a')`) is, by the time the pass runs,
-   *   already a `Const` too — verified live (PostgreSQL 16 and 17): `SELECT upper('a') AS u1,
-   *   upper('a') AS u2, ... GROUP BY ROLLUP(upper('a'))` leaves the un-ref'd duplicate `u2` as
-   *   `'A'`, never `NULL`, in the ROLLUP summary row, unlike a duplicate that does NOT fold (see
-   *   the `date_trunc` case in [isSafeFromGroupingSetNullExtension]'s KDoc, where BOTH occurrences
-   *   are null-extended). Without this exclusion, a duplicate literal like `SELECT 'ALL'::text AS
-   *   l1, 'ALL'::text AS l2, ... GROUP BY ROLLUP('ALL'::text)` would be wrongly forced nullable for
-   *   `l2` — verified live (PostgreSQL 16 and 17) that `l2` stays `'ALL'`, never `NULL`, even
-   *   though `l1` (the ref'd occurrence) does become `NULL`.
+   *   already a `Const` too — verified live on EVERY supported version (16, 17, and 18): `SELECT
+   *   upper('a') AS u1, upper('a') AS u2, ... GROUP BY ROLLUP(upper('a'))` leaves the un-ref'd
+   *   duplicate `u2` as `'A'`, never `NULL`, in the ROLLUP summary row, unlike a duplicate that
+   *   does NOT fold (see the `date_trunc` case in [isSafeFromGroupingSetNullExtension]'s KDoc,
+   *   where BOTH occurrences are null-extended). Without this exclusion, a duplicate literal like
+   *   `SELECT 'ALL'::text AS l1, 'ALL'::text AS l2, ... GROUP BY ROLLUP('ALL'::text)` would be
+   *   wrongly forced nullable for `l2` — verified live on every supported version that `l2` stays
+   *   `'ALL'`, never `NULL`, even though `l1` (the ref'd occurrence) does become `NULL`.
+   *
+   *   On PostgreSQL 18 specifically, this exclusion cannot rescue `u2`/`l2` in PRACTICE, even
+   *   though the reasoning above still holds: PostgreSQL 18's parse-analysis phase pre-resolves
+   *   every occurrence of a grouping-key expression — ref'd or not, foldable or not — into an
+   *   identical bare `*GROUP*`-RTE `Var` before Norm's analyzer ever inspects the tree, so the
+   *   Const-vs-key distinction this exclusion depends on is unavailable at analysis time. `u2`/`l2`
+   *   are forced nullable on PostgreSQL 18 despite their genuine runtime value never being `NULL`
+   *   on any version — an accepted over-widening (correct-or-silent, never wrong-and-confident),
+   *   not a bug in this exclusion. See the PostgreSQL-18-scoped assertions in
+   *   `QueryAnalysisTest`'s `duplicate bare Const grouping key stays non-null...` and `duplicate
+   *   IMMUTABLE-folding call stays non-null...` tests, which pin this divergence per version.
    */
   private fun isEffectivelyNonNull(
     entry: TargetEntry,
