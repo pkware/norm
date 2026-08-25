@@ -7869,15 +7869,14 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `GROUPING SETS guard is not defeated by a proving WHERE clause`() {
+    fun `GROUPING SETS grouping key stays nullable despite a proving WHERE clause`() {
       // The `()` grouping set emits a null row for `a` regardless of what WHERE proved about the
       // rows that fed the aggregation — this is the regression test for the single worst failure
       // mode of this change.
       //
-      // This test cannot currently fail on any supported PostgreSQL version, for the same reason as
-      // the eight further down this class named "... guard is not defeated by a proving WHERE
-      // clause" — see the comment above the first of those eight for the full explanation and the
-      // coverage gap it documents.
+      // This test and the eight further down this class (see the comment above the first of
+      // those eight) pin the same thing: a GROUPING SETS/ROLLUP grouping key stays nullable even
+      // under a WHERE clause that proves the underlying column non-null.
       val query = analyzeWithSchema(
         schema,
         "SELECT a FROM t WHERE a IS NOT NULL GROUP BY GROUPING SETS ((a), ())",
@@ -7948,44 +7947,32 @@ class QueryAnalysisTest {
       assertThat(query.columns[0].notNull).isFalse()
     }
 
-    // This test and the eight below it (including "GROUPING SETS guard is not defeated by a proving
-    // WHERE clause" earlier in this class) are named as regression tests for the qual-narrowing
-    // suppression guard — the three `!hasGroupingSets` conditions in ColumnNullabilityAnalyzer
-    // (currently at lines 293, 664, and 752) that stop a WHERE clause from wrongly proving a
-    // GROUPING SETS/CUBE/ROLLUP result column non-null. None of these nine currently CAN fail,
-    // on any supported PostgreSQL version, so none of them actually exercises that guard today.
+    // This test and the eight below it (including "GROUPING SETS grouping key stays nullable
+    // despite a proving WHERE clause" earlier in this class) pin the `hasGroupingSets` early
+    // return in NodeTreeNullabilityAnalyzer.isEffectivelyNonNull: removing it makes exactly these
+    // nine fail, and no other test in this class — confirmed empirically on PostgreSQL 16 and 18.
+    // That is the reason to keep them.
     //
-    // Verified empirically: temporarily removing NodeTreeNullabilityAnalyzer.isEffectivelyNonNull's
-    // `if (hasGroupingSets) { ... }` early return (so nullability falls through to plain `isNonNull`
-    // evaluation) makes exactly these nine tests fail, on PostgreSQL 18 — no other test in this class
-    // is affected, confirming the enumeration here is complete. With that early return intact (the
-    // real, current behavior) and the three qual-narrowing suppressions ALSO temporarily defeated
-    // (`applyQualNarrowing && !hasGroupingSets && ...` changed to `applyQualNarrowing && ...` at all
-    // three sites), all nine still PASS — on PostgreSQL 18 and on PostgreSQL 16 alike.
+    // The three `!hasGroupingSets` qual-narrowing suppressions in ColumnNullabilityAnalyzer (lines
+    // 293, 664, 752) that these tests were originally named for cannot be exercised by any query.
+    // Verified live: under GROUPING SETS, PostgreSQL rejects the primary-key functional-dependency
+    // shortcut that plain GROUP BY allows, so every non-aggregated column in a grouping-sets
+    // target list must be, or textually match, the grouping key — forcing it nullable via
+    // `isEffectivelyNonNull`'s `isGroupingKey` check before `isNonNull`, and therefore before qual
+    // narrowing, is ever reached. This holds identically at the top-level, CTE-body, and
+    // subquery-RTE sites, because `isSafeFromGroupingSetNullExtension` keys on `PgNodeExpression`
+    // shape, never on what a `Var`'s `varno` resolves to. Both halves of the suppression (qual
+    // narrowing and `groupRteMap = emptyMap()`) are dead for the same reason.
     //
-    // The reason: every query below selects a column that is EXACTLY its own GROUPING SETS/ROLLUP
-    // grouping key (e.g. `a` under `GROUP BY ROLLUP(a)`, `lower(a)` under `GROUP BY
-    // ROLLUP(lower(a))`). Such a column's target-list entry gets a non-zero `:ressortgroupref`
-    // matching the key, so `isEffectivelyNonNull`'s `isGroupingKey` check (`entry.sortGroupRef != 0
-    // && ... in groupingSortGroupRefs`) ALREADY forces it nullable unconditionally, before `isNonNull`
-    // — and therefore before any qual-narrowing collision — is ever reached. (Independently, none of
-    // these columns has an Aggref/GroupingFunc/WindowFunc descendant either, so
-    // `isSafeFromGroupingSetNullExtension` would ALSO force it nullable even if the sortGroupRef check
-    // did not — a second, equally version-independent reason isNonNull is never reached here.)
-    //
-    // This is a real, currently-unfilled coverage gap, not a resolved one: the qual-narrowing
-    // suppression these nine tests are named for is not actually protected by any test in this suite.
-    // Closing it needs a query where a GROUPING SETS/ROLLUP grouping key's own WHERE-narrowable
-    // column is read WITHOUT being (or textually matching) the grouping key itself — e.g. narrowing
-    // a NON-key column that WHERE also proves something about, in the presence of a grouping set that
-    // could null-extend a DIFFERENT column while leaving this one's `isEffectivelyNonNull` path
-    // actually reach `isNonNull`. No such query exists in this suite yet. These nine tests are left
-    // in place, unmodified beyond removing their now-inapplicable PostgreSQL-18 skip guards, as
-    // scaffolding: if `isEffectivelyNonNull`'s `hasGroupingSets` early return is ever narrowed or
-    // removed, at least these nine will fail immediately rather than the gap staying silent.
+    // The one thing that would revive the suppression: extending `Aggref`/`GroupingFunc`
+    // evaluation in `isNonNull` to consult its own arguments' nullability (e.g. a future MIN/MAX
+    // non-empty-source heuristic) without correspondingly narrowing
+    // `isSafeFromGroupingSetNullExtension`'s blanket-safe treatment of those node types. These nine
+    // tests stay in place as scaffolding for that: if `isEffectivelyNonNull`'s `hasGroupingSets`
+    // early return is ever narrowed or removed, at least these nine will fail immediately.
 
     @Test
-    fun `subquery ROLLUP grouping set guard is not defeated by a proving WHERE clause`() {
+    fun `subquery ROLLUP grouping key stays nullable despite a proving WHERE clause`() {
       val query = analyzeWithSchema(
         schema,
         "SELECT x FROM (SELECT a AS x FROM t WHERE a IS NOT NULL GROUP BY ROLLUP(a)) s",
@@ -7995,7 +7982,7 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `subquery GROUPING SETS guard is not defeated by a proving WHERE clause`() {
+    fun `subquery GROUPING SETS grouping key stays nullable despite a proving WHERE clause`() {
       val query = analyzeWithSchema(
         schema,
         "SELECT x FROM (SELECT a AS x FROM t WHERE a IS NOT NULL GROUP BY GROUPING SETS ((a), ())) s",
@@ -8005,7 +7992,7 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `CTE ROLLUP grouping set guard is not defeated by a proving WHERE clause`() {
+    fun `CTE ROLLUP grouping key stays nullable despite a proving WHERE clause`() {
       val query = analyzeWithSchema(
         schema,
         "WITH c AS (SELECT a FROM t WHERE a IS NOT NULL GROUP BY ROLLUP(a)) SELECT a FROM c",
@@ -8015,7 +8002,7 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `CTE GROUPING SETS guard is not defeated by a proving WHERE clause`() {
+    fun `CTE GROUPING SETS grouping key stays nullable despite a proving WHERE clause`() {
       val query = analyzeWithSchema(
         schema,
         "WITH c AS (SELECT a FROM t WHERE a IS NOT NULL GROUP BY GROUPING SETS ((a), ())) SELECT a FROM c",
@@ -8024,19 +8011,15 @@ class QueryAnalysisTest {
       assertThat(query.columns[0].notNull).isFalse()
     }
 
-    // These four EXPRESSION-grouping-key tests are four of the nine covered by the comment above
-    // the `subquery ROLLUP grouping set guard...` test earlier in this class: none of the nine can
-    // currently fail, on any supported PostgreSQL version, and the qual-narrowing suppression they
-    // are named for is not actually protected by any test in this suite. Here the grouping key is an
-    // EXPRESSION (e.g. `lower(a)`) rather than a bare column, but the same two reasons apply: the
-    // target-list entry for `lower(a)` structurally IS the grouping key, so it gets the ROLLUP's own
-    // `:ressortgroupref`, and it also has no Aggref/GroupingFunc/WindowFunc descendant — so both
-    // `isGroupingKey` and `isSafeFromGroupingSetNullExtension` independently force it nullable before
-    // `isNonNull` is ever reached, exactly as for the bare-Var cluster. See that comment for the full
-    // explanation, the empirical verification, and what a query that actually closes the gap needs.
+    // These four EXPRESSION-grouping-key tests pin the same thing as the four bare-Var tests
+    // above (see the comment there for the full explanation). Here the grouping key is an
+    // EXPRESSION (e.g. `lower(a)`) rather than a bare column, but the target-list entry for
+    // `lower(a)` structurally IS the grouping key, so it gets the ROLLUP's own `:ressortgroupref`
+    // and is forced nullable by `isGroupingKey` before `isNonNull` is ever reached — exactly as
+    // for the bare-Var cluster.
 
     @Test
-    fun `expression ROLLUP grouping key guard is not defeated by a proving WHERE clause`() {
+    fun `expression ROLLUP grouping key stays nullable despite a proving WHERE clause`() {
       val query = analyzeWithSchema(
         schema,
         "SELECT lower(a) FROM t WHERE a IS NOT NULL GROUP BY ROLLUP(lower(a))",
@@ -8046,7 +8029,7 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `concatenation ROLLUP grouping key guard is not defeated by a proving WHERE clause`() {
+    fun `concatenation ROLLUP grouping key stays nullable despite a proving WHERE clause`() {
       val query = analyzeWithSchema(
         schema,
         "SELECT a || 'z' FROM t WHERE a IS NOT NULL GROUP BY ROLLUP(a || 'z')",
@@ -8056,7 +8039,7 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `subquery expression ROLLUP grouping key guard is not defeated by a proving WHERE clause`() {
+    fun `subquery expression ROLLUP grouping key stays nullable despite a proving WHERE clause`() {
       val query = analyzeWithSchema(
         schema,
         """
@@ -8070,7 +8053,7 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `CTE expression ROLLUP grouping key guard is not defeated by a proving WHERE clause`() {
+    fun `CTE expression ROLLUP grouping key stays nullable despite a proving WHERE clause`() {
       val query = analyzeWithSchema(
         schema,
         """
