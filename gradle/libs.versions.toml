@@ -29,7 +29,7 @@ testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgr
 
 [plugins]
 ksp = "com.google.devtools.ksp:2.3.11"
-norm = "com.pkware.norm:0.4.1"
+norm = "com.pkware.norm:0.4.2"
 shadow = "com.gradleup.shadow:9.6.1"
 spring-kotlin = { id = "org.jetbrains.kotlin.plugin.spring", version.ref = "kotlin" }
 
