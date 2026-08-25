@@ -6222,6 +6222,101 @@ class QueryAnalysisTest {
       )
       assertThat(query.columns[0].notNull).isFalse()
     }
+
+    @Test
+    fun `MERGE WHEN NOT MATCHED BY SOURCE RETURNING JSON_QUERY over the source column is nullable`() {
+      // The source Var (jsrc.doc) is buried inside a JsonExpr argument, not read directly — this
+      // is the shape containsVarOutsideRelation must recurse into a JsonExpr to see. Verified
+      // live: for the deleted (source-absent) row, this whole expression is NULL despite doc
+      // being NOT NULL and both ON EMPTY/ON ERROR defaults being non-null constants — the source
+      // row itself never existed, so there was nothing for JSON_QUERY to evaluate against.
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE tgt (id INT PRIMARY KEY, note TEXT NOT NULL);
+        CREATE TABLE jsrc (id INT PRIMARY KEY, doc JSONB NOT NULL)
+        """.trimIndent(),
+        """
+        MERGE INTO tgt USING jsrc ON tgt.id = jsrc.id
+        WHEN NOT MATCHED BY SOURCE THEN DELETE
+        RETURNING JSON_QUERY(jsrc.doc, '${'$'}.a' DEFAULT '1'::jsonb ON EMPTY DEFAULT '1'::jsonb ON ERROR) AS result
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `MERGE WHEN NOT MATCHED BY SOURCE RETURNING JSON_EXISTS over the source column is nullable`() {
+      // Same JsonExpr-hides-a-Var shape as the JSON_QUERY case above, for the JSON_EXISTS_OP
+      // variant of JsonExpr. Verified live: NULL, not `false`, for the source-absent row — the
+      // source row itself is absent, so there is nothing for JSON_EXISTS to test against.
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE tgt (id INT PRIMARY KEY, note TEXT NOT NULL);
+        CREATE TABLE jsrc (id INT PRIMARY KEY, doc JSONB NOT NULL)
+        """.trimIndent(),
+        """
+        MERGE INTO tgt USING jsrc ON tgt.id = jsrc.id
+        WHEN NOT MATCHED BY SOURCE THEN DELETE
+        RETURNING JSON_EXISTS(jsrc.doc, '${'$'}.a') AS result
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `MERGE WHEN NOT MATCHED BY SOURCE RETURNING JSON_VALUE over the source column is nullable`() {
+      // Same JsonExpr-hides-a-Var shape, for the JSON_VALUE_OP variant. Verified live: NULL for
+      // the source-absent row despite both ON EMPTY/ON ERROR defaults being non-null constants.
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE tgt (id INT PRIMARY KEY, note TEXT NOT NULL);
+        CREATE TABLE jsrc (id INT PRIMARY KEY, doc JSONB NOT NULL)
+        """.trimIndent(),
+        """
+        MERGE INTO tgt USING jsrc ON tgt.id = jsrc.id
+        WHEN NOT MATCHED BY SOURCE THEN DELETE
+        RETURNING JSON_VALUE(jsrc.doc, '${'$'}.a' DEFAULT '1' ON EMPTY DEFAULT '1' ON ERROR) AS result
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `MERGE without WHEN NOT MATCHED BY SOURCE keeps a JSON_EXISTS over the source column NOT NULL`() {
+      // Positive control, same schema as the JsonExpr-hides-a-Var cases above but WHEN MATCHED
+      // only (no WHEN NOT MATCHED BY SOURCE): every row RETURNING can see has a genuine source
+      // match, so mergeAbsentVarnos' EXPLAIN resolution should still land on NOT NULL even once
+      // containsVarOutsideRelation recurses into the JsonExpr and triggers that resolution.
+      // JSON_EXISTS (not JSON_VALUE, which is unconditionally nullable — see evaluateJsonExpr's
+      // JSON_VALUE_OP branch) directly over the NOT NULL jsonb column, at a path proven present by
+      // the fixture data, is the shape that can actually resolve NOT NULL — `to_jsonb(text)` was
+      // deliberately avoided here since it is not itself on any never-null-for-non-null-input
+      // safe-list and would make this control fail for a reason unrelated to containsVarOutsideRelation.
+      // Verified live: `IS NULL` is `false` for the matched row.
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "MERGE RETURNING requires PostgreSQL 17+")
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE tgt (id INT PRIMARY KEY, note TEXT NOT NULL);
+        CREATE TABLE jsrc (id INT PRIMARY KEY, doc JSONB NOT NULL)
+        """.trimIndent(),
+        """
+        WITH m AS (
+          MERGE INTO tgt USING jsrc ON tgt.id = jsrc.id
+          WHEN MATCHED THEN UPDATE SET note = 'updated'
+          RETURNING JSON_EXISTS(jsrc.doc, '${'$'}.a') AS result
+        )
+        SELECT result FROM m
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
   }
 
   @Nested

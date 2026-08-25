@@ -744,10 +744,16 @@ internal class NodeTreeNullabilityAnalyzer(
      * attribute a `MERGE`'s join (e.g. a non-table `USING` source, such as a `VALUES` list) even
      * when the `RETURNING` list never actually depended on knowing which side that join favors.
      *
-     * Exhausts every [PgNodeExpression] variant explicitly so the compiler's own exhaustiveness
-     * check over the sealed [PgNodeExpression] hierarchy guarantees no node type is silently
-     * skipped — a skipped type here would mean a genuine dependency on `EXPLAIN` resolution going
-     * undetected, not merely a missed optimization.
+     * Exhausts every [PgNodeExpression] variant explicitly, so the compiler's own exhaustiveness
+     * check over the sealed [PgNodeExpression] hierarchy guarantees every node type is LISTED here.
+     * That guarantee is necessary but not sufficient: exhaustiveness only proves no variant was
+     * left out of the `when`, not that a listed variant's own child expressions are walked. A
+     * variant that genuinely carries no [PgNodeExpression] child (e.g. [PgNodeExpression.Const])
+     * belongs in the childless branch; one that does (e.g. [PgNodeExpression.JsonExpr]'s
+     * `argument`) must recurse into every such child, or a `Var` buried inside it silently
+     * disappears from this check — this exact mistake, for [PgNodeExpression.JsonExpr], is what
+     * let a `MERGE`'s `RETURNING JSON_QUERY(source.column, ...)` skip `EXPLAIN` resolution and
+     * report a genuinely nullable expression as NOT NULL.
      *
      * @param depth remaining recursion budget; exhausting it answers `true` (needs resolving)
      *   rather than `false`, the same fail-toward-conservative default every depth guard in this
@@ -766,11 +772,8 @@ internal class NodeTreeNullabilityAnalyzer(
             expression.varno != relationVarno
 
         is PgNodeExpression.Const,
-        is PgNodeExpression.Aggref,
-        is PgNodeExpression.GroupingFunc,
         is PgNodeExpression.SqlValueFunction,
         is PgNodeExpression.NextValExpr,
-        is PgNodeExpression.JsonExpr,
         is PgNodeExpression.Unknown,
         -> false
 
@@ -781,6 +784,13 @@ internal class NodeTreeNullabilityAnalyzer(
         is PgNodeExpression.NullIfExpr -> expression.arguments.any(recurse)
         is PgNodeExpression.MinMaxExpr -> expression.arguments.any(recurse)
         is PgNodeExpression.WindowFunc -> expression.arguments.any(recurse)
+        is PgNodeExpression.Aggref -> expression.arguments.any(recurse)
+        is PgNodeExpression.GroupingFunc -> expression.arguments.any(recurse)
+        is PgNodeExpression.JsonExpr ->
+          recurse(expression.argument) ||
+            expression.onEmptyDefault?.let(recurse) == true ||
+            expression.onErrorDefault?.let(recurse) == true
+
         is PgNodeExpression.SubLink -> expression.outerOperand?.let(recurse) == true
         is PgNodeExpression.CaseExpr ->
           expression.resultExpressions.any(recurse) ||
