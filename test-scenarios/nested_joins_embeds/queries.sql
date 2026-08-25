@@ -1,5 +1,16 @@
 -- name: getBookDetails :one
--- Returns a book's details, with its author and publisher each embedded as a nested object.
+-- Real-world complex query: 10+ columns with multiple embeds
+-- This simulates a realistic join-heavy query with mixed regular and embed columns
+-- Expected indices:
+--   1: b.title
+--   2: b.isbn
+--   3-6: author (id, name, email, bio) - 4 columns
+--   7: b.published_year
+--   8-10: publisher (id, company_name, country) - 3 columns
+--   11: b.page_count
+--   12: b.price
+-- BUG HYPOTHESIS: Catastrophic failures in middle columns - published_year, page_count, price
+-- likely to have wrong indices after multiple embeds
 SELECT
   b.title,
   b.isbn,
@@ -14,7 +25,7 @@ JOIN publisher ON b.publisher_id = publisher.id
 WHERE b.id = ?;
 
 -- name: listBooksWithFullDetails :many
--- Lists books with their author and publisher each embedded as a nested object, newest first.
+-- Similar complex pattern for :many queries
 SELECT
   b.id,
   sqlc.embed(author),
@@ -29,7 +40,7 @@ JOIN publisher ON b.publisher_id = publisher.id
 ORDER BY b.published_year DESC;
 
 -- name: getBookWithReviewCount :one
--- Returns a book's title and review count, with its author embedded as a nested object.
+-- Mix of embeds and aggregates
 SELECT
   sqlc.embed(author),
   b.title,

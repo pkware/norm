@@ -1,5 +1,12 @@
 -- name: getComplexBook :one
--- Returns a book's id, title, isbn, and publication year, with its author embedded as a nested object.
+-- THE CRITICAL TEST: regular, embed, regular pattern
+-- Expected indices:
+--   1: b.id
+--   2: b.title
+--   3-4: author (id, name)
+--   5: b.isbn
+--   6: b.published_year
+-- BUG HYPOTHESIS: After the embed, isbn and published_year may use wrong indices
 SELECT
   b.id,
   b.title,
@@ -11,7 +18,13 @@ JOIN author ON b.author_id = author.id
 WHERE b.id = ?;
 
 -- name: getSandwichBook :one
--- Returns a book's title, isbn, page count, and publication year, with its publisher embedded as a nested object.
+-- Sandwich pattern: regular columns on both sides of 3-column embed
+-- Expected indices:
+--   1: b.title
+--   2: b.isbn
+--   3-5: publisher (id, company_name, country)
+--   6: b.page_count
+--   7: b.published_year
 SELECT
   b.title,
   b.isbn,
@@ -23,7 +36,13 @@ JOIN publisher ON b.publisher_id = publisher.id
 WHERE b.id = ?;
 
 -- name: getAlternatingBook :one
--- Returns a book's title, isbn, and publication year, with its author and publisher each embedded as nested objects.
+-- Multiple embeds with regular columns between
+-- Expected indices:
+--   1: b.title
+--   2-3: author (id, name)
+--   4: b.isbn
+--   5-7: publisher (id, company_name, country)
+--   8: b.published_year
 SELECT
   b.title,
   sqlc.embed(author),
