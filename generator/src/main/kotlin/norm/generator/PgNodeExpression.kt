@@ -70,7 +70,31 @@ internal sealed interface PgNodeExpression {
 
   data class WindowFunc(val windowFunctionOid: Int, val arguments: List<PgNodeExpression>) : PgNodeExpression
 
-  data class SubLink(val subLinkType: Int, val outerOperand: PgNodeExpression? = null) : PgNodeExpression
+  /**
+   * @property subselectBlock The raw `{QUERY ...}` text of the sublink's `:subselect`, verbatim,
+   *   `null` when absent (malformed input, or a node-tree shape this parser does not model). Used
+   *   by [NodeTreeNullabilityAnalyzer] to recursively analyze an `ANY_SUBLINK`'s (`IN`/`= ANY`)
+   *   subquery body for the "exactly one non-null output column" leg of its nullability rule — see
+   *   that class's `SubLink` branch. Deliberately kept as raw text rather than a parsed
+   *   [PgNodeExpression] (that type only models scalar expressions, never a whole query block), so
+   *   analyzing it requires re-entering [PgNodeTreeParser]/`ColumnNullabilityAnalyzer`, not this
+   *   class's own `when` dispatch.
+   * @property testExpressionOperatorOid The `:opfuncid` of the sublink's `:testexpr` when that
+   *   `:testexpr` is a single top-level `OPEXPR` (e.g. `a = ANY (...)`, `a IN (...)`), `null`
+   *   otherwise — including the multi-column `(a, b) IN (...)` form, whose `:testexpr` is a
+   *   `BOOLEXPR` combining one `OPEXPR` per column with no single top-level operator OID of its
+   *   own. Used alongside [outerOperand] by [NodeTreeNullabilityAnalyzer] to confirm the sublink's
+   *   comparison operator is both strict and total on non-null input before trusting the subquery
+   *   column's own nullability — a `null` here means that proof is unavailable, and the sublink
+   *   must default to nullable, which naturally covers the multi-column form without special-casing
+   *   it: a `BOOLEXPR` testexpr never yields a top-level `:opfuncid` to trust in the first place.
+   */
+  data class SubLink(
+    val subLinkType: Int,
+    val outerOperand: PgNodeExpression? = null,
+    val subselectBlock: String? = null,
+    val testExpressionOperatorOid: Int? = null,
+  ) : PgNodeExpression
 
   /**
    * @property testExpression The `CASE testexpr WHEN ...` test expression (from `:arg`), `null`

@@ -644,17 +644,34 @@ internal class PgNodeTreeParser {
 
   private fun parseSubLink(text: String): PgNodeExpression.SubLink {
     val subLinkType = extractIntField(text, ":subLinkType") ?: error("Missing :subLinkType in SUBLINK node")
-    // For ANY sublinks (IN operator), extract the outer operand from the testexpr's first argument.
-    val outerOperand = if (subLinkType == PgNodeExpression.SUBLINK_TYPE_ANY ||
+    // For ANY sublinks (IN operator), extract the outer operand from the testexpr's first argument,
+    // and the testexpr's own operator OID (null for a row-comparison BOOLEXPR testexpr — see
+    // PgNodeExpression.SubLink.testExpressionOperatorOid's KDoc).
+    val testExprBlock = if (subLinkType == PgNodeExpression.SUBLINK_TYPE_ANY ||
       subLinkType == PgNodeExpression.SUBLINK_TYPE_ALL
     ) {
-      extractFieldExpression(text, ":testexpr")?.let { testExpr ->
-        extractArgListSection(testExpr, ":args")?.let { splitBraceBlocks(it).firstOrNull()?.let(::parseExpression) }
-      }
+      extractFieldExpression(text, ":testexpr")
     } else {
       null
     }
-    return PgNodeExpression.SubLink(subLinkType = subLinkType, outerOperand = outerOperand)
+    val outerOperand = testExprBlock?.let { testExpr ->
+      extractArgListSection(testExpr, ":args")?.let { splitBraceBlocks(it).firstOrNull()?.let(::parseExpression) }
+    }
+    val testExpressionOperatorOid = (testExprBlock?.let(::parseExpression) as? PgNodeExpression.OpExpr)
+      ?.operatorFunctionOid
+    // :subselect holds the sublink's subquery body ({QUERY ...}), mirroring parseSubqueryRangeTable
+    // and parseCteList's extraction of the same node shape — see subselectBlock's KDoc for why it
+    // is captured verbatim rather than parsed here. Depth-one-aware (via extractFieldExpression)
+    // is mandatory, not incidental: :testexpr precedes :subselect in SUBLINK's own field order, and
+    // :testexpr's own value can contain a NESTED sublink with its own :subselect — see
+    // extractFieldExpression's KDoc for the live-verified repro this guards against.
+    val subselectBlock = extractFieldExpression(text, ":subselect")
+    return PgNodeExpression.SubLink(
+      subLinkType = subLinkType,
+      outerOperand = outerOperand,
+      subselectBlock = subselectBlock,
+      testExpressionOperatorOid = testExpressionOperatorOid,
+    )
   }
 
   private fun parseCaseExpr(text: String): PgNodeExpression.CaseExpr {

@@ -2568,6 +2568,234 @@ class QueryAnalysisTest {
     }
 
     @Test
+    fun `ANY sublink over a subquery with a nullable column is nullable even with a non-null outer operand`() {
+      // Issue #239's own repro, verified live against PostgreSQL 17: `a = ANY (SELECT v FROM u)` is
+      // NULL, not FALSE, when u.v is nullable, u has a row whose v IS NULL, and no row matches —
+      // three-valued logic. Before this fix, the old ANY branch only checked the outer operand's
+      // own nullability and reported this NOT NULL, which is wrong.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE u (v TEXT)",
+        "SELECT a = ANY (SELECT v FROM u) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `ANY sublink whose outer operand is itself a SUBLINK does not shadow the outer subselect`() {
+      // Live-verified repro (PostgreSQL 17 and 18): `SELECT EXISTS (SELECT v FROM u) = ANY (SELECT
+      // b FROM x) FROM t` returns NULL when x.b is nullable, u.v is NOT NULL, and no row of x
+      // matches — the same three-valued ANY_SUBLINK logic as the issue's own repro. This pins the
+      // P0 fix specifically: the outer ANY_SUBLINK's :testexpr contains the nested EXISTS
+      // sublink's own :subselect (over u), which textually precedes the outer sublink's OWN
+      // :subselect (over x). Before extractFieldExpression became depth-one-aware, a raw
+      // first-match scan for ":subselect {" found u's block (NOT NULL) instead of x's (nullable),
+      // reporting this NOT NULL — the control below (u nullable too) would have flipped the wrong
+      // way if that bug were still present, proving it reads x.b, not u.v.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL); CREATE TABLE u (v BOOLEAN NOT NULL); CREATE TABLE x (b BOOLEAN)",
+        "SELECT EXISTS (SELECT v FROM u) = ANY (SELECT b FROM x) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `multi-column IN subquery is nullable even when every column is NOT NULL`() {
+      // (a, b) IN (SELECT p, q FROM w)'s :testexpr is a BOOLEXPR combining one OPEXPR per column,
+      // which has no single top-level operator OID this rule can trust — see
+      // PgNodeExpression.SubLink.testExpressionOperatorOid's KDoc. Pinned deliberately, not left to
+      // fall out of the single-column case by accident.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a INT NOT NULL, b INT NOT NULL); CREATE TABLE w (p INT NOT NULL, q INT NOT NULL)",
+        "SELECT (a, b) IN (SELECT p, q FROM w) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `ANY sublink over a subquery with a LEFT JOIN-nullable column is nullable`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, code TEXT NOT NULL);
+        CREATE TABLE d (id INT NOT NULL, code TEXT NOT NULL);
+        CREATE TABLE e (id INT NOT NULL, d_id INT NOT NULL, code TEXT NOT NULL)
+        """.trimIndent(),
+        "SELECT code = ANY (SELECT e.code FROM d LEFT JOIN e ON e.d_id = d.id) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `ANY sublink over a UNION subquery is nullable, the conservative set-operation bail-out`() {
+      // Every branch's own column is individually NOT NULL, but the union across branches is not
+      // traced — the same conservative bail-out buildSubqueryColumnNotNull already applies to a
+      // FROM-clause subquery RTE (see that method's KDoc) applies here too.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, a TEXT NOT NULL);
+        CREATE TABLE u1 (v TEXT NOT NULL);
+        CREATE TABLE u2 (v TEXT NOT NULL)
+        """.trimIndent(),
+        "SELECT a = ANY (SELECT v FROM u1 UNION SELECT v FROM u2) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `correlated ANY sublink whose subselect target list is an outer reference is nullable`() {
+      // SELECT t.a FROM u's target-list Var refers to the OUTER query's t (levelsUp 1), not u's
+      // own range table — resolving it against u's own schema (as the pre-fix code would have,
+      // absent the levelsUp guard) risks a varno collision: u's OWN varno-1/attno-2 column
+      // (dummy2, NOT NULL below) is a completely different column that happens to share the same
+      // (varno, varattno) pair as t.a purely because each query block numbers its range table
+      // independently starting from 1. The correct answer is "not proven" (nullable), regardless
+      // of what u's own schema says.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, a INT NOT NULL);
+        CREATE TABLE u (dummy1 INT, dummy2 INT NOT NULL)
+        """.trimIndent(),
+        "SELECT a = ANY (SELECT t.a FROM u) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `LATERAL derived table column over a nullable outer column is nullable, fixing a real collision`() {
+      // s's own subselect body (`SELECT t.a AS x FROM u`) has ONE local range-table entry, u, at
+      // local varno 1. t.a is an outer reference (varlevelsup 1) whose :varno ALSO happens to be
+      // 1, because it indexes the OUTER query's OWN rtable position for t — each query block
+      // numbers its range table independently starting from 1, so this collision is not contrived,
+      // it is the general case. Before the levelsUp guard, isSourceColumnNotNull for this Var
+      // resolved against the SUBQUERY's own range table (u), i.e. against u.junk's NOT NULL
+      // constraint, which has nothing to do with t.a. PostgreSQL's real answer here is NULL, since
+      // t.a is nullable — pinning that the guard fixes this, not merely widens it in this case.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT); CREATE TABLE u (junk TEXT NOT NULL)",
+        "SELECT s.x FROM t CROSS JOIN LATERAL (SELECT t.a AS x FROM u) s",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `LATERAL derived table column referencing a NOT NULL outer column is still conservatively nullable`() {
+      // Identical shape to the test above, except t.a is NOT NULL here — PostgreSQL's real answer
+      // is therefore NEVER NULL (t.a can never be null, so s.x can't either). The blunt levelsUp
+      // guard cannot tell this case apart from the one above: resolving an outer-reference Var
+      // against the INNER block's own range table (u) is unsound in BOTH directions — it could
+      // read a NOT NULL column that has nothing to do with the real (nullable) source, as above,
+      // or, as here, it could just as easily have collided with a NULLABLE column of u and
+      // under-reported a genuinely NOT NULL outer column. Correctly distinguishing this case would
+      // require resolving levelsUp > 0 Vars against the ENCLOSING query's own range table, which
+      // this analyzer's architecture does not support (see the levelsUp guard's own KDoc) — nested
+      // blocks are analyzed eagerly into memoized maps with no live handle back to an enclosing
+      // scope, and the varlevelsup chain has its own traps (set-operation branches the analyzer
+      // never enters as their own level; CTE bodies not in the chain at all) where mis-counting
+      // would resolve a Var against the WRONG table entirely, strictly worse than this widening.
+      // main's earlier NOT NULL answer for this exact shape was accidental — a coincidence of
+      // t.a's own NOT NULL constraint matching what u.junk's collision happened to resolve to, not
+      // a real proof — not a real signal this analyzer intentionally computed.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a TEXT NOT NULL); CREATE TABLE u (junk TEXT NOT NULL)",
+        "SELECT s.x FROM t CROSS JOIN LATERAL (SELECT t.a AS x FROM u) s",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `NOT IN subquery with a nullable inner column is nullable`() {
+      // `a NOT IN (subquery)` does NOT compile to an ALL_SUBLINK — verified live (PostgreSQL 17)
+      // against pg_rewrite.ev_action: it is a BOOLEXPR :boolop not wrapping an ordinary
+      // ANY_SUBLINK (subLinkType 2, operName "="), i.e. `NOT (a = ANY (subquery))`. This test pins
+      // that the BoolExpr branch's `expression.arguments.all(recurse)` correctly propagates the
+      // wrapped ANY_SUBLINK's own nullability (NULL NOT is NULL) rather than the wrapping NOT
+      // somehow making it non-null: u.v is nullable, so the inner ANY_SUBLINK is nullable, so the
+      // whole NOT IN expression is nullable too.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL, a TEXT NOT NULL); CREATE TABLE u (v TEXT)",
+        "SELECT a NOT IN (SELECT v FROM u) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `ANY sublink is nullable when the comparison operator is not on the never-null safe-list`() {
+      // jsonb has a real, STRICT `=` operator, but it is not on NeverNullSafeLists.
+      // NEVER_NULL_OPERATOR_SIGNATURES — isStrict alone is not sufficient proof (see
+      // isNeverNullForNonNullInput's own KDoc), so even with a non-null outer operand and a
+      // provably non-null single-column subquery result, this must stay nullable.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL, a JSONB NOT NULL); CREATE TABLE u (v JSONB NOT NULL)",
+        "SELECT a = ANY (SELECT v FROM u) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `two levels of nested ANY sublinks resolve to a precise NOT NULL, well within the depth budget`() {
+      // Two levels of ANY_SUBLINK nesting terminate and resolve correctly. Note this alone does
+      // NOT pin the depth guard's necessity — a sublink's :subselect is always a genuine substring
+      // of its parent's own text (see PgNodeTreeParser), so this recursion is provably bounded by
+      // input length regardless of any explicit budget, and two levels resolve identically with
+      // the budget removed entirely. See the next test for a case that actually depends on the
+      // budget's value.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, a BOOLEAN NOT NULL);
+        CREATE TABLE u (v BOOLEAN NOT NULL);
+        CREATE TABLE x (w BOOLEAN NOT NULL)
+        """.trimIndent(),
+        "SELECT a = ANY (SELECT (v = ANY (SELECT w FROM x)) FROM u) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `four levels of nested ANY sublinks exceed the depth budget and degrade to nullable`() {
+      // Every level here uses a NOT NULL boolean column and the safe-listed, strict, total boolean
+      // `=` operator, so the semantically correct answer — and the answer this analyzer WOULD give
+      // with a larger (or no) budget, verified by temporarily raising SUBLINK_ANALYSIS_DEPTH_BUDGET
+      // during development — is NOT NULL, all the way out. With the budget at 3, the 4th (innermost)
+      // ANY_SUBLINK's own callback is invoked at depth 0 — isSubLinkSubqueryColumnNotNull's `depth
+      // <= 0` guard fires before it even looks at u4, forcing that innermost sublink nullable, which
+      // cascades outward through every enclosing level. This is the case the two-level test above
+      // cannot exercise: it depends on the budget's actual VALUE, not merely on recursion
+      // terminating — raising the budget (or removing it) flips this test's expected answer.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, a BOOLEAN NOT NULL);
+        CREATE TABLE u1 (v1 BOOLEAN NOT NULL);
+        CREATE TABLE u2 (v2 BOOLEAN NOT NULL);
+        CREATE TABLE u3 (v3 BOOLEAN NOT NULL);
+        CREATE TABLE u4 (v4 BOOLEAN NOT NULL)
+        """.trimIndent(),
+        """
+        SELECT a = ANY (
+          SELECT (v1 = ANY (
+            SELECT (v2 = ANY (
+              SELECT (v3 = ANY (
+                SELECT v4 FROM u4
+              )) FROM u3
+            )) FROM u2
+          )) FROM u1
+        ) AS result FROM t
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
     fun `subquery in FROM`() {
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
