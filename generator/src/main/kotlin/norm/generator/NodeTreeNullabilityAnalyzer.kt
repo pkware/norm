@@ -71,6 +71,15 @@ import norm.generator.NodeTreeNullabilityAnalyzer.Companion.extractOuterJoinNull
  *   provably immune to the grouping-set null-extension mechanism — see [isSafeFromGroupingSetNullExtension]
  *   for the reasoning. Defaults to `false` (ordinary [isNonNull] evaluation only) for query blocks
  *   without grouping sets.
+ * @param isSubLinkSubqueryColumnNotNull Returns `true` when [subselectBlock] — the raw `{QUERY ...}`
+ *   text of an `ANY_SUBLINK`'s `:subselect` (see [PgNodeExpression.SubLink.subselectBlock]) —
+ *   produces EXACTLY ONE non-junk output column and that column is provably non-null. Used by
+ *   [isNonNull]'s `SubLink` branch as the third, most expensive leg of the `ANY_SUBLINK`
+ *   nullability rule (see that branch's own comment for the full three-condition rule and why each
+ *   condition is required). Defaults to `{ false }` — every existing construction site and unit
+ *   test that does not explicitly wire this callback stays conservative (nullable), which is also
+ *   the correct behavior for a nested sublink once the caller's own depth budget for this analysis
+ *   is exhausted (see `ColumnNullabilityAnalyzer`'s wiring of this callback for that budget).
  * @param forceNewNullable `true` when a `RETURNING WITH (OLD AS o, NEW AS n)` reference to `NEW`
  *   (`Var.returningType == `[PgNodeExpression.VAR_RETURNING_TYPE_NEW]`) must be treated as
  *   unconditionally nullable, the same way [isNonNull]'s `Var` branch ALWAYS treats `OLD`
@@ -94,6 +103,7 @@ internal class NodeTreeNullabilityAnalyzer(
   private val isLagLeadWithDefault: (Int) -> Boolean = { false },
   private val isFoldableToConst: (Int) -> Boolean = { false },
   private val isNonNullIffFirstArgumentNonNull: (Int) -> Boolean = { false },
+  private val isSubLinkSubqueryColumnNotNull: (subselectBlock: String) -> Boolean = { false },
   private val hasGroupingSets: Boolean = false,
   private val forceNewNullable: Boolean = false,
 ) {
@@ -489,7 +499,19 @@ internal class NodeTreeNullabilityAnalyzer(
         // itself may not exist for this result row at all (e.g. a MERGE ... WHEN NOT MATCHED THEN
         // INSERT action), a fact neither of those signals captures. The same applies to NEW
         // whenever forceNewNullable says so — see that constructor parameter's KDoc.
-        expression.returningType != PgNodeExpression.VAR_RETURNING_TYPE_OLD &&
+        //
+        // levelsUp == 0 is required because a Var with levelsUp > 0 indexes an ENCLOSING query's
+        // range table (see PgNodeExpression.Var.levelsUp's KDoc), not the current block's — this
+        // block's isSourceColumnNotNull, groupRteMap, and qual narrowing are all keyed against the
+        // CURRENT block's varnos, so resolving an outer-level varno against them would be sound in
+        // neither direction (a collision could read the wrong column's constraint entirely, in
+        // either the non-null or nullable direction). qualProvenNonNullVars already excludes these
+        // for its own WHERE-clause narrowing (see that method's KDoc); this makes the target-entry
+        // evaluation path agree, rather than silently trusting a levelsUp > 0 Var it happens to
+        // reach through an untouched path (e.g. an ANY_SUBLINK's own subselect target list — see
+        // isSubLinkSubqueryColumnNotNull).
+        expression.levelsUp == 0 &&
+          expression.returningType != PgNodeExpression.VAR_RETURNING_TYPE_OLD &&
           !(expression.returningType == PgNodeExpression.VAR_RETURNING_TYPE_NEW && forceNewNullable) &&
           !isOuterJoinNullable(expression.nullingRelations) &&
           isSourceColumnNotNull(expression.varno, expression.varattno)
@@ -556,9 +578,31 @@ internal class NodeTreeNullabilityAnalyzer(
       is PgNodeExpression.SubLink ->
         expression.subLinkType == PgNodeExpression.SUBLINK_TYPE_EXISTS ||
           expression.subLinkType == PgNodeExpression.SUBLINK_TYPE_ARRAY ||
+          // ANY_SUBLINK (`x = ANY (subquery)` / `x IN (subquery)`) is three-valued: PostgreSQL
+          // returns NULL, not FALSE, when the subquery yields a NULL row and no row matches —
+          // verified live on PostgreSQL 17: `CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL);
+          // CREATE TABLE u (v TEXT); INSERT INTO t VALUES (1,'x'); INSERT INTO u VALUES ('q'),
+          // (NULL); SELECT a = ANY (SELECT v FROM u) FROM t;` is NULL, not FALSE. Proving a
+          // non-null result therefore requires ALL THREE of: the outer operand is non-null (an
+          // ANY_SUBLINK with a null outer operand is NULL outright, same as any comparison); the
+          // comparison operator behind the sublink is both isStrict AND isNeverNullForNonNullInput
+          // — a non-strict or non-total operator could itself manufacture a NULL from non-null
+          // operands, same two-predicate proof OpExpr/ScalarArrayOpExpr require above; and the
+          // subquery's single output column is itself provably non-null — a NULL row in the
+          // subquery is exactly what makes the whole expression NULL when no row matches, per the
+          // repro above. testExpressionOperatorOid is null for the multi-column `(a, b) IN (SELECT
+          // p, q FROM w)` row-comparison form (a BOOLEXPR testexpr with no single top-level
+          // operator), so that form always falls through to nullable here rather than needing its
+          // own special case. Ordered cheapest-first: subLinkType and outerOperand are already
+          // computed above; the two OID predicates are cheap map lookups; isSubLinkSubqueryColumnNotNull
+          // is the only leg that re-enters full query-block analysis, so it is checked last.
           (
             expression.subLinkType == PgNodeExpression.SUBLINK_TYPE_ANY &&
-              expression.outerOperand?.let(recurse) == true
+              expression.outerOperand?.let(recurse) == true &&
+              expression.testExpressionOperatorOid?.let { operatorOid ->
+                isStrict(operatorOid) && isNeverNullForNonNullInput(operatorOid)
+              } == true &&
+              expression.subselectBlock?.let(isSubLinkSubqueryColumnNotNull) == true
             )
 
       is PgNodeExpression.CaseExpr ->

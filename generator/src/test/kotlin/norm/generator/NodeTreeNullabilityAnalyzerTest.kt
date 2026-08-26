@@ -16,12 +16,15 @@ class NodeTreeNullabilityAnalyzerTest {
   private fun analyzer(
     isStrict: (Int) -> Boolean = { false },
     isNeverNullForNonNullInput: (Int) -> Boolean = { false },
+    isSourceColumnNotNull: (varno: Int, varattno: Int) -> Boolean = { _, _ -> false },
+    isSubLinkSubqueryColumnNotNull: (subselectBlock: String) -> Boolean = { false },
   ) = NodeTreeNullabilityAnalyzer(
     isStrict = isStrict,
     hasNonNullInitialValue = { false },
-    isSourceColumnNotNull = { _, _ -> false },
+    isSourceColumnNotNull = isSourceColumnNotNull,
     isOuterJoinNullable = { it.isNotEmpty() },
     isNeverNullForNonNullInput = isNeverNullForNonNullInput,
+    isSubLinkSubqueryColumnNotNull = isSubLinkSubqueryColumnNotNull,
   )
 
   // JsonBehaviorType codes below are verified live (PostgreSQL 17 and 18): a JSON_VALUE/JSON_QUERY
@@ -255,6 +258,131 @@ class NodeTreeNullabilityAnalyzerTest {
       val unrecognizedFutureBehaviorCode = 42
       val expression = jsonExists(onError = unrecognizedFutureBehaviorCode)
       assertThat(analyzer().isNonNull(expression)).isFalse()
+    }
+  }
+
+  @Nested
+  inner class SubLinks {
+
+    // See issue #239's own live-verified repro (PostgreSQL 17): `a = ANY (SELECT v FROM u)` is
+    // NULL, not FALSE, when u.v is nullable and the subquery yields a NULL row with no match —
+    // three-valued logic, not the two-valued logic a naive "outer operand is non-null" check
+    // assumes. Proving ANY_SUBLINK non-null therefore requires ALL of: a non-null outer operand,
+    // a strict-and-total comparison operator, and a provably non-null single-column subquery
+    // result — see NodeTreeNullabilityAnalyzer's SubLink branch for the full rule.
+
+    private val comparisonOperatorOid = 100
+
+    private fun anySubLink(
+      outerOperand: PgNodeExpression? = PgNodeExpression.Const(isNull = false),
+      subselectBlock: String? = "{QUERY :targetList ({TARGETENTRY :expr {VAR :varno 1 :varattno 1} :resno 1})}",
+      testExpressionOperatorOid: Int? = comparisonOperatorOid,
+    ) = PgNodeExpression.SubLink(
+      subLinkType = PgNodeExpression.SUBLINK_TYPE_ANY,
+      outerOperand = outerOperand,
+      subselectBlock = subselectBlock,
+      testExpressionOperatorOid = testExpressionOperatorOid,
+    )
+
+    private fun safeAnalyzer(isSubLinkSubqueryColumnNotNull: (String) -> Boolean = { true }) = analyzer(
+      isStrict = { it == comparisonOperatorOid },
+      isNeverNullForNonNullInput = { it == comparisonOperatorOid },
+      isSubLinkSubqueryColumnNotNull = isSubLinkSubqueryColumnNotNull,
+    )
+
+    @Test
+    fun `EXISTS sublink is non-null`() {
+      val expression = PgNodeExpression.SubLink(subLinkType = PgNodeExpression.SUBLINK_TYPE_EXISTS)
+      assertThat(analyzer().isNonNull(expression)).isTrue()
+    }
+
+    @Test
+    fun `ARRAY sublink is non-null`() {
+      val expression = PgNodeExpression.SubLink(subLinkType = PgNodeExpression.SUBLINK_TYPE_ARRAY)
+      assertThat(analyzer().isNonNull(expression)).isTrue()
+    }
+
+    @Test
+    fun `ALL sublink is nullable`() {
+      val expression = PgNodeExpression.SubLink(
+        subLinkType = PgNodeExpression.SUBLINK_TYPE_ALL,
+        outerOperand = PgNodeExpression.Const(isNull = false),
+      )
+      assertThat(safeAnalyzer().isNonNull(expression)).isFalse()
+    }
+
+    @Test
+    fun `a scalar EXPR sublink is nullable`() {
+      // subLinkType 4 (EXPR_SUBLINK, an ordinary scalar subquery like `(SELECT max(id) FROM t)`)
+      // is not one of the three cases isNonNull's SubLink branch special-cases (EXISTS, ARRAY,
+      // ANY), so it always falls through to nullable regardless of anything else about it.
+      val expression = PgNodeExpression.SubLink(subLinkType = 4)
+      assertThat(safeAnalyzer().isNonNull(expression)).isFalse()
+    }
+
+    @Test
+    fun `ANY sublink is non-null when all three conditions are satisfied`() {
+      assertThat(safeAnalyzer().isNonNull(anySubLink())).isTrue()
+    }
+
+    @Test
+    fun `ANY sublink is nullable when the outer operand is nullable`() {
+      val expression = anySubLink(outerOperand = PgNodeExpression.Const(isNull = true))
+      assertThat(safeAnalyzer().isNonNull(expression)).isFalse()
+    }
+
+    @Test
+    fun `ANY sublink is nullable when the subquery column is nullable`() {
+      val expression = anySubLink()
+      assertThat(safeAnalyzer(isSubLinkSubqueryColumnNotNull = { false }).isNonNull(expression)).isFalse()
+    }
+
+    @Test
+    fun `ANY sublink is nullable when subselectBlock is null`() {
+      val expression = anySubLink(subselectBlock = null)
+      assertThat(safeAnalyzer().isNonNull(expression)).isFalse()
+    }
+
+    @Test
+    fun `ANY sublink is nullable when testExpressionOperatorOid is null, the row-comparison form`() {
+      val expression = anySubLink(testExpressionOperatorOid = null)
+      val result = analyzer(isStrict = {
+        true
+      }, isNeverNullForNonNullInput = { true }, isSubLinkSubqueryColumnNotNull = { true })
+        .isNonNull(expression)
+      assertThat(result).isFalse()
+    }
+
+    @Test
+    fun `ANY sublink is nullable when the comparison operator is not strict`() {
+      val expression = anySubLink()
+      val result = analyzer(isStrict = {
+        false
+      }, isNeverNullForNonNullInput = { true }, isSubLinkSubqueryColumnNotNull = { true })
+        .isNonNull(expression)
+      assertThat(result).isFalse()
+    }
+
+    @Test
+    fun `ANY sublink is nullable when the comparison operator is strict but not proven total on non-null input`() {
+      val expression = anySubLink()
+      val result = analyzer(isStrict = {
+        true
+      }, isNeverNullForNonNullInput = { false }, isSubLinkSubqueryColumnNotNull = { true })
+        .isNonNull(expression)
+      assertThat(result).isFalse()
+    }
+
+    @Test
+    fun `a Var with levelsUp 1 is nullable even when isSourceColumnNotNull returns true`() {
+      // A Var with levelsUp greater than 0 indexes an ENCLOSING query's range table (see
+      // PgNodeExpression.Var.levelsUp's own KDoc) — this block's isSourceColumnNotNull says
+      // nothing trustworthy about it, so it must stay nullable regardless of what that callback
+      // returns. This guard is what makes the ANY_SUBLINK subquery-column-nullability leg sound
+      // for a correlated subselect target list, e.g. `id IN (SELECT t.a FROM w)`.
+      val expression = PgNodeExpression.Var(varno = 1, varattno = 1, nullingRelations = emptySet(), levelsUp = 1)
+      val result = analyzer(isSourceColumnNotNull = { _, _ -> true }).isNonNull(expression)
+      assertThat(result).isFalse()
     }
   }
 }

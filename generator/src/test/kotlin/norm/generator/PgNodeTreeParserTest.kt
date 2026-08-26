@@ -4,6 +4,7 @@ import assertk.assertThat
 import assertk.assertions.hasSize
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
+import assertk.assertions.isNull
 import assertk.assertions.isTrue
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
@@ -244,6 +245,71 @@ class PgNodeTreeParserTest {
   }
 
   @Nested
+  inner class SubLinkParsing {
+
+    // Shapes verified live against a real PostgreSQL 17 ev_action for `a = ANY (SELECT v FROM u)`
+    // (see issue #239's own repro) — a SUBLINK's :testexpr is a single top-level OPEXPR whose
+    // :opfuncid is the comparison operator's function OID, and :subselect holds the subquery's own
+    // {QUERY ...} block. These synthetic texts reproduce that shape at a level a unit test can
+    // construct directly, without depending on a live server.
+
+    private val anyOpexprTestexpr = "{OPEXPR :opno 98 :opfuncid 67 :args " +
+      "({VAR :varno 1 :varattno 2 :varlevelsup 0 :location -1} " +
+      "{PARAM :paramkind 2 :paramid 1 :location -1}) :location -1}"
+
+    @Test
+    fun `subselect block is captured verbatim, including a nested brace and a backslash-escaped closing brace`() {
+      // The :resname k\}x below contains a backslash-escaped, literal `}` — see the class-level
+      // note on backslash escaping. A non-escape-aware balanced-brace scan would close the
+      // enclosing TARGETENTRY (and therefore the whole subselect QUERY block) too early, right at
+      // that escaped brace, truncating everything after it (":resjunk false}) :setOperations <>}").
+      val subselectBlock = """{QUERY :targetList (""" +
+        """{TARGETENTRY :expr {CONST :constisnull false} :resno 1 :resname k\}x :resjunk false}""" +
+        """) :setOperations <>}"""
+      val text = "{SUBLINK :subLinkType 2 :subLinkId 0 :testexpr $anyOpexprTestexpr :operName (\"=\") " +
+        ":subselect $subselectBlock :location -1}"
+      val result = parser.parseExpression(text) as PgNodeExpression.SubLink
+      assertThat(result.subselectBlock).isEqualTo(subselectBlock)
+    }
+
+    @Test
+    fun `testexpr operator OID is captured from a single OPEXPR testexpr`() {
+      val text = "{SUBLINK :subLinkType 2 :subLinkId 0 :testexpr $anyOpexprTestexpr :operName (\"=\") " +
+        ":subselect {QUERY :targetList (" +
+        "{TARGETENTRY :expr {VAR :varno 1 :varattno 1 :varlevelsup 0 :location -1} :resno 1 :resname v " +
+        ":resjunk false}) :setOperations <>} :location -1}"
+      val result = parser.parseExpression(text) as PgNodeExpression.SubLink
+      assertThat(result.testExpressionOperatorOid).isEqualTo(67)
+    }
+
+    @Test
+    fun `testexpr operator OID is null for a BOOLEXPR testexpr, the multi-column IN row-comparison form`() {
+      // (a, b) IN (SELECT p, q FROM w): :testexpr combines one OPEXPR per column under a BOOLEXPR,
+      // which has no single top-level :opfuncid of its own.
+      val rowComparisonTestexpr = "{BOOLEXPR :boolop and :args (" +
+        "{OPEXPR :opno 96 :opfuncid 65 :args (" +
+        "{VAR :varno 1 :varattno 1 :varlevelsup 0 :location -1} {PARAM :paramkind 2 :paramid 1 :location -1}" +
+        ") :location -1} " +
+        "{OPEXPR :opno 96 :opfuncid 65 :args (" +
+        "{VAR :varno 1 :varattno 2 :varlevelsup 0 :location -1} {PARAM :paramkind 2 :paramid 2 :location -1}" +
+        ") :location -1}) :location -1}"
+      val text = "{SUBLINK :subLinkType 2 :subLinkId 0 :testexpr $rowComparisonTestexpr :operName (\"=\") " +
+        ":subselect {QUERY :targetList (" +
+        "{TARGETENTRY :expr {VAR :varno 1 :varattno 1 :varlevelsup 0 :location -1} :resno 1 :resname p " +
+        ":resjunk false}) :setOperations <>} :location -1}"
+      val result = parser.parseExpression(text) as PgNodeExpression.SubLink
+      assertThat(result.testExpressionOperatorOid).isNull()
+    }
+
+    @Test
+    fun `an ANY sublink with no subselect yields null, not a crash`() {
+      val text = "{SUBLINK :subLinkType 2 :subLinkId 0 :testexpr $anyOpexprTestexpr :operName (\"=\") :location -1}"
+      val result = parser.parseExpression(text) as PgNodeExpression.SubLink
+      assertThat(result.subselectBlock).isNull()
+    }
+  }
+
+  @Nested
   inner class DepthAwareFieldExtraction {
 
     // extractFieldExpression must find a field at brace depth 1 of the node it is given, not the
@@ -252,6 +318,30 @@ class PgNodeTreeParserTest {
     // type, carrying the same field name, nested deeper. A first-match indexOf scan finds the
     // NESTED (wrong) occurrence whenever the earlier field's value textually precedes the node's
     // OWN later field of that name, silently proving the wrong subtree.
+
+    @Test
+    fun `a SUBLINK's testexpr containing a nested SUBLINK does not shadow the outer subselect`() {
+      // Live-verified repro (PostgreSQL 17 and 18): `SELECT EXISTS (SELECT v FROM u) = ANY
+      // (SELECT b FROM x) FROM t` — the outer ANY_SUBLINK's :testexpr (an OPEXPR whose first
+      // argument is the nested EXISTS sublink) precedes its own :subselect in SUBLINK's field
+      // order, and the nested EXISTS sublink has its OWN :subselect (the `u` query) textually
+      // inside that :testexpr, before the outer sublink's real :subselect (the `x` query) ever
+      // appears. A naive first-match scan for ":subselect {" returns the INNER (u) block.
+      val innerSubselect = "{QUERY :targetList (" +
+        "{TARGETENTRY :expr {VAR :varno 900 :varattno 1 :varlevelsup 0 :location -1} :resno 1 " +
+        ":resname inner_col :resjunk false}) :setOperations <>}"
+      val innerSublink = "{SUBLINK :subLinkType 0 :subLinkId 1 :testexpr <> :operName <> " +
+        ":subselect $innerSubselect :location -1}"
+      val outerSubselect = "{QUERY :targetList (" +
+        "{TARGETENTRY :expr {VAR :varno 901 :varattno 1 :varlevelsup 0 :location -1} :resno 1 " +
+        ":resname outer_col :resjunk false}) :setOperations <>}"
+      val outerTestexpr = "{OPEXPR :opno 91 :opfuncid 60 :args ($innerSublink " +
+        "{PARAM :paramkind 2 :paramid 1 :location -1}) :location -1}"
+      val outerText = "{SUBLINK :subLinkType 2 :subLinkId 0 :testexpr $outerTestexpr :operName (\"=\") " +
+        ":subselect $outerSubselect :location -1}"
+      val result = parser.parseExpression(outerText) as PgNodeExpression.SubLink
+      assertThat(result.subselectBlock).isEqualTo(outerSubselect)
+    }
 
     @Test
     fun `a CASEWHEN's own result is not shadowed by a nested CASEEXPR inside its condition`() {

@@ -5,6 +5,27 @@ import java.sql.SQLException
 import java.util.UUID
 
 /**
+ * Recursion budget for [ColumnNullabilityAnalyzer.subLinkSubqueryColumnNotNull]: how many levels
+ * of NESTED `ANY_SUBLINK` (a `SubLink` whose own subselect contains another `SubLink`) are
+ * resolved before defaulting to nullable — see that method's KDoc.
+ *
+ * This is NOT required to prevent an infinite loop: [PgNodeExpression.SubLink.subselectBlock] is
+ * always extracted, via [PgNodeTreeParser.extractFieldExpression], as a genuine SUBSTRING of its
+ * enclosing `SubLink`'s own text, strictly shorter than it — [PgNodeTreeParser] has no mechanism to
+ * produce a cyclic or self-referential node-tree text, so this recursion is provably bounded by the
+ * ORIGINAL query text's finite length regardless of this constant's value, or even its presence.
+ * The budget exists instead as a defensive bound on STACK DEPTH and repeated analysis WORK for a
+ * pathologically deep (if syntactically legal) chain of nested `= ANY (...)` sublinks, the same
+ * role [NodeTreeNullabilityAnalyzer.MAX_EXPRESSION_DEPTH] plays for a deeply nested parsed
+ * expression tree elsewhere in this codebase. Deliberately small: this analysis is only ever needed
+ * for the (typically shallow) nullability proof of an `IN`/`= ANY` subquery's single output column,
+ * not for arbitrarily deep query nesting in general — see `QueryAnalysisTest`'s four-level-nesting
+ * test for a query shape that is semantically NOT NULL end-to-end but is reported nullable at this
+ * budget, pinning that the budget's specific VALUE (not merely its presence) is what is enforced.
+ */
+private const val SUBLINK_ANALYSIS_DEPTH_BUDGET = 3
+
+/**
  * Drives per-column nullability analysis for a SQL query on behalf of [loader]: fetching the
  * query's own parsed node tree (via `prosqlbody` or a probe function, see
  * [queryColumnNullabilityViaProsqlbody]'s own KDoc), then recursively resolving CTE bodies,
@@ -325,6 +346,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     val analyzer = buildAnalyzer(
       hasGroupingSets = hasGroupingSets,
       forceNewNullable = forceNewNullable,
+      applyQualNarrowing = applyQualNarrowing,
       isSourceColumnNotNull = plainIsSourceColumnNotNull,
     )
     // :returningList must be checked FIRST, not as a fallback for an empty :targetList: an INSERT
@@ -347,7 +369,11 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
       // plain catalog/qual/subquery/CTE resolution [analyzer] itself uses, which is exactly correct
       // for that column's pass-through (unmodified) value.
       val returningAnalyzer =
-        buildAnalyzer(hasGroupingSets = false, forceNewNullable = forceNewNullable) { varno, varattno ->
+        buildAnalyzer(
+          hasGroupingSets = false,
+          forceNewNullable = forceNewNullable,
+          applyQualNarrowing = applyQualNarrowing,
+        ) { varno, varattno ->
           val assignedExpression = if (varno == resultRelationVarno) targetListByResno[varattno] else null
           if (assignedExpression != null) {
             analyzer.isNonNull(assignedExpression)
@@ -378,10 +404,30 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    * in this class. This method captures the common configuration so callers only need to supply
    * the source-column resolution strategy, which varies by context (outer query, CTE body,
    * subquery).
+   *
+   * @param applyQualNarrowing See [analyzeNodeTree]'s parameter of the same name — passed through
+   *   only so [isSubLinkSubqueryColumnNotNull]'s wiring below can apply the SAME qual-narrowing
+   *   policy to a `SubLink`'s subselect that the caller applies to everything else.
+   * @param depth The [subLinkSubqueryColumnNotNull] recursion budget for a `SubLink` encountered by
+   *   the returned analyzer — see that method's KDoc for why a budget is mandatory (a subselect can
+   *   itself contain a `SubLink`, whose own subselect can contain another). Defaults to
+   *   [SUBLINK_ANALYSIS_DEPTH_BUDGET] for every analyzer built directly from a top-level node tree,
+   *   CTE body, or subquery-RTE body; [subLinkSubqueryColumnNotNull] passes `depth - 1` when
+   *   building the analyzer for a `SubLink`'s OWN subselect, so the budget only ever decreases
+   *   along a chain of NESTED sublinks, never along the unrelated CTE/subquery-RTE recursion this
+   *   class already performs independently of it.
+   *
+   *   No `MERGE`-resolution parameter is threaded through here: a sublink's `:subselect` is, by SQL
+   *   grammar, always a `SELECT` — a `MERGE`, `UPDATE`, or `DELETE` can never appear as a sublink's
+   *   own subquery body — so [mergeAbsentVarnos] can never apply to anything
+   *   [subLinkSubqueryColumnNotNull] reaches, and there is nothing for a `sql`/`EXPLAIN` parameter
+   *   here to resolve.
    */
   private fun buildAnalyzer(
     hasGroupingSets: Boolean = false,
     forceNewNullable: Boolean = false,
+    applyQualNarrowing: Boolean = true,
+    depth: Int = SUBLINK_ANALYSIS_DEPTH_BUDGET,
     isSourceColumnNotNull: (varno: Int, varattno: Int) -> Boolean,
   ): NodeTreeNullabilityAnalyzer = NodeTreeNullabilityAnalyzer(
     isStrict = isStrictFunction,
@@ -393,9 +439,41 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     isLagLeadWithDefault = { oid -> oid in lagLeadWithDefaultOids },
     isFoldableToConst = { oid -> oid in immutableFunctionOids },
     isNonNullIffFirstArgumentNonNull = { oid -> oid in nonNullIffFirstArgumentNonNullFunctionOids },
+    isSubLinkSubqueryColumnNotNull = { subselectBlock ->
+      subLinkSubqueryColumnNotNull(subselectBlock, applyQualNarrowing, depth)
+    },
     hasGroupingSets = hasGroupingSets,
     forceNewNullable = forceNewNullable,
   )
+
+  /**
+   * Backs [NodeTreeNullabilityAnalyzer]'s `isSubLinkSubqueryColumnNotNull` callback: `true` when
+   * [subselectBlock] — the raw `{QUERY ...}` text of an `ANY_SUBLINK`'s `:subselect` — produces
+   * EXACTLY ONE non-junk output column and that column is provably non-null.
+   *
+   * Set-operation subselects (`UNION`/`INTERSECT`/`EXCEPT`) are rejected outright, the same
+   * conservative default [buildSubqueryColumnNotNull] applies to a `FROM`-clause subquery RTE for
+   * the identical reason: tracing through would report only the first branch's nullability, not
+   * the union across every branch (see that method's own KDoc).
+   *
+   * Deliberately does NOT resolve a CTE the subselect references via `:ctelevelsup` (an enclosing
+   * scope's `WITH` clause) — [analyzeQueryBlockNullability] is called with an EMPTY `resolvedCtes`
+   * map, so such a reference falls through to its existing "CTE not found" nullable default, which
+   * is already correct: resolving an enclosing CTE from here would require re-entering
+   * [resolveCteBodies] for a scope this method has no direct access to without threading
+   * substantially more context through every [buildAnalyzer] call site for a case this rule does
+   * not need precision for.
+   *
+   * @param depth remaining recursion budget — see [buildAnalyzer]'s `depth` parameter KDoc.
+   *   Returns `false` (safe: nullable) once exhausted, so a `SubLink` nested inside another
+   *   `SubLink`'s subselect cannot recurse indefinitely.
+   */
+  private fun subLinkSubqueryColumnNotNull(subselectBlock: String, applyQualNarrowing: Boolean, depth: Int): Boolean {
+    if (depth <= 0) return false
+    if (nodeTreeParser.hasSetOperations(subselectBlock)) return false
+    val nullability = analyzeQueryBlockNullability(subselectBlock, applyQualNarrowing, emptyMap(), depth - 1)
+    return nullability.size == 1 && !nullability[0]
+  }
 
   /**
    * `true` when a `RETURNING WITH (OLD AS o, NEW AS n)` reference to `NEW` in [nodeTree] must be
@@ -666,7 +744,11 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     } else {
       emptySet()
     }
-    return buildAnalyzer(hasGroupingSets = hasGroupingSets, forceNewNullable = forcesNewNullable(queryBlock)) {
+    return buildAnalyzer(
+      hasGroupingSets = hasGroupingSets,
+      forceNewNullable = forcesNewNullable(queryBlock),
+      applyQualNarrowing = applyQualNarrowing,
+    ) {
         varno,
         varattno,
       ->
@@ -733,47 +815,75 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     val resolvedCtes by lazy { resolveCteBodies(nodeTree, applyQualNarrowing, sql) }
     return buildMap {
       for ((outerVarno, subqueryBlock) in subqueryRangeTable) {
-        // Parse the subquery's own base-table range table for isSourceColumnNotNull.
-        val subRangeTable = nodeTreeParser.parseRangeTable(subqueryBlock)
-        val subCteRteMap = nodeTreeParser.parseCteRangeTableEntries(subqueryBlock)
-        // See analyzeNodeTree's identical guard: GROUPING SETS/CUBE/ROLLUP can
-        // null-extend a grouping key even when the base table column is NOT NULL. The actual
-        // override (including EXPRESSION grouping keys) is applied by extractColumnNullability
-        // via hasGroupingSets below.
-        val hasGroupingSets = nodeTreeParser.hasGroupingSets(subqueryBlock)
-        val groupRteMap = if (hasGroupingSets) {
-          emptyMap()
-        } else {
-          nodeTreeParser.parseGroupRteMap(subqueryBlock)
-        }
-        // See analyzeNodeTree's identical guard: suppress qual narrowing whenever
-        // hasGroupingSets, because those are exactly what GROUPING SETS/CUBE/ROLLUP null-extends
-        // after WHERE has already filtered rows.
-        val subQualNotNullVars = if (applyQualNarrowing && !hasGroupingSets) {
-          NodeTreeNullabilityAnalyzer.qualProvenNonNullVars(subqueryBlock, isStrictFunction)
-        } else {
-          emptySet()
-        }
-        val subAnalyzer = buildAnalyzer(hasGroupingSets = hasGroupingSets) { subVarno, subVarattno ->
-          if (isProvenByQuals(subQualNotNullVars, groupRteMap, subVarno, subVarattno)) {
-            true
-          } else {
-            val relid = subRangeTable[subVarno]
-            if (relid != null) {
-              isColumnNotNull(relid to subVarattno)
-            } else {
-              val cteName = subCteRteMap[subVarno]
-              cteName != null && resolvedCtes[cteName]?.getOrNull(subVarattno - 1) == false
-            }
-          }
-        }
-        val subNullabilities = subAnalyzer.extractColumnNullability(subqueryBlock)
+        val subNullabilities = analyzeQueryBlockNullability(subqueryBlock, applyQualNarrowing, resolvedCtes)
         subNullabilities.forEachIndexed { columnIndex, nullable ->
           // columnIndex is 0-based; varattno is 1-based
           put(outerVarno to (columnIndex + 1), !nullable)
         }
       }
     }
+  }
+
+  /**
+   * Computes per-column nullability for a single query block ([queryBlock]) — the shared core of
+   * [buildSubqueryColumnNotNull] (a `FROM`-clause subquery RTE) and [subLinkSubqueryColumnNotNull]
+   * (an `ANY_SUBLINK`'s `:subselect`): given a raw `{QUERY ...}` block, build a resolver over the
+   * block's OWN `parseRangeTable`/`parseCteRangeTableEntries`/`parseGroupRteMap` and qual
+   * narrowing, then run [NodeTreeNullabilityAnalyzer.extractColumnNullability] against it.
+   *
+   * @param resolvedCtes CTE bodies [queryBlock] may reference via `:ctelevelsup 1` (one level UP
+   *   from [queryBlock]'s own scope) — see [buildSubqueryColumnNotNull]'s own KDoc for why this
+   *   only ever resolves ONE level up, never [queryBlock]'s own nested `WITH` clause. Passed as
+   *   `emptyMap()` by [subLinkSubqueryColumnNotNull], which deliberately does not attempt this
+   *   resolution — see that method's KDoc.
+   * @param depth See [buildAnalyzer]'s `depth` parameter of the same name — passed through
+   *   unchanged so a `SubLink` inside [queryBlock] gets the correct, already-decremented budget.
+   */
+  private fun analyzeQueryBlockNullability(
+    queryBlock: String,
+    applyQualNarrowing: Boolean,
+    resolvedCtes: Map<String, List<Boolean>>,
+    depth: Int = SUBLINK_ANALYSIS_DEPTH_BUDGET,
+  ): List<Boolean> {
+    // Parse the block's own base-table range table for isSourceColumnNotNull.
+    val subRangeTable = nodeTreeParser.parseRangeTable(queryBlock)
+    val subCteRteMap = nodeTreeParser.parseCteRangeTableEntries(queryBlock)
+    // See analyzeNodeTree's identical guard: GROUPING SETS/CUBE/ROLLUP can
+    // null-extend a grouping key even when the base table column is NOT NULL. The actual
+    // override (including EXPRESSION grouping keys) is applied by extractColumnNullability
+    // via hasGroupingSets below.
+    val hasGroupingSets = nodeTreeParser.hasGroupingSets(queryBlock)
+    val groupRteMap = if (hasGroupingSets) {
+      emptyMap()
+    } else {
+      nodeTreeParser.parseGroupRteMap(queryBlock)
+    }
+    // See analyzeNodeTree's identical guard: suppress qual narrowing whenever
+    // hasGroupingSets, because those are exactly what GROUPING SETS/CUBE/ROLLUP null-extends
+    // after WHERE has already filtered rows.
+    val subQualNotNullVars = if (applyQualNarrowing && !hasGroupingSets) {
+      NodeTreeNullabilityAnalyzer.qualProvenNonNullVars(queryBlock, isStrictFunction)
+    } else {
+      emptySet()
+    }
+    val subAnalyzer = buildAnalyzer(
+      hasGroupingSets = hasGroupingSets,
+      applyQualNarrowing = applyQualNarrowing,
+      depth = depth,
+    ) { subVarno, subVarattno ->
+      if (isProvenByQuals(subQualNotNullVars, groupRteMap, subVarno, subVarattno)) {
+        true
+      } else {
+        val relid = subRangeTable[subVarno]
+        if (relid != null) {
+          isColumnNotNull(relid to subVarattno)
+        } else {
+          val cteName = subCteRteMap[subVarno]
+          cteName != null && resolvedCtes[cteName]?.getOrNull(subVarattno - 1) == false
+        }
+      }
+    }
+    return subAnalyzer.extractColumnNullability(queryBlock)
   }
 
   /**
