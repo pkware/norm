@@ -19,10 +19,14 @@ import java.util.logging.Logger
  * this class that scans raw text character-by-character for structural `{`, `}`, `(`, or `)` must
  * treat a `\`-prefixed pair as an opaque, non-structural unit — see [nextUnescapedIndexOf],
  * [findMarkerAtDepthOne], and [extractBalancedDelimiters]. Field-name markers (e.g. `:targetList (`,
- * `:expr {`) are Postgres's own fixed labels, never user data, so they are never escaped and the
- * plain (non-escape-aware) substring searches for them elsewhere in this class
- * ([extractArgListSection], [extractFieldExpression], and similar) remain safe as long as they
- * hand off to an escape-aware balanced-delimiter scan for everything past the marker.
+ * `:expr {`) are Postgres's own fixed labels, never user data, so they are never escaped, and the
+ * plain (non-escape-aware) substring searches for them elsewhere in this class ([extractArgListSection]
+ * and similar) remain safe as long as they hand off to an escape-aware balanced-delimiter scan for
+ * everything past the marker. [extractFieldExpression] is the one exception worth calling out
+ * explicitly: unlike those, it searches via the escape-aware AND depth-one-aware
+ * [findMarkerAtDepthOne] rather than a plain `indexOf` — see its own KDoc for why depth-one-awareness
+ * is required there specifically (several node types have a field whose own value can legally
+ * contain another node of the same outer type carrying the same field name, nested deeper).
  *
  * This class is stateless. Call [parseExpression] with any `{NODE_TYPE ...}` text to get a typed
  * node. Unrecognized node types become [PgNodeExpression.Unknown] and malformed input becomes
@@ -812,16 +816,42 @@ internal class PgNodeTreeParser {
   }
 
   /**
-   * Extracts a named `{...}` expression block from a field like `:fieldName {NODETYPE ...}`.
+   * Extracts a named `{...}` expression block from a field like `:fieldName {NODETYPE ...}`, at
+   * brace depth 1 of [text] — i.e. [fieldName] must be a direct field of the node [text] itself
+   * represents, not a same-named field belonging to some node NESTED inside one of [text]'s own
+   * field values.
    *
-   * Returns `null` if the field is absent or its value is not a brace block.
+   * Depth-one-awareness is load-bearing, not defensive polish: [fieldName] is often a field whose
+   * OWN value is a full expression subtree that can legally contain another node of the SAME
+   * outer type carrying the SAME field name — e.g. a `SUBLINK`'s `:testexpr` field can itself
+   * contain a nested `SUBLINK` with its own `:testexpr`/`:subselect`, a `CASEWHEN`'s `:expr`
+   * condition can contain a nested `CASEEXPR` with its own `:result`/`:defresult`, and a
+   * `JSONEXPR`'s `:on_empty`/`:on_error` behavior can nest another `JSONEXPR`. Because Postgres
+   * serializes a node depth-first, a same-named field belonging to a NESTED node is written
+   * INSIDE the outer field's own value — textually EARLIER than the outer node's OWN later field
+   * of that name would be, whenever the outer field being searched for comes before the nested
+   * one in that node's field order. Verified live, PostgreSQL 17 and 18, for `SUBLINK`: its
+   * `:testexpr` field precedes its `:subselect` field, so for `SELECT EXISTS (SELECT v FROM u) =
+   * ANY (SELECT b FROM x) FROM t`, the OUTER `ANY_SUBLINK`'s `:testexpr` (an `OPEXPR` whose first
+   * argument is the nested `EXISTS` sublink, itself a genuine `{SUBLINK ... :subselect {QUERY
+   * ... u ...} ...}` block) textually precedes the outer `ANY_SUBLINK`'s OWN `:subselect {QUERY
+   * ... x ...}` — a naive first-match `text.indexOf(":subselect {")` scan over the OUTER
+   * `ANY_SUBLINK`'s full text therefore returns the INNER `EXISTS` sublink's `u`-block, not the
+   * outer sublink's own `x`-block, silently proving the wrong subquery's column nullable or not.
+   * [findMarkerAtDepthOne] (reused here, the same helper [parseWhereQuals] uses for its
+   * `:jointree`/`:quals` extraction) only matches [fieldName] directly inside [text]'s own
+   * outermost `{...}` block, so a nested node's same-named field can never shadow it.
+   *
+   * [findMarkerAtDepthOne] resets its match state on any `{`, so the marker searched for must be
+   * `"$fieldName "` (trailing space, no brace) rather than `"$fieldName {"` — the value's opening
+   * brace is located separately, immediately after the marker.
+   *
+   * Returns `null` if the field is absent, or its value is not a brace block (e.g. `:defresult <>`).
    */
   private fun extractFieldExpression(text: String, fieldName: String): String? {
-    val marker = "$fieldName {"
-    val markerIndex = text.indexOf(marker)
-    if (markerIndex == -1) return null
-    val braceIndex = markerIndex + marker.length - 1
-    return extractBalancedBraces(text, braceIndex)
+    val markerEnd = findMarkerAtDepthOne(text, "$fieldName ")
+    if (markerEnd == -1 || markerEnd >= text.length || text[markerEnd] != '{') return null
+    return extractBalancedBraces(text, markerEnd)
   }
 
   /**
