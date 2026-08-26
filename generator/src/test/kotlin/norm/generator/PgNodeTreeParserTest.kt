@@ -244,6 +244,56 @@ class PgNodeTreeParserTest {
   }
 
   @Nested
+  inner class DepthAwareFieldExtraction {
+
+    // extractFieldExpression must find a field at brace depth 1 of the node it is given, not the
+    // first textual occurrence of that field name anywhere in the text — several node types have
+    // an earlier-serialized field whose OWN value can legally contain ANOTHER node of the same
+    // type, carrying the same field name, nested deeper. A first-match indexOf scan finds the
+    // NESTED (wrong) occurrence whenever the earlier field's value textually precedes the node's
+    // OWN later field of that name, silently proving the wrong subtree.
+
+    @Test
+    fun `a CASEWHEN's own result is not shadowed by a nested CASEEXPR inside its condition`() {
+      val innerCaseWhen = "{CASEWHEN :expr {CONST :constisnull false} " +
+        ":result {VAR :varno 100 :varattno 1 :varlevelsup 0 :location -1} :location -1}"
+      val innerCaseExpr = "{CASEEXPR :casetype 23 :arg <> :args ($innerCaseWhen) " +
+        ":defresult {VAR :varno 101 :varattno 1 :varlevelsup 0 :location -1} :location -1}"
+      val outerCaseWhen = "{CASEWHEN :expr $innerCaseExpr " +
+        ":result {VAR :varno 200 :varattno 1 :varlevelsup 0 :location -1} :location -1}"
+      val outerText = "{CASEEXPR :casetype 23 :arg <> :args ($outerCaseWhen) " +
+        ":defresult {VAR :varno 201 :varattno 1 :varlevelsup 0 :location -1} :location -1}"
+      val result = parser.parseExpression(outerText) as PgNodeExpression.CaseExpr
+      val resultVar = result.resultExpressions.single() as PgNodeExpression.Var
+      assertThat(resultVar.varno).isEqualTo(200)
+      val defaultVar = result.defaultResult as PgNodeExpression.Var
+      assertThat(defaultVar.varno).isEqualTo(201)
+    }
+
+    @Test
+    fun `a JSONEXPR's own on_empty and on_error are not shadowed by a nested JSONEXPR argument`() {
+      val innerOnEmpty = "{JSONBEHAVIOR :btype 8 :expr {VAR :varno 900 :varattno 1 :varlevelsup 0 " +
+        ":location -1} :location -1}"
+      val innerOnError = "{JSONBEHAVIOR :btype 8 :expr {VAR :varno 901 :varattno 1 :varlevelsup 0 " +
+        ":location -1} :location -1}"
+      val innerJsonExpr = "{JSONEXPR :op 2 :formatted_expr " +
+        "{VAR :varno 800 :varattno 1 :varlevelsup 0 :location -1} :on_empty $innerOnEmpty " +
+        ":on_error $innerOnError :location -1}"
+      val outerOnEmpty = "{JSONBEHAVIOR :btype 8 :expr {VAR :varno 902 :varattno 1 :varlevelsup 0 " +
+        ":location -1} :location -1}"
+      val outerOnError = "{JSONBEHAVIOR :btype 8 :expr {VAR :varno 903 :varattno 1 :varlevelsup 0 " +
+        ":location -1} :location -1}"
+      val outerText = "{JSONEXPR :op 2 :formatted_expr $innerJsonExpr :on_empty $outerOnEmpty " +
+        ":on_error $outerOnError :location -1}"
+      val result = parser.parseExpression(outerText) as PgNodeExpression.JsonExpr
+      val onEmptyVar = result.onEmptyDefault as PgNodeExpression.Var
+      assertThat(onEmptyVar.varno).isEqualTo(902)
+      val onErrorVar = result.onErrorDefault as PgNodeExpression.Var
+      assertThat(onErrorVar.varno).isEqualTo(903)
+    }
+  }
+
+  @Nested
   inner class ConstStructuralEquality {
 
     @Test
