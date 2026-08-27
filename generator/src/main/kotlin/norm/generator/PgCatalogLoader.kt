@@ -733,18 +733,20 @@ internal class PgCatalogLoader(internal val connection: Connection) {
    * shape is exercised elsewhere in [QueryAnalysisTest] and in the `test-scenarios` golden-file
    * corpus, which pins the exact generated Kotlin type derived from this function's answer).
    *
-   * @return one boolean per result column (`true` means nullable). If
+   * @return one [ColumnAnalysis] per result column. If
    *   [ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody] cannot produce an answer at
    *   all — a probe failure, or [sql] is a `MERGE` whose `USING` clause has more than one source
    *   relation of its own (see [ColumnNullabilityAnalyzer]'s `mergeAbsentVarnos` KDoc) — every real
    *   result column (via `PreparedStatement.getMetaData()`, the only source of a column count this
-   *   deep into a fallback) is reported nullable: the safe direction, and consistent with every
-   *   other fallback in this file. A statement with no result columns at all (`INSERT`/`UPDATE`/
-   *   `DELETE`/`MERGE` with no `RETURNING`) naturally reports an EMPTY list here, since its real
-   *   column count is `0` — there is nothing for a caller to treat as nullable OR not.
+   *   deep into a fallback) is reported nullable with no provenance: the safe direction, and
+   *   consistent with every other fallback in this file. A statement with no result columns at all
+   *   (`INSERT`/`UPDATE`/`DELETE`/`MERGE` with no `RETURNING`) naturally reports an EMPTY list here,
+   *   since its real column count is `0` — there is nothing for a caller to treat as nullable OR
+   *   not.
    */
-  fun queryColumnNullability(@Language("PostgreSQL") sql: String): List<Boolean> =
-    nullabilityAnalyzer.queryColumnNullabilityViaProsqlbody(sql) ?: List(realColumnCount(sql)) { true }
+  fun queryColumnNullability(@Language("PostgreSQL") sql: String): List<ColumnAnalysis> =
+    nullabilityAnalyzer.queryColumnNullabilityViaProsqlbody(sql)
+      ?: List(realColumnCount(sql)) { ColumnAnalysis(nullable = true, provenanceExpression = null) }
 
   /**
    * The real number of result columns [sql] produces, via `PreparedStatement.getMetaData()` — used

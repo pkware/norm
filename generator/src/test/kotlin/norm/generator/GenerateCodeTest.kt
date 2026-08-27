@@ -148,7 +148,6 @@ class GenerateCodeTest {
       analyzedQueries,
       effectivePackageName,
       frameworks,
-      analyzer.fetchReservedWords(),
       typeMappings,
     )
     val createdFiles = result.associate { spec ->

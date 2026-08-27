@@ -10,17 +10,19 @@ package norm.generator
  *   (`"MyCte"` is distinct from `MyCte`, which folds to `mycte`), so both building a `FROM <name>`
  *   reference from this stripped form, and comparing it against another identifier to decide
  *   whether they denote the same relation, can silently pick the wrong (or a nonexistent) one —
- *   see [resolveCteOutputExpression]'s own use of [rawName] instead, for exactly this reason. Use
- *   [rawName] for both constructing SQL and any identifier-resolution comparison.
+ *   see [resolveNodeTreeProvenanceExpression]'s own use of [rawName] instead, for exactly this
+ *   reason. Use [rawName] for both constructing SQL and any identifier-resolution comparison.
  * @property rawName The CTE name exactly as written in the original SQL, including surrounding
  *   double quotes if the user quoted it. Safe to splice verbatim into a `FROM <rawName>` probe.
  * @property bodyOpenParenthesis Index of `(` that opens the CTE body in the original SQL.
  * @property bodyCloseParenthesis Index of `)` that closes the CTE body.
  * @property hasColumnList Whether the CTE was declared with an explicit column list
- *   (`name(col1, col2) AS (...)`). The list renames/repositions the body's own output names, and
- *   this file carries no information about which body expression backs any particular listed
- *   name, so [resolveCteOutputExpression] refuses to resolve an expression through a CTE for
- *   which this is `true` — the presence of a list is all that matters, not its contents.
+ *   (`name(col1, col2) AS (...)`). The list renames/repositions the body's own output names — but
+ *   [resolveNodeTreeProvenanceExpression] never consults this flag: it cross-validates against the
+ *   CTE BODY's own `:resname`s (read from the node tree, via [PgNodeTreeParser.parseTargetList]),
+ *   which an explicit column list never changes, so a renamed CTE still resolves correctly. Kept
+ *   for callers that need to know a column list was present, not because expression resolution
+ *   depends on it.
  */
 internal data class CteDefinition(
   val name: String,

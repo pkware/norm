@@ -1049,26 +1049,29 @@ internal class PgNodeTreeParser {
       .find(text)?.groupValues?.get(1)?.let { it == "true" }
 
   /**
-   * Extracts a non-whitespace string field value from a node block, with backslash-escaping
-   * removed (see the class-level note on backslash escaping) — e.g. a `:resname` of `k\}x` (an
-   * alias `k}x` containing a literal `}`) is returned as `k}x`, not the raw escaped text.
+   * Extracts a string field value from a node block, with backslash-escaping removed (see the
+   * class-level note on backslash escaping) — e.g. a `:resname` of `k\}x` (an alias `k}x`
+   * containing a literal `}`) is returned as `k}x`, not the raw escaped text.
    *
-   * This does NOT recover a value containing an escaped (literal) whitespace character — a space,
-   * tab, newline, or any other character `\S` excludes: the `\S+` capture group below has no
-   * escape-awareness of its own and stops at that byte regardless of the preceding backslash,
-   * truncating the match before [unescapeToken] ever runs (verified live: an alias `"t<TAB>x"`
-   * captures as just `t\`, dropping the escaped tab and everything after it). No current caller of
-   * this method depends on a field value containing whitespace, so this residual gap is left
-   * unaddressed rather than rewriting the capture into a full escape-aware scanner for a case no
-   * caller hits.
+   * The capture group matches a run of EITHER a plain non-whitespace character OR a backslash
+   * followed by ANY character (`\\[\s\S]`, matched as one unit, tried FIRST at each position) —
+   * not a bare `\S+`, which has no escape-awareness of its own and stops at a literal escaped
+   * whitespace byte regardless of the preceding backslash, truncating the match before
+   * [unescapeToken] ever runs. Verified live: a CTE named `"My Cte"` serializes as `:ctename
+   * My\ Cte` (the embedded space backslash-escaped, exactly like any other special character this
+   * format escapes) — a bare `\S+` would capture only `My\`, silently dropping ` Cte` and every
+   * following field in the same node block from that regex's own next `find()` (the `:ctename`
+   * that follows next would still be found, since `\S+`'s truncation only shortens THIS field's
+   * captured value, but that shortened value is a distinct, colliding CTE name if two CTEs happen
+   * to share the same truncated prefix). `[\s\S]`, not `.`, is what lets the escaped-pair
+   * alternative consume an escaped newline too, without depending on `Regex`'s DOTALL mode.
    *
    * @param text the full node block text
    * @param fieldName the field name including the leading colon, e.g. `":ctename"`
-   * @return the unescaped string value (first contiguous non-whitespace run after the field name
-   *   and space), or `null` if the field is absent
+   * @return the unescaped string value, or `null` if the field is absent
    */
   private fun extractStringField(text: String, fieldName: String): String? =
-    stringFieldPatterns.getOrPut(fieldName) { Regex("""$fieldName (\S+)""") }
+    stringFieldPatterns.getOrPut(fieldName) { Regex("""$fieldName ((?:\\[\s\S]|\S)+)""") }
       .find(text)?.groupValues?.get(1)?.let(::unescapeToken)
 
   /**

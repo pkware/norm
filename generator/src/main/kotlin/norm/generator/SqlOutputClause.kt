@@ -102,10 +102,11 @@ internal data class OutputItemWithAlias(val selectItem: SelectItem, val alias: S
 
 /**
  * The shared parsing core behind both [parseSelectItems] (which discards [OutputItemWithAlias.alias])
- * and [resolveCteOutputExpression] (which needs the alias to match a CTE body item against the
- * outer name it's exposed under — see that function's KDoc for why the alias can't be dropped
- * there). Locates the same output clause [parseSelectItems] documents finding — see its KDoc for
- * the window/`RETURNING`-gating/star-truncation rules, all of which apply identically here.
+ * and [resolveNodeTreeProvenanceExpression] (which needs the alias to cross-validate a CTE body
+ * item's own name against the node tree's authoritative `:resname` — see that function's KDoc for
+ * why the alias can't be dropped there). Locates the same output clause [parseSelectItems]
+ * documents finding — see its KDoc for the window/`RETURNING`-gating/star-truncation rules, all of
+ * which apply identically here.
  */
 internal fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> {
   val mainQueryStart = parseCteClause(sql)?.mainQueryStart ?: 0

@@ -96,6 +96,15 @@ internal class StrippedText(private val text: String, private val originalOffset
   fun slice(from: Int, until: Int): StrippedText =
     StrippedText(text.substring(from, until), originalOffsets.copyOfRange(from, until))
 
+  /**
+   * The ORIGINAL (pre-stripping) index that stripped index [strippedIndex] came from — used by
+   * [splitTrailingImplicitAlias] to translate a boundary located in stripped space (comments and
+   * whitespace already removed) back into the ORIGINAL text, so the expression half of the split
+   * can be sliced out of the caller's own, un-stripped item text, comments and all, rather than the
+   * stripped copy this class holds privately.
+   */
+  fun originalIndexOf(strippedIndex: Int): Int = originalOffsets[strippedIndex]
+
   /** See [skipLexicalToken]'s KDoc — this threads `this` as the [OriginalAdjacency]. */
   fun skipLexicalToken(position: Int): Int = norm.generator.skipLexicalToken(text, position, this)
 
@@ -107,8 +116,9 @@ internal class StrippedText(private val text: String, private val originalOffset
    * The single, deliberately named escape hatch out of this class's own lexer entry points, back
    * to a plain `String` — see this class's own KDoc for why every OTHER accessor exists instead of
    * this one. Safe only for a caller that does no lexing at all, i.e. has no adjacency decision to
-   * gate; [isStarQualifierAcceptable] is the only current caller, since it merely inspects the
-   * character class of a qualifier's trailing run.
+   * gate; [isStarQualifierAcceptable] (inspecting the character class of a qualifier's trailing
+   * run) and [splitTrailingImplicitAlias] (extracting an already-located trailing alias segment's
+   * own text, which needs no further lexical stepping once found) are the only current callers.
    */
   fun asPlainString(): String = text
 }
@@ -235,6 +245,42 @@ private fun findTrailingImplicitAliasStart(text: StrippedText): Int? {
   }
   return if (lastSegmentEnd == text.length && lastSegmentStart > 0) lastSegmentStart else null
 }
+
+/**
+ * The expression/alias split of an item with a trailing implicit (no-`AS`) alias — e.g.
+ * `UPPER(a) y` splits into expression `UPPER(a)` and alias `y` — or `null` if [item] has no such
+ * trailing alias at all, generalizing [findTrailingImplicitAliasStart] (the same detection
+ * [isStarItem] uses for a star's own trailing alias) beyond star items to any item's text.
+ *
+ * That function already answers only for a trailing segment that is the item's FINAL token and
+ * does NOT span the entire item, so a bare column reference (`description` — one segment covering
+ * the whole text) correctly returns `null` here, not itself, matching this function's OWN "no
+ * implicit alias" contract for that shape.
+ *
+ * [item] is stripped of comments/whitespace only to LOCATE the split point ([findTrailingImplicitAliasStart]
+ * needs that normalized form) — the returned [ItemAndImplicitAlias.expression] is sliced out of
+ * [item] itself, ORIGINAL formatting (including any comment [stripComments] must still remove
+ * downstream) intact, via [StrippedText.originalIndexOf] translating the stripped split point back
+ * to [item]'s own indices.
+ *
+ * @param item The full item text — expression and any trailing implicit alias together, with no
+ *   `AS` keyword having already been found and split off (an item with an explicit `AS` alias is
+ *   never passed here; its alias is [extractAlias]'s own, unrelated concern).
+ */
+internal fun splitTrailingImplicitAlias(item: String): ItemAndImplicitAlias? {
+  val stripped = stripCommentsAndWhitespace(item)
+  val aliasStart = findTrailingImplicitAliasStart(stripped) ?: return null
+  val alias = stripped.asPlainString().substring(aliasStart)
+  val originalAliasStart = stripped.originalIndexOf(aliasStart)
+  return ItemAndImplicitAlias(item.substring(0, originalAliasStart).trim(), alias)
+}
+
+/**
+ * @property expression [splitTrailingImplicitAlias]'s own item text with the trailing implicit
+ *   alias removed, original formatting otherwise intact.
+ * @property alias The trailing implicit alias token itself.
+ */
+internal data class ItemAndImplicitAlias(val expression: String, val alias: String)
 
 /**
  * Matches ONE segment starting at [start] in [text], in this precedence order:

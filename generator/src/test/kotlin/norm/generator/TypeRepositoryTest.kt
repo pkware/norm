@@ -112,14 +112,23 @@ class TypeRepositoryTest {
       // Regression test for issue #229: a result column that is BOTH CTE-wrapped AND
       // expression-derived previously got no @property line at all. The outer select item
       // (`description_upper`, a plain column reference into the CTE) makes isComputedExpression
-      // false, so this only passes if TypeRepository also tries resolveCteOutputExpression.
+      // false, so this only passes if TypeRepository also reads column.provenanceExpression —
+      // populated here directly, standing in for what ColumnNullabilityAnalyzer's own node-tree
+      // resolution (NodeTreeProvenanceResolver + resolveNodeTreeProvenanceExpression) would have
+      // computed during analysis; TypeRepository itself no longer does any SQL-text CTE resolution
+      // of its own.
       val queryText = """
         WITH deleted_parent AS (
           DELETE FROM parent WHERE id = ? RETURNING UPPER(description) AS description_upper
         )
         SELECT description_upper FROM deleted_parent
       """.trimIndent()
-      val expressionColumn = Column(name = "description_upper", notNull = false, type = Identifier(name = "text"))
+      val expressionColumn = Column(
+        name = "description_upper",
+        notNull = false,
+        type = Identifier(name = "text"),
+        provenanceExpression = "UPPER(description)",
+      )
 
       val repository = TypeRepository("test", Catalog())
       repository.buildTypeProjectionForQuery(
@@ -134,8 +143,9 @@ class TypeRepositoryTest {
 
     @Test
     fun `a CTE-wrapped plain pass-through column gets no spurious source-reference KDoc line`() {
-      // Contrast case: a chained pass-through in the CTE body must not echo its own column name
-      // back as a fake expression.
+      // Contrast case: a chained pass-through in the CTE body has no provenanceExpression at all
+      // (the default `null`) — TypeRepository must not echo its own column name back as a fake
+      // expression.
       val queryText = """
         WITH deleted_parent AS (
           SELECT name FROM parent

@@ -221,22 +221,24 @@ public class JdbcAnalyzer(private val connection: Connection) {
       // Look up the catalog column for comment resolution.
       val catalogColumn = tableName?.let { catalog.findColumn(it, originalColumnName) }
 
-      // The node tree is the authoritative source for nullability. columnNullability[i-1] is true
-      // when nullable. Default to true (nullable) when the index is out of bounds.
-      val notNull = !(columnNullability.getOrElse(i - 1) { true })
+      // The node tree is the authoritative source for nullability. columnNullability[i-1].nullable
+      // is true when nullable. Default to nullable, with no provenance, when the index is out of
+      // bounds.
+      val analysis = columnNullability.getOrElse(i - 1) { ColumnAnalysis(nullable = true, provenanceExpression = null) }
 
       val comment = catalogColumn?.comment.orEmpty()
 
       columns.add(
         Column(
           name = columnLabel,
-          notNull = notNull,
+          notNull = !analysis.nullable,
           isArray = isArray,
           arrayDims = if (isArray) 1 else 0,
           comment = comment,
           type = Identifier(name = baseName),
           table = tableName?.let { resolveTableIdentifier(it, catalog) },
           originalName = originalColumnName,
+          provenanceExpression = analysis.provenanceExpression,
         ),
       )
     }

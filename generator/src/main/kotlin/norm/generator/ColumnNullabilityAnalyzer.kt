@@ -48,6 +48,21 @@ private const val SUBLINK_ANALYSIS_DEPTH_BUDGET = 3
 internal const val VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET = 50
 
 /**
+ * One result column's [nullable] flag (`true` means nullable) together with, when resolvable, its
+ * [provenanceExpression] — the CTE-body SQL expression (verbatim from the developer's own query
+ * text) that produced it, for a column whose own select item is merely a bare reference into a
+ * CTE's output. `null` when [NodeTreeProvenanceResolver] found no CTE reference to attribute this
+ * column to, or [resolveNodeTreeProvenanceExpression] could not PROVE the expression correct — see
+ * those functions' own KDoc for the full list of gates.
+ *
+ * Carries both facts together, rather than as two separate parallel lists, because
+ * [ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody] resolves them from the SAME
+ * parsed node tree in ONE round trip: nullability and provenance are two independent readings of a
+ * probe function PostgreSQL was only ever asked to build once.
+ */
+internal data class ColumnAnalysis(val nullable: Boolean, val provenanceExpression: String?)
+
+/**
  * Drives per-column nullability analysis for a SQL query on behalf of [loader]: fetching the
  * query's own parsed node tree (via `prosqlbody` or a probe function, see
  * [queryColumnNullabilityViaProsqlbody]'s own KDoc), then recursively resolving CTE bodies,
@@ -232,13 +247,23 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    * `RETURNING`) fails PostgreSQL's `RETURNS SETOF record` check on function creation — there is
    * nothing to probe, and the [SQLException] is caught here rather than propagated.
    *
+   * Provenance piggybacks the SAME round trip: [NodeTreeProvenanceResolver] resolves each column's
+   * CTE-body position from the identical [nodeTree] this method already builds for nullability, and
+   * [resolveNodeTreeProvenanceExpression] extracts and cross-validates the actual expression text
+   * from [sql] — the ORIGINAL, un-substituted query text, never [substitutedSql] — so a sentinel
+   * literal built only to satisfy a `?`'s type can never leak into generated KDoc. This costs no
+   * additional server call: both readings are computed from the ONE probe function already created
+   * below.
+   *
    * @param sql the SQL query or DML statement to analyze; any `?` parameter placeholder is
    *   replaced with a typed non-null sentinel literal internally (see [buildViewSqlWithSentinels])
-   * @return one boolean per result column in `SELECT`/`RETURNING` order (`true` means nullable), or
-   *   `null` if [sql] has no result columns to probe or the probe itself failed for any reason —
-   *   the caller must treat `null` as "this path has no answer", never as "zero columns."
+   *   ONLY for building the probe function — [sql] itself, `?` intact, is what provenance
+   *   expression text is extracted from
+   * @return one [ColumnAnalysis] per result column in `SELECT`/`RETURNING` order, or `null` if
+   *   [sql] has no result columns to probe or the probe itself failed for any reason — the caller
+   *   must treat `null` as "this path has no answer", never as "zero columns."
    */
-  internal fun queryColumnNullabilityViaProsqlbody(@Language("PostgreSQL") sql: String): List<Boolean>? {
+  internal fun queryColumnNullabilityViaProsqlbody(@Language("PostgreSQL") sql: String): List<ColumnAnalysis>? {
     val substitutedSql = buildViewSqlWithSentinels(sql) ?: replaceParameterPlaceholders(sql)
     val functionName = "norm_nullability_${UUID.randomUUID().toString().replace("-", "")}"
     return try {
@@ -275,13 +300,17 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
         // parameter blocks analyzeNodeTree's :targetList-to-:returningList substitution (see its
         // KDoc) for the WHOLE statement, not just the specific assignment a parameter feeds,
         // because there is no structural way from here to tell which assignment(s) it was.
-        analyzeNodeTree(
+        val nullability = analyzeNodeTree(
           nodeTree,
           applyQualNarrowing = true,
           sql = substitutedSql,
           trustAssignedExpressions = '?' !in sql,
           mergeAbsentVarnos = mergeAbsent,
         )
+        val provenance = NodeTreeProvenanceResolver().resolveColumnProvenance(nodeTree).map { columnProvenance ->
+          columnProvenance?.let { resolveNodeTreeProvenanceExpression(sql, nodeTree, it) }
+        }
+        nullability.mapIndexed { index, nullable -> ColumnAnalysis(nullable, provenance.getOrNull(index)) }
       } finally {
         connection.createStatement().use { statement ->
           statement.execute("DROP FUNCTION IF EXISTS pg_temp.$functionName()")

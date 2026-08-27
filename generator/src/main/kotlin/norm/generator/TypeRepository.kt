@@ -47,19 +47,11 @@ private val ENUM_JDBC_TYPE_INFO =
  * @param catalog Postgres catalog to use when resolving projection information.
  * @param typeMappings User-configured type/column overrides. Type-level overrides take precedence
  *   over auto-generated enums/domains; column-level overrides take precedence over everything.
- * @param reservedWords The connected PostgreSQL server's reserved keywords (see
- *   [resolveCteOutputExpression]'s own `reservedWords` parameter doc), forwarded verbatim to it
- *   when resolving a CTE-wrapped column's provenance. Defaults to `emptySet()` for callers (mostly
- *   tests building an in-memory [Catalog] with no live connection) whose queries never alias a
- *   reserved word inside a `WITH` clause; [generateCode] — the real production entry point — always
- *   supplies [JdbcAnalyzer.fetchReservedWords]'s live result explicitly instead of relying on this
- *   default.
  */
 internal class TypeRepository(
   private val packageName: String,
   private val catalog: Catalog,
   private val typeMappings: List<TypeMapping> = emptyList(),
-  private val reservedWords: Set<String> = emptySet(),
 ) {
 
   /**
@@ -296,14 +288,13 @@ internal class TypeRepository(
         // are excluded because echoing the column name back adds no value.
         val isComputedExpression = column.table == null && selectItem != null && selectItem.columnName == null
         // A plain reference into a CTE's output (column.table == null, but the outer item IS a
-        // simple column reference) can still be expression-derived one level down, inside the
-        // CTE body -- see resolveCteOutputExpression's KDoc for the shape it resolves and every
-        // case it deliberately punts on rather than guessing.
-        val cteExpression = if (!isComputedExpression && column.table == null && selectItem?.columnName != null) {
-          resolveCteOutputExpression(queryText, selectItem, reservedWords)
-        } else {
-          null
-        }
+        // simple column reference) can still be expression-derived one level down, inside the CTE
+        // body -- column.provenanceExpression was already resolved from the query's own parsed node
+        // tree, cross-validated against this same queryText, during analysis (see
+        // ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody and
+        // resolveNodeTreeProvenanceExpression for the shape it resolves and every case it
+        // deliberately punts on rather than guessing).
+        val cteExpression = if (!isComputedExpression && column.table == null) column.provenanceExpression else null
         PropertySource(
           propertyName = column.name,
           comment = column.comment,
@@ -880,10 +871,10 @@ private fun PropertySource.sourceReference(): String? = when {
  * `UPPER( a)`) reads oddly there, even though inserting that space is exactly right for
  * [stripComments]' OWN purpose of never fusing two tokens a comment used to separate.
  *
- * Applied ONLY at the point [resolveCteOutputExpression] returns an expression for KDoc, never
- * inside [stripComments] itself: [stripComments]' OTHER caller
- * ([mainQueryFromIsExactlyThisCte]'s own `fromText`) needs the inserted space PRESERVED, to keep
- * the token boundaries that caller's own exact-text comparison depends on intact.
+ * Applied ONLY at the point [resolveNodeTreeProvenanceExpression] returns an expression for KDoc,
+ * never inside [stripComments] itself — see that function's own KDoc for why it inserts the space
+ * in the first place, a purpose this whitespace-removal step would otherwise defeat for any OTHER
+ * caller relying on the fusion-prevention guarantee.
  *
  * Collapses any run of whitespace to a single space, then removes a single space immediately
  * after `(` or immediately before `)` — whitespace directly adjacent to a parenthesis is never

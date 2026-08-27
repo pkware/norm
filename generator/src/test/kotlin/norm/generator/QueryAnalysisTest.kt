@@ -8289,7 +8289,7 @@ class QueryAnalysisTest {
             RETURNING WITH (OLD AS o, NEW AS n) o.name, n.name
             """.trimIndent(),
           )
-          assertThat(result).isEqualTo(listOf(true, false))
+          assertThat(result?.map { it.nullable }).isEqualTo(listOf(true, false))
         } finally {
           connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
         }
@@ -8318,7 +8318,7 @@ class QueryAnalysisTest {
             -- only active rows
             """.trimIndent(),
           )
-          assertThat(result).isEqualTo(listOf(false, false))
+          assertThat(result?.map { it.nullable }).isEqualTo(listOf(false, false))
         } finally {
           connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
         }
@@ -8342,7 +8342,7 @@ class QueryAnalysisTest {
           val result = ColumnNullabilityAnalyzer(catalogLoader).queryColumnNullabilityViaProsqlbody(
             "SELECT id, name FROM t /* only active rows */",
           )
-          assertThat(result).isEqualTo(listOf(false, false))
+          assertThat(result?.map { it.nullable }).isEqualTo(listOf(false, false))
         } finally {
           connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
         }
