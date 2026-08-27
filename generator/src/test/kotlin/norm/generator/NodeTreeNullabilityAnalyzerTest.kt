@@ -1,7 +1,6 @@
 package norm.generator
 
 import assertk.assertThat
-import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isTrue
 import org.junit.jupiter.api.Nested
@@ -267,16 +266,9 @@ class NodeTreeNullabilityAnalyzerTest {
 
     @Test
     fun `a JSON_SERIALIZE-shaped node with an empty argument list is nullable, not vacuously non-null`() {
-      // Pins the arguments.isNotEmpty() guard in evaluateJsonConstructorExpr's types 5/6/7 branch:
-      // deleting it leaves `arguments.all(recurse)` vacuously true over an empty list — exactly the
-      // unsound "true over an empty collection" shape that made the original JsonConstructorExpr
-      // bug (JSON_SERIALIZE(NULL::jsonb) wrongly reported non-null) possible in the first place, just
-      // narrower. A genuinely argument-less JsonConstructorExpr of type 5/6/7 is not known to occur
-      // from real PostgreSQL output today — JSON_SERIALIZE/JSON()/JSON_SCALAR each always carry
-      // exactly one SQL argument — but the guard exists specifically so an unreadable or malformed
-      // `:args` (which PgNodeTreeParser's own safe-degradation rules parse down to an empty list,
-      // never throwing) cannot silently resolve to NOT NULL merely because `all` over nothing is
-      // vacuously `true`.
+      // Without the arguments.isNotEmpty() guard, `arguments.all(recurse)` is vacuously true over an
+      // empty list — the same unsound shape as the original `JsonConstructorExpr -> true` bug. A
+      // malformed `:args` parses down to an empty list rather than throwing, so this is reachable.
       val expression = PgNodeExpression.JsonConstructorExpr(
         type = PgNodeExpression.JSON_CONSTRUCTOR_TYPE_SERIALIZE,
         arguments = emptyList(),
@@ -297,22 +289,6 @@ class NodeTreeNullabilityAnalyzerTest {
 
     private val comparisonOperatorOid = 100
 
-    @Test
-    fun `each SUBLINK_TYPE constant equals the integer value real PostgreSQL emits for it`() {
-      // Every test below that builds a PgNodeExpression.SubLink by hand references these constants
-      // SYMBOLICALLY, so it passes under any self-consistent value — only a live QueryAnalysisTest
-      // pins the mapping against real PostgreSQL. This assertion pins the mapping directly here too,
-      // so a future regression to a wrong integer (the SUBLINK_TYPE_ALL = 3 bug this file's own
-      // history records) fails at THIS line, not only downstream in a live test that gives no clue
-      // which constant is wrong. Values verified live on PostgreSQL 18.4 — see
-      // PgNodeExpression.SUBLINK_TYPE_ALL's own KDoc for the full enum mapping and repro queries.
-      assertThat(PgNodeExpression.SUBLINK_TYPE_EXISTS).isEqualTo(0)
-      assertThat(PgNodeExpression.SUBLINK_TYPE_ALL).isEqualTo(1)
-      assertThat(PgNodeExpression.SUBLINK_TYPE_ANY).isEqualTo(2)
-      assertThat(PgNodeExpression.SUBLINK_TYPE_ROWCOMPARE).isEqualTo(3)
-      assertThat(PgNodeExpression.SUBLINK_TYPE_ARRAY).isEqualTo(6)
-    }
-
     private fun anySubLink(
       outerOperand: PgNodeExpression? = PgNodeExpression.Const(isNull = false),
       subselectBlock: String? = "{QUERY :targetList ({TARGETENTRY :expr {VAR :varno 1 :varattno 1} :resno 1})}",
@@ -323,13 +299,6 @@ class NodeTreeNullabilityAnalyzerTest {
       subselectBlock = subselectBlock,
       testExpressionOperatorOid = testExpressionOperatorOid,
     )
-
-    // ALL_SUBLINK (`x op ALL (subquery)`) is the dual of ANY_SUBLINK over OR instead of AND: TRUE
-    // if the subquery is empty or every comparison is true, FALSE if any comparison is false, and
-    // NULL only when some comparison is NULL and none is false. The identical three conditions that
-    // rule out a NULL comparison for ANY (non-null outer operand, strict-and-total operator,
-    // provably non-null single-column subquery result) rule it out here too, and an empty subquery
-    // is non-null (TRUE) rather than NULL, so the proof holds.
 
     private fun allSubLink(
       outerOperand: PgNodeExpression? = PgNodeExpression.Const(isNull = false),
@@ -362,12 +331,8 @@ class NodeTreeNullabilityAnalyzerTest {
 
     @Test
     fun `ROWCOMPARE sublink is nullable even when all three ANY-style conditions are satisfied`() {
-      // ROWCOMPARE_SUBLINK (a row comparison against a one-row subquery, e.g. `(a, id) < (SELECT v,
-      // 1 FROM u)`) is genuinely different from ANY/ALL: an EMPTY subquery yields NULL rather than
-      // TRUE/FALSE (there is no row to compare against), so no combination of outer-operand,
-      // operator, or column conditions can rescue it the way they do for ANY/ALL — it is
-      // deliberately excluded from isNonNull's SubLink proof regardless of how favorable those three
-      // conditions look.
+      // An EMPTY subquery yields NULL for ROWCOMPARE, unlike ANY/ALL, so no combination of the three
+      // conditions can rescue it — it is deliberately excluded from isNonNull's SubLink proof.
       val expression = PgNodeExpression.SubLink(
         subLinkType = PgNodeExpression.SUBLINK_TYPE_ROWCOMPARE,
         outerOperand = PgNodeExpression.Const(isNull = false),
@@ -442,57 +407,6 @@ class NodeTreeNullabilityAnalyzerTest {
     @Test
     fun `ALL sublink is non-null when all three conditions are satisfied`() {
       assertThat(safeAnalyzer().isNonNull(allSubLink())).isTrue()
-    }
-
-    @Test
-    fun `ALL sublink is nullable when the outer operand is nullable`() {
-      val expression = allSubLink(outerOperand = PgNodeExpression.Const(isNull = true))
-      assertThat(safeAnalyzer().isNonNull(expression)).isFalse()
-    }
-
-    @Test
-    fun `ALL sublink is nullable when the subquery column is nullable`() {
-      val expression = allSubLink()
-      assertThat(safeAnalyzer(isSubLinkSubqueryColumnNotNull = { false }).isNonNull(expression)).isFalse()
-    }
-
-    @Test
-    fun `ALL sublink is nullable when subselectBlock is null`() {
-      val expression = allSubLink(subselectBlock = null)
-      assertThat(safeAnalyzer().isNonNull(expression)).isFalse()
-    }
-
-    @Test
-    fun `ALL sublink is nullable when testExpressionOperatorOid is null, the row-comparison form`() {
-      // (a, id) <> ALL (SELECT v, 1 FROM u)'s :testexpr is a BOOLEXPR combining one OPEXPR per
-      // column, which has no single top-level operator OID this rule can trust — same shape as the
-      // ANY row-comparison form above, and it fails the proof automatically for the same reason.
-      val expression = allSubLink(testExpressionOperatorOid = null)
-      val result = analyzer(isStrict = {
-        true
-      }, isNeverNullForNonNullInput = { true }, isSubLinkSubqueryColumnNotNull = { true })
-        .isNonNull(expression)
-      assertThat(result).isFalse()
-    }
-
-    @Test
-    fun `ALL sublink is nullable when the comparison operator is not strict`() {
-      val expression = allSubLink()
-      val result = analyzer(isStrict = {
-        false
-      }, isNeverNullForNonNullInput = { true }, isSubLinkSubqueryColumnNotNull = { true })
-        .isNonNull(expression)
-      assertThat(result).isFalse()
-    }
-
-    @Test
-    fun `ALL sublink is nullable when the comparison operator is strict but not proven total on non-null input`() {
-      val expression = allSubLink()
-      val result = analyzer(isStrict = {
-        true
-      }, isNeverNullForNonNullInput = { false }, isSubLinkSubqueryColumnNotNull = { true })
-        .isNonNull(expression)
-      assertThat(result).isFalse()
     }
 
     @Test

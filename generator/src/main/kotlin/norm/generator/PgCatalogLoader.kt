@@ -491,14 +491,11 @@ internal class PgCatalogLoader(internal val connection: Connection) {
    * Returns NOT NULL column information for views and materialized views in [schemaName], for
    * [JdbcAnalyzer]'s catalog construction.
    *
-   * A thin name-resolution adapter over [ColumnNullabilityAnalyzer.isColumnNotNull] — the single,
-   * relid-keyed source of truth for column nullability, base table AND view alike. Unlike the
-   * `pg_depend` name-join this replaces (see `#256`), a view column's answer here comes from fully
-   * evaluating the view's OWN defining query (`pg_rewrite`'s `_RETURN` rule), not from tracing a
-   * same-named source column and inheriting its constraint regardless of the view's actual
-   * projection expression. This function does no computation of its own: it resolves each
-   * `(relid, attnum)` [nullabilityAnalyzer] already judged NOT NULL back to a
-   * `"viewName.columnName"` string, scoped to [schemaName].
+   * A thin name-resolution adapter over [ColumnNullabilityAnalyzer.isColumnNotNull], the single
+   * relid-keyed source of truth for column nullability, base table and view alike. Unlike the
+   * `pg_depend` name-join this replaces (`#256`), a view column's answer comes from fully evaluating
+   * the view's own defining query rather than from tracing a same-named source column and inheriting
+   * its constraint. This function does no computation of its own.
    *
    * @param schemaName The schema to check.
    * @return A set of `"viewName.columnName"` strings for view/matview columns that are non-nullable.
@@ -513,17 +510,11 @@ internal class PgCatalogLoader(internal val connection: Connection) {
    * [ColumnNullabilityAnalyzer.isColumnNotNull].
    *
    * `ORDER BY c.oid, a.attnum` is load-bearing, not cosmetic: [loadViewColumnNullability] resolves
-   * this result set's rows one at a time, via a SINGLE, SHARED [ColumnNullabilityAnalyzer] instance
-   * whose own answer for a view deep enough to hit
-   * [ColumnNullabilityAnalyzer.VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET] can depend on which OTHER
-   * views were already resolved (and memoized) beforehand — see that constant's KDoc for the
-   * documented, deliberately-accepted depth-sensitivity this ordering does NOT remove. Without an
-   * `ORDER BY`, PostgreSQL is free to return these rows in ANY order (whatever the planner or
-   * physical row order happens to produce), meaning the SAME schema's generated Kotlin type for a
-   * `>50`-deep view chain could differ between two runs of the SAME build — a real, user-visible
-   * form of non-determinism this ordering closes: a fixed, deterministic scan order (relid, then
-   * attnum) makes the sweep's resolution order — and therefore its output — stable and reproducible
-   * for a given schema, run after run, even though the underlying depth-sensitivity itself remains.
+   * these rows one at a time through a single shared [ColumnNullabilityAnalyzer], whose answer for a
+   * view deep enough to hit [ColumnNullabilityAnalyzer.VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET] can
+   * depend on which views were memoized beforehand. Absent an `ORDER BY`, PostgreSQL may return these
+   * rows in any order, so the generated Kotlin type for a very deep view chain could differ between
+   * two runs of the same build. A fixed scan order makes it reproducible for a given schema.
    */
   private fun loadViewColumnNamesByRelidAndAttnum(schemaName: String): Map<Pair<Int, Int>, String> = buildMap {
     connection.createStatement().use { stmt ->

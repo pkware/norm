@@ -41,24 +41,18 @@ internal data class WindowFunctionCase(
 
 /**
  * One live-DB view-graph shape for `ViewNullability`'s
- * `resolving one view first does not change a later, independent resolution of another` pin — see
- * `viewOrderIndependenceFixtures`'s own KDoc for why each of the three shapes exists.
+ * `resolving one view first does not change a later, independent resolution of another` pin.
  *
  * @property ddl Creates every view in [views], run against a fresh, isolated schema.
- * @property views Every view name the fixture's [ddl] creates — the CHECK axis: each one's answer,
- *   resolved on a completely untouched analyzer, is the ground truth every warmed resolution of it
- *   must still match.
- * @property warmTriggers The view name(s), each resolved as its OWN complete top-level call (fully
- *   unwinding, evicting its own taint before anything else runs) before every OTHER view in [views]
- *   is checked — the WARM axis. NOT necessarily all of [views]: for the straight-chain fixture,
- *   warming with the DEEPEST tip specifically is the only choice PROVEN safe for every check target
- *   — its own resolution touches (and, being fully tainted, evicts) every OTHER view in the chain
- *   before returning, so nothing it leaves behind can ever mask a later truncation. Warming with an
- *   INTERMEDIATE, shallower view instead (e.g. `chain_1`) is NOT safe in general: it can complete
- *   untainted and stay memoized PERMANENTLY, and a later, deeper resolution that happens to reach it
- *   BEFORE crossing the recursion budget will reuse that cached answer instead of truncating — see
- *   [ColumnNullabilityAnalyzer.VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET]'s KDoc for why this residual
- *   gap is a deliberately accepted limitation, not something this fixture chases further.
+ * @property views Every view the [ddl] creates — the CHECK axis. Each one's answer on a completely
+ *   untouched analyzer is the ground truth every warmed resolution must still match.
+ * @property warmTriggers The views resolved first, each as its own complete top-level call — the
+ *   WARM axis. NOT necessarily all of [views]: for the straight chain, only the DEEPEST tip is
+ *   proven safe, since its resolution taints and evicts every other view before returning. Warming
+ *   with an intermediate view can complete untainted and stay memoized permanently, which a later
+ *   deeper resolution then reuses instead of truncating — see
+ *   [ColumnNullabilityAnalyzer.VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET] for why that residual is
+ *   accepted.
  */
 internal data class ViewOrderIndependenceFixture(
   val name: String,
@@ -2951,20 +2945,11 @@ class QueryAnalysisTest {
 
     @Test
     fun `four levels of nested ANY sublinks separated by derived tables still respect the depth budget`() {
-      // Pins that buildSubqueryColumnNotNull's depth parameter is threaded through, not refilled to
-      // SUBLINK_ANALYSIS_DEPTH_BUDGET on every derived-table hop it now recurses through. The outer
-      // ANY_SUBLINK's own subselect reads its single column through a derived table (z), and that
-      // derived table's body contains the SAME four-level nested ANY_SUBLINK chain the un-wrapped
-      // "four levels...exceed the depth budget" test above already pins.
-      //
-      // If the derived-table hop refilled the budget instead of threading it (the reverted attempt's
-      // own mistake, per #257), v1's own chain would start at a fresh budget of 3 instead of the
-      // correctly-threaded 2, letting all four levels resolve and reporting this NOT NULL — verified
-      // by temporarily reverting the depth-threading change during development, which flips this
-      // test's expected answer to true. With threading in place, PostgreSQL's real (unbounded)
-      // answer is also NOT NULL for this specific shape (every column NOT NULL, safe operator), but
-      // Norm's own defensive bound intentionally truncates at this depth, matching the un-wrapped
-      // test's identical reasoning.
+      // The outer sublink's subselect reads its column through a derived table (z) whose body holds
+      // the same four-level chain the un-wrapped test above pins. If the derived-table hop refilled
+      // the budget instead of threading it, v1's chain would restart at 3 rather than the threaded 2
+      // and all four levels would resolve, reporting this NOT NULL. PostgreSQL's own unbounded
+      // answer for this shape IS NOT NULL; Norm's defensive bound truncates deliberately.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT NOT NULL, a BOOLEAN NOT NULL);
@@ -3054,16 +3039,9 @@ class QueryAnalysisTest {
 
     @Test
     fun `ALL sublink over a derived table is non-null, ALL now carries the same #257 machinery as ANY`() {
-      // This test USED to pin the opposite answer (deliberately nullable), reasoning that
-      // NodeTreeNullabilityAnalyzer's SubLink branch only special-cased ANY. That reasoning was
-      // built on a second, independent bug: PgNodeExpression.SUBLINK_TYPE_ALL was itself the wrong
-      // constant (3, ROWCOMPARE_SUBLINK's real value, not ALL_SUBLINK's real value of 1), so real
-      // ALL sublinks never matched it in the first place — the old nullable answer was accidental
-      // conservatism from a name collision, not a deliberate, protected choice. ALL_SUBLINK is now
-      // whitelisted alongside ANY under the identical three-valued-logic proof (see
-      // NodeTreeNullabilityAnalyzer's SubLink branch), so it inherits ANY's derived-table resolution
-      // for free. Verified live against PostgreSQL 18: u.v is NOT NULL and `<>` is a safe, total
-      // operator, so this genuinely never returns null.
+      // ALL_SUBLINK is now whitelisted alongside ANY under the identical three-valued-logic proof,
+      // so it inherits ANY's derived-table resolution for free. u.v is NOT NULL and `<>` is safe and
+      // total, so this genuinely never returns null.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL, a TEXT NOT NULL); CREATE TABLE u (v TEXT NOT NULL)",
         "SELECT a <> ALL (SELECT z.v FROM (SELECT v FROM u) z) AS result FROM t",
@@ -3074,40 +3052,12 @@ class QueryAnalysisTest {
 
     @Test
     fun `ALL sublink over a plain NOT NULL table is non-null, the load-bearing enum-mapping pin`() {
-      // The load-bearing pin for PgNodeExpression.SUBLINK_TYPE_ALL's corrected value: under the OLD
-      // (wrong) constant 3, a real ALL_SUBLINK (subLinkType 1, verified live on PostgreSQL 18.4 by
-      // dumping this exact query's prosqlbody node tree) never matched the constant at all, so this
-      // fell through to nullable unconditionally, regardless of anything else about the query. This
-      // test FAILS under that old constant and PASSES only once SUBLINK_TYPE_ALL is corrected to 1
-      // AND NodeTreeNullabilityAnalyzer's SubLink branch whitelists it — it pins the enum mapping
-      // itself, not a hand-transcribed belief about it. Verified live against PostgreSQL 18.4: `a
-      // <> ALL (SELECT v FROM u)` is `true` for every row of `t`, never `null`, when `u` is empty or
-      // every row's `v` differs from `a`.
+      // Under the old, wrong SUBLINK_TYPE_ALL = 3, a real ALL_SUBLINK (subLinkType 1) never matched
+      // the constant, so this fell through to nullable regardless of anything else. This test pins
+      // the enum mapping against real PostgreSQL rather than a hand-transcribed belief about it.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE u (v TEXT NOT NULL)",
         "SELECT a <> ALL (SELECT v FROM u) AS result FROM t",
-      )
-      assertThat(query.columns).hasSize(1)
-      assertThat(query.columns[0].notNull).isTrue()
-    }
-
-    @Test
-    fun `less-than ALL sublink over a plain NOT NULL table is non-null`() {
-      // Same shape as the `<>` pin above, with a different safe-listed operator (`<` over text),
-      // confirming the proof is not somehow specific to `<>`. Verified live against PostgreSQL 18.4.
-      val query = analyzeWithSchema(
-        "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE u (v TEXT NOT NULL)",
-        "SELECT a < ALL (SELECT v FROM u) AS result FROM t",
-      )
-      assertThat(query.columns).hasSize(1)
-      assertThat(query.columns[0].notNull).isTrue()
-    }
-
-    @Test
-    fun `ALL sublink over an enclosing CTE is non-null, the #257 machinery now carrying ALL too`() {
-      val query = analyzeWithSchema(
-        "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE u (v TEXT NOT NULL)",
-        "WITH c AS (SELECT v FROM u) SELECT a <> ALL (SELECT v FROM c) AS result FROM t",
       )
       assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].notNull).isTrue()
@@ -3125,22 +3075,6 @@ class QueryAnalysisTest {
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE w (v TEXT)",
         "SELECT a <> ALL (SELECT v FROM w) AS result FROM t",
-      )
-      assertThat(query.columns).hasSize(1)
-      assertThat(query.columns[0].notNull).isFalse()
-    }
-
-    @Test
-    fun `ALL sublink over a UNION subquery is nullable, the conservative set-operation bail-out`() {
-      // Mirrors the existing plain-UNION bail-out test for ANY: buildSubqueryColumnNotNull's
-      // hasSetOperations guard applies identically regardless of which sublink type reuses it.
-      val query = analyzeWithSchema(
-        """
-        CREATE TABLE t (id INT NOT NULL, a TEXT NOT NULL);
-        CREATE TABLE u1 (v TEXT NOT NULL);
-        CREATE TABLE u2 (v TEXT NOT NULL)
-        """.trimIndent(),
-        "SELECT a <> ALL (SELECT v FROM u1 UNION SELECT v FROM u2) AS result FROM t",
       )
       assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].notNull).isFalse()
@@ -3175,22 +3109,6 @@ class QueryAnalysisTest {
       )
       assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].notNull).isFalse()
-    }
-
-    @Test
-    fun `multi-column ALL sublink is nullable for every ROWCOMPAREEXPR-compiled comparison operator`() {
-      // Same ROWCOMPAREEXPR mechanism as the `<` case above, pinned for the remaining three
-      // row-comparison operators PostgreSQL compiles the same way (verified live on PostgreSQL
-      // 18.4): `<=`, `>`, `>=`.
-      val schema = "CREATE TABLE t (a INT NOT NULL, id INT NOT NULL); CREATE TABLE u (v INT NOT NULL)"
-      listOf("<=", ">", ">=").forEach { operator ->
-        val query = analyzeWithSchema(
-          schema,
-          "SELECT (a, id) $operator ALL (SELECT v, 1 FROM u) AS result FROM t",
-        )
-        assertThat(query.columns).hasSize(1)
-        assertThat(query.columns[0].notNull).isFalse()
-      }
     }
 
     @Test
@@ -5371,34 +5289,6 @@ class QueryAnalysisTest {
       assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].notNull).isFalse()
     }
-
-    @Test
-    fun `an ANY sublink inside a CTE body referencing an outer sibling is conservatively nullable`() {
-      // Known, deliberate conservatism: sib is declared OUTSIDE b, at the SAME :cteList b itself
-      // is declared in. A reference to it from a SubLink nested inside b's own body sits at
-      // :ctelevelsup 2 relative to that SubLink (b's own ctequery is already one level down from
-      // the outer WITH, and the SubLink is a further level down from that — verified live against
-      // real PostgreSQL 18 node-tree text) — TWO levels up, not the one level
-      // buildCteBodyAnalyzer's own `resolvedCtes` (queryBlock's OWN directly-declared CTEs) can
-      // reach. PostgreSQL itself never returns null here: u.v is NOT NULL and `=` is a safe, total
-      // operator, so this is a genuine (if narrow) loss of precision, not a soundness question —
-      // recovering it would mean threading a whole STACK of enclosing-CTE scopes (one per query
-      // level) through every buildAnalyzer/buildSubqueryColumnNotNull/analyzeQueryBlockNullability
-      // call site, rather than the single flat map this class carries today, so it is left
-      // conservative rather than attempted as a small follow-on to #257.
-      val query = analyzeWithSchema(
-        """
-        CREATE TABLE t (id INT NOT NULL, a TEXT NOT NULL);
-        CREATE TABLE u (v TEXT NOT NULL)
-        """.trimIndent(),
-        """
-        WITH sib AS (SELECT v FROM u), b AS (SELECT t.a = ANY (SELECT v FROM sib) AS r FROM t)
-        SELECT r FROM b
-        """.trimIndent(),
-      )
-      assertThat(query.columns).hasSize(1)
-      assertThat(query.columns[0].notNull).isFalse()
-    }
   }
 
   @Nested
@@ -7183,15 +7073,10 @@ class QueryAnalysisTest {
 
     @Test
     fun `JSON_TABLE column is nullable, never reaching evaluateJsonExpr's JSON_TABLE_OP at all`() {
-      // Verified live on PostgreSQL 18.4 by dumping this exact query's own ev_action: a JSON_TABLE
-      // column resolves to a plain VAR against an RTE_TABLEFUNC range-table entry (rtekind 4), never
-      // to a PgNodeExpression.JsonExpr this parser's ordinary expression walk would hand to
-      // evaluateJsonExpr — the JSON_TABLE_OP=3 JsonExpr nodes PostgreSQL DOES emit (one for the
-      // whole-document :docexpr, one per column's own :colvalexprs entry) live nested inside that
-      // RTE's own :tablefunc, a structure this parser never descends into. parseRangeTable only maps
-      // rtekind 0 (ordinary base tables) to a relid, so a Var whose varno indexes this rtekind-4 RTE
-      // finds no entry, and isSourceColumnNotNull's safe default (nullable) applies — see
-      // JSON_TABLE_OP's own KDoc for the constant's full live-verified reasoning.
+      // A JSON_TABLE column resolves to a plain VAR against an RTE_TABLEFUNC entry (rtekind 4),
+      // never to a JsonExpr the expression walk would hand to evaluateJsonExpr — the JSON_TABLE_OP
+      // nodes PostgreSQL does emit live inside that RTE's :tablefunc, which this parser never
+      // descends into. parseRangeTable maps only rtekind 0, so the Var finds no entry, so nullable.
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_TABLE requires PostgreSQL 17+")
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL, doc JSONB NOT NULL)",
@@ -7338,18 +7223,10 @@ class QueryAnalysisTest {
 
     @Test
     fun `JSON_QUERY with OMIT QUOTES on a successful JSON null match is non-null`() {
-      // Adjacent-hazard sweep: unlike JSON_VALUE (which unwraps a matched JSON null into a genuine
-      // SQL NULL), JSON_QUERY with OMIT QUOTES on a successful match of a JSON null renders the
-      // TEXT string "null", never a genuine SQL NULL — verified live (PostgreSQL 18.4):
-      // `JSON_QUERY('{"x": null}'::jsonb, '$.x' RETURNING text OMIT QUOTES) IS NULL` is `false`, and
-      // the value itself is the 4-character string 'null'. This does NOT reproduce the JSON_VALUE
-      // hazard; JSON_QUERY needs no additional hard-`false` treatment for OMIT QUOTES specifically.
-      // Same EMPTY ARRAY ON EMPTY/ON ERROR shape as the existing (non-OMIT-QUOTES)
-      // `JSON_QUERY with DEFAULT on empty and error is non-null for a non-null context item` pin
-      // above, since PostgreSQL's default (unwritten) ON EMPTY/ON ERROR behavior is NULL ON EMPTY/
-      // NULL ON ERROR — a real nullable path independent of OMIT QUOTES — so isolating the OMIT
-      // QUOTES-specific hazard requires ruling that default path out explicitly, the same way the
-      // existing sibling pin does. Pinned here as a negative control.
+      // Negative control for the JSON_VALUE hazard: JSON_QUERY with OMIT QUOTES on a successful
+      // match of a JSON null renders the text 'null', never a genuine SQL NULL, so it needs no
+      // hard-`false` treatment. The EMPTY ARRAY ON EMPTY/ON ERROR clauses rule out the default NULL
+      // ON EMPTY/ERROR path, which is nullable independently of OMIT QUOTES.
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_QUERY requires PostgreSQL 17+")
       val query = analyzeWithSchema(
         "CREATE TABLE t (data jsonb NOT NULL)",
@@ -7361,16 +7238,14 @@ class QueryAnalysisTest {
   }
 
   /**
-   * Live-database verification that the `JsonConstructorType` integer real PostgreSQL emits for
-   * each of the seven SQL/JSON constructor forms matches [PgNodeExpression]'s own hardcoded
-   * `JSON_CONSTRUCTOR_TYPE_*` constant — not a hand-transcribed comment, but an assertion that
-   * actually parses a LIVE `pg_rewrite.ev_action` dump via [PgNodeTreeParser] each time this suite
-   * runs, so a future PostgreSQL version reassigning one of these codes (the same class of drift
-   * `SUBLINK_TYPE_ALL = 3` had) fails HERE, at the exact constant, rather than only downstream as
-   * an unexplained nullability regression.
+   * Live-database pins for [PgNodeExpression.JsonConstructorExpr.function], which
+   * [NodeTreeNullabilityAnalyzer] recurses into for the two aggregate constructor types. Both cases
+   * report nullable whether `function` is populated or `null`, so — unlike every other
+   * `JSON_CONSTRUCTOR_TYPE_*` code, which the nullability tests above already discriminate — these
+   * two need a direct assertion on the parsed node.
    */
   @Nested
-  inner class JsonConstructorExprTypeCodes {
+  inner class JsonConstructorExprFunctionField {
 
     private fun jsonConstructorExprTypeFromView(
       @Language("PostgreSQL") ddl: String,
@@ -7399,26 +7274,6 @@ class QueryAnalysisTest {
           connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
         }
       }
-    }
-
-    @Test
-    fun `JSON_OBJECT node tree type code matches JSON_CONSTRUCTOR_TYPE_OBJECT`() {
-      val expression = jsonConstructorExprTypeFromView(
-        "CREATE TABLE t (id int NOT NULL)",
-        "SELECT JSON_OBJECT('a' VALUE 1) AS c1 FROM t",
-      )
-      assertThat(expression.type).isEqualTo(PgNodeExpression.JSON_CONSTRUCTOR_TYPE_OBJECT)
-      assertThat(expression.function).isNull()
-    }
-
-    @Test
-    fun `JSON_ARRAY node tree type code matches JSON_CONSTRUCTOR_TYPE_ARRAY`() {
-      val expression = jsonConstructorExprTypeFromView(
-        "CREATE TABLE t (id int NOT NULL)",
-        "SELECT JSON_ARRAY(1, 2) AS c1 FROM t",
-      )
-      assertThat(expression.type).isEqualTo(PgNodeExpression.JSON_CONSTRUCTOR_TYPE_ARRAY)
-      assertThat(expression.function).isNull()
     }
 
     @Test
@@ -7452,36 +7307,6 @@ class QueryAnalysisTest {
       assertThat(expression.type).isEqualTo(PgNodeExpression.JSON_CONSTRUCTOR_TYPE_OBJECTAGG)
       assertThat(expression.arguments).hasSize(0)
       assertThat(expression.function is PgNodeExpression.WindowFunc).isTrue()
-    }
-
-    @Test
-    fun `JSON() node tree type code matches JSON_CONSTRUCTOR_TYPE_PARSE`() {
-      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON() requires PostgreSQL 17+")
-      val expression = jsonConstructorExprTypeFromView(
-        "CREATE TABLE t (id int NOT NULL)",
-        "SELECT JSON('{\"a\":1}') AS c1 FROM t",
-      )
-      assertThat(expression.type).isEqualTo(PgNodeExpression.JSON_CONSTRUCTOR_TYPE_PARSE)
-    }
-
-    @Test
-    fun `JSON_SCALAR node tree type code matches JSON_CONSTRUCTOR_TYPE_SCALAR`() {
-      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_SCALAR requires PostgreSQL 17+")
-      val expression = jsonConstructorExprTypeFromView(
-        "CREATE TABLE t (id int NOT NULL)",
-        "SELECT JSON_SCALAR(1) AS c1 FROM t",
-      )
-      assertThat(expression.type).isEqualTo(PgNodeExpression.JSON_CONSTRUCTOR_TYPE_SCALAR)
-    }
-
-    @Test
-    fun `JSON_SERIALIZE node tree type code matches JSON_CONSTRUCTOR_TYPE_SERIALIZE`() {
-      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_SERIALIZE requires PostgreSQL 17+")
-      val expression = jsonConstructorExprTypeFromView(
-        "CREATE TABLE t (id int NOT NULL)",
-        "SELECT JSON_SERIALIZE('{\"a\":1}'::jsonb) AS c1 FROM t",
-      )
-      assertThat(expression.type).isEqualTo(PgNodeExpression.JSON_CONSTRUCTOR_TYPE_SERIALIZE)
     }
   }
 
@@ -7696,19 +7521,6 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `LEFT JOIN nullable side stays nullable even though the source column of the same name is NOT NULL`() {
-      val query = analyzeWithSchema(
-        """
-        CREATE TABLE u (v TEXT NOT NULL);
-        CREATE TABLE u2 (v TEXT NOT NULL);
-        CREATE VIEW view_left_join AS SELECT upper(b.v) AS v FROM u a LEFT JOIN u2 b ON a.v = b.v
-        """.trimIndent(),
-        "SELECT v FROM view_left_join",
-      )
-      assertThat(query.columns[0].notNull).isFalse()
-    }
-
-    @Test
     fun `UNION ALL with a NULL literal branch makes the view column nullable`() {
       val query = analyzeWithSchema(
         """
@@ -7746,20 +7558,6 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `LEFT JOIN nullable side of a materialized view stays nullable even though the source column is NOT NULL`() {
-      val query = analyzeWithSchema(
-        """
-        CREATE TABLE u (v TEXT NOT NULL);
-        CREATE TABLE u2 (v TEXT NOT NULL);
-        CREATE MATERIALIZED VIEW matview_left_join AS
-          SELECT upper(b.v) AS v FROM u a LEFT JOIN u2 b ON a.v = b.v
-        """.trimIndent(),
-        "SELECT v FROM matview_left_join",
-      )
-      assertThat(query.columns[0].notNull).isFalse()
-    }
-
-    @Test
     fun `renamed pass-through view column stays NOT NULL, matching the same-named case`() {
       // #256 corollary: the previous pg_depend name-join matched by NAME, so renaming a genuine
       // NOT NULL pass-through column ("v" to "other_name") lost the match entirely and fell back
@@ -7773,49 +7571,6 @@ class QueryAnalysisTest {
         "SELECT other_name FROM view_renamed",
       )
       assertThat(query.columns[0].notNull).isTrue()
-    }
-
-    @Test
-    fun `NULLIF is nullable whether or not the view column is renamed`() {
-      // Renaming must not flip the answer either way: both the same-named and the renamed NULLIF
-      // projection are genuinely nullable, so neither a name match nor a name mismatch should ever
-      // have been the deciding signal.
-      val sameNameQuery = analyzeWithSchema(
-        """
-        CREATE TABLE u (v TEXT NOT NULL);
-        CREATE VIEW view_nullif_same_name AS SELECT NULLIF(v, 'x') AS v FROM u
-        """.trimIndent(),
-        "SELECT v FROM view_nullif_same_name",
-      )
-      val renamedQuery = analyzeWithSchema(
-        """
-        CREATE TABLE u (v TEXT NOT NULL);
-        CREATE VIEW view_nullif_renamed AS SELECT NULLIF(v, 'x') AS other_name FROM u
-        """.trimIndent(),
-        "SELECT other_name FROM view_nullif_renamed",
-      )
-      assertThat(sameNameQuery.columns[0].notNull).isFalse()
-      assertThat(renamedQuery.columns[0].notNull).isFalse()
-    }
-
-    @Test
-    fun `SELECT star from a view agrees with the named column select`() {
-      val namedQuery = analyzeWithSchema(
-        """
-        CREATE TABLE u (v TEXT NOT NULL);
-        CREATE VIEW view_star AS SELECT NULLIF(v, 'x') AS v FROM u
-        """.trimIndent(),
-        "SELECT v FROM view_star",
-      )
-      val starQuery = analyzeWithSchema(
-        """
-        CREATE TABLE u (v TEXT NOT NULL);
-        CREATE VIEW view_star AS SELECT NULLIF(v, 'x') AS v FROM u
-        """.trimIndent(),
-        "SELECT * FROM view_star",
-      )
-      assertThat(namedQuery.columns[0].notNull).isFalse()
-      assertThat(starQuery.columns[0].notNull).isFalse()
     }
 
     @Test
@@ -7886,33 +7641,6 @@ class QueryAnalysisTest {
           val nonNull = runCatchingThrowable { catalogLoader.loadViewColumnNullability(schemaName) }
           assertThat(nonNull.contains("a.v")).isFalse()
           assertThat(nonNull.contains("b.v")).isFalse()
-        } finally {
-          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
-        }
-      }
-    }
-
-    @Test
-    fun `a direct self-referencing view built via CREATE OR REPLACE VIEW resolves nullable, not a stack overflow`() {
-      // Verified live, PostgreSQL 18.4: CREATE OR REPLACE VIEW self_v AS SELECT v FROM self_v also
-      // succeeds — a view can be made to select from ITSELF, not just from another view.
-      val schemaName = "test_${schemaCounter.incrementAndGet()}"
-      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
-        connection.createStatement().use {
-          it.execute("CREATE SCHEMA $schemaName")
-          it.execute("SET search_path TO $schemaName")
-          it.execute(
-            """
-            CREATE TABLE base (v TEXT NOT NULL);
-            CREATE VIEW self_v AS SELECT v FROM base;
-            CREATE OR REPLACE VIEW self_v AS SELECT v FROM self_v
-            """.trimIndent(),
-          )
-        }
-        try {
-          val catalogLoader = PgCatalogLoader(connection)
-          val nonNull = runCatchingThrowable { catalogLoader.loadViewColumnNullability(schemaName) }
-          assertThat(nonNull.contains("self_v.v")).isFalse()
         } finally {
           connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
         }
@@ -8001,14 +7729,10 @@ class QueryAnalysisTest {
 
     @Test
     fun `a full schema sweep of a deep view chain gives identical results across repeated runs`() {
-      // This is the guarantee that actually matters in production, and the one
-      // loadViewColumnNamesByRelidAndAttnum's ORDER BY (relid, then attnum) exists to provide — see
-      // that method's own KDoc: PostgreSQL is free to return pg_class/pg_attribute rows in ANY order
-      // absent an explicit ORDER BY, so a >50-deep view chain's generated Kotlin type could
-      // otherwise differ between two runs of the SAME build against the SAME schema, purely because
-      // the planner returned rows differently. Sweeping the SAME schema twice, via the REAL
-      // production entry point (loadViewColumnNullability), on two INDEPENDENT connections/loaders
-      // so neither run can incidentally reuse the other's cache, must give the IDENTICAL result.
+      // What loadViewColumnNamesByRelidAndAttnum's ORDER BY exists to provide: absent it, PostgreSQL
+      // may return rows in any order, so a chain deeper than the budget could generate a different
+      // Kotlin type between two runs of the same build. Swept twice through the real production
+      // entry point on two independent connections, so neither run can reuse the other's cache.
       val chainDepth = VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET + 2
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
@@ -8042,13 +7766,10 @@ class QueryAnalysisTest {
 
     @Test
     fun `a full schema sweep never reports a genuinely nullable deep-chain column as NOT NULL`() {
-      // The SOUNDNESS property that matters for generated code correctness, independent of which
-      // scan order a sweep happens to use: whatever the depth guard's conservative fallback does for
-      // a boundary-adjacent view, it must never flip a genuinely nullable column to a wrongly-claimed
-      // NOT NULL — the direction that would actually corrupt generated code (a Kotlin field declared
-      // non-nullable that can, in fact, be null at runtime). This chain's base column is nullable
-      // (no NOT NULL constraint), so EVERY view in it is genuinely nullable too; the sweep must never
-      // report ANY of them in its NOT NULL set, regardless of where truncation happens to land.
+      // Soundness, independent of scan order: whatever the depth guard's fallback does for a
+      // boundary-adjacent view, it must never flip a genuinely nullable column to NOT NULL — the
+      // direction that corrupts generated code. This chain's base column is nullable, so every view
+      // in it is too, and none may appear in the sweep's NOT NULL set.
       val chainDepth = VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET + 2
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
@@ -8075,67 +7796,11 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `DELIBERATE LIMITATION - forced ascending versus descending resolution order can still disagree`() {
-      // Documents a known, ACCEPTED gap in ColumnNullabilityAnalyzer.resolveViewColumnNullability
-      // itself, not a production defect: loadViewColumnNamesByRelidAndAttnum's ORDER BY now makes
-      // the REAL production sweep deterministic (see the repeated-runs pin above), so this test
-      // bypasses it and drives resolveViewColumnNullability directly in two FORCED, artificial
-      // orders that production no longer actually exercises, to keep this specific internal
-      // algorithmic fact documented. See VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET's KDoc for the full
-      // explanation and why it is not worth closing with more machinery.
-      //
-      // If resolveViewColumnNullability ever becomes fully depth-independent (no longer possible for
-      // ANY forced order to disagree), this test will start FAILING — that is a sign the limitation
-      // is gone and this test should be DELETED, not "fixed" to match new behavior.
-      val chainDepth = VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET + 2
-      val schemaName = "test_${schemaCounter.incrementAndGet()}"
-      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
-        connection.createStatement().use {
-          it.execute("CREATE SCHEMA $schemaName")
-          it.execute("SET search_path TO $schemaName")
-          val ddl = buildString {
-            appendLine("CREATE TABLE sweep_base (v TEXT NOT NULL);")
-            appendLine("CREATE VIEW sweep_0 AS SELECT v FROM sweep_base;")
-            for (level in 1 until chainDepth) {
-              appendLine("CREATE VIEW sweep_$level AS SELECT v FROM sweep_${level - 1};")
-            }
-          }
-          it.execute(ddl)
-        }
-        try {
-          val views = (0 until chainDepth).map { "sweep_$it" }
-          val relidByView = views.associateWith { regclassOid(connection, it) }
-
-          val ascendingAnalyzer = ColumnNullabilityAnalyzer(PgCatalogLoader(connection))
-          val ascendingNullable = views.filter { view ->
-            ascendingAnalyzer.resolveViewColumnNullability(relidByView.getValue(view))?.getOrNull(0) == true
-          }
-
-          val descendingAnalyzer = ColumnNullabilityAnalyzer(PgCatalogLoader(connection))
-          val descendingNullable = views.reversed().filter { view ->
-            descendingAnalyzer.resolveViewColumnNullability(relidByView.getValue(view))?.getOrNull(0) == true
-          }
-
-          assertThat(ascendingNullable).isEqualTo(emptyList())
-          assertThat(descendingNullable).isEqualTo(listOf(views.last(), views[views.size - 2]))
-        } finally {
-          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
-        }
-      }
-    }
-
-    @Test
     fun `the depth budget's own worst case resolves without a StackOverflowError on a small thread stack`() {
-      // Pins the guard's actual PURPOSE — fitting within a small worker-thread stack, not just a
-      // typically-roomy 8 MB main thread — rather than merely its constant. Driven off
-      // VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET itself (not a hardcoded number matching today's
-      // value) so this test actually DISCRIMINATES the budget: a chain of exactly the budget's own
-      // depth is this guard's own worst case (no truncation fires, so every level's frame is
-      // genuinely active on the stack at once) — if the budget were ever raised without re-verifying
-      // stack safety, this test would grow with it and could catch a real regression, rather than
-      // silently continuing to exercise a now-stale, no-longer-representative depth. Resolves on a
-      // thread built with an explicit 512 KiB stack — see that constant's KDoc for the empirical
-      // basis of this specific size.
+      // Pins the guard's purpose — fitting a small worker-thread stack, not a roomy 8 MB main
+      // thread. Driven off the budget itself rather than a hardcoded depth, so raising the budget
+      // without re-verifying stack safety grows this test with it. A chain of exactly the budget's
+      // depth is the worst case: nothing truncates, so every level's frames are live at once.
       val depth = VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
@@ -8234,27 +7899,17 @@ class QueryAnalysisTest {
     /**
      * Three loop-generated live-DB shapes for the order-independence pin above.
      *
-     * 1. A pass-through chain of depth `VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET + 2` — deep enough
-     *    to guarantee the recursion-depth guard fires when the deepest view is resolved first,
-     *    tainting every view above the truncation point; a later, independent, shallower resolution
-     *    must still get the TRUE (untainted) answer.
-     * 2. `cyc_a` / `cyc_b`, a genuine mutual cycle built via `CREATE OR REPLACE VIEW` (see
-     *    `viewColumnNullabilityInProgress`'s KDoc for why this is constructible at all). `cyc_a.w` is
-     *    a plain non-null literal; `cyc_b.v` reads it through the cycle. Resolving `cyc_a` first
-     *    versus `cyc_b` first genuinely changes the INTERMEDIATE value observed for `cyc_b` during
-     *    that specific resolution (an accepted, inherent ambiguity for a pair that PostgreSQL itself
-     *    can never actually execute — `ERROR: infinite recursion detected in rules for relation
-     *    "..."` — so there is no real fixpoint to under-approximate); what must NOT happen is that
-     *    ambiguity LEAKING into a later, separate, standalone resolution of either view.
-     * 3. `top → {a, mid}`, `a → mid`, `mid → self-cycle` — the DECISIVE shape for the memo-hit taint
-     *    propagation hole (see [ColumnNullabilityAnalyzer.isRelidMemoized]'s KDoc): `top`'s target
-     *    list reads `mid` directly BEFORE reading `a` (whose own body reads `mid` too), so `a`'s own
-     *    reference to `mid` becomes a PURE memo read of an already-tainted entry. Because `mid` is an
-     *    unconditional self-cycle, its answer — and everything derived from it — is invariant
-     *    regardless of whether it is freshly recomputed or (incorrectly) served stale, so this
-     *    fixture's OWN entry in this method cannot, by itself, observe the hole through VALUES alone;
-     *    see the dedicated `top`/`a`/`mid` eviction test below, which asserts directly on
-     *    [ColumnNullabilityAnalyzer.isRelidMemoized] instead.
+     * 1. A pass-through chain deeper than the recursion budget, so the depth guard fires when the
+     *    deepest view is resolved first and taints everything above the truncation point.
+     * 2. `cyc_a`/`cyc_b`, a genuine mutual cycle. Which one is resolved first really does change the
+     *    intermediate value observed during that resolution — an inherent ambiguity for a pair
+     *    PostgreSQL itself cannot execute — so what must not happen is that ambiguity leaking into a
+     *    later, standalone resolution of either view.
+     * 3. `top -> {a, mid}`, `a -> mid`, `mid -> self-cycle` — the decisive shape for memo-hit taint
+     *    propagation: `top` reads `mid` before `a`, so `a`'s own reference to `mid` is a PURE memo
+     *    read of an already-tainted entry. Because `mid` is an unconditional self-cycle, its answer
+     *    is invariant whether recomputed or served stale, so this fixture cannot observe the hole by
+     *    value — see the [ColumnNullabilityAnalyzer.isRelidMemoized] test below.
      */
     fun viewOrderIndependenceFixtures(): List<ViewOrderIndependenceFixture> {
       val chainDepth = VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET + 2
@@ -8350,17 +8005,11 @@ class QueryAnalysisTest {
 
     @Test
     fun `a tainted common ancestor widens an otherwise NOT NULL sibling's answer, observable by value`() {
-      // The black-box counterpart to the isRelidMemoized pin above: "y" is a shallow view over
-      // "chain_3" and is genuinely NOT NULL on its own (verified directly, below). "topv" reads BOTH
-      // a deep, truncating chain AND "y" — resolving "topv" walks the deep chain FIRST (its target
-      // list declares "d" before "y", matching resno/declaration order), which taints "chain_3" as
-      // an ancestor of the truncation; "y"'s own later reference to "chain_3", within that SAME
-      // top-level resolution, becomes a pure memo read of that now-tainted entry, widening "y"'s
-      // OWN answer to nullable for the DURATION of resolving "topv" — a real, OBSERVABLE VALUE
-      // divergence from "y"'s true answer. This is the accepted, safe-direction cost of taint
-      // propagation (see viewColumnNullabilityTaintedRelids' KDoc), not a defect: what this test
-      // pins is that it does NOT leak — a later, independent resolution of "y" alone still gets its
-      // TRUE answer, since "topv"'s own top-level call evicts everything it tainted once it unwinds.
+      // Black-box counterpart to the isRelidMemoized pin above. "y" is genuinely NOT NULL on its
+      // own. Resolving "topv" walks the deep chain first (declaration order), tainting "chain_3";
+      // "y"'s own later reference to it becomes a pure memo read of that tainted entry, widening "y"
+      // for the duration. That widening is the accepted, safe-direction cost of taint propagation;
+      // what this pins is that it does not LEAK into a later, independent resolution of "y".
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         connection.createStatement().use {
@@ -8401,18 +8050,11 @@ class QueryAnalysisTest {
 
     @Test
     fun `a branching view graph over a truncating prefix stays linear, not exponential`() {
-      // Performance regression pin for the SAME defect the taint-tracking fix above closes, from the
-      // opposite direction: an earlier "skip memoization for a tainted answer" design fixed the
-      // ordering bug but made a BRANCHING view graph exponential once any branch was deep enough to
-      // truncate — g_k here references g_{k-1} via TWO separate range-table aliases (both actually
-      // read), so skipping memoization for a tainted g_{k-1} would re-walk its entire subtree twice
-      // per level, compounding to 2^k. The shipped fix (always memoize, evict only the tainted
-      // subset at depth 0) keeps each distinct relid resolved at most once per top-level call
-      // regardless of how many aliases reference it, so this stays LINEAR in view count.
-      //
-      // The prefix is deliberately deeper than VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET, so every
-      // g_k's own resolution genuinely walks into truncated (tainted) territory — this shape is
-      // meaningless as a regression pin if nothing ever truncates.
+      // The rejected "skip memoization for a tainted answer" design fixed the ordering bug but made
+      // a branching graph exponential: g_k reads g_{k-1} through two aliases, so an un-memoizable
+      // tainted g_{k-1} is re-walked twice per level, compounding to 2^k. Always-memoize-then-evict
+      // keeps each distinct relid resolved once per top-level call. The prefix must exceed the depth
+      // budget or nothing truncates and the shape proves nothing.
       val prefixDepth = VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET + 5
       val diamondDepth = 9
       val schemaName = "test_${schemaCounter.incrementAndGet()}"

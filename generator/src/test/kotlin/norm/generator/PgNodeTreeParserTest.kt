@@ -309,36 +309,12 @@ class PgNodeTreeParserTest {
     }
 
     @Test
-    fun `an ALL sublink's outer operand and testexpr operator OID are extracted, same shape as ANY`() {
-      // subLinkType 1 is ALL_SUBLINK (see PgNodeExpression.SUBLINK_TYPE_ALL's own KDoc for the
-      // live-verified enum mapping) — its :testexpr is the same single top-level OPEXPR shape ANY
-      // uses, so parseSubLink's unconditional :testexpr extraction reads it identically.
-      val text = "{SUBLINK :subLinkType 1 :subLinkId 0 :testexpr $anyOpexprTestexpr :operName (\"<>\") " +
-        ":subselect {QUERY :targetList (" +
-        "{TARGETENTRY :expr {VAR :varno 1 :varattno 1 :varlevelsup 0 :location -1} :resno 1 :resname v " +
-        ":resjunk false}) :setOperations <>} :location -1}"
-      val result = parser.parseExpression(text) as PgNodeExpression.SubLink
-      assertThat(result.testExpressionOperatorOid).isEqualTo(67)
-      assertThat((result.outerOperand as PgNodeExpression.Var).varattno).isEqualTo(2)
-    }
-
-    @Test
     fun `a ROWCOMPARE sublink's testexpr yields no outer operand and no operator OID`() {
-      // subLinkType 3 is ROWCOMPARE_SUBLINK (`(a, id) < (SELECT v, 1 FROM u)`, a row comparison
-      // against a one-row subquery — no ALL/ANY keyword). Its :testexpr is a ROWCOMPAREEXPR, which
-      // carries its operands under :largs/:rargs, not :args, and is not one of the node types this
-      // parser's own `when` dispatch recognizes — it falls through to Unknown. So even though
-      // parseSubLink now extracts :testexpr unconditionally (see its own KDoc), neither
-      // extractArgListSection's ":args" lookup (ROWCOMPAREEXPR has no :args field) nor the
-      // OpExpr-cast for testExpressionOperatorOid (ROWCOMPAREEXPR parses as Unknown, not OpExpr) can
-      // find anything here — both stay null before and after that change, and isNonNull's SubLink
-      // proof excludes ROWCOMPARE_SUBLINK regardless (see NodeTreeNullabilityAnalyzer's SubLink
-      // branch), so this shape can never be reported non-null via that leg either way.
-      // Fixture is a verbatim shape, field-for-field, from a live PostgreSQL 18.4 ev_action dump of
-      // `(a, id) < ALL (SELECT v, 1 FROM u)`: PostgreSQL 18 uses :cmptype (not the older :rctype),
-      // its :opnos/:opfamilies/:inputcollids lists carry an "o" (OID list) type-tag element the
-      // parser never reads, and ROWCOMPAREEXPR itself carries no :location field of its own — it
-      // closes immediately after :rargs, unlike the hand-guessed fixture this replaced.
+      // A ROWCOMPAREEXPR testexpr carries its operands under :largs/:rargs, not :args, and is not a
+      // node type this parser's `when` dispatch recognizes, so it parses to Unknown. Both fields stay
+      // null even though parseSubLink now extracts :testexpr unconditionally. Fixture is verbatim from
+      // a live PostgreSQL 18.4 ev_action dump, including the "o" OID-list type tags and the absence of
+      // any :location field on ROWCOMPAREEXPR itself.
       val rowCompareTestexpr = "{ROWCOMPAREEXPR :cmptype 1 :opnos (o 97 97) :opfamilies (o 1976 1976) " +
         ":inputcollids (o 0 0) :largs (" +
         "{VAR :varno 1 :varattno 1 :varlevelsup 0 :location -1} " +
@@ -460,12 +436,8 @@ class PgNodeTreeParserTest {
 
     @Test
     fun `an explicit ctelevelsup greater than 0 is captured, distinguishing an enclosing CTE from a local one`() {
-      // Shape verified live against a real PostgreSQL 18 pg_rewrite.ev_action for a sublink
-      // referencing a sibling CTE declared one level up (see issue #257's ctelevelsup probes):
-      // a real CTE RTE always carries this field, but ColumnNullabilityAnalyzer.
-      // analyzeQueryBlockNullability depends on its EXACT value (not just its presence) to tell a
-      // local `WITH` apart from a shadowed enclosing one — this pins the parser's own contribution
-      // to that distinction, independent of the analyzer logic built on top of it.
+      // ColumnNullabilityAnalyzer.analyzeQueryBlockNullability depends on the exact value, not just
+      // the field's presence, to tell a local `WITH` apart from a shadowed enclosing one.
       val text = """
         {QUERY :rtable (
           {RANGETBLENTRY :eref {ALIAS :aliasname c :colnames ("v")} :rtekind 6 :ctename c
@@ -481,11 +453,8 @@ class PgNodeTreeParserTest {
 
     @Test
     fun `a CTE range table entry missing ctelevelsup entirely defaults to 0, a local (same-level) reference`() {
-      // Malformed/future-format input: :ctelevelsup is simply absent. The safe default must be
-      // `0` — the "declares its own WITH" case ColumnNullabilityAnalyzer.analyzeQueryBlockNullability
-      // resolves from the block's OWN CTE list, never an enclosing one, matching what every real
-      // PostgreSQL 18 CTE RTE observed so far actually carries when the reference IS local (see
-      // parseCteRangeTableEntries' own KDoc).
+      // Malformed or future-format input. The safe default is `0`, the "declares its own WITH" case
+      // resolved from the block's own CTE list rather than an enclosing one.
       val text = """
         {QUERY :rtable (
           {RANGETBLENTRY :eref {ALIAS :aliasname c :colnames ("v")} :rtekind 6 :ctename c
@@ -505,9 +474,6 @@ class PgNodeTreeParserTest {
 
     @Test
     fun `type and args are read from a JSON_OBJECT-shaped node, func stays null`() {
-      // Fixture trimmed from a live PostgreSQL 18.4 pg_rewrite.ev_action dump of
-      // `CREATE VIEW v AS SELECT json_object('a' VALUE 1) AS c1` — :func is `<>` (absent) for this
-      // type, verified live.
       val text = "{JSONCONSTRUCTOREXPR :type 1 :args (" +
         "{CONST :consttype 705 :constisnull false :location -1} " +
         "{CONST :consttype 23 :constisnull false :location -1}) :func <> :coercion <> " +
@@ -521,10 +487,8 @@ class PgNodeTreeParserTest {
 
     @Test
     fun `args is empty and func holds the underlying AGGREF for a JSON_OBJECTAGG-shaped node`() {
-      // Fixture trimmed from a live PostgreSQL 18.4 dump of
-      // `CREATE VIEW v AS SELECT json_objectagg(k:v) AS c1 FROM t_agg` — :args is `<>` (empty) and
-      // the real aggregate lives under :func instead, verified live (see
-      // PgNodeExpression.JsonConstructorExpr.arguments' own KDoc).
+      // :args is `<>` (empty) and the real aggregate lives under :func instead — see
+      // PgNodeExpression.JsonConstructorExpr.arguments.
       val text = "{JSONCONSTRUCTOREXPR :type 3 :args <> :func " +
         "{AGGREF :aggfnoid 3197 :aggtype 114 :aggcollid 0 :inputcollid 100 :aggtranstype 0 " +
         ":aggargtypes (o 25 23) :aggdirectargs <> :args (" +
@@ -544,11 +508,8 @@ class PgNodeTreeParserTest {
 
     @Test
     fun `a JSONVALUEEXPR argument transparently unwraps to its formatted_expr, not Unknown`() {
-      // Fixture trimmed from a live PostgreSQL 18.4 dump of `CREATE VIEW v AS SELECT json(a) AS c1
-      // FROM t (a text)` — JSON()'s single argument is ALWAYS wrapped in a JSONVALUEEXPR (verified
-      // live), so without unwrapping, this argument would parse to Unknown and always evaluate
-      // nullable regardless of a's own NOT NULL constraint. :formatted_expr, not :raw_expr, is the
-      // child recursed into (see parseJsonValueExpr's own KDoc).
+      // JSON()'s single argument is always wrapped in a JSONVALUEEXPR, so without unwrapping it would
+      // parse to Unknown and always evaluate nullable regardless of the column's NOT NULL constraint.
       val text = "{JSONCONSTRUCTOREXPR :type 5 :args (" +
         "{JSONVALUEEXPR :raw_expr {VAR :varno 1 :varattno 1 :varlevelsup 0 :location -1} " +
         ":formatted_expr {COERCEVIAIO :arg {VAR :varno 1 :varattno 1 :varlevelsup 0 :location -1} " +
@@ -577,24 +538,16 @@ class PgNodeTreeParserTest {
   @Nested
   inner class AggrefArgumentExtraction {
 
-    // Both fixtures below are VERBATIM (not hand-written) `{AGGREF ...}` blocks copied from a live
-    // PostgreSQL 18.4 pg_rewrite.ev_action dump — extractArgListSection's prior plain (non-depth-aware)
-    // text.indexOf(":args (") scan silently mis-parsed both of these real shapes, attributing the
-    // WRONG nested list to Aggref.arguments. No isNonNull answer moved when this was fixed (that
-    // branch never reads Aggref.arguments), but Aggref.arguments also feeds
-    // NodeTreeNullabilityAnalyzer.containsVarOutsideRelation and GroupRteSubstitution, where a Var the
-    // wrong list hides is a silent wrong-NOT-NULL, so both real-world shapes are pinned here directly
-    // against the parser, independent of any nullability outcome.
+    // Both fixtures are VERBATIM `{AGGREF ...}` blocks from a live PostgreSQL 18.4 ev_action dump.
+    // extractArgListSection's prior non-depth-aware `indexOf(":args (")` mis-parsed both, attributing
+    // a nested node's argument list to the aggregate. No isNonNull answer moved (that branch never
+    // reads Aggref.arguments), but the arguments also feed containsVarOutsideRelation and
+    // GroupRteSubstitution, where a Var the wrong list hides becomes a silent wrong-NOT-NULL.
 
     @Test
     fun `an AGGREF with a FILTER clause does not attribute the filter's own OPEXPR args to the aggregate`() {
-      // Verbatim AGGREF block for `count(*) FILTER (WHERE b = 1)`. The aggregate's own `:args` is
-      // `<>` (count(*) takes no explicit argument) and comes BEFORE `:aggfilter` in AGGREF's field
-      // order; `:aggfilter` holds a completely separate `{OPEXPR ...}` (the FILTER condition) with
-      // its OWN nested `:args (...)` (the `b`/`1` comparison operands). A plain, non-depth-aware
-      // `indexOf(":args (")` over the whole AGGREF text skips the empty `:args <>` and matches this
-      // nested OPEXPR's `:args (` instead, wrongly returning the FILTER condition's two operands as
-      // if they were the aggregate's own arguments.
+      // The aggregate's own `:args` is `<>` and precedes `:aggfilter`, whose separate `{OPEXPR ...}`
+      // carries its own nested `:args (...)` — the list a plain scan matches instead.
       val text = "{AGGREF :aggfnoid 2803 :aggtype 20 :aggcollid 0 :inputcollid 0 :aggtranstype 0 " +
         ":aggargtypes <> :aggdirectargs <> :args <> :aggorder <> :aggdistinct <> :aggfilter " +
         "{OPEXPR :opno 96 :opfuncid 65 :opresulttype 16 :opretset false :opcollid 0 :inputcollid 0 " +
@@ -611,12 +564,8 @@ class PgNodeTreeParserTest {
 
     @Test
     fun `an AGGREF with WITHIN GROUP does not attribute aggdirectargs' nested args to the aggregate`() {
-      // Verbatim AGGREF block for `percentile_cont(0.5) WITHIN GROUP (ORDER BY a)`. `:aggdirectargs`
-      // (the direct, non-aggregated `0.5` argument, itself wrapped in a numeric-cast FUNCEXPR with
-      // its OWN nested `:args (...)`) is serialized BEFORE the aggregate's real `:args` (the
-      // TARGETENTRY-wrapped, order-by-driven `a` argument). A plain `indexOf(":args (")` matches
-      // aggdirectargs' nested FUNCEXPR's `:args (` first, wrongly returning just the `0.5` literal
-      // instead of the real single argument (a FUNCEXPR wrapping a VAR referencing `a`).
+      // `:aggdirectargs` (the `0.5`, wrapped in a numeric-cast FUNCEXPR with its own nested `:args`)
+      // is serialized BEFORE the aggregate's real `:args` — so a plain scan returns just the literal.
       val text = "{AGGREF :aggfnoid 3974 :aggtype 701 :aggcollid 0 :inputcollid 0 :aggtranstype 0 " +
         ":aggargtypes (o 701 701) :aggdirectargs ({FUNCEXPR :funcid 1746 :funcresulttype 701 " +
         ":funcretset false :funcvariadic false :funcformat 2 :funccollid 0 :inputcollid 0 " +

@@ -72,16 +72,11 @@ internal sealed interface PgNodeExpression {
 
   /**
    * @property outerOperand The parsed first argument of the sublink's `:testexpr` (e.g. `a` in `a =
-   *   ANY (...)`/`a <> ALL (...)`), `null` when `:testexpr` is absent (`EXISTS`/`EXPR`/`MULTIEXPR`/
-   *   `ARRAY`/`CTE` sublinks all emit no `:testexpr` — verified live across all eight `SubLinkType`
-   *   values) or when it has no single-argument `:args` list this parser can read from — which is
-   *   true for every multi-column row-comparison form: the `BOOLEXPR` shape (`(a, b) IN (...)`,
-   *   `(a, b) <> ALL (...)`, `(a, b) = ALL (...)`) has no top-level `:args` of its own, and the
-   *   `ROWCOMPAREEXPR` shape (`(a, b) < ALL (...)` and `<=`/`>`/`>=`) carries its operands under
-   *   `:largs`/`:rargs` instead of `:args`, and is not a node type this parser's own `when` dispatch
-   *   recognizes in the first place (parses to [Unknown]). Extracted unconditionally regardless of
-   *   `subLinkType` (see [PgNodeTreeParser.parseSubLink]'s own KDoc) for consumers beyond
-   *   [NodeTreeNullabilityAnalyzer]'s own `SubLink` nullability proof — see its own KDoc.
+   *   ANY (...)`), `null` when `:testexpr` is absent — `EXISTS`/`EXPR`/`MULTIEXPR`/`ARRAY`/`CTE`
+   *   sublinks emit none — or when it has no single-argument `:args` list this parser can read, which
+   *   is true of every multi-column row-comparison form (the `BOOLEXPR` shape has no top-level
+   *   `:args`; the `ROWCOMPAREEXPR` shape uses `:largs`/`:rargs` and parses to [Unknown] anyway).
+   *   Extracted regardless of `subLinkType` — see [PgNodeTreeParser.parseSubLink].
    * @property subselectBlock The raw `{QUERY ...}` text of the sublink's `:subselect`, verbatim,
    *   `null` when absent (malformed input, or a node-tree shape this parser does not model). Used
    *   by [NodeTreeNullabilityAnalyzer] to recursively analyze an `ANY_SUBLINK`'s (`IN`/`= ANY`) or
@@ -91,17 +86,13 @@ internal sealed interface PgNodeExpression {
    *   whole query block), so analyzing it requires re-entering [PgNodeTreeParser]/
    *   `ColumnNullabilityAnalyzer`, not this class's own `when` dispatch.
    * @property testExpressionOperatorOid The `:opfuncid` of the sublink's `:testexpr` when that
-   *   `:testexpr` is a single top-level `OPEXPR` (e.g. `a = ANY (...)`, `a IN (...)`, `a <> ALL
-   *   (...)`), `null` otherwise — including the multi-column `(a, b) IN (...)`/`(a, b) <> ALL (...)`/
-   *   `(a, b) = ALL (...)` forms, whose `:testexpr` is a `BOOLEXPR` combining one `OPEXPR` per column
-   *   with no single top-level operator OID of its own, and the multi-column `(a, b) < ALL (...)`
-   *   (and `<=`/`>`/`>=`) form, whose `:testexpr` is instead a `ROWCOMPAREEXPR` that this parser does
-   *   not model at all (see [outerOperand]'s own KDoc). Used alongside [outerOperand] by
-   *   [NodeTreeNullabilityAnalyzer] to confirm the sublink's comparison operator is both strict and
-   *   total on non-null input before trusting the subquery column's own nullability — a `null` here
-   *   means that proof is unavailable, and the sublink must default to nullable, which naturally
-   *   covers every multi-column form without special-casing any of them: neither a `BOOLEXPR` nor a
-   *   `ROWCOMPAREEXPR` testexpr ever yields a top-level `:opfuncid` to trust in the first place.
+   *   `:testexpr` is a single top-level `OPEXPR` (`a = ANY (...)`, `a IN (...)`, `a <> ALL (...)`),
+   *   `null` otherwise. Used alongside [outerOperand] by [NodeTreeNullabilityAnalyzer] to confirm the
+   *   comparison operator is both strict and total on non-null input before trusting the subquery
+   *   column's own nullability; `null` means that proof is unavailable and the sublink defaults to
+   *   nullable. That naturally covers every multi-column form without special-casing: neither the
+   *   `BOOLEXPR` testexpr of `(a, b) IN (...)`/`<> ALL`/`= ALL` nor the `ROWCOMPAREEXPR` testexpr of
+   *   `(a, b) < ALL (...)` (and `<=`/`>`/`>=`) yields a top-level `:opfuncid`.
    */
   data class SubLink(
     val subLinkType: Int,
@@ -162,27 +153,15 @@ internal sealed interface PgNodeExpression {
    * A `JSON_OBJECT`, `JSON_ARRAY`, `JSON_OBJECTAGG`, `JSON_ARRAYAGG`, `JSON()`, `JSON_SCALAR`, or
    * `JSON_SERIALIZE` constructor call (`JSONCONSTRUCTOREXPR` in `primnodes.h`).
    *
-   * @property type The `JsonConstructorType` code — see the `JSON_CONSTRUCTOR_TYPE_*` constants
-   *   below, each verified live (PostgreSQL 18.4, by dumping `pg_rewrite.ev_action` for a `CREATE
-   *   VIEW` wrapping the corresponding SQL construct) rather than trusted from PostgreSQL source
-   *   alone.
-   * @property arguments The parsed `:args` list. Populated for [JSON_CONSTRUCTOR_TYPE_OBJECT] (each
-   *   key/value pair, flattened), [JSON_CONSTRUCTOR_TYPE_ARRAY] (each element), and
-   *   [JSON_CONSTRUCTOR_TYPE_PARSE]/[JSON_CONSTRUCTOR_TYPE_SCALAR]/[JSON_CONSTRUCTOR_TYPE_SERIALIZE]
-   *   (their single value argument). ALWAYS EMPTY for [JSON_CONSTRUCTOR_TYPE_OBJECTAGG]/
-   *   [JSON_CONSTRUCTOR_TYPE_ARRAYAGG] — verified live that PostgreSQL puts the underlying aggregate
-   *   (or window function, when `OVER` is used) in [function] instead, leaving `:args <>` for those
-   *   two types; see [function]'s own KDoc.
-   * @property function The parsed `:func` node — `null` (from `:func <>`) for every type EXCEPT
-   *   [JSON_CONSTRUCTOR_TYPE_OBJECTAGG]/[JSON_CONSTRUCTOR_TYPE_ARRAYAGG], where it holds the
-   *   underlying [Aggref] (the ordinary case, verified live) or [WindowFunc] (verified live for
-   *   `JSON_OBJECTAGG(...) OVER (...)`) that actually computes the aggregated JSON value —
-   *   [NodeTreeNullabilityAnalyzer.isNonNull]'s `JsonConstructorExpr` branch recurses into this
-   *   field for those two types rather than [arguments] (which is empty for them — see that
-   *   property's own KDoc), routing through the EXISTING [Aggref]/[WindowFunc] nullability rules
-   *   rather than duplicating them. A rule that instead required `arguments.all { ... }` for these
-   *   two types would be vacuously `true` over an empty list — exactly the unsound shape the
-   *   original `JsonConstructorExpr -> true` bug had, just narrower.
+   * @property type The `JsonConstructorType` code — see the `JSON_CONSTRUCTOR_TYPE_*` constants below.
+   * @property arguments The parsed `:args` list: each flattened key/value pair for `OBJECT`, each
+   *   element for `ARRAY`, the single value argument for `PARSE`/`SCALAR`/`SERIALIZE`. ALWAYS EMPTY for
+   *   `OBJECTAGG`/`ARRAYAGG`, which put the underlying aggregate in [function] instead.
+   * @property function The parsed `:func` node — `null` (from `:func <>`) for every type except
+   *   `OBJECTAGG`/`ARRAYAGG`, where it holds the [Aggref] (or [WindowFunc], when `OVER` is used) that
+   *   computes the aggregated JSON value. [NodeTreeNullabilityAnalyzer.isNonNull] recurses into this
+   *   for those two types rather than [arguments], whose emptiness would make an
+   *   `arguments.all { ... }` rule vacuously `true`.
    */
   data class JsonConstructorExpr(
     val type: Int,
@@ -206,38 +185,21 @@ internal sealed interface PgNodeExpression {
   companion object {
     // SubLinkType (primnodes.h): EXISTS_SUBLINK=0, ALL_SUBLINK=1, ANY_SUBLINK=2,
     // ROWCOMPARE_SUBLINK=3, EXPR_SUBLINK=4, MULTIEXPR_SUBLINK=5, ARRAY_SUBLINK=6, CTE_SUBLINK=7.
-    // Verified live on PostgreSQL 18.4 by dumping prosqlbody node trees: `a <> ALL (SELECT v FROM
-    // u)` and `a < ALL (SELECT v FROM u)` both emit `:subLinkType 1`; `(a, id) < (SELECT v, 1 FROM
-    // u)` (a row comparison against a one-row subquery, not `ALL`/`ANY`) emits `:subLinkType 3`;
-    // `a NOT IN (SELECT v FROM u)` emits `:subLinkType 2` wrapped in a `BOOLEXPR :boolop not`;
-    // `EXISTS (...)` emits `0`; a plain scalar subquery emits `4`; `ARRAY(SELECT ...)` emits `6`;
-    // `a = ANY (SELECT v FROM u)`/`a IN (SELECT v FROM u)` emit `2`. Only the constants this
-    // analyzer distinguishes are named below — EXPR_SUBLINK, MULTIEXPR_SUBLINK, and CTE_SUBLINK are
-    // never specially handled and fall through to nullable by matching none of these.
+    // Only the values this analyzer distinguishes are named; EXPR/MULTIEXPR/CTE are never specially
+    // handled and fall through to nullable by matching none of them. `a NOT IN (...)` is an
+    // ANY_SUBLINK wrapped in a `BOOLEXPR :boolop not`, not a distinct type.
     const val SUBLINK_TYPE_EXISTS: Int = 0 // EXISTS_SUBLINK
     const val SUBLINK_TYPE_ALL: Int = 1 // ALL_SUBLINK
     const val SUBLINK_TYPE_ANY: Int = 2 // ANY_SUBLINK
     const val SUBLINK_TYPE_ROWCOMPARE: Int = 3 // ROWCOMPARE_SUBLINK
     const val SUBLINK_TYPE_ARRAY: Int = 6 // ARRAY_SUBLINK
 
-    // JsonExprOp (primnodes.h) — introduced in PG 17. Verified live on PostgreSQL 18.4 by dumping
-    // ev_action node trees: `JSON_EXISTS(...)` emits `:op 0`, `JSON_QUERY(...)` emits `:op 1`,
-    // `JSON_VALUE(...)` emits `:op 2`, and a `JSON_TABLE(...)` COLUMNS clause emits `:op 3` for both
-    // its whole-document `:docexpr` and each column's own `:colvalexprs` entry — but those live
-    // inside a range-table entry's `:tablefunc` (rtekind 4, `RTE_TABLEFUNC`), never as an ordinary
-    // expression this parser's `parseExpression` walks into; a `JSON_TABLE` column resolves in the
-    // outer query as a plain `VAR` against that RTE instead (see
-    // NodeTreeNullabilityAnalyzer.isKnownNonNullJsonBehavior's own KDoc, which already documents
-    // this for the ON EMPTY/ON ERROR allow-list). JSON_TABLE_OP is therefore named here for
-    // completeness and is deliberately UNREACHED by evaluateJsonExpr's `when` — no branch is written
-    // for it, so it falls through that `when`'s own `else -> false`, the safe default, exactly like
-    // any other JsonExpr code this parser might one day see in a position it does not expect.
-    //
-    // There is no JSON_SERIALIZE_OP: `JSON_SERIALIZE(...)` was previously (wrongly) assigned the
-    // value 4 here, a value JsonExprOp does not define at all — verified live that
-    // `JSON_SERIALIZE(...)` never produces a JsonExpr node in the first place, emitting a
-    // JSONCONSTRUCTOREXPR (`:type 7`) instead. The dead `JSON_SERIALIZE_OP` branch this constant fed
-    // in evaluateJsonExpr has been removed along with it.
+    // JsonExprOp (primnodes.h) — introduced in PG 17. JSON_EXISTS=0, JSON_QUERY=1, JSON_VALUE=2,
+    // JSON_TABLE=3. A JSON_TABLE COLUMNS clause does emit :op 3 nodes, but they live inside a range
+    // table entry's :tablefunc (rtekind 4), which parseExpression never descends into — a JSON_TABLE
+    // column resolves in the outer query as a plain VAR against that RTE. So JSON_TABLE_OP is named
+    // for completeness and deliberately has no branch in evaluateJsonExpr. There is no
+    // JSON_SERIALIZE_OP: `JSON_SERIALIZE(...)` emits a JSONCONSTRUCTOREXPR (`:type 7`) instead.
     const val JSON_EXISTS_OP: Int = 0
     const val JSON_QUERY_OP: Int = 1
     const val JSON_VALUE_OP: Int = 2
@@ -270,29 +232,11 @@ internal sealed interface PgNodeExpression {
     const val VAR_RETURNING_TYPE_OLD: Int = 1
     const val VAR_RETURNING_TYPE_NEW: Int = 2
 
-    // JsonConstructorType (primnodes.h). Verified live by dumping pg_rewrite.ev_action for a CREATE
-    // VIEW wrapping each construct:
-    //  - `JSON_OBJECT('a' VALUE 1)` -> `:type 1`, `JSON_ARRAY(1, 2)` -> `:type 2` — both verified to
-    //    exist and produce this same JSONCONSTRUCTOREXPR shape on PostgreSQL 16 too (the earliest
-    //    version this project supports), the only two codes stable that far back.
-    //  - `JSON_OBJECTAGG(k:v)`/`JSON_ARRAYAGG(v)` -> `:type 3`/`:type 4` — also verified present on
-    //    PostgreSQL 16.
-    //  - `JSON('{"a":1}')` -> `:type 5`, `JSON_SCALAR(1)` -> `:type 6`, `JSON_SERIALIZE(x)` ->
-    //    `:type 7` — verified live to NOT produce a JSONCONSTRUCTOREXPR node at all on PostgreSQL 16:
-    //    `json(text)` there resolves to the pre-SQL/JSON-standard `json` I/O CAST function instead —
-    //    verified live over a real column reference (not a literal): `json(a_column)` emits an
-    //    ordinary `{COERCEVIAIO :arg {VAR ...} ...}` node, a shape this parser already models via
-    //    parseCoerceViaIo/PgNodeExpression.CoerceViaIo (never a JSONCONSTRUCTOREXPR). A literal
-    //    argument, e.g. `json('{"a":1}')`, additionally constant-folds all the way to a plain
-    //    `{CONST ...}` before that, since the whole expression is compile-time constant — but the
-    //    non-folding, COERCEVIAIO shape is the one that matters here, since it is what a real,
-    //    non-constant column reference actually produces. `json_scalar`/`json_serialize` do not exist
-    //    as functions on PostgreSQL 16 at all (`function ... does not exist`). Verified present and
-    //    producing `:type 5`/`6`/`7` respectively on both PostgreSQL 17 and 18. No version-conditional
-    //    logic is needed in NodeTreeNullabilityAnalyzer for this either way: a `:type` this analyzer
-    //    does not expect simply never occurs on a version whose grammar cannot produce it in the
-    //    first place, and PostgreSQL 16's COERCEVIAIO/CONST shapes are both already handled by this
-    //    parser's ordinary, non-JSON-specific rules.
+    // JsonConstructorType (primnodes.h): JSON_OBJECT=1, JSON_ARRAY=2, JSON_OBJECTAGG=3,
+    // JSON_ARRAYAGG=4, JSON_PARSE (`JSON()`)=5, JSON_SCALAR=6, JSON_SERIALIZE=7. Types 1-4 exist back
+    // to PostgreSQL 16; types 5-7 need 17, where on 16 `json(a_column)` is the pre-standard I/O cast
+    // (an ordinary COERCEVIAIO node this parser already handles) and json_scalar/json_serialize do not
+    // exist at all, so no version-conditional logic is needed.
     const val JSON_CONSTRUCTOR_TYPE_OBJECT: Int = 1
     const val JSON_CONSTRUCTOR_TYPE_ARRAY: Int = 2
     const val JSON_CONSTRUCTOR_TYPE_OBJECTAGG: Int = 3
@@ -325,18 +269,14 @@ internal sealed interface PgNodeExpression {
 internal data class NodeTreeCteDefinition(val name: String, val queryBlock: String)
 
 /**
- * A CTE range-table-entry reference (`rtekind 6`) parsed from a query block's own `:rtable` — the
- * CTE's name and how many query levels up its OWN declaration (`:cteList` entry) sits, relative to
- * the block this reference was found in.
+ * A CTE range-table-entry reference (`rtekind 6`) parsed from a query block's own `:rtable`.
  *
  * @property name The referenced CTE's name (from `:ctename`).
- * @property ctelevelsup `0` when the CTE is declared in the SAME query block's own `:cteList` (the
- *   block declares its own `WITH` clause containing this name); a value greater than `0` means the
- *   declaration is that many query levels further up, in an ENCLOSING scope. Distinguishing these is
- *   required to resolve a reference correctly when a block declares its own `WITH c` that shadows an
- *   enclosing `WITH c` of the same name with a different body — see
- *   [ColumnNullabilityAnalyzer.analyzeQueryBlockNullability]'s own KDoc for the caller that acts on
- *   this distinction.
+ * @property ctelevelsup `0` when the CTE is declared in the SAME query block's own `:cteList`; a
+ *   value greater than `0` means the declaration is that many query levels further up, in an
+ *   enclosing scope. The distinction is required when a block declares its own `WITH c` that shadows
+ *   an enclosing `WITH c` of the same name with a different body — see
+ *   [ColumnNullabilityAnalyzer.analyzeQueryBlockNullability].
  */
 internal data class NodeTreeCteReference(val name: String, val ctelevelsup: Int)
 
