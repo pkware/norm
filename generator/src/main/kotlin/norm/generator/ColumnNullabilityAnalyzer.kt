@@ -6,8 +6,8 @@ import java.util.UUID
 
 /**
  * Recursion budget for [ColumnNullabilityAnalyzer.subLinkSubqueryColumnNotNull]: how many levels
- * of NESTED `ANY_SUBLINK` (a `SubLink` whose own subselect contains another `SubLink`) are
- * resolved before defaulting to nullable — see that method's KDoc.
+ * of NESTED `ANY_SUBLINK`/`ALL_SUBLINK` (a `SubLink` whose own subselect contains another
+ * `SubLink`) are resolved before defaulting to nullable — see that method's KDoc.
  *
  * This is NOT required to prevent an infinite loop: [PgNodeExpression.SubLink.subselectBlock] is
  * always extracted, via [PgNodeTreeParser.extractFieldExpression], as a genuine SUBSTRING of its
@@ -15,8 +15,8 @@ import java.util.UUID
  * produce a cyclic or self-referential node-tree text, so this recursion is provably bounded by the
  * ORIGINAL query text's finite length regardless of this constant's value, or even its presence.
  * The budget exists instead as a defensive bound on STACK DEPTH and repeated analysis WORK for a
- * pathologically deep (if syntactically legal) chain of nested `= ANY (...)` sublinks, the same
- * role [NodeTreeNullabilityAnalyzer.MAX_EXPRESSION_DEPTH] plays for a deeply nested parsed
+ * pathologically deep (if syntactically legal) chain of nested `= ANY (...)`/`ALL (...)` sublinks,
+ * the same role [NodeTreeNullabilityAnalyzer.MAX_EXPRESSION_DEPTH] plays for a deeply nested parsed
  * expression tree elsewhere in this codebase. Deliberately small: this analysis is only ever needed
  * for the (typically shallow) nullability proof of an `IN`/`= ANY` subquery's single output column,
  * not for arbitrarily deep query nesting in general — see `QueryAnalysisTest`'s four-level-nesting
@@ -904,8 +904,8 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
 
   /**
    * Backs [NodeTreeNullabilityAnalyzer]'s `isSubLinkSubqueryColumnNotNull` callback: `true` when
-   * [subselectBlock] — the raw `{QUERY ...}` text of an `ANY_SUBLINK`'s `:subselect` — produces
-   * EXACTLY ONE non-junk output column and that column is provably non-null.
+   * [subselectBlock] — the raw `{QUERY ...}` text of an `ANY_SUBLINK`'s or `ALL_SUBLINK`'s
+   * `:subselect` — produces EXACTLY ONE non-junk output column and that column is provably non-null.
    *
    * Set-operation subselects (`UNION`/`INTERSECT`/`EXCEPT`) are rejected outright, the same
    * conservative default [buildSubqueryColumnNotNull] applies to a `FROM`-clause subquery RTE for
@@ -1331,7 +1331,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
   /**
    * Computes per-column nullability for a single query block ([queryBlock]) — the shared core of
    * [buildSubqueryColumnNotNull] (a `FROM`-clause subquery RTE) and [subLinkSubqueryColumnNotNull]
-   * (an `ANY_SUBLINK`'s `:subselect`): given a raw `{QUERY ...}` block, build a resolver over the
+   * (an `ANY_SUBLINK`'s or `ALL_SUBLINK`'s `:subselect`): given a raw `{QUERY ...}` block, build a resolver over the
    * block's OWN `parseRangeTable`/`parseCteRangeTableEntries`/`parseGroupRteMap`/subquery-RTE/qual
    * narrowing, then run [NodeTreeNullabilityAnalyzer.extractColumnNullability] against it.
    *

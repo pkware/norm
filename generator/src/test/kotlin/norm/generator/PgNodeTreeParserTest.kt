@@ -307,6 +307,51 @@ class PgNodeTreeParserTest {
       val result = parser.parseExpression(text) as PgNodeExpression.SubLink
       assertThat(result.subselectBlock).isNull()
     }
+
+    @Test
+    fun `an ALL sublink's outer operand and testexpr operator OID are extracted, same shape as ANY`() {
+      // subLinkType 1 is ALL_SUBLINK (see PgNodeExpression.SUBLINK_TYPE_ALL's own KDoc for the
+      // live-verified enum mapping) — its :testexpr is the same single top-level OPEXPR shape ANY
+      // uses, so parseSubLink's unconditional :testexpr extraction reads it identically.
+      val text = "{SUBLINK :subLinkType 1 :subLinkId 0 :testexpr $anyOpexprTestexpr :operName (\"<>\") " +
+        ":subselect {QUERY :targetList (" +
+        "{TARGETENTRY :expr {VAR :varno 1 :varattno 1 :varlevelsup 0 :location -1} :resno 1 :resname v " +
+        ":resjunk false}) :setOperations <>} :location -1}"
+      val result = parser.parseExpression(text) as PgNodeExpression.SubLink
+      assertThat(result.testExpressionOperatorOid).isEqualTo(67)
+      assertThat((result.outerOperand as PgNodeExpression.Var).varattno).isEqualTo(2)
+    }
+
+    @Test
+    fun `a ROWCOMPARE sublink's testexpr yields no outer operand and no operator OID`() {
+      // subLinkType 3 is ROWCOMPARE_SUBLINK (`(a, id) < (SELECT v, 1 FROM u)`, a row comparison
+      // against a one-row subquery — no ALL/ANY keyword). Its :testexpr is a ROWCOMPAREEXPR, which
+      // carries its operands under :largs/:rargs, not :args, and is not one of the node types this
+      // parser's own `when` dispatch recognizes — it falls through to Unknown. So even though
+      // parseSubLink now extracts :testexpr unconditionally (see its own KDoc), neither
+      // extractArgListSection's ":args" lookup (ROWCOMPAREEXPR has no :args field) nor the
+      // OpExpr-cast for testExpressionOperatorOid (ROWCOMPAREEXPR parses as Unknown, not OpExpr) can
+      // find anything here — both stay null before and after that change, and isNonNull's SubLink
+      // proof excludes ROWCOMPARE_SUBLINK regardless (see NodeTreeNullabilityAnalyzer's SubLink
+      // branch), so this shape can never be reported non-null via that leg either way.
+      // Fixture is a verbatim shape, field-for-field, from a live PostgreSQL 18.4 ev_action dump of
+      // `(a, id) < ALL (SELECT v, 1 FROM u)`: PostgreSQL 18 uses :cmptype (not the older :rctype),
+      // its :opnos/:opfamilies/:inputcollids lists carry an "o" (OID list) type-tag element the
+      // parser never reads, and ROWCOMPAREEXPR itself carries no :location field of its own — it
+      // closes immediately after :rargs, unlike the hand-guessed fixture this replaced.
+      val rowCompareTestexpr = "{ROWCOMPAREEXPR :cmptype 1 :opnos (o 97 97) :opfamilies (o 1976 1976) " +
+        ":inputcollids (o 0 0) :largs (" +
+        "{VAR :varno 1 :varattno 1 :varlevelsup 0 :location -1} " +
+        "{VAR :varno 1 :varattno 2 :varlevelsup 0 :location -1}) " +
+        ":rargs ({PARAM :paramkind 2 :paramid 1 :location -1} {PARAM :paramkind 2 :paramid 2 :location -1})}"
+      val text = "{SUBLINK :subLinkType 3 :subLinkId 0 :testexpr $rowCompareTestexpr :operName <> " +
+        ":subselect {QUERY :targetList (" +
+        "{TARGETENTRY :expr {VAR :varno 1 :varattno 1 :varlevelsup 0 :location -1} :resno 1 :resname v " +
+        ":resjunk false}) :setOperations <>} :location -1}"
+      val result = parser.parseExpression(text) as PgNodeExpression.SubLink
+      assertThat(result.outerOperand).isNull()
+      assertThat(result.testExpressionOperatorOid).isNull()
+    }
   }
 
   @Nested

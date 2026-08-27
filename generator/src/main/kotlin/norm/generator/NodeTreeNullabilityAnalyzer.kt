@@ -68,14 +68,15 @@ import norm.generator.NodeTreeNullabilityAnalyzer.Companion.MAX_EXPRESSION_DEPTH
  *   for the reasoning. Defaults to `false` (ordinary [isNonNull] evaluation only) for query blocks
  *   without grouping sets.
  * @param isSubLinkSubqueryColumnNotNull Returns `true` when [subselectBlock] — the raw `{QUERY ...}`
- *   text of an `ANY_SUBLINK`'s `:subselect` (see [PgNodeExpression.SubLink.subselectBlock]) —
- *   produces EXACTLY ONE non-junk output column and that column is provably non-null. Used by
- *   [isNonNull]'s `SubLink` branch as the third, most expensive leg of the `ANY_SUBLINK`
- *   nullability rule (see that branch's own comment for the full three-condition rule and why each
- *   condition is required). Defaults to `{ false }` — every existing construction site and unit
- *   test that does not explicitly wire this callback stays conservative (nullable), which is also
- *   the correct behavior for a nested sublink once the caller's own depth budget for this analysis
- *   is exhausted (see `ColumnNullabilityAnalyzer`'s wiring of this callback for that budget).
+ *   text of an `ANY_SUBLINK`'s or `ALL_SUBLINK`'s `:subselect` (see
+ *   [PgNodeExpression.SubLink.subselectBlock]) — produces EXACTLY ONE non-junk output column and
+ *   that column is provably non-null. Used by [isNonNull]'s `SubLink` branch as the third, most
+ *   expensive leg of the identical `ANY_SUBLINK`/`ALL_SUBLINK` nullability rule (see that branch's
+ *   own comment for the full three-condition rule and why each condition is required). Defaults to
+ *   `{ false }` — every existing construction site and unit test that does not explicitly wire this
+ *   callback stays conservative (nullable), which is also the correct behavior for a nested sublink
+ *   once the caller's own depth budget for this analysis is exhausted (see
+ *   `ColumnNullabilityAnalyzer`'s wiring of this callback for that budget).
  * @param forceNewNullable `true` when a `RETURNING WITH (OLD AS o, NEW AS n)` reference to `NEW`
  *   (`Var.returningType == `[PgNodeExpression.VAR_RETURNING_TYPE_NEW]`) must be treated as
  *   unconditionally nullable, the same way [isNonNull]'s `Var` branch ALWAYS treats `OLD`
@@ -592,8 +593,39 @@ internal class NodeTreeNullabilityAnalyzer(
           // own special case. Ordered cheapest-first: subLinkType and outerOperand are already
           // computed above; the two OID predicates are cheap map lookups; isSubLinkSubqueryColumnNotNull
           // is the only leg that re-enters full query-block analysis, so it is checked last.
+          //
+          // ALL_SUBLINK (`x op ALL (subquery)`) gets the IDENTICAL three-condition proof, because it
+          // is the dual of ANY_SUBLINK over OR/AND: `x op ALL (S)` is TRUE if `S` is empty or every
+          // comparison is true, FALSE if any comparison is false, and NULL only when some comparison
+          // is NULL and none is false. The same three conditions that rule out a NULL comparison for
+          // ANY rule it out here too, and — unlike ANY, where an empty subquery is FALSE, itself
+          // non-null — an empty subquery for ALL is TRUE, also non-null, so no empty-subquery case
+          // needs separate handling either. `NOT IN` desugars to a `BOOLEXPR not` wrapping an
+          // ANY_SUBLINK, verified live, never an ALL_SUBLINK, so a negation can never hide inside an
+          // ALL testexpr this proof sees. The multi-column row-comparison ALL form fails this proof
+          // automatically, but not by one single mechanism — verified live on PostgreSQL 18.4, it
+          // splits by operator: `(a, id) <> ALL (...)` and `(a, id) = ALL (...)` compile their
+          // testexpr to a BOOLEXPR (`:boolop or`/`and` respectively) combining one OPEXPR per
+          // column, the same shape as ANY's own row-comparison form, so testExpressionOperatorOid is
+          // null and the proof fails on that leg. `(a, id) < ALL (...)` (and `<=`/`>`/`>=`) instead
+          // compile to a ROWCOMPAREEXPR testexpr — a node type this parser's own `when` dispatch
+          // does not recognize, so it parses as Unknown; testExpressionOperatorOid is null for the
+          // same structural reason (no top-level OPEXPR to cast), and outerOperand is null too,
+          // since ROWCOMPAREEXPR carries its operands under `:largs`/`:rargs`, not `:args` — see
+          // PgNodeTreeParser.parseSubLink's own KDoc. Either way, the answer is nullable; only the
+          // path to that answer differs by operator.
+          //
+          // ROWCOMPARE_SUBLINK (a row comparison against a one-row subquery, e.g. `(a, id) < (SELECT
+          // v, 1 FROM u)`, no `ALL`/`ANY` keyword) is deliberately NOT included here even though it
+          // shares SUBLINK's shape: an EMPTY subquery yields NULL for ROWCOMPARE, not TRUE/FALSE —
+          // there being no row to compare against is not decidable to any of TRUE or FALSE the way
+          // ALL's and ANY's empty-subquery cases are — so no combination of the three conditions
+          // above can rescue it, and it must stay nullable.
           (
-            expression.subLinkType == PgNodeExpression.SUBLINK_TYPE_ANY &&
+            (
+              expression.subLinkType == PgNodeExpression.SUBLINK_TYPE_ANY ||
+                expression.subLinkType == PgNodeExpression.SUBLINK_TYPE_ALL
+              ) &&
               expression.outerOperand?.let(recurse) == true &&
               expression.testExpressionOperatorOid?.let { operatorOid ->
                 isStrict(operatorOid) && isNeverNullForNonNullInput(operatorOid)

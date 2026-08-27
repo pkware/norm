@@ -71,23 +71,37 @@ internal sealed interface PgNodeExpression {
   data class WindowFunc(val windowFunctionOid: Int, val arguments: List<PgNodeExpression>) : PgNodeExpression
 
   /**
+   * @property outerOperand The parsed first argument of the sublink's `:testexpr` (e.g. `a` in `a =
+   *   ANY (...)`/`a <> ALL (...)`), `null` when `:testexpr` is absent (`EXISTS`/`EXPR`/`MULTIEXPR`/
+   *   `ARRAY`/`CTE` sublinks all emit no `:testexpr` — verified live across all eight `SubLinkType`
+   *   values) or when it has no single-argument `:args` list this parser can read from — which is
+   *   true for every multi-column row-comparison form: the `BOOLEXPR` shape (`(a, b) IN (...)`,
+   *   `(a, b) <> ALL (...)`, `(a, b) = ALL (...)`) has no top-level `:args` of its own, and the
+   *   `ROWCOMPAREEXPR` shape (`(a, b) < ALL (...)` and `<=`/`>`/`>=`) carries its operands under
+   *   `:largs`/`:rargs` instead of `:args`, and is not a node type this parser's own `when` dispatch
+   *   recognizes in the first place (parses to [Unknown]). Extracted unconditionally regardless of
+   *   `subLinkType` (see [PgNodeTreeParser.parseSubLink]'s own KDoc) for consumers beyond
+   *   [NodeTreeNullabilityAnalyzer]'s own `SubLink` nullability proof — see its own KDoc.
    * @property subselectBlock The raw `{QUERY ...}` text of the sublink's `:subselect`, verbatim,
    *   `null` when absent (malformed input, or a node-tree shape this parser does not model). Used
-   *   by [NodeTreeNullabilityAnalyzer] to recursively analyze an `ANY_SUBLINK`'s (`IN`/`= ANY`)
-   *   subquery body for the "exactly one non-null output column" leg of its nullability rule — see
-   *   that class's `SubLink` branch. Deliberately kept as raw text rather than a parsed
-   *   [PgNodeExpression] (that type only models scalar expressions, never a whole query block), so
-   *   analyzing it requires re-entering [PgNodeTreeParser]/`ColumnNullabilityAnalyzer`, not this
-   *   class's own `when` dispatch.
+   *   by [NodeTreeNullabilityAnalyzer] to recursively analyze an `ANY_SUBLINK`'s (`IN`/`= ANY`) or
+   *   `ALL_SUBLINK`'s (`x op ALL (...)`) subquery body for the "exactly one non-null output column"
+   *   leg of its nullability rule — see that class's `SubLink` branch. Deliberately kept as raw text
+   *   rather than a parsed [PgNodeExpression] (that type only models scalar expressions, never a
+   *   whole query block), so analyzing it requires re-entering [PgNodeTreeParser]/
+   *   `ColumnNullabilityAnalyzer`, not this class's own `when` dispatch.
    * @property testExpressionOperatorOid The `:opfuncid` of the sublink's `:testexpr` when that
-   *   `:testexpr` is a single top-level `OPEXPR` (e.g. `a = ANY (...)`, `a IN (...)`), `null`
-   *   otherwise — including the multi-column `(a, b) IN (...)` form, whose `:testexpr` is a
-   *   `BOOLEXPR` combining one `OPEXPR` per column with no single top-level operator OID of its
-   *   own. Used alongside [outerOperand] by [NodeTreeNullabilityAnalyzer] to confirm the sublink's
-   *   comparison operator is both strict and total on non-null input before trusting the subquery
-   *   column's own nullability — a `null` here means that proof is unavailable, and the sublink
-   *   must default to nullable, which naturally covers the multi-column form without special-casing
-   *   it: a `BOOLEXPR` testexpr never yields a top-level `:opfuncid` to trust in the first place.
+   *   `:testexpr` is a single top-level `OPEXPR` (e.g. `a = ANY (...)`, `a IN (...)`, `a <> ALL
+   *   (...)`), `null` otherwise — including the multi-column `(a, b) IN (...)`/`(a, b) <> ALL (...)`/
+   *   `(a, b) = ALL (...)` forms, whose `:testexpr` is a `BOOLEXPR` combining one `OPEXPR` per column
+   *   with no single top-level operator OID of its own, and the multi-column `(a, b) < ALL (...)`
+   *   (and `<=`/`>`/`>=`) form, whose `:testexpr` is instead a `ROWCOMPAREEXPR` that this parser does
+   *   not model at all (see [outerOperand]'s own KDoc). Used alongside [outerOperand] by
+   *   [NodeTreeNullabilityAnalyzer] to confirm the sublink's comparison operator is both strict and
+   *   total on non-null input before trusting the subquery column's own nullability — a `null` here
+   *   means that proof is unavailable, and the sublink must default to nullable, which naturally
+   *   covers every multi-column form without special-casing any of them: neither a `BOOLEXPR` nor a
+   *   `ROWCOMPAREEXPR` testexpr ever yields a top-level `:opfuncid` to trust in the first place.
    */
   data class SubLink(
     val subLinkType: Int,
@@ -159,11 +173,21 @@ internal sealed interface PgNodeExpression {
   data class Unknown(val nodeType: String) : PgNodeExpression
 
   companion object {
-    // SubLinkType (primnodes.h)
-    const val SUBLINK_TYPE_EXISTS: Int = 0
-    const val SUBLINK_TYPE_ANY: Int = 2
-    const val SUBLINK_TYPE_ALL: Int = 3
-    const val SUBLINK_TYPE_ARRAY: Int = 6
+    // SubLinkType (primnodes.h): EXISTS_SUBLINK=0, ALL_SUBLINK=1, ANY_SUBLINK=2,
+    // ROWCOMPARE_SUBLINK=3, EXPR_SUBLINK=4, MULTIEXPR_SUBLINK=5, ARRAY_SUBLINK=6, CTE_SUBLINK=7.
+    // Verified live on PostgreSQL 18.4 by dumping prosqlbody node trees: `a <> ALL (SELECT v FROM
+    // u)` and `a < ALL (SELECT v FROM u)` both emit `:subLinkType 1`; `(a, id) < (SELECT v, 1 FROM
+    // u)` (a row comparison against a one-row subquery, not `ALL`/`ANY`) emits `:subLinkType 3`;
+    // `a NOT IN (SELECT v FROM u)` emits `:subLinkType 2` wrapped in a `BOOLEXPR :boolop not`;
+    // `EXISTS (...)` emits `0`; a plain scalar subquery emits `4`; `ARRAY(SELECT ...)` emits `6`;
+    // `a = ANY (SELECT v FROM u)`/`a IN (SELECT v FROM u)` emit `2`. Only the constants this
+    // analyzer distinguishes are named below — EXPR_SUBLINK, MULTIEXPR_SUBLINK, and CTE_SUBLINK are
+    // never specially handled and fall through to nullable by matching none of these.
+    const val SUBLINK_TYPE_EXISTS: Int = 0 // EXISTS_SUBLINK
+    const val SUBLINK_TYPE_ALL: Int = 1 // ALL_SUBLINK
+    const val SUBLINK_TYPE_ANY: Int = 2 // ANY_SUBLINK
+    const val SUBLINK_TYPE_ROWCOMPARE: Int = 3 // ROWCOMPARE_SUBLINK
+    const val SUBLINK_TYPE_ARRAY: Int = 6 // ARRAY_SUBLINK
 
     // JsonExprOp (primnodes.h) — introduced in PG 17
     const val JSON_EXISTS_OP: Int = 0
