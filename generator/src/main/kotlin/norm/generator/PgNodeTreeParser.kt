@@ -428,7 +428,16 @@ internal class PgNodeTreeParser {
       if (cteQueryIndex == -1) return@mapNotNull null
       val braceStart = cteQueryIndex + cteQueryMarker.length - 1
       val queryBlock = extractBalancedBraces(block, braceStart) ?: return@mapNotNull null
-      NodeTreeCteDefinition(name = cteName, queryBlock = queryBlock)
+      // :cterecursive and :ctecolnames are serialized AFTER :ctequery in COMMONTABLEEXPR's own
+      // field order (verified live), so a naive whole-block scan for either would find a NESTED
+      // COMMONTABLEEXPR's same-named field first, were [queryBlock] itself to declare its own
+      // nested WITH clause — depth-one-aware extraction (via [extractBoolFieldAtDepthOne] and
+      // [extractOuterSectionContent], both scoped to [block]'s own outermost brace) is required
+      // here, unlike :ctename above, which is always serialized BEFORE :ctequery and so can never
+      // be shadowed by anything nested inside it.
+      val recursive = extractBoolFieldAtDepthOne(block, ":cterecursive") ?: false
+      val columnNames = extractQuotedStringListField(block, ":ctecolnames")
+      NodeTreeCteDefinition(name = cteName, queryBlock = queryBlock, recursive = recursive, columnNames = columnNames)
     }
   }
 
@@ -457,6 +466,63 @@ internal class PgNodeTreeParser {
         val cteName = extractStringField(rangeTableEntry, ":ctename") ?: return@forEachIndexed
         val ctelevelsup = extractIntField(rangeTableEntry, ":ctelevelsup") ?: 0
         put(index + 1, NodeTreeCteReference(name = cteName, ctelevelsup = ctelevelsup))
+      }
+    }
+  }
+
+  /**
+   * Parses EVERY range-table entry from [nodeTreeText]'s own `:rtable`, regardless of `rtekind`,
+   * into a [RangeTableEntry] — see that type's KDoc for why a resolver needs visibility into every
+   * kind, not just the ones [parseRangeTable], [parseSubqueryRangeTable], and
+   * [parseCteRangeTableEntries] each recognize individually.
+   *
+   * None of the fields read here need [findMarkerAtDepthOne]'s depth-one-awareness: a `JOINEXPR`
+   * range-table entry's own fields (`:jointype`, `:joinaliasvars`, etc.) contain no nested `QUERY`
+   * block that could shadow them (`:joinaliasvars`'s entries are scalar expressions, never a whole
+   * query), and a `CTE` range-table entry (`rtekind 6`) carries only the CTE's NAME and scope
+   * metadata, not its body — the body lives in `:cteList`, parsed separately by [parseCteList].
+   *
+   * @param nodeTreeText the raw `pg_rewrite.ev_action` text (or a bare `{QUERY ...}` block)
+   * @return a map from 1-based varno to [RangeTableEntry], or an empty map if [nodeTreeText] is
+   *   malformed or contains no `:rtable`
+   */
+  fun parseRangeTableEntries(nodeTreeText: String): Map<Int, RangeTableEntry> {
+    val rtableContent = extractOuterSectionContent(nodeTreeText, ":rtable (") ?: return emptyMap()
+    return buildMap {
+      splitBraceBlocks(rtableContent).forEachIndexed { index, rangeTableEntry ->
+        val rtekind = extractIntField(rangeTableEntry, ":rtekind") ?: return@forEachIndexed
+        val entry: RangeTableEntry = when (rtekind) {
+          0 -> {
+            val relid = extractIntField(rangeTableEntry, ":relid") ?: return@forEachIndexed
+            RangeTableEntry.Relation(relid)
+          }
+          1 -> {
+            val subqueryMarker = ":subquery {"
+            val subqueryIndex = rangeTableEntry.indexOf(subqueryMarker)
+            if (subqueryIndex == -1) return@forEachIndexed
+            val braceStart = subqueryIndex + subqueryMarker.length - 1
+            val subqueryBlock = extractBalancedBraces(rangeTableEntry, braceStart) ?: return@forEachIndexed
+            RangeTableEntry.Subquery(subqueryBlock)
+          }
+          2 -> {
+            val jointype = extractIntField(rangeTableEntry, ":jointype") ?: return@forEachIndexed
+            RangeTableEntry.Join(
+              jointype = jointype,
+              joinAliasVars = parseArgList(rangeTableEntry, ":joinaliasvars"),
+              joinMergedCols = extractIntField(rangeTableEntry, ":joinmergedcols") ?: 0,
+              joinLeftCols = extractIntListField(rangeTableEntry, ":joinleftcols"),
+              joinRightCols = extractIntListField(rangeTableEntry, ":joinrightcols"),
+            )
+          }
+          6 -> {
+            val cteName = extractStringField(rangeTableEntry, ":ctename") ?: return@forEachIndexed
+            val ctelevelsup = extractIntField(rangeTableEntry, ":ctelevelsup") ?: 0
+            val selfReference = extractBoolField(rangeTableEntry, ":self_reference") ?: false
+            RangeTableEntry.Cte(NodeTreeCteReference(cteName, ctelevelsup, selfReference))
+          }
+          else -> RangeTableEntry.Other(rtekind)
+        }
+        put(index + 1, entry) // varno is 1-based
       }
     }
   }
@@ -1042,6 +1108,79 @@ internal class PgNodeTreeParser {
     if (fieldIndex == -1) return emptySet()
     val content = bitmapsetPattern.find(text, fieldIndex + fieldName.length)?.groupValues?.get(1) ?: return emptySet()
     return content.trim().split(whitespace).mapNotNull { it.toIntOrNull() }.toSet()
+  }
+
+  /**
+   * Extracts a plain `(i N ...)` integer-list field value, e.g. `:joinleftcols (i 1)`.
+   *
+   * @param text the full node block text
+   * @param fieldName the field name including the leading colon, e.g. `":joinleftcols"`
+   * @return the list of integer members in order, or an empty list if the field is absent, empty
+   *   (`<>`), or not an `(i ...)` list
+   */
+  private fun extractIntListField(text: String, fieldName: String): List<Int> {
+    val markerEnd = findMarkerAtDepthOne(text, "$fieldName ")
+    if (markerEnd == -1) return emptyList()
+    val match = integerListPattern.matchAt(text, markerEnd) ?: return emptyList()
+    return match.groupValues[1].trim().split(whitespace).mapNotNull { it.toIntOrNull() }
+  }
+
+  /**
+   * Extracts a boolean field's value, scoped to [text]'s OWN outermost `{...}` block (brace depth
+   * 1) — the depth-one-aware counterpart to [extractBoolField], required whenever [fieldName] could
+   * also appear, deeper in [text], on a NESTED node of the same type (see [parseCteList]'s call site
+   * for the concrete case: a CTE body that declares its own nested `WITH` clause).
+   *
+   * @return `true`/`false` read directly after [fieldName]'s marker, or `null` if [fieldName] is
+   *   absent at depth 1 or its value is neither literal token
+   */
+  private fun extractBoolFieldAtDepthOne(text: String, fieldName: String): Boolean? {
+    val markerEnd = findMarkerAtDepthOne(text, "$fieldName ")
+    if (markerEnd == -1) return null
+    return when {
+      text.startsWith("true", markerEnd) -> true
+      text.startsWith("false", markerEnd) -> false
+      else -> null
+    }
+  }
+
+  /**
+   * Extracts a `(...)`-list-of-quoted-strings field's values, e.g. `:ctecolnames ("d" "id")` — each
+   * element is a Postgres `String` node, serialized as a double-quote-delimited token using the
+   * SAME backslash-escaping rules as every other value in `pg_node_tree` (see the class-level note),
+   * just with an extra pair of literal, unescaped quote characters delimiting the token itself.
+   *
+   * Depth-one-aware via [extractOuterSectionContent] (reused, not reimplemented) for the same reason
+   * [extractBoolFieldAtDepthOne] is: [fieldName] could otherwise be shadowed by a nested node's
+   * same-named field.
+   *
+   * @return the unescaped, unquoted string values in declaration order, or `null` if [fieldName] is
+   *   absent at depth 1 or its value is empty (`<>`)
+   */
+  private fun extractQuotedStringListField(text: String, fieldName: String): List<String>? {
+    val content = extractOuterSectionContent(text, "$fieldName (") ?: return null
+    val values = mutableListOf<String>()
+    var index = 0
+    while (index < content.length) {
+      if (content[index] != '"') {
+        index++
+        continue
+      }
+      val token = StringBuilder()
+      index++
+      while (index < content.length && content[index] != '"') {
+        if (content[index] == '\\' && index + 1 < content.length) {
+          token.append(content[index + 1])
+          index += 2
+        } else {
+          token.append(content[index])
+          index++
+        }
+      }
+      values.add(token.toString())
+      index++ // skip the closing quote
+    }
+    return values
   }
 
   /**
