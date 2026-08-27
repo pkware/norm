@@ -45,3 +45,16 @@ UPDATE account
 SET note = NULL
 WHERE note IS NOT NULL
 RETURNING note;
+
+-- Reports whether a department's name matches any employee's full name, read through a derived
+-- table rather than directly from employee; non-`null` because full_name is NOT NULL.
+-- name: departmentNameMatchesAnyEmployeeViaDerivedTable :many
+SELECT department.name = ANY (SELECT names.full_name FROM (SELECT full_name FROM employee) names) AS name_matches
+FROM department;
+
+-- Reports whether a department's name matches any employee's full name, read through an
+-- enclosing CTE rather than directly from employee; non-`null` because full_name is NOT NULL.
+-- name: departmentNameMatchesAnyEmployeeViaCte :many
+WITH employee_names AS (SELECT full_name FROM employee)
+SELECT department.name = ANY (SELECT full_name FROM employee_names) AS name_matches
+FROM department;

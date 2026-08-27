@@ -222,6 +222,22 @@ internal sealed interface PgNodeExpression {
 internal data class NodeTreeCteDefinition(val name: String, val queryBlock: String)
 
 /**
+ * A CTE range-table-entry reference (`rtekind 6`) parsed from a query block's own `:rtable` — the
+ * CTE's name and how many query levels up its OWN declaration (`:cteList` entry) sits, relative to
+ * the block this reference was found in.
+ *
+ * @property name The referenced CTE's name (from `:ctename`).
+ * @property ctelevelsup `0` when the CTE is declared in the SAME query block's own `:cteList` (the
+ *   block declares its own `WITH` clause containing this name); a value greater than `0` means the
+ *   declaration is that many query levels further up, in an ENCLOSING scope. Distinguishing these is
+ *   required to resolve a reference correctly when a block declares its own `WITH c` that shadows an
+ *   enclosing `WITH c` of the same name with a different body — see
+ *   [ColumnNullabilityAnalyzer.analyzeQueryBlockNullability]'s own KDoc for the caller that acts on
+ *   this distinction.
+ */
+internal data class NodeTreeCteReference(val name: String, val ctelevelsup: Int)
+
+/**
  * A single result column from a query's `targetList`.
  *
  * @property expression The parsed expression node for this column.

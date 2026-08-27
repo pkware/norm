@@ -474,11 +474,18 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     } else {
       nodeTreeParser.parseGroupRteMap(nodeTree) // (groupVarno, attrPos) → (baseVarno, baseVarattno)
     }
+    // nodeTree's own directly-declared CTE bodies, keyed by name — computed once here so the SAME
+    // resolution feeds both buildCteColumnNotNull (the varno-keyed projection isSourceColumnNotNull
+    // needs below) and buildAnalyzer's own resolvedCtes parameter (for a SubLink nested in
+    // nodeTree's own target list — see analyzeQueryBlockNullability's KDoc for why a SubLink's
+    // enclosing-CTE resolution needs the raw, name-keyed map rather than this varno-keyed
+    // projection).
+    val resolvedCtes = resolveCteBodies(nodeTree, applyQualNarrowing, sql)
     // For subquery RTEs (rtekind 1), the outer VAR's varno is not in rangeTable.
     // Resolve their nullability by recursively analyzing each subquery's target list.
     // The map is keyed by (varno, varattno) for direct lookup in isSourceColumnNotNull.
-    val subqueryColumnNotNull = buildSubqueryColumnNotNull(nodeTree, applyQualNarrowing, sql)
-    val cteColumnNotNull = buildCteColumnNotNull(nodeTree, applyQualNarrowing, sql)
+    val subqueryColumnNotNull = buildSubqueryColumnNotNull(nodeTree, resolvedCtes, applyQualNarrowing, sql)
+    val cteColumnNotNull = buildCteColumnNotNull(nodeTree, resolvedCtes)
     // A non-zero :resultRelation means this is an INSERT/UPDATE/DELETE/MERGE, not a SELECT — see
     // parseResultRelation's KDoc. Its :targetList holds the value expressions being WRITTEN to
     // each explicitly-assigned column of the target relation (keyed by :resno = the column's
@@ -559,6 +566,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
       hasGroupingSets = hasGroupingSets,
       forceNewNullable = forceNewNullable,
       applyQualNarrowing = applyQualNarrowing,
+      resolvedCtes = resolvedCtes,
       isSourceColumnNotNull = plainIsSourceColumnNotNull,
     )
     // :returningList must be checked FIRST, not as a fallback for an empty :targetList: an INSERT
@@ -585,6 +593,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
           hasGroupingSets = false,
           forceNewNullable = forceNewNullable,
           applyQualNarrowing = applyQualNarrowing,
+          resolvedCtes = resolvedCtes,
         ) { varno, varattno ->
           val assignedExpression = if (varno == resultRelationVarno) targetListByResno[varattno] else null
           if (assignedExpression != null) {
@@ -860,12 +869,21 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    *   own subquery body — so [mergeAbsentVarnos] can never apply to anything
    *   [subLinkSubqueryColumnNotNull] reaches, and there is nothing for a `sql`/`EXPLAIN` parameter
    *   here to resolve.
+   * @param resolvedCtes CTE bodies declared directly in the query block THIS analyzer is being
+   *   built for — see [analyzeQueryBlockNullability]'s own `resolvedCtes` parameter KDoc for the
+   *   exact invariant every caller must uphold. Threaded through to
+   *   [subLinkSubqueryColumnNotNull] so a `SubLink`'s own subselect can resolve a reference to an
+   *   ENCLOSING `WITH` clause (`:ctelevelsup` greater than `0`, relative to the subselect) —
+   *   without this, every such reference degraded to nullable regardless of the CTE body's own
+   *   provable nullability (`#257`). Defaults to `emptyMap()`, the safe (nullable) answer for a
+   *   `SubLink` reached from a query block with no CTEs of its own to resolve against.
    */
   private fun buildAnalyzer(
     hasGroupingSets: Boolean = false,
     forceNewNullable: Boolean = false,
     applyQualNarrowing: Boolean = true,
     depth: Int = SUBLINK_ANALYSIS_DEPTH_BUDGET,
+    resolvedCtes: Map<String, List<Boolean>> = emptyMap(),
     isSourceColumnNotNull: (varno: Int, varattno: Int) -> Boolean,
   ): NodeTreeNullabilityAnalyzer = NodeTreeNullabilityAnalyzer(
     isStrict = isStrictFunction,
@@ -878,7 +896,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     isFoldableToConst = { oid -> oid in immutableFunctionOids },
     isNonNullIffFirstArgumentNonNull = { oid -> oid in nonNullIffFirstArgumentNonNullFunctionOids },
     isSubLinkSubqueryColumnNotNull = { subselectBlock ->
-      subLinkSubqueryColumnNotNull(subselectBlock, applyQualNarrowing, depth)
+      subLinkSubqueryColumnNotNull(subselectBlock, applyQualNarrowing, depth, resolvedCtes)
     },
     hasGroupingSets = hasGroupingSets,
     forceNewNullable = forceNewNullable,
@@ -894,22 +912,24 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    * the identical reason: tracing through would report only the first branch's nullability, not
    * the union across every branch (see that method's own KDoc).
    *
-   * Deliberately does NOT resolve a CTE the subselect references via `:ctelevelsup` (an enclosing
-   * scope's `WITH` clause) — [analyzeQueryBlockNullability] is called with an EMPTY `resolvedCtes`
-   * map, so such a reference falls through to its existing "CTE not found" nullable default, which
-   * is already correct: resolving an enclosing CTE from here would require re-entering
-   * [resolveCteBodies] for a scope this method has no direct access to without threading
-   * substantially more context through every [buildAnalyzer] call site for a case this rule does
-   * not need precision for.
-   *
    * @param depth remaining recursion budget — see [buildAnalyzer]'s `depth` parameter KDoc.
    *   Returns `false` (safe: nullable) once exhausted, so a `SubLink` nested inside another
    *   `SubLink`'s subselect cannot recurse indefinitely.
+   * @param resolvedCtes See [buildAnalyzer]'s parameter of the same name — the CTE bodies declared
+   *   directly in [subselectBlock]'s OWN enclosing query block, passed straight through to
+   *   [analyzeQueryBlockNullability] so [subselectBlock] can resolve a reference to one of them
+   *   (`#257`; before this, an enclosing-CTE reference always fell through to nullable regardless
+   *   of the CTE body's own provable nullability).
    */
-  private fun subLinkSubqueryColumnNotNull(subselectBlock: String, applyQualNarrowing: Boolean, depth: Int): Boolean {
+  private fun subLinkSubqueryColumnNotNull(
+    subselectBlock: String,
+    applyQualNarrowing: Boolean,
+    depth: Int,
+    resolvedCtes: Map<String, List<Boolean>>,
+  ): Boolean {
     if (depth <= 0) return false
     if (nodeTreeParser.hasSetOperations(subselectBlock)) return false
-    val nullability = analyzeQueryBlockNullability(subselectBlock, applyQualNarrowing, emptyMap(), depth - 1)
+    val nullability = analyzeQueryBlockNullability(subselectBlock, applyQualNarrowing, resolvedCtes, depth - 1)
     return nullability.size == 1 && !nullability[0]
   }
 
@@ -943,24 +963,27 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
 
   /**
    * Builds a map from `(varno, varattno)` to `true` for CTE result columns that are guaranteed
-   * non-null. Analyzes each CTE body with a sub-analyzer using the CTE's own range table.
+   * non-null.
    *
-   * @param applyQualNarrowing See [analyzeNodeTree]'s parameter of the same name. Threaded
-   *   through unchanged to every CTE body analyzed here.
+   * @param resolvedCtes [nodeTree]'s own directly-declared CTE bodies (from [resolveCteBodies]),
+   *   keyed by name — passed in rather than computed here so the SAME resolution can also be
+   *   threaded into [buildAnalyzer] for a `SubLink` nested in [nodeTree]'s own target list. Every
+   *   entry in [nodeTree]'s own `:rtable` referencing a CTE is, by construction, `:ctelevelsup 0`
+   *   relative to [nodeTree] itself — [nodeTree] is always the OUTERMOST statement text this class
+   *   analyzes (see [analyzeNodeTree]'s only caller, [queryColumnNullabilityViaProsqlbody]), so it
+   *   has no enclosing scope a reference here could possibly point past.
    */
   private fun buildCteColumnNotNull(
     nodeTree: String,
-    applyQualNarrowing: Boolean = true,
-    @Language("PostgreSQL") sql: String,
+    resolvedCtes: Map<String, List<Boolean>>,
   ): Map<Pair<Int, Int>, Boolean> {
     val cteRteMap = nodeTreeParser.parseCteRangeTableEntries(nodeTree)
     if (cteRteMap.isEmpty()) return emptyMap()
-    val resolvedCtes = resolveCteBodies(nodeTree, applyQualNarrowing, sql)
     if (resolvedCtes.isEmpty()) return emptyMap()
 
     return buildMap {
-      for ((varno, cteName) in cteRteMap) {
-        val nullabilities = resolvedCtes[cteName] ?: continue
+      for ((varno, reference) in cteRteMap) {
+        val nullabilities = resolvedCtes[reference.name] ?: continue
         nullabilities.forEachIndexed { columnIndex, nullable ->
           put(varno to (columnIndex + 1), !nullable)
         }
@@ -1117,17 +1140,31 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
   }
 
   /**
-   * Builds a map from `(varno, varattno)` to `true` for CTE RTE columns that are non-null,
-   * based on previously resolved CTE nullabilities.
+   * Builds a map from `(varno, varattno)` to `true` for CTE RTE columns that are non-null.
+   *
+   * A DIRECT reference in [queryBlock]'s own `:rtable` to a CTE is ctelevelsup-aware, exactly like
+   * [analyzeQueryBlockNullability]'s identical split: `:ctelevelsup 0` means [queryBlock] declares
+   * that CTE ITSELF (a local `WITH`, possibly shadowing a sibling of the same name declared one
+   * level further up), resolved from [ownResolvedCtes]; anything greater than `0` means a SIBLING
+   * CTE declared in the SAME outer `:cteList` [queryBlock]'s own CTE is itself declared in,
+   * resolved from [previouslyResolved]. Before this ctelevelsup check existed, a local shadowing
+   * `WITH` always resolved against the (wrong) sibling body instead — a genuine unsound answer, not
+   * merely a widened one (`#257`).
+   *
+   * @param ownResolvedCtes CTE bodies declared directly in [queryBlock]'s OWN `:cteList`.
+   * @param previouslyResolved CTE bodies declared in the SAME outer `:cteList` [queryBlock]'s own
+   *   CTE is itself declared in (siblings declared earlier in that same `WITH` clause).
    */
   private fun buildInnerCteNotNull(
     queryBlock: String,
+    ownResolvedCtes: Map<String, List<Boolean>>,
     previouslyResolved: Map<String, List<Boolean>>,
   ): Map<Pair<Int, Int>, Boolean> {
     val innerCteRtes = nodeTreeParser.parseCteRangeTableEntries(queryBlock)
     return buildMap {
-      for ((varno, cteName) in innerCteRtes) {
-        val nullabilities = previouslyResolved[cteName] ?: continue
+      for ((varno, reference) in innerCteRtes) {
+        val ctesInScope = if (reference.ctelevelsup == 0) ownResolvedCtes else previouslyResolved
+        val nullabilities = ctesInScope[reference.name] ?: continue
         nullabilities.forEachIndexed { columnIndex, nullable ->
           put(varno to (columnIndex + 1), !nullable)
         }
@@ -1166,8 +1203,17 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     } else {
       nodeTreeParser.parseGroupRteMap(queryBlock)
     }
-    val innerCteNotNull = buildInnerCteNotNull(queryBlock, previouslyResolved)
-    val subqueryColumnNotNull = buildSubqueryColumnNotNull(queryBlock, applyQualNarrowing, sql)
+    // CTE bodies declared directly in queryBlock's OWN :cteList (queryBlock's own nested WITH
+    // clause, if it has one) — distinct from previouslyResolved above, which holds SIBLING CTEs
+    // declared one level further up, in the SAME :cteList queryBlock's own CTE is itself declared
+    // in. Needed for buildInnerCteNotNull (a DIRECT :rtable reference in queryBlock itself, split
+    // by ctelevelsup — see that method's own KDoc), buildSubqueryColumnNotNull (a derived table
+    // nested in queryBlock), and buildAnalyzer's own resolvedCtes parameter below (a SubLink nested
+    // in queryBlock). Using previouslyResolved for any of these instead would resolve a shadowing
+    // local WITH against the WRONG (outer, sibling) body — see #257.
+    val ownResolvedCtes = resolveCteBodies(queryBlock, applyQualNarrowing, sql)
+    val innerCteNotNull = buildInnerCteNotNull(queryBlock, ownResolvedCtes, previouslyResolved)
+    val subqueryColumnNotNull = buildSubqueryColumnNotNull(queryBlock, ownResolvedCtes, applyQualNarrowing, sql)
     // See analyzeNodeTree's identical guard for why qual narrowing is suppressed whenever
     // hasGroupingSets: a grouping key is exactly the thing a GROUPING SETS/CUBE/ROLLUP query
     // null-extends after WHERE has already run. A non-zero :resultRelation suppresses narrowing
@@ -1186,6 +1232,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
       hasGroupingSets = hasGroupingSets,
       forceNewNullable = forcesNewNullable(queryBlock),
       applyQualNarrowing = applyQualNarrowing,
+      resolvedCtes = ownResolvedCtes,
     ) {
         varno,
         varattno,
@@ -1227,33 +1274,52 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    * Without this, `isSourceColumnNotNull` for a subquery VAR would always return `false` (nullable)
    * because the subquery RTE has no `relid` in the outer range table.
    *
-   * @param nodeTree the `pg_rewrite.ev_action` text of the outer query's temporary view
+   * @param nodeTree the `pg_rewrite.ev_action` text of the outer query's temporary view, or a
+   *   nested `{QUERY ...}` block reached via [analyzeQueryBlockNullability] (a `SubLink`'s own
+   *   subselect, or a derived table nested inside one)
+   * @param resolvedCtes CTE bodies declared directly in [nodeTree]'s own `:cteList` — a subquery
+   *   nested inside [nodeTree] (e.g. `INSERT INTO t(name) SELECT name FROM source RETURNING *`,
+   *   where "source" is a sibling CTE) can reference one of these via `:ctelevelsup 1` (one level
+   *   UP from the subquery's own scope) inside its OWN `:rtable`, not [nodeTree]'s. Computed once
+   *   by every caller (see [analyzeNodeTree], [buildCteBodyAnalyzer], and
+   *   [analyzeQueryBlockNullability] itself) so the SAME resolution also feeds [buildAnalyzer]'s
+   *   own `resolvedCtes` parameter for a `SubLink` nested in [nodeTree], rather than being
+   *   recomputed here.
    * @param applyQualNarrowing See [analyzeNodeTree]'s parameter of the same name.
+   * @param depth The [subLinkSubqueryColumnNotNull] recursion budget threaded through to
+   *   [analyzeQueryBlockNullability] for a `SubLink` reached via one of [nodeTree]'s subquery RTEs.
+   *   Every call site that resolves [nodeTree]'s OWN top-level subquery RTEs (from
+   *   [analyzeNodeTree] or [buildCteBodyAnalyzer]) uses the default, full budget — a `FROM`-clause
+   *   subquery-RTE hop is NOT a nested-sublink hop, so it must not consume this budget (see
+   *   [buildAnalyzer]'s `depth` KDoc). [analyzeQueryBlockNullability]'s OWN recursive call, by
+   *   contrast, passes its CURRENT (possibly already-decremented) `depth` through unchanged — this
+   *   is the ONLY path that reaches a derived table NESTED INSIDE a `SubLink`'s own subselect, and
+   *   refilling the budget there would let a chain of `= ANY` sublinks separated by derived tables
+   *   bypass the defensive bound entirely (`#257`).
    * @return A map from `(varno, varattno)` pairs to `true` when the subquery column is non-null
    */
   private fun buildSubqueryColumnNotNull(
     nodeTree: String,
+    resolvedCtes: Map<String, List<Boolean>>,
     applyQualNarrowing: Boolean = true,
     @Language("PostgreSQL") sql: String = "",
+    depth: Int = SUBLINK_ANALYSIS_DEPTH_BUDGET,
   ): Map<Pair<Int, Int>, Boolean> {
     // Set-operation queries (UNION ALL, INTERSECT, EXCEPT) store their branches as rtekind=1
     // subquery RTEs. Tracing through them would incorrectly report the first branch's nullability
     // as the result's nullability — the true result is the union across ALL branches, some of which
     // may introduce nulls (e.g., a branch with LEFT JOIN). Return empty so the analyzer conservatively
-    // treats set-operation output columns as nullable (the correct safe default).
+    // treats set-operation output columns as nullable (the correct safe default). This guard is what
+    // keeps analyzeQueryBlockNullability's OWN recursive call into this method conservative too, when
+    // a derived table nested inside a SubLink's subselect (or another derived table) turns out to
+    // wrap a set operation.
     if (nodeTreeParser.hasSetOperations(nodeTree)) return emptyMap()
     val subqueryRangeTable = nodeTreeParser.parseSubqueryRangeTable(nodeTree)
     if (subqueryRangeTable.isEmpty()) return emptyMap()
-    // A subquery nested inside a DML statement's own :targetList (e.g. `INSERT INTO t(name)
-    // SELECT name FROM source RETURNING *`, where "source" is a sibling CTE) can reference a CTE
-    // declared at NODETREE'S level via `:ctelevelsup 1` — one level UP from the subquery's own
-    // scope — inside its OWN `:rtable`, not [nodeTree]'s. Resolved once here, lazily, so a
-    // [nodeTree] with no CTEs at all (the overwhelmingly common case) never pays for
-    // [resolveCteBodies]'s recursive analysis.
-    val resolvedCtes by lazy { resolveCteBodies(nodeTree, applyQualNarrowing, sql) }
     return buildMap {
       for ((outerVarno, subqueryBlock) in subqueryRangeTable) {
-        val subNullabilities = analyzeQueryBlockNullability(subqueryBlock, applyQualNarrowing, resolvedCtes)
+        val subNullabilities =
+          analyzeQueryBlockNullability(subqueryBlock, applyQualNarrowing, resolvedCtes, depth, sql)
         subNullabilities.forEachIndexed { columnIndex, nullable ->
           // columnIndex is 0-based; varattno is 1-based
           put(outerVarno to (columnIndex + 1), !nullable)
@@ -1266,22 +1332,48 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    * Computes per-column nullability for a single query block ([queryBlock]) — the shared core of
    * [buildSubqueryColumnNotNull] (a `FROM`-clause subquery RTE) and [subLinkSubqueryColumnNotNull]
    * (an `ANY_SUBLINK`'s `:subselect`): given a raw `{QUERY ...}` block, build a resolver over the
-   * block's OWN `parseRangeTable`/`parseCteRangeTableEntries`/`parseGroupRteMap` and qual
+   * block's OWN `parseRangeTable`/`parseCteRangeTableEntries`/`parseGroupRteMap`/subquery-RTE/qual
    * narrowing, then run [NodeTreeNullabilityAnalyzer.extractColumnNullability] against it.
    *
-   * @param resolvedCtes CTE bodies [queryBlock] may reference via `:ctelevelsup 1` (one level UP
-   *   from [queryBlock]'s own scope) — see [buildSubqueryColumnNotNull]'s own KDoc for why this
-   *   only ever resolves ONE level up, never [queryBlock]'s own nested `WITH` clause. Passed as
-   *   `emptyMap()` by [subLinkSubqueryColumnNotNull], which deliberately does not attempt this
-   *   resolution — see that method's KDoc.
+   * [queryBlock]'s own `:rtable` can hold THREE things this method must resolve differently: a
+   * base table (via [isColumnNotNull]), a NESTED subquery RTE — a derived table read from within
+   * [queryBlock], resolved by recursing into [buildSubqueryColumnNotNull] on [queryBlock] itself —
+   * and a CTE RTE, resolved below via [ownResolvedCtes] or [resolvedCtes] depending on
+   * `:ctelevelsup` (see that parameter's own KDoc). Before `#257`, only the base-table case was
+   * handled here, so a `SubLink`'s subselect reading a derived table or an enclosing CTE always
+   * degraded to nullable regardless of what the actual source column's constraint said.
+   *
+   * @param resolvedCtes CTE bodies visible via `:ctelevelsup` greater than `0` relative to
+   *   [queryBlock] — i.e. declared in whichever scope encloses [queryBlock] itself (NOT
+   *   [queryBlock]'s own nested `WITH` clause, which is [ownResolvedCtes] below). Every caller must
+   *   uphold this SAME invariant: [buildSubqueryColumnNotNull] passes its own [nodeTree]'s
+   *   `resolvedCtes` parameter (CTEs declared directly in the block CONTAINING [queryBlock]) and
+   *   [subLinkSubqueryColumnNotNull] passes [buildAnalyzer]'s `resolvedCtes` parameter (CTEs
+   *   declared directly in the block a `SubLink` reaching [queryBlock] is itself nested in) — both
+   *   are, by construction, exactly "one level up from [queryBlock]". Getting this wrong resolves a
+   *   `Var` against the WRONG CTE body, which is silently worse than the nullability widening this
+   *   fixes — see `ctelevelsup`'s own KDoc on [NodeTreeCteReference] for the shadowing hazard this
+   *   guards against, and this class's `#257` test coverage for a case where it is observable (an
+   *   enclosing CTE and a local CTE of the SAME name with DIFFERENT bodies).
    * @param depth See [buildAnalyzer]'s `depth` parameter of the same name — passed through
-   *   unchanged so a `SubLink` inside [queryBlock] gets the correct, already-decremented budget.
+   *   unchanged so a `SubLink` inside [queryBlock] gets the correct, already-decremented budget, and
+   *   also into this method's OWN [buildSubqueryColumnNotNull] call for a derived table nested
+   *   inside [queryBlock] — see that method's `depth` KDoc for why refilling it there would be
+   *   unsound.
+   * @param sql See [mergeAbsentVarnos]'s `sql` parameter — passed through only so a data-modifying
+   *   CTE declared directly in [queryBlock]'s OWN nested `WITH` clause ([ownResolvedCtes]) can
+   *   resolve its own `MERGE`, if it has one, through [resolveCteBodies]. Defaults to an empty
+   *   string for [subLinkSubqueryColumnNotNull]'s call (a `SubLink`'s subselect is never itself
+   *   `MERGE`-shaped, but ITS OWN nested `WITH` clause could still declare a data-modifying CTE);
+   *   an empty `EXPLAIN` target simply fails harmlessly there (caught, treated as "cannot resolve"),
+   *   the same accepted narrow limitation [buildCteBodyAnalyzer]'s identical default already has.
    */
   private fun analyzeQueryBlockNullability(
     queryBlock: String,
     applyQualNarrowing: Boolean,
     resolvedCtes: Map<String, List<Boolean>>,
     depth: Int = SUBLINK_ANALYSIS_DEPTH_BUDGET,
+    @Language("PostgreSQL") sql: String = "",
   ): List<Boolean> {
     // Parse the block's own base-table range table for isSourceColumnNotNull.
     val subRangeTable = nodeTreeParser.parseRangeTable(queryBlock)
@@ -1304,10 +1396,19 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     } else {
       emptySet()
     }
+    // CTE bodies declared directly in queryBlock's OWN :cteList — see this method's own
+    // resolvedCtes KDoc for why a ctelevelsup-0 reference must resolve against THIS map, never the
+    // resolvedCtes parameter (which belongs to an ENCLOSING scope, one level further up).
+    val ownResolvedCtes = resolveCteBodies(queryBlock, applyQualNarrowing, sql)
+    // A derived table (subquery RTE) nested inside queryBlock — see buildSubqueryColumnNotNull's
+    // own KDoc for the #257 recursion this call performs. depth is threaded, not defaulted: this is
+    // the recursive hop that must NOT refill the sublink depth budget.
+    val subqueryColumnNotNull = buildSubqueryColumnNotNull(queryBlock, ownResolvedCtes, applyQualNarrowing, sql, depth)
     val subAnalyzer = buildAnalyzer(
       hasGroupingSets = hasGroupingSets,
       applyQualNarrowing = applyQualNarrowing,
       depth = depth,
+      resolvedCtes = ownResolvedCtes,
     ) { subVarno, subVarattno ->
       if (isProvenByQuals(subQualNotNullVars, groupRteMap, subVarno, subVarattno)) {
         true
@@ -1315,9 +1416,19 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
         val relid = subRangeTable[subVarno]
         if (relid != null) {
           isColumnNotNull(relid to subVarattno)
+        } else if (subqueryColumnNotNull[subVarno to subVarattno] == true) {
+          true
         } else {
-          val cteName = subCteRteMap[subVarno]
-          cteName != null && resolvedCtes[cteName]?.getOrNull(subVarattno - 1) == false
+          val cteReference = subCteRteMap[subVarno]
+          if (cteReference == null) {
+            false
+          } else {
+            // ctelevelsup 0 means queryBlock declares this CTE itself (a local WITH, possibly
+            // shadowing an enclosing CTE of the same name) — resolve from ownResolvedCtes, never
+            // the enclosing resolvedCtes parameter. See this method's own resolvedCtes KDoc.
+            val ctesInScope = if (cteReference.ctelevelsup == 0) ownResolvedCtes else resolvedCtes
+            ctesInScope[cteReference.name]?.getOrNull(subVarattno - 1) == false
+          }
         }
       }
     }

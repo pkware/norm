@@ -2,6 +2,7 @@ package example
 
 import java.util.UUID
 import kotlin.Any
+import kotlin.Boolean
 import kotlin.Long
 import kotlin.String
 import norm.Many
@@ -197,4 +198,58 @@ public interface Queries : Transactable {
   public fun <T> clearAccountNoteDynamically(mapper: (note: String?) -> T): Query<T>
 
   public fun clearAccountNoteDynamically(): Query<String?> = clearAccountNoteDynamically(::inputValue)
+
+  /**
+   * Reports whether a department's name matches any employee's full name, read through a derived
+   * table rather than directly from employee; non-`null` because full_name is NOT NULL.
+   *
+   * ```sql
+   * SELECT department.name = ANY (SELECT names.full_name FROM (SELECT full_name FROM employee) names) AS name_matches
+   * FROM department
+   * ```
+   */
+  public fun <T : Any> departmentNameMatchesAnyEmployeeViaDerivedTable(mapper: (name_matches: Boolean) -> T): Many<T>
+
+  /**
+   * Reports whether a department's name matches any employee's full name, read through a derived
+   * table rather than directly from employee; non-`null` because full_name is NOT NULL.
+   *
+   * ```sql
+   * SELECT department.name = ANY (SELECT names.full_name FROM (SELECT full_name FROM employee) names) AS name_matches
+   * FROM department
+   * ```
+   */
+  public fun departmentNameMatchesAnyEmployeeViaDerivedTable(): Many<Boolean> = departmentNameMatchesAnyEmployeeViaDerivedTable(::inputValue)
+
+  public fun <T : Any> departmentNameMatchesAnyEmployeeViaDerivedTableDynamically(mapper: (name_matches: Boolean) -> T): Query<T>
+
+  public fun departmentNameMatchesAnyEmployeeViaDerivedTableDynamically(): Query<Boolean> = departmentNameMatchesAnyEmployeeViaDerivedTableDynamically(::inputValue)
+
+  /**
+   * Reports whether a department's name matches any employee's full name, read through an
+   * enclosing CTE rather than directly from employee; non-`null` because full_name is NOT NULL.
+   *
+   * ```sql
+   * WITH employee_names AS (SELECT full_name FROM employee)
+   * SELECT department.name = ANY (SELECT full_name FROM employee_names) AS name_matches
+   * FROM department
+   * ```
+   */
+  public fun <T : Any> departmentNameMatchesAnyEmployeeViaCte(mapper: (name_matches: Boolean) -> T): Many<T>
+
+  /**
+   * Reports whether a department's name matches any employee's full name, read through an
+   * enclosing CTE rather than directly from employee; non-`null` because full_name is NOT NULL.
+   *
+   * ```sql
+   * WITH employee_names AS (SELECT full_name FROM employee)
+   * SELECT department.name = ANY (SELECT full_name FROM employee_names) AS name_matches
+   * FROM department
+   * ```
+   */
+  public fun departmentNameMatchesAnyEmployeeViaCte(): Many<Boolean> = departmentNameMatchesAnyEmployeeViaCte(::inputValue)
+
+  public fun <T : Any> departmentNameMatchesAnyEmployeeViaCteDynamically(mapper: (name_matches: Boolean) -> T): Query<T>
+
+  public fun departmentNameMatchesAnyEmployeeViaCteDynamically(): Query<Boolean> = departmentNameMatchesAnyEmployeeViaCteDynamically(::inputValue)
 }

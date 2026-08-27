@@ -434,23 +434,28 @@ internal class PgNodeTreeParser {
   /**
    * Parses CTE range table entries (`rtekind 6`) from a full `pg_node_tree` text.
    *
-   * Extracts the `:rtable` section and returns a map from 1-based `varno` to the CTE name
-   * (`:ctename`) for each range table entry with `rtekind 6`.
+   * Extracts the `:rtable` section and returns a map from 1-based `varno` to a
+   * [NodeTreeCteReference] (the CTE's `:ctename` and `:ctelevelsup`) for each range table entry
+   * with `rtekind 6`. `:ctelevelsup` defaults to `0` when absent, matching PostgreSQL's own default
+   * for a same-level reference (verified live, PostgreSQL 18: the field is always present on a real
+   * CTE RTE, so this default is defensive only).
    *
    * This is the CTE counterpart to [parseRangeTable] (which handles `rtekind 0` base tables)
    * and [parseSubqueryRangeTable] (which handles `rtekind 1` subqueries).
    *
    * @param nodeTreeText the raw `pg_rewrite.ev_action` text (or a bare `{QUERY ...}` block)
-   * @return a map from 1-based varno to CTE name, or an empty map if no CTE RTEs are found
+   * @return a map from 1-based varno to [NodeTreeCteReference], or an empty map if no CTE RTEs are
+   *   found
    */
-  fun parseCteRangeTableEntries(nodeTreeText: String): Map<Int, String> {
+  fun parseCteRangeTableEntries(nodeTreeText: String): Map<Int, NodeTreeCteReference> {
     val rtableContent = extractOuterSectionContent(nodeTreeText, ":rtable (") ?: return emptyMap()
     return buildMap {
       splitBraceBlocks(rtableContent).forEachIndexed { index, rangeTableEntry ->
         val rtekind = extractIntField(rangeTableEntry, ":rtekind") ?: return@forEachIndexed
         if (rtekind != 6) return@forEachIndexed
         val cteName = extractStringField(rangeTableEntry, ":ctename") ?: return@forEachIndexed
-        put(index + 1, cteName)
+        val ctelevelsup = extractIntField(rangeTableEntry, ":ctelevelsup") ?: 0
+        put(index + 1, NodeTreeCteReference(name = cteName, ctelevelsup = ctelevelsup))
       }
     }
   }
