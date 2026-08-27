@@ -26,6 +26,90 @@ import java.util.UUID
 private const val SUBLINK_ANALYSIS_DEPTH_BUDGET = 3
 
 /**
+ * Recursion budget for [ColumnNullabilityAnalyzer.resolveViewColumnNullability]: how many levels of
+ * NESTED view-over-view resolution (view A selects from view B, which selects from view C, ...) are
+ * followed before defaulting to nullable — see that method's KDoc.
+ *
+ * Unlike [SUBLINK_ANALYSIS_DEPTH_BUDGET], this bound IS required to prevent a crash, not merely
+ * excess work: [resolveViewColumnNullability] recurses through real JVM stack frames (via
+ * [ColumnNullabilityAnalyzer.analyzeViewNodeTree] → [ColumnNullabilityAnalyzer.analyzeNodeTree] →
+ * [ColumnNullabilityAnalyzer.isColumnNotNull] → [ColumnNullabilityAnalyzer.resolveViewColumnNullability]
+ * again for the next view down the chain), and PostgreSQL permits a genuinely unbounded view-nesting
+ * depth via repeated `CREATE VIEW`.
+ *
+ * The chosen value must be safe on a SMALL thread stack, not merely the (typically 8 MB) main
+ * thread a JVM usually starts on: a worker thread — a Gradle build's own task-execution thread
+ * pool, for instance — commonly gets a stack far smaller than that, and this class has no way to
+ * know, or control, the stack size of whatever thread eventually calls it.
+ *
+ * Measured live (JDK 26) directly against THIS budget's own worst case — a chain of exactly `50`
+ * levels, resolved on a thread built with an explicit small stack (`Thread(..., stackSize = ...)`),
+ * the shape `QueryAnalysisTest.ViewNullability`'s small-stack-thread pin exercises: the exact
+ * byte-level failure boundary is NOISY across repeated runs, even on an identical JVM build and an
+ * unchanged constant — `java.lang.StackOverflowError` was observed at stack sizes as high as `~230
+ * KiB` in some runs, while `256 KiB` and above succeeded consistently across every run tried. This
+ * noise is consistent with per-level cost on the order of a few KiB (roughly `230 KiB / 50 ≈ 4.6
+ * KiB` per level in the worst observed case) rather than a precise, reproducible constant — several
+ * real JVM stack frames per level (see the call chain above), each holding a handful of local
+ * variables and closures, whose exact count and size can shift with JIT tiering state. `512 KiB` —
+ * the stack size the small-stack-thread pin actually uses — sits at roughly `2x` the highest
+ * observed failure point, a margin chosen for consistency ACROSS RUNS rather than a single
+ * best-case measurement; every run attempted at `512 KiB` succeeded. A prior, now-corrected version
+ * of this KDoc understated the true cost per level by extrapolating from an UNGUARDED, pre-fix
+ * 199-level chain's failure point instead of measuring this budget's own shipped worst case
+ * directly — that number is no longer reproducible on shipped code at all, since this guard now
+ * truncates before a chain can ever reach 199 levels.
+ *
+ * `50` was chosen as a round number far beyond any view-nesting depth a real schema is expected to
+ * have (single digits, occasionally low tens), not as a value tuned close to any stack-safety edge.
+ * [ColumnNullabilityAnalyzer.viewColumnNullabilityInProgress]'s cycle guard, not this budget, is
+ * what protects the (much shallower, but genuinely possible via `CREATE OR REPLACE VIEW`) case of
+ * an actual cycle — see that property's own KDoc for that separate guard.
+ *
+ * KNOWN, DELIBERATE LIMITATION: this guard's own DEPTH CHECK runs before
+ * [ColumnNullabilityAnalyzer.resolveViewColumnNullability]'s memo lookup — required so a relid whose
+ * OWN entry depth is at or past this budget always truncates regardless of memo state, which closes
+ * ONE concrete non-determinism (verified live, PostgreSQL 18.4: on a 52-view pass-through chain,
+ * `resolve(chain_51)` alone gives `[true]`; `resolve(chain_1)` first, then `resolve(chain_51)`, used
+ * to give `[false]` instead — now both give `[true]`, matching).
+ *
+ * This ordering does NOT make every possible resolution order agree in general, and no fix that
+ * avoids extra bookkeeping per cached answer can: an UNTAINTED, permanently-memoized answer for a
+ * relid that sits STRICTLY SHALLOWER than where truncation would occur — not the relid the depth
+ * check itself intercepts, but one reached a few frames before it — is still reused as-is, because a
+ * memo hit performs zero recursion and so never revisits this guard at all. Concretely, on that same
+ * 52-view chain: resolving each view in ASCENDING order (shallowest first) reports NO view nullable
+ * at all, because each deeper view's walk immediately hits an already-correct, already-cached answer
+ * for its immediate predecessor and never recurses far enough to reach this guard; resolving in
+ * DESCENDING order (deepest first) reports the two deepest views nullable, because the first,
+ * deepest resolution walks all the way down unaided and genuinely crosses the budget. Both answers
+ * are individually SOUND (a straight, unbroken pass-through chain really is NOT NULL end to end, so
+ * `[false]`/NOT NULL is the mathematically accurate answer here, and `[true]`/nullable is merely the
+ * more conservative one — neither direction is ever WRONG in the unsafe sense of claiming NOT NULL
+ * when the true answer is nullable) but the two SCAN ORDERS can still disagree with each other for
+ * the small number of views sitting within [VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET] steps of the
+ * deepest point in a chain that itself exceeds the budget.
+ *
+ * This residual is accepted deliberately, for the same reason the budget itself is: no real schema
+ * nests views anywhere near this depth, and closing it fully would require tracking, per cached
+ * answer, how much additional depth its OWN computation would have needed to fully verify — an
+ * "iterative worklist"-shaped mechanism this guard's single, narrow job (preventing
+ * `java.lang.StackOverflowError`) does not warrant. This is NOT a gap to close with more machinery (a
+ * dedicated large-stack thread, a full graph pre-sort, etc.); the guard's only job is preventing that
+ * crash on a shape that does not occur in practice, and it does that job.
+ *
+ * Catalog scan order is NO LONGER the source of run-to-run non-determinism this once implied,
+ * though: [PgCatalogLoader.loadViewColumnNullability]'s own sweep (the production caller that walks
+ * every view/matview column in a schema through this SAME shared analyzer) is ordered deterministically
+ * by relid then attnum — see `loadViewColumnNamesByRelidAndAttnum`'s `ORDER BY` — rather than left to
+ * whatever order PostgreSQL's planner happens to return rows in. So while the CHOICE of scan order
+ * still determines which of the (still individually sound) answers a deep chain's boundary-adjacent
+ * views get, that choice is now FIXED for a given schema: the same schema produces the same generated
+ * Kotlin types on every run, not merely on every run where the planner happens to agree with itself.
+ */
+internal const val VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET = 50
+
+/**
  * Drives per-column nullability analysis for a SQL query on behalf of [loader]: fetching the
  * query's own parsed node tree (via `prosqlbody` or a probe function, see
  * [queryColumnNullabilityViaProsqlbody]'s own KDoc), then recursively resolving CTE bodies,
@@ -41,7 +125,6 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
   private val connection get() = loader.connection
   private val nodeTreeParser get() = loader.nodeTreeParser
   private val columnNotNullByRelidAndAttnum get() = loader.columnNotNullByRelidAndAttnum
-  private val viewColumnNotNullByRelidAndAttnum get() = loader.viewColumnNotNullByRelidAndAttnum
   private val aggregateHasNonNullInitialValue get() = loader.aggregateHasNonNullInitialValue
   private val alwaysNonNullFunctionOids get() = loader.alwaysNonNullFunctionOids
   private val neverNullForNonNullInputOids get() = loader.neverNullForNonNullInputOids
@@ -49,6 +132,135 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
   private val immutableFunctionOids get() = loader.immutableFunctionOids
   private val nonNullIffFirstArgumentNonNullFunctionOids get() = loader.nonNullIffFirstArgumentNonNullFunctionOids
   private val isStrictFunction get() = loader.isStrictFunction
+
+  /**
+   * Memoized per-relid view-column nullability, populated by [resolveViewColumnNullability]. One
+   * entry per RESOLVED relid: index `i` (0-based) of the value list corresponds to attnum `i + 1`
+   * (see [resolveViewColumnNullability]'s resno-contiguity argument for why this indexing is safe),
+   * and each entry is `true` when that column may be `null`. A `null` VALUE (as opposed to an
+   * absent key) means [relid] is not a view or materialized view at all — no `_RETURN` rule exists
+   * for it in `pg_rewrite` — so [isColumnNotNull] must fall through to ordinary base-table
+   * resolution for it instead.
+   *
+   * On-demand and memoized here, rather than an eager whole-database map the way the `#256` fix's
+   * predecessor computed it. This does NOT mean a single schema-wide sweep skips resolving
+   * unreferenced views — [PgCatalogLoader.loadViewColumnNullability] resolves every view/matview
+   * column in its target schema on every call, by design (measured ~1.5s for 361 views on one real
+   * schema) — what memoization buys is that resolving the SAME relid more than once is free after
+   * the first: once directly, when that sweep reaches it, and again whenever ANY other view or
+   * query analyzed by this SAME [ColumnNullabilityAnalyzer] instance selects from it — a nested
+   * view chain sharing a common base view, or two sibling queries selecting from the same view,
+   * both reuse the first resolution's answer instead of re-evaluating the node tree, and (within one
+   * top-level resolution) a branching/diamond view graph that references the SAME view from two
+   * different paths — see [viewColumnNullabilityTaintedRelids]'s KDoc — never re-walks it twice
+   * either. Written to UNCONDITIONALLY by every successful [resolveViewColumnNullability] call
+   * (never skipped, even for a [viewColumnNullabilityTaintedRelids]-tainted answer — see that
+   * property's own KDoc for why skipping memoization outright, rather than tainting-then-evicting,
+   * was tried and rejected: it makes a branching view graph re-walk shared ancestors exponentially
+   * many times once ANY branch is deep enough to taint). The single-threaded JDBC [connection] this
+   * class is built on means no synchronization is needed around this mutable map.
+   */
+  private val viewColumnNullabilityMemo = mutableMapOf<Int, List<Boolean>?>()
+
+  /**
+   * Relids currently being resolved by [resolveViewColumnNullability] — guards against infinite
+   * recursion through a view dependency cycle.
+   *
+   * This guard is LOAD-BEARING, not merely defensive: PostgreSQL genuinely permits constructing a
+   * cyclic view via `CREATE OR REPLACE VIEW`, which does NOT require every relation the new
+   * definition references to already have existed when the ORIGINAL view was created — only that
+   * they exist at the moment of the `CREATE OR REPLACE` itself. Verified live, PostgreSQL 18.4:
+   * ```sql
+   * CREATE VIEW b AS SELECT v FROM a;
+   * CREATE OR REPLACE VIEW a AS SELECT v FROM b;  -- succeeds: a genuine mutual cycle, a <-> b
+   * CREATE OR REPLACE VIEW self_v AS SELECT v FROM self_v;  -- succeeds: a direct self-cycle
+   * ```
+   * `private`: nothing outside this class needs to seed it directly — see
+   * `QueryAnalysisTest.ViewNullability`'s dependency-cycle pin, which builds a REAL cycle via
+   * `CREATE OR REPLACE VIEW` against a live database rather than reaching into this field.
+   *
+   * A view can never actually be QUERIED once it participates in a real cycle — PostgreSQL itself
+   * refuses with `ERROR: infinite recursion detected in rules for relation "..."` — so this guard's
+   * placeholder answer is never wrong in a way that matters for a genuinely cyclic view: there is no
+   * "true" nullability to under-approximate, since no row can ever be produced from it at all. What
+   * this guard protects is [resolveViewColumnNullability] ITSELF from an infinite Kotlin recursion
+   * while proving that.
+   */
+  private val viewColumnNullabilityInProgress = mutableSetOf<Int>()
+
+  /**
+   * Current depth of NESTED [resolveViewColumnNullability] recursion (view-over-view resolution) —
+   * see [VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET]'s KDoc for why this bound exists and how its
+   * value was chosen. Incremented/decremented around the recursive portion of
+   * [resolveViewColumnNullability] only; the single-threaded JDBC [connection] this class is built
+   * on means no synchronization is needed around this mutable counter.
+   *
+   * Also used to detect the OUTERMOST call in a chain of recursive [resolveViewColumnNullability]
+   * calls — the frame that entered at depth `0` and, once its own `finally` block brings this back
+   * to `0`, evicts every [viewColumnNullabilityTaintedRelids] entry the WHOLE traversal accumulated;
+   * see that property's KDoc.
+   */
+  private var viewColumnNullabilityRecursionDepth = 0
+
+  /**
+   * Total number of TAINT EVENTS [resolveViewColumnNullability] has produced since this
+   * [ColumnNullabilityAnalyzer] was constructed — monotonically increasing, never reset. A taint
+   * event is any of: [viewColumnNullabilityInProgress]'s cycle guard firing, the recursion-depth
+   * guard firing, or a memo READ (the fast path at this method's very first line) landing on a relid
+   * already in [viewColumnNullabilityTaintedRelids].
+   *
+   * Every frame CURRENTLY ON THE STACK when a taint event fires is an ancestor of it and has an
+   * ANSWER BUILT FROM IT: the tainted relid's own (placeholder or cached-but-tainted) value feeds
+   * into whatever `Var` evaluation was asking about it, which feeds into that frame's own
+   * [resolveViewColumnNullability] result, and so on up the call chain — see
+   * [resolveViewColumnNullability]'s use of this counter, which snapshots it on entry and compares
+   * on exit: if the count changed anywhere DURING that frame's own execution window, a taint event
+   * happened somewhere in its subtree (not necessarily an immediate child — any descendant, or a
+   * sibling reached through a shared memo entry), so [viewColumnNullabilityTaintedRelids] gains this
+   * frame's own relid too, propagating the taint one level further up. Comparing snapshots (not the
+   * raw value) is what scopes the check to each frame's own window, so counting monotonically
+   * forever, across unrelated LATER top-level resolutions too, is still correct: an unrelated
+   * resolution's own entry/exit window simply won't straddle a taint event that happened elsewhere.
+   */
+  private var viewColumnNullabilityTaintEventCount = 0
+
+  /**
+   * Relids whose CURRENT [viewColumnNullabilityMemo] entry was computed from — directly, or
+   * transitively through another tainted relid's cached answer — a placeholder produced by either
+   * of [resolveViewColumnNullability]'s two guards, rather than a genuine, order-independent
+   * evaluation of the view's own defining query.
+   *
+   * This is the fix for a real, reproduced defect in an earlier version of this guard, which simply
+   * SKIPPED memoizing an affected relid's answer outright. Skipping memoization is unsound in a
+   * different way than never guarding at all: on a BRANCHING view graph (e.g. `g_k AS SELECT a.v1,
+   * b.v2 FROM g_{k-1} a JOIN g_{k-1} b ...`), a deep-enough truncating prefix makes every ancestor of
+   * the truncation un-memoizable, so EVERY reference to a shared, tainted ancestor re-walks its
+   * entire subtree from scratch — doubling the work at every branching level and turning what should
+   * be linear-in-view-count work into exponential (measured: 2.1s / 7.7s / 31.0s at branching depths
+   * 5 / 7 / 9 over a 46-deep truncating prefix, versus 92ms for the identical branching shape with no
+   * truncating prefix at all).
+   *
+   * The fix instead memoizes EVERY successfully-computed answer unconditionally (so a branching
+   * graph still resolves each distinct relid at most once per top-level call — see
+   * [viewColumnNullabilityMemo]'s KDoc), tracks which of those answers are tainted in THIS set, and
+   * evicts exactly the tainted ones once the OUTERMOST [resolveViewColumnNullability] call (the one
+   * that started at recursion depth `0`) finishes — see that method's own use of
+   * [viewColumnNullabilityRecursionDepth] to detect this moment. Cross-call order dependence (a
+   * later, unrelated, possibly-shallower query reusing a poisoned answer left behind by an earlier,
+   * deeper one) is eliminated this way, while intra-traversal caching — the property that keeps a
+   * branching graph linear — survives untouched for the (overwhelmingly common) untainted case.
+   *
+   * The one subtlety this depends on: a memo READ (not just a memo WRITE) of an already-tainted
+   * relid must ALSO count as a taint event for the reading frame — otherwise a SIBLING frame that
+   * merely reads a tainted answer via the ordinary memo-hit fast path (having done no recursion of
+   * its own) would see no counter movement across its own entry/exit window and incorrectly treat
+   * itself as untainted. [resolveViewColumnNullability]'s memo-hit branch is written to account for
+   * this; `QueryAnalysisTest.ViewNullability`'s `top → {a, mid}` / `a → mid` / `mid → self-cycle`
+   * fixture exists specifically because it is the shape that would fail without it — `top` reaches
+   * the tainted `mid` twice, once transitively through `a` and once directly, and only the SECOND
+   * reference is a pure memo read.
+   */
+  private val viewColumnNullabilityTaintedRelids = mutableSetOf<Int>()
 
   /**
    * Replaces `?` parameter placeholders in [sql] with typed non-null sentinel values.
@@ -389,13 +601,239 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     return analyzer.extractColumnNullability(nodeTree)
   }
 
-  private fun isColumnNotNull(key: Pair<Int, Int>): Boolean =
+  /**
+   * `true` when `(relid, attnum)` — [key] — is guaranteed NOT NULL, whether [key] identifies a
+   * plain base-table column (checked against [columnNotNullByRelidAndAttnum]'s catalog constraint)
+   * or a view/materialized-view column (resolved via [resolveViewColumnNullability]'s full node-tree
+   * evaluation of the view's own defining query — see that method's KDoc for why a view column can
+   * never be answered from `pg_attribute.attnotnull` alone, which PostgreSQL always reports `false`
+   * for a view column regardless of the view's actual definition).
+   *
+   * `internal`, not `private`: [PgCatalogLoader.loadViewColumnNullability] calls this directly to
+   * resolve a whole schema's worth of view columns by name.
+   */
+  internal fun isColumnNotNull(key: Pair<Int, Int>): Boolean {
     // A negative attribute number is a SYSTEM column (ctid, xmin, xmax, cmin, cmax, tableoid) —
     // pg_attribute rows for these are typically excluded from the catalog queries that populate
-    // columnNotNullByRelidAndAttnum/viewColumnNotNullByRelidAndAttnum (both normally filter
-    // attnum > 0), so a Var referencing one would otherwise fall through to "not found" (nullable)
-    // even though every system column is unconditionally non-null for any real, returned row.
-    key.second < 0 || columnNotNullByRelidAndAttnum[key] == true || viewColumnNotNullByRelidAndAttnum[key] == true
+    // columnNotNullByRelidAndAttnum (which filters attnum > 0), so a Var referencing one would
+    // otherwise fall through to "not found" (nullable) even though every system column is
+    // unconditionally non-null for any real, returned row.
+    if (key.second < 0) return true
+    if (columnNotNullByRelidAndAttnum[key] == true) return true
+    val viewNullability = resolveViewColumnNullability(key.first) ?: return false
+    return viewNullability.getOrNull(key.second - 1) == false
+  }
+
+  /**
+   * Resolves [relid]'s per-column nullability by fully evaluating its view definition's own node
+   * tree (`pg_rewrite`'s `_RETURN` rule) — the `#256` fix for the previous `pg_depend` name-join,
+   * which inherited a same-named source column's `NOT NULL` constraint regardless of what the
+   * view's own target-list expression actually computed (e.g. `SELECT NULLIF(v, 'x') AS v FROM u`
+   * was reported `NOT NULL` whenever `u.v` was, even though `NULLIF` can always return `null`).
+   *
+   * @return one nullable flag per user-visible column (`attnum > 0 AND NOT attisdropped`), index
+   *   `i` corresponding to attnum `i + 1`. This resno-contiguity is safe because there is no `ALTER
+   *   VIEW DROP COLUMN` — only `CREATE OR REPLACE VIEW`, which can only APPEND columns, never drop
+   *   or reorder one — so a view's non-junk target-list resnos are always contiguous `1..N` with no
+   *   gaps (verified live, PostgreSQL 18.4: an `ORDER BY` expression not already in the SELECT list
+   *   produces a `resjunk true` target entry, but it is always APPENDED after every real column, so
+   *   filtering junk and sorting by resno — exactly what [analyzeViewNodeTree] already does — never
+   *   disturbs this alignment; also verified for `DISTINCT ON` with an unselected key, `ORDER BY` by
+   *   an unselected expression AND by ordinal, `GROUP BY` on an unselected key, a view over a table
+   *   with a dropped column, `SELECT *` over a table widened after the view was created, and `UNION`
+   *   with `ORDER BY`). [alignViewColumnNullability] guards this fact ever silently breaking on a
+   *   future PostgreSQL version anyway, since no real SQL is known to violate it today.
+   *   Returns `null` when [relid] is not a view or materialized view at all (no `_RETURN` rule).
+   */
+  internal fun resolveViewColumnNullability(relid: Int): List<Boolean>? {
+    if (viewColumnNullabilityRecursionDepth >= VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET) {
+      // Recursion depth guard — see VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET's KDoc: a pathologically
+      // deep (but not cyclic) chain of nested pass-through views can exhaust the JVM stack before
+      // ever revisiting a relid the cycle guard below would catch. A taint event (see
+      // viewColumnNullabilityTaintEventCount's KDoc), not memoized directly: it is only correct
+      // WHILE this deep, not relid's own true answer.
+      //
+      // MUST run before the memo lookup below, not after: [relid] itself sitting at or past this
+      // depth must always truncate, never returning a cached answer instead — see
+      // VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET's KDoc for the reproduced non-determinism this
+      // ordering closes, and for the honest limit of what it closes: an UNTAINTED, permanently
+      // cached answer for a relid sitting STRICTLY SHALLOWER than this boundary — reached a few
+      // frames before truncation would occur, not at the point this specific check intercepts — can
+      // still be reused as-is, since a memo hit performs no recursion and never revisits this check.
+      // That residual is accepted deliberately; this ordering only guarantees the narrower property
+      // that [relid] itself is never the one to skip truncation via its own stale cache entry.
+      viewColumnNullabilityTaintEventCount++
+      return List(columnCountFor(relid)) { true }
+    }
+    if (viewColumnNullabilityMemo.containsKey(relid)) {
+      // A memo READ of an already-tainted relid is ITSELF a taint event for whichever frame is
+      // reading it — see viewColumnNullabilityTaintedRelids' KDoc for why this propagation is
+      // required, not merely convenient: without it, a sibling frame that reaches a tainted relid
+      // purely through this fast path (no recursion of its own) would see no counter movement across
+      // its own entry/exit window and wrongly conclude it is untainted itself.
+      if (relid in viewColumnNullabilityTaintedRelids) viewColumnNullabilityTaintEventCount++
+      return viewColumnNullabilityMemo[relid]
+    }
+    if (relid in viewColumnNullabilityInProgress) {
+      // Dependency cycle guard — see viewColumnNullabilityInProgress's KDoc: this is load-bearing,
+      // since CREATE OR REPLACE VIEW can genuinely construct a cycle. This placeholder is a taint
+      // event (see viewColumnNullabilityTaintEventCount's KDoc), not memoized directly: it is only
+      // correct WHILE the cycle is being walked, not relid's own true answer.
+      viewColumnNullabilityTaintEventCount++
+      return List(columnCountFor(relid)) { true }
+    }
+    val taintEventCountAtEntry = viewColumnNullabilityTaintEventCount
+    val isOutermostCall = viewColumnNullabilityRecursionDepth == 0
+    viewColumnNullabilityInProgress.add(relid)
+    viewColumnNullabilityRecursionDepth++
+    try {
+      val nodeTree = fetchViewNodeTree(relid)
+      if (nodeTree == null) {
+        // Not a view at all — this determination did no recursion of its own, so it can never be
+        // tainted by anything happening elsewhere; always safe to memoize permanently.
+        viewColumnNullabilityMemo[relid] = null
+        return null
+      }
+      val nullability = try {
+        if (nodeTreeParser.hasSetOperations(nodeTree)) {
+          // See analyzeCteBodyNullability's identical split: a UNION ALL/INTERSECT/EXCEPT at the
+          // view's own top level must be resolved branch-by-branch and OR-combined, not by running
+          // the ordinary analyzeViewNodeTree path against it directly. The synthetic "cteName"
+          // passed here can never collide with a real CTE self-reference the way a WITH RECURSIVE
+          // CTE's own name would: this concern is about a NAME collision against a WITH-clause CTE
+          // declared inside the view's OWN body, not about whether the view itself can be cyclic
+          // (it can, via CREATE OR REPLACE VIEW — see viewColumnNullabilityInProgress's KDoc — but
+          // that is a FROM-clause relation self-reference, resolved by the cycle guard above, and
+          // has no bearing on this CTE-name-keyed map at all), so previouslyResolved's
+          // self-reference entry is always dead weight here, never actually consulted.
+          analyzeSetOperationBranches(nodeTree, emptyMap(), "__norm_view_relid_$relid", applyQualNarrowing = true)
+        } else {
+          analyzeViewNodeTree(nodeTree)
+        }
+      } catch (_: SQLException) {
+        null
+      }
+      val expectedColumnCount = columnCountFor(relid)
+      // Mirrors alignViewColumnNullability's own fallback condition exactly (both a caught
+      // SQLException above and an unanalyzable analyzeSetOperationBranches result reach it via
+      // `nullability == null`) — treated as a taint event for the SAME reason the two guards above
+      // are: an all-nullable answer forced by a TRANSIENT failure (or a structural inability
+      // specific to THIS node tree) must not be cached as relid's answer for this analyzer's entire
+      // remaining lifetime with no eviction path. This frame's own entry/exit comparison below
+      // (shared with every other taint source) is what actually marks relid — and any ancestor whose
+      // window spans this moment — tainted; this just supplies the missing signal.
+      if (nullability == null || nullability.size != expectedColumnCount) {
+        viewColumnNullabilityTaintEventCount++
+      }
+      val result = alignViewColumnNullability(nullability, expectedColumnCount)
+      // ALWAYS memoize — see viewColumnNullabilityMemo's KDoc for why unconditional memoization
+      // (rather than skipping it for a tainted answer) is required to keep a branching view graph
+      // linear. Whether this frame's OWN window saw a taint event (from any descendant, a sibling
+      // reached through a shared, already-tainted memo entry, or its OWN fallback above) instead
+      // decides whether relid joins viewColumnNullabilityTaintedRelids — see that property's KDoc.
+      viewColumnNullabilityMemo[relid] = result
+      if (viewColumnNullabilityTaintEventCount != taintEventCountAtEntry) {
+        viewColumnNullabilityTaintedRelids.add(relid)
+      }
+      return result
+    } finally {
+      viewColumnNullabilityRecursionDepth--
+      viewColumnNullabilityInProgress.remove(relid)
+      if (isOutermostCall) {
+        // Back to the frame that started this whole traversal at depth 0: evict every tainted entry
+        // IT accumulated, so a LATER, independent (and possibly shallower, and therefore able to
+        // compute a genuine answer) query against any of them recomputes fresh — see
+        // viewColumnNullabilityTaintedRelids' KDoc. Untainted entries this traversal computed stay
+        // cached; only the tainted subset is ever evicted.
+        for (taintedRelid in viewColumnNullabilityTaintedRelids) {
+          viewColumnNullabilityMemo.remove(taintedRelid)
+        }
+        viewColumnNullabilityTaintedRelids.clear()
+      }
+    }
+  }
+
+  /** The number of user-visible columns (`attnum > 0 AND NOT attisdropped`) [relid] has. */
+  private fun columnCountFor(relid: Int): Int = columnNotNullByRelidAndAttnum.keys.count { it.first == relid }
+
+  /**
+   * Aligns [nullability] — one flag per non-junk target-list entry, in resno order, as produced by
+   * [resolveViewColumnNullability]'s own node-tree evaluation — onto exactly [expectedColumnCount]
+   * entries, or falls back to nullable for every column when the two disagree (including when
+   * [nullability] is `null`, meaning the analysis that produced it could not answer at all, e.g. a
+   * `MERGE`-shaped `analyzeSetOperationBranches` failure).
+   *
+   * This defensive check has NOT been observed to trigger from any real SQL — see
+   * [resolveViewColumnNullability]'s resno-contiguity KDoc for the live sweep this backs — so it is
+   * kept as insurance against a future PostgreSQL version violating that argument, rather than as a
+   * currently-reachable code path. `internal`, not `private`, purely so it can be unit-tested
+   * directly with a synthetic mismatch: no known real SQL reaches this branch, so there is no SQL
+   * fixture that could exercise it end-to-end.
+   */
+  internal fun alignViewColumnNullability(nullability: List<Boolean>?, expectedColumnCount: Int): List<Boolean> =
+    if (nullability != null && nullability.size == expectedColumnCount) {
+      nullability
+    } else {
+      List(expectedColumnCount) { true }
+    }
+
+  /**
+   * `true` when [relid] currently has a (possibly tainted) answer cached in
+   * [viewColumnNullabilityMemo] — `internal`, not `private`, purely so a test can assert directly on
+   * EVICTION having actually happened.
+   *
+   * A missing taint propagation is USUALLY value-observable — `QueryAnalysisTest.ViewNullability`
+   * has a dedicated pin (`topv`/`y`/a deep chain) that catches one this way, by deliberately sharing
+   * a tainted common ancestor between a genuinely NOT NULL view and a truncating one — so this is
+   * NOT a fundamental limitation of black-box, output-value comparison in general. It is specific to
+   * the `top → {a, mid}` / `a → mid` / `mid → self-cycle` fixture's OWN shape: `mid` is an
+   * UNCONDITIONAL self-cycle, so every value derived from it — correctly re-derived, or incorrectly
+   * left stale — is the identical safe-nullable placeholder either way, with no dependency on
+   * external state to observe through. This direct assertion is what pins that ONE shape's specific
+   * hole regardless.
+   */
+  internal fun isRelidMemoized(relid: Int): Boolean = viewColumnNullabilityMemo.containsKey(relid)
+
+  /**
+   * Entry point for [resolveViewColumnNullability]: evaluates [nodeTree] — a view's own
+   * `pg_rewrite.ev_action` `_RETURN` rule text — through the SAME [analyzeNodeTree] machinery an
+   * ordinary query already uses, rather than widening [analyzeNodeTree]'s own visibility for this
+   * one caller.
+   *
+   * Always passes `applyQualNarrowing = true` and `sql = ""`, and takes [analyzeNodeTree]'s
+   * defaults for `trustAssignedExpressions` (`true`: a view has no `?` parameter placeholder to
+   * distrust) and `mergeAbsentVarnos` (empty: a view's defining query is always a plain `SELECT`,
+   * never a data-modifying statement, so it can never itself be a `MERGE`).
+   */
+  internal fun analyzeViewNodeTree(nodeTree: String): List<Boolean> =
+    analyzeNodeTree(nodeTree, applyQualNarrowing = true, sql = "")
+
+  /**
+   * Fetches [relid]'s `_RETURN` rule text (`pg_rewrite.ev_action`, the query PostgreSQL runs when
+   * the view is selected from) for [resolveViewColumnNullability], or `null` when [relid] is not a
+   * view or materialized view, or otherwise has no such rule.
+   *
+   * Guarded by `relkind IN ('v', 'm')` so a base table that happens to carry an unrelated
+   * `ev_type = '1'` rule is never mistaken for a view — `ev_type = '1'` alone identifies only that a
+   * rule is a `_RETURN` rule, not that its relation is actually a view.
+   */
+  private fun fetchViewNodeTree(relid: Int): String? = try {
+    connection.prepareStatement(
+      """
+      SELECT rw.ev_action::text AS node_tree
+      FROM pg_catalog.pg_rewrite rw
+      JOIN pg_catalog.pg_class c ON c.oid = rw.ev_class
+      WHERE rw.ev_class = ? AND rw.ev_type = '1' AND c.relkind IN ('v', 'm')
+      """.trimIndent(),
+    ).use { preparedStatement ->
+      preparedStatement.setInt(1, relid)
+      preparedStatement.executeQuery().use { resultSet ->
+        if (resultSet.next()) resultSet.getString("node_tree") else null
+      }
+    }
+  } catch (_: SQLException) {
+    null
+  }
 
   /**
    * Creates a [NodeTreeNullabilityAnalyzer] pre-configured with this loader's catalog lookups.

@@ -13,6 +13,6 @@ import kotlin.jvm.JvmRecord
 @JvmRecord
 public data class TypeSummary(
   public val string_type: String,
-  public val row_count: Long?,
+  public val row_count: Long,
   public val average_value: Int?,
 )

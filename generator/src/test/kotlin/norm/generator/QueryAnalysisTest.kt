@@ -19,6 +19,7 @@ import org.junit.jupiter.params.provider.MethodSource
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
+import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.Statement
 import java.util.concurrent.atomic.AtomicInteger
@@ -36,6 +37,36 @@ internal data class WindowFunctionCase(
   val expectedNotNull: Boolean,
 ) {
   override fun toString() = description
+}
+
+/**
+ * One live-DB view-graph shape for `ViewNullability`'s
+ * `resolving one view first does not change a later, independent resolution of another` pin — see
+ * `viewOrderIndependenceFixtures`'s own KDoc for why each of the three shapes exists.
+ *
+ * @property ddl Creates every view in [views], run against a fresh, isolated schema.
+ * @property views Every view name the fixture's [ddl] creates — the CHECK axis: each one's answer,
+ *   resolved on a completely untouched analyzer, is the ground truth every warmed resolution of it
+ *   must still match.
+ * @property warmTriggers The view name(s), each resolved as its OWN complete top-level call (fully
+ *   unwinding, evicting its own taint before anything else runs) before every OTHER view in [views]
+ *   is checked — the WARM axis. NOT necessarily all of [views]: for the straight-chain fixture,
+ *   warming with the DEEPEST tip specifically is the only choice PROVEN safe for every check target
+ *   — its own resolution touches (and, being fully tainted, evicts) every OTHER view in the chain
+ *   before returning, so nothing it leaves behind can ever mask a later truncation. Warming with an
+ *   INTERMEDIATE, shallower view instead (e.g. `chain_1`) is NOT safe in general: it can complete
+ *   untainted and stay memoized PERMANENTLY, and a later, deeper resolution that happens to reach it
+ *   BEFORE crossing the recursion budget will reuse that cached answer instead of truncating — see
+ *   [ColumnNullabilityAnalyzer.VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET]'s KDoc for why this residual
+ *   gap is a deliberately accepted limitation, not something this fixture chases further.
+ */
+internal data class ViewOrderIndependenceFixture(
+  val name: String,
+  val ddl: String,
+  val views: List<String>,
+  val warmTriggers: List<String>,
+) {
+  override fun toString() = name
 }
 
 /**
@@ -6844,7 +6875,868 @@ class QueryAnalysisTest {
   }
 
   @Nested
-  inner class ViewNullability {
+  @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+  internal inner class ViewNullability {
+
+    @Test
+    fun `plain pass-through view column stays NOT NULL`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE VIEW view_v AS SELECT v FROM u
+        """.trimIndent(),
+        "SELECT v FROM view_v",
+      )
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `NULLIF makes a view column nullable even though the source column of the same name is NOT NULL`() {
+      // #256: the previous pg_depend name-join inherited "u.v"'s NOT NULL constraint for the view
+      // column purely because both are named "v", never consulting NULLIF itself — which can always
+      // return null. Verified live: PostgreSQL returns null for every row here.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE VIEW view_nullif AS SELECT NULLIF(v, 'x') AS v FROM u
+        """.trimIndent(),
+        "SELECT v FROM view_nullif",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `CASE WHEN without ELSE makes a view column nullable even though the source column is NOT NULL`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE VIEW view_case AS SELECT CASE WHEN v = 'zzz' THEN v END AS v FROM u
+        """.trimIndent(),
+        "SELECT v FROM view_case",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `a NULL literal view column stays nullable even when a WHERE clause proves the source column non-null`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE VIEW view_null_literal AS SELECT NULL::text AS v FROM u WHERE u.v IS NOT NULL
+        """.trimIndent(),
+        "SELECT v FROM view_null_literal",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `an uncorrelated scalar subquery is nullable even though a same-named source column is NOT NULL`() {
+      // "(SELECT w.v FROM w LIMIT 1)" can yield zero rows regardless of any data in "w", making the
+      // scalar subquery null structurally — not merely because "w" happens to be empty here.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE TABLE w (v TEXT NOT NULL);
+        CREATE VIEW view_scalar_subquery AS SELECT (SELECT w.v FROM w LIMIT 1) AS v FROM u
+        """.trimIndent(),
+        "SELECT v FROM view_scalar_subquery",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `an aggregate over a WHERE false predicate is nullable even though the source column is NOT NULL`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE VIEW view_aggregate_empty AS SELECT max(u.v) AS v FROM u WHERE false
+        """.trimIndent(),
+        "SELECT v FROM view_aggregate_empty",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `LEFT JOIN nullable side stays nullable even though the source column of the same name is NOT NULL`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE TABLE u2 (v TEXT NOT NULL);
+        CREATE VIEW view_left_join AS SELECT upper(b.v) AS v FROM u a LEFT JOIN u2 b ON a.v = b.v
+        """.trimIndent(),
+        "SELECT v FROM view_left_join",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `UNION ALL with a NULL literal branch makes the view column nullable`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE VIEW view_union_null AS SELECT v FROM u UNION ALL SELECT NULL::text FROM u
+        """.trimIndent(),
+        "SELECT v FROM view_union_null",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `UNION ALL of two NOT NULL branches stays NOT NULL`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE TABLE u2 (v2 TEXT NOT NULL);
+        CREATE VIEW view_union_not_null AS SELECT v FROM u UNION ALL SELECT v2 FROM u2
+        """.trimIndent(),
+        "SELECT v FROM view_union_not_null",
+      )
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `NULLIF makes a materialized view column nullable even though the source column is NOT NULL`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE MATERIALIZED VIEW matview_nullif AS SELECT NULLIF(v, 'x') AS v FROM u
+        """.trimIndent(),
+        "SELECT v FROM matview_nullif",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `LEFT JOIN nullable side of a materialized view stays nullable even though the source column is NOT NULL`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE TABLE u2 (v TEXT NOT NULL);
+        CREATE MATERIALIZED VIEW matview_left_join AS
+          SELECT upper(b.v) AS v FROM u a LEFT JOIN u2 b ON a.v = b.v
+        """.trimIndent(),
+        "SELECT v FROM matview_left_join",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `renamed pass-through view column stays NOT NULL, matching the same-named case`() {
+      // #256 corollary: the previous pg_depend name-join matched by NAME, so renaming a genuine
+      // NOT NULL pass-through column ("v" to "other_name") lost the match entirely and fell back
+      // to reporting it nullable — even though PostgreSQL never returns null for it. This is a
+      // BEHAVIOR CHANGE from the pre-fix `false` answer.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE VIEW view_renamed AS SELECT v AS other_name FROM u
+        """.trimIndent(),
+        "SELECT other_name FROM view_renamed",
+      )
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `NULLIF is nullable whether or not the view column is renamed`() {
+      // Renaming must not flip the answer either way: both the same-named and the renamed NULLIF
+      // projection are genuinely nullable, so neither a name match nor a name mismatch should ever
+      // have been the deciding signal.
+      val sameNameQuery = analyzeWithSchema(
+        """
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE VIEW view_nullif_same_name AS SELECT NULLIF(v, 'x') AS v FROM u
+        """.trimIndent(),
+        "SELECT v FROM view_nullif_same_name",
+      )
+      val renamedQuery = analyzeWithSchema(
+        """
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE VIEW view_nullif_renamed AS SELECT NULLIF(v, 'x') AS other_name FROM u
+        """.trimIndent(),
+        "SELECT other_name FROM view_nullif_renamed",
+      )
+      assertThat(sameNameQuery.columns[0].notNull).isFalse()
+      assertThat(renamedQuery.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `SELECT star from a view agrees with the named column select`() {
+      val namedQuery = analyzeWithSchema(
+        """
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE VIEW view_star AS SELECT NULLIF(v, 'x') AS v FROM u
+        """.trimIndent(),
+        "SELECT v FROM view_star",
+      )
+      val starQuery = analyzeWithSchema(
+        """
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE VIEW view_star AS SELECT NULLIF(v, 'x') AS v FROM u
+        """.trimIndent(),
+        "SELECT * FROM view_star",
+      )
+      assertThat(namedQuery.columns[0].notNull).isFalse()
+      assertThat(starQuery.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `an ORDER BY expression appended as a resjunk target entry does not shift a real column's attnum alignment`() {
+      // #256's resno-contiguity fact: "length(v)" is not in the SELECT list, so PostgreSQL appends
+      // it as a resjunk=true target-list entry AFTER the real "v" column. If the view-column
+      // resolver mis-aligned by index instead of by (junk-filtered, resno-sorted) position, this
+      // would misread "v" using the junk entry's answer instead of its own.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE VIEW view_ordered AS SELECT v FROM u ORDER BY length(v)
+        """.trimIndent(),
+        "SELECT v FROM view_ordered",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `a pass-through chain of nested views stays NOT NULL`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE VIEW inner_view AS SELECT v FROM u;
+        CREATE VIEW outer_view AS SELECT v FROM inner_view
+        """.trimIndent(),
+        "SELECT v FROM outer_view",
+      )
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `a NULLIF chain of nested views stays nullable`() {
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE VIEW inner_nullif AS SELECT NULLIF(v, 'x') AS v FROM u;
+        CREATE VIEW outer_nullif AS SELECT v FROM inner_nullif
+        """.trimIndent(),
+        "SELECT v FROM outer_nullif",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `a mutual view dependency cycle built via CREATE OR REPLACE VIEW resolves nullable, not a stack overflow`() {
+      // A genuine cyclic view CAN be constructed against a live PostgreSQL database: CREATE OR
+      // REPLACE VIEW does not require every relation the NEW definition references to have existed
+      // when the ORIGINAL view was created, only that they exist at the moment of the replace
+      // itself. Verified live, PostgreSQL 18.4: "a" and "b" below end up mutually dependent.
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          it.execute(
+            """
+            CREATE TABLE base (v TEXT NOT NULL);
+            CREATE VIEW a AS SELECT v FROM base;
+            CREATE VIEW b AS SELECT v FROM a;
+            CREATE OR REPLACE VIEW a AS SELECT v FROM b
+            """.trimIndent(),
+          )
+        }
+        try {
+          val catalogLoader = PgCatalogLoader(connection)
+          val nonNull = runCatchingThrowable { catalogLoader.loadViewColumnNullability(schemaName) }
+          assertThat(nonNull.contains("a.v")).isFalse()
+          assertThat(nonNull.contains("b.v")).isFalse()
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    @Test
+    fun `a direct self-referencing view built via CREATE OR REPLACE VIEW resolves nullable, not a stack overflow`() {
+      // Verified live, PostgreSQL 18.4: CREATE OR REPLACE VIEW self_v AS SELECT v FROM self_v also
+      // succeeds — a view can be made to select from ITSELF, not just from another view.
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          it.execute(
+            """
+            CREATE TABLE base (v TEXT NOT NULL);
+            CREATE VIEW self_v AS SELECT v FROM base;
+            CREATE OR REPLACE VIEW self_v AS SELECT v FROM self_v
+            """.trimIndent(),
+          )
+        }
+        try {
+          val catalogLoader = PgCatalogLoader(connection)
+          val nonNull = runCatchingThrowable { catalogLoader.loadViewColumnNullability(schemaName) }
+          assertThat(nonNull.contains("self_v.v")).isFalse()
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    @Test
+    fun `a pass-through view chain deeper than the recursion budget resolves nullable, not a stack overflow`() {
+      // Twice VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET — comfortably past it regardless of the
+      // constant's current value (see that constant's KDoc for the empirical basis of the number
+      // itself) — so this pins the guard actually firing, not merely that a chain shallower than the
+      // budget works.
+      val depth = VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET * 2
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          val chainDdl = buildString {
+            appendLine("CREATE TABLE u (v TEXT NOT NULL);")
+            appendLine("CREATE VIEW view_0 AS SELECT v FROM u;")
+            for (level in 1 until depth) {
+              appendLine("CREATE VIEW view_$level AS SELECT v FROM view_${level - 1};")
+            }
+          }
+          it.execute(chainDdl)
+        }
+        try {
+          val catalogLoader = PgCatalogLoader(connection)
+          val analyzer = ColumnNullabilityAnalyzer(catalogLoader)
+          // Resolved directly from the DEEPEST view down, rather than through
+          // loadViewColumnNullability's unordered schema-wide sweep, so this test is not at the
+          // mercy of a resolution order that might happen to walk the chain shallow-first (and
+          // never actually recurse deeply) — see loadViewColumnNamesByRelidAndAttnum's KDoc.
+          val deepestRelid = regclassOid(connection, "view_${depth - 1}")
+          val result = runCatchingThrowable { analyzer.resolveViewColumnNullability(deepestRelid) }
+          assertThat(result).isEqualTo(listOf(true))
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    @Test
+    fun `warming with a view at exactly the truncation boundary no longer changes the deepest view's answer`() {
+      // Direct pin for the depth-before-memo ordering fix: on a chain of exactly
+      // VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET + 2 views, the deepest view's own resolution
+      // truncates trying to enter view_1 — the relid sitting EXACTLY at the boundary. Before this
+      // fix, warming with view_1 first (a shallow view that completes correctly and stays
+      // permanently memoized) let the deepest view's later resolution skip truncation entirely by
+      // reusing that cache — verified live, PostgreSQL 18.4: resolve(deepest) alone gave `[true]`,
+      // but resolve(view_1) first then resolve(deepest) gave `[false]` instead. Both now agree.
+      val chainDepth = VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET + 2
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          val ddl = buildString {
+            appendLine("CREATE TABLE boundary_base (v TEXT NOT NULL);")
+            appendLine("CREATE VIEW boundary_0 AS SELECT v FROM boundary_base;")
+            for (level in 1 until chainDepth) {
+              appendLine("CREATE VIEW boundary_$level AS SELECT v FROM boundary_${level - 1};")
+            }
+          }
+          it.execute(ddl)
+        }
+        try {
+          val deepestRelid = regclassOid(connection, "boundary_${chainDepth - 1}")
+          val boundaryRelid = regclassOid(connection, "boundary_1")
+
+          val freshResult = ColumnNullabilityAnalyzer(
+            PgCatalogLoader(connection),
+          ).resolveViewColumnNullability(deepestRelid)
+          assertThat(freshResult).isEqualTo(listOf(true))
+
+          val warmedAnalyzer = ColumnNullabilityAnalyzer(PgCatalogLoader(connection))
+          warmedAnalyzer.resolveViewColumnNullability(boundaryRelid)
+          val warmedResult = warmedAnalyzer.resolveViewColumnNullability(deepestRelid)
+          assertThat(warmedResult).isEqualTo(freshResult)
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    @Test
+    fun `a full schema sweep of a deep view chain gives identical results across repeated runs`() {
+      // This is the guarantee that actually matters in production, and the one
+      // loadViewColumnNamesByRelidAndAttnum's ORDER BY (relid, then attnum) exists to provide — see
+      // that method's own KDoc: PostgreSQL is free to return pg_class/pg_attribute rows in ANY order
+      // absent an explicit ORDER BY, so a >50-deep view chain's generated Kotlin type could
+      // otherwise differ between two runs of the SAME build against the SAME schema, purely because
+      // the planner returned rows differently. Sweeping the SAME schema twice, via the REAL
+      // production entry point (loadViewColumnNullability), on two INDEPENDENT connections/loaders
+      // so neither run can incidentally reuse the other's cache, must give the IDENTICAL result.
+      val chainDepth = VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET + 2
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          val ddl = buildString {
+            appendLine("CREATE TABLE sweep_base (v TEXT NOT NULL);")
+            appendLine("CREATE VIEW sweep_0 AS SELECT v FROM sweep_base;")
+            for (level in 1 until chainDepth) {
+              appendLine("CREATE VIEW sweep_$level AS SELECT v FROM sweep_${level - 1};")
+            }
+          }
+          it.execute(ddl)
+        }
+        try {
+          val firstRun = PgCatalogLoader(connection).loadViewColumnNullability(schemaName)
+          DriverManager.getConnection(
+            container.jdbcUrl,
+            container.username,
+            container.password,
+          ).use { secondConnection ->
+            val secondRun = PgCatalogLoader(secondConnection).loadViewColumnNullability(schemaName)
+            assertThat(secondRun).isEqualTo(firstRun)
+          }
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    @Test
+    fun `a full schema sweep never reports a genuinely nullable deep-chain column as NOT NULL`() {
+      // The SOUNDNESS property that matters for generated code correctness, independent of which
+      // scan order a sweep happens to use: whatever the depth guard's conservative fallback does for
+      // a boundary-adjacent view, it must never flip a genuinely nullable column to a wrongly-claimed
+      // NOT NULL — the direction that would actually corrupt generated code (a Kotlin field declared
+      // non-nullable that can, in fact, be null at runtime). This chain's base column is nullable
+      // (no NOT NULL constraint), so EVERY view in it is genuinely nullable too; the sweep must never
+      // report ANY of them in its NOT NULL set, regardless of where truncation happens to land.
+      val chainDepth = VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET + 2
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          val ddl = buildString {
+            appendLine("CREATE TABLE sound_base (v TEXT);")
+            appendLine("CREATE VIEW sound_0 AS SELECT v FROM sound_base;")
+            for (level in 1 until chainDepth) {
+              appendLine("CREATE VIEW sound_$level AS SELECT v FROM sound_${level - 1};")
+            }
+          }
+          it.execute(ddl)
+        }
+        try {
+          val notNullColumns = PgCatalogLoader(connection).loadViewColumnNullability(schemaName)
+          val chainColumns = (0 until chainDepth).map { "sound_$it.v" }
+          assertThat(notNullColumns.intersect(chainColumns.toSet())).isEqualTo(emptySet())
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    @Test
+    fun `DELIBERATE LIMITATION - forced ascending versus descending resolution order can still disagree`() {
+      // Documents a known, ACCEPTED gap in ColumnNullabilityAnalyzer.resolveViewColumnNullability
+      // itself, not a production defect: loadViewColumnNamesByRelidAndAttnum's ORDER BY now makes
+      // the REAL production sweep deterministic (see the repeated-runs pin above), so this test
+      // bypasses it and drives resolveViewColumnNullability directly in two FORCED, artificial
+      // orders that production no longer actually exercises, to keep this specific internal
+      // algorithmic fact documented. See VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET's KDoc for the full
+      // explanation and why it is not worth closing with more machinery.
+      //
+      // If resolveViewColumnNullability ever becomes fully depth-independent (no longer possible for
+      // ANY forced order to disagree), this test will start FAILING — that is a sign the limitation
+      // is gone and this test should be DELETED, not "fixed" to match new behavior.
+      val chainDepth = VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET + 2
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          val ddl = buildString {
+            appendLine("CREATE TABLE sweep_base (v TEXT NOT NULL);")
+            appendLine("CREATE VIEW sweep_0 AS SELECT v FROM sweep_base;")
+            for (level in 1 until chainDepth) {
+              appendLine("CREATE VIEW sweep_$level AS SELECT v FROM sweep_${level - 1};")
+            }
+          }
+          it.execute(ddl)
+        }
+        try {
+          val views = (0 until chainDepth).map { "sweep_$it" }
+          val relidByView = views.associateWith { regclassOid(connection, it) }
+
+          val ascendingAnalyzer = ColumnNullabilityAnalyzer(PgCatalogLoader(connection))
+          val ascendingNullable = views.filter { view ->
+            ascendingAnalyzer.resolveViewColumnNullability(relidByView.getValue(view))?.getOrNull(0) == true
+          }
+
+          val descendingAnalyzer = ColumnNullabilityAnalyzer(PgCatalogLoader(connection))
+          val descendingNullable = views.reversed().filter { view ->
+            descendingAnalyzer.resolveViewColumnNullability(relidByView.getValue(view))?.getOrNull(0) == true
+          }
+
+          assertThat(ascendingNullable).isEqualTo(emptyList())
+          assertThat(descendingNullable).isEqualTo(listOf(views.last(), views[views.size - 2]))
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    @Test
+    fun `the depth budget's own worst case resolves without a StackOverflowError on a small thread stack`() {
+      // Pins the guard's actual PURPOSE — fitting within a small worker-thread stack, not just a
+      // typically-roomy 8 MB main thread — rather than merely its constant. Driven off
+      // VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET itself (not a hardcoded number matching today's
+      // value) so this test actually DISCRIMINATES the budget: a chain of exactly the budget's own
+      // depth is this guard's own worst case (no truncation fires, so every level's frame is
+      // genuinely active on the stack at once) — if the budget were ever raised without re-verifying
+      // stack safety, this test would grow with it and could catch a real regression, rather than
+      // silently continuing to exercise a now-stale, no-longer-representative depth. Resolves on a
+      // thread built with an explicit 512 KiB stack — see that constant's KDoc for the empirical
+      // basis of this specific size.
+      val depth = VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          val chainDdl = buildString {
+            appendLine("CREATE TABLE u (v TEXT NOT NULL);")
+            appendLine("CREATE VIEW view_0 AS SELECT v FROM u;")
+            for (level in 1 until depth) {
+              appendLine("CREATE VIEW view_$level AS SELECT v FROM view_${level - 1};")
+            }
+          }
+          it.execute(chainDdl)
+        }
+        try {
+          val catalogLoader = PgCatalogLoader(connection)
+          val analyzer = ColumnNullabilityAnalyzer(catalogLoader)
+          val deepestRelid = regclassOid(connection, "view_${depth - 1}")
+
+          var result: List<Boolean>? = null
+          var caughtThrowable: Throwable? = null
+          val smallStackThread = Thread(
+            null,
+            {
+              try {
+                result = analyzer.resolveViewColumnNullability(deepestRelid)
+              } catch (throwable: Throwable) {
+                caughtThrowable = throwable
+              }
+            },
+            "view-nullability-small-stack-test",
+            512 * 1024L,
+          )
+          smallStackThread.start()
+          smallStackThread.join()
+
+          assertThat(caughtThrowable).isNull()
+          assertThat(result).isEqualTo(listOf(false))
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    @ParameterizedTest
+    @MethodSource("viewOrderIndependenceFixtures")
+    fun `resolving one view first does not change a later, independent resolution of another`(
+      fixture: ViewOrderIndependenceFixture,
+    ) {
+      // Regression pin for the memo-poisoning/taint-tracking defect: a LATER, SEPARATE top-level
+      // resolveViewColumnNullability call must give the identical answer regardless of what an
+      // EARLIER, already-completed (and fully unwound) top-level call happened to touch first — see
+      // viewColumnNullabilityTaintedRelids' KDoc for the mechanism this pins (taint-tracking +
+      // evict-at-depth-0), and viewOrderIndependenceFixtures' KDoc for why each of the three
+      // fixtures is here.
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          it.execute(fixture.ddl)
+        }
+        try {
+          val relidByView = fixture.views.associateWith { view -> regclassOid(connection, view) }
+          // Ground truth: each view resolved on its OWN completely untouched analyzer — nothing else
+          // has ever been resolved on it, so its answer cannot possibly have been influenced by
+          // resolution order.
+          val groundTruth = fixture.views.associateWith { view ->
+            ColumnNullabilityAnalyzer(
+              PgCatalogLoader(connection),
+            ).resolveViewColumnNullability(relidByView.getValue(view))
+          }
+
+          // Every ORDERED pair (warm, check) with warm != check: resolving `warm` first, as its OWN
+          // complete top-level call (which fully unwinds before `check` is ever touched), must not
+          // change `check`'s own, later, independent resolution — checked for EVERY view in the
+          // fixture (both as the thing warmed with, and the thing checked afterward), which is what
+          // "for every view in the fixture, in both resolution orders" means here.
+          for (warmView in fixture.warmTriggers) {
+            for (checkView in fixture.views) {
+              if (warmView == checkView) continue
+              val analyzer = ColumnNullabilityAnalyzer(PgCatalogLoader(connection))
+              analyzer.resolveViewColumnNullability(relidByView.getValue(warmView))
+              val afterWarming = analyzer.resolveViewColumnNullability(relidByView.getValue(checkView))
+              assertThat(afterWarming)
+                .isEqualTo(groundTruth.getValue(checkView))
+            }
+          }
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    /**
+     * Three loop-generated live-DB shapes for the order-independence pin above.
+     *
+     * 1. A pass-through chain of depth `VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET + 2` — deep enough
+     *    to guarantee the recursion-depth guard fires when the deepest view is resolved first,
+     *    tainting every view above the truncation point; a later, independent, shallower resolution
+     *    must still get the TRUE (untainted) answer.
+     * 2. `cyc_a` / `cyc_b`, a genuine mutual cycle built via `CREATE OR REPLACE VIEW` (see
+     *    `viewColumnNullabilityInProgress`'s KDoc for why this is constructible at all). `cyc_a.w` is
+     *    a plain non-null literal; `cyc_b.v` reads it through the cycle. Resolving `cyc_a` first
+     *    versus `cyc_b` first genuinely changes the INTERMEDIATE value observed for `cyc_b` during
+     *    that specific resolution (an accepted, inherent ambiguity for a pair that PostgreSQL itself
+     *    can never actually execute — `ERROR: infinite recursion detected in rules for relation
+     *    "..."` — so there is no real fixpoint to under-approximate); what must NOT happen is that
+     *    ambiguity LEAKING into a later, separate, standalone resolution of either view.
+     * 3. `top → {a, mid}`, `a → mid`, `mid → self-cycle` — the DECISIVE shape for the memo-hit taint
+     *    propagation hole (see [ColumnNullabilityAnalyzer.isRelidMemoized]'s KDoc): `top`'s target
+     *    list reads `mid` directly BEFORE reading `a` (whose own body reads `mid` too), so `a`'s own
+     *    reference to `mid` becomes a PURE memo read of an already-tainted entry. Because `mid` is an
+     *    unconditional self-cycle, its answer — and everything derived from it — is invariant
+     *    regardless of whether it is freshly recomputed or (incorrectly) served stale, so this
+     *    fixture's OWN entry in this method cannot, by itself, observe the hole through VALUES alone;
+     *    see the dedicated `top`/`a`/`mid` eviction test below, which asserts directly on
+     *    [ColumnNullabilityAnalyzer.isRelidMemoized] instead.
+     */
+    fun viewOrderIndependenceFixtures(): List<ViewOrderIndependenceFixture> {
+      val chainDepth = VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET + 2
+      val chainViews = (0 until chainDepth).map { level -> "chain_$level" }
+      val chainDdl = buildString {
+        appendLine("CREATE TABLE chain_base (v TEXT NOT NULL);")
+        appendLine("CREATE VIEW chain_0 AS SELECT v FROM chain_base;")
+        for (level in 1 until chainDepth) {
+          appendLine("CREATE VIEW chain_$level AS SELECT v FROM chain_${level - 1};")
+        }
+      }
+
+      val cycleDdl = """
+        CREATE TABLE cyc_base (v TEXT NOT NULL);
+        CREATE VIEW cyc_b AS SELECT v FROM cyc_base;
+        CREATE VIEW cyc_a AS SELECT b.v AS v, 'x'::text AS w FROM cyc_b b;
+        CREATE OR REPLACE VIEW cyc_b AS SELECT a.w AS v FROM cyc_a a;
+      """.trimIndent()
+
+      val topMidDdl = """
+        CREATE TABLE top_mid_base (v TEXT NOT NULL);
+        CREATE VIEW mid AS SELECT v FROM top_mid_base;
+        CREATE VIEW a AS SELECT v FROM mid;
+        CREATE VIEW top AS SELECT m.v AS v1, a.v AS v2 FROM mid m CROSS JOIN a;
+        CREATE OR REPLACE VIEW mid AS SELECT v FROM mid;
+      """.trimIndent()
+
+      return listOf(
+        ViewOrderIndependenceFixture(
+          name = "a chain deeper than the recursion budget",
+          ddl = chainDdl,
+          views = chainViews,
+          // Deliberately ONLY the deepest tip, not every view — see this fixture's own KDoc (and
+          // VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET's) for why warming with an INTERMEDIATE,
+          // shallower view is NOT safe in general, even after the depth-before-memo fix.
+          warmTriggers = listOf(chainViews.last()),
+        ),
+        ViewOrderIndependenceFixture(
+          name = "a mutual cycle built via CREATE OR REPLACE VIEW",
+          ddl = cycleDdl,
+          views = listOf("cyc_a", "cyc_b"),
+          warmTriggers = listOf("cyc_a", "cyc_b"),
+        ),
+        ViewOrderIndependenceFixture(
+          name = "top selecting from both a self-cycle and a view over that same self-cycle",
+          ddl = topMidDdl,
+          views = listOf("top", "a", "mid"),
+          warmTriggers = listOf("top", "a", "mid"),
+        ),
+      )
+    }
+
+    @Test
+    fun `a view reached only through an already-tainted memo entry is still evicted, not left stale`() {
+      // The white-box pin for the memo-hit taint-propagation hole itself, specific to this ONE
+      // fixture shape — see ColumnNullabilityAnalyzer.isRelidMemoized's KDoc for why THIS
+      // particular fixture cannot be pinned by output values alone ("mid" is an unconditional
+      // self-cycle, so every value derived from it is identical whether "a" is correctly
+      // evicted-and-recomputed or incorrectly left stale), unlike the black-box pin right below,
+      // which demonstrates the SAME class of bug IS normally value-observable.
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          it.execute(
+            """
+            CREATE TABLE top_mid_base (v TEXT NOT NULL);
+            CREATE VIEW mid AS SELECT v FROM top_mid_base;
+            CREATE VIEW a AS SELECT v FROM mid;
+            CREATE VIEW top AS SELECT m.v AS v1, a.v AS v2 FROM mid m CROSS JOIN a;
+            CREATE OR REPLACE VIEW mid AS SELECT v FROM mid
+            """.trimIndent(),
+          )
+        }
+        try {
+          val catalogLoader = PgCatalogLoader(connection)
+          val analyzer = ColumnNullabilityAnalyzer(catalogLoader)
+          val topRelid = regclassOid(connection, "top")
+          val aRelid = regclassOid(connection, "a")
+          val midRelid = regclassOid(connection, "mid")
+
+          runCatchingThrowable { analyzer.resolveViewColumnNullability(topRelid) }
+
+          assertThat(analyzer.isRelidMemoized(topRelid)).isFalse()
+          assertThat(analyzer.isRelidMemoized(midRelid)).isFalse()
+          assertThat(analyzer.isRelidMemoized(aRelid)).isFalse()
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    @Test
+    fun `a tainted common ancestor widens an otherwise NOT NULL sibling's answer, observable by value`() {
+      // The black-box counterpart to the isRelidMemoized pin above: "y" is a shallow view over
+      // "chain_3" and is genuinely NOT NULL on its own (verified directly, below). "topv" reads BOTH
+      // a deep, truncating chain AND "y" — resolving "topv" walks the deep chain FIRST (its target
+      // list declares "d" before "y", matching resno/declaration order), which taints "chain_3" as
+      // an ancestor of the truncation; "y"'s own later reference to "chain_3", within that SAME
+      // top-level resolution, becomes a pure memo read of that now-tainted entry, widening "y"'s
+      // OWN answer to nullable for the DURATION of resolving "topv" — a real, OBSERVABLE VALUE
+      // divergence from "y"'s true answer. This is the accepted, safe-direction cost of taint
+      // propagation (see viewColumnNullabilityTaintedRelids' KDoc), not a defect: what this test
+      // pins is that it does NOT leak — a later, independent resolution of "y" alone still gets its
+      // TRUE answer, since "topv"'s own top-level call evicts everything it tainted once it unwinds.
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          val chainDepth = VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET + 2
+          val ddl = buildString {
+            appendLine("CREATE TABLE chain_base (v TEXT NOT NULL);")
+            appendLine("CREATE VIEW chain_0 AS SELECT v FROM chain_base;")
+            for (level in 1 until chainDepth) {
+              appendLine("CREATE VIEW chain_$level AS SELECT v FROM chain_${level - 1};")
+            }
+            appendLine("CREATE VIEW y AS SELECT v FROM chain_3;")
+            appendLine(
+              "CREATE VIEW topv AS SELECT d.v AS v1, y.v AS v2 FROM chain_${chainDepth - 1} d CROSS JOIN y;",
+            )
+          }
+          it.execute(ddl)
+        }
+        try {
+          val yRelid = regclassOid(connection, "y")
+          val topvRelid = regclassOid(connection, "topv")
+
+          val groundTruthY = ColumnNullabilityAnalyzer(PgCatalogLoader(connection)).resolveViewColumnNullability(yRelid)
+          assertThat(groundTruthY).isEqualTo(listOf(false))
+
+          val analyzer = ColumnNullabilityAnalyzer(PgCatalogLoader(connection))
+          val topvResult = analyzer.resolveViewColumnNullability(topvRelid)
+          assertThat(topvResult).isEqualTo(listOf(true, true))
+
+          val yAfterward = analyzer.resolveViewColumnNullability(yRelid)
+          assertThat(yAfterward).isEqualTo(listOf(false))
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    @Test
+    fun `a branching view graph over a truncating prefix stays linear, not exponential`() {
+      // Performance regression pin for the SAME defect the taint-tracking fix above closes, from the
+      // opposite direction: an earlier "skip memoization for a tainted answer" design fixed the
+      // ordering bug but made a BRANCHING view graph exponential once any branch was deep enough to
+      // truncate — g_k here references g_{k-1} via TWO separate range-table aliases (both actually
+      // read), so skipping memoization for a tainted g_{k-1} would re-walk its entire subtree twice
+      // per level, compounding to 2^k. The shipped fix (always memoize, evict only the tainted
+      // subset at depth 0) keeps each distinct relid resolved at most once per top-level call
+      // regardless of how many aliases reference it, so this stays LINEAR in view count.
+      //
+      // The prefix is deliberately deeper than VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET, so every
+      // g_k's own resolution genuinely walks into truncated (tainted) territory — this shape is
+      // meaningless as a regression pin if nothing ever truncates.
+      val prefixDepth = VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET + 5
+      val diamondDepth = 9
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use {
+          it.execute("CREATE SCHEMA $schemaName")
+          it.execute("SET search_path TO $schemaName")
+          val ddl = buildString {
+            appendLine("CREATE TABLE base (v1 TEXT NOT NULL, v2 TEXT NOT NULL);")
+            appendLine("CREATE VIEW pfx_0 AS SELECT v1, v2 FROM base;")
+            for (level in 1 until prefixDepth) {
+              appendLine("CREATE VIEW pfx_$level AS SELECT v1, v2 FROM pfx_${level - 1};")
+            }
+            appendLine(
+              "CREATE VIEW g_1 AS SELECT a.v1 AS v1, b.v2 AS v2 FROM pfx_${prefixDepth - 1} a, " +
+                "pfx_${prefixDepth - 1} b;",
+            )
+            for (level in 2..diamondDepth) {
+              appendLine(
+                "CREATE VIEW g_$level AS SELECT a.v1 AS v1, b.v2 AS v2 FROM g_${level - 1} a, g_${level - 1} b;",
+              )
+            }
+          }
+          it.execute(ddl)
+        }
+        try {
+          val catalogLoader = PgCatalogLoader(connection)
+          val analyzer = ColumnNullabilityAnalyzer(catalogLoader)
+          val topRelid = regclassOid(connection, "g_$diamondDepth")
+
+          val elapsedMillis = System.nanoTime().let { startNanos ->
+            runCatchingThrowable { analyzer.resolveViewColumnNullability(topRelid) }
+            (System.nanoTime() - startNanos) / 1_000_000
+          }
+
+          // A generous bound, not a tight wall-clock assertion (see this test's own KDoc for why):
+          // linear resolution of ~(prefixDepth + diamondDepth) distinct views is expected to take
+          // well under a second; the exponential (skip-memoization) shape this pins against took
+          // over 30 SECONDS at this exact diamondDepth over a comparable truncating prefix, and
+          // roughly doubles for every additional level beyond it.
+          assertThat(elapsedMillis < 10_000L).isTrue()
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    @Test
+    fun `view-column alignment falls back to nullable on a target-entry count mismatch`() {
+      // No known real SQL reaches alignViewColumnNullability's fallback branch (see its own KDoc
+      // for the live sweep this backs), so this exercises the pure fallback logic directly with a
+      // synthetic mismatch, rather than attempting to construct one via a real view.
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        val analyzer = ColumnNullabilityAnalyzer(PgCatalogLoader(connection))
+
+        assertThat(analyzer.alignViewColumnNullability(listOf(false, true), expectedColumnCount = 3))
+          .isEqualTo(listOf(true, true, true))
+        assertThat(analyzer.alignViewColumnNullability(null, expectedColumnCount = 2))
+          .isEqualTo(listOf(true, true))
+        assertThat(analyzer.alignViewColumnNullability(listOf(false, false), expectedColumnCount = 2))
+          .isEqualTo(listOf(false, false))
+      }
+    }
 
     @Test
     fun `LEFT JOIN view marks right side column as nullable`() {
@@ -6864,9 +7756,8 @@ class QueryAnalysisTest {
         try {
           val catalogLoader = PgCatalogLoader(connection)
           val nonNull = catalogLoader.loadViewColumnNullability(schemaName)
-          val outerJoinNullable = catalogLoader.loadViewOuterJoinNullableColumns(schemaName)
           assertThat(nonNull.contains("v.name")).isTrue()
-          assertThat(outerJoinNullable.contains("v.label")).isTrue()
+          assertThat(nonNull.contains("v.label")).isFalse()
         } finally {
           connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
         }
@@ -6891,11 +7782,8 @@ class QueryAnalysisTest {
         try {
           val catalogLoader = PgCatalogLoader(connection)
           val nonNull = catalogLoader.loadViewColumnNullability(schemaName)
-          val outerJoinNullable = catalogLoader.loadViewOuterJoinNullableColumns(schemaName)
           assertThat(nonNull.contains("v.name")).isTrue()
           assertThat(nonNull.contains("v.label")).isTrue()
-          assertThat(outerJoinNullable.contains("v.name")).isFalse()
-          assertThat(outerJoinNullable.contains("v.label")).isFalse()
         } finally {
           connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
         }
@@ -6903,16 +7791,13 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `a view column backed by two same-named source columns is nullable if either source is nullable`() {
-      // "val" is SELECTed only from "b" (nullable), but the JOIN condition ALSO references "a.val"
-      // (NOT NULL) — PostgreSQL's pg_depend records a normal dependency for EVERY source column the
-      // view's definition touches anywhere, not just the ones that feed a specific output column, so
-      // matching those dependency rows to a view column purely BY NAME (as this loader does) sees
-      // both "a.val" and "b.val" as candidate sources for the single output column "val". Verified
-      // live: this exact schema produces two pg_depend rows for "v.val" — (b.val, notNull=false) and
-      // (a.val, notNull=true). loadViewColumnNullability must apply the same any-nullable-source-wins
-      // reduction the relid-keyed viewColumnNotNullByRelidAndAttnum already does, not let the NOT
-      // NULL row win regardless of arrival order.
+    fun `a nullable source column stays nullable, even when a same-named column elsewhere is NOT NULL`() {
+      // Under the pre-#256 pg_depend name-join, "val" matched BOTH "a.val" (NOT NULL, referenced
+      // only in the JOIN condition) and "b.val" (nullable, the actual SELECTed source) purely by
+      // name, requiring an any-nullable-source-wins reduction to get this case right. Under full
+      // node-tree evaluation there is no name matching at all: the view's target list is a plain
+      // Var reading "b.val" directly, so this is now a direct (not reduced-from-ambiguous) proof —
+      // kept as a regression check that the answer itself did not change.
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         connection.createStatement().use {
@@ -6937,7 +7822,7 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `a view column backed by two same-named NOT NULL source columns stays NOT NULL`() {
+    fun `a NOT NULL source column stays NOT NULL, even when a same-named column elsewhere is nullable`() {
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         connection.createStatement().use {
@@ -6962,7 +7847,12 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `materialized view excluded from outer join analysis`() {
+    fun `materialized view LEFT JOIN column is genuinely nullable`() {
+      // Before #256, materialized views were entirely excluded from outer-join analysis, so
+      // "mv.label" — genuinely nullable, on the right side of a LEFT JOIN — was wrongly reported
+      // NOT NULL (inherited from "e.label"'s own constraint via the pg_depend name-join, with no
+      // outer-join subtraction ever applied to a materialized view). This INVERTS that prior
+      // (incorrect) answer.
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         connection.createStatement().use {
@@ -6978,8 +7868,9 @@ class QueryAnalysisTest {
         }
         try {
           val catalogLoader = PgCatalogLoader(connection)
-          val outerJoinNullable = catalogLoader.loadViewOuterJoinNullableColumns(schemaName)
-          assertThat(outerJoinNullable.contains("mv.label")).isFalse()
+          val nonNull = catalogLoader.loadViewColumnNullability(schemaName)
+          assertThat(nonNull.contains("mv.name")).isTrue()
+          assertThat(nonNull.contains("mv.label")).isFalse()
         } finally {
           connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
         }
@@ -8419,6 +9310,45 @@ class QueryAnalysisTest {
       }
     }
   }
+
+  /**
+   * Runs [block] and asserts that no [Throwable] — including an [Error] such as
+   * `StackOverflowError`, which an uncaught JUnit test failure would also report, but only
+   * incidentally — escaped it, then returns its result.
+   *
+   * Used by `ViewNullability`'s cyclic-view and deep-recursion pins, which specifically need to
+   * prove the ABSENCE of a `StackOverflowError` as part of what they assert, not merely that a
+   * value came back — detekt's `ForbiddenImport` rule blocks `org.junit.jupiter.api.Assertions.*`
+   * project-wide (this codebase uses assertk), so this wraps the same "did not throw" check in an
+   * assertk-compatible form instead of JUnit's own `assertDoesNotThrow`.
+   */
+  private fun <T> runCatchingThrowable(block: () -> T): T {
+    var caughtThrowable: Throwable? = null
+    val result = try {
+      block()
+    } catch (throwable: Throwable) {
+      caughtThrowable = throwable
+      null
+    }
+    assertThat(caughtThrowable).isNull()
+    @Suppress("UNCHECKED_CAST")
+    return result as T
+  }
+
+  /**
+   * Resolves the `pg_class.oid` of the relation named [relationName] on the CURRENT `search_path`
+   * of [connection] — used by `ViewNullability`'s deep-chain pins to get a relid to call
+   * [ColumnNullabilityAnalyzer.resolveViewColumnNullability] with directly, rather than through
+   * [PgCatalogLoader.loadViewColumnNullability]'s unordered schema-wide sweep (which would leave
+   * resolution order at the mercy of whatever order that sweep happens to visit relations in).
+   */
+  private fun regclassOid(connection: Connection, relationName: String): Int =
+    connection.createStatement().use { statement ->
+      statement.executeQuery("SELECT '$relationName'::regclass::oid").use { resultSet ->
+        resultSet.next()
+        resultSet.getInt(1)
+      }
+    }
 
   /**
    * Ground truth for [PgCatalogLoader.aggregateHasNonNullInitialValue]: calls the aggregate named

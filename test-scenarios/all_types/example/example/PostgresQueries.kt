@@ -1003,14 +1003,14 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun <T : Any> getTypeSummary(string_type: String, mapper: (
     string_type: String,
-    row_count: Long?,
+    row_count: Long,
     average_value: Int?,
   ) -> T): T {
     val sql = "SELECT * FROM type_summary WHERE string_type = ?"
     val rowReader: ResultSet.() -> T = {
       mapper(
         getString(1),
-        getLong(2).takeUnless { wasNull() },
+        getLong(2),
         getInt(3).takeUnless { wasNull() },
       )
     }

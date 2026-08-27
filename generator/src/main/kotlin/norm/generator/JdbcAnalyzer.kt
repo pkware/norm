@@ -121,19 +121,14 @@ public class JdbcAnalyzer(private val connection: Connection) {
     }
 
     // For views and materialized views, JDBC's getColumns() reports all columns as nullable because
-    // views carry no constraints. Resolve actual nullability by tracing columns back to their source
-    // base table columns via pg_depend, where NOT NULL constraints exist.
+    // views carry no constraints. Resolve actual nullability by fully evaluating each view's own
+    // defining query — see loadViewColumnNullability's KDoc.
     val viewNotNullColumns = catalogLoader.loadViewColumnNullability(schemaName)
-    // For regular views (not materialized views), columns on the nullable side of an outer join inside
-    // the view's definition must remain nullable even when the base table column is NOT NULL. Remove
-    // such columns from the NOT NULL set to prevent false non-null claims.
-    val viewOuterJoinNullableColumns = catalogLoader.loadViewOuterJoinNullableColumns(schemaName)
-    val correctedViewNotNullColumns = viewNotNullColumns - viewOuterJoinNullableColumns
 
     return tableEntries.map { (tableName, tableType) ->
       val primaryKeyColumns = loadPrimaryKeyColumns(dbMeta, schemaName, tableName)
       val columns =
-        loadColumns(dbMeta, schemaName, tableName, columnComments, correctedViewNotNullColumns, primaryKeyColumns)
+        loadColumns(dbMeta, schemaName, tableName, columnComments, viewNotNullColumns, primaryKeyColumns)
       Table(
         rel = Identifier(name = tableName, schema = schemaName),
         columns = columns,
