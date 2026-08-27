@@ -1,18 +1,14 @@
 package norm.generator
 
 import norm.generator.NodeTreeNullabilityAnalyzer.Companion.MAX_EXPRESSION_DEPTH
-import norm.generator.NodeTreeNullabilityAnalyzer.Companion.extractOuterJoinNullability
 
 /**
  * Evaluates nullability of result columns from a PostgreSQL `pg_node_tree` text
- * (from `pg_rewrite.ev_action`).
+ * (from `pg_rewrite.ev_action` or `pg_proc.prosqlbody`).
  *
  * Uses [PgNodeTreeParser] to parse the `:targetList` and then recursively evaluates each
  * expression via [isNonNull]. This covers outer-join-induced nullability (VAR nodes with
  * non-empty `varnullingrels`), aggregate nullability, strict-function propagation, and more.
- *
- * For outer-join-only inspection (without full expression evaluation), use
- * [extractOuterJoinNullability].
  *
  * @param isStrict Returns `true` if the function or operator with the given OID is strict (returns
  *   `null` when any argument is `null`). Used for [isNonNull] evaluation of [PgNodeExpression.FuncExpr],
@@ -755,27 +751,6 @@ internal class NodeTreeNullabilityAnalyzer(
 
   internal companion object {
     internal const val MAX_EXPRESSION_DEPTH = 100
-
-    /**
-     * Returns nullable flags for each non-junk column based solely on outer-join nulling relations.
-     *
-     * Unlike [NodeTreeNullabilityAnalyzer.extractColumnNullability], this method does not evaluate
-     * expression nullability — it only checks whether a VAR node was introduced by an outer join
-     * (via `varnullingrels`). Use this for catalog view inspection where only outer-join structure
-     * matters, not expression semantics.
-     */
-    internal fun extractOuterJoinNullability(nodeTreeText: String): List<Boolean> {
-      val parser = PgNodeTreeParser()
-      return parser.parseTargetList(nodeTreeText)
-        .filter { !it.isJunk }
-        .sortedBy { it.resultNumber }
-        .map { entry ->
-          when (val expression = entry.expression) {
-            is PgNodeExpression.Var -> expression.nullingRelations.isNotEmpty()
-            else -> false
-          }
-        }
-    }
 
     /**
      * Returns the `(varno, varattno)` pairs that the query's `WHERE` clause proves non-null.

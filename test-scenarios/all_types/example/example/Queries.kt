@@ -699,7 +699,7 @@ public interface Queries : Transactable {
   @Throws(SQLException::class)
   public fun <T : Any> getTypeSummary(string_type: String, mapper: (
     string_type: String,
-    row_count: Long?,
+    row_count: Long,
     average_value: Int?,
   ) -> T): T
 

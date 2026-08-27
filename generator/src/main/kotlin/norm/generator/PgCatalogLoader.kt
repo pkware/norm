@@ -246,40 +246,6 @@ internal class PgCatalogLoader(internal val connection: Connection) {
   val columnNotNullByRelidAndAttnum: Map<Pair<Int, Int>, Boolean> by lazy(::loadColumnNotNull)
 
   /**
-   * Maps `(relid, attnum)` pairs to `true` for view columns that are guaranteed NOT NULL.
-   *
-   * PostgreSQL stores `pg_attribute.attnotnull = false` for all view columns. This map
-   * corrects that by tracing each view column back to its source base table column via
-   * `pg_depend`, then subtracting columns that are nullable due to outer joins within the
-   * view's definition.
-   *
-   * Covers both regular views (`relkind = 'v'`) and materialized views (`relkind = 'm'`).
-   * No schema filter — the node tree can reference views from any schema.
-   *
-   * Returns `false` for absent keys.
-   */
-  val viewColumnNotNullByRelidAndAttnum: Map<Pair<Int, Int>, Boolean> by lazy(::loadViewColumnNotNull)
-
-  /**
-   * Maps `(relid, attnum)` pairs to `true` for REGULAR (non-materialized) view columns that are
-   * nullable because they sit on the nullable side of an outer join (`LEFT`/`RIGHT`/`FULL JOIN`)
-   * inside the view's own definition — computed once here and shared by both
-   * [viewColumnNotNullByRelidAndAttnum]'s own subtraction step and the public,
-   * schema-scoped [loadViewOuterJoinNullableColumns], so the two can never independently drift
-   * from each other's answer for the same column.
-   *
-   * Materialized views are excluded because their data is stored at refresh time; the outer-join
-   * structure of the definition does not affect the persisted NOT NULL guarantee of a materialized
-   * view's columns (PostgreSQL allows defining NOT NULL constraints on matview columns separately).
-   *
-   * Returns `false` for absent keys (not on the nullable side of any outer join the analyzer
-   * detects, or not a regular view column at all).
-   */
-  val viewOuterJoinNullableByRelidAndAttnum: Map<Pair<Int, Int>, Boolean> by lazy(
-    ::loadViewOuterJoinNullableByRelidAndAttnum,
-  )
-
-  /**
    * Shared strictness lookup used by every [buildAnalyzer] call site and by
    * [NodeTreeNullabilityAnalyzer.qualProvenNonNullVars].
    */
@@ -298,94 +264,6 @@ internal class PgCatalogLoader(internal val connection: Connection) {
       ).use { rs ->
         while (rs.next()) {
           put(rs.getInt("attrelid") to rs.getInt("attnum"), rs.getBoolean("attnotnull"))
-        }
-      }
-    }
-  }
-
-  private fun loadViewColumnNotNull(): Map<Pair<Int, Int>, Boolean> {
-    // Step 1: build the initial non-null set from pg_depend (source base table column is NOT NULL).
-    val candidateNotNull = mutableMapOf<Pair<Int, Int>, Boolean>()
-    connection.createStatement().use { stmt ->
-      stmt.executeQuery(
-        """
-        SELECT
-          view_class.oid::integer AS view_relid,
-          view_attr.attnum AS view_attnum,
-          source_attr.attnotnull AS source_notNull
-        FROM pg_catalog.pg_depend d
-        JOIN pg_catalog.pg_rewrite rw ON rw.oid = d.objid
-        JOIN pg_catalog.pg_class view_class ON view_class.oid = rw.ev_class
-        JOIN pg_catalog.pg_attribute source_attr
-          ON source_attr.attrelid = d.refobjid AND source_attr.attnum = d.refobjsubid
-        JOIN pg_catalog.pg_class source_class ON source_class.oid = d.refobjid
-        JOIN pg_catalog.pg_attribute view_attr ON view_attr.attrelid = view_class.oid
-        WHERE view_class.relkind IN ('v', 'm')
-          AND d.classid = 'pg_rewrite'::regclass
-          AND d.refclassid = 'pg_class'::regclass
-          AND d.refobjsubid > 0
-          AND d.deptype = 'n'
-          AND source_class.relkind IN ('r', 'p')
-          AND view_attr.attnum > 0
-          AND view_attr.attname = source_attr.attname
-          AND source_attr.attnum > 0
-        """.trimIndent(),
-      ).use { rs ->
-        while (rs.next()) {
-          val key = rs.getInt("view_relid") to rs.getInt("view_attnum")
-          // Mark as non-null only when source is NOT NULL. If multiple source columns are
-          // found for the same view column, keep false (safe default) if any is nullable.
-          if (rs.getBoolean("source_notNull")) {
-            candidateNotNull.putIfAbsent(key, true)
-          } else {
-            candidateNotNull[key] = false
-          }
-        }
-      }
-    }
-
-    // Step 2: subtract columns that are nullable due to outer joins in the view's definition,
-    // using the shared computation also exposed publicly via loadViewOuterJoinNullableColumns.
-    for ((key, outerJoinNullable) in viewOuterJoinNullableByRelidAndAttnum) {
-      if (outerJoinNullable) {
-        candidateNotNull[key] = false
-      }
-    }
-
-    return candidateNotNull.filterValues { it }
-  }
-
-  /**
-   * Loader for [viewOuterJoinNullableByRelidAndAttnum]: for each regular (non-materialized) view,
-   * runs node tree analysis to find outer-join-nullable columns by position.
-   */
-  private fun loadViewOuterJoinNullableByRelidAndAttnum(): Map<Pair<Int, Int>, Boolean> = buildMap {
-    connection.createStatement().use { stmt ->
-      stmt.executeQuery(
-        """
-        SELECT
-          c.oid::integer AS view_relid,
-          rw.ev_action::text AS node_tree,
-          array_agg(a.attnum ORDER BY a.attnum) AS attnums
-        FROM pg_catalog.pg_class c
-        JOIN pg_catalog.pg_rewrite rw ON rw.ev_class = c.oid AND rw.ev_type = '1'
-        JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-        WHERE c.relkind = 'v'
-        GROUP BY c.oid, rw.ev_action
-        """.trimIndent(),
-      ).use { rs ->
-        while (rs.next()) {
-          val viewRelid = rs.getInt("view_relid")
-          val nodeTree = rs.getString("node_tree")
-
-          @Suppress("UNCHECKED_CAST")
-          val attnums = (rs.getArray("attnums").array as Array<*>).map { (it as Number).toInt() }
-          val outerJoinNullable = NodeTreeNullabilityAnalyzer.extractOuterJoinNullability(nodeTree)
-          for ((index, nullable) in outerJoinNullable.withIndex()) {
-            if (nullable && index < attnums.size) {
-              put(viewRelid to attnums[index], true)
-            }
-          }
         }
       }
     }
@@ -613,45 +491,39 @@ internal class PgCatalogLoader(internal val connection: Connection) {
    * Returns NOT NULL column information for views and materialized views in [schemaName], for
    * [JdbcAnalyzer]'s catalog construction.
    *
-   * A thin name-resolution adapter over [viewColumnNotNullByRelidAndAttnum] — the single,
-   * relid-keyed source of truth for view-column nullability (source-column tracing via
-   * `pg_depend`, with any-nullable-source-wins reduction, already net of outer-join subtraction —
-   * see the property's own KDoc). This function does no computation of its own: it resolves
-   * each `(relid, attnum)` the shared map already judged NOT NULL back to a `"viewName.columnName"`
-   * string, scoped to [schemaName]. Kept relid-keyed and computed once, rather than re-querying
-   * `pg_depend`/`pg_rewrite` by name per schema, so this and every other caller of the shared map
-   * can never independently drift from each other's answer for the same column — exactly the
-   * divergence that previously made this function skip the any-nullable-source-wins reduction the
-   * relid-keyed map already applied.
+   * A thin name-resolution adapter over [ColumnNullabilityAnalyzer.isColumnNotNull] — the single,
+   * relid-keyed source of truth for column nullability, base table AND view alike. Unlike the
+   * `pg_depend` name-join this replaces (see `#256`), a view column's answer here comes from fully
+   * evaluating the view's OWN defining query (`pg_rewrite`'s `_RETURN` rule), not from tracing a
+   * same-named source column and inheriting its constraint regardless of the view's actual
+   * projection expression. This function does no computation of its own: it resolves each
+   * `(relid, attnum)` [nullabilityAnalyzer] already judged NOT NULL back to a
+   * `"viewName.columnName"` string, scoped to [schemaName].
    *
    * @param schemaName The schema to check.
    * @return A set of `"viewName.columnName"` strings for view/matview columns that are non-nullable.
    */
   fun loadViewColumnNullability(schemaName: String): Set<String> = loadViewColumnNamesByRelidAndAttnum(schemaName)
-    .filterKeys { key -> viewColumnNotNullByRelidAndAttnum[key] == true }
+    .filterKeys { key -> nullabilityAnalyzer.isColumnNotNull(key) }
     .values.toSet()
-
-  /**
-   * Returns view columns that are nullable due to outer joins in the view's own definition.
-   *
-   * A thin name-resolution adapter over [viewOuterJoinNullableByRelidAndAttnum] — the single,
-   * relid-keyed source of truth for this, also consulted by [viewColumnNotNullByRelidAndAttnum]'s
-   * own subtraction step. This function does no computation of its own: it resolves each
-   * `(relid, attnum)` the shared map already judged outer-join-nullable back to a
-   * `"viewName.columnName"` string, scoped to [schemaName].
-   *
-   * @param schemaName The schema to inspect.
-   * @return A set of `"viewName.columnName"` strings for view columns that are nullable from outer joins.
-   */
-  fun loadViewOuterJoinNullableColumns(schemaName: String): Set<String> =
-    loadViewColumnNamesByRelidAndAttnum(schemaName)
-      .filterKeys { key -> viewOuterJoinNullableByRelidAndAttnum[key] == true }
-      .values.toSet()
 
   /**
    * Maps `(relid, attnum)` to `"viewName.columnName"` for every view/matview column in
    * [schemaName] — the name-resolution half of [loadViewColumnNullability]'s adapter over
-   * [viewColumnNotNullByRelidAndAttnum].
+   * [ColumnNullabilityAnalyzer.isColumnNotNull].
+   *
+   * `ORDER BY c.oid, a.attnum` is load-bearing, not cosmetic: [loadViewColumnNullability] resolves
+   * this result set's rows one at a time, via a SINGLE, SHARED [ColumnNullabilityAnalyzer] instance
+   * whose own answer for a view deep enough to hit
+   * [ColumnNullabilityAnalyzer.VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET] can depend on which OTHER
+   * views were already resolved (and memoized) beforehand — see that constant's KDoc for the
+   * documented, deliberately-accepted depth-sensitivity this ordering does NOT remove. Without an
+   * `ORDER BY`, PostgreSQL is free to return these rows in ANY order (whatever the planner or
+   * physical row order happens to produce), meaning the SAME schema's generated Kotlin type for a
+   * `>50`-deep view chain could differ between two runs of the SAME build — a real, user-visible
+   * form of non-determinism this ordering closes: a fixed, deterministic scan order (relid, then
+   * attnum) makes the sweep's resolution order — and therefore its output — stable and reproducible
+   * for a given schema, run after run, even though the underlying depth-sensitivity itself remains.
    */
   private fun loadViewColumnNamesByRelidAndAttnum(schemaName: String): Map<Pair<Int, Int>, String> = buildMap {
     connection.createStatement().use { stmt ->
@@ -663,6 +535,7 @@ internal class PgCatalogLoader(internal val connection: Connection) {
         JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
         WHERE n.nspname = '$schemaName'
           AND c.relkind IN ('v', 'm')
+        ORDER BY c.oid, a.attnum
         """.trimIndent(),
       ).use { rs ->
         while (rs.next()) {
