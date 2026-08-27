@@ -409,4 +409,49 @@ class PgNodeTreeParserTest {
       assertThat(first).isEqualTo(second)
     }
   }
+
+  @Nested
+  inner class CteRangeTableEntryParsing {
+
+    @Test
+    fun `an explicit ctelevelsup greater than 0 is captured, distinguishing an enclosing CTE from a local one`() {
+      // Shape verified live against a real PostgreSQL 18 pg_rewrite.ev_action for a sublink
+      // referencing a sibling CTE declared one level up (see issue #257's ctelevelsup probes):
+      // a real CTE RTE always carries this field, but ColumnNullabilityAnalyzer.
+      // analyzeQueryBlockNullability depends on its EXACT value (not just its presence) to tell a
+      // local `WITH` apart from a shadowed enclosing one — this pins the parser's own contribution
+      // to that distinction, independent of the analyzer logic built on top of it.
+      val text = """
+        {QUERY :rtable (
+          {RANGETBLENTRY :eref {ALIAS :aliasname c :colnames ("v")} :rtekind 6 :ctename c
+           :ctelevelsup 1 :self_reference false}
+        )}
+      """.trimIndent()
+      val result = parser.parseCteRangeTableEntries(text)
+      assertThat(result).hasSize(1)
+      val reference = result.getValue(1)
+      assertThat(reference.name).isEqualTo("c")
+      assertThat(reference.ctelevelsup).isEqualTo(1)
+    }
+
+    @Test
+    fun `a CTE range table entry missing ctelevelsup entirely defaults to 0, a local (same-level) reference`() {
+      // Malformed/future-format input: :ctelevelsup is simply absent. The safe default must be
+      // `0` — the "declares its own WITH" case ColumnNullabilityAnalyzer.analyzeQueryBlockNullability
+      // resolves from the block's OWN CTE list, never an enclosing one, matching what every real
+      // PostgreSQL 18 CTE RTE observed so far actually carries when the reference IS local (see
+      // parseCteRangeTableEntries' own KDoc).
+      val text = """
+        {QUERY :rtable (
+          {RANGETBLENTRY :eref {ALIAS :aliasname c :colnames ("v")} :rtekind 6 :ctename c
+           :self_reference false}
+        )}
+      """.trimIndent()
+      val result = parser.parseCteRangeTableEntries(text)
+      assertThat(result).hasSize(1)
+      val reference = result.getValue(1)
+      assertThat(reference.name).isEqualTo("c")
+      assertThat(reference.ctelevelsup).isEqualTo(0)
+    }
+  }
 }

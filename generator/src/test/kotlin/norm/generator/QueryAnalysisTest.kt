@@ -2854,6 +2854,220 @@ class QueryAnalysisTest {
       assertThat(query.columns[0].notNull).isTrue()
       assertThat(query.columns[1].notNull).isFalse()
     }
+
+    @Test
+    fun `ANY sublink over a subquery reading a derived table is non-null, issue #257`() {
+      // #257's own repro, verified live against PostgreSQL 18: `a = ANY (SELECT z.v FROM (SELECT v
+      // FROM u) z) FROM t` returns false, never null, when u.v is NOT NULL — identical semantics to
+      // the un-wrapped `a = ANY (SELECT v FROM u)` case above, just with the subquery's single
+      // output column read through an intervening derived table (a subquery range-table entry)
+      // instead of directly from u. Before this fix, analyzeQueryBlockNullability resolved a Var
+      // only against its OWN base-table range table, so z.v's varno (indexing the derived table's
+      // rtekind-1 range-table entry, not a base table) fell through to nullable regardless of what
+      // u.v's own constraint said.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE u (v TEXT NOT NULL)",
+        "SELECT a = ANY (SELECT z.v FROM (SELECT v FROM u) z) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `ANY sublink over a subquery reading a derived table two levels deep is non-null`() {
+      // Pins that the derived-table recursion is not one-level-only: y is itself a derived table
+      // read from within z's own body, not directly from u. Verified live against PostgreSQL 18:
+      // returns false, never null.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE u (v TEXT NOT NULL)",
+        "SELECT a = ANY (SELECT z2.v FROM (SELECT y.v FROM (SELECT v FROM u) y) z2) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `ANY sublink over a subquery reading an enclosing CTE is non-null, issue #257`() {
+      // #257's own repro, verified live against PostgreSQL 18: identical semantics to the derived-
+      // table case above, but the sublink's own subselect reads an ENCLOSING CTE (declared in the
+      // outer query's own WITH clause) rather than a FROM-clause derived table. Before this fix,
+      // subLinkSubqueryColumnNotNull passed an EMPTY resolvedCtes map into
+      // analyzeQueryBlockNullability, so a CTE reference always fell through to nullable regardless
+      // of the CTE body's own provable nullability.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE u (v TEXT NOT NULL)",
+        "WITH c AS (SELECT v FROM u) SELECT a = ANY (SELECT v FROM c) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `ANY sublink over a derived table reading a genuinely nullable column stays nullable`() {
+      // The #239 three-valued-logic hazard, now reached through a derived table instead of directly
+      // from a base table: w.v is nullable, so a row with v IS NULL and no match makes the whole
+      // ANY_SUBLINK NULL, not false. Verified live against PostgreSQL 18: returns null once w has a
+      // NULL row and t.a matches no non-null row. An unsound fix that widens purely because a
+      // derived table is now traced would flip this to notNull incorrectly.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE w (v TEXT)",
+        "SELECT a = ANY (SELECT z.v FROM (SELECT v FROM w) z) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `ANY sublink over an enclosing CTE reading a genuinely nullable column stays nullable`() {
+      // Same #239 hazard as above, reached through an enclosing CTE reference instead of a derived
+      // table. Verified live against PostgreSQL 18: returns null once w has a NULL row and t.a
+      // matches no non-null row.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE w (v TEXT)",
+        "WITH c AS (SELECT v FROM w) SELECT a = ANY (SELECT v FROM c) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `ANY sublink over a derived table wrapping a UNION subquery stays nullable, the conservative bail-out`() {
+      // Mirrors the existing plain-UNION bail-out test, but with the UNION reached through an
+      // intervening derived table — pinning that buildSubqueryColumnNotNull's own hasSetOperations
+      // guard still fires when it is THIS recursive call (from inside analyzeQueryBlockNullability),
+      // not only the top-level one. Verified live against PostgreSQL 18: every row of both branches
+      // is NOT NULL, but the bail-out is still deliberately conservative here.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, a TEXT NOT NULL);
+        CREATE TABLE u1 (v TEXT NOT NULL);
+        CREATE TABLE u2 (v TEXT NOT NULL)
+        """.trimIndent(),
+        "SELECT a = ANY (SELECT z.v FROM (SELECT v FROM u1 UNION SELECT v FROM u2) z) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `four levels of nested ANY sublinks separated by derived tables still respect the depth budget`() {
+      // Pins that buildSubqueryColumnNotNull's depth parameter is threaded through, not refilled to
+      // SUBLINK_ANALYSIS_DEPTH_BUDGET on every derived-table hop it now recurses through. The outer
+      // ANY_SUBLINK's own subselect reads its single column through a derived table (z), and that
+      // derived table's body contains the SAME four-level nested ANY_SUBLINK chain the un-wrapped
+      // "four levels...exceed the depth budget" test above already pins.
+      //
+      // If the derived-table hop refilled the budget instead of threading it (the reverted attempt's
+      // own mistake, per #257), v1's own chain would start at a fresh budget of 3 instead of the
+      // correctly-threaded 2, letting all four levels resolve and reporting this NOT NULL — verified
+      // by temporarily reverting the depth-threading change during development, which flips this
+      // test's expected answer to true. With threading in place, PostgreSQL's real (unbounded)
+      // answer is also NOT NULL for this specific shape (every column NOT NULL, safe operator), but
+      // Norm's own defensive bound intentionally truncates at this depth, matching the un-wrapped
+      // test's identical reasoning.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, a BOOLEAN NOT NULL);
+        CREATE TABLE u1 (v1 BOOLEAN NOT NULL);
+        CREATE TABLE u2 (v2 BOOLEAN NOT NULL);
+        CREATE TABLE u3 (v3 BOOLEAN NOT NULL);
+        CREATE TABLE u4 (v4 BOOLEAN NOT NULL)
+        """.trimIndent(),
+        """
+        SELECT a = ANY (
+          SELECT z.r FROM (
+            SELECT (v1 = ANY (
+              SELECT (v2 = ANY (
+                SELECT (v3 = ANY (
+                  SELECT v4 FROM u4
+                )) FROM u3
+              )) FROM u2
+            )) AS r FROM u1
+          ) z
+        ) AS result FROM t
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `a sublink's own WITH shadows an enclosing CTE of the same name with a different, wrong-answer body`() {
+      // Pins the ctelevelsup handling: the OUTER WITH c reads a nullable column (outer_source.v has
+      // no NOT NULL constraint), while the sublink's OWN WITH c — same name, different body — reads
+      // a NOT NULL column instead. Resolving against the wrong (outer) map would report this
+      // nullable; the correct, ctelevelsup-aware resolution reports it non-null. Verified live
+      // against PostgreSQL 18: inner_source is empty, so ANY over it is always false, never null,
+      // regardless of outer_source's own contents.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, a TEXT NOT NULL);
+        CREATE TABLE outer_source (v TEXT);
+        CREATE TABLE inner_source (v TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH c AS (SELECT v FROM outer_source)
+        SELECT a = ANY (
+          WITH c AS (SELECT v FROM inner_source) SELECT v FROM c
+        ) AS result FROM t
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `ANY sublink over a derived table reading a NULLIF-wrapped view column stays nullable`() {
+      // Confirms #256's fix is what carries this, not a coincidence: the view's OWN target-list
+      // expression (NULLIF) is analyzed, not the source column's name-matched constraint. Verified
+      // live against PostgreSQL 18: NULLIF(v, 'x') is null whenever v = 'x', so this stays nullable
+      // even though u.v itself is NOT NULL. See the paired NOT-NULL view test below.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, a TEXT NOT NULL);
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE VIEW uv AS SELECT NULLIF(v, 'x') AS v FROM u
+        """.trimIndent(),
+        "SELECT a = ANY (SELECT z.v FROM (SELECT v FROM uv) z) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `ANY sublink over a derived table reading a plain pass-through view column is non-null`() {
+      // Paired with the NULLIF view test above: a plain pass-through view column over a NOT NULL
+      // source is correctly non-null, proving the previous test's nullable result comes from
+      // NULLIF's own semantics, not from every view-backed derived table being conservatively
+      // widened regardless of its actual defining expression. Verified live against PostgreSQL 18.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, a TEXT NOT NULL);
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE VIEW pv AS SELECT v FROM u
+        """.trimIndent(),
+        "SELECT a = ANY (SELECT z.v FROM (SELECT v FROM pv) z) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `ALL sublink over a derived table stays nullable, the deliberate ALL_SUBLINK conservatism`() {
+      // #257 deliberately left ALL_SUBLINK's identical three-valued-logic shape alone (see the
+      // issue's own "also still conservative" section) — NodeTreeNullabilityAnalyzer's SubLink
+      // branch only special-cases subLinkType ANY, so this always falls through to nullable
+      // regardless of anything the #257 fix taught the ANY path to resolve. Verified live against
+      // PostgreSQL 18: u.v is NOT NULL and `<>` is a safe, total operator, so this never actually
+      // returns null — pinning that the conservatism is a deliberate, protected choice rather than
+      // an accident nobody would notice regressing.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL, a TEXT NOT NULL); CREATE TABLE u (v TEXT NOT NULL)",
+        "SELECT a <> ALL (SELECT z.v FROM (SELECT v FROM u) z) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
   }
 
   @Nested
@@ -4961,6 +5175,75 @@ class QueryAnalysisTest {
       )
       assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].name).isEqualTo("my\"Id")
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `a CTE body's own local WITH shadowing a sibling of the same name resolves against the local body`() {
+      // #257 follow-up: buildInnerCteNotNull resolved a DIRECT :rtable reference to a CTE against
+      // previouslyResolved (sibling CTEs) with no ctelevelsup check, so b's own local "c" (over
+      // nullable w.v) was shadowed by the OUTER sibling "c" (over NOT NULL u.v) and this reported
+      // notNull=true. Verified live against PostgreSQL 18: returns null once w has a NULL row,
+      // since b's own body reads its OWN local c, not the outer one.
+      val query = analyzeWithSchema(
+        "CREATE TABLE u (v TEXT NOT NULL); CREATE TABLE w (v TEXT)",
+        """
+        WITH c AS (SELECT v FROM u), b AS (WITH c AS (SELECT v FROM w) SELECT v FROM c)
+        SELECT v FROM b
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `an ANY sublink inside a CTE body resolves a shadowing local WITH, not the outer sibling`() {
+      // Same ctelevelsup hazard as the direct-reference test above, but reached through a SubLink
+      // inside b's own body instead of a plain target-list reference — this is what
+      // buildAnalyzer's `resolvedCtes = ownResolvedCtes` (not previouslyResolved) at
+      // buildCteBodyAnalyzer's call site protects. Verified live against PostgreSQL 18: returns
+      // null once w has a NULL row and t.a matches no non-null row of b's OWN local sib.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, a TEXT NOT NULL);
+        CREATE TABLE u (v TEXT NOT NULL);
+        CREATE TABLE w (v TEXT)
+        """.trimIndent(),
+        """
+        WITH sib AS (SELECT v FROM u),
+             b AS (WITH sib AS (SELECT v FROM w) SELECT t.a = ANY (SELECT v FROM sib) AS r FROM t)
+        SELECT r FROM b
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `an ANY sublink inside a CTE body referencing an outer sibling is conservatively nullable`() {
+      // Known, deliberate conservatism: sib is declared OUTSIDE b, at the SAME :cteList b itself
+      // is declared in. A reference to it from a SubLink nested inside b's own body sits at
+      // :ctelevelsup 2 relative to that SubLink (b's own ctequery is already one level down from
+      // the outer WITH, and the SubLink is a further level down from that — verified live against
+      // real PostgreSQL 18 node-tree text) — TWO levels up, not the one level
+      // buildCteBodyAnalyzer's own `resolvedCtes` (queryBlock's OWN directly-declared CTEs) can
+      // reach. PostgreSQL itself never returns null here: u.v is NOT NULL and `=` is a safe, total
+      // operator, so this is a genuine (if narrow) loss of precision, not a soundness question —
+      // recovering it would mean threading a whole STACK of enclosing-CTE scopes (one per query
+      // level) through every buildAnalyzer/buildSubqueryColumnNotNull/analyzeQueryBlockNullability
+      // call site, rather than the single flat map this class carries today, so it is left
+      // conservative rather than attempted as a small follow-on to #257.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, a TEXT NOT NULL);
+        CREATE TABLE u (v TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH sib AS (SELECT v FROM u), b AS (SELECT t.a = ANY (SELECT v FROM sib) AS r FROM t)
+        SELECT r FROM b
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].notNull).isFalse()
     }
   }

@@ -4,6 +4,7 @@ import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.util.UUID
 import kotlin.Any
+import kotlin.Boolean
 import kotlin.Long
 import kotlin.String
 import kotlin.Unit
@@ -171,4 +172,39 @@ public class PostgresQueries(
   override fun <T> clearAccountNote(mapper: (note: String?) -> T): Many<T> = clearAccountNote(mapper, driver::queryMany)
 
   override fun <T> clearAccountNoteDynamically(mapper: (note: String?) -> T): Query<T> = clearAccountNote(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> departmentNameMatchesAnyEmployeeViaDerivedTable(mapper: (name_matches: Boolean) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |SELECT department.name = ANY (SELECT names.full_name FROM (SELECT full_name FROM employee) names) AS name_matches
+        |FROM department
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getBoolean(1),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> departmentNameMatchesAnyEmployeeViaDerivedTable(mapper: (name_matches: Boolean) -> T): Many<T> = departmentNameMatchesAnyEmployeeViaDerivedTable(mapper, driver::queryMany)
+
+  override fun <T : Any> departmentNameMatchesAnyEmployeeViaDerivedTableDynamically(mapper: (name_matches: Boolean) -> T): Query<T> = departmentNameMatchesAnyEmployeeViaDerivedTable(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> departmentNameMatchesAnyEmployeeViaCte(mapper: (name_matches: Boolean) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH employee_names AS (SELECT full_name FROM employee)
+        |SELECT department.name = ANY (SELECT full_name FROM employee_names) AS name_matches
+        |FROM department
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getBoolean(1),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> departmentNameMatchesAnyEmployeeViaCte(mapper: (name_matches: Boolean) -> T): Many<T> = departmentNameMatchesAnyEmployeeViaCte(mapper, driver::queryMany)
+
+  override fun <T : Any> departmentNameMatchesAnyEmployeeViaCteDynamically(mapper: (name_matches: Boolean) -> T): Query<T> = departmentNameMatchesAnyEmployeeViaCte(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
 }
