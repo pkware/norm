@@ -3053,17 +3053,170 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `ALL sublink over a derived table stays nullable, the deliberate ALL_SUBLINK conservatism`() {
-      // #257 deliberately left ALL_SUBLINK's identical three-valued-logic shape alone (see the
-      // issue's own "also still conservative" section) — NodeTreeNullabilityAnalyzer's SubLink
-      // branch only special-cases subLinkType ANY, so this always falls through to nullable
-      // regardless of anything the #257 fix taught the ANY path to resolve. Verified live against
-      // PostgreSQL 18: u.v is NOT NULL and `<>` is a safe, total operator, so this never actually
-      // returns null — pinning that the conservatism is a deliberate, protected choice rather than
-      // an accident nobody would notice regressing.
+    fun `ALL sublink over a derived table is non-null, ALL now carries the same #257 machinery as ANY`() {
+      // This test USED to pin the opposite answer (deliberately nullable), reasoning that
+      // NodeTreeNullabilityAnalyzer's SubLink branch only special-cased ANY. That reasoning was
+      // built on a second, independent bug: PgNodeExpression.SUBLINK_TYPE_ALL was itself the wrong
+      // constant (3, ROWCOMPARE_SUBLINK's real value, not ALL_SUBLINK's real value of 1), so real
+      // ALL sublinks never matched it in the first place — the old nullable answer was accidental
+      // conservatism from a name collision, not a deliberate, protected choice. ALL_SUBLINK is now
+      // whitelisted alongside ANY under the identical three-valued-logic proof (see
+      // NodeTreeNullabilityAnalyzer's SubLink branch), so it inherits ANY's derived-table resolution
+      // for free. Verified live against PostgreSQL 18: u.v is NOT NULL and `<>` is a safe, total
+      // operator, so this genuinely never returns null.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL, a TEXT NOT NULL); CREATE TABLE u (v TEXT NOT NULL)",
         "SELECT a <> ALL (SELECT z.v FROM (SELECT v FROM u) z) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `ALL sublink over a plain NOT NULL table is non-null, the load-bearing enum-mapping pin`() {
+      // The load-bearing pin for PgNodeExpression.SUBLINK_TYPE_ALL's corrected value: under the OLD
+      // (wrong) constant 3, a real ALL_SUBLINK (subLinkType 1, verified live on PostgreSQL 18.4 by
+      // dumping this exact query's prosqlbody node tree) never matched the constant at all, so this
+      // fell through to nullable unconditionally, regardless of anything else about the query. This
+      // test FAILS under that old constant and PASSES only once SUBLINK_TYPE_ALL is corrected to 1
+      // AND NodeTreeNullabilityAnalyzer's SubLink branch whitelists it — it pins the enum mapping
+      // itself, not a hand-transcribed belief about it. Verified live against PostgreSQL 18.4: `a
+      // <> ALL (SELECT v FROM u)` is `true` for every row of `t`, never `null`, when `u` is empty or
+      // every row's `v` differs from `a`.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE u (v TEXT NOT NULL)",
+        "SELECT a <> ALL (SELECT v FROM u) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `less-than ALL sublink over a plain NOT NULL table is non-null`() {
+      // Same shape as the `<>` pin above, with a different safe-listed operator (`<` over text),
+      // confirming the proof is not somehow specific to `<>`. Verified live against PostgreSQL 18.4.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE u (v TEXT NOT NULL)",
+        "SELECT a < ALL (SELECT v FROM u) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `ALL sublink over an enclosing CTE is non-null, the #257 machinery now carrying ALL too`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE u (v TEXT NOT NULL)",
+        "WITH c AS (SELECT v FROM u) SELECT a <> ALL (SELECT v FROM c) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `ALL sublink over a subquery with a nullable column stays nullable, the ALL three-valued-logic hazard`() {
+      // #239's own three-valued-logic hazard, now reached through ALL_SUBLINK instead of
+      // ANY_SUBLINK: `x op ALL (S)` is NULL, not TRUE, when some row's comparison is NULL and no
+      // row's comparison is FALSE. Verified live against PostgreSQL 18.4: `CREATE TABLE t (id INT
+      // PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE w (v TEXT); INSERT INTO t VALUES (1, 'x');
+      // INSERT INTO w VALUES (NULL); SELECT a <> ALL (SELECT v FROM w) FROM t;` is NULL — w's only
+      // row has v IS NULL, so `a <> v` for that row is itself NULL, and no other row exists to make
+      // the whole comparison FALSE.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE w (v TEXT)",
+        "SELECT a <> ALL (SELECT v FROM w) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `ALL sublink over a UNION subquery is nullable, the conservative set-operation bail-out`() {
+      // Mirrors the existing plain-UNION bail-out test for ANY: buildSubqueryColumnNotNull's
+      // hasSetOperations guard applies identically regardless of which sublink type reuses it.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL, a TEXT NOT NULL);
+        CREATE TABLE u1 (v TEXT NOT NULL);
+        CREATE TABLE u2 (v TEXT NOT NULL)
+        """.trimIndent(),
+        "SELECT a <> ALL (SELECT v FROM u1 UNION SELECT v FROM u2) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `multi-column ALL sublink is nullable even when every column is NOT NULL, the row-comparison form`() {
+      // (a, id) <> ALL (SELECT v, 1 FROM u)'s :testexpr is a BOOLEXPR combining one OPEXPR per
+      // column, exactly like the multi-column IN form above — no single top-level operator OID this
+      // rule can trust, so testExpressionOperatorOid is null and the proof fails automatically.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a INT NOT NULL, id INT NOT NULL); CREATE TABLE u (v INT NOT NULL)",
+        "SELECT (a, id) <> ALL (SELECT v, 1 FROM u) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `multi-column ALL sublink is nullable even when every column is NOT NULL, the ROWCOMPAREEXPR form`() {
+      // Unlike the `<>`/`=` row-comparison forms above (a BOOLEXPR testexpr), `(a, id) < ALL (SELECT
+      // v, 1 FROM u)` compiles its testexpr to a ROWCOMPAREEXPR instead — verified live on
+      // PostgreSQL 18.4 by dumping this exact query's ev_action: `{ROWCOMPAREEXPR :cmptype 1 :opnos
+      // (o 97 97) ... :largs (...) :rargs (...)}`, no `:location` field of its own. This parser's
+      // `when` dispatch does not recognize ROWCOMPAREEXPR, so it parses to Unknown; that alone
+      // already makes testExpressionOperatorOid null (no OPEXPR to cast) and outerOperand null (no
+      // `:args` field — ROWCOMPAREEXPR carries `:largs`/`:rargs` instead), so the proof fails on both
+      // legs, independently of the BOOLEXPR mechanism the `<>`/`=` forms use.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (a INT NOT NULL, id INT NOT NULL); CREATE TABLE u (v INT NOT NULL)",
+        "SELECT (a, id) < ALL (SELECT v, 1 FROM u) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `multi-column ALL sublink is nullable for every ROWCOMPAREEXPR-compiled comparison operator`() {
+      // Same ROWCOMPAREEXPR mechanism as the `<` case above, pinned for the remaining three
+      // row-comparison operators PostgreSQL compiles the same way (verified live on PostgreSQL
+      // 18.4): `<=`, `>`, `>=`.
+      val schema = "CREATE TABLE t (a INT NOT NULL, id INT NOT NULL); CREATE TABLE u (v INT NOT NULL)"
+      listOf("<=", ">", ">=").forEach { operator ->
+        val query = analyzeWithSchema(
+          schema,
+          "SELECT (a, id) $operator ALL (SELECT v, 1 FROM u) AS result FROM t",
+        )
+        assertThat(query.columns).hasSize(1)
+        assertThat(query.columns[0].notNull).isFalse()
+      }
+    }
+
+    @Test
+    fun `ALL sublink is nullable when the comparison operator is not on the never-null safe-list`() {
+      // Mirrors the equivalent ANY test above: jsonb has a real, STRICT `=` operator, but it is not
+      // on NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES, so even with a non-null outer operand
+      // and a provably non-null single-column subquery result, this must stay nullable.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL, a JSONB NOT NULL); CREATE TABLE u (v JSONB NOT NULL)",
+        "SELECT a = ALL (SELECT v FROM u) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `ROWCOMPARE sublink, a row comparison against a one-row subquery, stays nullable`() {
+      // (a, id) < (SELECT v, 1 FROM u), with no ALL/ANY keyword, compiles to a ROWCOMPARE_SUBLINK
+      // (subLinkType 3 — verified live on PostgreSQL 18.4 by dumping this exact query's prosqlbody
+      // node tree), genuinely different from ALL/ANY: an EMPTY subquery yields NULL for ROWCOMPARE,
+      // not TRUE/FALSE, so no combination of operand/operator/column conditions can rescue it — it
+      // is deliberately excluded from isNonNull's SubLink proof. Verified live against PostgreSQL
+      // 18.4: with `u` empty, `(a, id) < (SELECT v, 1 FROM u)` is NULL, not FALSE.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL, a INT NOT NULL); CREATE TABLE u (v INT NOT NULL)",
+        "SELECT (a, id) < (SELECT v, 1 FROM u) AS result FROM t",
       )
       assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].notNull).isFalse()

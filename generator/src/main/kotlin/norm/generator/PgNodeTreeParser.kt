@@ -649,16 +649,26 @@ internal class PgNodeTreeParser {
 
   private fun parseSubLink(text: String): PgNodeExpression.SubLink {
     val subLinkType = extractIntField(text, ":subLinkType") ?: error("Missing :subLinkType in SUBLINK node")
-    // For ANY sublinks (IN operator), extract the outer operand from the testexpr's first argument,
-    // and the testexpr's own operator OID (null for a row-comparison BOOLEXPR testexpr — see
-    // PgNodeExpression.SubLink.testExpressionOperatorOid's KDoc).
-    val testExprBlock = if (subLinkType == PgNodeExpression.SUBLINK_TYPE_ANY ||
-      subLinkType == PgNodeExpression.SUBLINK_TYPE_ALL
-    ) {
-      extractFieldExpression(text, ":testexpr")
-    } else {
-      null
-    }
+    // :testexpr is extracted UNCONDITIONALLY, regardless of subLinkType — not merely for ANY/ALL.
+    // outerOperand (this field's first argument) feeds three consumers beyond isNonNull's own
+    // ANY/ALL proof below: NodeTreeNullabilityAnalyzer.safetyWalkChildren,
+    // NodeTreeNullabilityAnalyzer.containsVarOutsideRelation, and GroupRteSubstitution's
+    // Var-substitution walk. This is uniformity and future-proofing, not the closing of a live hole
+    // today: verified live on PostgreSQL 18.4 across all eight SubLinkType values, EXISTS/EXPR/
+    // MULTIEXPR/ARRAY/CTE sublinks all emit `:testexpr <>` (absent), and ROWCOMPARE_SUBLINK's own
+    // ROWCOMPAREEXPR testexpr carries no `:args` field at all (its operands are under `:largs`/
+    // `:rargs` instead — see PgNodeTreeParserTest's own ROWCOMPARE fixture) and is not a node type
+    // this parser's own `when` dispatch recognizes, so it parses to Unknown regardless. outerOperand
+    // is therefore `null` for every sublink type this analyzer does not already special-case, gated
+    // extraction or not — those three consumers see nothing new today. What unconditional extraction
+    // buys is robustness against a FUTURE SubLinkType (or a future PostgreSQL version reshaping an
+    // existing one) that DOES carry a real single-argument testexpr this parser could read: gating by
+    // subLinkType would silently keep that hidden from all three consumers with no compile-time or
+    // test-time signal, whereas unconditional extraction makes it visible automatically the moment
+    // this parser's `when` dispatch (or a future extraction rule) learns to read it. isNonNull's own
+    // ANY/ALL proof stays gated on subLinkType below regardless, so this change alone cannot make any
+    // sublink provably non-null.
+    val testExprBlock = extractFieldExpression(text, ":testexpr")
     val outerOperand = testExprBlock?.let { testExpr ->
       extractArgListSection(testExpr, ":args")?.let { splitBraceBlocks(it).firstOrNull()?.let(::parseExpression) }
     }
