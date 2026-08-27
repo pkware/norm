@@ -594,33 +594,18 @@ internal class NodeTreeNullabilityAnalyzer(
           // computed above; the two OID predicates are cheap map lookups; isSubLinkSubqueryColumnNotNull
           // is the only leg that re-enters full query-block analysis, so it is checked last.
           //
-          // ALL_SUBLINK (`x op ALL (subquery)`) gets the IDENTICAL three-condition proof, because it
-          // is the dual of ANY_SUBLINK over OR/AND: `x op ALL (S)` is TRUE if `S` is empty or every
-          // comparison is true, FALSE if any comparison is false, and NULL only when some comparison
-          // is NULL and none is false. The same three conditions that rule out a NULL comparison for
-          // ANY rule it out here too, and — unlike ANY, where an empty subquery is FALSE, itself
-          // non-null — an empty subquery for ALL is TRUE, also non-null, so no empty-subquery case
-          // needs separate handling either. `NOT IN` desugars to a `BOOLEXPR not` wrapping an
-          // ANY_SUBLINK, verified live, never an ALL_SUBLINK, so a negation can never hide inside an
-          // ALL testexpr this proof sees. The multi-column row-comparison ALL form fails this proof
-          // automatically, but not by one single mechanism — verified live on PostgreSQL 18.4, it
-          // splits by operator: `(a, id) <> ALL (...)` and `(a, id) = ALL (...)` compile their
-          // testexpr to a BOOLEXPR (`:boolop or`/`and` respectively) combining one OPEXPR per
-          // column, the same shape as ANY's own row-comparison form, so testExpressionOperatorOid is
-          // null and the proof fails on that leg. `(a, id) < ALL (...)` (and `<=`/`>`/`>=`) instead
-          // compile to a ROWCOMPAREEXPR testexpr — a node type this parser's own `when` dispatch
-          // does not recognize, so it parses as Unknown; testExpressionOperatorOid is null for the
-          // same structural reason (no top-level OPEXPR to cast), and outerOperand is null too,
-          // since ROWCOMPAREEXPR carries its operands under `:largs`/`:rargs`, not `:args` — see
-          // PgNodeTreeParser.parseSubLink's own KDoc. Either way, the answer is nullable; only the
-          // path to that answer differs by operator.
+          // ALL_SUBLINK (`x op ALL (subquery)`) gets the IDENTICAL proof, being ANY's dual over AND
+          // instead of OR: `x op ALL (S)` is NULL only when some comparison is NULL and none is FALSE,
+          // which the same three conditions rule out. An empty S is TRUE for ALL (FALSE for ANY) —
+          // non-null either way, so no empty-subquery case needs handling. `NOT IN` desugars to a
+          // BOOLEXPR not around an ANY_SUBLINK, never an ALL_SUBLINK, so a negation cannot hide inside
+          // an ALL testexpr. The multi-column row-comparison ALL forms fail automatically, because
+          // testExpressionOperatorOid is null for both their shapes — see
+          // PgNodeExpression.SubLink.testExpressionOperatorOid.
           //
-          // ROWCOMPARE_SUBLINK (a row comparison against a one-row subquery, e.g. `(a, id) < (SELECT
-          // v, 1 FROM u)`, no `ALL`/`ANY` keyword) is deliberately NOT included here even though it
-          // shares SUBLINK's shape: an EMPTY subquery yields NULL for ROWCOMPARE, not TRUE/FALSE —
-          // there being no row to compare against is not decidable to any of TRUE or FALSE the way
-          // ALL's and ANY's empty-subquery cases are — so no combination of the three conditions
-          // above can rescue it, and it must stay nullable.
+          // ROWCOMPARE_SUBLINK (`(a, id) < (SELECT v, 1 FROM u)`, no ALL/ANY keyword) is excluded
+          // despite sharing SUBLINK's shape: an EMPTY subquery yields NULL for ROWCOMPARE, so no
+          // combination of the three conditions can rescue it.
           (
             (
               expression.subLinkType == PgNodeExpression.SUBLINK_TYPE_ANY ||
@@ -683,38 +668,22 @@ internal class NodeTreeNullabilityAnalyzer(
   }
 
   /**
-   * Evaluates nullability of a `JSON_OBJECT`/`JSON_ARRAY`/`JSON_OBJECTAGG`/`JSON_ARRAYAGG`/`JSON()`/
-   * `JSON_SCALAR`/`JSON_SERIALIZE` constructor call, branching on
-   * [PgNodeExpression.JsonConstructorExpr.type].
+   * Evaluates a `JSON_OBJECT`/`JSON_ARRAY`/`JSON_OBJECTAGG`/`JSON_ARRAYAGG`/`JSON()`/`JSON_SCALAR`/
+   * `JSON_SERIALIZE` constructor, branching on [PgNodeExpression.JsonConstructorExpr.type].
    *
-   * - [PgNodeExpression.JSON_CONSTRUCTOR_TYPE_OBJECT]/[PgNodeExpression.JSON_CONSTRUCTOR_TYPE_ARRAY]:
-   *   unconditionally non-null, INCLUDING the zero-argument forms (`JSON_OBJECT()`, `JSON_ARRAY()`)
-   *   and a `NULL ON NULL` clause (e.g. `JSON_OBJECT('a': NULL NULL ON NULL)`) — `ABSENT ON NULL`/
-   *   `NULL ON NULL` only change the JSON *document's content* (whether a key with a JSON-`null`
-   *   value is omitted or kept), never whether the SQL-level result itself is `null`. Verified live
-   *   (PostgreSQL 18.4): `JSON_OBJECT() IS NULL`, `JSON_ARRAY() IS NULL`, and
-   *   `JSON_OBJECT('a': NULL NULL ON NULL) IS NULL` are all `false`. `:absent_on_null`/`:unique` are
-   *   therefore deliberately not parsed onto [PgNodeExpression.JsonConstructorExpr] at all — this
-   *   rule has no use for them.
-   * - [PgNodeExpression.JSON_CONSTRUCTOR_TYPE_OBJECTAGG]/[PgNodeExpression.JSON_CONSTRUCTOR_TYPE_ARRAYAGG]:
-   *   [PgNodeExpression.JsonConstructorExpr.arguments] is ALWAYS EMPTY for these two types (verified
-   *   live — see that property's own KDoc); the underlying [PgNodeExpression.Aggref] or
-   *   [PgNodeExpression.WindowFunc] lives in [PgNodeExpression.JsonConstructorExpr.function] instead,
-   *   so this recurses into THAT rather than requiring (vacuously true) `arguments.all(recurse)` over
-   *   an empty list — exactly the same unsound shape as the bug this method replaces, just narrower.
-   *   Routing through [PgNodeExpression.JsonConstructorExpr.function] reaches the EXISTING [isNonNull]
-   *   `Aggref`/`WindowFunc` rules, which already report `false` (nullable) for an aggregate over an
-   *   empty group — verified live: `JSON_ARRAYAGG` over an empty group `IS NULL` is `true`.
-   * - [PgNodeExpression.JSON_CONSTRUCTOR_TYPE_PARSE] (`JSON(expr)`)/
-   *   [PgNodeExpression.JSON_CONSTRUCTOR_TYPE_SCALAR] (`JSON_SCALAR(expr)`)/
-   *   [PgNodeExpression.JSON_CONSTRUCTOR_TYPE_SERIALIZE] (`JSON_SERIALIZE(expr)`): non-null only when
-   *   there IS an argument and every argument is non-null — strict, single-argument constructs.
-   *   Verified live (PostgreSQL 18.4) for all three: `JSON_SERIALIZE(NULL::jsonb) IS NULL`,
-   *   `JSON(NULL::text) IS NULL`, and `JSON_SCALAR(NULL::text) IS NULL` are all `true`. This is the
-   *   fix for the original bug report: `JSON_SERIALIZE` was previously reported unconditionally
-   *   non-null regardless of its argument's own nullability.
-   * - Any other code falls through to `false` (nullable), the safe default for a `JsonConstructorType`
-   *   this analyzer does not recognize.
+   * - `OBJECT`/`ARRAY`: unconditionally non-null, including the zero-argument forms. `ABSENT ON
+   *   NULL`/`NULL ON NULL` only change the JSON document's CONTENT — whether a key with a JSON-`null`
+   *   value is omitted or kept — never whether the SQL-level result is `null`, so `:absent_on_null`
+   *   and `:unique` are deliberately not parsed at all.
+   * - `OBJECTAGG`/`ARRAYAGG`: [PgNodeExpression.JsonConstructorExpr.arguments] is always EMPTY for
+   *   these two, so an arguments-based rule would be vacuously true; the underlying
+   *   [PgNodeExpression.Aggref]/[PgNodeExpression.WindowFunc] in
+   *   [PgNodeExpression.JsonConstructorExpr.function] is recursed into instead, reaching the existing
+   *   rules that already report an aggregate over an empty group nullable.
+   * - `PARSE`/`SCALAR`/`SERIALIZE`: strict single-argument constructs, non-null only when there IS an
+   *   argument and every argument is non-null. This is the original bug report: `JSON_SERIALIZE` was
+   *   reported non-null regardless of its argument.
+   * - Any other code falls through to `false` (nullable), the safe default.
    */
   private fun evaluateJsonConstructorExpr(
     expression: PgNodeExpression.JsonConstructorExpr,
@@ -742,10 +711,8 @@ internal class NodeTreeNullabilityAnalyzer(
         expression.onError,
       )
 
-    // JSON_TABLE_OP (3) has no branch here — its JsonExpr nodes never reach this method in the
-    // first place; see JSON_TABLE_OP's own KDoc. If it ever were reached, the `else -> false` below
-    // is the correct, safe answer for a code this method has no live-verified rule for.
-
+    // JSON_TABLE_OP (3) has no branch: its JsonExpr nodes never reach this method — see
+    // PgNodeExpression.JSON_TABLE_OP. The `else -> false` below would be the safe answer anyway.
     PgNodeExpression.JSON_QUERY_OP -> {
       val emptyOk = isKnownNonNullJsonBehavior(expression.onEmpty) && expression.onEmptyDefault?.let(recurse) != false
       val errorOk = isKnownNonNullJsonBehavior(expression.onError) && expression.onErrorDefault?.let(recurse) != false

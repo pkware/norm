@@ -650,25 +650,13 @@ internal class PgNodeTreeParser {
 
   private fun parseSubLink(text: String): PgNodeExpression.SubLink {
     val subLinkType = extractIntField(text, ":subLinkType") ?: error("Missing :subLinkType in SUBLINK node")
-    // :testexpr is extracted UNCONDITIONALLY, regardless of subLinkType — not merely for ANY/ALL.
-    // outerOperand (this field's first argument) feeds three consumers beyond isNonNull's own
-    // ANY/ALL proof below: NodeTreeNullabilityAnalyzer.safetyWalkChildren,
-    // NodeTreeNullabilityAnalyzer.containsVarOutsideRelation, and GroupRteSubstitution's
-    // Var-substitution walk. This is uniformity and future-proofing, not the closing of a live hole
-    // today: verified live on PostgreSQL 18.4 across all eight SubLinkType values, EXISTS/EXPR/
-    // MULTIEXPR/ARRAY/CTE sublinks all emit `:testexpr <>` (absent), and ROWCOMPARE_SUBLINK's own
-    // ROWCOMPAREEXPR testexpr carries no `:args` field at all (its operands are under `:largs`/
-    // `:rargs` instead — see PgNodeTreeParserTest's own ROWCOMPARE fixture) and is not a node type
-    // this parser's own `when` dispatch recognizes, so it parses to Unknown regardless. outerOperand
-    // is therefore `null` for every sublink type this analyzer does not already special-case, gated
-    // extraction or not — those three consumers see nothing new today. What unconditional extraction
-    // buys is robustness against a FUTURE SubLinkType (or a future PostgreSQL version reshaping an
-    // existing one) that DOES carry a real single-argument testexpr this parser could read: gating by
-    // subLinkType would silently keep that hidden from all three consumers with no compile-time or
-    // test-time signal, whereas unconditional extraction makes it visible automatically the moment
-    // this parser's `when` dispatch (or a future extraction rule) learns to read it. isNonNull's own
-    // ANY/ALL proof stays gated on subLinkType below regardless, so this change alone cannot make any
-    // sublink provably non-null.
+    // :testexpr is extracted unconditionally, not just for ANY/ALL: outerOperand also feeds
+    // NodeTreeNullabilityAnalyzer.safetyWalkChildren/containsVarOutsideRelation and
+    // GroupRteSubstitution's Var walk. Every other sublink type either emits no :testexpr or emits a
+    // ROWCOMPAREEXPR with no readable :args, so those consumers see nothing new today; what this buys
+    // is that a future SubLinkType carrying a real testexpr becomes visible automatically instead of
+    // being silently hidden by a subLinkType gate. isNonNull's ANY/ALL proof stays gated below, so
+    // this alone cannot make any sublink provably non-null.
     val testExprBlock = extractFieldExpression(text, ":testexpr")
     val outerOperand = testExprBlock?.let { testExpr ->
       extractArgListSection(testExpr, ":args")?.let { splitBraceBlocks(it).firstOrNull()?.let(::parseExpression) }
@@ -798,43 +786,22 @@ internal class PgNodeTreeParser {
   }
 
   /**
-   * Parses a `{JSONVALUEEXPR ...}` block — Postgres's wrapper around an argument to a JSON
-   * constructor that needs `FORMAT`-aware coercion — by transparently unwrapping to its
-   * `:formatted_expr` child, rather than modeling it as its own [PgNodeExpression] variant.
+   * Parses a `{JSONVALUEEXPR ...}` block — Postgres's wrapper around a JSON-constructor argument
+   * needing `FORMAT`-aware coercion — by transparently unwrapping to its `:formatted_expr` child
+   * rather than modeling it as its own [PgNodeExpression] variant.
    *
-   * Verified live (PostgreSQL 17 and 18) exactly which arguments wrap this way, rather than assumed
-   * from the syntax alone: a `JSON_OBJECT`/`JSON_ARRAY` value with an explicit `FORMAT JSON` clause
-   * wraps; `JSON()`'s single argument ALWAYS wraps, regardless of its own type — even `JSON(a_jsonb_column)`
-   * wraps, since `JSON()`'s own semantics always route through `FORMAT`-aware parsing; `JSON_SCALAR`'s
-   * single argument never wraps (its argument is a plain SQL scalar being converted to a JSON scalar,
-   * not FORMAT-parsed at all). `JSON_SERIALIZE`'s single argument wraps ONLY when that argument's own
-   * type is not already `jsonb` — `JSON_SERIALIZE(a_jsonb_column)` and
-   * `JSON_SERIALIZE(a_jsonb_column RETURNING text)` do NOT wrap (their `:args` holds the bare `VAR`
-   * directly), while `JSON_SERIALIZE(a_text_column)` and `JSON_SERIALIZE(a_text_column FORMAT JSON)`
-   * both DO wrap (with or without an explicit `FORMAT JSON` clause — the wrapping is driven by the
-   * argument's TYPE needing coercion to `jsonb`, not by the clause's presence).
+   * Load-bearing, not defensive: without this case a `{JSONVALUEEXPR ...}` parses to
+   * [PgNodeExpression.Unknown], which [NodeTreeNullabilityAnalyzer.isNonNull] always treats as
+   * nullable, so `JSON(a_not_null_column)`/`JSON_SERIALIZE(a_not_null_column)` would be reported
+   * nullable regardless of the source column's constraint. `JSON()`'s single argument always wraps;
+   * `JSON_SERIALIZE`'s wraps only when its argument is not already `jsonb`; `JSON_SCALAR`'s never does.
    *
-   * This is NOT merely defensive: without this case, a `{JSONVALUEEXPR ...}` block falls through
-   * [parseExpression]'s `when` to [PgNodeExpression.Unknown], which
-   * [NodeTreeNullabilityAnalyzer.isNonNull] always treats as nullable — meaning
-   * `JSON(a_not_null_text_column)`/`JSON_SERIALIZE(a_not_null_text_column)` would ALWAYS be reported
-   * nullable regardless of the source column's own `NOT NULL` constraint, the exact kind of spurious
-   * widening this project treats as a bug (see [PgNodeExpression.JsonConstructorExpr]'s own KDoc for
-   * how [PgNodeExpression.JSON_CONSTRUCTOR_TYPE_PARSE]/[PgNodeExpression.JSON_CONSTRUCTOR_TYPE_SERIALIZE]
-   * recurse into [PgNodeExpression.JsonConstructorExpr.arguments]).
-   *
-   * `:formatted_expr`, not `:raw_expr`, is the correct child to recurse into: it is the value this
-   * node actually contributes to the enclosing expression (Postgres coerces `:raw_expr` through it,
-   * typically via a [PgNodeExpression.CoerceViaIo]) — verified live that `:formatted_expr`'s own leaf
-   * faithfully mirrors `:raw_expr`'s nullability in every case dumped (a `NULL` `:raw_expr` `CONST`
-   * is wrapped by a `COERCEVIAIO` around an equally-`NULL` `CONST` in `:formatted_expr`, and a `VAR`
-   * `:raw_expr` is mirrored identically), so [PgNodeExpression.CoerceViaIo]'s own, already-existing
-   * strict-propagation rule in [NodeTreeNullabilityAnalyzer.isNonNull] carries the answer through
-   * correctly without this method needing any special-casing of its own.
+   * `:formatted_expr`, not `:raw_expr`, is the value this node contributes to the enclosing
+   * expression; Postgres coerces `:raw_expr` through it, typically via a [PgNodeExpression.CoerceViaIo]
+   * whose existing strict-propagation rule carries nullability through unchanged.
    *
    * @return [PgNodeExpression.Unknown]`("PARSE_ERROR")` if `:formatted_expr` is absent or malformed —
-   *   this class never throws (see the class-level KDoc), and this degrades toward nullable, never
-   *   toward a confidently wrong `NOT NULL`, the same way every other malformed-input fallback here does.
+   *   this class never throws (see the class-level KDoc), and this degrades toward nullable.
    */
   private fun parseJsonValueExpr(text: String): PgNodeExpression {
     val formattedExpression = extractFieldExpression(text, ":formatted_expr")
@@ -880,30 +847,14 @@ internal class PgNodeTreeParser {
    * Extracts the content of the `(...)` list after [fieldName] — a direct field of the node [text]
    * itself represents, at brace depth 1 — without parsing it.
    *
-   * Depth-one-awareness (via [findMarkerAtDepthOne], the same helper [extractFieldExpression] uses)
-   * is load-bearing here too, not merely for [extractFieldExpression]'s own `{...}`-valued fields:
-   * when [text]'s own [fieldName] value is EMPTY (`fieldName <>`, no `(` at all) but [text] ALSO
-   * contains a deeper, unrelated node with its own `fieldName (` — e.g. a `JSONCONSTRUCTOREXPR` with
-   * an empty `:args <>` whose `:func` holds an `AGGREF` carrying its OWN, real `:args (...)` list
-   * (verified live: PostgreSQL's `JSON_OBJECTAGG`/`JSON_ARRAYAGG` always shape a node this way — see
-   * [PgNodeExpression.JsonConstructorExpr.arguments]'s own KDoc) — a plain, non-depth-aware
-   * `text.indexOf("$fieldName (")` finds that UNRELATED nested list instead, silently attributing
-   * the inner `AGGREF`'s own arguments to the outer node as if they were its own. A prior version of
-   * this method used exactly that plain scan; caught by a unit test asserting
-   * [PgNodeExpression.JsonConstructorExpr.arguments] is genuinely empty for a `JSON_OBJECTAGG`-shaped
-   * node, which failed by returning the `AGGREF`'s own (unparseable-here, `TARGETENTRY`-wrapped)
-   * arguments instead.
-   *
-   * [findMarkerAtDepthOne] itself still scans for the literal marker text, not a truly structural
-   * token — a depth-1 string VALUE that happens to read exactly `"$fieldName "` (e.g. `:args`) would,
-   * in principle, be indistinguishable from a real field marker to this scan. This is unreachable
-   * from genuine PostgreSQL output, the same pre-existing property [extractFieldExpression]'s own
-   * depth-one scan already relies on (see commit `6ce3856`): `outToken` backslash-escapes the space
-   * inside any string value before a field marker's own un-escaped space could ever appear, and for
-   * an XML name specifically (the one syntactic position PostgreSQL lets a user embed an arbitrary
-   * string that could otherwise resemble `:args`), PostgreSQL further maps a literal `:` to
-   * `_x003A_` — verified live: `XMLELEMENT(NAME ":args", ...)` serializes as `:name _x003A_args`, not
-   * a bare `:args`.
+   * Depth-one-awareness (via [findMarkerAtDepthOne]) is load-bearing here, not only for
+   * [extractFieldExpression]'s `{...}`-valued fields: when [text]'s own [fieldName] value is EMPTY
+   * (`fieldName <>`, no `(` at all) but [text] also contains a deeper node carrying its own
+   * `fieldName (` — a `JSONCONSTRUCTOREXPR` with an empty `:args <>` whose `:func` holds an `AGGREF`
+   * with a real `:args (...)`, exactly how `JSON_OBJECTAGG`/`JSON_ARRAYAGG` are shaped — a plain
+   * `text.indexOf("$fieldName (")` finds that unrelated nested list and silently attributes the inner
+   * node's arguments to the outer one. See [extractFieldExpression] for why scanning for literal
+   * marker text is nonetheless safe against a string value that resembles a field marker.
    *
    * @return `null` if the field is absent at depth 1, or its value is `<>` (empty/absent in
    *   `pg_node_tree`), or the value at that position is not actually a `(...)` list.
