@@ -499,4 +499,146 @@ class PgNodeTreeParserTest {
       assertThat(reference.ctelevelsup).isEqualTo(0)
     }
   }
+
+  @Nested
+  inner class JsonConstructorExprParsing {
+
+    @Test
+    fun `type and args are read from a JSON_OBJECT-shaped node, func stays null`() {
+      // Fixture trimmed from a live PostgreSQL 18.4 pg_rewrite.ev_action dump of
+      // `CREATE VIEW v AS SELECT json_object('a' VALUE 1) AS c1` — :func is `<>` (absent) for this
+      // type, verified live.
+      val text = "{JSONCONSTRUCTOREXPR :type 1 :args (" +
+        "{CONST :consttype 705 :constisnull false :location -1} " +
+        "{CONST :consttype 23 :constisnull false :location -1}) :func <> :coercion <> " +
+        ":returning {JSONRETURNING :format {JSONFORMAT :format_type 1 :encoding 0 :location -1} " +
+        ":typid 114 :typmod -1} :absent_on_null false :unique false :location -1}"
+      val result = parser.parseExpression(text) as PgNodeExpression.JsonConstructorExpr
+      assertThat(result.type).isEqualTo(PgNodeExpression.JSON_CONSTRUCTOR_TYPE_OBJECT)
+      assertThat(result.arguments).hasSize(2)
+      assertThat(result.function).isNull()
+    }
+
+    @Test
+    fun `args is empty and func holds the underlying AGGREF for a JSON_OBJECTAGG-shaped node`() {
+      // Fixture trimmed from a live PostgreSQL 18.4 dump of
+      // `CREATE VIEW v AS SELECT json_objectagg(k:v) AS c1 FROM t_agg` — :args is `<>` (empty) and
+      // the real aggregate lives under :func instead, verified live (see
+      // PgNodeExpression.JsonConstructorExpr.arguments' own KDoc).
+      val text = "{JSONCONSTRUCTOREXPR :type 3 :args <> :func " +
+        "{AGGREF :aggfnoid 3197 :aggtype 114 :aggcollid 0 :inputcollid 100 :aggtranstype 0 " +
+        ":aggargtypes (o 25 23) :aggdirectargs <> :args (" +
+        "{TARGETENTRY :expr {CONST :consttype 25 :constisnull false :location -1} :resno 1 " +
+        ":resname <> :ressortgroupref 0 :resorigtbl 0 :resorigcol 0 :resjunk false}) " +
+        ":aggorder <> :aggdistinct <> :aggfilter <> :aggstar false :aggvariadic false :aggkind n " +
+        ":aggpresorted false :agglevelsup 0 :aggsplit 0 :aggno -1 :aggtransno -1 :location -1} " +
+        ":coercion <> :returning {JSONRETURNING :format {JSONFORMAT :format_type 1 :encoding 0 " +
+        ":location -1} :typid 114 :typmod -1} :absent_on_null false :unique false :location -1}"
+      val result = parser.parseExpression(text) as PgNodeExpression.JsonConstructorExpr
+      assertThat(result.type).isEqualTo(PgNodeExpression.JSON_CONSTRUCTOR_TYPE_OBJECTAGG)
+      assertThat(result.arguments).hasSize(0)
+      val function = result.function as PgNodeExpression.Aggref
+      assertThat(function.aggregateFunctionOid).isEqualTo(3197)
+      assertThat(function.arguments).hasSize(1)
+    }
+
+    @Test
+    fun `a JSONVALUEEXPR argument transparently unwraps to its formatted_expr, not Unknown`() {
+      // Fixture trimmed from a live PostgreSQL 18.4 dump of `CREATE VIEW v AS SELECT json(a) AS c1
+      // FROM t (a text)` — JSON()'s single argument is ALWAYS wrapped in a JSONVALUEEXPR (verified
+      // live), so without unwrapping, this argument would parse to Unknown and always evaluate
+      // nullable regardless of a's own NOT NULL constraint. :formatted_expr, not :raw_expr, is the
+      // child recursed into (see parseJsonValueExpr's own KDoc).
+      val text = "{JSONCONSTRUCTOREXPR :type 5 :args (" +
+        "{JSONVALUEEXPR :raw_expr {VAR :varno 1 :varattno 1 :varlevelsup 0 :location -1} " +
+        ":formatted_expr {COERCEVIAIO :arg {VAR :varno 1 :varattno 1 :varlevelsup 0 :location -1} " +
+        ":resulttype 114 :resultcollid 0 :coerceformat 1 :location -1} " +
+        ":format {JSONFORMAT :format_type 0 :encoding 0 :location -1}}) :func <> :coercion <> " +
+        ":returning {JSONRETURNING :format {JSONFORMAT :format_type 1 :encoding 0 :location -1} " +
+        ":typid 114 :typmod -1} :absent_on_null false :unique false :location -1}"
+      val result = parser.parseExpression(text) as PgNodeExpression.JsonConstructorExpr
+      assertThat(result.type).isEqualTo(PgNodeExpression.JSON_CONSTRUCTOR_TYPE_PARSE)
+      assertThat(result.arguments).hasSize(1)
+      val coercion = result.arguments.single() as PgNodeExpression.CoerceViaIo
+      val innerVar = coercion.argument as PgNodeExpression.Var
+      assertThat(innerVar.varno).isEqualTo(1)
+      assertThat(innerVar.varattno).isEqualTo(1)
+    }
+
+    @Test
+    fun `a JSONVALUEEXPR missing formatted_expr degrades to Unknown rather than throwing`() {
+      val text = "{JSONVALUEEXPR :raw_expr {CONST :consttype 25 :constisnull false :location -1} " +
+        ":format {JSONFORMAT :format_type 0 :encoding 0 :location -1}}"
+      val result = parser.parseExpression(text) as PgNodeExpression.Unknown
+      assertThat(result.nodeType).isEqualTo("PARSE_ERROR")
+    }
+  }
+
+  @Nested
+  inner class AggrefArgumentExtraction {
+
+    // Both fixtures below are VERBATIM (not hand-written) `{AGGREF ...}` blocks copied from a live
+    // PostgreSQL 18.4 pg_rewrite.ev_action dump — extractArgListSection's prior plain (non-depth-aware)
+    // text.indexOf(":args (") scan silently mis-parsed both of these real shapes, attributing the
+    // WRONG nested list to Aggref.arguments. No isNonNull answer moved when this was fixed (that
+    // branch never reads Aggref.arguments), but Aggref.arguments also feeds
+    // NodeTreeNullabilityAnalyzer.containsVarOutsideRelation and GroupRteSubstitution, where a Var the
+    // wrong list hides is a silent wrong-NOT-NULL, so both real-world shapes are pinned here directly
+    // against the parser, independent of any nullability outcome.
+
+    @Test
+    fun `an AGGREF with a FILTER clause does not attribute the filter's own OPEXPR args to the aggregate`() {
+      // Verbatim AGGREF block for `count(*) FILTER (WHERE b = 1)`. The aggregate's own `:args` is
+      // `<>` (count(*) takes no explicit argument) and comes BEFORE `:aggfilter` in AGGREF's field
+      // order; `:aggfilter` holds a completely separate `{OPEXPR ...}` (the FILTER condition) with
+      // its OWN nested `:args (...)` (the `b`/`1` comparison operands). A plain, non-depth-aware
+      // `indexOf(":args (")` over the whole AGGREF text skips the empty `:args <>` and matches this
+      // nested OPEXPR's `:args (` instead, wrongly returning the FILTER condition's two operands as
+      // if they were the aggregate's own arguments.
+      val text = "{AGGREF :aggfnoid 2803 :aggtype 20 :aggcollid 0 :inputcollid 0 :aggtranstype 0 " +
+        ":aggargtypes <> :aggdirectargs <> :args <> :aggorder <> :aggdistinct <> :aggfilter " +
+        "{OPEXPR :opno 96 :opfuncid 65 :opresulttype 16 :opretset false :opcollid 0 :inputcollid 0 " +
+        ":args ({VAR :varno 1 :varattno 2 :vartype 23 :vartypmod -1 :varcollid 0 :varnullingrels (b) " +
+        ":varlevelsup 0 :varreturningtype 0 :varnosyn 1 :varattnosyn 2 :location -1} " +
+        "{CONST :consttype 23 :consttypmod -1 :constcollid 0 :constlen 4 :constbyval true " +
+        ":constisnull false :location -1 :constvalue 4 [ 1 0 0 0 0 0 0 0 ]}) :location -1} " +
+        ":aggstar true :aggvariadic false :aggkind n :aggpresorted false :agglevelsup 0 :aggsplit 0 " +
+        ":aggno -1 :aggtransno -1 :location -1}"
+      val result = parser.parseExpression(text) as PgNodeExpression.Aggref
+      assertThat(result.aggregateFunctionOid).isEqualTo(2803)
+      assertThat(result.arguments).hasSize(0)
+    }
+
+    @Test
+    fun `an AGGREF with WITHIN GROUP does not attribute aggdirectargs' nested args to the aggregate`() {
+      // Verbatim AGGREF block for `percentile_cont(0.5) WITHIN GROUP (ORDER BY a)`. `:aggdirectargs`
+      // (the direct, non-aggregated `0.5` argument, itself wrapped in a numeric-cast FUNCEXPR with
+      // its OWN nested `:args (...)`) is serialized BEFORE the aggregate's real `:args` (the
+      // TARGETENTRY-wrapped, order-by-driven `a` argument). A plain `indexOf(":args (")` matches
+      // aggdirectargs' nested FUNCEXPR's `:args (` first, wrongly returning just the `0.5` literal
+      // instead of the real single argument (a FUNCEXPR wrapping a VAR referencing `a`).
+      val text = "{AGGREF :aggfnoid 3974 :aggtype 701 :aggcollid 0 :inputcollid 0 :aggtranstype 0 " +
+        ":aggargtypes (o 701 701) :aggdirectargs ({FUNCEXPR :funcid 1746 :funcresulttype 701 " +
+        ":funcretset false :funcvariadic false :funcformat 2 :funccollid 0 :inputcollid 0 " +
+        ":args ({CONST :consttype 1700 :consttypmod -1 :constcollid 0 :constlen -1 :constbyval false " +
+        ":constisnull false :location -1 :constvalue 8 [ 32 0 0 0 255 128 136 19 ]}) :location -1}) " +
+        ":args ({TARGETENTRY :expr {FUNCEXPR :funcid 1746 :funcresulttype 701 :funcretset false " +
+        ":funcvariadic false :funcformat 2 :funccollid 0 :inputcollid 0 :args ({VAR :varno 1 " +
+        ":varattno 1 :vartype 1700 :vartypmod -1 :varcollid 0 :varnullingrels (b) :varlevelsup 0 " +
+        ":varreturningtype 0 :varnosyn 1 :varattnosyn 1 :location -1}) :location -1} :resno 1 " +
+        ":resname <> :ressortgroupref 1 :resorigtbl 0 :resorigcol 0 :resjunk false}) " +
+        ":aggorder ({SORTGROUPCLAUSE :tleSortGroupRef 1 :eqop 670 :sortop 672 :reverse_sort false " +
+        ":nulls_first false :hashable true}) :aggdistinct <> :aggfilter <> :aggstar false " +
+        ":aggvariadic false :aggkind o :aggpresorted false :agglevelsup 0 :aggsplit 0 :aggno -1 " +
+        ":aggtransno -1 :location -1}"
+      val result = parser.parseExpression(text) as PgNodeExpression.Aggref
+      assertThat(result.aggregateFunctionOid).isEqualTo(3974)
+      assertThat(result.arguments).hasSize(1)
+      val argumentFunction = result.arguments.single() as PgNodeExpression.FuncExpr
+      assertThat(argumentFunction.functionOid).isEqualTo(1746)
+      val innerVar = argumentFunction.arguments.single() as PgNodeExpression.Var
+      assertThat(innerVar.varno).isEqualTo(1)
+      assertThat(innerVar.varattno).isEqualTo(1)
+    }
+  }
 }

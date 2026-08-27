@@ -263,6 +263,29 @@ class NodeTreeNullabilityAnalyzerTest {
   }
 
   @Nested
+  inner class JsonConstructorExprEvaluation {
+
+    @Test
+    fun `a JSON_SERIALIZE-shaped node with an empty argument list is nullable, not vacuously non-null`() {
+      // Pins the arguments.isNotEmpty() guard in evaluateJsonConstructorExpr's types 5/6/7 branch:
+      // deleting it leaves `arguments.all(recurse)` vacuously true over an empty list — exactly the
+      // unsound "true over an empty collection" shape that made the original JsonConstructorExpr
+      // bug (JSON_SERIALIZE(NULL::jsonb) wrongly reported non-null) possible in the first place, just
+      // narrower. A genuinely argument-less JsonConstructorExpr of type 5/6/7 is not known to occur
+      // from real PostgreSQL output today — JSON_SERIALIZE/JSON()/JSON_SCALAR each always carry
+      // exactly one SQL argument — but the guard exists specifically so an unreadable or malformed
+      // `:args` (which PgNodeTreeParser's own safe-degradation rules parse down to an empty list,
+      // never throwing) cannot silently resolve to NOT NULL merely because `all` over nothing is
+      // vacuously `true`.
+      val expression = PgNodeExpression.JsonConstructorExpr(
+        type = PgNodeExpression.JSON_CONSTRUCTOR_TYPE_SERIALIZE,
+        arguments = emptyList(),
+      )
+      assertThat(analyzer().isNonNull(expression)).isFalse()
+    }
+  }
+
+  @Nested
   inner class SubLinks {
 
     // See issue #239's own live-verified repro (PostgreSQL 17): `a = ANY (SELECT v FROM u)` is

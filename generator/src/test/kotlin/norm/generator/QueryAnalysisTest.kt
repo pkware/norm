@@ -7180,6 +7180,309 @@ class QueryAnalysisTest {
       assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].notNull).isTrue()
     }
+
+    @Test
+    fun `JSON_TABLE column is nullable, never reaching evaluateJsonExpr's JSON_TABLE_OP at all`() {
+      // Verified live on PostgreSQL 18.4 by dumping this exact query's own ev_action: a JSON_TABLE
+      // column resolves to a plain VAR against an RTE_TABLEFUNC range-table entry (rtekind 4), never
+      // to a PgNodeExpression.JsonExpr this parser's ordinary expression walk would hand to
+      // evaluateJsonExpr — the JSON_TABLE_OP=3 JsonExpr nodes PostgreSQL DOES emit (one for the
+      // whole-document :docexpr, one per column's own :colvalexprs entry) live nested inside that
+      // RTE's own :tablefunc, a structure this parser never descends into. parseRangeTable only maps
+      // rtekind 0 (ordinary base tables) to a relid, so a Var whose varno indexes this rtekind-4 RTE
+      // finds no entry, and isSourceColumnNotNull's safe default (nullable) applies — see
+      // JSON_TABLE_OP's own KDoc for the constant's full live-verified reasoning.
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_TABLE requires PostgreSQL 17+")
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL, doc JSONB NOT NULL)",
+        """
+        SELECT jt.a
+        FROM t, JSON_TABLE(doc, '${'$'}[*]' COLUMNS (a INT PATH '${'$'}.a')) AS jt
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `JSON_SERIALIZE over a nullable jsonb column is nullable`() {
+      // The bug this fix closes: JSON_SERIALIZE(NULL::jsonb) IS NULL is true (verified live,
+      // PostgreSQL 18.4), so a nullable jsonb argument must produce a nullable result column —
+      // previously reported unconditionally NOT NULL regardless of the argument.
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_SERIALIZE requires PostgreSQL 17+")
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (data jsonb)",
+        "SELECT JSON_SERIALIZE(data) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `JSON_SERIALIZE over a NOT NULL jsonb column is non-null`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_SERIALIZE requires PostgreSQL 17+")
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (data jsonb NOT NULL)",
+        "SELECT JSON_SERIALIZE(data) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `JSON() over a nullable text column is nullable`() {
+      // JSON(expr) is JSON_CONSTRUCTOR_TYPE_PARSE — its single argument is ALWAYS wrapped in a
+      // JSONVALUEEXPR (verified live), so this also pins that the parser's transparent unwrap keeps
+      // the real column's own nullability visible rather than degrading to Unknown (always
+      // nullable, masking the distinction this test exists to catch).
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON() requires PostgreSQL 17+")
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (data text)",
+        "SELECT JSON(data) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `JSON() over a NOT NULL text column is non-null`() {
+      // The precision half of the JSONVALUEEXPR-unwrap pin above: without unwrapping, this argument
+      // would parse to Unknown and ALWAYS be reported nullable regardless of the source column's own
+      // NOT NULL constraint — a spurious widening this test would catch as a failure.
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON() requires PostgreSQL 17+")
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (data text NOT NULL)",
+        "SELECT JSON(data) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `JSON_SCALAR over a nullable column is nullable`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_SCALAR requires PostgreSQL 17+")
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (val int)",
+        "SELECT JSON_SCALAR(val) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `JSON_SCALAR over a NOT NULL column is non-null`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_SCALAR requires PostgreSQL 17+")
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (val int NOT NULL)",
+        "SELECT JSON_SCALAR(val) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `JSON_OBJECT with zero arguments is non-null`() {
+      // Verified live: JSON_OBJECT() IS NULL is false on every supported version — JSON_OBJECT/
+      // JSON_ARRAY (JsonConstructorType 1/2) are stable back to PostgreSQL 16.
+      val query = analyzeWithSchema("CREATE TABLE t (id int NOT NULL)", "SELECT JSON_OBJECT() AS result FROM t")
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `JSON_OBJECT with NULL ON NULL over a nullable value column stays non-null`() {
+      // ABSENT ON NULL / NULL ON NULL only change the JSON document's CONTENT, never whether the
+      // SQL-level result itself is null — verified live: JSON_OBJECT('a': NULL NULL ON NULL) IS
+      // NULL is false, even though the value argument is a literal SQL NULL.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (val text)",
+        "SELECT JSON_OBJECT('a' VALUE val NULL ON NULL) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `JSON_ARRAY with zero arguments is non-null`() {
+      val query = analyzeWithSchema("CREATE TABLE t (id int NOT NULL)", "SELECT JSON_ARRAY() AS result FROM t")
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `JSON_OBJECTAGG is nullable`() {
+      // Verified live: JSON_OBJECTAGG over an empty group IS NULL is true — the aggregate has no
+      // non-null initial transition value (pg_aggregate.agginitval IS NULL), the same property
+      // hasNonNullInitialValue already checks for every other Aggref. JsonConstructorType 3/4 are
+      // stable back to PostgreSQL 16.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (k text NOT NULL, v int NOT NULL)",
+        "SELECT JSON_OBJECTAGG(k:v) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `JSON_ARRAYAGG is nullable`() {
+      // Verified live: JSON_ARRAYAGG over an empty group IS NULL is true.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (v int NOT NULL)",
+        "SELECT JSON_ARRAYAGG(v) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `JSON_OBJECTAGG OVER a window is nullable`() {
+      // The WindowFunc leg of JsonConstructorExpr.function: verified live that JSON_OBJECTAGG(...)
+      // OVER (...) puts a WINDOWFUNC node, not an AGGREF, under :func — this pins that
+      // safetyWalkChildren/isNonNull still reach it and route through the existing WindowFunc rule
+      // (which reports nullable here, same as any other non-safe-listed window function).
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (k text NOT NULL, v int NOT NULL)",
+        "SELECT JSON_OBJECTAGG(k:v) OVER (PARTITION BY k) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `JSON_QUERY with OMIT QUOTES on a successful JSON null match is non-null`() {
+      // Adjacent-hazard sweep: unlike JSON_VALUE (which unwraps a matched JSON null into a genuine
+      // SQL NULL), JSON_QUERY with OMIT QUOTES on a successful match of a JSON null renders the
+      // TEXT string "null", never a genuine SQL NULL — verified live (PostgreSQL 18.4):
+      // `JSON_QUERY('{"x": null}'::jsonb, '$.x' RETURNING text OMIT QUOTES) IS NULL` is `false`, and
+      // the value itself is the 4-character string 'null'. This does NOT reproduce the JSON_VALUE
+      // hazard; JSON_QUERY needs no additional hard-`false` treatment for OMIT QUOTES specifically.
+      // Same EMPTY ARRAY ON EMPTY/ON ERROR shape as the existing (non-OMIT-QUOTES)
+      // `JSON_QUERY with DEFAULT on empty and error is non-null for a non-null context item` pin
+      // above, since PostgreSQL's default (unwritten) ON EMPTY/ON ERROR behavior is NULL ON EMPTY/
+      // NULL ON ERROR — a real nullable path independent of OMIT QUOTES — so isolating the OMIT
+      // QUOTES-specific hazard requires ruling that default path out explicitly, the same way the
+      // existing sibling pin does. Pinned here as a negative control.
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_QUERY requires PostgreSQL 17+")
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (data jsonb NOT NULL)",
+        "SELECT JSON_QUERY(data, '\$.x' RETURNING text OMIT QUOTES EMPTY ARRAY ON EMPTY EMPTY ARRAY ON ERROR) " +
+          "AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+  }
+
+  /**
+   * Live-database verification that the `JsonConstructorType` integer real PostgreSQL emits for
+   * each of the seven SQL/JSON constructor forms matches [PgNodeExpression]'s own hardcoded
+   * `JSON_CONSTRUCTOR_TYPE_*` constant — not a hand-transcribed comment, but an assertion that
+   * actually parses a LIVE `pg_rewrite.ev_action` dump via [PgNodeTreeParser] each time this suite
+   * runs, so a future PostgreSQL version reassigning one of these codes (the same class of drift
+   * `SUBLINK_TYPE_ALL = 3` had) fails HERE, at the exact constant, rather than only downstream as
+   * an unexplained nullability regression.
+   */
+  @Nested
+  inner class JsonConstructorExprTypeCodes {
+
+    private fun jsonConstructorExprTypeFromView(
+      @Language("PostgreSQL") ddl: String,
+      @Language("PostgreSQL") viewSql: String,
+    ): PgNodeExpression.JsonConstructorExpr {
+      val schemaName = "test_${schemaCounter.incrementAndGet()}"
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        connection.createStatement().use { statement ->
+          statement.execute("CREATE SCHEMA $schemaName")
+          statement.execute("SET search_path TO $schemaName")
+          statement.execute(ddl)
+          statement.execute("CREATE VIEW probe_view AS $viewSql")
+        }
+        try {
+          val nodeTree = connection.createStatement().use { statement ->
+            statement.executeQuery(
+              "SELECT ev_action::text FROM pg_rewrite WHERE ev_class = 'probe_view'::regclass",
+            ).use { resultSet ->
+              resultSet.next()
+              resultSet.getString(1)
+            }
+          }
+          val entries = PgNodeTreeParser().parseTargetList(nodeTree)
+          return entries.single { !it.isJunk }.expression as PgNodeExpression.JsonConstructorExpr
+        } finally {
+          connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
+        }
+      }
+    }
+
+    @Test
+    fun `JSON_OBJECT node tree type code matches JSON_CONSTRUCTOR_TYPE_OBJECT`() {
+      val expression = jsonConstructorExprTypeFromView(
+        "CREATE TABLE t (id int NOT NULL)",
+        "SELECT JSON_OBJECT('a' VALUE 1) AS c1 FROM t",
+      )
+      assertThat(expression.type).isEqualTo(PgNodeExpression.JSON_CONSTRUCTOR_TYPE_OBJECT)
+      assertThat(expression.function).isNull()
+    }
+
+    @Test
+    fun `JSON_ARRAY node tree type code matches JSON_CONSTRUCTOR_TYPE_ARRAY`() {
+      val expression = jsonConstructorExprTypeFromView(
+        "CREATE TABLE t (id int NOT NULL)",
+        "SELECT JSON_ARRAY(1, 2) AS c1 FROM t",
+      )
+      assertThat(expression.type).isEqualTo(PgNodeExpression.JSON_CONSTRUCTOR_TYPE_ARRAY)
+      assertThat(expression.function).isNull()
+    }
+
+    @Test
+    fun `JSON_OBJECTAGG node tree type code matches JSON_CONSTRUCTOR_TYPE_OBJECTAGG, func is an Aggref`() {
+      val expression = jsonConstructorExprTypeFromView(
+        "CREATE TABLE t (k text NOT NULL, v int NOT NULL)",
+        "SELECT JSON_OBJECTAGG(k:v) AS c1 FROM t",
+      )
+      assertThat(expression.type).isEqualTo(PgNodeExpression.JSON_CONSTRUCTOR_TYPE_OBJECTAGG)
+      assertThat(expression.arguments).hasSize(0)
+      assertThat(expression.function is PgNodeExpression.Aggref).isTrue()
+    }
+
+    @Test
+    fun `JSON_ARRAYAGG node tree type code matches JSON_CONSTRUCTOR_TYPE_ARRAYAGG, func is an Aggref`() {
+      val expression = jsonConstructorExprTypeFromView(
+        "CREATE TABLE t (v int NOT NULL)",
+        "SELECT JSON_ARRAYAGG(v) AS c1 FROM t",
+      )
+      assertThat(expression.type).isEqualTo(PgNodeExpression.JSON_CONSTRUCTOR_TYPE_ARRAYAGG)
+      assertThat(expression.arguments).hasSize(0)
+      assertThat(expression.function is PgNodeExpression.Aggref).isTrue()
+    }
+
+    @Test
+    fun `JSON_OBJECTAGG OVER a window puts a WindowFunc, not an Aggref, under func`() {
+      val expression = jsonConstructorExprTypeFromView(
+        "CREATE TABLE t (k text NOT NULL, v int NOT NULL)",
+        "SELECT JSON_OBJECTAGG(k:v) OVER (PARTITION BY k) AS c1 FROM t",
+      )
+      assertThat(expression.type).isEqualTo(PgNodeExpression.JSON_CONSTRUCTOR_TYPE_OBJECTAGG)
+      assertThat(expression.arguments).hasSize(0)
+      assertThat(expression.function is PgNodeExpression.WindowFunc).isTrue()
+    }
+
+    @Test
+    fun `JSON() node tree type code matches JSON_CONSTRUCTOR_TYPE_PARSE`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON() requires PostgreSQL 17+")
+      val expression = jsonConstructorExprTypeFromView(
+        "CREATE TABLE t (id int NOT NULL)",
+        "SELECT JSON('{\"a\":1}') AS c1 FROM t",
+      )
+      assertThat(expression.type).isEqualTo(PgNodeExpression.JSON_CONSTRUCTOR_TYPE_PARSE)
+    }
+
+    @Test
+    fun `JSON_SCALAR node tree type code matches JSON_CONSTRUCTOR_TYPE_SCALAR`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_SCALAR requires PostgreSQL 17+")
+      val expression = jsonConstructorExprTypeFromView(
+        "CREATE TABLE t (id int NOT NULL)",
+        "SELECT JSON_SCALAR(1) AS c1 FROM t",
+      )
+      assertThat(expression.type).isEqualTo(PgNodeExpression.JSON_CONSTRUCTOR_TYPE_SCALAR)
+    }
+
+    @Test
+    fun `JSON_SERIALIZE node tree type code matches JSON_CONSTRUCTOR_TYPE_SERIALIZE`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_SERIALIZE requires PostgreSQL 17+")
+      val expression = jsonConstructorExprTypeFromView(
+        "CREATE TABLE t (id int NOT NULL)",
+        "SELECT JSON_SERIALIZE('{\"a\":1}'::jsonb) AS c1 FROM t",
+      )
+      assertThat(expression.type).isEqualTo(PgNodeExpression.JSON_CONSTRUCTOR_TYPE_SERIALIZE)
+    }
   }
 
   @Nested

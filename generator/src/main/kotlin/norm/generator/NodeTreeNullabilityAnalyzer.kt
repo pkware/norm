@@ -461,7 +461,7 @@ internal class NodeTreeNullabilityAnalyzer(
     is PgNodeExpression.RowExpr -> expression.arguments
     is PgNodeExpression.FieldSelect -> listOf(expression.argument)
     is PgNodeExpression.JsonIsPredicate -> listOf(expression.argument)
-    is PgNodeExpression.JsonConstructorExpr -> expression.arguments
+    is PgNodeExpression.JsonConstructorExpr -> expression.arguments + listOfNotNull(expression.function)
     is PgNodeExpression.XmlExpr -> expression.arguments
     is PgNodeExpression.Var,
     is PgNodeExpression.Const,
@@ -653,7 +653,7 @@ internal class NodeTreeNullabilityAnalyzer(
       is PgNodeExpression.GroupingFunc -> true
       is PgNodeExpression.FieldSelect -> false // safe default — field nullability requires composite type analysis
       is PgNodeExpression.JsonIsPredicate -> true
-      is PgNodeExpression.JsonConstructorExpr -> true
+      is PgNodeExpression.JsonConstructorExpr -> evaluateJsonConstructorExpr(expression, recurse)
       is PgNodeExpression.JsonExpr -> evaluateJsonExpr(expression, recurse)
       is PgNodeExpression.XmlExpr -> evaluateXmlExpr(expression, recurse)
       is PgNodeExpression.Unknown -> false // safe default
@@ -682,6 +682,57 @@ internal class NodeTreeNullabilityAnalyzer(
     return false
   }
 
+  /**
+   * Evaluates nullability of a `JSON_OBJECT`/`JSON_ARRAY`/`JSON_OBJECTAGG`/`JSON_ARRAYAGG`/`JSON()`/
+   * `JSON_SCALAR`/`JSON_SERIALIZE` constructor call, branching on
+   * [PgNodeExpression.JsonConstructorExpr.type].
+   *
+   * - [PgNodeExpression.JSON_CONSTRUCTOR_TYPE_OBJECT]/[PgNodeExpression.JSON_CONSTRUCTOR_TYPE_ARRAY]:
+   *   unconditionally non-null, INCLUDING the zero-argument forms (`JSON_OBJECT()`, `JSON_ARRAY()`)
+   *   and a `NULL ON NULL` clause (e.g. `JSON_OBJECT('a': NULL NULL ON NULL)`) — `ABSENT ON NULL`/
+   *   `NULL ON NULL` only change the JSON *document's content* (whether a key with a JSON-`null`
+   *   value is omitted or kept), never whether the SQL-level result itself is `null`. Verified live
+   *   (PostgreSQL 18.4): `JSON_OBJECT() IS NULL`, `JSON_ARRAY() IS NULL`, and
+   *   `JSON_OBJECT('a': NULL NULL ON NULL) IS NULL` are all `false`. `:absent_on_null`/`:unique` are
+   *   therefore deliberately not parsed onto [PgNodeExpression.JsonConstructorExpr] at all — this
+   *   rule has no use for them.
+   * - [PgNodeExpression.JSON_CONSTRUCTOR_TYPE_OBJECTAGG]/[PgNodeExpression.JSON_CONSTRUCTOR_TYPE_ARRAYAGG]:
+   *   [PgNodeExpression.JsonConstructorExpr.arguments] is ALWAYS EMPTY for these two types (verified
+   *   live — see that property's own KDoc); the underlying [PgNodeExpression.Aggref] or
+   *   [PgNodeExpression.WindowFunc] lives in [PgNodeExpression.JsonConstructorExpr.function] instead,
+   *   so this recurses into THAT rather than requiring (vacuously true) `arguments.all(recurse)` over
+   *   an empty list — exactly the same unsound shape as the bug this method replaces, just narrower.
+   *   Routing through [PgNodeExpression.JsonConstructorExpr.function] reaches the EXISTING [isNonNull]
+   *   `Aggref`/`WindowFunc` rules, which already report `false` (nullable) for an aggregate over an
+   *   empty group — verified live: `JSON_ARRAYAGG` over an empty group `IS NULL` is `true`.
+   * - [PgNodeExpression.JSON_CONSTRUCTOR_TYPE_PARSE] (`JSON(expr)`)/
+   *   [PgNodeExpression.JSON_CONSTRUCTOR_TYPE_SCALAR] (`JSON_SCALAR(expr)`)/
+   *   [PgNodeExpression.JSON_CONSTRUCTOR_TYPE_SERIALIZE] (`JSON_SERIALIZE(expr)`): non-null only when
+   *   there IS an argument and every argument is non-null — strict, single-argument constructs.
+   *   Verified live (PostgreSQL 18.4) for all three: `JSON_SERIALIZE(NULL::jsonb) IS NULL`,
+   *   `JSON(NULL::text) IS NULL`, and `JSON_SCALAR(NULL::text) IS NULL` are all `true`. This is the
+   *   fix for the original bug report: `JSON_SERIALIZE` was previously reported unconditionally
+   *   non-null regardless of its argument's own nullability.
+   * - Any other code falls through to `false` (nullable), the safe default for a `JsonConstructorType`
+   *   this analyzer does not recognize.
+   */
+  private fun evaluateJsonConstructorExpr(
+    expression: PgNodeExpression.JsonConstructorExpr,
+    recurse: (PgNodeExpression) -> Boolean,
+  ): Boolean = when (expression.type) {
+    PgNodeExpression.JSON_CONSTRUCTOR_TYPE_OBJECT, PgNodeExpression.JSON_CONSTRUCTOR_TYPE_ARRAY -> true
+
+    PgNodeExpression.JSON_CONSTRUCTOR_TYPE_OBJECTAGG, PgNodeExpression.JSON_CONSTRUCTOR_TYPE_ARRAYAGG ->
+      expression.function?.let(recurse) == true
+
+    PgNodeExpression.JSON_CONSTRUCTOR_TYPE_PARSE,
+    PgNodeExpression.JSON_CONSTRUCTOR_TYPE_SCALAR,
+    PgNodeExpression.JSON_CONSTRUCTOR_TYPE_SERIALIZE,
+    -> expression.arguments.isNotEmpty() && expression.arguments.all(recurse)
+
+    else -> false
+  }
+
   private fun evaluateJsonExpr(
     expression: PgNodeExpression.JsonExpr,
     recurse: (PgNodeExpression) -> Boolean,
@@ -691,7 +742,9 @@ internal class NodeTreeNullabilityAnalyzer(
         expression.onError,
       )
 
-    PgNodeExpression.JSON_SERIALIZE_OP -> recurse(expression.argument)
+    // JSON_TABLE_OP (3) has no branch here — its JsonExpr nodes never reach this method in the
+    // first place; see JSON_TABLE_OP's own KDoc. If it ever were reached, the `else -> false` below
+    // is the correct, safe answer for a code this method has no live-verified rule for.
 
     PgNodeExpression.JSON_QUERY_OP -> {
       val emptyOk = isKnownNonNullJsonBehavior(expression.onEmpty) && expression.onEmptyDefault?.let(recurse) != false
@@ -893,7 +946,9 @@ internal class NodeTreeNullabilityAnalyzer(
         is PgNodeExpression.RowExpr -> expression.arguments.any(recurse)
         is PgNodeExpression.FieldSelect -> recurse(expression.argument)
         is PgNodeExpression.JsonIsPredicate -> recurse(expression.argument)
-        is PgNodeExpression.JsonConstructorExpr -> expression.arguments.any(recurse)
+        is PgNodeExpression.JsonConstructorExpr ->
+          expression.arguments.any(recurse) || expression.function?.let(recurse) == true
+
         is PgNodeExpression.XmlExpr -> expression.arguments.any(recurse)
       }
     }
