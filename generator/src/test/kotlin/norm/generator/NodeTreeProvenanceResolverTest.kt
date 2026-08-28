@@ -124,7 +124,66 @@ class NodeTreeProvenanceResolverTest {
   }
 
   @Nested
+  inner class ChainedCtes {
+
+    @Test
+    fun `a chain of three plain CTEs resolves through every hop back to the one that computed the value`() {
+      // #238 P1: the resolver used to grow its scope stack by one frame per HOP, never per lexical
+      // nesting level, so by the third hop `:ctelevelsup 1` (which every hop here carries, since none
+      // of these CTEs nests its own WITH) indexed a frame that no longer held the top-level list at
+      // all, and this returned no provenance whatsoever.
+      val provenance = provenanceFor(
+        "CREATE TABLE t (d TEXT)",
+        "WITH c1 AS (SELECT UPPER(d) AS d FROM t), c2 AS (SELECT d FROM c1), c3 AS (SELECT d FROM c2) " +
+          "SELECT d FROM c3",
+      )
+      assertThat(provenance).containsExactly(
+        NodeTreeColumnProvenance(listOf(CteHop("c3", 0), CteHop("c2", 1), CteHop("c1", 1)), 1),
+      )
+    }
+
+    @Test
+    fun `a chain of four plain CTEs resolves through every hop back to the one that computed the value`() {
+      val provenance = provenanceFor(
+        "CREATE TABLE t (d TEXT)",
+        "WITH c1 AS (SELECT UPPER(d) AS d FROM t), c2 AS (SELECT d FROM c1), c3 AS (SELECT d FROM c2), " +
+          "c4 AS (SELECT d FROM c3) SELECT d FROM c4",
+      )
+      assertThat(provenance).containsExactly(
+        NodeTreeColumnProvenance(
+          listOf(CteHop("c4", 0), CteHop("c3", 1), CteHop("c2", 1), CteHop("c1", 1)),
+          1,
+        ),
+      )
+    }
+
+    @Test
+    fun `a chain of five plain CTEs resolves through every hop back to the one that computed the value`() {
+      val provenance = provenanceFor(
+        "CREATE TABLE t (d TEXT)",
+        "WITH c1 AS (SELECT UPPER(d) AS d FROM t), c2 AS (SELECT d FROM c1), c3 AS (SELECT d FROM c2), " +
+          "c4 AS (SELECT d FROM c3), c5 AS (SELECT d FROM c4) SELECT d FROM c5",
+      )
+      assertThat(provenance).containsExactly(
+        NodeTreeColumnProvenance(
+          listOf(CteHop("c5", 0), CteHop("c4", 1), CteHop("c3", 1), CteHop("c2", 1), CteHop("c1", 1)),
+          1,
+        ),
+      )
+    }
+  }
+
+  @Nested
   inner class NestedCteShadowing {
+
+    // #238 P0 repro note: a resolver-level test asserting on [NodeTreeColumnProvenance] alone cannot
+    // distinguish the bug from a fix here. [CteHop] records only a CTE's NAME and its own
+    // `:ctelevelsup`, never WHICH `:ctequery` block that hop actually landed on, and in this exact
+    // repro shape both the wrongly-scoped inner "c" and the correctly-scoped outer "c" happen to
+    // yield the identical (name, ctelevelsup, bodyPosition) tuple despite reading completely
+    // different `:ctequery` bodies. Only reading the ACTUAL TEXT at that position observes the
+    // divergence -- see NodeTreeProvenanceExpressionTest.NestedCteShadowing's own test for this exact
+    // shape, which asserts the emitted expression is `UPPER(name)`, never `LOWER(description)`.
 
     @Test
     fun `a nested WITH that shadows an outer CTE name resolves against the INNER, correctly-scoped body`() {

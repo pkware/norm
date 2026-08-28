@@ -240,8 +240,11 @@ WHEN MATCHED THEN UPDATE SET name = desc_source.description_upper
 WHEN NOT MATCHED THEN INSERT (parent_id, name) VALUES (desc_source.id, desc_source.description_upper)
 RETURNING desc_source.id AS source_parent_id, desc_source.description_upper AS merged_description;
 
--- #238: a CTE with an explicit column list resolves positionally, independent of the renamed
--- column name.
+-- #238: an explicit column list is resolved positionally against the body's own resname, not the
+-- renamed column name -- but "parent_label" itself still resolves to nothing here, since its body
+-- item ("UPPER(name)", with no AS and no implicit alias token at all) has no verifiable name to
+-- cross-validate the position against. "parent_id" (a bare, unaliased "id") IS verifiable by its
+-- own name, and resolves correctly to "parent.id".
 -- name: selectParentViaCteWithExplicitColumnList :many
 WITH renamed_parent(parent_label, parent_id) AS (
   SELECT UPPER(name), id FROM parent

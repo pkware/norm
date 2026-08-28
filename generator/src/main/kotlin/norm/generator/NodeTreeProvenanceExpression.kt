@@ -115,9 +115,13 @@ internal fun resolveNodeTreeProvenanceExpression(
  * [NodeTreeProvenanceResolver] resolved against, never merely a same-named one elsewhere in the
  * tree.
  *
- * Index `0` of the scope stack is always the CURRENT query block's own `:cteList`; entering a
- * hop's CTE body pushes that body's OWN `:cteList` onto the front, exactly mirroring
- * [NodeTreeProvenanceResolver.resolveVar]'s `currentScopeStack` bookkeeping.
+ * Index `0` of the scope stack is always the CURRENT query block's own `:cteList`; entering a hop's
+ * CTE body pushes that body's OWN `:cteList` onto the front of the scope AS IT EXISTED AT THAT
+ * HOP'S OWN DECLARATION — `scopeStack.drop(hop.ctelevelsup)`, never the full accumulated
+ * [scopeStack] — exactly mirroring [NodeTreeProvenanceResolver.resolveVar]'s `currentScopeStack`
+ * bookkeeping (see that method's KDoc for why: a hop into a SIBLING CTE is not a nesting level, so
+ * blindly prepending onto every frame accumulated so far drifts out of step with the node tree's own
+ * `:ctelevelsup`, which only ever counts LEXICAL nesting).
  *
  * @return `null` if any hop's [CteHop.ctelevelsup] addresses a scope-stack depth that does not
  *   exist, or its [CteHop.name] is not declared in that scope's `:cteList` — neither can happen for
@@ -132,7 +136,7 @@ private fun scopedNodeTreeCteQueryBlock(nodeTreeText: String, hops: List<CteHop>
     val definition = scope[hop.name] ?: return null
     resolvedQueryBlock = definition.queryBlock
     val ownScope = parser.parseCteList(definition.queryBlock).associateBy { it.name }
-    scopeStack = listOf(ownScope) + scopeStack
+    scopeStack = listOf(ownScope) + scopeStack.drop(hop.ctelevelsup)
   }
   return resolvedQueryBlock
 }
@@ -167,7 +171,9 @@ private fun scopedSqlCteDefinition(sql: String, hops: List<CteHop>): CteDefiniti
     resolvedDefinition = definition
     val bodyOffset = definition.bodyOpenParenthesis + 1
     val bodyText = sql.substring(bodyOffset, definition.bodyCloseParenthesis)
-    scopeStack = listOf(rebasedCteDefinitions(bodyText, bodyOffset)) + scopeStack
+    // drop, not prepend-onto-the-full-stack: see scopedNodeTreeCteQueryBlock's KDoc, which this
+    // mirrors exactly.
+    scopeStack = listOf(rebasedCteDefinitions(bodyText, bodyOffset)) + scopeStack.drop(hop.ctelevelsup)
   }
   return resolvedDefinition
 }

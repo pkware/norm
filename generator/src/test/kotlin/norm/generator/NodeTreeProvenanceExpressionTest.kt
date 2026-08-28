@@ -207,6 +207,26 @@ class NodeTreeProvenanceExpressionTest {
   }
 
   @Nested
+  inner class ImplicitAliasOnBareColumn {
+
+    @Test
+    fun `a bare column's own implicit alias no longer fuses into the next item, killing the whole body`() {
+      // #238 P2: "description dx" (a bare column immediately followed by its own implicit alias,
+      // no AS) used to fuse into ONE unverifiable segment once stripCommentsAndWhitespace deleted
+      // the separating space, so this position had no verifiable name at all -- and that alone
+      // failed NodeTreeProvenanceExpression's all-positions cross-validation gate for the WHOLE
+      // body, silencing "ux"'s own provenance too even though its own alias was perfectly fine.
+      val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
+      val sql = """
+        WITH a AS (SELECT description dx, UPPER(name) AS ux FROM parent)
+        SELECT dx, ux FROM a
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql, columnIndex = 1)).isEqualTo("UPPER(name)")
+    }
+  }
+
+  @Nested
   inner class CommentAndWhitespaceNormalization {
 
     @Test
@@ -438,7 +458,67 @@ class NodeTreeProvenanceExpressionTest {
   }
 
   @Nested
+  inner class ChainedCtes {
+
+    @Test
+    fun `a chain of three plain CTEs resolves the ORIGINAL computed expression, not nothing`() {
+      // #238 P1: previously resolved to nothing from the third hop on -- see
+      // NodeTreeProvenanceResolverTest.ChainedCtes for why.
+      val ddl = "CREATE TABLE t (d TEXT)"
+      val sql = """
+        WITH c1 AS (SELECT UPPER(d) AS d FROM t), c2 AS (SELECT d FROM c1), c3 AS (SELECT d FROM c2)
+        SELECT d FROM c3
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql)).isEqualTo("UPPER(d)")
+    }
+
+    @Test
+    fun `a chain of four plain CTEs resolves the ORIGINAL computed expression`() {
+      val ddl = "CREATE TABLE t (d TEXT)"
+      val sql = """
+        WITH c1 AS (SELECT UPPER(d) AS d FROM t), c2 AS (SELECT d FROM c1), c3 AS (SELECT d FROM c2),
+             c4 AS (SELECT d FROM c3)
+        SELECT d FROM c4
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql)).isEqualTo("UPPER(d)")
+    }
+
+    @Test
+    fun `a chain of five plain CTEs resolves the ORIGINAL computed expression`() {
+      val ddl = "CREATE TABLE t (d TEXT)"
+      val sql = """
+        WITH c1 AS (SELECT UPPER(d) AS d FROM t), c2 AS (SELECT d FROM c1), c3 AS (SELECT d FROM c2),
+             c4 AS (SELECT d FROM c3), c5 AS (SELECT d FROM c4)
+        SELECT d FROM c5
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql)).isEqualTo("UPPER(d)")
+    }
+  }
+
+  @Nested
   inner class NestedCteShadowing {
+
+    @Test
+    fun `a sibling chain that hops through a CTE with its own shadowing nested WITH emits the OUTER sibling's value`() {
+      // #238 P0 repro (verified against live PostgreSQL 18.4). With the row ('alpha', 'zeta') this
+      // query actually returns "ALPHA" (UPPER(name), from the OUTER "c") -- never LOWER(description)
+      // from "e"'s own inner, shadowing "c", which "e"'s body does not even read from ("e" selects
+      // from "d", a plain pass-through of the OUTER "c"). See
+      // NodeTreeProvenanceResolverTest.NestedCteShadowing for the full explanation of the scope bug
+      // this reproduces.
+      val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
+      val sql = """
+        WITH c AS (SELECT id, UPPER(name) AS ux FROM parent),
+             d AS (SELECT id, ux FROM c),
+             e AS (WITH c AS (SELECT id, LOWER(description) AS ux FROM parent) SELECT id, ux FROM d)
+        SELECT id, ux FROM e
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql, columnIndex = 1)).isEqualTo("UPPER(name)")
+    }
 
     @Test
     fun `a nested WITH that shadows an outer CTE name resolves against the INNER, correctly-scoped body`() {

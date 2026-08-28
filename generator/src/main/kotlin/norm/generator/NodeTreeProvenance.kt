@@ -159,12 +159,26 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
    * silently attributes a shadowed reference to the WRONG CTE. [scopeStack] tracks this precisely: index
    * `0` is always the CURRENT [queryBlock]'s own `:cteList`, index `1` the query block ONE level up
    * that declared it (if [queryBlock] is itself a CTE body, that is the `:cteList` its own CTE
-   * reference was resolved against), and so on. Each hop into a CTE's own body pushes that body's own
-   * `:cteList` onto the FRONT of [scopeStack], so a reference resolved from inside it sees its own
-   * scope at index `0` again. A [reference]'s `:ctelevelsup` deeper than [scopeStack] is tall (this can
-   * only happen for a malformed or not-yet-modeled shape — a real CTE reference's levelsup can never
-   * exceed the number of `WITH` clauses actually enclosing it) bails rather than reading past the end
-   * of what has actually been tracked.
+   * reference was resolved against), and so on.
+   *
+   * Scope is LEXICAL and belongs to the DECLARATION site, not to the path this resolver happened to
+   * walk to get there: hopping from one CTE's body into a SIBLING CTE it references (both declared in
+   * the SAME `:cteList`) is not a nesting level — PostgreSQL's own `:ctelevelsup` for that reference
+   * already says so (`1`, addressing the shared list one level up, not `0`). So when [reference]
+   * resolves against `scopeStack[reference.ctelevelsup]`, entering that CTE's own body must see the
+   * scope AS IT EXISTED AT THAT DECLARATION — `scopeStack.drop(reference.ctelevelsup)` — with that
+   * body's own `:cteList` pushed onto the front, never [scopeStack] as accumulated by however many
+   * hops it took this resolver to arrive here. Blindly prepending onto the FULL [scopeStack] on every
+   * hop (as this resolver used to) leaves stale frames from CTEs the new body was never lexically
+   * inside of at every index beyond `0`, which both (a) attributes a chained reference to the WRONG
+   * same-named CTE from three or more hops in, and (b) makes an ever-deeper stack drift out of step
+   * with the FIXED `:ctelevelsup` a sibling-only chain keeps re-using, so a chain of three or more
+   * plain (non-nested) CTEs resolves to nothing at all (#238).
+   *
+   * A [reference]'s `:ctelevelsup` deeper than [scopeStack] is tall (this can only happen for a
+   * malformed or not-yet-modeled shape — a real CTE reference's levelsup can never exceed the number
+   * of `WITH` clauses actually enclosing it) bails rather than reading past the end of what has
+   * actually been tracked.
    */
   private fun resolveVar(
     expression: PgNodeExpression,
@@ -205,7 +219,9 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
           }
           currentQueryBlock = definition.queryBlock
           val ownScope = parser.parseCteList(definition.queryBlock).associateBy { it.name }
-          currentScopeStack = listOf(ownScope) + currentScopeStack
+          // drop, not prepend-onto-the-full-stack: see this method's own KDoc on why scope belongs
+          // to the DECLARATION site (reference.ctelevelsup levels up from HERE), never the hop path.
+          currentScopeStack = listOf(ownScope) + currentScopeStack.drop(reference.ctelevelsup)
           currentVar = bodyVar
         }
         else ->

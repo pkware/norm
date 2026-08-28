@@ -850,8 +850,11 @@ public interface Queries : Transactable {
   public fun mergeChildFromParentDescriptionUpperDynamically(): Query<MergeChildFromParentDescriptionUpper> = mergeChildFromParentDescriptionUpperDynamically(::MergeChildFromParentDescriptionUpper)
 
   /**
-   * #238: a CTE with an explicit column list resolves positionally, independent of the renamed
-   * column name.
+   * #238: an explicit column list is resolved positionally against the body's own resname, not the
+   * renamed column name -- but "parent_label" itself still resolves to nothing here, since its body
+   * item ("UPPER(name)", with no AS and no implicit alias token at all) has no verifiable name to
+   * cross-validate the position against. "parent_id" (a bare, unaliased "id") IS verifiable by its
+   * own name, and resolves correctly to "parent.id".
    *
    * ```sql
    * WITH renamed_parent(parent_label, parent_id) AS (
@@ -863,8 +866,11 @@ public interface Queries : Transactable {
   public fun <T : Any> selectParentViaCteWithExplicitColumnList(mapper: (parent_label: String, parent_id: UUID) -> T): Many<T>
 
   /**
-   * #238: a CTE with an explicit column list resolves positionally, independent of the renamed
-   * column name.
+   * #238: an explicit column list is resolved positionally against the body's own resname, not the
+   * renamed column name -- but "parent_label" itself still resolves to nothing here, since its body
+   * item ("UPPER(name)", with no AS and no implicit alias token at all) has no verifiable name to
+   * cross-validate the position against. "parent_id" (a bare, unaliased "id") IS verifiable by its
+   * own name, and resolves correctly to "parent.id".
    *
    * ```sql
    * WITH renamed_parent(parent_label, parent_id) AS (
