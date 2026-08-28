@@ -248,6 +248,76 @@ class TypeRepositoryTest {
   }
 
   @Nested
+  inner class ComputedExpressionCommentAndWhitespaceStripping {
+
+    @Test
+    fun `a comment inside a top-level computed expression is stripped, not embedded verbatim`() {
+      // #238 8.1: the top-level path (isComputedExpression == true) emitted selectItem.expression
+      // RAW, applying neither stripComments nor collapseCosmeticWhitespace -- unlike the CTE path
+      // (resolveNodeTreeProvenanceExpression), which applies both. A developer who read the KDoc
+      // and pasted the rendered text back into psql got "a + -- note\n  b", where the line comment
+      // swallows the rest of its own line -- including the "b" operand -- so PostgreSQL rejects it
+      // with "syntax error at end of input". Verified live against verify-pg18.
+      val queryText = "SELECT a + -- note\n  b AS sum2 FROM t"
+      val sumColumn = Column(name = "sum2", notNull = true, type = Identifier(name = "int4"))
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("sumWithComment", listOf(sumColumn), queryText)
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).contains("@property sum2 (`a + b`)")
+    }
+  }
+
+  @Nested
+  inner class ComputedExpressionSpecialCharacterRendering {
+
+    @Test
+    fun `an expression containing a newline gets no source-reference KDoc line rather than a corrupted one`() {
+      // #238 8.2: a Markdown inline code span (the single backtick pair sourceReference() wraps
+      // an expression in) can never faithfully carry a raw newline -- CommonMark folds it to a
+      // single space when rendered, silently changing "s || 'a\nb'" (a string literal containing a
+      // real newline) into "s || 'a b'", a DIFFERENT value: verified live that
+      // "SELECT ('a\nb' = 'a b')" is false. The CTE-body text extraction is right to preserve that
+      // newline verbatim (75b1802) -- the defect is here, at emission -- so this must decline
+      // (emit nothing) rather than render a corrupted span.
+      val expressionColumn = Column(
+        name = "u",
+        notNull = false,
+        type = Identifier(name = "text"),
+        provenanceExpression = "s || 'a\nb'",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("newlineExpression", listOf(expressionColumn), "SELECT u FROM c")
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).doesNotContain("@property u")
+    }
+
+    @Test
+    fun `an expression containing a backtick is escaped with a longer backtick run, not truncated`() {
+      // #238 8.3: sourceReference() wrapped an expression in a SINGLE pair of backticks
+      // unconditionally, so a literal backtick inside the expression (e.g. "s || '`'") closed the
+      // inline code span early, corrupting the rendered Markdown. A run of backticks strictly
+      // longer than any run INSIDE the expression is a valid CommonMark delimiter that can never be
+      // mistaken for a closing delimiter, so the expression is escaped rather than declined.
+      val expressionColumn = Column(
+        name = "u",
+        notNull = false,
+        type = Identifier(name = "text"),
+        provenanceExpression = "s || '`'",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("backtickExpression", listOf(expressionColumn), "SELECT u FROM c")
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).contains("@property u (``s || '`'``)")
+    }
+  }
+
+  @Nested
   inner class PropertyNameNeedingBackticks {
 
     @Test

@@ -307,7 +307,18 @@ internal class TypeRepository(
           comment = column.comment,
           sourceTable = column.table?.name,
           sourceColumn = column.originalName.ifEmpty { null },
-          expression = if (isComputedExpression) selectItem.expression else cteExpression ?: "",
+          // #238 8.1: this top-level path re-lexes selectItem.expression straight from queryText,
+          // the SAME raw text the CTE path's own resolveNodeTreeProvenanceExpression extracts a
+          // comment/cosmetic-whitespace-free expression from before returning it (see that
+          // function's own KDoc) -- so this path must apply the SAME two normalizations to avoid
+          // embedding comment text (or the cosmetic whitespace stripComments' own substitution can
+          // leave behind) verbatim in generated KDoc, which a developer could paste back into
+          // PostgreSQL only to have the comment swallow part of the expression.
+          expression = if (isComputedExpression) {
+            collapseCosmeticWhitespace(stripComments(selectItem.expression))
+          } else {
+            cteExpression ?: ""
+          },
         )
       },
       sql = queryText,
@@ -811,9 +822,15 @@ internal fun TypeSpec.Builder.addClassKdoc(
     }
     if (hasSql) {
       if (isNotEmpty()) append("\n\n")
-      append("```sql\n")
+      // #238: a fixed 3-backtick fence breaks if sql ITSELF contains a run of 3+ backticks (e.g.
+      // inside a string literal) -- a line matching or exceeding the fence's own length terminates
+      // a CommonMark fenced code block early, same class of defect as sourceReference()'s inline
+      // span below. A fence one backtick longer than any run already in sql can never be mistaken
+      // for a closing fence.
+      val fence = markdownFenceDelimiter(sql)
+      append(fence).append("sql\n")
       append(sql.trim())
-      append("\n```")
+      append("\n").append(fence)
     }
     if (documentedProperties.isNotEmpty()) {
       if (isNotEmpty()) append("\n\n")
@@ -860,16 +877,76 @@ private fun String.formatAsKdocPropertyReference(): String =
   if (PLAIN_KOTLIN_IDENTIFIER.matches(this)) this else "`$this`"
 
 /**
- * Returns a source reference string for display in KDoc, or `null` if none is available.
+ * Returns a source reference string for display in KDoc, or `null` if none is available (either
+ * there is nothing to reference, or [markdownInlineCodeSpan] could not render it faithfully — see
+ * that function's own KDoc for when that happens).
  *
  * - For columns from a table: `` `table.column` ``
  * - For computed expressions: `` `COUNT(*)` ``
  */
 private fun PropertySource.sourceReference(): String? = when {
-  sourceTable != null -> "`$sourceTable.$sourceColumn`"
-  expression.isNotEmpty() -> "`$expression`"
+  sourceTable != null -> markdownInlineCodeSpan("$sourceTable.$sourceColumn")
+  expression.isNotEmpty() -> markdownInlineCodeSpan(expression)
   else -> null
 }
+
+/**
+ * The longest run of consecutive backtick characters anywhere in [text], or `0` if [text] contains
+ * none. Used by [markdownInlineCodeSpan] and [markdownFenceDelimiter] to pick a delimiter that can
+ * never be mistaken for a same-length run already inside [text].
+ */
+private fun longestBacktickRun(text: String): Int {
+  var longest = 0
+  var current = 0
+  for (character in text) {
+    if (character == '`') {
+      current++
+      if (current > longest) longest = current
+    } else {
+      current = 0
+    }
+  }
+  return longest
+}
+
+/**
+ * Wraps [text] in a Markdown inline code span that renders back to EXACTLY [text] — never [text]
+ * altered to fit the rendering (that is the same class of defect as the truncation #238 8.1
+ * reverted) — or `null` if no inline code span can carry [text] faithfully at all.
+ *
+ * Two hazards, both #238 emission-site defects rather than resolution defects (the text handed in
+ * here is already the developer's own complete, correct SQL):
+ * - A run of backticks INSIDE [text] as long as the span's own delimiter would be read as the
+ *   CLOSING delimiter, ending the span early (#238 8.3, `s || '\`'` truncating the rendered span).
+ *   Fixed by using a delimiter one backtick longer than [text]'s own longest run
+ *   ([longestBacktickRun]) — CommonMark's own rule for an unambiguous code span delimiter — with a
+ *   single padding space on each side when [text] itself starts or ends with a backtick, so that
+ *   character never sits directly against the delimiter.
+ * - A raw newline INSIDE [text] (#238 8.2, `s || 'a\nb'` — a string literal containing a genuine
+ *   newline). CommonMark folds any line ending inside an inline code span to a single space when
+ *   rendering, which would silently turn that into `s || 'a b'`, a DIFFERENT value (`'a\nb' =
+ *   'a b'` is `false`). No inline-span delimiter choice can fix this — the corruption happens
+ *   during RENDERING, not parsing — so per the "correct or silent" invariant this declines rather
+ *   than emit a value that reads back as something else. (A multi-line expression could in
+ *   principle be rendered as a fenced block instead of an inline span, but a `@property` tag's
+ *   description begins on the SAME line as its name token, and KDoc has no established convention
+ *   for interleaving one there — declining is the only choice provable correct today.)
+ */
+internal fun markdownInlineCodeSpan(text: String): String? {
+  if (text.contains('\n') || text.contains('\r')) return null
+  val delimiter = "`".repeat(longestBacktickRun(text) + 1)
+  val needsPadding = text.startsWith("`") || text.endsWith("`")
+  return if (needsPadding) "$delimiter $text $delimiter" else "$delimiter$text$delimiter"
+}
+
+/**
+ * A backtick-fence delimiter (` ``` `, or longer) that can be used to open a Markdown fenced code
+ * block containing [text] without [text] itself ever being able to supply a same-length or longer
+ * run of backticks that CommonMark would read as the block's own closing fence (#238) — one
+ * backtick longer than [text]'s own longest run ([longestBacktickRun]), and never shorter than the
+ * conventional 3.
+ */
+internal fun markdownFenceDelimiter(text: String): String = "`".repeat(maxOf(3, longestBacktickRun(text) + 1))
 
 /**
  * Collapses the cosmetic whitespace [stripComments]' own single-space substitution can leave
