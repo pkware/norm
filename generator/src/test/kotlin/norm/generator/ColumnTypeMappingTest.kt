@@ -2377,6 +2377,31 @@ class ColumnTypeMappingTest {
     }
 
     @Test
+    fun `column override matches the real source column, not a CTE's own output alias`() {
+      // #238: JdbcAnalyzer.buildResultColumns now populates originalName from the node tree's own
+      // :resorigtbl/:resorigcol -- the REAL source column, resolved through a CTE even when the
+      // outer select item is a plain reference to the CTE's own (possibly renamed) output alias.
+      // tryResolveColumnOverride keys columnLevelOverrides off that SAME originalName, so a
+      // columnMapping("parent", "id") must match a column whose outer name is "parentId" as long as
+      // its originalName is "id" -- before this fix, originalName mirrored the alias itself
+      // ("parentId"), and the mapping silently never matched.
+      val mappings = listOf(
+        TypeMapping("", "parent", "id", "com.example.ParentId", "com.example.ParentIdAdapter"),
+      )
+      val repository = TypeRepository("test", Catalog(), mappings)
+
+      val cteRenamedPassthroughColumn = column(
+        name = "parentId",
+        type = "int4",
+        table = Identifier(name = "parent"),
+        originalName = "id",
+      )
+
+      assertThat(repository.resolveColumnType(cteRenamedPassthroughColumn))
+        .isEqualTo(ClassName("com.example", "ParentId"))
+    }
+
+    @Test
     fun `unsupported postgres type in type mapping produces error`() {
       val mappings = listOf(
         TypeMapping("xml", null, null, "com.example.XmlDoc", "com.example.XmlDocAdapter"),

@@ -651,29 +651,6 @@ public class PostgresQueries(
 
   override fun <T : Any> insertChildFromParentDescriptionUpperDynamically(mapper: (inserted_parent_id: UUID, inserted_name: String?) -> T): Query<T> = insertChildFromParentDescriptionUpper(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
 
-  private fun <T : Any, Return> mergeChildFromParentDescriptionUpper(mapper: (source_parent_id: UUID, merged_description: String?) -> T, processor: ManyProcessor<T, Return>): Return {
-    val sql = """
-        |WITH desc_source AS (
-        |  SELECT id, UPPER(description) AS description_upper FROM parent
-        |)
-        |MERGE INTO child USING desc_source ON child.parent_id = desc_source.id
-        |WHEN MATCHED THEN UPDATE SET name = desc_source.description_upper
-        |WHEN NOT MATCHED THEN INSERT (parent_id, name) VALUES (desc_source.id, desc_source.description_upper)
-        |RETURNING desc_source.id AS source_parent_id, desc_source.description_upper AS merged_description
-        """.trimMargin()
-    val rowReader: ResultSet.() -> T = {
-      mapper(
-        getObject(1, UUID::class.java),
-        getString(2),
-      )
-    }
-    return processor.invoke(sql, rowReader, null)
-  }
-
-  override fun <T : Any> mergeChildFromParentDescriptionUpper(mapper: (source_parent_id: UUID, merged_description: String?) -> T): Many<T> = mergeChildFromParentDescriptionUpper(mapper, driver::queryMany)
-
-  override fun <T : Any> mergeChildFromParentDescriptionUpperDynamically(mapper: (source_parent_id: UUID, merged_description: String?) -> T): Query<T> = mergeChildFromParentDescriptionUpper(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
-
   private fun <T : Any, Return> selectParentViaCteWithExplicitColumnList(mapper: (parent_label: String, parent_id: UUID) -> T, processor: ManyProcessor<T, Return>): Return {
     val sql = """
         |WITH renamed_parent(parent_label, parent_id) AS (

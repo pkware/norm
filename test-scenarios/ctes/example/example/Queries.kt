@@ -816,40 +816,6 @@ public interface Queries : Transactable {
   public fun insertChildFromParentDescriptionUpperDynamically(): Query<InsertChildFromParentDescriptionUpper> = insertChildFromParentDescriptionUpperDynamically(::InsertChildFromParentDescriptionUpper)
 
   /**
-   * #238: MERGE ... RETURNING resolves the returned CTE column to its body position.
-   *
-   * ```sql
-   * WITH desc_source AS (
-   *   SELECT id, UPPER(description) AS description_upper FROM parent
-   * )
-   * MERGE INTO child USING desc_source ON child.parent_id = desc_source.id
-   * WHEN MATCHED THEN UPDATE SET name = desc_source.description_upper
-   * WHEN NOT MATCHED THEN INSERT (parent_id, name) VALUES (desc_source.id, desc_source.description_upper)
-   * RETURNING desc_source.id AS source_parent_id, desc_source.description_upper AS merged_description
-   * ```
-   */
-  public fun <T : Any> mergeChildFromParentDescriptionUpper(mapper: (source_parent_id: UUID, merged_description: String?) -> T): Many<T>
-
-  /**
-   * #238: MERGE ... RETURNING resolves the returned CTE column to its body position.
-   *
-   * ```sql
-   * WITH desc_source AS (
-   *   SELECT id, UPPER(description) AS description_upper FROM parent
-   * )
-   * MERGE INTO child USING desc_source ON child.parent_id = desc_source.id
-   * WHEN MATCHED THEN UPDATE SET name = desc_source.description_upper
-   * WHEN NOT MATCHED THEN INSERT (parent_id, name) VALUES (desc_source.id, desc_source.description_upper)
-   * RETURNING desc_source.id AS source_parent_id, desc_source.description_upper AS merged_description
-   * ```
-   */
-  public fun mergeChildFromParentDescriptionUpper(): Many<MergeChildFromParentDescriptionUpper> = mergeChildFromParentDescriptionUpper(::MergeChildFromParentDescriptionUpper)
-
-  public fun <T : Any> mergeChildFromParentDescriptionUpperDynamically(mapper: (source_parent_id: UUID, merged_description: String?) -> T): Query<T>
-
-  public fun mergeChildFromParentDescriptionUpperDynamically(): Query<MergeChildFromParentDescriptionUpper> = mergeChildFromParentDescriptionUpperDynamically(::MergeChildFromParentDescriptionUpper)
-
-  /**
    * #238: an explicit column list is resolved positionally against the body's own resname, not the
    * renamed column name -- but "parent_label" itself still resolves to nothing here, since its body
    * item ("UPPER(name)", with no AS and no implicit alias token at all) has no verifiable name to

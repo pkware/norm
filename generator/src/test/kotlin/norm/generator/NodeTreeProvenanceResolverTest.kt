@@ -4,6 +4,7 @@ import assertk.assertThat
 import assertk.assertions.containsExactly
 import assertk.assertions.isEqualTo
 import org.intellij.lang.annotations.Language
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.testcontainers.containers.PostgreSQLContainer
@@ -437,6 +438,7 @@ class NodeTreeProvenanceResolverTest {
 
     @Test
     fun `MERGE RETURNING resolves the returned CTE column to its body position`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "MERGE RETURNING requires PostgreSQL 17+")
       val provenance = provenanceFor(
         "CREATE TABLE t (d TEXT, id INT); CREATE TABLE b (id INT, d TEXT)",
         "WITH c AS (SELECT UPPER(d) AS d, id FROM t) " +

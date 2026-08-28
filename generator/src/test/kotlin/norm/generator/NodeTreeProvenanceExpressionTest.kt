@@ -5,6 +5,7 @@ import assertk.assertions.isEqualTo
 import assertk.assertions.isNotEmpty
 import assertk.assertions.isNull
 import org.intellij.lang.annotations.Language
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.testcontainers.containers.PostgreSQLContainer
@@ -113,6 +114,33 @@ class NodeTreeProvenanceExpressionTest {
       val sql = "SELECT UPPER(description) AS description_upper FROM parent"
 
       assertThat(resolvedExpression(ddl, sql)).isNull()
+    }
+  }
+
+  @Nested
+  inner class DataModifyingMainQueries {
+
+    @Test
+    fun `MERGE RETURNING resolves a CTE source column's expression`() {
+      // #238: MERGE ... RETURNING is PostgreSQL 17+, so this shape has no test-scenarios coverage
+      // (scenarios have no version gate) -- this test is that coverage instead, end to end from a
+      // MERGE main query through to the extracted expression text.
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "MERGE RETURNING requires PostgreSQL 17+")
+      val ddl = """
+        CREATE TABLE parent (id INT, description TEXT);
+        CREATE TABLE child (parent_id INT, name TEXT)
+      """.trimIndent()
+      val sql = """
+        WITH desc_source AS (
+          SELECT id, UPPER(description) AS description_upper FROM parent
+        )
+        MERGE INTO child USING desc_source ON child.parent_id = desc_source.id
+        WHEN MATCHED THEN UPDATE SET name = desc_source.description_upper
+        WHEN NOT MATCHED THEN INSERT (parent_id, name) VALUES (desc_source.id, desc_source.description_upper)
+        RETURNING desc_source.id AS source_parent_id, desc_source.description_upper AS merged_description
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql, columnIndex = 1)).isEqualTo("UPPER(description)")
     }
   }
 

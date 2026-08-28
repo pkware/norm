@@ -230,16 +230,6 @@ INSERT INTO child (parent_id, name)
 SELECT id, description_upper FROM desc_source
 RETURNING parent_id AS inserted_parent_id, name AS inserted_name;
 
--- #238: MERGE ... RETURNING resolves the returned CTE column to its body position.
--- name: mergeChildFromParentDescriptionUpper :many
-WITH desc_source AS (
-  SELECT id, UPPER(description) AS description_upper FROM parent
-)
-MERGE INTO child USING desc_source ON child.parent_id = desc_source.id
-WHEN MATCHED THEN UPDATE SET name = desc_source.description_upper
-WHEN NOT MATCHED THEN INSERT (parent_id, name) VALUES (desc_source.id, desc_source.description_upper)
-RETURNING desc_source.id AS source_parent_id, desc_source.description_upper AS merged_description;
-
 -- #238: an explicit column list is resolved positionally against the body's own resname, not the
 -- renamed column name -- but "parent_label" itself still resolves to nothing here, since its body
 -- item ("UPPER(name)", with no AS and no implicit alias token at all) has no verifiable name to
