@@ -220,7 +220,12 @@ private fun TypeSpec.Builder.addDynamicInterfaceMethods(query: SqlStatement) {
  */
 private fun FunSpec.Builder.addStandardKdoc(query: SqlStatement, extraFormat: String? = null, vararg extraArgs: Any) {
   if (query.comments.isNotEmpty()) {
-    addKdoc(query.comments.joinToString("\n", postfix = "\n\n", transform = String::trim))
+    // #238 11.3: query.comments is the developer's own "-- comment" text preceding "-- name:",
+    // passed as a "%L" ARGUMENT rather than interpolated into the format string itself -- a literal
+    // "%" in that comment (e.g. "-- Matches 100% of rows.") would otherwise be read as a KotlinPoet
+    // format specifier and throw building the KDoc, the same defect class fixed for EnumBuilder's
+    // catalog comment.
+    addKdoc("%L\n\n", query.comments.joinToString("\n", transform = String::trim))
   }
   addKdoc("```sql\n%L\n```\n\n", query.sql)
   if (extraFormat != null) {

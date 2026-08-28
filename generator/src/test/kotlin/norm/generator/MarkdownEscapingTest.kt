@@ -3,6 +3,11 @@ package norm.generator
 import assertk.assertThat
 import assertk.assertions.isEqualTo
 import assertk.assertions.isNull
+import org.commonmark.node.AbstractVisitor
+import org.commonmark.node.Code
+import org.commonmark.node.SoftLineBreak
+import org.commonmark.node.Text
+import org.commonmark.parser.Parser
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
@@ -53,6 +58,62 @@ class MarkdownEscapingTest {
     @Test
     fun `a raw carriage return is declined for the same reason as a newline`() {
       assertThat(markdownInlineCodeSpan("a\rb")).isNull()
+    }
+  }
+
+  @Nested
+  inner class BacktickEscaping {
+
+    @Test
+    fun `a lone backtick is escaped with a preceding backslash`() {
+      assertThat(escapeMarkdownBacktick("a `b`")).isEqualTo("a \\`b\\`")
+    }
+
+    @Test
+    fun `a backslash already immediately before a backtick does not defeat the escape`() {
+      // #238 11.2: text.replace("`", "\\`") alone turns "weird \`" (a literal backslash then a
+      // backtick, e.g. from `COMMENT ON COLUMN ... IS 'weird \`'`) into "weird \\`" -- CommonMark
+      // reads the doubled backslash as an ESCAPED backslash (a literal "\"), leaving the backtick
+      // that follows UNESCAPED and free to open a code span that pairs forward with a LATER
+      // property's own source-reference span, exactly the corruption escaping this was meant to
+      // prevent. Escaping the text's own literal backslashes FIRST, before escaping backticks,
+      // keeps the two escapes from colliding.
+      val textWithBackslashBeforeBacktick = "weird \\" + "`"
+
+      val escaped = escapeMarkdownBacktick(textWithBackslashBeforeBacktick)
+
+      val markdown = "@property a $escaped\n@property b (`hz.b`)"
+      val spans = extractSourceReferenceSpans(markdown)
+      assertThat(spans).isEqualTo(listOf("hz.b"))
+    }
+
+    /**
+     * A minimal, self-contained copy of the extraction real KDoc verification
+     * ([SourceReferenceLiveVerificationTest]'s own `extractSourceReferenceSpans`) uses: a real
+     * CommonMark parse for a [org.commonmark.node.Code] node whose immediately preceding text ends
+     * in `(` — the shape [TypeSpec.Builder.addClassKdoc] produces via `append("($source)")`. Kept
+     * here, rather than shared, so this pure-text unit test needs no live database and cannot be
+     * broken by unrelated changes to that file's live-verification concerns.
+     */
+    private fun extractSourceReferenceSpans(markdown: String): List<String> {
+      val spans = mutableListOf<String>()
+      val precedingText = StringBuilder()
+      val visitor = object : AbstractVisitor() {
+        override fun visit(text: Text) {
+          precedingText.append(text.literal)
+        }
+
+        override fun visit(softLineBreak: SoftLineBreak) {
+          precedingText.append("\n")
+        }
+
+        override fun visit(code: Code) {
+          if (precedingText.endsWith("(")) spans.add(code.literal)
+          precedingText.append("`").append(code.literal).append("`")
+        }
+      }
+      Parser.builder().build().parse(markdown).accept(visitor)
+      return spans
     }
   }
 

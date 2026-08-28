@@ -1,6 +1,7 @@
 package norm.generator
 
 import assertk.assertThat
+import assertk.assertions.contains
 import assertk.assertions.isEmpty
 import com.squareup.kotlinpoet.TypeSpec
 import org.commonmark.node.AbstractVisitor
@@ -45,5 +46,54 @@ class InterfaceBuilderKdocTest {
       },
     )
     assertThat(codeSpans).isEmpty()
+  }
+
+  @Test
+  fun `a backslash immediately before a backtick in one parameter comment cannot open a code span either`() {
+    // #238 11.2: escaping ONLY the backtick ("`" -> "\\`") is defeated when the comment already
+    // contains a backslash immediately before the backtick -- CommonMark reads the resulting "\\`"
+    // as an escaped backslash followed by an UNESCAPED, code-span-opening backtick, exactly the
+    // defect this test's sibling above already guards against for a bare backtick.
+    val statement = createStatement(
+      sql = "SELECT 1",
+      cmd = ":exec",
+      params = listOf(
+        Parameter(1, column("aParam", comment = "weird \\" + "`")),
+        Parameter(2, column("bParam", comment = "cruel world`")),
+      ),
+    )
+
+    val builder = TypeSpec.interfaceBuilder("Test")
+    builder.addSqlStatementInterfaceMethod(statement)
+    val kdoc = builder.build().funSpecs.first().kdoc.toString()
+
+    val codeSpans = mutableListOf<String>()
+    Parser.builder().build().parse(kdoc).accept(
+      object : AbstractVisitor() {
+        override fun visit(code: Code) {
+          codeSpans.add(code.literal)
+        }
+      },
+    )
+    assertThat(codeSpans).isEmpty()
+  }
+
+  @Test
+  fun `a percent sign in the query's own leading SQL comment does not abort generation`() {
+    // #238 11.3: addStandardKdoc appends query.comments (the developer's own "-- comment" lines
+    // preceding "-- name:") as a KotlinPoet KDoc FORMAT string with no arguments, the same class of
+    // defect fixed for EnumBuilder's catalog comment -- a literal "%" in the developer's own comment
+    // is read as a format specifier and throws building the KDoc.
+    val statement = createStatement(
+      sql = "SELECT 1",
+      cmd = ":exec",
+      comments = listOf("Matches 100% of rows."),
+    )
+
+    val builder = TypeSpec.interfaceBuilder("Test")
+    builder.addSqlStatementInterfaceMethod(statement)
+    val kdoc = builder.build().funSpecs.first().kdoc.toString()
+
+    assertThat(kdoc).contains("Matches 100% of rows.")
   }
 }

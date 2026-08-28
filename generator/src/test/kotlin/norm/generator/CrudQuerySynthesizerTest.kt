@@ -393,6 +393,24 @@ class CrudQuerySynthesizerTest {
     assertThat(byName.getValue("deleteAllTq").sql).isEqualTo("DELETE FROM tq")
   }
 
+  @Test
+  fun `a column name containing a backtick generates SQL against the real column, not a folded one`() {
+    // #238 11.1: a prior fix rewrote Column.name's backtick to an apostrophe before this synthesizer
+    // ever saw it, so generated SQL referenced a column ("a'b") that does not exist. Column.name must
+    // stay the real database identifier here.
+    val table = table(
+      "bt",
+      column("id", "int4", notNull = true, isPrimaryKey = true, isAutoIncrement = true),
+      column("a`b", "text", notNull = true),
+    )
+    val catalog = catalog(table)
+    val quoter = quoteOnly("a`b")
+
+    val insert = CrudQuerySynthesizer.synthesize(catalog, quoter).first { it.name == "insertBt" }
+
+    assertThat(insert.sql).isEqualTo("""INSERT INTO bt ("a`b") VALUES (?) RETURNING id""")
+  }
+
   // --- Helpers ---
 
   /**

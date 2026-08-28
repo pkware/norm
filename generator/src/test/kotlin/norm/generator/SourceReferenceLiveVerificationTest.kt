@@ -1,6 +1,7 @@
 package norm.generator
 
 import assertk.assertThat
+import assertk.assertions.isFalse
 import assertk.assertions.isTrue
 import org.commonmark.node.AbstractVisitor
 import org.commonmark.node.Code
@@ -70,7 +71,21 @@ class SourceReferenceLiveVerificationTest {
     val fileText = case.path.readText()
     val markdown = extractKdocMarkdown(fileText) ?: return
     val spans = extractSourceReferenceSpans(markdown)
-    if (spans.isEmpty()) return
+    if (spans.isEmpty()) {
+      // A raw "(`" in the KDoc's own Markdown SOURCE (before CommonMark parses it) is the exact,
+      // and only, text addClassKdoc emits via `append("($source)")` where $source is itself
+      // backtick-wrapped -- so its presence means a span WAS emitted here. Zero PARSED spans despite
+      // that means span delimitation broke (#238 11.2's own defect, which this exact blind spot let
+      // through once already): a stray, unpaired backtick or backslash elsewhere in the same KDoc
+      // paragraph closed or reopened the code span in the wrong place. That is a real failure, not
+      // an absence of spans to verify -- silently returning here would prove nothing.
+      assertThat(
+        markdown.contains("(`"),
+        "found zero source-reference spans in ${case.path}, but its raw KDoc source contains \"(`\" " +
+          "-- span delimitation broke somewhere in this file's KDoc paragraph, it did not simply have no spans",
+      ).isFalse()
+      return
+    }
 
     val originalSql = extractFencedSqlBlock(markdown)
 

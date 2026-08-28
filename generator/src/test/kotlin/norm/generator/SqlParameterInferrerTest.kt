@@ -47,6 +47,20 @@ class SqlParameterInferrerTest {
     }
 
     @Test
+    fun `un-doubles an embedded double quote in a quoted INSERT column name`() {
+      // #238 11.4: a column literally named a"b (one embedded double-quote character) is spelled
+      // "a""b" in SQL, per PostgreSQL's own quoted-identifier escape rule (the embedded "" is ONE
+      // literal " character, not two) -- unquoteIdentifier stripped only the OUTER quotes, leaving
+      // the doubled internal quote as two literal characters in the inferred column/parameter name
+      // instead of un-escaping it back to the one character the real column is actually named.
+      val result = inferrer.inferParameterInfo("""INSERT INTO t("a""b") VALUES (?)""")
+
+      assertThat(result.getValue(1)).isEqualTo(
+        InferredParameter("a\"b", "t", inheritsNullability = true, columnName = "a\"b"),
+      )
+    }
+
+    @Test
     fun `function arg names override INSERT column names but preserve columnName for nullability`() {
       val result = inferrer.inferParameterInfo(
         "INSERT INTO user_credentials(username, password_hash) VALUES (?, crypt(?, gen_salt('bf')))",

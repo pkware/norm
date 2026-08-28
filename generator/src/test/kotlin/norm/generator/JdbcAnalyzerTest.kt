@@ -8,6 +8,7 @@ import assertk.assertions.hasSize
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
+import assertk.assertions.isNotEmpty
 import assertk.assertions.isNotNull
 import assertk.assertions.isTrue
 import org.junit.jupiter.api.AfterAll
@@ -1189,37 +1190,48 @@ class JdbcAnalyzerTest {
   }
 
   @Nested
-  inner class BacktickColumnNameSanitization {
+  inner class BacktickColumnNamePreservation {
+
+    // #238 11.1: a prior fix (e15d412) rewrote a backtick in Column.name to an apostrophe to keep
+    // KotlinPoet's generated declaration compilable. That name field is also what CRUD synthesis
+    // builds SQL from and what Catalog.findColumn matches column comments by, so the rewrite was a
+    // REGRESSION worse than the invalid-Kotlin defect it fixed: generateCrud (the plugin default)
+    // aborted with "column \"a'b\" of relation ... does not exist", two distinct columns differing
+    // only by backtick-vs-apostrophe collided into one Kotlin declaration, and a column's comment
+    // silently stopped being found. Reverted. A column name containing a backtick still cannot
+    // produce a compilable Kotlin property declaration -- that is a pre-existing limitation of the
+    // whole naming pipeline (shared by "*/", ".", and a literal newline in a column name), not a
+    // provenance defect, and is out of scope here.
 
     @Test
-    fun `buildCatalog sanitizes a backtick in a table column name, but keeps it in originalName`() {
-      // #238 10.5: KotlinPoet wraps a non-plain-identifier name in backticks verbatim, with no
-      // escaping of characters inside it -- there is no Kotlin escape sequence for a backtick inside
-      // a backtick-quoted identifier at all. A raw column name containing one ("a`b") therefore
-      // produced INVALID Kotlin ("public val `a`b`: String?", which closes at the FIRST embedded
-      // backtick). originalName must keep the exact database identifier -- a PostgreSQL
-      // double-quoted identifier has no trouble containing a backtick.
-      // A table name distinct from the sibling test's own -- these tests can run CONCURRENTLY
-      // (parallel test execution is enabled repository-wide), and both create/drop DDL against the
-      // SAME shared connection/schema.
-      connection.createStatement().use { it.execute("""CREATE TABLE backtick_test_catalog (id INT, "a`b" TEXT)""") }
+    fun `buildCatalog keeps a backtick in a column's name and originalName identical`() {
+      // A table name distinct from sibling tests' own -- these tests can run CONCURRENTLY (parallel
+      // test execution is enabled repository-wide), and all create/drop DDL against the SAME shared
+      // connection/schema.
+      connection.createStatement().use {
+        it.execute("""CREATE TABLE backtick_test_catalog (id INT, "a`b" TEXT)""")
+        it.execute("""COMMENT ON COLUMN backtick_test_catalog."a`b" IS 'Has a backtick.'""")
+      }
 
       try {
         val catalog = analyzer.buildCatalog()
         val table = catalog.schemas.first().tables.first { it.rel.name == "backtick_test_catalog" }
         val column = table.columns.first { it.originalName == "a`b" }
 
-        assertThat(column.name).doesNotContain("`")
-        assertThat(column.name).isEqualTo("a'b")
+        assertThat(column.name).isEqualTo("a`b")
         assertThat(column.originalName).isEqualTo("a`b")
+        assertThat(column.comment).isEqualTo("Has a backtick.")
       } finally {
         connection.createStatement().use { it.execute("DROP TABLE IF EXISTS backtick_test_catalog") }
       }
     }
 
     @Test
-    fun `analyzeQuery sanitizes a backtick in a query result column's label, but keeps it in originalName`() {
-      connection.createStatement().use { it.execute("""CREATE TABLE backtick_test_query (id INT, "a`b" TEXT)""") }
+    fun `analyzeQuery keeps a backtick in a query result column's label and finds its comment`() {
+      connection.createStatement().use {
+        it.execute("""CREATE TABLE backtick_test_query (id INT, "a`b" TEXT)""")
+        it.execute("""COMMENT ON COLUMN backtick_test_query."a`b" IS 'Has a backtick.'""")
+      }
 
       try {
         val catalog = analyzer.buildCatalog()
@@ -1228,11 +1240,57 @@ class JdbcAnalyzerTest {
         val query = analyzer.analyzeQuery(parsed, catalog)
 
         val column = query.columns.single()
-        assertThat(column.name).doesNotContain("`")
-        assertThat(column.name).isEqualTo("a'b")
+        assertThat(column.name).isEqualTo("a`b")
         assertThat(column.originalName).isEqualTo("a`b")
+        assertThat(column.comment).isEqualTo("Has a backtick.")
       } finally {
         connection.createStatement().use { it.execute("DROP TABLE IF EXISTS backtick_test_query") }
+      }
+    }
+
+    @Test
+    fun `buildCatalog keeps two columns distinguished by backtick versus apostrophe as separate names`() {
+      // The reverted sanitizer folded a backtick to an apostrophe, so "a\`b" and "a'b" -- two
+      // distinct, legal PostgreSQL column names -- both became the Kotlin name "a'b", colliding into
+      // one property/parameter declaration.
+      connection.createStatement().use {
+        it.execute("""CREATE TABLE backtick_collision_test (id INT, "a`b" TEXT, "a'b" TEXT)""")
+      }
+
+      try {
+        val catalog = analyzer.buildCatalog()
+        val table = catalog.schemas.first().tables.first { it.rel.name == "backtick_collision_test" }
+        val names = table.columns.map { it.name }
+
+        assertThat(names).contains("a`b")
+        assertThat(names).contains("a'b")
+      } finally {
+        connection.createStatement().use { it.execute("DROP TABLE IF EXISTS backtick_collision_test") }
+      }
+    }
+
+    @Test
+    fun `CRUD synthesis against a table with a backtick column name generates SQL PostgreSQL accepts`() {
+      connection.createStatement().use {
+        it.execute("""CREATE TABLE backtick_crud_test (id SERIAL PRIMARY KEY, "a`b" TEXT NOT NULL)""")
+      }
+
+      try {
+        val catalog = analyzer.buildCatalog()
+        val quoter = analyzer.buildIdentifierQuoter()
+        val queries = CrudQuerySynthesizer.synthesize(catalog, quoter)
+          .filter { it.name.endsWith("BacktickCrudTest") }
+
+        assertThat(queries).isNotEmpty()
+        for (query in queries) {
+          // A malformed SQL string (e.g. referencing the wrong, sanitized column name) throws
+          // during analysis against the live server -- this is the exact failure e15d412's fix
+          // caused ("column \"a'b\" of relation ... does not exist").
+          val analyzed = analyzer.analyzeQuery(query, catalog)
+          assertThat(analyzed.text).isNotEmpty()
+        }
+      } finally {
+        connection.createStatement().use { it.execute("DROP TABLE IF EXISTS backtick_crud_test") }
       }
     }
   }
@@ -1264,6 +1322,19 @@ class JdbcAnalyzerTest {
     assertThat(quoter("MyTable")).isEqualTo("\"MyTable\"")
     // Leading digit is not a valid unquoted identifier start
     assertThat(quoter("1column")).isEqualTo("\"1column\"")
+  }
+
+  @Test
+  fun `buildIdentifierQuoter doubles an embedded double quote per PostgreSQL's own quoted-identifier escape rule`() {
+    // #238 11.4: a column literally named a"b (PostgreSQL: CREATE TABLE t ("a""b" INT)) wraps in
+    // double quotes unmodified ("a"b") without doubling the embedded quote -- PostgreSQL reads that
+    // as the quoted identifier "a" followed by a bare, syntactically invalid b" token, failing with
+    // "Unterminated identifier". PostgreSQL's own escape rule for a quoted identifier is to double
+    // every embedded double quote, exactly as it already is for a quoted STRING LITERAL's embedded
+    // single quote.
+    val quoter = analyzer.buildIdentifierQuoter()
+
+    assertThat(quoter("a\"b")).isEqualTo("\"a\"\"b\"")
   }
 
   companion object {

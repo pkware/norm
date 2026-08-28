@@ -30,7 +30,12 @@ internal fun buildEnumTypeSpec(enumDefinition: Enum, packageName: String): TypeS
 
   val enumBuilder = TypeSpec.enumBuilder(enumClassName)
     // Add KDoc to the enum class if a comment is present.
-    .apply { if (enumDefinition.comment.isNotEmpty()) addKdoc("${enumDefinition.comment}\n\n") }
+    // #238 11.3: the comment must be passed as a "%L" ARGUMENT, never interpolated directly into the
+    // format string itself -- a literal "%" in the comment (e.g. "Feeling 100% of the time.") would
+    // otherwise be read as a KotlinPoet format specifier and throw building the KDoc, the same class
+    // of defect the table/column ([TypeRepository.addClassKdoc]) and domain ([buildDomainTypeSpec])
+    // comment paths already avoid.
+    .apply { if (enumDefinition.comment.isNotEmpty()) addKdoc("%L\n\n", enumDefinition.comment) }
     .addKdoc("@property databaseValue The representation of this enum in Postgres.")
     .primaryConstructor(
       FunSpec.constructorBuilder()

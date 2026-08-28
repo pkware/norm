@@ -12,4 +12,5 @@ public data class QuotedColumns(
   public val id: Int,
   public val Foo: String,
   public val `My Col`: String?,
+  public val Select: String?,
 )

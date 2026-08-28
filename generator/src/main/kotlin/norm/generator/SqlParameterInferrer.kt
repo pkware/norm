@@ -358,7 +358,11 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
      */
     private fun unquoteIdentifier(identifier: String): String =
       if (identifier.startsWith('"') && identifier.endsWith('"')) {
-        identifier.substring(1, identifier.length - 1)
+        // #238 11.4: PostgreSQL's own quoted-identifier escape rule reads an embedded "" inside a
+        // quoted identifier as ONE literal " character, not two -- un-doubling it here recovers the
+        // real column name (e.g. a"b), rather than leaving the SQL-escaped spelling (a""b) as the
+        // inferred parameter name.
+        identifier.substring(1, identifier.length - 1).replace("\"\"", "\"")
       } else {
         identifier
       }

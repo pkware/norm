@@ -932,19 +932,20 @@ public interface Queries : Transactable {
 
   /**
    * ```sql
-   * INSERT INTO quoted_columns ("Foo", "My Col") VALUES (?, ?) RETURNING id
+   * INSERT INTO quoted_columns ("Foo", "My Col", "Select") VALUES (?, ?, ?) RETURNING id
    * ```
    */
   @Throws(SQLException::class)
   public fun <T : Any> insertQuotedColumns(
     Foo: String,
     `My Col`: String?,
+    Select: String?,
     mapper: (id: Int) -> T,
   ): T
 
   /**
    * ```sql
-   * INSERT INTO quoted_columns ("Foo", "My Col") VALUES (?, ?) RETURNING id
+   * INSERT INTO quoted_columns ("Foo", "My Col", "Select") VALUES (?, ?, ?) RETURNING id
    * ```
    *
    * @return A list containing the generated values for each inserted row, in insertion order.
@@ -954,13 +955,14 @@ public interface Queries : Transactable {
     stream: Iterable<Input>,
     Foo: (Input) -> String,
     `My Col`: (Input) -> String?,
+    Select: (Input) -> String?,
     mapper: (id: Int) -> T,
     batchSize: Int,
   ): List<T>
 
   /**
    * ```sql
-   * INSERT INTO quoted_columns ("Foo", "My Col") VALUES (?, ?) RETURNING id
+   * INSERT INTO quoted_columns ("Foo", "My Col", "Select") VALUES (?, ?, ?) RETURNING id
    * ```
    *
    * Uses a batch size of 100.
@@ -972,15 +974,20 @@ public interface Queries : Transactable {
     stream: Iterable<Input>,
     Foo: (Input) -> String,
     `My Col`: (Input) -> String?,
-  ): List<Int> = insertQuotedColumns(stream, Foo, `My Col`, ::inputValue, 100)
+    Select: (Input) -> String?,
+  ): List<Int> = insertQuotedColumns(stream, Foo, `My Col`, Select, ::inputValue, 100)
 
   /**
    * ```sql
-   * INSERT INTO quoted_columns ("Foo", "My Col") VALUES (?, ?) RETURNING id
+   * INSERT INTO quoted_columns ("Foo", "My Col", "Select") VALUES (?, ?, ?) RETURNING id
    * ```
    */
   @Throws(SQLException::class)
-  public fun insertQuotedColumns(Foo: String, `My Col`: String?): Int = insertQuotedColumns(Foo, `My Col`, ::inputValue)
+  public fun insertQuotedColumns(
+    Foo: String,
+    `My Col`: String?,
+    Select: String?,
+  ): Int = insertQuotedColumns(Foo, `My Col`, Select, ::inputValue)
 
   /**
    * ```sql
@@ -991,6 +998,7 @@ public interface Queries : Transactable {
     id: Int,
     Foo: String,
     `My Col`: String?,
+    Select: String?,
   ) -> T): Many<T>
 
   /**
@@ -1077,6 +1085,7 @@ public interface Queries : Transactable {
     id: Int,
     Foo: String,
     `My Col`: String?,
+    Select: String?,
   ) -> T): Many<T>
 
   /**
@@ -1090,6 +1099,7 @@ public interface Queries : Transactable {
     id: Int,
     Foo: String,
     `My Col`: String?,
+    Select: String?,
   ) -> T): Query<T>
 
   public fun findAllQuotedColumnsDynamically(): Query<QuotedColumns> = findAllQuotedColumnsDynamically(::QuotedColumns)

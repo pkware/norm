@@ -945,9 +945,14 @@ private val PLAIN_KOTLIN_IDENTIFIER = Regex("[A-Za-z_][A-Za-z0-9_]*")
  * This fixes only the KDoc SPAN; it does not and cannot fix the Kotlin PROPERTY declaration itself
  * (`` public val `a\`b`: ... ``), which is not valid Kotlin -- a backtick-quoted Kotlin identifier
  * cannot contain a backtick character, and there is no escape sequence for one inside a backtick
- * identifier at all. That is a distinct, pre-existing defect in how a column's raw JDBC label
- * becomes a Kotlin property name (`JdbcAnalyzer.buildResultColumns`'s `columnLabel`) — see
- * `sanitizeKotlinIdentifier` for its fix (#238 10.5).
+ * identifier at all. That is a distinct, pre-existing defect in how a column's raw database
+ * identifier becomes a Kotlin property name (`JdbcAnalyzer.loadColumns`'s `columnName`,
+ * `JdbcAnalyzer.buildResultColumns`'s `columnLabel`) shared by the rest of the naming pipeline's
+ * unfixed identifiers (a block-comment delimiter, `.`, a literal newline) — sanitizing only the
+ * [Column.name] used for Kotlin generation once caused a worse regression when the SAME field also
+ * carries the identifier back into generated SQL and catalog lookups (`Column.name`/
+ * `Catalog.findColumn`), so making the naming pipeline total is left for separate resolution, not
+ * attempted here.
  */
 private fun String.formatAsKdocPropertyReference(): String? = when {
   PLAIN_KOTLIN_IDENTIFIER.matches(this) -> this
@@ -1102,8 +1107,17 @@ internal fun containsUnescapableBlockCommentDelimiter(text: String): Boolean =
  * delimiter-matching ENTIRELY, rather than attempting to widen or relocate a delimiter the way
  * [wrapInBacktickDelimiter] does for a span [text] itself is wrapped in — there is no single
  * "delimiter" to widen for backtick characters scattered through plain prose.
+ *
+ * Escapes [text]'s own literal backslashes FIRST, before escaping backticks (#238 11.2): escaping
+ * only the backtick (`` text.replace("`", "\\`") ``) is defeated when [text] already contains a
+ * backslash immediately before a backtick (e.g. a PostgreSQL comment `` 'weird \`' ``) — the naive
+ * replacement produces `` \\` ``, which CommonMark reads as an ESCAPED backslash (a literal `\`)
+ * followed by an UNESCAPED backtick, free to open a code span that pairs forward with a LATER
+ * property's own source-reference span instead of closing here, corrupting every span in between —
+ * the exact defect class this function exists to prevent. Escaping the backslash first means any
+ * backslash the SECOND replacement introduces was never itself subject to the first.
  */
-internal fun escapeMarkdownBacktick(text: String): String = text.replace("`", "\\`")
+internal fun escapeMarkdownBacktick(text: String): String = text.replace("\\", "\\\\").replace("`", "\\`")
 
 /**
  * Wraps [text] in a backtick-delimited span using a delimiter one backtick longer than [text]'s own

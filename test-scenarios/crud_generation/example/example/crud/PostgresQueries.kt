@@ -888,9 +888,10 @@ public class PostgresQueries(
   override fun <T : Any> insertQuotedColumns(
     Foo: String,
     `My Col`: String?,
+    Select: String?,
     mapper: (id: Int) -> T,
   ): T {
-    val sql = "INSERT INTO quoted_columns (\"Foo\", \"My Col\") VALUES (?, ?) RETURNING id"
+    val sql = "INSERT INTO quoted_columns (\"Foo\", \"My Col\", \"Select\") VALUES (?, ?, ?) RETURNING id"
     val rowReader: ResultSet.() -> T = {
       mapper(
         getInt(1),
@@ -899,6 +900,7 @@ public class PostgresQueries(
     return driver.queryOne(sql, rowReader) {
       setString(1, Foo)
       setString(2, `My Col`)
+      setString(3, Select)
     }
   }
 
@@ -907,10 +909,11 @@ public class PostgresQueries(
     stream: Iterable<Input>,
     Foo: (Input) -> String,
     `My Col`: (Input) -> String?,
+    Select: (Input) -> String?,
     mapper: (id: Int) -> T,
     batchSize: Int,
   ): List<T> {
-    val sql = "INSERT INTO quoted_columns (\"Foo\", \"My Col\") VALUES (?, ?)"
+    val sql = "INSERT INTO quoted_columns (\"Foo\", \"My Col\", \"Select\") VALUES (?, ?, ?)"
     val columnNames = arrayOf("id")
     return driver.executeBatchWithGeneratedKeys(sql, columnNames) {
       val rowReader: ResultSet.() -> T = {
@@ -923,6 +926,7 @@ public class PostgresQueries(
       for (entry in stream) {
         setString(1, Foo(entry))
         setString(2, `My Col`(entry))
+        setString(3, Select(entry))
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
@@ -945,6 +949,7 @@ public class PostgresQueries(
       id: Int,
       Foo: String,
       `My Col`: String?,
+      Select: String?,
     ) -> T,
     processor: ManyProcessor<T, Return>,
   ): Return {
@@ -954,6 +959,7 @@ public class PostgresQueries(
         getInt(1),
         getString(2),
         getString(3),
+        getString(4),
       )
     }
     val queryBinder: (PreparedStatement.() -> Unit)? = {
@@ -966,6 +972,7 @@ public class PostgresQueries(
     id: Int,
     Foo: String,
     `My Col`: String?,
+    Select: String?,
   ) -> T): Many<T> = findQuotedColumnsById(id, mapper, driver::queryMany)
 
   @Throws(SQLException::class)
@@ -1023,6 +1030,7 @@ public class PostgresQueries(
     id: Int,
     Foo: String,
     `My Col`: String?,
+    Select: String?,
   ) -> T, processor: ManyProcessor<T, Return>): Return {
     val sql = "SELECT * FROM quoted_columns"
     val rowReader: ResultSet.() -> T = {
@@ -1030,6 +1038,7 @@ public class PostgresQueries(
         getInt(1),
         getString(2),
         getString(3),
+        getString(4),
       )
     }
     return processor.invoke(sql, rowReader, null)
@@ -1039,12 +1048,14 @@ public class PostgresQueries(
     id: Int,
     Foo: String,
     `My Col`: String?,
+    Select: String?,
   ) -> T): Many<T> = findAllQuotedColumns(mapper, driver::queryMany)
 
   override fun <T : Any> findAllQuotedColumnsDynamically(mapper: (
     id: Int,
     Foo: String,
     `My Col`: String?,
+    Select: String?,
   ) -> T): Query<T> = findAllQuotedColumns(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
 
   @Throws(SQLException::class)
