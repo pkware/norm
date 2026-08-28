@@ -229,7 +229,12 @@ private fun FunSpec.Builder.addStandardKdoc(query: SqlStatement, extraFormat: St
   for ((index, parameter) in query.parameters.withIndex()) {
     val comment = parameter.column!!.comment
     if (comment.isNotEmpty()) {
-      addKdoc("@param %L %L\n", query.getParameterName(index), comment)
+      // Consecutive `@param` lines share ONE CommonMark paragraph (joined by a single "\n", never a
+      // blank line), the same shape TypeRepository.addClassKdoc's `@property` lines already needed
+      // escapeMarkdownBacktick for (#238 10.3): a stray, unpaired backtick in one parameter's column
+      // comment is free to pair with a backtick belonging to a LATER parameter's own comment instead,
+      // corrupting every `@param` line in between.
+      addKdoc("@param %L %L\n", query.getParameterName(index), escapeMarkdownBacktick(comment))
     }
   }
 }

@@ -476,7 +476,7 @@ public interface Queries : Transactable {
    * SELECT id, "user" FROM "order" WHERE id = ?
    * ```
    *
-   * @param id Contains a literal ` backtick.
+   * @param id Contains a literal \` backtick.
    */
   @Throws(SQLException::class)
   public fun <T : Any> getOrderIdAndUser(id: Int, mapper: (id: Int, user: String) -> T): T
@@ -488,7 +488,7 @@ public interface Queries : Transactable {
    * SELECT id, "user" FROM "order" WHERE id = ?
    * ```
    *
-   * @param id Contains a literal ` backtick.
+   * @param id Contains a literal \` backtick.
    */
   @Throws(SQLException::class)
   public fun getOrderIdAndUser(id: Int): Order = getOrderIdAndUser(id, ::Order)
