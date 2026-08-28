@@ -1200,4 +1200,44 @@ public interface Queries : Transactable {
   public fun <T : Any> selectViaQuotedCteNameWithEmbeddedQuotesDynamically(mapper: (id: UUID, `My Col`: String) -> T): Query<T>
 
   public fun selectViaQuotedCteNameWithEmbeddedQuotesDynamically(): Query<SelectViaQuotedCteNameWithEmbeddedQuotes> = selectViaQuotedCteNameWithEmbeddedQuotesDynamically(::SelectViaQuotedCteNameWithEmbeddedQuotes)
+
+  /**
+   * #238 9.2: a lone `SELECT *` over a CTE whose FIRST output column is itself computed. The
+   * pre-existing select-item/result-column count mismatch guard (buildTypeProjectionForQuery's own
+   * parseSelectItems call site) already declines attribution here regardless -- a star's expansion
+   * width is never knowable from text alone, so the raw item count (1, just "*") can never match the
+   * real result column count (2) -- but the CTE's own node-tree-resolved provenance
+   * (column.provenanceExpression) still correctly documents name_upper as UPPER(name), never the
+   * star text itself.
+   *
+   * ```sql
+   * WITH name_upper_first AS (
+   *   SELECT UPPER(name) AS name_upper, id FROM parent
+   * )
+   * SELECT * FROM name_upper_first
+   * ```
+   */
+  public fun <T : Any> selectComputedColumnFirstViaOuterStar(mapper: (name_upper: String, id: UUID) -> T): Many<T>
+
+  /**
+   * #238 9.2: a lone `SELECT *` over a CTE whose FIRST output column is itself computed. The
+   * pre-existing select-item/result-column count mismatch guard (buildTypeProjectionForQuery's own
+   * parseSelectItems call site) already declines attribution here regardless -- a star's expansion
+   * width is never knowable from text alone, so the raw item count (1, just "*") can never match the
+   * real result column count (2) -- but the CTE's own node-tree-resolved provenance
+   * (column.provenanceExpression) still correctly documents name_upper as UPPER(name), never the
+   * star text itself.
+   *
+   * ```sql
+   * WITH name_upper_first AS (
+   *   SELECT UPPER(name) AS name_upper, id FROM parent
+   * )
+   * SELECT * FROM name_upper_first
+   * ```
+   */
+  public fun selectComputedColumnFirstViaOuterStar(): Many<SelectComputedColumnFirstViaOuterStar> = selectComputedColumnFirstViaOuterStar(::SelectComputedColumnFirstViaOuterStar)
+
+  public fun <T : Any> selectComputedColumnFirstViaOuterStarDynamically(mapper: (name_upper: String, id: UUID) -> T): Query<T>
+
+  public fun selectComputedColumnFirstViaOuterStarDynamically(): Query<SelectComputedColumnFirstViaOuterStar> = selectComputedColumnFirstViaOuterStarDynamically(::SelectComputedColumnFirstViaOuterStar)
 }

@@ -328,3 +328,16 @@ WITH "He""llo" AS (
   SELECT id, UPPER(name) AS "My Col" FROM parent
 )
 SELECT id, "My Col" FROM "He""llo";
+
+-- #238 9.2: a lone `SELECT *` over a CTE whose FIRST output column is itself computed. The
+-- pre-existing select-item/result-column count mismatch guard (buildTypeProjectionForQuery's own
+-- parseSelectItems call site) already declines attribution here regardless -- a star's expansion
+-- width is never knowable from text alone, so the raw item count (1, just "*") can never match the
+-- real result column count (2) -- but the CTE's own node-tree-resolved provenance
+-- (column.provenanceExpression) still correctly documents name_upper as UPPER(name), never the
+-- star text itself.
+-- name: selectComputedColumnFirstViaOuterStar :many
+WITH name_upper_first AS (
+  SELECT UPPER(name) AS name_upper, id FROM parent
+)
+SELECT * FROM name_upper_first;

@@ -10,7 +10,7 @@ import kotlin.jvm.JvmRecord
  * ```
  *
  * @property id (`tq.id`)
- * @property `My Col` Column name containing a space. (`tq.My Col`)
+ * @property `My Col` Column name containing a space. (`tq."My Col"`)
  */
 @JvmRecord
 public data class GetQuotedColumnWithSpace(

@@ -934,4 +934,24 @@ public class PostgresQueries(
   override fun <T : Any> selectViaQuotedCteNameWithEmbeddedQuotes(mapper: (id: UUID, `My Col`: String) -> T): Many<T> = selectViaQuotedCteNameWithEmbeddedQuotes(mapper, driver::queryMany)
 
   override fun <T : Any> selectViaQuotedCteNameWithEmbeddedQuotesDynamically(mapper: (id: UUID, `My Col`: String) -> T): Query<T> = selectViaQuotedCteNameWithEmbeddedQuotes(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectComputedColumnFirstViaOuterStar(mapper: (name_upper: String, id: UUID) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH name_upper_first AS (
+        |  SELECT UPPER(name) AS name_upper, id FROM parent
+        |)
+        |SELECT * FROM name_upper_first
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getString(1),
+        getObject(2, UUID::class.java),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectComputedColumnFirstViaOuterStar(mapper: (name_upper: String, id: UUID) -> T): Many<T> = selectComputedColumnFirstViaOuterStar(mapper, driver::queryMany)
+
+  override fun <T : Any> selectComputedColumnFirstViaOuterStarDynamically(mapper: (name_upper: String, id: UUID) -> T): Query<T> = selectComputedColumnFirstViaOuterStar(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
 }

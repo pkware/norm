@@ -340,5 +340,189 @@ class TypeRepositoryTest {
       assertThat(kdoc).contains("@property `My Col` Column name containing a space.")
       assertThat(kdoc).doesNotContain("@property My Col ")
     }
+
+    @Test
+    fun `a property name containing its own literal backtick gets a widened delimiter, not a broken span`() {
+      // #238 9.5: a fixed single-backtick wrap around a name containing a backtick would close the
+      // span early -- the same #238 8.3 hazard sourceReference()'s own span was already fixed for.
+      val backtickNamedColumn = Column(
+        name = "a`b",
+        notNull = true,
+        type = Identifier(name = "text"),
+        comment = "Comment.",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("getBacktickNamed", listOf(backtickNamedColumn), "SELECT x FROM t")
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).contains("@property ``a`b`` Comment.")
+    }
+  }
+
+  @Nested
+  inner class TableColumnSourceReferenceQuoting {
+
+    @Test
+    fun `a mixed-case original column name is double-quoted in its table_column source reference`() {
+      // #238 9.3: rendering the bare, unquoted originalName ("tq.Foo") reads back as PostgreSQL
+      // folding "Foo" to "foo" -- a column "tq" never has. Verified live: "SELECT tq.Foo FROM tq"
+      // fails with "column tq.foo does not exist", while "SELECT tq.\"Foo\" FROM tq" succeeds.
+      val quotedColumn = Column(
+        name = "bar",
+        notNull = true,
+        type = Identifier(name = "text"),
+        table = Identifier(name = "tq"),
+        originalName = "Foo",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("getBar", listOf(quotedColumn), "SELECT \"Foo\" AS bar FROM tq")
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).contains("@property bar (`tq.\"Foo\"`)")
+      assertThat(kdoc).doesNotContain("`tq.Foo`")
+    }
+
+    @Test
+    fun `a space-containing original column name is double-quoted in its table_column source reference`() {
+      val spacedColumn = Column(
+        name = "myCol",
+        notNull = true,
+        type = Identifier(name = "text"),
+        table = Identifier(name = "tq"),
+        originalName = "My Col",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("getMyCol", listOf(spacedColumn), "SELECT \"My Col\" FROM tq")
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).contains("@property myCol (`tq.\"My Col\"`)")
+      assertThat(kdoc).doesNotContain("`tq.My Col`")
+    }
+
+    @Test
+    fun `a plain lowercase original column name is rendered bare, unquoted`() {
+      // Contrast case: a normal identifier must NOT gain spurious quotes.
+      val plainColumn = Column(
+        name = "id",
+        notNull = true,
+        type = Identifier(name = "int4"),
+        table = Identifier(name = "tq"),
+        originalName = "id",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("getId", listOf(plainColumn), "SELECT id FROM tq")
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).contains("@property id (`tq.id`)")
+    }
+  }
+
+  @Nested
+  inner class StarSelectItemNeverBecomesAnExpression {
+
+    @Test
+    fun `a lone star select item over a CTE reports the CTE body's own resolved expression`() {
+      // #238 9.2: "WITH c AS (SELECT UPPER(s) AS u FROM t) SELECT * FROM c" -- parseSelectItems
+      // returns the single star item ("*") AS-IS rather than the empty-list fail-safe it uses for a
+      // star followed by more items (see parseOutputItemsWithAlias's own KDoc), so
+      // selectItem.columnName == null for it exactly as for a genuine computed expression. Before
+      // this fix, isComputedExpression fired on the star's own literal text, documenting "*" as if
+      // it were the expression that produced the column -- even though provenanceExpression (stood
+      // in for here, as elsewhere in this file, for what the node-tree resolver would have
+      // computed) already held the real answer.
+      val queryText = "WITH c AS (SELECT UPPER(s) AS u FROM t) SELECT * FROM c"
+      val starColumn = Column(
+        name = "u",
+        notNull = false,
+        type = Identifier(name = "text"),
+        provenanceExpression = "UPPER(s)",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("starOverCte", listOf(starColumn), queryText)
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).contains("@property u (`UPPER(s)`)")
+      assertThat(kdoc).doesNotContain("(`*`)")
+    }
+
+    @Test
+    fun `a lone star select item with no resolved expression gets no source-reference KDoc line at all`() {
+      // Contrast case: "SELECT * FROM generate_series(1,3)" -- a single-column, non-table source
+      // with nothing for the node-tree resolver to resolve (provenanceExpression stays null).
+      // Before this fix this still emitted "(`*`)"; the star must never be the fallback answer.
+      val starColumn = Column(name = "generate_series", notNull = true, type = Identifier(name = "int4"))
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery(
+        "generateSeriesStar",
+        listOf(starColumn),
+        "SELECT * FROM generate_series(1,3)",
+      )
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).doesNotContain("@property generate_series")
+    }
+
+    @Test
+    fun `a qualified star select item (c_star) with no resolved expression gets no source-reference KDoc line`() {
+      // "SELECT c.* FROM (SELECT UPPER(s) AS u FROM t) c" -- the qualified-star spelling of the
+      // same hazard.
+      val starColumn = Column(name = "u", notNull = false, type = Identifier(name = "text"))
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery(
+        "qualifiedStar",
+        listOf(starColumn),
+        "SELECT c.* FROM (SELECT UPPER(s) AS u FROM t) c",
+      )
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).doesNotContain("@property u")
+    }
+  }
+
+  @Nested
+  inner class BlockCommentDelimiterDeclines {
+
+    @Test
+    fun `an expression containing a block-comment close delimiter gets no source-reference KDoc line`() {
+      // #238 9.1: KotlinPoet's own KDoc emission unconditionally rewrites "*/" to "&#42;/" (and
+      // "/*" to "/&#42;") inside every KDoc block it renders, so a literal block-comment delimiter
+      // inside an expression can never survive being embedded in the generated FILE's inline code
+      // span -- CommonMark never decodes an HTML entity back to a literal character inside a code
+      // span. Proven by reading typeSpec.toString(), which runs through KotlinPoet's real emission
+      // (unlike kdoc.toString(), which does not).
+      val starSlashColumn = Column(
+        name = "u",
+        notNull = false,
+        type = Identifier(name = "text"),
+        provenanceExpression = "s || '*/'",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("starSlashExpression", listOf(starSlashColumn), "SELECT u FROM c")
+
+      val renderedFile = repository.requiredTypes.first().toString()
+      assertThat(renderedFile).doesNotContain("@property u")
+      assertThat(renderedFile).doesNotContain("&#42;")
+    }
+
+    @Test
+    fun `a query containing a block comment gets no fenced sql block rather than a corrupted one`() {
+      val plainColumn = Column(name = "id", notNull = true, type = Identifier(name = "int4"))
+      val queryText = "SELECT id /* note */ FROM t"
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("getIdWithComment", listOf(plainColumn), queryText)
+
+      val renderedFile = repository.requiredTypes.first().toString()
+      assertThat(renderedFile).doesNotContain("```sql")
+      assertThat(renderedFile).doesNotContain("&#42;")
+    }
   }
 }

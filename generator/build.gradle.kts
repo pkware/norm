@@ -10,6 +10,7 @@ dependencies {
   testImplementation(libs.bundles.mockito)
   testImplementation(libs.bundles.testcontainers)
   testImplementation(libs.postgresql)
+  testImplementation(libs.commonmark)
 }
 
 kotlin {
