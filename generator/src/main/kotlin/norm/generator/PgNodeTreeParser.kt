@@ -1017,12 +1017,16 @@ internal class PgNodeTreeParser {
     val resultName = extractStringField(suffix, ":resname")
     val isJunk = suffix.contains(":resjunk true")
     val sortGroupRef = extractIntField(suffix, ":ressortgroupref") ?: 0
+    val originalTableOid = extractIntField(suffix, ":resorigtbl") ?: 0
+    val originalColumnNumber = extractIntField(suffix, ":resorigcol") ?: 0
     return TargetEntry(
       expression = expression,
       resultName = resultName,
       resultNumber = resultNumber,
       isJunk = isJunk,
       sortGroupRef = sortGroupRef,
+      originalTableOid = originalTableOid,
+      originalColumnNumber = originalColumnNumber,
     )
   }
 

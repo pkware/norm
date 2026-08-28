@@ -40,3 +40,12 @@ CREATE TABLE document (
   title TEXT NOT NULL,
   metadata JSONB
 );
+
+-- Table with quoted, mixed-case, and space-containing column names: pins CrudQuerySynthesizer's
+-- own identifier quoting in the SQL it BUILDS (INSERT), a different surface from reading such
+-- columns back, which test-scenarios/comments/schema.sql's "tq" table already covers (#238).
+CREATE TABLE quoted_columns (
+  id SERIAL PRIMARY KEY,
+  "Foo" TEXT NOT NULL,
+  "My Col" TEXT
+);

@@ -105,6 +105,51 @@ class TypeRepositoryTest {
   }
 
   @Nested
+  inner class SetOperationComputedExpression {
+
+    @Test
+    fun `a computed expression under a top-level UNION gets no source-reference KDoc line`() {
+      // #238: "SELECT UPPER(x) AS u FROM t UNION SELECT LOWER(x) FROM t" -- parseSelectItems only
+      // ever sees the FIRST branch (it has no concept of set operations at all), so before this
+      // fix, isComputedExpression fired on the first branch's own item and documented "UPPER(x)" as
+      // if that were the query's one true expression -- when branch 2 actually computes LOWER(x)
+      // for the same column. One branch presented as the whole answer is a WRONG emission, by the
+      // same "correct or silent" standard the rest of this KDoc pipeline holds to; there is no
+      // per-branch text to attribute a single property to, so this must emit NOTHING rather than
+      // guess branch 1's text.
+      val queryText = "SELECT UPPER(x) AS u FROM t UNION SELECT LOWER(x) FROM t"
+      val unionColumn = Column(name = "u", notNull = true, type = Identifier(name = "text"))
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("upperOrLower", listOf(unionColumn), queryText)
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      // The raw SQL always appears verbatim in a fenced code block regardless of attribution (see
+      // SelectItemColumnCountMismatchGuard's own test above), so "UPPER(x)" alone would trivially
+      // still be present there -- asserting on the "@property" line specifically is what actually
+      // distinguishes "no attribution" from "wrongly attributed to branch 1".
+      assertThat(kdoc).doesNotContain("@property u")
+    }
+
+    @Test
+    fun `a plain column reference under a top-level UNION still gets no source-reference KDoc line`() {
+      // Contrast case, pinning existing accepted behavior: PostgreSQL itself names a set operation's
+      // whole result column after branch 1 alone, so echoing a bare column reference is not
+      // misleading the way a computed expression is -- this must keep behaving exactly as an
+      // ordinary bare column reference already does (no source-reference line either way), NOT
+      // regress to something new merely because a set operation is present.
+      val queryText = "SELECT a FROM x UNION SELECT b FROM y"
+      val plainColumn = Column(name = "a", notNull = true, type = Identifier(name = "int4"))
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("aOrB", listOf(plainColumn), queryText)
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).doesNotContain("@property a")
+    }
+  }
+
+  @Nested
   inner class CteWrappedExpressionSourceReference {
 
     @Test

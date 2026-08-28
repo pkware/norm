@@ -388,7 +388,7 @@ private fun buildBatch(statement: SqlStatement): FunSpec = batchFunction(stateme
     """.trimMargin(),
   )
   beginControlFlow("for (entry in stream) {")
-  for (block in bindStatements(statement) { "$it(entry)" }) addStatement("%L", block)
+  for (block in bindStatements(statement) { CodeBlock.of("%L(entry)", it) }) addStatement("%L", block)
   addCode(
     """
       |addBatch()
@@ -453,7 +453,7 @@ private fun buildBatchWithReturn(statement: SqlStatement): FunSpec = batchWithRe
   )
 
   beginControlFlow("for (entry in stream) {")
-  for (block in bindStatements(statement) { "$it(entry)" }) addStatement("%L", block)
+  for (block in bindStatements(statement) { CodeBlock.of("%L(entry)", it) }) addStatement("%L", block)
   addCode(
     """
       |addBatch()
@@ -498,16 +498,21 @@ internal const val MAPPER_PARAMETER_NAME = "mapper"
 /**
  * Produces a [CodeBlock] per JDBC bind position that sets the parameter on the [PreparedStatement].
  *
- * @param nameTransform Converts a parameter name (from [SqlStatement.getParameterName]) into the
- *   code expression that provides the value. For single-item functions this is just the name itself;
- *   for batch functions it is `entry.paramName()`.
+ * @param nameTransform Converts the parameter's NAME reference (built via `%N`, so a name needing
+ *   backtick-escaping — e.g. `My Col` — is escaped exactly as [ParameterSpec]'s own declaration
+ *   already is, unlike the plain string interpolation this replaced) into the code expression that
+ *   provides the value. For single-item functions this is just the name reference itself; for batch
+ *   functions it calls it as a function of `entry` (`%L(entry)` around the same escaped reference).
  */
-private fun bindStatements(statement: SqlStatement, nameTransform: (String) -> String = { it }): List<CodeBlock> =
-  statement.parameterBindings.map { binding ->
-    val typeInfo = statement.resolveMappableType(binding.column)
-    val paramName = CodeBlock.of(nameTransform(statement.getParameterName(binding.parameterIndex)))
-    typeInfo.statementAction(binding.jdbcPosition, paramName)
-  }
+private fun bindStatements(
+  statement: SqlStatement,
+  nameTransform: (CodeBlock) -> CodeBlock = { it },
+): List<CodeBlock> = statement.parameterBindings.map { binding ->
+  val typeInfo = statement.resolveMappableType(binding.column)
+  val parameterNameReference = CodeBlock.of("%N", statement.getParameterName(binding.parameterIndex))
+  val paramName = nameTransform(parameterNameReference)
+  typeInfo.statementAction(binding.jdbcPosition, paramName)
+}
 
 /**
  * Generates the invocation of a mapper function.

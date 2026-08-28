@@ -17,9 +17,9 @@ import kotlin.jvm.JvmRecord
  * SELECT parent_id, parent_name, child_name FROM parent_and_child
  * ```
  *
- * @property parent_id (`parent.parent_id`)
- * @property parent_name (`parent.parent_name`)
- * @property child_name (`child.child_name`)
+ * @property parent_id (`parent.id`)
+ * @property parent_name (`parent.name`)
+ * @property child_name (`child.name`)
  */
 @JvmRecord
 public data class ListParentsWithOptionalChildAlongsideInsert(

@@ -84,6 +84,36 @@ internal data class SelectItem(
 internal fun parseSelectItems(sql: String): List<SelectItem> = parseOutputItemsWithAlias(sql).map { it.selectItem }
 
 /**
+ * Whether [sql]'s own MAIN query — after any leading `WITH` clause, the exact window
+ * [parseOutputItemsWithAlias] searches for its output clause — contains a top-level
+ * `UNION`/`INTERSECT`/`EXCEPT` keyword: this statement's own visible `SELECT`/`RETURNING` list is
+ * only ONE branch of a set operation, so [parseSelectItems] parsed only that branch's items, never
+ * the other branch(es)' own (possibly differently-computed) expressions for the same result column.
+ *
+ * [TypeRepository.buildTypeProjectionForQuery] uses this to suppress a computed expression's own
+ * `@property` source-reference line under a set operation — reporting `UPPER(x)` alone for `SELECT
+ * UPPER(x) AS u FROM t UNION SELECT LOWER(x) FROM t` would present one branch as the whole answer,
+ * which is a WRONG emission by this codebase's own "correct or silent" standard, not merely an
+ * incomplete one. A bare column reference is UNAFFECTED — PostgreSQL itself names a set operation's
+ * whole result column after branch 1 alone, so echoing that name back is not misleading the way a
+ * branch-specific expression is.
+ *
+ * All three keywords are PostgreSQL RESERVED words (verified live against PostgreSQL 18.4's
+ * `pg_get_keywords()`: `union`/`intersect`/`except` are all category `R`), so an unquoted occurrence
+ * can never be a column/table identifier or alias — only [findTopLevelKeyword]'s lexical- and
+ * depth-awareness is needed to rule out a string literal, comment, or nested subquery, not the
+ * additional alias-position gating [findTopLevelReturningKeyword] needs for the non-reserved
+ * `RETURNING`.
+ */
+internal fun hasTopLevelSetOperation(sql: String): Boolean {
+  val mainQueryStart = parseCteClause(sql)?.mainQueryStart ?: 0
+  val window = sql.substring(mainQueryStart)
+  return SET_OPERATION_KEYWORDS.any { keyword -> findTopLevelKeyword(window, keyword) >= 0 }
+}
+
+private val SET_OPERATION_KEYWORDS = listOf("UNION", "INTERSECT", "EXCEPT")
+
+/**
  * A single item from [parseOutputItemsWithAlias], pairing the [selectItem] parsed from the
  * item's expression (alias stripped, exactly what [parseSelectItems] itself exposes) with the
  * [alias] that was stripped off, if any.
@@ -368,6 +398,16 @@ private fun parseAliasToken(item: String, start: Int): String? {
  * `JdbcAnalyzer.buildResultColumns`' `originalName` fall to `""` instead of correctly falling back
  * to `ResultSetMetaData.getColumnName`, exactly the wrong-value-over-no-value mistake this whole
  * file exists to avoid.
+ *
+ * An UNQUOTED column/table name is folded via [foldAsciiCase] — PostgreSQL's own `downcase_identifier`
+ * behavior, ASCII `A`-`Z` only, deliberately NOT Kotlin's `String.lowercase()` (see that function's
+ * own KDoc for why) — so [SelectItem.columnName]/[SelectItem.tableName] agree with what
+ * `ResultSetMetaData.getColumnName` reports for the same reference. Verified live against
+ * PostgreSQL 18.4 + pgjdbc 42.7.11: `SELECT ID FROM t` parses column name `id`, matching pgjdbc's
+ * own report, where an unfolded `ID` would silently miss `JdbcAnalyzer.buildResultColumns`'
+ * `catalog.findColumn` lookup and drop the column's Postgres comment (#238). A QUOTED name is never
+ * folded — quoting is precisely how PostgreSQL preserves a name's original case against this
+ * default folding.
  */
 private fun parseColumnReference(expression: String): SelectItem {
   val trimmed = expression.trim()
@@ -380,8 +420,8 @@ private fun parseColumnReference(expression: String): SelectItem {
   val rawColumn = match.groups["column"]!!.value
   val tableIsQuoted = rawTable?.startsWith('"') == true
   val columnIsQuoted = rawColumn.startsWith('"')
-  val column = if (columnIsQuoted) unescapeQuotedIdentifier(rawColumn) else rawColumn
-  val table = rawTable?.let { if (tableIsQuoted) unescapeQuotedIdentifier(it) else it }
+  val column = if (columnIsQuoted) unescapeQuotedIdentifier(rawColumn) else foldAsciiCase(rawColumn)
+  val table = rawTable?.let { if (tableIsQuoted) unescapeQuotedIdentifier(it) else foldAsciiCase(it) }
   if (column.isEmpty() || table?.isEmpty() == true) return noMatch
 
   return SelectItem(

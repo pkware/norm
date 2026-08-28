@@ -214,17 +214,21 @@ public class JdbcAnalyzer(private val connection: Connection) {
       val columnLabel = rsmd.getColumnLabel(i)
       val selectItem = selectItems.getOrNull(i - 1)
 
-      // PostgreSQL JDBC returns the alias for both getColumnName and getColumnLabel when AS is used.
-      // Use the parsed SELECT item to resolve the original column name for comment lookup.
-      val originalColumnName = selectItem?.columnName ?: rsmd.getColumnName(i)
-
-      // Look up the catalog column for comment resolution.
-      val catalogColumn = tableName?.let { catalog.findColumn(it, originalColumnName) }
-
       // The node tree is the authoritative source for nullability. columnNullability[i-1].nullable
       // is true when nullable. Default to nullable, with no provenance, when the index is out of
       // bounds.
       val analysis = columnNullability.getOrElse(i - 1) { ColumnAnalysis(nullable = true, provenanceExpression = null) }
+
+      // analysis.originalColumnName (from the node tree's own :resorigtbl/:resorigcol) is the REAL
+      // source column, resolved by PostgreSQL itself even through an intervening CTE alias -- prefer
+      // it over the parsed SELECT item, which only sees the select-list TEXT and would otherwise
+      // report a CTE's own output alias as if it were the original column (#238). PostgreSQL JDBC
+      // returns the alias for both getColumnName and getColumnLabel when AS is used, so
+      // rsmd.getColumnName is the least reliable of the three and stays the last resort.
+      val originalColumnName = analysis.originalColumnName ?: selectItem?.columnName ?: rsmd.getColumnName(i)
+
+      // Look up the catalog column for comment resolution.
+      val catalogColumn = tableName?.let { catalog.findColumn(it, originalColumnName) }
 
       val comment = catalogColumn?.comment.orEmpty()
 

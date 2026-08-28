@@ -484,6 +484,44 @@ class SqlOutputClauseTest {
     }
 
     @Test
+    fun `an unquoted uppercase column reference is ASCII-folded to lowercase`() {
+      // #238: pgjdbc's ResultSetMetaData.getColumnName reports "id" (PostgreSQL folds an unquoted
+      // reference via downcase_identifier before ever resolving it against the catalog), but the
+      // old implementation stored the matched text VERBATIM ("ID"). JdbcAnalyzer.buildResultColumns
+      // prefers this parsed columnName over the JDBC-reported one, so the mismatch made
+      // catalog.findColumn miss and silently drop the column's Postgres comment. Verified live
+      // against PostgreSQL 18.4: "SELECT ID FROM t" against a table with a lowercase "id" column
+      // resolves successfully and reports column name "id".
+      val result = parseSelectItems("SELECT ID FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("ID", "id", null),
+      )
+    }
+
+    @Test
+    fun `an unquoted uppercase qualified column reference folds both the table and column name`() {
+      val result = parseSelectItems("SELECT T.ID FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("T.ID", "id", "t"),
+      )
+    }
+
+    @Test
+    fun `an unquoted non-ASCII uppercase column reference is NOT folded`() {
+      // foldAsciiCase's own KDoc documents this directly: PostgreSQL's downcase_identifier folds
+      // ONLY plain ASCII A-Z, never a non-ASCII letter, even one with an obvious upper/lower
+      // pairing -- verified live against PostgreSQL 18.4, an unquoted "Ü" fails to resolve against a
+      // column actually named "ü" ("column "Ü" does not exist"), and instead resolves against a
+      // column named "Ü" (quoted, uppercase). Folding via Kotlin's String.lowercase() here would
+      // silently disagree with PostgreSQL about which of two differently-cased columns an unquoted
+      // reference targets -- the exact #229 regression foldAsciiCase exists to prevent.
+      val result = parseSelectItems("SELECT Ü FROM t")
+      assertThat(result).containsExactly(
+        SelectItem("Ü", "Ü", null),
+      )
+    }
+
+    @Test
     fun `quoted CTE name`() {
       val result = parseSelectItems("""WITH "myCte" AS (SELECT 1 AS a) SELECT a FROM "myCte"""")
       assertThat(result).containsExactly(

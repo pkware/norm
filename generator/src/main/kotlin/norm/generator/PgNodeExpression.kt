@@ -373,6 +373,14 @@ internal sealed interface RangeTableEntry {
  *   BY`/`DISTINCT` key. When non-zero and this value appears among the `:tleSortGroupRef`s referenced by
  *   `:groupClause`/`:groupingSets`, this entry IS a `GROUP BY` grouping key — see
  *   [NodeTreeNullabilityAnalyzer]'s GROUPING SETS/CUBE/ROLLUP handling.
+ * @property originalTableOid The entry's `:resorigtbl` value — the OID of the real relation this
+ *   column ultimately traces back to (PostgreSQL's own `markTargetListOrigins` walks THROUGH a CTE
+ *   or subquery reference to find it, not merely the immediate FROM item), or `0` when there is no
+ *   single source column (a computed expression, an aggregate, a set-operation branch, or a
+ *   `USING`/`NATURAL`-merged join column).
+ * @property originalColumnNumber The entry's `:resorigcol` value — the source relation's 1-based
+ *   attribute number — or `0` under the same conditions as [originalTableOid]. The two fields are
+ *   set together: one is `0` if and only if the other is.
  */
 internal data class TargetEntry(
   val expression: PgNodeExpression,
@@ -380,4 +388,6 @@ internal data class TargetEntry(
   val resultNumber: Int,
   val isJunk: Boolean,
   val sortGroupRef: Int = 0,
+  val originalTableOid: Int = 0,
+  val originalColumnNumber: Int = 0,
 )

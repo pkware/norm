@@ -278,6 +278,12 @@ internal class TypeRepository(
     } else {
       rawSelectItems
     }
+    // A top-level set operation (UNION/INTERSECT/EXCEPT) means parseSelectItems only ever parsed
+    // ONE branch's own items -- a computed expression documented from that branch alone would
+    // present one branch as the whole answer, a WRONG emission by this pipeline's own "correct or
+    // silent" standard (#238). See hasTopLevelSetOperation's own KDoc for why a bare column
+    // reference is unaffected and stays documented exactly as before.
+    val hasSetOperation = hasTopLevelSetOperation(queryText)
     typeBeingDefined.addClassKdoc(
       classComment = "",
       tableName = null,
@@ -286,7 +292,8 @@ internal class TypeRepository(
         // For computed expressions (no source table and not a simple column reference), include the SQL
         // expression so it can appear in KDoc. Simple column references (e.g. crosstab output columns)
         // are excluded because echoing the column name back adds no value.
-        val isComputedExpression = column.table == null && selectItem != null && selectItem.columnName == null
+        val isComputedExpression =
+          column.table == null && selectItem != null && selectItem.columnName == null && !hasSetOperation
         // A plain reference into a CTE's output (column.table == null, but the outer item IS a
         // simple column reference) can still be expression-derived one level down, inside the CTE
         // body -- column.provenanceExpression was already resolved from the query's own parsed node

@@ -55,12 +55,22 @@ internal const val VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET = 50
  * column to, or [resolveNodeTreeProvenanceExpression] could not PROVE the expression correct — see
  * those functions' own KDoc for the full list of gates.
  *
- * Carries both facts together, rather than as two separate parallel lists, because
+ * Also carries [originalColumnName] — the REAL source column name, resolved from the outer target
+ * entry's own `:resorigtbl`/`:resorigcol` (see [PgCatalogLoader.columnNameByRelidAndAttnum]) rather
+ * than whatever alias the select item's own text happens to spell. `null` when those fields are `0`
+ * (no single source column) or the OID/attnum pair isn't in the catalog map for any reason — the
+ * caller must fall back to its ordinary column-name resolution, never guess.
+ *
+ * Carries all three facts together, rather than as separate parallel lists, because
  * [ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody] resolves them from the SAME
- * parsed node tree in ONE round trip: nullability and provenance are two independent readings of a
- * probe function PostgreSQL was only ever asked to build once.
+ * parsed node tree in ONE round trip: nullability, provenance, and the original column name are
+ * three independent readings of a probe function PostgreSQL was only ever asked to build once.
  */
-internal data class ColumnAnalysis(val nullable: Boolean, val provenanceExpression: String?)
+internal data class ColumnAnalysis(
+  val nullable: Boolean,
+  val provenanceExpression: String?,
+  val originalColumnName: String? = null,
+)
 
 /**
  * Drives per-column nullability analysis for a SQL query on behalf of [loader]: fetching the
@@ -78,6 +88,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
   private val connection get() = loader.connection
   private val nodeTreeParser get() = loader.nodeTreeParser
   private val columnNotNullByRelidAndAttnum get() = loader.columnNotNullByRelidAndAttnum
+  private val columnNameByRelidAndAttnum get() = loader.columnNameByRelidAndAttnum
   private val aggregateHasNonNullInitialValue get() = loader.aggregateHasNonNullInitialValue
   private val alwaysNonNullFunctionOids get() = loader.alwaysNonNullFunctionOids
   private val neverNullForNonNullInputOids get() = loader.neverNullForNonNullInputOids
@@ -310,7 +321,10 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
         val provenance = NodeTreeProvenanceResolver().resolveColumnProvenance(nodeTree).map { columnProvenance ->
           columnProvenance?.let { resolveNodeTreeProvenanceExpression(sql, nodeTree, it) }
         }
-        nullability.mapIndexed { index, nullable -> ColumnAnalysis(nullable, provenance.getOrNull(index)) }
+        val originalColumnNames = resolveOriginalColumnNames(nodeTree)
+        nullability.mapIndexed { index, nullable ->
+          ColumnAnalysis(nullable, provenance.getOrNull(index), originalColumnNames.getOrNull(index))
+        }
       } finally {
         connection.createStatement().use { statement ->
           statement.execute("DROP FUNCTION IF EXISTS pg_temp.$functionName()")
@@ -318,6 +332,38 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
       }
     } catch (_: SQLException) {
       null
+    }
+  }
+
+  /**
+   * Resolves each result column's REAL source column name from [nodeTree]'s own `:returningList`
+   * (DML `RETURNING`) or `:targetList` (a plain `SELECT`) — the same list, in the same order
+   * ([TargetEntry.isJunk] filtered, sorted by [TargetEntry.resultNumber]), [analyzeNodeTree] reads
+   * for nullability, so the two stay index-aligned.
+   *
+   * Each entry's own `:resorigtbl`/`:resorigcol` — [TargetEntry.originalTableOid] and
+   * [TargetEntry.originalColumnNumber] — name the column PostgreSQL itself traced this result
+   * column back to, walking THROUGH a CTE or subquery reference rather than stopping at the
+   * immediate select item's own alias (verified live against PostgreSQL 18.4: `WITH c AS (SELECT id
+   * AS parent_id FROM parent) SELECT parent_id FROM c`'s outer target entry carries
+   * `:resorigtbl`/`:resorigcol` for `parent.id`, not the CTE's own `parent_id` alias).
+   *
+   * @return one entry per result column: the resolved column name, or `null` when
+   *   [TargetEntry.originalTableOid]/[TargetEntry.originalColumnNumber] is `0` (no single source
+   *   column — a computed expression, an aggregate, a set-operation branch, or a `USING`/`NATURAL`
+   *   merged join column) or the OID/attnum pair is absent from [columnNameByRelidAndAttnum] for any
+   *   other reason. The caller must treat `null` as "fall back to the ordinary resolution", never
+   *   guess a value.
+   */
+  private fun resolveOriginalColumnNames(nodeTree: String): List<String?> {
+    val returningEntries = nodeTreeParser.parseReturningList(nodeTree)
+    val entries = returningEntries.ifEmpty { nodeTreeParser.parseTargetList(nodeTree) }
+    return entries.filter { !it.isJunk }.sortedBy { it.resultNumber }.map { entry ->
+      if (entry.originalTableOid == 0 || entry.originalColumnNumber == 0) {
+        null
+      } else {
+        columnNameByRelidAndAttnum[entry.originalTableOid to entry.originalColumnNumber]
+      }
     }
   }
 

@@ -103,6 +103,62 @@ class QueryAnalysisTest {
   }
 
   @Nested
+  inner class OriginalColumnNameResolution {
+
+    @Test
+    fun `an unquoted uppercase column reference still resolves the column's Postgres comment`() {
+      // #238: pgjdbc's ResultSetMetaData.getColumnName reports the FOLDED name ("id"), but
+      // JdbcAnalyzer.buildResultColumns prefers the PARSED select-item's columnName when present.
+      // Before ASCII-folding was applied there, an unquoted "ID" stayed "ID" verbatim, so
+      // catalog.findColumn("t", "ID") missed the catalog row keyed by "id" and silently dropped the
+      // column's comment.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE t (id INT NOT NULL);
+        COMMENT ON COLUMN t.id IS 'The primary key.';
+        """.trimIndent(),
+        "SELECT ID FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].comment).isEqualTo("The primary key.")
+      assertThat(query.columns[0].originalName).isEqualTo("id")
+    }
+
+    @Test
+    fun `a CTE output column referenced through its own alias resolves to the real source column`() {
+      // #238: the outer query references the CTE's OWN output alias ("parentId"), not the real
+      // underlying column ("id") -- before this fix, originalName fell back to that alias, so
+      // generated KDoc's "@property parentId (`parent.parentId`)" named a column "parent" never
+      // had, instead of the real "parent.id". The node tree's :resorigtbl/:resorigcol on the outer
+      // target entry name the true source column regardless of what alias the CTE assigned it.
+      val query = analyzeWithSchema(
+        "CREATE TABLE parent (id INT NOT NULL, description TEXT)",
+        """
+        WITH renamed AS (
+          SELECT id AS parent_id, description FROM parent
+        )
+        SELECT parent_id FROM renamed
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].originalName).isEqualTo("id")
+    }
+
+    @Test
+    fun `a UNION's output column has no single original column, so originalName falls back rather than guessing`() {
+      // #238: :resorigtbl/:resorigcol are both 0 for a SetOp's own target list -- there is no
+      // single source column a union's result traces back to -- so this must fall back to the
+      // ordinary selectItem/JDBC-label resolution rather than reporting a wrong source column.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL)",
+        "SELECT id FROM t UNION SELECT id FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].originalName).isEqualTo("id")
+    }
+  }
+
+  @Nested
   inner class Joins {
 
     private val schema = """

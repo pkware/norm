@@ -246,6 +246,23 @@ internal class PgCatalogLoader(internal val connection: Connection) {
   val columnNotNullByRelidAndAttnum: Map<Pair<Int, Int>, Boolean> by lazy(::loadColumnNotNull)
 
   /**
+   * Maps `(relid, attnum)` pairs to `pg_attribute.attname` — every user-visible column of every
+   * relation kind (base table, view, materialized view; `attnum > 0` and `NOT attisdropped`), not
+   * just base tables.
+   *
+   * Used by [ColumnNullabilityAnalyzer] to resolve a `TargetEntry`'s `:resorigtbl`/`:resorigcol`
+   * back to the REAL source column name, for a result column whose own select-list item is merely a
+   * reference to an alias assigned somewhere upstream (a CTE's own `RETURNING`/`SELECT` list
+   * renaming a column, e.g.) — PostgreSQL's `markTargetListOrigins` walks through such a reference to
+   * find the ultimate source column, so this is a plain OID/attnum lookup, not a name-based one.
+   *
+   * Returns `null` for absent keys — expected for any entry `:resorigtbl 0`/`:resorigcol 0`
+   * represents (a computed expression, an aggregate, a set-operation branch, or a `USING`/`NATURAL`
+   * merged join column has no single source column at all).
+   */
+  val columnNameByRelidAndAttnum: Map<Pair<Int, Int>, String> by lazy(::loadColumnNameByRelidAndAttnum)
+
+  /**
    * Shared strictness lookup used by every [buildAnalyzer] call site and by
    * [NodeTreeNullabilityAnalyzer.qualProvenNonNullVars].
    */
@@ -264,6 +281,24 @@ internal class PgCatalogLoader(internal val connection: Connection) {
       ).use { rs ->
         while (rs.next()) {
           put(rs.getInt("attrelid") to rs.getInt("attnum"), rs.getBoolean("attnotnull"))
+        }
+      }
+    }
+  }
+
+  private fun loadColumnNameByRelidAndAttnum(): Map<Pair<Int, Int>, String> = buildMap {
+    connection.createStatement().use { stmt ->
+      // No schema filter, same reasoning as loadColumnNotNull above — a resorigtbl OID can name a
+      // relation in any schema.
+      stmt.executeQuery(
+        """
+        SELECT attrelid::integer, attnum, attname
+        FROM pg_catalog.pg_attribute
+        WHERE attnum > 0 AND NOT attisdropped
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) {
+          put(rs.getInt("attrelid") to rs.getInt("attnum"), rs.getString("attname"))
         }
       }
     }

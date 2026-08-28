@@ -133,7 +133,11 @@ class GenerateCodeTest {
       if (propsFile.exists()) propsFile.inputStream().use { load(it) }
     }
     val allParsedQueries = if (scenarioProperties.getProperty("generateCrud", "false").toBoolean()) {
-      CrudQuerySynthesizer.synthesizeAndMerge(catalog, parsedQueries)
+      // Must match NormGenerateTask's own production call exactly: without the real quoter, a
+      // synthesized statement referencing a quoted/mixed-case/space-containing column (e.g. the
+      // crud_generation scenario's "quoted_columns" table, #238) comes back unquoted and fails
+      // with a genuine PostgreSQL syntax error at analysis time, never reaching golden comparison.
+      CrudQuerySynthesizer.synthesizeAndMerge(catalog, parsedQueries, analyzer.buildIdentifierQuoter())
     } else {
       parsedQueries
     }
