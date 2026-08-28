@@ -21,9 +21,15 @@ package norm.generator
  * neighboring item's expression instead. Every gate below is required to rule that out; per the
  * "correct or silent" invariant, ANY gate failing returns `null` (no provenance) rather than a wrong
  * expression:
- * - the CTE named [NodeTreeColumnProvenance.cteName] must be findable, by exact name, in [sql]'s own
- *   `WITH` clause (fold-compared via [foldIdentifier] against [CteDefinition.rawName], never
- *   [CteDefinition.name] — see that property's own KDoc for why).
+ * - the CTE named [NodeTreeColumnProvenance.cteName] must be findable, by exact name, among every
+ *   `WITH` clause reachable in [sql] — not just its own outermost one, since [provenance] can point
+ *   into a nested CTE body's own `WITH` (see [allSqlCteDefinitions]) — and, on the node-tree side,
+ *   among every `:cteList` reachable in [nodeTreeText] (see [allNodeTreeCteDefinitions]), fold-compared
+ *   via [foldIdentifier] against [CteDefinition.rawName], never [CteDefinition.name] — see that
+ *   property's own KDoc for why. If that name is declared MORE THAN ONCE across those nesting
+ *   depths — an outer CTE shadowed by an inner, differently-bodied one of the same name —
+ *   [NodeTreeColumnProvenance] alone cannot say which one [NodeTreeProvenanceResolver] actually
+ *   meant, so this gate fails on ANY duplicate rather than guessing.
  * - [parseOutputItemsWithAlias] over that CTE's body text must yield EXACTLY as many top-level items
  *   as [nodeTreeText] has non-junk body target entries for that same CTE. A mis-split/mis-merge that
  *   happens to preserve the total item count survives this check alone.
@@ -55,9 +61,9 @@ package norm.generator
  *   any) — never [nodeTreeText]'s sentinel-substituted or deparsed form.
  * @param nodeTreeText The SAME node tree [NodeTreeProvenanceResolver] resolved [provenance] from
  *   (`pg_rewrite.ev_action` or `pg_proc.prosqlbody` text, or a bare `{QUERY ...}` block) — re-parsed
- *   here only for [PgNodeTreeParser.parseCteList], to read the referenced CTE body's own `:resname`s
- *   for cross-validation. Never re-analyzed for nullability or re-queried against the server: this
- *   is the SAME text already in hand from the one probe round trip that produced [provenance].
+ *   here only via [allNodeTreeCteDefinitions], to read the referenced CTE body's own `:resname`s for
+ *   cross-validation. Never re-analyzed for nullability or re-queried against the server: this is the
+ *   SAME text already in hand from the one probe round trip that produced [provenance].
  * @param provenance Where [NodeTreeProvenanceResolver] found the expression — a CTE name and
  *   1-based body position — or `null` if it found nothing, in which case this function is not
  *   called at all (there is nothing to extract).
@@ -72,15 +78,20 @@ internal fun resolveNodeTreeProvenanceExpression(
   provenance: NodeTreeColumnProvenance,
   parser: PgNodeTreeParser = PgNodeTreeParser(),
 ): String? {
-  val cteBodyBlock = parser.parseCteList(nodeTreeText).find { it.name == provenance.cteName }?.queryBlock
+  val cteBodyBlock = allNodeTreeCteDefinitions(nodeTreeText, parser)
+    .filter { it.name == provenance.cteName }
+    .singleOrNull()
+    ?.queryBlock
     ?: return null
   val bodyResultNames = (parser.parseReturningList(cteBodyBlock).ifEmpty { parser.parseTargetList(cteBodyBlock) })
     .filterNot { it.isJunk }
     .sortedBy { it.resultNumber }
     .map { it.resultName }
 
-  val cteClause = parseCteClause(sql) ?: return null
-  val cteInSql = cteClause.definitions.singleOrNull { foldIdentifier(it.rawName) == provenance.cteName } ?: return null
+  val cteInSql = allSqlCteDefinitions(sql)
+    .filter { foldIdentifier(it.rawName) == provenance.cteName }
+    .singleOrNull()
+    ?: return null
   val bodySql = sql.substring(cteInSql.bodyOpenParenthesis + 1, cteInSql.bodyCloseParenthesis)
   val items = parseOutputItemsWithAlias(bodySql)
 
@@ -100,6 +111,52 @@ internal fun resolveNodeTreeProvenanceExpression(
   if (matchedItem.selectItem.columnName != null) return null
 
   return collapseCosmeticWhitespace(stripComments(verifiedItems[provenance.bodyPosition - 1]!!.expression))
+}
+
+/**
+ * Every [NodeTreeCteDefinition] reachable from [nodeTreeText], at ANY nesting depth — not just its
+ * own outermost `:cteList`, which is all [PgNodeTreeParser.parseCteList] alone returns. Recurses into
+ * each CTE body's own `:cteList` in turn, mirroring exactly the scopes [NodeTreeProvenanceResolver]
+ * can walk into (a nested `WITH` inside a CTE body shadowing an enclosing one of the same name).
+ *
+ * @see resolveNodeTreeProvenanceExpression's own KDoc for why a name appearing more than once in the
+ *   returned list must fail resolution rather than pick either one.
+ */
+private fun allNodeTreeCteDefinitions(nodeTreeText: String, parser: PgNodeTreeParser): List<NodeTreeCteDefinition> =
+  parser.parseCteList(nodeTreeText).flatMap { definition ->
+    listOf(definition) + allNodeTreeCteDefinitions(definition.queryBlock, parser)
+  }
+
+/**
+ * The SQL-text counterpart of [allNodeTreeCteDefinitions]: every [CteDefinition] reachable from
+ * [originalSql], at any nesting depth, found by recursing into each CTE body's own text —
+ * [parseCteClause] itself recognizes a nested `WITH` there when the body starts with one — the SAME
+ * scopes [allNodeTreeCteDefinitions] recurses into, on the node-tree side.
+ *
+ * Each returned [CteDefinition]'s [CteDefinition.bodyOpenParenthesis]/[CteDefinition.bodyCloseParenthesis]
+ * are always re-based to index into [originalSql] itself — never the (possibly deeply nested) body
+ * substring a definition was actually found in — since [resolveNodeTreeProvenanceExpression] always
+ * slices [originalSql] directly by whichever [CteDefinition] this function returns.
+ *
+ * @param scanText the text currently being scanned for a leading `WITH` clause: [originalSql] itself
+ *   on the initial (non-recursive) call, or a nested CTE body's own substring on every recursive one.
+ * @param scanTextOffset [scanText]'s own start index within [originalSql]; `0` on the initial call.
+ */
+private fun allSqlCteDefinitions(
+  originalSql: String,
+  scanText: String = originalSql,
+  scanTextOffset: Int = 0,
+): List<CteDefinition> {
+  val clause = parseCteClause(scanText) ?: return emptyList()
+  return clause.definitions.flatMap { definition ->
+    val rebased = definition.copy(
+      bodyOpenParenthesis = definition.bodyOpenParenthesis + scanTextOffset,
+      bodyCloseParenthesis = definition.bodyCloseParenthesis + scanTextOffset,
+    )
+    val nestedBodyText = scanText.substring(definition.bodyOpenParenthesis + 1, definition.bodyCloseParenthesis)
+    val nestedBodyOffset = definition.bodyOpenParenthesis + scanTextOffset + 1
+    listOf(rebased) + allSqlCteDefinitions(originalSql, nestedBodyText, nestedBodyOffset)
+  }
 }
 
 /**

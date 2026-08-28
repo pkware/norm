@@ -72,8 +72,10 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
     val entries = outputEntries(nodeTreeText).filter { !it.isJunk }.sortedBy { it.resultNumber }
     if (entries.isEmpty()) return emptyList()
     if (parser.hasSetOperations(nodeTreeText)) return entries.map { null }
-    val cteDefinitions = parser.parseCteList(nodeTreeText).associateBy { it.name }
-    return entries.map { entry -> resolveVar(entry.expression, nodeTreeText, cteDefinitions) }
+    // A single-element stack: [nodeTreeText]'s own `:cteList` is the ONLY scope in play until the
+    // walk descends into a CTE body — see resolveVar's KDoc for why the stack grows from there.
+    val outermostScope = listOf(parser.parseCteList(nodeTreeText).associateBy { it.name })
+    return entries.map { entry -> resolveVar(entry.expression, nodeTreeText, outermostScope) }
   }
 
   /** `:returningList` when non-empty, else `:targetList` — see [resolveColumnProvenance]'s KDoc. */
@@ -102,13 +104,28 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
    * Landing on anything else (a base table, a derived table, an unmodeled range-table kind, or a
    * body entry that is a genuine non-`Var` expression) stops the walk and returns the CURRENT best
    * answer, if any.
+   *
+   * A CTE reference's [NodeTreeCteReference.ctelevelsup] says how many query levels ABOVE the block
+   * containing that reference its declaring `:cteList` lives — `0` means [queryBlock]'s OWN `WITH`
+   * clause; a nested `WITH c` shadows an enclosing `WITH c` of the same name with a DIFFERENT body,
+   * so resolving every reference against one flat, outermost-only CTE map (as this resolver used to)
+   * silently attributes a shadowed reference to the WRONG CTE. [scopeStack] tracks this precisely: index
+   * `0` is always the CURRENT [queryBlock]'s own `:cteList`, index `1` the query block ONE level up
+   * that declared it (if [queryBlock] is itself a CTE body, that is the `:cteList` its own CTE
+   * reference was resolved against), and so on. Each hop into a CTE's own body pushes that body's own
+   * `:cteList` onto the FRONT of [scopeStack], so a reference resolved from inside it sees its own
+   * scope at index `0` again. A [reference]'s `:ctelevelsup` deeper than [scopeStack] is tall (this can
+   * only happen for a malformed or not-yet-modeled shape — a real CTE reference's levelsup can never
+   * exceed the number of `WITH` clauses actually enclosing it) bails rather than reading past the end
+   * of what has actually been tracked.
    */
   private fun resolveVar(
     expression: PgNodeExpression,
     queryBlock: String,
-    cteDefinitions: Map<String, NodeTreeCteDefinition>,
+    scopeStack: List<Map<String, NodeTreeCteDefinition>>,
   ): NodeTreeColumnProvenance? {
     var currentQueryBlock = queryBlock
+    var currentScopeStack = scopeStack
     var currentVar = expression as? PgNodeExpression.Var ?: return null
     if (currentVar.levelsUp != 0) return null
     var resolvedCteName: String? = null
@@ -126,7 +143,8 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
         is RangeTableEntry.Cte -> {
           val reference = rangeTableEntry.reference
           if (reference.selfReference) return null
-          val definition = cteDefinitions[reference.name] ?: return null
+          val scope = currentScopeStack.getOrNull(reference.ctelevelsup) ?: return null
+          val definition = scope[reference.name] ?: return null
           if (definition.recursive) return null
           if (parser.hasSetOperations(definition.queryBlock)) return null
           resolvedCteName = reference.name
@@ -139,6 +157,8 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
             return NodeTreeColumnProvenance(resolvedCteName, resolvedPosition)
           }
           currentQueryBlock = definition.queryBlock
+          val ownScope = parser.parseCteList(definition.queryBlock).associateBy { it.name }
+          currentScopeStack = listOf(ownScope) + currentScopeStack
           currentVar = bodyVar
         }
         else ->

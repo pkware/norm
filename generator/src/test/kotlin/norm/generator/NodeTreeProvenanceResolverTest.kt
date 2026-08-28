@@ -119,6 +119,50 @@ class NodeTreeProvenanceResolverTest {
   }
 
   @Nested
+  inner class NestedCteShadowing {
+
+    @Test
+    fun `a nested WITH that shadows an outer CTE name resolves against the INNER, correctly-scoped body`() {
+      // #238 P0 repro: before the resolver tracked a scope stack, a flat, outermost-only CTE map
+      // resolved "c" against the OUTER definition (UPPER(name)) even when the reference was written
+      // from INSIDE "d"'s own body, which declares its own, shadowing "c" (LOWER(description)).
+      val provenance = provenanceFor(
+        "CREATE TABLE parent (name TEXT, description TEXT)",
+        "WITH c AS (SELECT UPPER(name) AS ux FROM parent), " +
+          "d AS (WITH c AS (SELECT LOWER(description) AS ux FROM parent) SELECT ux, 1 AS n FROM c) " +
+          "SELECT ux, n FROM d",
+      )
+      // "ux" resolves through d's own reference to its INNER "c" (ctelevelsup 0 relative to d's own
+      // body), landing on the inner CTE's own computed expression. "n" never enters a CTE reference
+      // at all -- d's own body position 2 is the literal "1 AS n" -- so it resolves to d's own body,
+      // not to either "c".
+      assertThat(provenance).containsExactly(NodeTreeColumnProvenance("c", 1), NodeTreeColumnProvenance("d", 2))
+    }
+
+    @Test
+    fun `sibling CTEs where the second one shadows the first's name resolve against the INNER body`() {
+      val provenance = provenanceFor(
+        "CREATE TABLE t (x TEXT, y TEXT)",
+        "WITH a AS (SELECT UPPER(x) AS ux FROM t), " +
+          "b AS (WITH a AS (SELECT LOWER(y) AS ux FROM t) SELECT ux FROM a) " +
+          "SELECT ux FROM b",
+      )
+      assertThat(provenance).containsExactly(NodeTreeColumnProvenance("a", 1))
+    }
+
+    @Test
+    fun `a nested WITH with no name collision at all still resolves through both levels`() {
+      // Non-adversarial control: proves the scope-stack fix supports genuine multi-level CTE nesting,
+      // not merely "decline whenever names collide".
+      val provenance = provenanceFor(
+        "CREATE TABLE t (y TEXT)",
+        "WITH d AS (WITH e AS (SELECT LOWER(y) AS uy FROM t) SELECT uy FROM e) SELECT uy FROM d",
+      )
+      assertThat(provenance).containsExactly(NodeTreeColumnProvenance("e", 1))
+    }
+  }
+
+  @Nested
   inner class Joins {
 
     @Test
@@ -169,6 +213,61 @@ class NodeTreeProvenanceResolverTest {
           "SELECT d FROM a NATURAL LEFT JOIN b",
       )
       assertThat(provenance).containsExactly(NodeTreeColumnProvenance("a", 1))
+    }
+  }
+
+  @Nested
+  inner class LevelsUpGuards {
+
+    // Both shapes below cannot occur through a real, live PostgreSQL round trip: a top-level
+    // statement's own :targetList Var always has :varlevelsup 0 (there is no enclosing scope to
+    // point past), and an ordinary (non-merged) :joinaliasvars entry always references one of the
+    // JOIN's own two inputs at :varlevelsup 0. Each guard is nonetheless load-bearing defensive code
+    // -- see NodeTreeProvenanceResolver's own KDoc -- so these are hand-crafted `pg_node_tree`
+    // fixtures (the same established pattern PgNodeTreeParserTest and
+    // NodeTreeProvenanceExpressionTest's AllPositionCheckGate test use) exercising exactly the shape
+    // each guard exists to refuse. Both mutations (deleting the guarded line) were run by hand against
+    // this class and confirmed to turn the corresponding test red before being reverted.
+
+    @Test
+    fun `an outer target-list Var with a nonzero levelsup resolves to nothing, never an enclosing scope's CTE`() {
+      val nodeTree = """
+        {QUERY :targetList (
+          {TARGETENTRY :expr {VAR :varno 1 :varattno 1 :varlevelsup 1} :resno 1 :resname x :resjunk false}
+        ) :rtable (
+          {RANGETBLENTRY :rtekind 6 :ctename c :ctelevelsup 0}
+        ) :cteList (
+          {COMMONTABLEEXPR :ctename c :ctequery {QUERY :targetList (
+            {TARGETENTRY :expr {CONST :constvalue 1} :resno 1 :resname ux :resjunk false}
+          ) :rtable ()}}
+        )}
+      """.trimIndent()
+
+      assertThat(NodeTreeProvenanceResolver().resolveColumnProvenance(nodeTree)).containsExactly(null)
+    }
+
+    @Test
+    fun `a JOIN alias var with a nonzero levelsup resolves to nothing, never an enclosing scope's CTE`() {
+      val nodeTree = """
+        {QUERY :targetList (
+          {TARGETENTRY :expr {VAR :varno 3 :varattno 1 :varlevelsup 0} :resno 1 :resname x :resjunk false}
+        ) :rtable (
+          {RANGETBLENTRY :rtekind 6 :ctename a :ctelevelsup 0}
+          {RANGETBLENTRY :rtekind 6 :ctename b :ctelevelsup 0}
+          {RANGETBLENTRY :rtekind 2 :jointype 0 :joinmergedcols 0 :joinaliasvars (
+            {VAR :varno 1 :varattno 1 :varlevelsup 1}
+          )}
+        ) :cteList (
+          {COMMONTABLEEXPR :ctename a :ctequery {QUERY :targetList (
+            {TARGETENTRY :expr {CONST :constvalue 1} :resno 1 :resname ux :resjunk false}
+          ) :rtable ()}}
+          {COMMONTABLEEXPR :ctename b :ctequery {QUERY :targetList (
+            {TARGETENTRY :expr {CONST :constvalue 2} :resno 1 :resname ux :resjunk false}
+          ) :rtable ()}}
+        )}
+      """.trimIndent()
+
+      assertThat(NodeTreeProvenanceResolver().resolveColumnProvenance(nodeTree)).containsExactly(null)
     }
   }
 

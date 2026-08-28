@@ -2,7 +2,6 @@ package norm.generator
 
 import assertk.assertThat
 import assertk.assertions.isEqualTo
-import assertk.assertions.isGreaterThan
 import assertk.assertions.isNotEmpty
 import assertk.assertions.isNull
 import org.intellij.lang.annotations.Language
@@ -11,6 +10,7 @@ import org.junit.jupiter.api.Test
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
+import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.SQLException
 import java.util.UUID
@@ -31,8 +31,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * literal, a second bare word trailing a completed alias, a DML statement targeting a CTE's own
  * name as if it were a real relation, an unquoted qualifier that cannot address a differently-cased
  * quoted CTE name, ...) — those can never reach this function from a query Norm's own JDBC analysis
- * step would have accepted in the first place, so they are dropped rather than ported, each noted
- * inline at the point it would otherwise have appeared.
+ * step would have accepted in the first place, so they are simply dropped rather than ported; no
+ * `@Test` for any of them exists anywhere in this file.
  */
 @Testcontainers
 class NodeTreeProvenanceExpressionTest {
@@ -422,6 +422,58 @@ class NodeTreeProvenanceExpressionTest {
   }
 
   @Nested
+  inner class NestedCteShadowing {
+
+    @Test
+    fun `a nested WITH that shadows an outer CTE name never emits the outer body's expression`() {
+      // #238 P0 repro. Before this file's fix, both the node-tree AND SQL-text re-derivation only
+      // ever looked at nodeTreeText's/sql's own OUTERMOST WITH clause by name, so a reference
+      // NodeTreeProvenanceResolver correctly resolved against the INNER, shadowing "c" got handed
+      // the OUTER "c"'s body text instead -- "UPPER(name)" instead of "LOWER(description)". The name
+      // "c" is declared twice (outer and, inside "d"'s own body, a shadowing inner one), which is
+      // provably ambiguous from a bare name alone, so the correct, non-guessing answer is `null`, not
+      // either body's text.
+      val ddl = "CREATE TABLE parent (name TEXT, description TEXT)"
+      val sql = """
+        WITH c AS (SELECT UPPER(name) AS ux FROM parent),
+             d AS (WITH c AS (SELECT LOWER(description) AS ux FROM parent) SELECT ux, 1 AS n FROM c)
+        SELECT ux, n FROM d
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql, columnIndex = 0)).isNull()
+      // The second column never enters either "c" at all -- it resolves against "d"'s own body
+      // position 2, a plain literal -- so it is unaffected by the "c"/"c" name collision and still
+      // resolves normally.
+      assertThat(resolvedExpression(ddl, sql, columnIndex = 1)).isEqualTo("1")
+    }
+
+    @Test
+    fun `sibling CTEs where the second one shadows the first's name never emit the outer body's expression`() {
+      val ddl = "CREATE TABLE t (x TEXT, y TEXT)"
+      val sql = """
+        WITH a AS (SELECT UPPER(x) AS ux FROM t),
+             b AS (WITH a AS (SELECT LOWER(y) AS ux FROM t) SELECT ux FROM a)
+        SELECT ux FROM b
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql)).isNull()
+    }
+
+    @Test
+    fun `a nested WITH with no name collision resolves through both levels to the real expression`() {
+      // Non-adversarial control, proving the fix is a genuine scope-aware resolution rather than a
+      // blanket refusal whenever a nested WITH is present at all.
+      val ddl = "CREATE TABLE t (y TEXT)"
+      val sql = """
+        WITH d AS (WITH e AS (SELECT LOWER(y) AS uy FROM t) SELECT uy FROM e)
+        SELECT uy FROM d
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql)).isEqualTo("LOWER(y)")
+    }
+  }
+
+  @Nested
   inner class UniquenessGate {
 
     @Test
@@ -657,11 +709,20 @@ class NodeTreeProvenanceExpressionTest {
       // Sweeps the FULL live-fetched reserved-keyword set -- never a fixed subset -- through the
       // identical CTE-wrapped shape the named tests above exercise individually. A reserved word
       // that PostgreSQL itself refuses to parse as a bare, unaliased value at all (e.g. "select",
-      // "join" -- not niladic keywords, and not usable as a bare expression) can never reach
-      // TypeRepository from a real query in the first place, since JdbcAnalyzer's own
-      // PreparedStatement.prepareStatement would already have rejected it -- those words are simply
-      // skipped here, the same "never reachable" reasoning applied throughout this file. Every word
-      // PostgreSQL DOES accept must still resolve to nothing.
+      // "join" -- not niladic keywords, and not usable as a bare expression at all: verified live
+      // that even a QUOTED body alias changes nothing here, since the rejection is always the OUTER
+      // bare reference, never the alias) can never reach TypeRepository from a real query in the
+      // first place, since JdbcAnalyzer's own PreparedStatement.prepareStatement would already have
+      // rejected it -- those words are simply skipped here, the same "never reachable" reasoning
+      // applied throughout this file. Every word PostgreSQL DOES accept as a bare reference must
+      // still resolve to nothing.
+      //
+      // The skip is proven CORRECT, not merely present: [expectedReachableWords] independently
+      // determines -- via a SEPARATE live query the resolution pipeline never touches -- exactly
+      // which words PostgreSQL's own grammar allows as a bare, FROM-less `SELECT word`. If the main
+      // loop's own skip decisions ever drifted from that independent answer (attempting a word
+      // PostgreSQL cannot actually parse bare, or skipping one it can), this equality fails; a bare
+      // `isGreaterThan(0)` could not catch either kind of drift.
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         val reservedWords = connection.createStatement().use { statement ->
           statement.executeQuery("SELECT word FROM pg_get_keywords() WHERE catcode IN ('R', 'T')").use { resultSet ->
@@ -669,12 +730,13 @@ class NodeTreeProvenanceExpressionTest {
           }
         }
         assertThat(reservedWords).isNotEmpty()
+        val expectedReachableWords = reservedWords.filter { word -> isParseableAsBareSelectItem(connection, word) }
 
         var attempted = 0
         for (word in reservedWords) {
           val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
           val sql = """
-            WITH c AS (SELECT UPPER(name) AS $word FROM parent)
+            WITH c AS (SELECT UPPER(name) AS "$word" FROM parent)
             SELECT $word FROM c
           """.trimIndent()
 
@@ -687,8 +749,10 @@ class NodeTreeProvenanceExpressionTest {
           attempted++
           assertThat(expression).isNull()
         }
-        // Proves the loop actually exercised real shapes rather than vacuously skipping every word.
-        assertThat(attempted).isGreaterThan(0)
+        // Every word PostgreSQL's own grammar allows bare was attempted (and asserted null above);
+        // none was skipped that should not have been, and none was silently attempted despite being
+        // unparseable.
+        assertThat(attempted).isEqualTo(expectedReachableWords.size)
       }
     }
   }
@@ -732,6 +796,22 @@ class NodeTreeProvenanceExpressionTest {
     val provenance = NodeTreeProvenanceResolver().resolveColumnProvenance(nodeTree).getOrNull(columnIndex)
       ?: return null
     return resolveNodeTreeProvenanceExpression(sql, nodeTree, provenance)
+  }
+
+  /**
+   * Whether PostgreSQL's own grammar accepts [word] as a bare, FROM-less `SELECT word` at all --
+   * independent of [resolvedExpression]'s own CTE-wrapped probe, so it cannot share a bug with
+   * whatever it is being used to check. Only a reserved word with its own niladic-keyword-shaped
+   * grammar production (`user`, `current_date`, `true`, ...) parses this way; an ordinary reserved
+   * word (`table`, `select`, ...) has no bare-expression production at all, in ANY context -- verified
+   * live that neither quoting the alias it is bound to, nor parenthesizing the bare reference itself,
+   * changes that.
+   */
+  private fun isParseableAsBareSelectItem(connection: Connection, word: String): Boolean = try {
+    connection.createStatement().use { it.execute("SELECT $word") }
+    true
+  } catch (_: SQLException) {
+    false
   }
 
   /**
