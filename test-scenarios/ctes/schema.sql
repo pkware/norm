@@ -16,3 +16,8 @@ CREATE TABLE child (
   name TEXT NOT NULL,
   UNIQUE (parent_id, name)
 );
+
+-- View over child, used by #238's comma-separated mixed-FROM-list scenario (a CTE, a table, a
+-- view, a derived table, and a set-returning function all in the same FROM clause).
+CREATE VIEW child_summary AS
+  SELECT id, parent_id, name FROM child;
