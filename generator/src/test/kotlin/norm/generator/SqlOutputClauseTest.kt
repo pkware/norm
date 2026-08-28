@@ -105,16 +105,12 @@ class SqlOutputClauseTest {
       // ") (bogus AS alias" has a stray ")" before any "(" — depth dips negative. Without a floor,
       // the subsequent "(" brings depth back to exactly 0, so the later "AS" is (wrongly) treated
       // as a top-level alias boundary, splitting into expression=") (bogus", alias="alias". Bailing
-      // at the first negative dip instead returns the item unsplit AS FAR AS extractAlias' OWN
-      // explicit-"AS" scan goes -- but this text is never valid PostgreSQL syntax regardless (a
-      // stray leading ")"), so the later, separate top-level IMPLICIT-alias check (#238 P2) still
-      // finds "alias" as a genuinely space-separated trailing identifier after "AS" (itself a
-      // complete word) and splits it off too, unaware that the identifier one step further back was
-      // never a well-formed expression to begin with.
+      // at the first negative dip instead returns the whole item unsplit, with no alias stripped —
+      // an honest "could not parse this" over a confidently wrong split.
       val result = parseSelectItems("UPDATE t SET x = 1 RETURNING id, ) (bogus AS alias")
       assertThat(result).containsExactly(
         SelectItem("id", "id", null),
-        SelectItem(") (bogus AS", null, null),
+        SelectItem(") (bogus AS alias", null, null),
       )
     }
 
@@ -451,42 +447,39 @@ class SqlOutputClauseTest {
 
     @Test
     fun `an identifier ending in the letters AS is not mistaken for the AS keyword`() {
-      // Verified against PostgreSQL 18.4: "CREATE TABLE d1(dataAS text)" then "SELECT dataAS b FROM
-      // d1" returns column "b" holding the row's own "dataAS" value -- "dataAS" lexes as ONE
-      // identifier, never as "data" followed by the keyword "AS", so extractAlias's boundary check
-      // must reject the "AS" inside "dataAS" as not a real keyword occurrence. "b" is then a
-      // genuine top-level IMPLICIT alias (#238 P2) -- "dataAS" is a complete bare column reference
-      // (ASCII-folded to "dataas"), separated from "b" by a real space.
+      // Verified against PostgreSQL 18.4: "CREATE TABLE d1(dataAS text)" then "SELECT 1 dataAS"
+      // returns column "dataas" -- "dataAS" lexes as ONE identifier, never as "data" followed by
+      // the keyword "AS". extractAlias's boundary check must reject the "AS" inside "dataAS" as
+      // not a real keyword occurrence on BOTH the old (whitespace) and new (isIdentifierChar) rule
+      // -- included as a regression guard for the widened rule, not a reproduction of a bug.
       val result = parseSelectItems("SELECT dataAS b FROM users")
       assertThat(result).containsExactly(
-        SelectItem("dataAS", "dataas", null),
+        SelectItem("dataAS b", null, null),
       )
     }
 
     @Test
     fun `an AS keyword fused with a following non-ASCII character is not an alias boundary`() {
-      // Verified against PostgreSQL 18.4: "SELECT age AS€b FROM users238b" (with a real "age"
-      // column) returns column "as€b" holding age's own value -- "AS€b" lexes as ONE
-      // implicit-alias identifier (€ is a legal identifier-continuation character), never as the
-      // keyword "AS" followed by "€b", so extractAlias finds no explicit alias here. "age" is then
-      // a complete bare column reference, and "AS€b" -- despite LOOKING like the keyword -- is a
-      // genuine top-level IMPLICIT alias (#238 P2), separated from "age" by a real space.
+      // Verified against PostgreSQL 18.4: "SELECT 1 AS€b" returns column "as€b" -- "AS€b" lexes as
+      // ONE implicit-alias identifier (€ is a legal identifier-continuation character), never as
+      // the keyword "AS" followed by "€b". Regression guard for the widened rule: the old
+      // whitespace-only check already rejected this ("€" is not whitespace either), so this
+      // confirms the new isIdentifierChar-based check agrees for the right reason.
       val result = parseSelectItems("SELECT age AS€b FROM users")
       assertThat(result).containsExactly(
-        SelectItem("age", "age", null),
+        SelectItem("age AS€b", null, null),
       )
     }
 
     @Test
     fun `an AS keyword fused with a preceding non-ASCII character is not an alias boundary`() {
-      // Verified against PostgreSQL 18.4: "SELECT age x€AS FROM users238b" (with a real "age"
-      // column) returns column "x€as" holding age's own value -- "x€AS" lexes as ONE
-      // implicit-alias identifier (the same reasoning as the "AS€b" case above, from the other
-      // side), so "age" is a complete bare column reference and "x€AS" is its genuine top-level
-      // IMPLICIT alias (#238 P2), separated from "age" by a real space.
+      // Verified against PostgreSQL 18.4: "SELECT age x€AS b FROM users" is a syntax error --
+      // "x€AS" lexes as ONE implicit-alias identifier (the same reasoning as the "AS€b" case
+      // above, from the other side), leaving a stray extra token "b" with nothing to attach to.
+      // Regression guard for the widened rule, same as the case above.
       val result = parseSelectItems("SELECT age x€AS FROM users")
       assertThat(result).containsExactly(
-        SelectItem("age", "age", null),
+        SelectItem("age x€AS", null, null),
       )
     }
 
@@ -1180,14 +1173,12 @@ class SqlOutputClauseTest {
         ),
         // The shape most likely to be broken by a looser implicit-alias check: candidate 2 for
         // "count(*) total" is "count(*)", which still does not end in ".*" (it ends in ")"), so
-        // this must NOT be treated as a star. "total" is also stripped as a genuine top-level
-        // IMPLICIT alias (#238 P2): the character before it (skipping the real space) is ")",
-        // which CAN end a complete expression -- unlike an operator character, which never can.
+        // this must NOT be treated as a star.
         NotStarGuardCase(
           description = "count star with an implicit alias is not mistaken for the star guard",
           sql = "SELECT count(*) total, id FROM t",
           expected = listOf(
-            SelectItem("count(*)", null, null),
+            SelectItem("count(*) total", null, null),
             SelectItem("id", "id", null),
           ),
         ),
@@ -1261,17 +1252,16 @@ class SqlOutputClauseTest {
           ),
         ),
         // Regression guard: PostgreSQL identifiers cannot start with a digit, so "2." is not a valid
-        // qualifier — this is ordinary multiplication ("2 * 3"), with "lbl" a genuine top-level
-        // IMPLICIT alias (#238 P2) on the numeral "3" (verified against a real PostgreSQL 18.4
-        // container: "SELECT 2.*3 lbl, a FROM t" returns 2 columns) — "3" ends in a digit, which CAN
-        // end a complete expression, so "lbl" is stripped, leaving expression "2.*3". A qualifier
-        // check based on `\w` (ASCII word characters) rather than "letter or underscore, then
-        // identifier characters" would wrongly accept "2." as a qualifier here.
+        // qualifier — this is ordinary multiplication ("2 * 3"), with "3 lbl" an implicit alias on
+        // the numeric literal "3" (verified against a real PostgreSQL 18.4 container: "SELECT
+        // 2.*3 lbl, a FROM t" returns 2 columns). A qualifier check based on `\w` (ASCII word
+        // characters) rather than "letter or underscore, then identifier characters" would wrongly
+        // accept "2." as a qualifier here.
         NotStarGuardCase(
           description = "a digit-leading qualifier before a star is arithmetic, not a star",
           sql = "SELECT 2.*3 lbl, a FROM t",
           expected = listOf(
-            SelectItem("2.*3", null, null),
+            SelectItem("2.*3 lbl", null, null),
             SelectItem("a", "a", null),
           ),
         ),
@@ -1287,13 +1277,12 @@ class SqlOutputClauseTest {
         // regardless of whether an implicit alias follows the star: "2." is rejected because the
         // identifier-character run immediately before its final "." is "2", and that run's first
         // character is a digit. Verified against a real PostgreSQL 18.4 container: "SELECT 2.*a lbl,
-        // a FROM t" is valid arithmetic ("2 * a AS lbl"), returning 2 columns; "lbl" is stripped as
-        // a genuine top-level IMPLICIT alias (#238 P2) -- "a" ends in an identifier character.
+        // a FROM t" is valid arithmetic ("2 * a AS lbl"), returning 2 columns.
         NotStarGuardCase(
           description = "a digit-leading qualifier before a star with an implicit alias remains arithmetic, not a star",
           sql = "SELECT 2.*a lbl, a FROM t",
           expected = listOf(
-            SelectItem("2.*a", null, null),
+            SelectItem("2.*a lbl", null, null),
             SelectItem("a", "a", null),
           ),
         ),
@@ -1302,13 +1291,12 @@ class SqlOutputClauseTest {
         // PostgreSQL 18.4 container: "SELECT count(*) * 2 tot, (SELECT 1) AS id FROM t" returns 2
         // columns (tot, id) — isStarItem finds "tot" as the trailing alias segment, leaving the
         // prefix "count(*)*2", which does not end in the literal ".*" (it ends in "*2"), so this is
-        // correctly rejected without needing to reason about the "*" inside "count(*)" at all. "tot"
-        // is also stripped as a genuine top-level IMPLICIT alias (#238 P2) -- "2" ends in a digit.
+        // correctly rejected without needing to reason about the "*" inside "count(*)" at all.
         NotStarGuardCase(
           description = "an aggregate star multiplied by a constant is not mistaken for the star guard",
           sql = "SELECT count(*) * 2 tot, (SELECT 1) AS id FROM t",
           expected = listOf(
-            SelectItem("count(*) * 2", null, null),
+            SelectItem("count(*) * 2 tot", null, null),
             SelectItem("(SELECT 1)", null, null),
           ),
         ),
@@ -1317,13 +1305,12 @@ class SqlOutputClauseTest {
         // "all2" would normalize IDENTICALLY ("all2.*a") if the quantifier were stripped inside
         // isStarItem itself rather than beforehand in parseSelectItems, using the still-whitespace-
         // intact clause text. Verified against a real PostgreSQL 18.4 container: "SELECT ALL 2.*a
-        // lbl, b FROM t" is valid arithmetic ("ALL 2 * a AS lbl"), returning 2 columns; "lbl" is
-        // stripped as a genuine top-level IMPLICIT alias (#238 P2).
+        // lbl, b FROM t" is valid arithmetic ("ALL 2 * a AS lbl"), returning 2 columns.
         NotStarGuardCase(
           description = "an ALL quantifier fused with a digit-leading qualifier is still arithmetic, not a star",
           sql = "SELECT ALL 2.*a lbl, b FROM t",
           expected = listOf(
-            SelectItem("2.*a", null, null),
+            SelectItem("2.*a lbl", null, null),
             SelectItem("b", "b", null),
           ),
         ),
@@ -1359,10 +1346,7 @@ class SqlOutputClauseTest {
           "a digit-leading qualifier before a star with an NFD implicit alias remains arithmetic, not a star",
           sql = "SELECT 2.*x\u0301 lbl, a FROM t",
           expected = listOf(
-            // "lbl" is stripped as a genuine top-level IMPLICIT alias (#238 P2) -- the combining
-            // mark itself is an identifier-continuation character, which CAN end a complete
-            // expression.
-            SelectItem("2.*x\u0301", null, null),
+            SelectItem("2.*x\u0301 lbl", null, null),
             SelectItem("a", "a", null),
           ),
         ),
@@ -1379,13 +1363,7 @@ class SqlOutputClauseTest {
           "a multiplication expression with an implicit alias and internal block comment is not mistaken as a star",
           sql = "SELECT 2 * x /*c*/ total, id FROM t",
           expected = listOf(
-            // "total" is stripped as a genuine top-level IMPLICIT alias (#238 P2): the character
-            // immediately before the real space that separates it -- "x", the end of the complete
-            // right-hand operand of "*" -- CAN end a complete expression, so this is NOT the same
-            // shape as "a * b" (where the character right before the alias candidate is the
-            // operator "*" itself). The comment stays attached to the expression -- only WHITESPACE
-            // is cosmetic, never a comment.
-            SelectItem("2 * x /*c*/", null, null),
+            SelectItem("2 * x /*c*/ total", null, null),
             SelectItem("id", "id", null),
           ),
         ),
@@ -1411,10 +1389,7 @@ class SqlOutputClauseTest {
           "count star with an implicit alias and a trailing line comment is not mistaken for the star guard",
           sql = "SELECT count(*) total -- c\n, id FROM t",
           expected = listOf(
-            // "total" is stripped as a genuine top-level IMPLICIT alias (#238 P2) -- the trailing
-            // comment (after the alias, this time) is simply discarded, same as a trailing comment
-            // after an explicit "AS" alias already is.
-            SelectItem("count(*)", null, null),
+            SelectItem("count(*) total -- c", null, null),
             SelectItem("id", "id", null),
           ),
         ),
@@ -1431,10 +1406,7 @@ class SqlOutputClauseTest {
           description = "a parenthesized cast with an implicit alias is not mistaken for the star guard",
           sql = "SELECT (a*b)::int lbl, id FROM t",
           expected = listOf(
-            // "lbl" is stripped as a genuine top-level IMPLICIT alias (#238 P2) -- "int" ends in an
-            // identifier character, which CAN end a complete expression (unlike "t.*::text", where
-            // "text" is glued directly onto "::" with NO separator at all).
-            SelectItem("(a*b)::int", null, null),
+            SelectItem("(a*b)::int lbl", null, null),
             SelectItem("id", "id", null),
           ),
         ),
@@ -1442,9 +1414,7 @@ class SqlOutputClauseTest {
           description = "a string literal containing a star with an implicit alias is not mistaken for the star guard",
           sql = "SELECT 'lit *' foo, id FROM t",
           expected = listOf(
-            // "foo" is stripped as a genuine top-level IMPLICIT alias (#238 P2) -- a closing quote
-            // CAN end a complete expression.
-            SelectItem("'lit *'", null, null),
+            SelectItem("'lit *' foo", null, null),
             SelectItem("id", "id", null),
           ),
         ),
@@ -1453,9 +1423,7 @@ class SqlOutputClauseTest {
           "an array-indexed multiplication expression with an implicit alias is not mistaken for the star guard",
           sql = "SELECT arr[1] * 2 tot, id FROM t",
           expected = listOf(
-            // "tot" is stripped as a genuine top-level IMPLICIT alias (#238 P2) -- "2" ends in a
-            // digit.
-            SelectItem("arr[1] * 2", null, null),
+            SelectItem("arr[1] * 2 tot", null, null),
             SelectItem("id", "id", null),
           ),
         ),
@@ -1475,16 +1443,20 @@ class SqlOutputClauseTest {
         ),
         // "preferences prefs" is a real implicit alias (no "AS"), but NEITHER candidate 1
         // ("preferences prefs") NOR candidate 2 ("preferences") is star-shaped, so the guard does
-        // not fire and both items survive. "prefs" is stripped as a genuine top-level IMPLICIT
-        // alias (#238 P2): "preferences" ends in an identifier character, which CAN end a complete
-        // expression, so parseColumnReference runs against the ALREADY-stripped "preferences" alone
-        // and resolves it, rather than the FULL "preferences prefs" (which contains a space and can
-        // never match).
+        // not fire and both items survive. columnName is null for the FIRST item specifically
+        // because parseColumnReference's own regex requires the ENTIRE (unstripped) expression to
+        // match a bare or qualified identifier — "preferences prefs" contains a space, so the whole
+        // match fails — NOT because this function mistakes it for something else. This is a LOST
+        // name (parseColumnReference simply cannot see past the implicit alias it wasn't taught to
+        // strip), not a WRONG one: the resulting `emptyList()`-style fallback in JdbcAnalyzer
+        // degrades to metadata, exactly as documented on parseSelectItems for any expression this
+        // function cannot resolve.
         NotStarGuardCase(
-          description = "an implicit alias on a non-star column is stripped, resolving its own column name",
+          description =
+          "an implicit alias on a non-star column is not mistaken for the star guard, but loses its column name",
           sql = "SELECT preferences prefs, id FROM t",
           expected = listOf(
-            SelectItem("preferences", "preferences", null),
+            SelectItem("preferences prefs", null, null),
             SelectItem("id", "id", null),
           ),
         ),

@@ -35,7 +35,7 @@ package norm.generator
  * - [parseOutputItemsWithAlias] over that CTE's body text must yield EXACTLY as many top-level items
  *   as [nodeTreeText] has non-junk body target entries for that same CTE. A mis-split/mis-merge that
  *   happens to preserve the total item count survives this check alone.
- * - EVERY position's own name (see [verifiedNameAndExpression]) — not merely
+ * - EVERY position's own name (see [verifiedExpression]) — not merely
  *   [NodeTreeColumnProvenance.bodyPosition]'s — must fold-match that position's own `:resname`, in
  *   the SAME order. A one-mis-split-plus-
  *   one-mis-merge pair shifts items between its two error points while leaving the total count
@@ -46,15 +46,26 @@ package norm.generator
  *   the all-position check above by matching against a DIFFERENT item that happens to share the same
  *   name — uniqueness is what turns "every position matches" into "every position matches ITS OWN
  *   item".
- * - [NodeTreeColumnProvenance.bodyPosition]'s own item must have a VERIFIABLE alias to prove its
+ * - [NodeTreeColumnProvenance.bodyPosition]'s own item must have a VERIFIABLE name to prove its
  *   position against in the first place: an explicit `AS x`, an implicit (no-`AS`) trailing alias
  *   token (via [splitTrailingImplicitAlias]), or being itself a bare column reference (whose own
  *   name IS what PostgreSQL reports as `:resname` when there is no alias at all). A position whose
  *   `:resname` PostgreSQL auto-generated (e.g. `upper`, `?column?`) has no corresponding text to
  *   verify against, so it can never pass this gate — and per the point above, that failure alone
  *   already fails the WHOLE cross-validation, not merely that one position.
- * - the matched item must not itself be a bare column reference — a CTE body that merely forwards
- *   another column unchanged (`description AS description_upper`) has nothing worth reporting as
+ * - [verifiedExpression] NEVER cuts an implicit alias token off the matched item, unlike the
+ *   explicit-`AS` case: whether a trailing bare word is an alias or the item's own last operand
+ *   cannot be decided from text alone (`ts AT TIME ZONE timezone`'s trailing `timezone` is a
+ *   required operand of `AT TIME ZONE`, not an alias, yet it is ALSO a legal implicit alias token,
+ *   and PostgreSQL's own `:resname` for that item is `timezone` either way — the exact same string
+ *   a genuine alias would produce). `:resname` is used only to VERIFY that some trailing token
+ *   matches, never to decide where to cut, so the emitted expression is always the item's COMPLETE
+ *   text, alias or operand included — never a truncated fragment that either fails to parse or,
+ *   worse, parses into a different value (`INTERVAL '1' DAY` cut to `INTERVAL '1'` evaluates to `1
+ *   SECOND`).
+ * - the matched item must not itself be a bare column reference (see [isBareColumnPassThrough]) —
+ *   a CTE body that merely forwards another column unchanged (`description AS
+ *   description_upper`, or the same shape spelled `description dx`) has nothing worth reporting as
  *   "the expression"; echoing a column name back adds no value (the same rule
  *   [TypeRepository.buildTypeProjectionForQuery] already applies to a top-level plain column
  *   reference).
@@ -71,8 +82,9 @@ package norm.generator
  *   called at all (there is nothing to extract).
  * @param parser The node-tree parser to use; defaults to a fresh, stateless instance.
  * @return The CTE body's expression text, [collapseCosmeticWhitespace]-normalized and with any
- *   comment [stripComments]-removed, exactly as the SHIPPED `SqlCteOutputExpression.kt` whitelist
- *   emitted for the one shape it resolved — or `null` if any gate above fails.
+ *   comment [stripComments]-removed, exactly as the developer wrote it — including any implicit
+ *   alias glued onto it, since cutting one is exactly the defect this function refuses to
+ *   reintroduce — or `null` if any gate above fails.
  */
 internal fun resolveNodeTreeProvenanceExpression(
   sql: String,
@@ -93,22 +105,74 @@ internal fun resolveNodeTreeProvenanceExpression(
   if (items.size != bodyResultNames.size) return null
   if (bodyResultNames.distinct().size != bodyResultNames.size) return null
 
-  val verifiedItems = items.map { verifiedNameAndExpression(it) }
-  for ((index, verifiedItem) in verifiedItems.withIndex()) {
+  val verifiedExpressions = items.mapIndexed { index, item ->
     val resultName = bodyResultNames[index] ?: return null
-    if (verifiedItem == null || verifiedItem.name != resultName) return null
+    verifiedExpression(item, resultName) ?: return null
   }
 
   if (provenance.bodyPosition < 1 || provenance.bodyPosition > items.size) return null
   val matchedItem = items[provenance.bodyPosition - 1]
   // A bare column reference is a chained pass-through with nothing of its own to report -- see this
-  // function's own KDoc. selectItem.columnName is already derived from the ALIAS-STRIPPED
-  // expression -- [parseOutputItemsWithAlias] strips an IMPLICIT alias token (`description dx`) the
-  // same way it strips an explicit `AS` one (`description AS description_upper`) before ever calling
-  // [parseColumnReference] -- so this check needs no re-parse of its own (#238).
-  if (matchedItem.selectItem.columnName != null) return null
+  // function's own KDoc.
+  if (isBareColumnPassThrough(matchedItem)) return null
 
-  return collapseCosmeticWhitespace(stripComments(verifiedItems[provenance.bodyPosition - 1]!!.expression))
+  return collapseCosmeticWhitespace(stripComments(verifiedExpressions[provenance.bodyPosition - 1]))
+}
+
+/**
+ * Whether [item] is nothing more than a bare column reference forwarded under a different name —
+ * an explicit `AS` alias on a plain column (`description AS description_upper`), or the SAME shape
+ * spelled with an implicit alias instead (`description dx`) — in which case there is nothing of
+ * [item]'s own to report as "the expression".
+ *
+ * The implicit-alias branch here is the ONE place [splitTrailingImplicitAlias]'s guessed split is
+ * used to decide something about [item] rather than merely to VERIFY a `:resname` match (see
+ * [verifiedExpression]'s own KDoc) — safe here because a wrong guess can only make this function
+ * MORE conservative (reporting a pass-through that, once split correctly, wasn't one — the caller
+ * bails and reports nothing) or LESS conservative (missing a real pass-through and instead
+ * reporting the item's complete, uncut text — noisy, exactly like an unaliased top-level `count(*)
+ * c`, but never a WRONG value): a bad guess here never changes what text gets EMITTED, unlike
+ * cutting the guessed alias off before returning it would.
+ */
+private fun isBareColumnPassThrough(item: OutputItemWithAlias): Boolean {
+  if (item.selectItem.columnName != null) return true
+  if (item.alias != null) return false
+  val implicitAliasStripped = splitTrailingImplicitAlias(item.selectItem.expression)?.expression ?: return false
+  return parseColumnReference(implicitAliasStripped).columnName != null
+}
+
+/**
+ * [item]'s COMPLETE, UNCUT text — see this file's own KDoc for why cutting is never attempted —
+ * if [item]'s own name can be VERIFIED to fold-match [resultName] (the node tree's authoritative
+ * `:resname` for this same position), `null` otherwise. Tried in this order, matching PostgreSQL's
+ * own precedence for naming a select-list item:
+ *
+ * 1. An explicit `AS alias` ([OutputItemWithAlias.alias]) — folded via [foldIdentifier]'s raw-text
+ *    overload, since [OutputItemWithAlias.alias] still carries its own quotes, if any. Unambiguous:
+ *    `AS` can only ever introduce an alias, so [item]'s own [SelectItem.expression] (already split
+ *    off by [extractAlias]) is exactly the developer's expression with nothing extra attached.
+ * 2. A bare column reference with NO alias at all ([SelectItem.columnName] non-`null`) — PostgreSQL
+ *    exposes such an item under the column's own name.
+ * 3. Neither of the above: [item]'s own text may still END with an implicit (no-`AS`) alias token
+ *    that happens to be the SAME string PostgreSQL reports for a keyword-operand shape's own
+ *    trailing operand (`ts AT TIME ZONE timezone`'s `:resname` is `timezone`, whether or not
+ *    `timezone` is really an alias) — [splitTrailingImplicitAlias] over
+ *    [item]'s [SelectItem.expression] is used ONLY to find that trailing token and fold-compare it
+ *    against [resultName]; the [ItemAndImplicitAlias.expression] half of its result (the text with
+ *    that token cut off) is never read.
+ */
+private fun verifiedExpression(item: OutputItemWithAlias, resultName: String): String? {
+  val alias = item.alias
+  if (alias != null) return item.selectItem.expression.takeIf { foldIdentifier(alias) == resultName }
+
+  val columnName = item.selectItem.columnName
+  if (columnName != null) {
+    val folded = foldIdentifier(columnName, item.selectItem.isColumnNameQuoted)
+    return item.selectItem.expression.takeIf { folded == resultName }
+  }
+
+  val implicitAlias = splitTrailingImplicitAlias(item.selectItem.expression)?.alias ?: return null
+  return item.selectItem.expression.takeIf { foldIdentifier(implicitAlias) == resultName }
 }
 
 /**
@@ -195,39 +259,3 @@ private fun rebasedCteDefinitions(text: String, offset: Int): List<CteDefinition
       it.bodyCloseParenthesis + offset,
     )
   } ?: emptyList()
-
-/**
- * One body item's own [name] — the value PostgreSQL would report as `:resname` for it, the one
- * thing [resolveNodeTreeProvenanceExpression] can independently derive from TEXT alone to
- * cross-validate against the node tree's authoritative answer — and its own [expression] text with
- * any alias (explicit or implicit) already removed, ready to be returned as the resolved provenance
- * expression should this turn out to be the matched position.
- *
- * @property name Tried in this order, matching PostgreSQL's own precedence for naming a select-list
- *   item:
- *   1. An alias ([OutputItemWithAlias.alias]) — explicit `AS alias` OR an implicit (no-`AS`)
- *      trailing alias token, [parseOutputItemsWithAlias] having already folded both spellings into
- *      this one field (via [extractAlias] and, when that finds nothing, [splitTrailingImplicitAlias]
- *      — see [OutputItemWithAlias.alias]'s own KDoc) — folded via [foldIdentifier]'s raw-text
- *      overload, since [OutputItemWithAlias.alias] still carries its own quotes, if any.
- *   2. A bare column reference with NO alias at all ([SelectItem.columnName] non-`null`) —
- *      PostgreSQL exposes such an item under the column's own name.
- * @property expression [SelectItem.expression] — already alias-free either way, by
- *   [parseOutputItemsWithAlias]'s own construction: case 1 by [extractAlias]'s or
- *   [splitTrailingImplicitAlias]'s split, case 2 because the WHOLE item was one bare column
- *   reference with nothing else to strip.
- */
-private data class VerifiedBodyItem(val name: String, val expression: String)
-
-/**
- * Computes [item]'s [VerifiedBodyItem], or `null` if [item] has no VERIFIABLE name at all (an
- * unaliased computed expression, whose auto-generated `:resname` — e.g. `upper`, `?column?` —
- * cannot be reconstructed from text without guessing) — see [VerifiedBodyItem.name]'s own KDoc for
- * the two cases tried, in order.
- */
-private fun verifiedNameAndExpression(item: OutputItemWithAlias): VerifiedBodyItem? {
-  val alias = item.alias
-  if (alias != null) return VerifiedBodyItem(foldIdentifier(alias), item.selectItem.expression)
-  val columnName = item.selectItem.columnName ?: return null
-  return VerifiedBodyItem(foldIdentifier(columnName, item.selectItem.isColumnNameQuoted), item.selectItem.expression)
-}

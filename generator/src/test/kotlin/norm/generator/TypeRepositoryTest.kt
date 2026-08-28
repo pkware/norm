@@ -104,11 +104,12 @@ class TypeRepositoryTest {
     }
 
     @Test
-    fun `an implicitly aliased top-level computed expression emits its own text, not the alias glued on`() {
-      // #238 P2: "count(*) c" has no "AS" at all, yet "c" is still its alias -- SqlOutputClause's
-      // extractAlias used to return the WHOLE item unsplit when there was no explicit "AS", so
-      // isComputedExpression's own "expression" carried the alias glued onto the end
-      // (`count(*) c`), not the bare expression PostgreSQL itself computes (`count(*)`).
+    fun `an implicitly aliased top-level computed expression emits its complete text, alias included`() {
+      // #238: whether a trailing bare word is an alias or the expression's own last operand cannot
+      // be decided from text alone without a grammar (`SELECT a IS NOT NULL` would truncate to the
+      // unparseable `a IS NOT`, `SELECT INTERVAL '1' DAY` would truncate to `INTERVAL '1'`, which
+      // evaluates to a DIFFERENT value). So the top-level path never guesses: an item with no
+      // explicit `AS` is embedded in its ENTIRE, exactly-as-written form, alias or operand included.
       val countColumn = Column(name = "c", notNull = true, type = Identifier(name = "int8"))
       val maxColumn = Column(name = "m", notNull = false, type = Identifier(name = "text"))
 
@@ -120,10 +121,8 @@ class TypeRepositoryTest {
       )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
-      assertThat(kdoc).contains("@property c (`count(*)`)")
-      assertThat(kdoc).doesNotContain("`count(*) c`")
-      assertThat(kdoc).contains("@property m (`max(name)`)")
-      assertThat(kdoc).doesNotContain("`max(name) m`")
+      assertThat(kdoc).contains("@property c (`count(*) c`)")
+      assertThat(kdoc).contains("@property m (`max(name) m`)")
     }
   }
 

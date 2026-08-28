@@ -192,13 +192,17 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `a body item's implicit (no-AS) alias now resolves, via findTrailingImplicitAlias`() {
+      // (#238) findTrailingImplicitAlias VERIFIES "ux" against the body's own `:resname`, but never
+      // CUTS it off -- whether a trailing bare word is an alias or the expression's own last operand
+      // cannot be decided from text alone, so the emitted expression is the item's complete, uncut
+      // text, alias included.
       val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
       val sql = """
         WITH a AS (SELECT LOWER(name) ux FROM parent)
         SELECT ux FROM a
       """.trimIndent()
 
-      assertThat(resolvedExpression(ddl, sql)).isEqualTo("LOWER(name)")
+      assertThat(resolvedExpression(ddl, sql)).isEqualTo("LOWER(name) ux")
     }
 
     @Test
@@ -223,14 +227,17 @@ class NodeTreeProvenanceExpressionTest {
     fun `an escaped-quote body alias no longer blocks a later item's own implicit alias from resolving`() {
       // The exact #229 P0 repro shape: item 1 has an escaped-quote explicit alias "zz\"q", item 2 an
       // IMPLICIT alias "zz". The retired whitelist could not support an implicit alias at all, so it
-      // punted on this whole body once it saw one -- Route D's findTrailingImplicitAlias resolves it.
+      // punted on this whole body once it saw one -- Route D's own findTrailingImplicitAlias VERIFIES
+      // "zz" against item 2's own `:resname`, but (#238) never CUTS it off: whether a trailing bare
+      // word is an alias or the expression's own last operand cannot be decided from text alone, so
+      // the emitted expression is the item's complete, uncut text, alias included.
       val ddl = "CREATE TABLE t (a TEXT, b TEXT)"
       val sql = """
         WITH c AS (SELECT UPPER(a) AS "zz""q", LOWER(b) zz FROM t)
         SELECT zz FROM c
       """.trimIndent()
 
-      assertThat(resolvedExpression(ddl, sql)).isEqualTo("LOWER(b)")
+      assertThat(resolvedExpression(ddl, sql)).isEqualTo("LOWER(b) zz")
     }
   }
 
