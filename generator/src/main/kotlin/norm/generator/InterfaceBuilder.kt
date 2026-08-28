@@ -227,7 +227,20 @@ private fun FunSpec.Builder.addStandardKdoc(query: SqlStatement, extraFormat: St
     // catalog comment.
     addKdoc("%L\n\n", query.comments.joinToString("\n", transform = String::trim))
   }
-  addKdoc("```sql\n%L\n```\n\n", query.sql)
+  // #238 12.2: TypeRepository.addClassKdoc declines its own "sql" fenced block for the identical
+  // query text (query.sql == the queryText passed to buildTypeProjectionForQuery, see
+  // SqlStatement.sql) via the same containsUnescapableBlockCommentDelimiter guard -- KotlinPoet's
+  // own KDoc emission unconditionally rewrites "/*"/"*/" to "/&#42;"/"&#42;/", a rewrite CommonMark
+  // never decodes back inside a fenced code block, so without this guard the twin KDoc blocks would
+  // disagree: one rendering the same query faithfully, the other silently corrupting it.
+  if (!containsUnescapableBlockCommentDelimiter(query.sql)) {
+    // #238 12 twin-site sweep: addClassKdoc also sizes its fence to markdownFenceDelimiter(sql) --
+    // one backtick longer than any run already in sql -- rather than a fixed 3-backtick fence, so a
+    // query text containing its own line of 3+ backticks (e.g. inside a multi-line string literal)
+    // can never be mistaken for this fence's own closing line and truncate the rendered SQL.
+    val fence = markdownFenceDelimiter(query.sql)
+    addKdoc("%Lsql\n%L\n%L\n\n", fence, query.sql, fence)
+  }
   if (extraFormat != null) {
     addKdoc(extraFormat, *extraArgs)
   }

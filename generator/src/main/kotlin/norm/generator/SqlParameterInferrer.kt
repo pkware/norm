@@ -318,8 +318,12 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
   }
 
   private companion object {
-    // Matches either a double-quoted SQL identifier ("name") or an unquoted one (word).
-    private const val SQL_IDENTIFIER = """(?:"[^"]+"|\w+)"""
+    // Matches either a double-quoted SQL identifier ("name") or an unquoted one (word). The
+    // quoted branch allows a doubled internal quote (`""`) so it can span PostgreSQL's own
+    // quoted-identifier escape for an embedded `"` character (#238 12.1) -- `"[^"]+"` alone
+    // stops at the first internal quote, matching only a trailing fragment like `"b"` out of
+    // `"a""b"`.
+    private const val SQL_IDENTIFIER = """(?:"(?:[^"]|"")+"|\w+)"""
 
     // Matches a possibly schema-qualified table name: `table`, `"table"`, or `"schema"."table"`.
     private const val QUALIFIED_TABLE = """($SQL_IDENTIFIER(?:\.$SQL_IDENTIFIER)?)"""

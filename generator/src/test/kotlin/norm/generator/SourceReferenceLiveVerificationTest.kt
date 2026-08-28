@@ -1,7 +1,8 @@
 package norm.generator
 
 import assertk.assertThat
-import assertk.assertions.isFalse
+import assertk.assertions.containsExactly
+import assertk.assertions.isEqualTo
 import assertk.assertions.isTrue
 import org.commonmark.node.AbstractVisitor
 import org.commonmark.node.Code
@@ -11,6 +12,7 @@ import org.commonmark.node.Text
 import org.commonmark.parser.Parser
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
+import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
 import org.junit.jupiter.params.ParameterizedTest
@@ -70,22 +72,25 @@ class SourceReferenceLiveVerificationTest {
   fun `every source-reference span in the golden file parses against a live server`(case: GoldenFileCase) {
     val fileText = case.path.readText()
     val markdown = extractKdocMarkdown(fileText) ?: return
+    val markerCount = countSourceReferenceMarkers(markdown)
+    if (markerCount == 0) return
+
     val spans = extractSourceReferenceSpans(markdown)
-    if (spans.isEmpty()) {
-      // A raw "(`" in the KDoc's own Markdown SOURCE (before CommonMark parses it) is the exact,
-      // and only, text addClassKdoc emits via `append("($source)")` where $source is itself
-      // backtick-wrapped -- so its presence means a span WAS emitted here. Zero PARSED spans despite
-      // that means span delimitation broke (#238 11.2's own defect, which this exact blind spot let
-      // through once already): a stray, unpaired backtick or backslash elsewhere in the same KDoc
-      // paragraph closed or reopened the code span in the wrong place. That is a real failure, not
-      // an absence of spans to verify -- silently returning here would prove nothing.
-      assertThat(
-        markdown.contains("(`"),
-        "found zero source-reference spans in ${case.path}, but its raw KDoc source contains \"(`\" " +
-          "-- span delimitation broke somewhere in this file's KDoc paragraph, it did not simply have no spans",
-      ).isFalse()
-      return
-    }
+    // A raw "(`" in the KDoc's own Markdown SOURCE (before CommonMark parses it) is the exact,
+    // and only, text addClassKdoc emits via `append("($source)")` where $source is itself
+    // backtick-wrapped -- so every occurrence means a span WAS emitted here, and each must parse
+    // back out on its own. Comparing the FULL count -- not just checking spans is non-empty --
+    // catches a PARTIAL loss too: losing one span while others survive still leaves the list
+    // non-empty, which a plain emptiness check would silently accept (#238 12.3). A mismatch means
+    // span delimitation broke somewhere in this file's KDoc paragraph (#238 11.2's own defect
+    // class): a stray, unpaired backtick or backslash elsewhere in the same paragraph closed,
+    // reopened, or swallowed a code span in the wrong place.
+    assertThat(
+      spans.size,
+      "found ${spans.size} source-reference span(s) in ${case.path} but its raw KDoc source " +
+        "contains $markerCount \"(`\" marker(s) -- span delimitation broke somewhere in this " +
+        "file's KDoc paragraph, whether that lost every span or only some of them",
+    ).isEqualTo(markerCount)
 
     val originalSql = extractFencedSqlBlock(markdown)
 
@@ -99,6 +104,25 @@ class SourceReferenceLiveVerificationTest {
       val verified = candidates.any(::explainsWithoutError)
       assertThat(verified, "source reference `$span` in ${case.path}").isTrue()
     }
+  }
+
+  @Test
+  fun `a swallowed span among surviving ones is a count mismatch, not silently accepted`() {
+    // #238 12.3: reproduces the exact shape a plain "spans.isEmpty()" check cannot see -- property
+    // b's own unescaped backtick ("Say `hello", the #238 10.3 defect class fixed elsewhere by
+    // escapeMarkdownBacktick) pairs with property c's marker backtick instead of a's, swallowing
+    // c's ENTIRE span into a bigger code span that is not preceded by "(" at all. Property a's own
+    // span, earlier in the same paragraph and fully self-contained, still parses correctly -- so
+    // the result is non-empty (a's span alone), which the old guard would have accepted outright.
+    val markdown = "@property a (`t.\"x\"`)\n@property b Say `hello\n@property c (`SOME_EXPR`)"
+
+    val spans = extractSourceReferenceSpans(markdown)
+    val markerCount = countSourceReferenceMarkers(markdown)
+
+    assertThat(spans).containsExactly("t.\"x\"")
+    assertThat(markerCount).isEqualTo(2)
+    // The guard's own comparison: a non-empty, but INCOMPLETE, span list must still be caught.
+    assertThat(spans.size).isEqualTo(1)
   }
 
   /**
@@ -207,6 +231,23 @@ class SourceReferenceLiveVerificationTest {
     }
     Parser.builder().build().parse(markdown).accept(visitor)
     return spans
+  }
+
+  /**
+   * Counts every raw `` (` `` marker in [markdown]'s own Markdown SOURCE, before CommonMark parses
+   * it — the exact, and only, text [TypeSpec.Builder.addClassKdoc] emits via `append("($source)")`
+   * where `$source` is itself backtick-wrapped. Compared against [extractSourceReferenceSpans]'s
+   * PARSED count, this is what catches a partial span loss (#238 12.3): [extractSourceReferenceSpans]
+   * alone cannot tell "every marker parsed" from "some markers parsed, one silently swallowed".
+   */
+  private fun countSourceReferenceMarkers(markdown: String): Int {
+    var count = 0
+    var index = markdown.indexOf("(`")
+    while (index >= 0) {
+      count++
+      index = markdown.indexOf("(`", index + 2)
+    }
+    return count
   }
 
   /** The literal contents of [markdown]'s own ` ```sql ` fenced code block, or `null` if it has none. */

@@ -2,10 +2,13 @@ package norm.generator
 
 import assertk.assertThat
 import assertk.assertions.contains
+import assertk.assertions.doesNotContain
 import assertk.assertions.isEmpty
+import assertk.assertions.isEqualTo
 import com.squareup.kotlinpoet.TypeSpec
 import org.commonmark.node.AbstractVisitor
 import org.commonmark.node.Code
+import org.commonmark.node.FencedCodeBlock
 import org.commonmark.parser.Parser
 import org.junit.jupiter.api.Test
 
@@ -95,5 +98,52 @@ class InterfaceBuilderKdocTest {
     val kdoc = builder.build().funSpecs.first().kdoc.toString()
 
     assertThat(kdoc).contains("Matches 100% of rows.")
+  }
+
+  @Test
+  fun `an unescapable block-comment delimiter declines the fenced sql block, matching the data-class KDoc`() {
+    // #238 12.2: TypeRepository.addClassKdoc already declines its "sql" fenced block for the exact
+    // same query text (canRenderSqlVerbatim, guarded by containsUnescapableBlockCommentDelimiter)
+    // because KotlinPoet's own KDoc emission unconditionally rewrites "/*"/"*/" to "/&#42;"/"&#42;/"
+    // -- a rewrite CommonMark never decodes back inside a fenced code block. addStandardKdoc emitted
+    // its own "```sql" fence unconditionally, so the very same query rendered faithfully in one KDoc
+    // and corrupted in the other.
+    val statement = createStatement(
+      sql = "SELECT name || '/*x*/' AS block_delim",
+      columns = listOf(column("block_delim")),
+    )
+
+    val builder = TypeSpec.interfaceBuilder("Test")
+    builder.addSqlStatementInterfaceMethod(statement)
+    val kdoc = builder.build().funSpecs.first().kdoc.toString()
+
+    assertThat(kdoc).doesNotContain("```sql")
+  }
+
+  @Test
+  fun `a query text line matching or exceeding a fixed 3-backtick fence does not truncate the sql block`() {
+    // Twin-site sweep for #238 12: TypeRepository.addClassKdoc already guards its "sql" fenced
+    // block against this exact hazard via markdownFenceDelimiter (a fence one backtick longer than
+    // any run already in the SQL), but addStandardKdoc still opens/closes with a FIXED "```sql"
+    // fence -- a query text containing its own line of 3+ backticks (e.g. inside a multi-line
+    // string literal) closes that fence early, silently truncating the rendered SQL.
+    val sqlWithTripleBacktickLine = "SELECT '\n```\n' AS x"
+    val statement = createStatement(sql = sqlWithTripleBacktickLine, columns = listOf(column("x")))
+
+    val builder = TypeSpec.interfaceBuilder("Test")
+    builder.addSqlStatementInterfaceMethod(statement)
+    val kdoc = builder.build().funSpecs.first().kdoc.toString()
+
+    var fencedContent: String? = null
+    Parser.builder().build().parse(kdoc).accept(
+      object : AbstractVisitor() {
+        override fun visit(fencedCodeBlock: FencedCodeBlock) {
+          if (fencedContent == null && fencedCodeBlock.info == "sql") {
+            fencedContent = fencedCodeBlock.literal.trimEnd('\n')
+          }
+        }
+      },
+    )
+    assertThat(fencedContent).isEqualTo(sqlWithTripleBacktickLine)
   }
 }
