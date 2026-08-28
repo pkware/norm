@@ -102,6 +102,29 @@ class TypeRepositoryTest {
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).doesNotContain("`id`")
     }
+
+    @Test
+    fun `an implicitly aliased top-level computed expression emits its own text, not the alias glued on`() {
+      // #238 P2: "count(*) c" has no "AS" at all, yet "c" is still its alias -- SqlOutputClause's
+      // extractAlias used to return the WHOLE item unsplit when there was no explicit "AS", so
+      // isComputedExpression's own "expression" carried the alias glued onto the end
+      // (`count(*) c`), not the bare expression PostgreSQL itself computes (`count(*)`).
+      val countColumn = Column(name = "c", notNull = true, type = Identifier(name = "int8"))
+      val maxColumn = Column(name = "m", notNull = false, type = Identifier(name = "text"))
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery(
+        "countAndMax",
+        listOf(countColumn, maxColumn),
+        "SELECT count(*) c, max(name) m FROM t",
+      )
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).contains("@property c (`count(*)`)")
+      assertThat(kdoc).doesNotContain("`count(*) c`")
+      assertThat(kdoc).contains("@property m (`max(name)`)")
+      assertThat(kdoc).doesNotContain("`max(name) m`")
+    }
   }
 
   @Nested

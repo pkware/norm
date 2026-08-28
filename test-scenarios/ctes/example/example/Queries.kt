@@ -928,40 +928,44 @@ public interface Queries : Transactable {
   public fun selectUpperNameViaCteWithSetOperationBodyDynamically(): Query<SelectUpperNameViaCteWithSetOperationBody> = selectUpperNameViaCteWithSetOperationBodyDynamically(::SelectUpperNameViaCteWithSetOperationBody)
 
   /**
-   * #238: a CTE body that is a bare `TABLE x`.
+   * #238: a CTE body that is a bare `TABLE x`. `TABLE x` cannot itself carry a computed expression,
+   * so the derived column that pins provenance is computed in the main query instead, over a column
+   * passed straight through from the CTE.
    *
    * ```sql
    * WITH all_parents AS (
    *   TABLE parent
    * )
-   * SELECT id, name, description FROM all_parents
+   * SELECT id, UPPER(name) AS name_upper, description FROM all_parents
    * ```
    */
   public fun <T : Any> selectParentViaCteTable(mapper: (
     id: UUID,
-    name: String,
+    name_upper: String,
     description: String?,
   ) -> T): Many<T>
 
   /**
-   * #238: a CTE body that is a bare `TABLE x`.
+   * #238: a CTE body that is a bare `TABLE x`. `TABLE x` cannot itself carry a computed expression,
+   * so the derived column that pins provenance is computed in the main query instead, over a column
+   * passed straight through from the CTE.
    *
    * ```sql
    * WITH all_parents AS (
    *   TABLE parent
    * )
-   * SELECT id, name, description FROM all_parents
+   * SELECT id, UPPER(name) AS name_upper, description FROM all_parents
    * ```
    */
-  public fun selectParentViaCteTable(): Many<Parent> = selectParentViaCteTable(::Parent)
+  public fun selectParentViaCteTable(): Many<SelectParentViaCteTable> = selectParentViaCteTable(::SelectParentViaCteTable)
 
   public fun <T : Any> selectParentViaCteTableDynamically(mapper: (
     id: UUID,
-    name: String,
+    name_upper: String,
     description: String?,
   ) -> T): Query<T>
 
-  public fun selectParentViaCteTableDynamically(): Query<Parent> = selectParentViaCteTableDynamically(::Parent)
+  public fun selectParentViaCteTableDynamically(): Query<SelectParentViaCteTable> = selectParentViaCteTableDynamically(::SelectParentViaCteTable)
 
   /**
    * #238: a CTE body that is a bare `VALUES (...)`.
@@ -1054,11 +1058,13 @@ public interface Queries : Transactable {
   public fun selectUpperNameUnionAcrossTablesDynamically(): Query<SelectUpperNameUnionAcrossTables> = selectUpperNameUnionAcrossTablesDynamically(::SelectUpperNameUnionAcrossTables)
 
   /**
-   * #238: `SELECT *` at the OUTER level, expanding a CTE's own explicit column list.
+   * #238: `SELECT *` at the OUTER level, expanding a CTE's own explicit column list -- including one
+   * that is itself a computed expression, so the star-expanded result gets its own type with a
+   * pinned `@property` line instead of aliasing `Parent` and pinning nothing.
    *
    * ```sql
    * WITH all_cols AS (
-   *   SELECT id, name, description FROM parent
+   *   SELECT id, name, description, UPPER(name) AS name_upper FROM parent
    * )
    * SELECT * FROM all_cols
    * ```
@@ -1067,63 +1073,75 @@ public interface Queries : Transactable {
     id: UUID,
     name: String,
     description: String?,
+    name_upper: String,
   ) -> T): Many<T>
 
   /**
-   * #238: `SELECT *` at the OUTER level, expanding a CTE's own explicit column list.
+   * #238: `SELECT *` at the OUTER level, expanding a CTE's own explicit column list -- including one
+   * that is itself a computed expression, so the star-expanded result gets its own type with a
+   * pinned `@property` line instead of aliasing `Parent` and pinning nothing.
    *
    * ```sql
    * WITH all_cols AS (
-   *   SELECT id, name, description FROM parent
+   *   SELECT id, name, description, UPPER(name) AS name_upper FROM parent
    * )
    * SELECT * FROM all_cols
    * ```
    */
-  public fun selectAllColumnsOuterFromCte(): Many<Parent> = selectAllColumnsOuterFromCte(::Parent)
+  public fun selectAllColumnsOuterFromCte(): Many<SelectAllColumnsOuterFromCte> = selectAllColumnsOuterFromCte(::SelectAllColumnsOuterFromCte)
 
   public fun <T : Any> selectAllColumnsOuterFromCteDynamically(mapper: (
     id: UUID,
     name: String,
     description: String?,
+    name_upper: String,
   ) -> T): Query<T>
 
-  public fun selectAllColumnsOuterFromCteDynamically(): Query<Parent> = selectAllColumnsOuterFromCteDynamically(::Parent)
+  public fun selectAllColumnsOuterFromCteDynamically(): Query<SelectAllColumnsOuterFromCte> = selectAllColumnsOuterFromCteDynamically(::SelectAllColumnsOuterFromCte)
 
   /**
-   * #238: `SELECT *` at the INNER (CTE body) level.
+   * #238: `SELECT *` at the INNER (CTE body) level. A star sharing a body with any other item -- even
+   * a computed one -- is deliberately UNRESOLVABLE text-side (parseOutputItemsWithAlias's own star
+   * truncation guard drops the star and everything after it, so the item count can never match the
+   * node tree's), so the derived column that pins provenance is computed in the main query instead,
+   * over a column passed straight through the inner star.
    *
    * ```sql
    * WITH all_cols AS (
    *   SELECT * FROM parent
    * )
-   * SELECT id, name, description FROM all_cols
+   * SELECT id, UPPER(name) AS name_upper, description FROM all_cols
    * ```
    */
   public fun <T : Any> selectAllColumnsInnerCte(mapper: (
     id: UUID,
-    name: String,
+    name_upper: String,
     description: String?,
   ) -> T): Many<T>
 
   /**
-   * #238: `SELECT *` at the INNER (CTE body) level.
+   * #238: `SELECT *` at the INNER (CTE body) level. A star sharing a body with any other item -- even
+   * a computed one -- is deliberately UNRESOLVABLE text-side (parseOutputItemsWithAlias's own star
+   * truncation guard drops the star and everything after it, so the item count can never match the
+   * node tree's), so the derived column that pins provenance is computed in the main query instead,
+   * over a column passed straight through the inner star.
    *
    * ```sql
    * WITH all_cols AS (
    *   SELECT * FROM parent
    * )
-   * SELECT id, name, description FROM all_cols
+   * SELECT id, UPPER(name) AS name_upper, description FROM all_cols
    * ```
    */
-  public fun selectAllColumnsInnerCte(): Many<Parent> = selectAllColumnsInnerCte(::Parent)
+  public fun selectAllColumnsInnerCte(): Many<SelectAllColumnsInnerCte> = selectAllColumnsInnerCte(::SelectAllColumnsInnerCte)
 
   public fun <T : Any> selectAllColumnsInnerCteDynamically(mapper: (
     id: UUID,
-    name: String,
+    name_upper: String,
     description: String?,
   ) -> T): Query<T>
 
-  public fun selectAllColumnsInnerCteDynamically(): Query<Parent> = selectAllColumnsInnerCteDynamically(::Parent)
+  public fun selectAllColumnsInnerCteDynamically(): Query<SelectAllColumnsInnerCte> = selectAllColumnsInnerCteDynamically(::SelectAllColumnsInnerCte)
 
   /**
    * #238: a CTE body item with an implicit (no `AS`) alias.

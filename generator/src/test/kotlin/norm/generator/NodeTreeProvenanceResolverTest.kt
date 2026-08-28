@@ -2,7 +2,6 @@ package norm.generator
 
 import assertk.assertThat
 import assertk.assertions.containsExactly
-import assertk.assertions.isEqualTo
 import org.intellij.lang.annotations.Language
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Nested
@@ -88,16 +87,6 @@ class NodeTreeProvenanceResolverTest {
         "WITH c(renamed) AS (SELECT UPPER(d) FROM t) SELECT renamed FROM c",
       )
       assertThat(provenance).containsExactly(NodeTreeColumnProvenance("c", 1))
-    }
-
-    @Test
-    fun `parseCteList captures the explicit column list as columnNames, distinct from the body's own resname`() {
-      val nodeTree = nodeTreeFor(
-        "CREATE TABLE t (d TEXT)",
-        "WITH c(renamed) AS (SELECT UPPER(d) FROM t) SELECT renamed FROM c",
-      )
-      val cte = PgNodeTreeParser().parseCteList(nodeTree).single()
-      assertThat(cte.columnNames).isEqualTo(listOf("renamed"))
     }
 
     @Test

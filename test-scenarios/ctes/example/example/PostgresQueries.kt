@@ -732,14 +732,14 @@ public class PostgresQueries(
 
   private fun <T : Any, Return> selectParentViaCteTable(mapper: (
     id: UUID,
-    name: String,
+    name_upper: String,
     description: String?,
   ) -> T, processor: ManyProcessor<T, Return>): Return {
     val sql = """
         |WITH all_parents AS (
         |  TABLE parent
         |)
-        |SELECT id, name, description FROM all_parents
+        |SELECT id, UPPER(name) AS name_upper, description FROM all_parents
         """.trimMargin()
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -753,13 +753,13 @@ public class PostgresQueries(
 
   override fun <T : Any> selectParentViaCteTable(mapper: (
     id: UUID,
-    name: String,
+    name_upper: String,
     description: String?,
   ) -> T): Many<T> = selectParentViaCteTable(mapper, driver::queryMany)
 
   override fun <T : Any> selectParentViaCteTableDynamically(mapper: (
     id: UUID,
-    name: String,
+    name_upper: String,
     description: String?,
   ) -> T): Query<T> = selectParentViaCteTable(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
 
@@ -829,10 +829,11 @@ public class PostgresQueries(
     id: UUID,
     name: String,
     description: String?,
+    name_upper: String,
   ) -> T, processor: ManyProcessor<T, Return>): Return {
     val sql = """
         |WITH all_cols AS (
-        |  SELECT id, name, description FROM parent
+        |  SELECT id, name, description, UPPER(name) AS name_upper FROM parent
         |)
         |SELECT * FROM all_cols
         """.trimMargin()
@@ -841,6 +842,7 @@ public class PostgresQueries(
         getObject(1, UUID::class.java),
         getString(2),
         getString(3),
+        getString(4),
       )
     }
     return processor.invoke(sql, rowReader, null)
@@ -850,24 +852,26 @@ public class PostgresQueries(
     id: UUID,
     name: String,
     description: String?,
+    name_upper: String,
   ) -> T): Many<T> = selectAllColumnsOuterFromCte(mapper, driver::queryMany)
 
   override fun <T : Any> selectAllColumnsOuterFromCteDynamically(mapper: (
     id: UUID,
     name: String,
     description: String?,
+    name_upper: String,
   ) -> T): Query<T> = selectAllColumnsOuterFromCte(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
 
   private fun <T : Any, Return> selectAllColumnsInnerCte(mapper: (
     id: UUID,
-    name: String,
+    name_upper: String,
     description: String?,
   ) -> T, processor: ManyProcessor<T, Return>): Return {
     val sql = """
         |WITH all_cols AS (
         |  SELECT * FROM parent
         |)
-        |SELECT id, name, description FROM all_cols
+        |SELECT id, UPPER(name) AS name_upper, description FROM all_cols
         """.trimMargin()
     val rowReader: ResultSet.() -> T = {
       mapper(
@@ -881,13 +885,13 @@ public class PostgresQueries(
 
   override fun <T : Any> selectAllColumnsInnerCte(mapper: (
     id: UUID,
-    name: String,
+    name_upper: String,
     description: String?,
   ) -> T): Many<T> = selectAllColumnsInnerCte(mapper, driver::queryMany)
 
   override fun <T : Any> selectAllColumnsInnerCteDynamically(mapper: (
     id: UUID,
-    name: String,
+    name_upper: String,
     description: String?,
   ) -> T): Query<T> = selectAllColumnsInnerCte(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
 

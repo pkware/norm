@@ -372,6 +372,42 @@ class NodeTreeProvenanceExpressionTest {
 
       assertThat(resolvedExpression(ddl, sql)).isEqualTo("UPPER(a)")
     }
+
+    @Test
+    fun `two literal spaces inside a quoted identifier are never collapsed to one`() {
+      // #238 P1 repro: verified live on PostgreSQL 18.4 -- collapsing "My  Col" to "My Col" names a
+      // DIFFERENT, nonexistent column, which PostgreSQL rejects outright ("column \"My Col\" does
+      // not exist"). collapseCosmeticWhitespace must be lexer-aware, never a blind regex collapse.
+      val ddl = """CREATE TABLE t (id INT NOT NULL, "My  Col" TEXT NOT NULL)"""
+      val sql = """
+        WITH c AS (SELECT id, UPPER("My  Col") AS u FROM t)
+        SELECT id, u FROM c
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql, columnIndex = 1)).isEqualTo("""UPPER("My  Col")""")
+    }
+
+    @Test
+    fun `internal spaces around parentheses inside a string literal are never collapsed`() {
+      val ddl = "CREATE TABLE t (name TEXT NOT NULL)"
+      val sql = """
+        WITH c AS (SELECT name || '( x )' AS u FROM t)
+        SELECT u FROM c
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql)).isEqualTo("name || '( x )'")
+    }
+
+    @Test
+    fun `a run of internal spaces inside a string literal is never collapsed`() {
+      val ddl = "CREATE TABLE t (name TEXT NOT NULL)"
+      val sql = """
+        WITH c AS (SELECT name || 'a  b' AS u FROM t)
+        SELECT u FROM c
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql)).isEqualTo("name || 'a  b'")
+    }
   }
 
   @Nested

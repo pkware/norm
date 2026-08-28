@@ -100,17 +100,15 @@ internal fun resolveNodeTreeProvenanceExpression(
   }
 
   if (provenance.bodyPosition < 1 || provenance.bodyPosition > items.size) return null
-  val matchedExpression = verifiedItems[provenance.bodyPosition - 1]!!.expression
+  val matchedItem = items[provenance.bodyPosition - 1]
   // A bare column reference is a chained pass-through with nothing of its own to report -- see this
-  // function's own KDoc. Checked against [matchedExpression] -- the ALIAS-STRIPPED text
-  // [VerifiedBodyItem] already computed -- rather than `items[...].selectItem.columnName`: that
-  // field is derived from the item's FULL, unsplit text, so it misses an IMPLICIT-alias pass-through
-  // (`description dx`) even though [parseColumnReference] recognizes the exact same shape once the
-  // trailing alias token is split off, exactly as it already does for the explicit-`AS` spelling
-  // (`description AS description_upper`) (#238).
-  if (parseColumnReference(matchedExpression).columnName != null) return null
+  // function's own KDoc. selectItem.columnName is already derived from the ALIAS-STRIPPED
+  // expression -- [parseOutputItemsWithAlias] strips an IMPLICIT alias token (`description dx`) the
+  // same way it strips an explicit `AS` one (`description AS description_upper`) before ever calling
+  // [parseColumnReference] -- so this check needs no re-parse of its own (#238).
+  if (matchedItem.selectItem.columnName != null) return null
 
-  return collapseCosmeticWhitespace(stripComments(matchedExpression))
+  return collapseCosmeticWhitespace(stripComments(verifiedItems[provenance.bodyPosition - 1]!!.expression))
 }
 
 /**
@@ -207,23 +205,17 @@ private fun rebasedCteDefinitions(text: String, offset: Int): List<CteDefinition
  *
  * @property name Tried in this order, matching PostgreSQL's own precedence for naming a select-list
  *   item:
- *   1. An explicit `AS alias` ([OutputItemWithAlias.alias]) — folded via [foldIdentifier]'s raw-text
+ *   1. An alias ([OutputItemWithAlias.alias]) — explicit `AS alias` OR an implicit (no-`AS`)
+ *      trailing alias token, [parseOutputItemsWithAlias] having already folded both spellings into
+ *      this one field (via [extractAlias] and, when that finds nothing, [splitTrailingImplicitAlias]
+ *      — see [OutputItemWithAlias.alias]'s own KDoc) — folded via [foldIdentifier]'s raw-text
  *      overload, since [OutputItemWithAlias.alias] still carries its own quotes, if any.
  *   2. A bare column reference with NO alias at all ([SelectItem.columnName] non-`null`) —
- *      PostgreSQL exposes such an item under the column's own name. Mutually exclusive with case 3:
- *      `columnName` is non-`null` here only when the item's ENTIRE text matched [COLUMN_REFERENCE],
- *      which by construction leaves no separate trailing token an implicit alias could be.
- *   3. An implicit (no-`AS`) trailing alias token, via [splitTrailingImplicitAlias] over
- *      [SelectItem.expression] — reached only when [OutputItemWithAlias.alias] is `null` and
- *      [SelectItem.columnName] is also `null`, so [SelectItem.expression] is still the FULL,
- *      unsplit item text (see [parseOutputItemsWithAlias]'s own behavior when [extractAlias] finds
- *      no top-level `AS`).
- * @property expression [SelectItem.expression] for cases 1 and 2 above (already alias-free either
- *   way — case 1 by [extractAlias]'s own split, case 2 because the WHOLE item was one bare column
- *   reference with nothing else to strip); for case 3, [ItemAndImplicitAlias.expression] — the SAME
- *   [SelectItem.expression] text with the trailing implicit alias token itself sliced back off, so
- *   an emitted expression for an implicit-alias item never carries its own alias along as if it
- *   were part of the expression (`UPPER(a) y` must emit `UPPER(a)`, never `UPPER(a) y`).
+ *      PostgreSQL exposes such an item under the column's own name.
+ * @property expression [SelectItem.expression] — already alias-free either way, by
+ *   [parseOutputItemsWithAlias]'s own construction: case 1 by [extractAlias]'s or
+ *   [splitTrailingImplicitAlias]'s split, case 2 because the WHOLE item was one bare column
+ *   reference with nothing else to strip.
  */
 private data class VerifiedBodyItem(val name: String, val expression: String)
 
@@ -231,15 +223,11 @@ private data class VerifiedBodyItem(val name: String, val expression: String)
  * Computes [item]'s [VerifiedBodyItem], or `null` if [item] has no VERIFIABLE name at all (an
  * unaliased computed expression, whose auto-generated `:resname` — e.g. `upper`, `?column?` —
  * cannot be reconstructed from text without guessing) — see [VerifiedBodyItem.name]'s own KDoc for
- * the three cases tried, in order.
+ * the two cases tried, in order.
  */
 private fun verifiedNameAndExpression(item: OutputItemWithAlias): VerifiedBodyItem? {
-  val explicitAlias = item.alias
-  if (explicitAlias != null) return VerifiedBodyItem(foldIdentifier(explicitAlias), item.selectItem.expression)
-  val columnName = item.selectItem.columnName
-  if (columnName != null) {
-    return VerifiedBodyItem(foldIdentifier(columnName, item.selectItem.isColumnNameQuoted), item.selectItem.expression)
-  }
-  val split = splitTrailingImplicitAlias(item.selectItem.expression) ?: return null
-  return VerifiedBodyItem(foldIdentifier(split.alias), split.expression)
+  val alias = item.alias
+  if (alias != null) return VerifiedBodyItem(foldIdentifier(alias), item.selectItem.expression)
+  val columnName = item.selectItem.columnName ?: return null
+  return VerifiedBodyItem(foldIdentifier(columnName, item.selectItem.isColumnNameQuoted), item.selectItem.expression)
 }

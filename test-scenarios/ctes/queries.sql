@@ -261,12 +261,14 @@ WITH combined_upper AS (
 )
 SELECT id, name_upper FROM combined_upper;
 
--- #238: a CTE body that is a bare `TABLE x`.
+-- #238: a CTE body that is a bare `TABLE x`. `TABLE x` cannot itself carry a computed expression,
+-- so the derived column that pins provenance is computed in the main query instead, over a column
+-- passed straight through from the CTE.
 -- name: selectParentViaCteTable :many
 WITH all_parents AS (
   TABLE parent
 )
-SELECT id, name, description FROM all_parents;
+SELECT id, UPPER(name) AS name_upper, description FROM all_parents;
 
 -- #238: a CTE body that is a bare `VALUES (...)`.
 -- name: selectViaCteValues :many
@@ -292,19 +294,25 @@ SELECT id, name_upper FROM parent_names
 UNION
 SELECT id, UPPER(name) FROM child;
 
--- #238: `SELECT *` at the OUTER level, expanding a CTE's own explicit column list.
+-- #238: `SELECT *` at the OUTER level, expanding a CTE's own explicit column list -- including one
+-- that is itself a computed expression, so the star-expanded result gets its own type with a
+-- pinned `@property` line instead of aliasing `Parent` and pinning nothing.
 -- name: selectAllColumnsOuterFromCte :many
 WITH all_cols AS (
-  SELECT id, name, description FROM parent
+  SELECT id, name, description, UPPER(name) AS name_upper FROM parent
 )
 SELECT * FROM all_cols;
 
--- #238: `SELECT *` at the INNER (CTE body) level.
+-- #238: `SELECT *` at the INNER (CTE body) level. A star sharing a body with any other item -- even
+-- a computed one -- is deliberately UNRESOLVABLE text-side (parseOutputItemsWithAlias's own star
+-- truncation guard drops the star and everything after it, so the item count can never match the
+-- node tree's), so the derived column that pins provenance is computed in the main query instead,
+-- over a column passed straight through the inner star.
 -- name: selectAllColumnsInnerCte :many
 WITH all_cols AS (
   SELECT * FROM parent
 )
-SELECT id, name, description FROM all_cols;
+SELECT id, UPPER(name) AS name_upper, description FROM all_cols;
 
 -- #238: a CTE body item with an implicit (no `AS`) alias.
 -- name: selectParentUpperNameImplicitAlias :many

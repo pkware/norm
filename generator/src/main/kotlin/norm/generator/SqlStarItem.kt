@@ -272,15 +272,24 @@ internal fun splitTrailingImplicitAlias(item: String): ItemAndImplicitAlias? {
   val aliasStart = findTrailingImplicitAliasStart(stripped) ?: return null
   val alias = stripped.asPlainString().substring(aliasStart)
   val originalAliasStart = stripped.originalIndexOf(aliasStart)
-  return ItemAndImplicitAlias(item.substring(0, originalAliasStart).trim(), alias)
+  val precededByWhitespace = originalAliasStart > 0 && item[originalAliasStart - 1].isWhitespace()
+  return ItemAndImplicitAlias(item.substring(0, originalAliasStart).trim(), alias, precededByWhitespace)
 }
 
 /**
  * @property expression [splitTrailingImplicitAlias]'s own item text with the trailing implicit
  *   alias removed, original formatting otherwise intact.
  * @property alias The trailing implicit alias token itself.
+ * @property precededByWhitespace Whether a REAL whitespace character (never merely a comment)
+ *   immediately preceded [alias] in the original text — [topLevelImplicitAlias] uses this to
+ *   reject a trailing identifier that only LOOKS like an alias because it is glued directly onto a
+ *   non-identifier operator with no separator at all (`t.*::text`'s `text` is the cast's own
+ *   mandatory type name, not an alias, and is glued directly onto `::`) — see that function's own
+ *   KDoc. [isStarItem]'s own zero-separator star-alias detection (`t.*whatever`, or the same shape
+ *   with a comment glued in place of whitespace) is UNAFFECTED: it calls
+ *   [findTrailingImplicitAliasStart] directly, never this property.
  */
-internal data class ItemAndImplicitAlias(val expression: String, val alias: String)
+internal data class ItemAndImplicitAlias(val expression: String, val alias: String, val precededByWhitespace: Boolean)
 
 /**
  * Matches ONE segment starting at [start] in [text], in this precedence order:

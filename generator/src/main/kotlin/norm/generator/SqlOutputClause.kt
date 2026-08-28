@@ -53,6 +53,11 @@ internal data class SelectItem(
  * - Qualified columns: `book.title` → expression=`book.title`, columnName=`title`, tableName=`book`
  * - Aliased columns: `author.name AS author_name` → expression=`author.name`, columnName=`name`, tableName=`author`
  * - Computed expressions: `COUNT(*) AS book_count` → expression=`COUNT(*)`, columnName=`null`
+ * - Implicitly aliased items (no `AS`): `count(*) c` → expression=`count(*)`, columnName=`null`;
+ *   `preferences prefs` → expression=`preferences`, columnName=`preferences` — the trailing alias
+ *   token is stripped exactly as an explicit `AS` alias would be (via [topLevelImplicitAlias]),
+ *   never left glued onto `expression` for [TypeRepository.buildTypeProjectionForQuery] to embed
+ *   verbatim in generated KDoc as if it were part of the expression (#238 P2).
  * - Star projections: `*` → expression=`*`, columnName=`null`
  *
  * On the `SELECT` branch only (a `RETURNING` clause has no such quantifier), an optional leading
@@ -145,8 +150,16 @@ private val SET_OPERATION_KEYWORDS = listOf("UNION", "INTERSECT", "EXCEPT")
  * column reference; `description AS description_upper` is a bare column reference AND has an
  * alias).
  *
- * @property selectItem The parsed expression/columnName/tableName, alias already removed.
- * @property alias The alias text after `AS`, or `null` if the item has no alias.
+ * @property selectItem The parsed expression/columnName/tableName, alias already removed — an
+ *   IMPLICIT (no-`AS`) trailing alias token is stripped here too, via [topLevelImplicitAlias],
+ *   not merely an explicit `AS` one, so [SelectItem.expression] never carries an unaliased-looking
+ *   trailing token that was really the item's own alias (`count(*) c` must strip to `count(*)`, not
+ *   stay `count(*) c` — #238 P2).
+ * @property alias The alias text — after `AS` if present, otherwise an implicit trailing alias
+ *   token found by [topLevelImplicitAlias] — or `null` if the item has no alias of either
+ *   kind. Stripping [selectItem]'s implicit alias here (rather than leaving it for a caller to
+ *   split out of [SelectItem.expression] itself) means [selectItem] and [alias] agree with each
+ *   other under EITHER spelling of an alias, not just the explicit one.
  */
 internal data class OutputItemWithAlias(val selectItem: SelectItem, val alias: String?)
 
@@ -201,7 +214,24 @@ internal fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> {
 
   val items = splitAtTopLevel(rawClause.trim().trimEnd(';'), ',').map { raw ->
     val item = raw.trim()
-    val (expression, alias) = extractAlias(item)
+    val (afterExplicitAlias, explicitAlias) = extractAlias(item)
+    // No top-level "AS" was found -- afterExplicitAlias is still the WHOLE item (extractAlias's own
+    // no-alias fallback). Tried in this order, matching PostgreSQL's own precedence:
+    // 1. An explicit "AS" alias always wins outright.
+    // 2. The WHOLE item is already a bare/qualified column reference on its own ("T.ID" is the
+    //    column "id" of table "t", NOT the column "T" with an implicit alias "ID" -- a trailing
+    //    ".identifier" must never be peeled off as if it were a SEPARATE alias token).
+    // 3. Only once both of those fail is an IMPLICIT trailing alias token tried (#238 P2:
+    //    "count(*) c" has no "AS" at all, yet "c" is still its alias, not part of the expression;
+    //    "preferences prefs" is the bare column "preferences" aliased "prefs", not one opaque blob).
+    val (expression, alias) = when {
+      explicitAlias != null -> afterExplicitAlias to explicitAlias
+      parseColumnReference(afterExplicitAlias).columnName != null -> afterExplicitAlias to null
+      else -> {
+        val implicitAlias = topLevelImplicitAlias(afterExplicitAlias)
+        if (implicitAlias != null) implicitAlias.expression to implicitAlias.alias else afterExplicitAlias to null
+      }
+    }
     OutputItemWithAlias(parseColumnReference(expression), alias)
   }
 
@@ -371,6 +401,63 @@ private fun extractAlias(item: String): Pair<String, String?> {
     item to null
   }
 }
+
+/**
+ * [item]'s own [splitTrailingImplicitAlias], but ONLY when BOTH of the following hold — `null`
+ * otherwise, even when [splitTrailingImplicitAlias] itself would have found a split:
+ * - a GENUINE whitespace character — see [ItemAndImplicitAlias.precededByWhitespace] — separated
+ *   the candidate alias from whatever precedes it in the ORIGINAL text.
+ * - the character immediately before that separator — [split.expression]'s own last character,
+ *   with any TRAILING comment stripped first (a comment sitting there is real separator material
+ *   too, exactly like whitespace, so its presence must never hide the real character before it) —
+ *   is one that can genuinely END a complete SQL expression: an identifier-continuation character,
+ *   a closing `)` or `]`, or a closing quote.
+ *
+ * [splitTrailingImplicitAlias]'s own trailing-segment walk cannot tell a real alias apart from a
+ * trailing identifier that is syntactically REQUIRED or MEANINGFUL where it sits:
+ * - `t.*::text` (a whole-row cast, no alias at all) has "text" — the cast's mandatory type name,
+ *   not an alias — glued directly onto `::` with NO separator, the same shape a genuine
+ *   ZERO-separator star alias has (`t.*whatever`, verified valid PostgreSQL syntax) — the
+ *   whitespace check alone catches this.
+ * - `a * b` (ordinary multiplication, no alias at all) has "b" separated from "a *" by a GENUINE
+ *   space, yet "b" is `*`'s own required right-hand OPERAND, not a trailing alias — the whitespace
+ *   check alone does NOT catch this; only the second check does, since the character immediately
+ *   before the separator is `*` itself (an operator, never a character that can end a complete
+ *   expression on its own).
+ *
+ * [isStarItem] can safely reuse the UNGUARDED [splitTrailingImplicitAlias]/
+ * [findTrailingImplicitAliasStart] despite both ambiguities, because a wrong guess there only feeds
+ * a `.endsWith(".*")` check that a bogus candidate can never satisfy anyway — but THIS caller
+ * returns the guess itself as the expression text, where the same wrong guess would either silently
+ * drop real content (`t.*::text` → `t.*::`) or silently drop a real OPERAND (`a * b` → `a *`),
+ * rather than leaving the expression exactly as written (#238 P2). The CTE-body resolver
+ * ([verifiedNameAndExpression]'s own alias detection, folded into [parseOutputItemsWithAlias]
+ * itself) is safe unguarded for a DIFFERENT reason: every guess it makes is cross-validated against
+ * the node tree's authoritative `:resname` before ever being trusted (see
+ * [resolveNodeTreeProvenanceExpression]'s own KDoc), a safety net this TOP-LEVEL,
+ * un-cross-validated path does not have.
+ *
+ * Declining to split a star item (`u.*whatever`, `u.* whatever`) costs nothing here: [isStarItem]
+ * re-derives its own alias/qualifier split independently from the (here, deliberately un-split)
+ * `expression` text, so the star-truncation guard still recognizes it as a star regardless.
+ */
+private fun topLevelImplicitAlias(item: String): ItemAndImplicitAlias? {
+  val split = splitTrailingImplicitAlias(item) ?: return null
+  if (!split.precededByWhitespace) return null
+  val lastExpressionCharacter = stripComments(split.expression).trim().lastOrNull() ?: return null
+  return if (canEndAnExpression(lastExpressionCharacter)) split else null
+}
+
+/**
+ * True if [character] can be the LAST character of a complete SQL expression — an
+ * identifier-continuation character (also true for the last digit of a numeric literal), a closing
+ * `)` or `]`, or a closing quote (`'` ending a string literal, `"` ending a quoted identifier) —
+ * false for an operator character (`*`, `+`, `-`, `/`, etc.), which can only ever be followed by
+ * another operand, never by a trailing alias. See [topLevelImplicitAlias]'s own KDoc for why this
+ * distinction matters.
+ */
+private fun canEndAnExpression(character: Char): Boolean =
+  isIdentifierChar(character) || character == ')' || character == ']' || character == '\'' || character == '"'
 
 /**
  * Extracts exactly the alias TOKEN starting at or after [start] in [item] (the position right

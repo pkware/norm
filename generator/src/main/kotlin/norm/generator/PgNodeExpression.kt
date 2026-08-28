@@ -269,21 +269,8 @@ internal sealed interface PgNodeExpression {
  *   [NodeTreeProvenanceResolver] refuses to attribute a result column to a recursive CTE's body —
  *   the "same" `resno` position can be fed by a different branch on every recursive iteration, so
  *   no single body position honestly describes the whole CTE's output.
- * @property columnNames The CTE's explicit column list (from `:ctecolnames`, e.g. `WITH c(x, y) AS
- *   (...)`), in declaration order, or `null` when the CTE has no explicit column list — the CTE's
- *   output columns are named by its body's own `:resname`s instead. Always non-`null` in practice
- *   (`:ctecolnames` is populated for EVERY CTE, whether or not the SQL wrote an explicit column
- *   list, by copying the body's own resnames when none was written), but modeled as nullable
- *   because [PgNodeTreeParser] cannot distinguish a genuinely-empty CTE (impossible in valid SQL)
- *   from a malformed/unparseable one, and `null` is this class's universal "could not read this
- *   field" signal elsewhere.
  */
-internal data class NodeTreeCteDefinition(
-  val name: String,
-  val queryBlock: String,
-  val recursive: Boolean = false,
-  val columnNames: List<String>? = null,
-)
+internal data class NodeTreeCteDefinition(val name: String, val queryBlock: String, val recursive: Boolean = false)
 
 /**
  * A CTE range-table-entry reference (`rtekind 6`) parsed from a query block's own `:rtable`.
@@ -327,28 +314,17 @@ internal sealed interface RangeTableEntry {
   /**
    * `rtekind 2`: a `JOIN` (including its `USING`/`NATURAL`-merged output columns).
    *
-   * @property jointype The `JoinType` code (`JoinType` in `nodes/nodes.h`): `0` = INNER, `1` =
-   *   LEFT, `2` = FULL, `3` = RIGHT, plus several semi/anti-join codes the planner introduces that
-   *   never appear on a parse-analysis-only tree like this one.
    * @property joinAliasVars One parsed expression per join OUTPUT column, in order — 1-based
    *   `varattno - 1` indexes into this list. An ordinary (non-merged) column's entry is a bare
    *   [PgNodeExpression.Var] pointing at whichever side produced it; a `USING`/`NATURAL`-merged
-   *   column's entry is a [PgNodeExpression.CoalesceExpr] of the two sides' Vars — see
-   *   [NodeTreeProvenanceResolver] for why that distinction is load-bearing.
-   * @property joinMergedCols The number of LEADING entries in [joinAliasVars] that are merged
-   *   (`USING`/`NATURAL`) columns, `0` for a plain `ON`/comma join with no merged columns.
-   * @property joinLeftCols The left side's own attribute number contributing to each output
-   *   column, `0` for a column the left side does not contribute to.
-   * @property joinRightCols The right side's own attribute number contributing to each output
-   *   column, `0` for a column the right side does not contribute to.
+   *   column's entry is a [PgNodeExpression.CoalesceExpr] of the two sides' Vars. That distinction
+   *   is exactly what [NodeTreeProvenanceResolver.resolveVar] relies on: it casts an entry `as?
+   *   Var` and bails (`return null`) when it is anything else — a `CoalesceExpr` under an outer
+   *   join, whose honest provenance is not one side's expression alone — so the type-specific
+   *   `jointype`/`joinmergedcols`/`joinleftcols`/`joinrightcols` fields PostgreSQL also serializes
+   *   here are never needed to make that call and are not parsed into this class at all.
    */
-  data class Join(
-    val jointype: Int,
-    val joinAliasVars: List<PgNodeExpression>,
-    val joinMergedCols: Int,
-    val joinLeftCols: List<Int>,
-    val joinRightCols: List<Int>,
-  ) : RangeTableEntry
+  data class Join(val joinAliasVars: List<PgNodeExpression>) : RangeTableEntry
 
   /**
    * Any `rtekind` this parser does not model individually: `3` (function), `4` (tablefunc, e.g.

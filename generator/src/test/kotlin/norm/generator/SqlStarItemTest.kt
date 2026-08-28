@@ -21,7 +21,7 @@ class SqlStarItemTest {
       // name and fails NodeTreeProvenanceExpression's all-positions cross-validation gate for the
       // WHOLE body, not merely this one position.
       val result = splitTrailingImplicitAlias("description dx")
-      assertThat(result).isEqualTo(ItemAndImplicitAlias("description", "dx"))
+      assertThat(result).isEqualTo(ItemAndImplicitAlias("description", "dx", precededByWhitespace = true))
     }
 
     @Test
@@ -29,7 +29,7 @@ class SqlStarItemTest {
       // Non-adversarial control: proves the adjacency gate did not regress the shape this function
       // already supported, where a ")" already ends the expression's own run before the alias.
       val result = splitTrailingImplicitAlias("UPPER(a) y")
-      assertThat(result).isEqualTo(ItemAndImplicitAlias("UPPER(a)", "y"))
+      assertThat(result).isEqualTo(ItemAndImplicitAlias("UPPER(a)", "y", precededByWhitespace = true))
     }
 
     @Test
@@ -45,7 +45,26 @@ class SqlStarItemTest {
       // (never separated by whitespace/comment in the original text) must keep continuing the run
       // exactly as before.
       val result = splitTrailingImplicitAlias("a\$b dx")
-      assertThat(result).isEqualTo(ItemAndImplicitAlias("a\$b", "dx"))
+      assertThat(result).isEqualTo(ItemAndImplicitAlias("a\$b", "dx", precededByWhitespace = true))
+    }
+
+    @Test
+    fun `an identifier glued directly onto a cast operator is flagged as NOT genuinely separated`() {
+      // #238 P2: "t.*::text" -- "text" is the cast's own mandatory type name, glued directly onto
+      // "::" with no separator at all, never a real alias. precededByWhitespace is what
+      // topLevelImplicitAlias uses to reject exactly this shape, since the split itself cannot tell
+      // a real alias apart from a syntactically required trailing identifier.
+      val result = splitTrailingImplicitAlias("t.*::text")
+      assertThat(result).isEqualTo(ItemAndImplicitAlias("t.*::", "text", precededByWhitespace = false))
+    }
+
+    @Test
+    fun `an identifier separated only by a comment is flagged as NOT genuinely separated by whitespace`() {
+      // A comment is not whitespace -- it stays attached to the expression (stripComments' own job
+      // to remove it later), so precededByWhitespace is false even though a real lexical separator
+      // (the comment) exists here.
+      val result = splitTrailingImplicitAlias("UPPER(a)/*c*/y")
+      assertThat(result).isEqualTo(ItemAndImplicitAlias("UPPER(a)/*c*/", "y", precededByWhitespace = false))
     }
   }
 }
