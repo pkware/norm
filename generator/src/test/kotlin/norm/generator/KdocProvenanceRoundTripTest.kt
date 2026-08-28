@@ -215,6 +215,27 @@ class KdocProvenanceRoundTripTest {
       assertThat(generatedFile).doesNotContain("```sql")
       assertThat(generatedFile).doesNotContain("&#42;")
     }
+
+    @Test
+    fun `a property name containing a block-comment close delimiter gets no @property line, never a rewritten one`() {
+      // #238 10.2: widening formatAsKdocPropertyReference's backtick delimiter fixes a literal
+      // backtick inside a property NAME, but not a literal block-comment delimiter -- KotlinPoet's
+      // rewrite (same as the expression case above) still substitutes an HTML entity for it, so the
+      // rendered tag would name a DIFFERENT property than the one actually declared.
+      val starSlashColumn = Column(
+        name = "c*/d",
+        notNull = true,
+        type = Identifier(name = "text"),
+        comment = "has a comment",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("getCStarSlashD", listOf(starSlashColumn), "SELECT x FROM t")
+      val generatedFile = renderedFileTextFor(repository)
+
+      assertThat(generatedFile).doesNotContain("@property")
+      assertThat(generatedFile).doesNotContain("&#42;")
+    }
   }
 
   /**

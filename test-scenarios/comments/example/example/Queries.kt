@@ -468,4 +468,28 @@ public interface Queries : Transactable {
   public fun <T : Any> getBooksWithTrailingCommentDynamically(mapper: (id: Int, title: String) -> T): Query<T>
 
   public fun getBooksWithTrailingCommentDynamically(): Query<GetBooksWithTrailingComment> = getBooksWithTrailingCommentDynamically(::GetBooksWithTrailingComment)
+
+  /**
+   * Returns an order's id and its "user" column -- both "order" and "user" are reserved words.
+   *
+   * ```sql
+   * SELECT id, "user" FROM "order" WHERE id = ?
+   * ```
+   *
+   * @param id Contains a literal ` backtick.
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> getOrderIdAndUser(id: Int, mapper: (id: Int, user: String) -> T): T
+
+  /**
+   * Returns an order's id and its "user" column -- both "order" and "user" are reserved words.
+   *
+   * ```sql
+   * SELECT id, "user" FROM "order" WHERE id = ?
+   * ```
+   *
+   * @param id Contains a literal ` backtick.
+   */
+  @Throws(SQLException::class)
+  public fun getOrderIdAndUser(id: Int): Order = getOrderIdAndUser(id, ::Order)
 }

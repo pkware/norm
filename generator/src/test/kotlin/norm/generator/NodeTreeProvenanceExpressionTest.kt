@@ -191,18 +191,21 @@ class NodeTreeProvenanceExpressionTest {
     }
 
     @Test
-    fun `a body item's implicit (no-AS) alias now resolves, via findTrailingImplicitAlias`() {
-      // (#238) findTrailingImplicitAlias VERIFIES "ux" against the body's own `:resname`, but never
-      // CUTS it off -- whether a trailing bare word is an alias or the expression's own last operand
-      // cannot be decided from text alone, so the emitted expression is the item's complete, uncut
-      // text, alias included.
+    fun `a body item's implicit (no-AS) alias resolves to nothing, not its uncut select-item text`() {
+      // (#238 10.4) findTrailingImplicitAlias VERIFIES "ux" against the body's own `:resname`, but
+      // never CUTS it off -- whether a trailing bare word is an alias or the expression's own last
+      // operand cannot be decided from text alone. The item's complete, uncut text ("LOWER(name)
+      // ux") is a legal SELECT-LIST ITEM but NOT a legal standalone EXPRESSION: `SELECT (LOWER(name)
+      // ux)` is a syntax error, since the parentheses force expression context and the bare trailing
+      // "ux" is then an unexpected second token. Declining here (rather than emitting text that
+      // fails the very context a `@property` source reference renders it in) is the fix.
       val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
       val sql = """
         WITH a AS (SELECT LOWER(name) ux FROM parent)
         SELECT ux FROM a
       """.trimIndent()
 
-      assertThat(resolvedExpression(ddl, sql)).isEqualTo("LOWER(name) ux")
+      assertThat(resolvedExpression(ddl, sql)).isNull()
     }
 
     @Test
@@ -224,20 +227,20 @@ class NodeTreeProvenanceExpressionTest {
     }
 
     @Test
-    fun `an escaped-quote body alias no longer blocks a later item's own implicit alias from resolving`() {
+    fun `an escaped-quote body alias no longer blocks cross-validation of a later item's own implicit alias`() {
       // The exact #229 P0 repro shape: item 1 has an escaped-quote explicit alias "zz\"q", item 2 an
       // IMPLICIT alias "zz". The retired whitelist could not support an implicit alias at all, so it
       // punted on this whole body once it saw one -- Route D's own findTrailingImplicitAlias VERIFIES
-      // "zz" against item 2's own `:resname`, but (#238) never CUTS it off: whether a trailing bare
-      // word is an alias or the expression's own last operand cannot be decided from text alone, so
-      // the emitted expression is the item's complete, uncut text, alias included.
+      // "zz" against item 2's own `:resname`, proving the all-position cross-validation gate holds,
+      // but (#238 10.4) the match itself is still declined: item 2's own COMPLETE text ("LOWER(b)
+      // zz") is a legal SELECT-LIST ITEM but not a legal standalone EXPRESSION.
       val ddl = "CREATE TABLE t (a TEXT, b TEXT)"
       val sql = """
         WITH c AS (SELECT UPPER(a) AS "zz""q", LOWER(b) zz FROM t)
         SELECT zz FROM c
       """.trimIndent()
 
-      assertThat(resolvedExpression(ddl, sql)).isEqualTo("LOWER(b) zz")
+      assertThat(resolvedExpression(ddl, sql)).isNull()
     }
   }
 
@@ -258,6 +261,42 @@ class NodeTreeProvenanceExpressionTest {
       """.trimIndent()
 
       assertThat(resolvedExpression(ddl, sql, columnIndex = 1)).isEqualTo("UPPER(name)")
+    }
+  }
+
+  @Nested
+  inner class ImplicitAliasOnComputedExpressionDeclines {
+
+    @Test
+    fun `an implicit alias on a genuine computed expression resolves to nothing, not its uncut text`() {
+      // #238 10.4 repro, the exact shape golden file SelectParentUpperNameImplicitAlias.kt emitted:
+      // "UPPER(name) y" is [name]'s COMPLETE select-item text (verified against its own `:resname`),
+      // but wrapping it as a standalone expression -- "SELECT (UPPER(name) y) FROM parent" -- is a
+      // syntax error PostgreSQL itself rejects, since the parentheses force expression context and
+      // the bare trailing "y" is then an unexpected second token.
+      val ddl = "CREATE TABLE parent (id INT, name TEXT)"
+      val sql = """
+        WITH upper_name AS (SELECT id, UPPER(name) y FROM parent)
+        SELECT id, y FROM upper_name
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql, columnIndex = 1)).isNull()
+    }
+
+    @Test
+    fun `declining an implicit-alias position leaves an explicit-AS sibling position in the same body emitting`() {
+      // The all-position cross-validation gate (this file's own top-level KDoc) still requires EVERY
+      // position's name to verify -- including the implicit-alias one -- to prove the body wasn't
+      // mis-split. Declining that one position's OWN emission must not also silence a DIFFERENT
+      // position resolved by a SEPARATE call against the SAME body.
+      val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
+      val sql = """
+        WITH a AS (SELECT UPPER(name) AS ux, LOWER(description) dx FROM parent)
+        SELECT ux, dx FROM a
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql, columnIndex = 0)).isEqualTo("UPPER(name)")
+      assertThat(resolvedExpression(ddl, sql, columnIndex = 1)).isNull()
     }
   }
 

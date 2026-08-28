@@ -47,11 +47,20 @@ private val ENUM_JDBC_TYPE_INFO =
  * @param catalog Postgres catalog to use when resolving projection information.
  * @param typeMappings User-configured type/column overrides. Type-level overrides take precedence
  *   over auto-generated enums/domains; column-level overrides take precedence over everything.
+ * @param reservedWords The connected PostgreSQL server's reserved keywords, from
+ *   [JdbcAnalyzer.fetchReservedWords] — consulted by [quoteSqlIdentifierIfNeeded] when rendering a
+ *   `` `table.column` `` source reference, so a relation or column named after a reserved word
+ *   (`order`, `user`) is quoted rather than emitted as text PostgreSQL rejects with a syntax error
+ *   (#238 10.1). Defaults to `emptySet()` for callers (mostly tests building an in-memory [Catalog]
+ *   with no live connection) whose fixtures never name anything after a reserved word;
+ *   [generateCode] — the real production entry point — always supplies
+ *   [JdbcAnalyzer.fetchReservedWords]'s live result explicitly instead of relying on this default.
  */
 internal class TypeRepository(
   private val packageName: String,
   private val catalog: Catalog,
   private val typeMappings: List<TypeMapping> = emptyList(),
+  private val reservedWords: Set<String> = emptySet(),
 ) {
 
   /**
@@ -337,6 +346,7 @@ internal class TypeRepository(
         )
       },
       sql = queryText,
+      reservedWords = reservedWords,
     )
     typeBeingDefined.primaryConstructor(primaryConstructor.build())
     if (secondaryConstructor != null) {
@@ -815,12 +825,16 @@ internal data class PropertySource(
  * @param tableName The database table this class fully maps to. `null` for ad-hoc query projections.
  * @param properties Source information for each property.
  * @param sql The SQL query text. Included in query projection KDoc as a fenced code block.
+ * @param reservedWords The connected PostgreSQL server's reserved keywords, forwarded to
+ *   [quoteSqlIdentifierIfNeeded] for each property's `` `table.column` `` source reference (#238
+ *   10.1). Empty for a table projection, which never renders a source reference at all.
  */
 internal fun TypeSpec.Builder.addClassKdoc(
   classComment: String,
   tableName: String?,
   properties: List<PropertySource>,
   sql: String = "",
+  reservedWords: Set<String> = emptySet(),
 ) {
   val hasTableMapping = tableName != null
   // #238 9.1: KotlinPoet's own KDoc emission unconditionally rewrites "/*"/"*/" to "/&#42;"/"&#42;/"
@@ -833,7 +847,16 @@ internal fun TypeSpec.Builder.addClassKdoc(
   // containsUnescapableBlockCommentDelimiter's own KDoc, and markdownInlineCodeSpan for the identical
   // hazard on a single property's source-reference span.
   val canRenderSqlVerbatim = sql.isNotEmpty() && !containsUnescapableBlockCommentDelimiter(sql)
-  val documentedProperties = properties.filter { it.hasDocumentation(hasTableMapping) }
+  // #238 10.2: a property whose OWN name cannot be rendered as a `@property` name token at all
+  // (formatAsKdocPropertyReference returns `null` -- see its own KDoc) has no line to emit in the
+  // first place, not merely a corrupted one -- so it is dropped here, before the property/name pair
+  // is ever built, rather than emitted with a name that reads back as a DIFFERENT (mangled)
+  // property than the one actually declared.
+  val documentedProperties = properties.mapNotNull { property ->
+    if (!property.hasDocumentation(hasTableMapping, reservedWords)) return@mapNotNull null
+    val formattedName = property.propertyName.formatAsKdocPropertyReference() ?: return@mapNotNull null
+    formattedName to property
+  }
   if (classComment.isEmpty() && !hasTableMapping && !canRenderSqlVerbatim && documentedProperties.isEmpty()) return
 
   val kdoc = buildString {
@@ -858,13 +881,21 @@ internal fun TypeSpec.Builder.addClassKdoc(
     }
     if (documentedProperties.isNotEmpty()) {
       if (isNotEmpty()) append("\n\n")
-      for ((index, property) in documentedProperties.withIndex()) {
-        append("@property ${property.propertyName.formatAsKdocPropertyReference()} ")
+      for ((index, formattedNameAndProperty) in documentedProperties.withIndex()) {
+        val (formattedName, property) = formattedNameAndProperty
+        append("@property $formattedName ")
         if (property.comment.isNotEmpty()) {
-          append(property.comment)
+          // #238 10.3: property.comment is arbitrary PostgreSQL comment prose, appended into the
+          // SAME CommonMark paragraph as every OTHER property's own source-reference code span (no
+          // blank line separates consecutive `@property` lines) -- so an unescaped, unpaired
+          // backtick in ONE comment is free to pair with a backtick belonging to a LATER property's
+          // span instead of its own, corrupting every span in between. Escaping it here (never
+          // altering the comment TEXT PostgreSQL reports, only how CommonMark delimits it) keeps it
+          // from ever being read as a code-span delimiter at all.
+          append(escapeMarkdownBacktick(property.comment))
         }
         if (!hasTableMapping) {
-          val source = property.sourceReference()
+          val source = property.sourceReference(reservedWords)
           if (source != null) {
             if (property.comment.isNotEmpty()) append(" ")
             append("($source)")
@@ -880,8 +911,8 @@ internal fun TypeSpec.Builder.addClassKdoc(
 /**
  * Whether this property has any documentation to show in KDoc.
  */
-private fun PropertySource.hasDocumentation(hasTableMapping: Boolean): Boolean =
-  comment.isNotEmpty() || (!hasTableMapping && sourceReference() != null)
+private fun PropertySource.hasDocumentation(hasTableMapping: Boolean, reservedWords: Set<String>): Boolean =
+  comment.isNotEmpty() || (!hasTableMapping && sourceReference(reservedWords) != null)
 
 /**
  * A regular Kotlin identifier: matched WITHOUT surrounding backticks in KDoc's `@property` tag.
@@ -903,43 +934,64 @@ private val PLAIN_KOTLIN_IDENTIFIER = Regex("[A-Za-z_][A-Za-z0-9_]*")
  * the `@property` tag's span early, corrupting everything after it on the line -- the exact defect
  * class #238 8.3 already fixed for [sourceReference]'s own span.
  *
+ * Returns `null` — decline, emit no `@property` line for this property at all — when [this] contains
+ * a literal block-comment open or close delimiter ([containsUnescapableBlockCommentDelimiter]):
+ * widening the backtick delimiter fixes the SPAN, but KotlinPoet's own KDoc emission still rewrites
+ * the block-comment delimiter itself to an HTML entity inside it, same as [markdownInlineCodeSpan]
+ * already declines for a source-reference span (#238 9.1) — so a name containing that delimiter
+ * would otherwise render with the entity substituted in, a tag naming a DIFFERENT property than the
+ * one actually declared (#238 10.2).
+ *
  * This fixes only the KDoc SPAN; it does not and cannot fix the Kotlin PROPERTY declaration itself
  * (`` public val `a\`b`: ... ``), which is not valid Kotlin -- a backtick-quoted Kotlin identifier
  * cannot contain a backtick character, and there is no escape sequence for one inside a backtick
  * identifier at all. That is a distinct, pre-existing defect in how a column's raw JDBC label
- * becomes a Kotlin property name (`JdbcAnalyzer.buildResultColumns`'s `columnLabel`), never
- * validated as a legal-once-backtick-quoted identifier before being handed to KotlinPoet. Deciding
- * how to handle it (reject the column? substitute a sanitized name?) is a naming-strategy question
- * for that pipeline stage, not a KDoc-rendering one, so it is left for separate resolution.
+ * becomes a Kotlin property name (`JdbcAnalyzer.buildResultColumns`'s `columnLabel`) — see
+ * `sanitizeKotlinIdentifier` for its fix (#238 10.5).
  */
-private fun String.formatAsKdocPropertyReference(): String =
-  if (PLAIN_KOTLIN_IDENTIFIER.matches(this)) this else wrapInBacktickDelimiter(this)
+private fun String.formatAsKdocPropertyReference(): String? = when {
+  PLAIN_KOTLIN_IDENTIFIER.matches(this) -> this
+  containsUnescapableBlockCommentDelimiter(this) -> null
+  else -> wrapInBacktickDelimiter(this)
+}
 
 /**
  * A PostgreSQL identifier that never needs double-quoting when written back into SQL: starts with
  * a lowercase letter or underscore, followed by any number of lowercase letters, digits,
  * underscores, or dollar signs (Postgres's own `SAFE_IDENTIFIER` rule, matching what an
  * ALREADY-live-connected caller does in [JdbcAnalyzer.buildIdentifierQuoter] — this copy exists
- * because [TypeRepository] itself has no connection to fetch the RESERVED-WORD half of that
- * function's check from, per this file's own doc comment on why `TypeRepository` re-lexes rather
- * than re-querying; a source-reference identifier that happens to collide with a reserved word,
- * e.g. a column named `order`, is outside today's scope).
+ * because [TypeRepository] has no connection of its own to query, per this file's own doc comment
+ * on why `TypeRepository` re-lexes rather than re-querying). Matching this pattern is necessary but
+ * NOT sufficient — [quoteSqlIdentifierIfNeeded] additionally rejects a RESERVED word, which this
+ * pattern alone cannot rule out (`order` and `user` both match it) (#238 10.1).
  */
 private val SQL_UNQUOTED_IDENTIFIER = Regex("[a-z_][a-z0-9_\$]*")
 
 /**
  * Double-quotes [identifier] exactly as PostgreSQL itself requires it to be written back into SQL
- * — doubling any embedded `"` per PostgreSQL's own quoted-identifier escape rule — or returns it
- * unchanged if [SQL_UNQUOTED_IDENTIFIER] already accepts it bare.
+ * — doubling any embedded `"` per PostgreSQL's own quoted-identifier escape rule — unless BOTH
+ * [SQL_UNQUOTED_IDENTIFIER] accepts it bare AND it is not one of [reservedWords].
  *
- * Without this, a mixed-case or space-containing original column name (`"Foo"`, `"My Col"`) was
- * rendered into a `` `table.column` `` source reference as bare `table.Foo`/`table.My Col` — text
- * that reads back as PostgreSQL folding `Foo` to `foo` (a column `Foo` never has), or as two
- * unrelated tokens instead of one qualified reference — verified live: `SELECT tq.Foo FROM tq`
- * fails with `column tq.foo does not exist` (#238 9.3).
+ * Without the [SQL_UNQUOTED_IDENTIFIER] half, a mixed-case or space-containing original column name
+ * (`"Foo"`, `"My Col"`) was rendered into a `` `table.column` `` source reference as bare
+ * `table.Foo`/`table.My Col` — text that reads back as PostgreSQL folding `Foo` to `foo` (a column
+ * `Foo` never has), or as two unrelated tokens instead of one qualified reference — verified live:
+ * `SELECT tq.Foo FROM tq` fails with `column tq.foo does not exist` (#238 9.3).
+ *
+ * Without the [reservedWords] half, a relation or column named after a PostgreSQL reserved word
+ * (`order`, `user`) — which [SQL_UNQUOTED_IDENTIFIER] alone cannot distinguish from any other
+ * all-lowercase identifier — was rendered bare too: `` `order.id` `` reads back as `SELECT order.id
+ * FROM "order"`, which PostgreSQL rejects with `syntax error at or near "."`, since an unquoted
+ * `order` is parsed as the reserved keyword, not a table reference (#238 10.1). [reservedWords] is
+ * always the CONNECTED server's own live keyword set ([JdbcAnalyzer.fetchReservedWords]) — never a
+ * hardcoded snapshot, which drifts as PostgreSQL's own reserved-word list changes across versions.
  */
-private fun quoteSqlIdentifierIfNeeded(identifier: String): String =
-  if (SQL_UNQUOTED_IDENTIFIER.matches(identifier)) identifier else "\"${identifier.replace("\"", "\"\"")}\""
+private fun quoteSqlIdentifierIfNeeded(identifier: String, reservedWords: Set<String>): String =
+  if (SQL_UNQUOTED_IDENTIFIER.matches(identifier) && identifier !in reservedWords) {
+    identifier
+  } else {
+    "\"${identifier.replace("\"", "\"\"")}\""
+  }
 
 /**
  * Returns a source reference string for display in KDoc, or `null` if none is available (either
@@ -948,13 +1000,16 @@ private fun quoteSqlIdentifierIfNeeded(identifier: String): String =
  *
  * - For columns from a table: `` `table."Column"` `` — each identifier individually quoted via
  *   [quoteSqlIdentifierIfNeeded] exactly as PostgreSQL itself would require it written back into
- *   SQL, so this can always be pasted into a query verbatim (#238 9.3).
+ *   SQL, so this can always be pasted into a query verbatim (#238 9.3, 10.1).
  * - For computed expressions: `` `COUNT(*)` ``
+ *
+ * @param reservedWords The connected server's reserved keywords, forwarded to
+ *   [quoteSqlIdentifierIfNeeded] (#238 10.1).
  */
-private fun PropertySource.sourceReference(): String? = when {
+private fun PropertySource.sourceReference(reservedWords: Set<String>): String? = when {
   sourceTable != null -> {
-    val qualifiedColumn = sourceColumn?.let(::quoteSqlIdentifierIfNeeded).orEmpty()
-    markdownInlineCodeSpan("${quoteSqlIdentifierIfNeeded(sourceTable)}.$qualifiedColumn")
+    val qualifiedColumn = sourceColumn?.let { quoteSqlIdentifierIfNeeded(it, reservedWords) }.orEmpty()
+    markdownInlineCodeSpan("${quoteSqlIdentifierIfNeeded(sourceTable, reservedWords)}.$qualifiedColumn")
   }
   expression.isNotEmpty() -> markdownInlineCodeSpan(expression)
   else -> null
@@ -1029,6 +1084,26 @@ internal fun markdownInlineCodeSpan(text: String): String? {
  */
 internal fun containsUnescapableBlockCommentDelimiter(text: String): Boolean =
   text.contains("/*") || text.contains("*/")
+
+/**
+ * Backslash-escapes every literal backtick in [text] so it can never be read as a CommonMark inline-
+ * code-span delimiter, without altering the character [text] itself renders as: CommonMark treats a
+ * backslash immediately before an ASCII punctuation character as a literal escape everywhere EXCEPT
+ * inside an already-open code span, code block, autolink, or raw HTML — none of which apply to
+ * [text] here, since it is plain prose (a PostgreSQL column comment), never itself wrapped in a code
+ * span.
+ *
+ * [TypeSpec.Builder.addClassKdoc] appends every property's own [PropertySource.comment] into ONE
+ * continuous CommonMark paragraph shared by every `@property` line (consecutive lines with no blank
+ * line between them never start a new paragraph), so an odd, unescaped backtick in ONE property's
+ * comment is free to pair with a backtick belonging to a DIFFERENT property's own source-reference
+ * span later in that same paragraph — silently turning every span in between from a real inline code
+ * span into plain, undelimited text (#238 10.3). Escaping here removes the character from
+ * delimiter-matching ENTIRELY, rather than attempting to widen or relocate a delimiter the way
+ * [wrapInBacktickDelimiter] does for a span [text] itself is wrapped in — there is no single
+ * "delimiter" to widen for backtick characters scattered through plain prose.
+ */
+internal fun escapeMarkdownBacktick(text: String): String = text.replace("`", "\\`")
 
 /**
  * Wraps [text] in a backtick-delimited span using a delimiter one backtick longer than [text]'s own

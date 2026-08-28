@@ -34,20 +34,23 @@ internal data class KeywordOperandCase(
 }
 
 /**
- * Live-server proof that [resolveNodeTreeProvenanceExpression] never truncates a CTE body item
+ * Live-server proof that [resolveNodeTreeProvenanceExpression] never TRUNCATES a CTE body item
  * whose last token is a keyword operand rather than a genuine alias — see this file's own
- * [KeywordOperandCase] KDoc, and #238.
+ * [KeywordOperandCase] KDoc — but also never EMITS that item's complete, uncut text when the only
+ * way to verify it is via that same implicit alias (#238 10.4): the complete text is a legal
+ * SELECT-LIST ITEM (`ts AT TIME ZONE 'UTC' res`), never a legal standalone EXPRESSION
+ * (`(ts AT TIME ZONE 'UTC' res)` is a syntax error), which is exactly the context a `@property`
+ * source reference renders it in.
  *
  * Every shape is run through the REAL pipeline (a `prosqlbody` node tree built from a live
  * PostgreSQL server, exactly as production does) in two forms:
- * - WITH a real trailing implicit (no-`AS`) alias: the resolved expression must be [case]'s
- *   COMPLETE, uncut text (expression AND alias together — see [resolveNodeTreeProvenanceExpression]'s
- *   own KDoc for why cutting is never attempted), and — the actual proof, not merely a text
- *   comparison — evaluating that resolved text standalone against the same table must produce the
- *   EXACT SAME value the original query itself produced.
+ * - WITH a real trailing implicit (no-`AS`) alias: PostgreSQL's own `:resname` for the item DOES
+ *   verify against that alias — proving the cross-validation gate itself still works for every one
+ *   of these keyword-operand shapes — but [resolveNodeTreeProvenanceExpression] must still resolve
+ *   to `null`, never [case]'s truncated OR complete text.
  * - WITHOUT any alias at all: PostgreSQL's own auto-generated `:resname` (`?column?`, `case`, ...)
- *   has no corresponding text to verify against, so the resolved expression must be `null` — never
- *   a guess.
+ *   has no corresponding text to verify against either, so the resolved expression must be `null`
+ *   here too — never a guess.
  */
 @Testcontainers
 internal class KeywordOperandProvenanceCorpusTest {
@@ -59,7 +62,7 @@ internal class KeywordOperandProvenanceCorpusTest {
 
   @ParameterizedTest
   @MethodSource("corpus")
-  fun `a keyword-operand shape with a real trailing alias emits its complete text, verified by evaluation`(
+  fun `a keyword-operand shape with a real trailing alias resolves to nothing, never its truncated or uncut text`(
     case: KeywordOperandCase,
   ) {
     val bodyItem = "${case.expression} res"
@@ -72,11 +75,7 @@ internal class KeywordOperandProvenanceCorpusTest {
         ?: error("expected a resolvable provenance for: $cteSql")
       val resolved = resolveNodeTreeProvenanceExpression(cteSql, nodeTree, provenance)
 
-      assertThat(resolved).isEqualTo(bodyItem)
-
-      val queryValue = scalarValue(connection, cteSql)
-      val resolvedValue = scalarValue(connection, "SELECT $resolved ${case.fromClause}".trim())
-      assertThat(resolvedValue).isEqualTo(queryValue)
+      assertThat(resolved).isNull()
     }
   }
 
@@ -130,14 +129,6 @@ internal class KeywordOperandProvenanceCorpusTest {
       }
     }
   }
-
-  private fun scalarValue(connection: Connection, sql: String): String? =
-    connection.createStatement().use { statement ->
-      statement.executeQuery(sql).use { resultSet ->
-        check(resultSet.next()) { "Expected exactly one row from: $sql" }
-        resultSet.getString(1)
-      }
-    }
 
   companion object {
     private val schemaCounter = AtomicInteger(0)

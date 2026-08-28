@@ -422,6 +422,129 @@ class TypeRepositoryTest {
   }
 
   @Nested
+  inner class ReservedWordSourceReferenceQuoting {
+
+    @Test
+    fun `a reserved-word relation name is double-quoted in its table_column source reference`() {
+      // #238 10.1: SQL_UNQUOTED_IDENTIFIER alone accepts "order" -- it's already all-lowercase with
+      // no special characters -- so without consulting the live server's own reserved-word set, the
+      // relation name was rendered bare: "order.id" reads back as PostgreSQL parsing "order" as the
+      // RESERVED KEYWORD, not a table reference. Verified live: `SELECT order.id FROM "order"` fails
+      // with `syntax error at or near "."`.
+      val orderColumn = Column(
+        name = "id",
+        notNull = true,
+        type = Identifier(name = "int4"),
+        table = Identifier(name = "order"),
+        originalName = "id",
+      )
+
+      val repository = TypeRepository("test", Catalog(), reservedWords = setOf("order"))
+      repository.buildTypeProjectionForQuery("getId", listOf(orderColumn), "SELECT id FROM \"order\"")
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).contains("@property id (`\"order\".id`)")
+      assertThat(kdoc).doesNotContain("`order.id`")
+    }
+
+    @Test
+    fun `a reserved-word column name is double-quoted in its table_column source reference`() {
+      val userColumn = Column(
+        name = "name",
+        notNull = true,
+        type = Identifier(name = "text"),
+        table = Identifier(name = "author"),
+        originalName = "user",
+      )
+
+      val repository = TypeRepository("test", Catalog(), reservedWords = setOf("user"))
+      repository.buildTypeProjectionForQuery("getName", listOf(userColumn), "SELECT \"user\" FROM author")
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).contains("@property name (`author.\"user\"`)")
+      assertThat(kdoc).doesNotContain("`author.user`")
+    }
+
+    @Test
+    fun `an empty reserved-word set (the default) leaves an ordinary identifier bare, unquoted`() {
+      // Contrast case: TypeRepository's own default (emptySet()) must not spuriously quote every
+      // all-lowercase identifier -- only the connected server's OWN reported reserved words.
+      val plainColumn = Column(
+        name = "id",
+        notNull = true,
+        type = Identifier(name = "int4"),
+        table = Identifier(name = "author"),
+        originalName = "id",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("getId", listOf(plainColumn), "SELECT id FROM author")
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).contains("@property id (`author.id`)")
+    }
+  }
+
+  @Nested
+  inner class PropertyNameBlockCommentDelimiterDeclines {
+
+    @Test
+    fun `a property name containing a block-comment close delimiter gets no @property line at all`() {
+      // #238 10.2: widening the backtick delimiter (formatAsKdocPropertyReference's normal fix for
+      // a name containing its OWN literal backtick) does not help here -- KotlinPoet's own KDoc
+      // emission unconditionally rewrites "*/" to an HTML entity inside EVERY KDoc block it renders,
+      // so "@property `c*/d`" would render with the entity substituted in, naming a DIFFERENT
+      // property than the one actually declared (`` `c*/d` ``). Declining the whole line is the fix.
+      val starSlashColumn = Column(
+        name = "c*/d",
+        notNull = true,
+        type = Identifier(name = "text"),
+        comment = "has a comment",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("getCStarSlashD", listOf(starSlashColumn), "SELECT x FROM t")
+
+      val renderedFile = repository.requiredTypes.first().toString()
+      assertThat(renderedFile).doesNotContain("@property")
+      assertThat(renderedFile).doesNotContain("&#42;")
+    }
+  }
+
+  @Nested
+  inner class CommentBacktickEscaping {
+
+    @Test
+    fun `a backtick in one property's comment does not mis-pair a later property's own source-reference span`() {
+      // #238 10.3: every @property line lives in ONE continuous CommonMark paragraph (no blank line
+      // separates them), so an unescaped, unpaired backtick in property "x"'s own comment is free to
+      // pair with the backtick belonging to property "y"'s source-reference span instead of its own,
+      // turning "y"'s span from a real inline code span into plain, undelimited text.
+      val xColumn = Column(
+        name = "x",
+        notNull = true,
+        type = Identifier(name = "text"),
+        table = Identifier(name = "t"),
+        originalName = "x",
+        comment = "use ` here",
+      )
+      val yColumn = Column(
+        name = "y",
+        notNull = true,
+        type = Identifier(name = "text"),
+        table = Identifier(name = "t"),
+        originalName = "y",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("getXAndY", listOf(xColumn, yColumn), "SELECT x, y FROM t")
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).contains("@property y (`t.y`)")
+    }
+  }
+
+  @Nested
   inner class StarSelectItemNeverBecomesAnExpression {
 
     @Test

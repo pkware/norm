@@ -13,7 +13,6 @@ import kotlin.jvm.JvmRecord
  * ```
  *
  * @property id (`parent.id`)
- * @property y (`UPPER(name) y`)
  */
 @JvmRecord
 public data class SelectParentUpperNameImplicitAlias(

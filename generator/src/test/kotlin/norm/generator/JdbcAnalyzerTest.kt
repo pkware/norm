@@ -15,13 +15,23 @@ import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
+import org.junit.jupiter.api.parallel.Execution
+import org.junit.jupiter.api.parallel.ExecutionMode
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import java.sql.Connection
 import java.sql.DriverManager
 
+// Every test in this class shares ONE JDBC Connection (see the companion object below) -- a
+// java.sql.Connection is not safe for concurrent use from multiple threads, and this repository
+// enables concurrent JUnit test execution by default (JavaConventionsPlugin). Without pinning this
+// class to a single thread, two tests issuing overlapping statements on the shared connection race
+// (observed: an unrelated view-nullability assertion failed only once two backtick-column DDL tests
+// were added alongside it — see BacktickColumnNameSanitization, #238 10.5). GenerateCodeTest, which
+// shares the same single-connection pattern, already applies this same fix.
 @Testcontainers
+@Execution(ExecutionMode.SAME_THREAD)
 class JdbcAnalyzerTest {
 
   @Test
@@ -1175,6 +1185,55 @@ class JdbcAnalyzerTest {
       val overlongName = "a".repeat(100)
       assertThat(liveParseIdent(overlongName)).isEqualTo(overlongName)
       assertThat(foldIdentifier(overlongName)).isEqualTo(overlongName)
+    }
+  }
+
+  @Nested
+  inner class BacktickColumnNameSanitization {
+
+    @Test
+    fun `buildCatalog sanitizes a backtick in a table column name, but keeps it in originalName`() {
+      // #238 10.5: KotlinPoet wraps a non-plain-identifier name in backticks verbatim, with no
+      // escaping of characters inside it -- there is no Kotlin escape sequence for a backtick inside
+      // a backtick-quoted identifier at all. A raw column name containing one ("a`b") therefore
+      // produced INVALID Kotlin ("public val `a`b`: String?", which closes at the FIRST embedded
+      // backtick). originalName must keep the exact database identifier -- a PostgreSQL
+      // double-quoted identifier has no trouble containing a backtick.
+      // A table name distinct from the sibling test's own -- these tests can run CONCURRENTLY
+      // (parallel test execution is enabled repository-wide), and both create/drop DDL against the
+      // SAME shared connection/schema.
+      connection.createStatement().use { it.execute("""CREATE TABLE backtick_test_catalog (id INT, "a`b" TEXT)""") }
+
+      try {
+        val catalog = analyzer.buildCatalog()
+        val table = catalog.schemas.first().tables.first { it.rel.name == "backtick_test_catalog" }
+        val column = table.columns.first { it.originalName == "a`b" }
+
+        assertThat(column.name).doesNotContain("`")
+        assertThat(column.name).isEqualTo("a'b")
+        assertThat(column.originalName).isEqualTo("a`b")
+      } finally {
+        connection.createStatement().use { it.execute("DROP TABLE IF EXISTS backtick_test_catalog") }
+      }
+    }
+
+    @Test
+    fun `analyzeQuery sanitizes a backtick in a query result column's label, but keeps it in originalName`() {
+      connection.createStatement().use { it.execute("""CREATE TABLE backtick_test_query (id INT, "a`b" TEXT)""") }
+
+      try {
+        val catalog = analyzer.buildCatalog()
+        val parsed = ParsedQuery("getBacktick", ":one", """SELECT "a`b" FROM backtick_test_query""", emptyList())
+
+        val query = analyzer.analyzeQuery(parsed, catalog)
+
+        val column = query.columns.single()
+        assertThat(column.name).doesNotContain("`")
+        assertThat(column.name).isEqualTo("a'b")
+        assertThat(column.originalName).isEqualTo("a`b")
+      } finally {
+        connection.createStatement().use { it.execute("DROP TABLE IF EXISTS backtick_test_query") }
+      }
     }
   }
 

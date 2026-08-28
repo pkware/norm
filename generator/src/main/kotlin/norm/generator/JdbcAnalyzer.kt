@@ -172,7 +172,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
 
         add(
           Column(
-            name = columnName,
+            name = sanitizeKotlinIdentifier(columnName),
             notNull = notNull,
             isArray = isArray,
             arrayDims = if (isArray) 1 else 0,
@@ -234,7 +234,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
 
       columns.add(
         Column(
-          name = columnLabel,
+          name = sanitizeKotlinIdentifier(columnLabel),
           notNull = !analysis.nullable,
           isArray = isArray,
           arrayDims = if (isArray) 1 else 0,
@@ -356,6 +356,24 @@ public class JdbcAnalyzer(private val connection: Connection) {
     val rawBase = if (isArray) typeName.removePrefix("_") else typeName
     return rawBase to isArray
   }
+
+  /**
+   * Replaces any literal backtick in [rawName] with an apostrophe, for use as [Column.name] (the
+   * Kotlin property/parameter name) — never for [Column.originalName], which must keep the exact
+   * database identifier for SQL correctness (a PostgreSQL double-quoted identifier has no trouble
+   * containing a backtick at all).
+   *
+   * KotlinPoet wraps any name that is not already a plain identifier in backticks verbatim, with no
+   * escaping of characters inside it (see `TypeRepository.formatAsKdocPropertyReference`'s own KDoc
+   * on the identical hazard for a KDoc `@property` tag's name token). A raw column name containing a
+   * backtick (`` "a`b" ``) therefore produced INVALID Kotlin — `` public val `a`b`: String? `` — a
+   * backtick-quoted identifier that closes at the FIRST embedded backtick, leaving a bare stray `` b`
+   * `` token the Kotlin compiler cannot parse, since there is no escape sequence for a backtick
+   * inside a backtick-quoted Kotlin identifier at all (#238 10.5). Substituting an apostrophe keeps
+   * the generated property compilable at the cost of no longer matching the database column name
+   * exactly — an acceptable trade for an identifier no valid Kotlin declaration could spell anyway.
+   */
+  private fun sanitizeKotlinIdentifier(rawName: String): String = rawName.replace("`", "'")
 
   /**
    * Resolves a table name to an [Identifier] by finding it in the catalog.

@@ -24,6 +24,13 @@ private val TRANSACTABLE = ClassName(RUNTIME_PACKAGE, "Transactable")
  * @param queries The queries for which to generate code.
  * @param packageName The package in which to generate code.
  * @param frameworks The frameworks for which to generate DI annotations and connection providers.
+ * @param reservedWords The connected PostgreSQL server's reserved keywords, from
+ *   [JdbcAnalyzer.fetchReservedWords] — used when rendering a `` `table.column` `` KDoc source
+ *   reference for a relation or column named after a reserved word (`order`, `user`), which must be
+ *   quoted rather than emitted as text PostgreSQL rejects with a syntax error (#238 10.1). Required
+ *   rather than defaulted here deliberately: this is the seam where a per-database, per-run value
+ *   must be threaded through explicitly rather than silently falling back to an empty set (or,
+ *   worse, a hardcoded snapshot that could drift from whichever server this run actually targets).
  * @param typeMappings User-configured type/column overrides. Type-level overrides suppress
  *   auto-generation of the matching enum or domain.
  * @return The generated files. File names include the package hierarchy.
@@ -33,9 +40,10 @@ public fun generateCode(
   queries: List<Query>,
   packageName: String,
   frameworks: Set<Framework>,
+  reservedWords: Set<String>,
   typeMappings: List<TypeMapping> = emptyList(),
 ): List<GeneratedFile> {
-  val generator = TypeRepository(packageName, catalog, typeMappings)
+  val generator = TypeRepository(packageName, catalog, typeMappings, reservedWords)
 
   val resolvedQueries = queries.map { SqlStatement(catalog, it, generator) }
   val queriesInterface = ClassName(packageName, "Queries")

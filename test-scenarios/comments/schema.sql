@@ -50,3 +50,17 @@ CREATE TABLE tq (
 
 COMMENT ON COLUMN tq."Foo" IS 'Mixed-case column, only referenceable quoted.';
 COMMENT ON COLUMN tq."My Col" IS 'Column name containing a space.';
+
+-- "order" and "user" are both PostgreSQL reserved keywords -- a relation or column named after one
+-- can only ever be referenced quoted in SQL. Used to test that a `@property` source reference
+-- double-quotes a reserved-word identifier rather than emitting text PostgreSQL rejects with a
+-- syntax error (#238 10.1).
+CREATE TABLE "order" (
+  id SERIAL PRIMARY KEY,
+  "user" TEXT NOT NULL
+);
+
+-- The backtick below is deliberate: a PostgreSQL comment containing one must never corrupt the
+-- Markdown delimitation of a LATER property's own source-reference span in the same generated KDoc
+-- block (#238 10.3).
+COMMENT ON COLUMN "order".id IS 'Contains a literal ` backtick.';
