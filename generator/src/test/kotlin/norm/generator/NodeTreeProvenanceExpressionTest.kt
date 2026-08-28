@@ -446,6 +446,24 @@ class NodeTreeProvenanceExpressionTest {
     }
 
     @Test
+    fun `a matched body item that is a bare column with an implicit alias also resolves to nothing`() {
+      // #238 P3: the explicit-AS form of this exact pass-through (the test right above) already
+      // resolved to nothing -- matchedItem.selectItem.columnName is non-null for "description AS
+      // description_upper" because parseColumnReference runs on the alias-stripped expression
+      // "description". For the IMPLICIT-alias spelling below, extractAlias finds no top-level AS at
+      // all, so selectItem.columnName is null for the FULL unsplit text "description dx" (it isn't a
+      // bare column/table dotted pair) even though the item is exactly the same kind of unchanged
+      // pass-through once its own trailing alias token is split off. The two spellings must agree.
+      val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
+      val sql = """
+        WITH a AS (SELECT description dx FROM parent)
+        SELECT dx FROM a
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql)).isNull()
+    }
+
+    @Test
     fun `a quoted CTE name referenced unquoted resolves to nothing, a different relation in PostgreSQL`() {
       val ddl = "CREATE TABLE t (a TEXT, b TEXT); CREATE TABLE foo (ux TEXT)"
       val sql = """

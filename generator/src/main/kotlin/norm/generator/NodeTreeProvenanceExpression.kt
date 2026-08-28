@@ -100,12 +100,17 @@ internal fun resolveNodeTreeProvenanceExpression(
   }
 
   if (provenance.bodyPosition < 1 || provenance.bodyPosition > items.size) return null
-  val matchedItem = items[provenance.bodyPosition - 1]
+  val matchedExpression = verifiedItems[provenance.bodyPosition - 1]!!.expression
   // A bare column reference is a chained pass-through with nothing of its own to report -- see this
-  // function's own KDoc.
-  if (matchedItem.selectItem.columnName != null) return null
+  // function's own KDoc. Checked against [matchedExpression] -- the ALIAS-STRIPPED text
+  // [VerifiedBodyItem] already computed -- rather than `items[...].selectItem.columnName`: that
+  // field is derived from the item's FULL, unsplit text, so it misses an IMPLICIT-alias pass-through
+  // (`description dx`) even though [parseColumnReference] recognizes the exact same shape once the
+  // trailing alias token is split off, exactly as it already does for the explicit-`AS` spelling
+  // (`description AS description_upper`) (#238).
+  if (parseColumnReference(matchedExpression).columnName != null) return null
 
-  return collapseCosmeticWhitespace(stripComments(verifiedItems[provenance.bodyPosition - 1]!!.expression))
+  return collapseCosmeticWhitespace(stripComments(matchedExpression))
 }
 
 /**

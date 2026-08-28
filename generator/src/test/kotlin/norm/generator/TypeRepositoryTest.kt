@@ -132,6 +132,24 @@ class TypeRepositoryTest {
     }
 
     @Test
+    fun `a computed expression under a parenthesized top-level UNION gets no source-reference KDoc line`() {
+      // #238 P0-1: hasTopLevelSetOperation used to inspect the RAW main-query window while
+      // parseOutputItemsWithAlias (via parseSelectItems) inspected the SAME window with redundant
+      // outer parentheses stripped. Wrapping the whole set operation in one parenthesis pair sinks
+      // the UNION to paren depth 1 in the raw window, so the guard missed it -- while the parser,
+      // seeing the parentheses stripped, still split the (still branch-1-only) items and let
+      // isComputedExpression fire on "UPPER(x)" as if it were the whole answer.
+      val queryText = "(SELECT UPPER(x) AS u FROM t UNION SELECT LOWER(x) FROM t)"
+      val unionColumn = Column(name = "u", notNull = true, type = Identifier(name = "text"))
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("upperOrLowerParenthesized", listOf(unionColumn), queryText)
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).doesNotContain("@property u")
+    }
+
+    @Test
     fun `a plain column reference under a top-level UNION still gets no source-reference KDoc line`() {
       // Contrast case, pinning existing accepted behavior: PostgreSQL itself names a set operation's
       // whole result column after branch 1 alone, so echoing a bare column reference is not

@@ -86,6 +86,25 @@ internal data class SelectItem(
 internal fun parseSelectItems(sql: String): List<SelectItem> = parseOutputItemsWithAlias(sql).map { it.selectItem }
 
 /**
+ * The single window both [hasTopLevelSetOperation] and [parseOutputItemsWithAlias] scan: [sql]'s
+ * MAIN query — after any leading `WITH` clause, via [parseCteClause]'s
+ * [ParsedCteClause.mainQueryStart] — with any redundant outer `(`...`)` pair already stripped via
+ * [stripRedundantOuterParentheses].
+ *
+ * A guard and the parser it guards must see the SAME text: [hasTopLevelSetOperation] once computed
+ * this window WITHOUT the [stripRedundantOuterParentheses] step [parseOutputItemsWithAlias] applies,
+ * so a set operation wrapped in one parenthesis pair (`(SELECT a UNION SELECT b)`) sat at paren depth
+ * ONE in the guard's raw text — invisible to it — while the parser, seeing the parentheses already
+ * stripped, still found and returned branch 1's items as if no set operation were present (#238).
+ * Both callers now share this one function so they can never drift apart on what "the main query
+ * window" means again.
+ */
+private fun mainQueryWindow(sql: String): String {
+  val mainQueryStart = parseCteClause(sql)?.mainQueryStart ?: 0
+  return stripRedundantOuterParentheses(sql.substring(mainQueryStart))
+}
+
+/**
  * Whether [sql]'s own MAIN query — after any leading `WITH` clause, the exact window
  * [parseOutputItemsWithAlias] searches for its output clause — contains a top-level
  * `UNION`/`INTERSECT`/`EXCEPT` keyword: this statement's own visible `SELECT`/`RETURNING` list is
@@ -108,8 +127,7 @@ internal fun parseSelectItems(sql: String): List<SelectItem> = parseOutputItemsW
  * `RETURNING`.
  */
 internal fun hasTopLevelSetOperation(sql: String): Boolean {
-  val mainQueryStart = parseCteClause(sql)?.mainQueryStart ?: 0
-  val window = sql.substring(mainQueryStart)
+  val window = mainQueryWindow(sql)
   return SET_OPERATION_KEYWORDS.any { keyword -> findTopLevelKeyword(window, keyword) >= 0 }
 }
 
@@ -138,11 +156,11 @@ internal data class OutputItemWithAlias(val selectItem: SelectItem, val alias: S
  * item's own name against the node tree's authoritative `:resname` — see that function's KDoc for
  * why the alias can't be dropped there). Locates the same output clause [parseSelectItems]
  * documents finding — see its KDoc for the window/`RETURNING`-gating/star-truncation rules, all of
- * which apply identically here.
+ * which apply identically here. The window itself is [mainQueryWindow] — see its KDoc for why
+ * [hasTopLevelSetOperation] must compute that SAME window rather than its own copy.
  */
 internal fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> {
-  val mainQueryStart = parseCteClause(sql)?.mainQueryStart ?: 0
-  val window = stripRedundantOuterParentheses(sql.substring(mainQueryStart))
+  val window = mainQueryWindow(sql)
 
   // See parseSelectItems' KDoc for why RETURNING is gated on the main query's own leading keyword.
   val leadingKeywordStart = skipWhitespaceAndComments(window, 0)
@@ -438,8 +456,13 @@ private fun parseAliasToken(item: String, start: Int): String? {
  * `catalog.findColumn` lookup and drop the column's Postgres comment (#238). A QUOTED name is never
  * folded — quoting is precisely how PostgreSQL preserves a name's original case against this
  * default folding.
+ *
+ * Also called directly by [resolveNodeTreeProvenanceExpression] to re-classify an already
+ * alias-stripped CTE body item — see that function's own KDoc for why the bare-column check needs
+ * a fresh classification of the STRIPPED text rather than the item's own (pre-strip)
+ * [SelectItem.columnName].
  */
-private fun parseColumnReference(expression: String): SelectItem {
+internal fun parseColumnReference(expression: String): SelectItem {
   val trimmed = expression.trim()
   // A simple column reference is one or two identifiers separated by a dot, with no parentheses or operators
   val match = COLUMN_REFERENCE.matchEntire(trimmed)

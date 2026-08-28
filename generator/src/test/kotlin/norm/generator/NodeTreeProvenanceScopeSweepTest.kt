@@ -3,7 +3,6 @@ package norm.generator
 import assertk.assertThat
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
-import assertk.assertions.isGreaterThan
 import org.intellij.lang.annotations.Language
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
@@ -82,9 +81,16 @@ class NodeTreeProvenanceScopeSweepTest {
           "query itself produced `$actualValue` for: $sql"
       }
     }
-    // The sweep's own sensitivity: if NOTHING in the corpus ever emits a non-null expression, this
-    // test would trivially pass no matter what NodeTreeProvenanceResolver did.
-    assertThat(evaluatedNonNullCount).isGreaterThan(0)
+    // The sweep's own sensitivity: every one of these 99 shapes is constructed so `x` chases back to
+    // c1's own computed expression through nothing but bare-column pass-throughs -- no axis
+    // (chainDepth, shadowed, siblingCount, nestingDepth) combination here has a legitimate reason to
+    // bail to null. `isGreaterThan(0)` previously let a regression that bails for every chainDepth >=
+    // 2 case slip through GREEN: the 9 chainDepth == 1 cases (siblingCount 0..2 x nestingDepth 0..2,
+    // no shadow variant since chainDepth 1 has none) still emit, satisfying "more than zero" while 90
+    // genuine resolutions silently vanished. Asserting the full expected count instead -- confirmed
+    // by hand: reverting NodeTreeProvenanceResolver.resolveVar to bail after the first CTE hop turns
+    // this exact assertion red at 9, not 99 -- closes that gap.
+    assertThat(evaluatedNonNullCount).isEqualTo(cases.size)
     assertThat(failures).isEmpty()
   }
 
