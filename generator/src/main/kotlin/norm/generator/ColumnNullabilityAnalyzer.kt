@@ -211,27 +211,84 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     // A RETURNING list that only reads the target relation's own columns, or OLD/NEW references,
     // never needs EXPLAIN's resolution at all — see containsVarOutsideRelation's KDoc. Skipping it
     // here matters beyond saving an EXPLAIN round trip: a MERGE whose USING source is not a plain
-    // base table (e.g. a VALUES list or a subquery) can never be resolved below, but that must not
-    // block a RETURNING list that never depended on knowing which side of that join is nullable.
+    // base table or CTE (e.g. a VALUES list or a subquery) can never be resolved below, but that
+    // must not block a RETURNING list that never depended on knowing which side of that join is
+    // nullable.
     val returningEntries = nodeTreeParser.parseReturningList(nodeTree)
     if (returningEntries.none { NodeTreeNullabilityAnalyzer.containsVarOutsideRelation(it.expression, targetVarno) }) {
       return emptyMap()
     }
     val targetRelid = rangeTable[targetVarno] ?: return null
-    // A simple `MERGE INTO target USING source ON ...` has exactly one OTHER base-table :rtable
-    // entry besides the target — the source. A `USING` clause with more than one relation of its
-    // own (e.g. a join or subquery source) has no single relation this method can attribute a
-    // join side to, so it bails rather than guess.
-    val sourceEntries = rangeTable.filterKeys { it != targetVarno }
+    // A simple `MERGE INTO target USING source ON ...` has exactly one OTHER :rtable entry besides
+    // the target — the source, of ANY rtekind. A `USING` clause with more than one relation of its
+    // own (e.g. a join or subquery source) has no single relation this method can attribute a join
+    // side to, so it bails rather than guess. Reads the FULL range table, not [rangeTable] (base
+    // tables only) — a CTE source's own varno never appears there at all — since the returned map
+    // is keyed by varno regardless of the relation's kind, exactly matching how a caller's `Var`
+    // (base-table or CTE) looks it up later.
+    val sourceEntries = nodeTreeParser.parseRangeTableEntries(nodeTree).filterKeys { it != targetVarno }
     if (sourceEntries.size != 1) return null
-    val (sourceVarno, sourceRelid) = sourceEntries.entries.single()
+    val (sourceVarno, sourceEntry) = sourceEntries.entries.single()
     val targetName = resolveTableName(targetRelid) ?: return null
-    val sourceName = resolveTableName(sourceRelid) ?: return null
-    val mapping = explainMergeSideNullability(connection, sql, targetName, sourceName) ?: return null
+    val sourceNames = mergeSourceRelationNameCandidates(nodeTree, sourceEntry) ?: return null
+    val mapping = explainMergeSideNullability(connection, sql, targetName, sourceNames) ?: return null
     return buildMap {
       put(targetVarno, mapping.targetCanBeAbsent)
       put(sourceVarno, mapping.sourceCanBeAbsent)
     }
+  }
+
+  /**
+   * The name(s) `EXPLAIN`'s plan JSON might attribute to [sourceEntry] — a `MERGE`'s own `USING`
+   * source relation — so [explainMergeSideNullability] can match it regardless of how the planner
+   * chooses to execute it.
+   *
+   * A plain base-table source ([RangeTableEntry.Relation]) has exactly one name: its own catalog
+   * name, via [resolveTableName].
+   *
+   * A CTE source ([RangeTableEntry.Cte]) can appear EITHER way in the plan, and nothing in the
+   * parsed query tree says which one the planner will pick (a cost-based decision made only at
+   * plan time — verified live on PostgreSQL 18.4 for both):
+   * - `MATERIALIZED`, or otherwise not eligible for inlining, it plans as its own `"CTE Scan"` node
+   *   carrying `"CTE Name"` set to the literal name from the `WITH` clause.
+   * - referenced only once — always true of a `MERGE ... USING` source — and eligible for
+   *   inlining, PostgreSQL folds it directly into whatever it scans: the CTE's own name never
+   *   appears in the plan at all. [resolveInlinedBaseRelationName] recovers a second candidate name
+   *   for this shape, but ONLY for the simplest possible body — nothing but `SELECT ... FROM
+   *   oneBaseTable` — since that is the only shape whose entire body collapses to a single,
+   *   unambiguous relation name; anything with a join, a second relation, or a derived table has no
+   *   single name this can safely offer.
+   *
+   * Offering both candidates together never risks a false attribution: for a given plan, at most
+   * ONE of them can ever actually appear — the planner either inlines the CTE (hiding its own name
+   * entirely) or does not (never showing the inlined table's name in its place).
+   *
+   * @return `null` when [sourceEntry] is neither a base table nor a CTE (a join, subquery,
+   *   function, `VALUES`, or another `rtekind` this cannot safely name at all)
+   */
+  private fun mergeSourceRelationNameCandidates(nodeTree: String, sourceEntry: RangeTableEntry): Set<String>? =
+    when (sourceEntry) {
+      is RangeTableEntry.Relation -> resolveTableName(sourceEntry.relid)?.let(::setOf)
+      is RangeTableEntry.Cte -> buildSet {
+        add(sourceEntry.reference.name)
+        resolveInlinedBaseRelationName(nodeTree, sourceEntry.reference.name)?.let(::add)
+      }
+      else -> null
+    }
+
+  /**
+   * The bare table name [cteName]'s body resolves to, ONLY when that body is nothing but a plain
+   * `SELECT ... FROM oneBaseTable` — a single `rtekind 0` range-table entry and nothing else. See
+   * [mergeSourceRelationNameCandidates]'s own KDoc for why this narrow shape is the only one this
+   * offers as an inlining candidate.
+   *
+   * @return `null` when [cteName] cannot be found in [nodeTree]'s own `:cteList`, or its body is
+   *   anything other than exactly one base-table range-table entry
+   */
+  private fun resolveInlinedBaseRelationName(nodeTree: String, cteName: String): String? {
+    val cteDefinition = nodeTreeParser.parseCteList(nodeTree).find { it.name == cteName } ?: return null
+    val onlyEntry = nodeTreeParser.parseRangeTableEntries(cteDefinition.queryBlock).values.singleOrNull()
+    return (onlyEntry as? RangeTableEntry.Relation)?.let { resolveTableName(it.relid) }
   }
 
   /**

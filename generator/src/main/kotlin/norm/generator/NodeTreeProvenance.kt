@@ -16,15 +16,62 @@ package norm.generator
 private const val MAX_PROVENANCE_CHAIN_DEPTH = 50
 
 /**
+ * One `Var`-into-CTE-range-table-entry hop [NodeTreeProvenanceResolver] followed while chasing a
+ * column's provenance, in the SAME shape [NodeTreeCteReference] carries: the referenced CTE's
+ * [name] and how many query levels up its declaring `:cteList` lives ([ctelevelsup]) relative to
+ * the query block the reference was written in — `0` for that block's OWN `WITH` clause, more for
+ * an enclosing one.
+ *
+ * [resolveNodeTreeProvenanceExpression] replays a [NodeTreeColumnProvenance.hops] list step by
+ * step against the user's own SQL TEXT, maintaining an analogous stack of lexically-nested `WITH`
+ * clauses, to find the EXACT declaration [NodeTreeProvenanceResolver] resolved against — not
+ * merely a same-named one anywhere in the statement. This is what lets a nested `WITH` that
+ * shadows an outer CTE of the same name resolve correctly instead of bailing on the mere
+ * existence of a duplicate name (#238).
+ */
+internal data class CteHop(val name: String, val ctelevelsup: Int)
+
+/**
  * Where a single output column's expression can be found, verbatim, in the user's ORIGINAL SQL
- * text: the CTE named [cteName], at 1-based position [bodyPosition] among that CTE's own output
- * columns (its `:targetList`, or — for a data-modifying CTE — its `:returningList`).
+ * text: at 1-based position [bodyPosition] among the OUTPUT columns (`:targetList`, or — for a
+ * data-modifying CTE — `:returningList`) of the CTE [hops]' LAST entry names.
+ *
+ * [hops] is the FULL sequence of `Var`-into-CTE hops [NodeTreeProvenanceResolver] followed to
+ * reach that CTE — never just its final entry — because a nested `WITH` can shadow an outer CTE of
+ * the SAME name with a DIFFERENT body; only replaying the WHOLE path (each hop's name AND
+ * [CteHop.ctelevelsup]) against the user's SQL text can tell which declaration was actually meant,
+ * rather than merely which name. Always non-empty: [NodeTreeProvenanceResolver] never returns a
+ * [NodeTreeColumnProvenance] without having followed at least one hop.
  *
  * This is deliberately NOT the expression text itself: [NodeTreeProvenanceResolver] answers only
  * "where", working purely from the parsed node tree. Extracting and cross-validating the actual
  * source text at this position against the user's original SQL is a separate, later step.
+ *
+ * @property cteName The LAST hop's CTE name — the one [bodyPosition] indexes into. Convenience for
+ *   a caller that only cares "where does the text live", never used by
+ *   [resolveNodeTreeProvenanceExpression] itself for scope resolution (see [hops] for why the
+ *   name alone is not enough to disambiguate a shadowed one).
  */
-internal data class NodeTreeColumnProvenance(val cteName: String, val bodyPosition: Int)
+internal data class NodeTreeColumnProvenance(val hops: List<CteHop>, val bodyPosition: Int) {
+
+  init {
+    require(hops.isNotEmpty()) { "NodeTreeColumnProvenance requires at least one CTE hop" }
+  }
+
+  val cteName: String get() = hops.last().name
+
+  /**
+   * Convenience constructor for the common single-hop case (a direct reference into a CTE
+   * declared at the SAME query level the reference itself is written in, never nested through a
+   * shadowing `WITH`) — equivalent to `NodeTreeColumnProvenance(listOf(CteHop(cteName, 0)),
+   * bodyPosition)`. Every reference [NodeTreeProvenanceResolver] resolves whose FIRST hop is also
+   * its LAST has `ctelevelsup 0` for that hop by construction: the very first hop is always
+   * resolved against [NodeTreeProvenanceResolver.resolveColumnProvenance]'s own single-level
+   * `outermostScope`, so any `ctelevelsup` other than `0` there has no scope to address and
+   * already bails before a [NodeTreeColumnProvenance] is ever constructed.
+   */
+  constructor(cteName: String, bodyPosition: Int) : this(listOf(CteHop(cteName, 0)), bodyPosition)
+}
 
 /**
  * Resolves each of a query's output columns to the CTE body position that expression was written
@@ -128,7 +175,7 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
     var currentScopeStack = scopeStack
     var currentVar = expression as? PgNodeExpression.Var ?: return null
     if (currentVar.levelsUp != 0) return null
-    var resolvedCteName: String? = null
+    val hops = mutableListOf<CteHop>()
     var resolvedPosition: Int? = null
     var depth = 0
     while (true) {
@@ -147,14 +194,14 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
           val definition = scope[reference.name] ?: return null
           if (definition.recursive) return null
           if (parser.hasSetOperations(definition.queryBlock)) return null
-          resolvedCteName = reference.name
+          hops.add(CteHop(reference.name, reference.ctelevelsup))
           resolvedPosition = currentVar.varattno
           val bodyEntry = outputEntries(definition.queryBlock).find { it.resultNumber == currentVar.varattno }
             ?: return null
           if (bodyEntry.isJunk) return null
           val bodyVar = bodyEntry.expression as? PgNodeExpression.Var
           if (bodyVar == null || bodyVar.levelsUp != 0) {
-            return NodeTreeColumnProvenance(resolvedCteName, resolvedPosition)
+            return NodeTreeColumnProvenance(hops, resolvedPosition)
           }
           currentQueryBlock = definition.queryBlock
           val ownScope = parser.parseCteList(definition.queryBlock).associateBy { it.name }
@@ -162,9 +209,7 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
           currentVar = bodyVar
         }
         else ->
-          return resolvedCteName?.let { name ->
-            resolvedPosition?.let { position -> NodeTreeColumnProvenance(name, position) }
-          }
+          return if (hops.isEmpty()) null else NodeTreeColumnProvenance(hops, resolvedPosition!!)
       }
     }
   }

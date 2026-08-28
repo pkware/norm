@@ -21,15 +21,17 @@ package norm.generator
  * neighboring item's expression instead. Every gate below is required to rule that out; per the
  * "correct or silent" invariant, ANY gate failing returns `null` (no provenance) rather than a wrong
  * expression:
- * - the CTE named [NodeTreeColumnProvenance.cteName] must be findable, by exact name, among every
- *   `WITH` clause reachable in [sql] — not just its own outermost one, since [provenance] can point
- *   into a nested CTE body's own `WITH` (see [allSqlCteDefinitions]) — and, on the node-tree side,
- *   among every `:cteList` reachable in [nodeTreeText] (see [allNodeTreeCteDefinitions]), fold-compared
- *   via [foldIdentifier] against [CteDefinition.rawName], never [CteDefinition.name] — see that
- *   property's own KDoc for why. If that name is declared MORE THAN ONCE across those nesting
- *   depths — an outer CTE shadowed by an inner, differently-bodied one of the same name —
- *   [NodeTreeColumnProvenance] alone cannot say which one [NodeTreeProvenanceResolver] actually
- *   meant, so this gate fails on ANY duplicate rather than guessing.
+ * - the CTE [provenance] points at must be findable by REPLAYING [NodeTreeColumnProvenance.hops]
+ *   step by step — never a flat, name-only search across every `WITH` clause anywhere in the
+ *   statement — both on the node-tree side (see [scopedNodeTreeCteQueryBlock]) and on the SQL-text
+ *   side (see [scopedSqlCteDefinition]). Each hop's own [CteHop.ctelevelsup] says exactly which
+ *   lexically-enclosing `WITH` clause declares it, so a nested `WITH` that shadows an outer CTE of
+ *   the SAME name resolves against the EXACT declaration [NodeTreeProvenanceResolver] walked to,
+ *   rather than failing outright merely because the name is declared more than once somewhere in
+ *   the statement (#238). A single `WITH` clause can never legally declare the same name twice
+ *   (PostgreSQL itself rejects that at parse time), so each hop's own lookup is unambiguous by
+ *   construction — the scoping is what makes uniqueness free, not an additional check layered on
+ *   top of a global search.
  * - [parseOutputItemsWithAlias] over that CTE's body text must yield EXACTLY as many top-level items
  *   as [nodeTreeText] has non-junk body target entries for that same CTE. A mis-split/mis-merge that
  *   happens to preserve the total item count survives this check alone.
@@ -61,9 +63,9 @@ package norm.generator
  *   any) — never [nodeTreeText]'s sentinel-substituted or deparsed form.
  * @param nodeTreeText The SAME node tree [NodeTreeProvenanceResolver] resolved [provenance] from
  *   (`pg_rewrite.ev_action` or `pg_proc.prosqlbody` text, or a bare `{QUERY ...}` block) — re-parsed
- *   here only via [allNodeTreeCteDefinitions], to read the referenced CTE body's own `:resname`s for
- *   cross-validation. Never re-analyzed for nullability or re-queried against the server: this is the
- *   SAME text already in hand from the one probe round trip that produced [provenance].
+ *   here only via [scopedNodeTreeCteQueryBlock], to read the referenced CTE body's own `:resname`s
+ *   for cross-validation. Never re-analyzed for nullability or re-queried against the server: this
+ *   is the SAME text already in hand from the one probe round trip that produced [provenance].
  * @param provenance Where [NodeTreeProvenanceResolver] found the expression — a CTE name and
  *   1-based body position — or `null` if it found nothing, in which case this function is not
  *   called at all (there is nothing to extract).
@@ -78,20 +80,13 @@ internal fun resolveNodeTreeProvenanceExpression(
   provenance: NodeTreeColumnProvenance,
   parser: PgNodeTreeParser = PgNodeTreeParser(),
 ): String? {
-  val cteBodyBlock = allNodeTreeCteDefinitions(nodeTreeText, parser)
-    .filter { it.name == provenance.cteName }
-    .singleOrNull()
-    ?.queryBlock
-    ?: return null
+  val cteBodyBlock = scopedNodeTreeCteQueryBlock(nodeTreeText, provenance.hops, parser) ?: return null
   val bodyResultNames = (parser.parseReturningList(cteBodyBlock).ifEmpty { parser.parseTargetList(cteBodyBlock) })
     .filterNot { it.isJunk }
     .sortedBy { it.resultNumber }
     .map { it.resultName }
 
-  val cteInSql = allSqlCteDefinitions(sql)
-    .filter { foldIdentifier(it.rawName) == provenance.cteName }
-    .singleOrNull()
-    ?: return null
+  val cteInSql = scopedSqlCteDefinition(sql, provenance.hops) ?: return null
   val bodySql = sql.substring(cteInSql.bodyOpenParenthesis + 1, cteInSql.bodyCloseParenthesis)
   val items = parseOutputItemsWithAlias(bodySql)
 
@@ -114,50 +109,83 @@ internal fun resolveNodeTreeProvenanceExpression(
 }
 
 /**
- * Every [NodeTreeCteDefinition] reachable from [nodeTreeText], at ANY nesting depth — not just its
- * own outermost `:cteList`, which is all [PgNodeTreeParser.parseCteList] alone returns. Recurses into
- * each CTE body's own `:cteList` in turn, mirroring exactly the scopes [NodeTreeProvenanceResolver]
- * can walk into (a nested `WITH` inside a CTE body shadowing an enclosing one of the same name).
+ * Replays [hops] against [nodeTreeText]'s own `:cteList` structure, maintaining the SAME
+ * scope-stack shape [NodeTreeProvenanceResolver.resolveVar] built while producing [hops] in the
+ * first place, and returns the LAST hop's CTE body (`:ctequery` block) — the exact declaration
+ * [NodeTreeProvenanceResolver] resolved against, never merely a same-named one elsewhere in the
+ * tree.
  *
- * @see resolveNodeTreeProvenanceExpression's own KDoc for why a name appearing more than once in the
- *   returned list must fail resolution rather than pick either one.
+ * Index `0` of the scope stack is always the CURRENT query block's own `:cteList`; entering a
+ * hop's CTE body pushes that body's OWN `:cteList` onto the front, exactly mirroring
+ * [NodeTreeProvenanceResolver.resolveVar]'s `currentScopeStack` bookkeeping.
+ *
+ * @return `null` if any hop's [CteHop.ctelevelsup] addresses a scope-stack depth that does not
+ *   exist, or its [CteHop.name] is not declared in that scope's `:cteList` — neither can happen for
+ *   [hops] genuinely produced by [NodeTreeProvenanceResolver] against THIS SAME [nodeTreeText], but
+ *   the caller must still treat either as "cannot resolve" rather than assume it.
  */
-private fun allNodeTreeCteDefinitions(nodeTreeText: String, parser: PgNodeTreeParser): List<NodeTreeCteDefinition> =
-  parser.parseCteList(nodeTreeText).flatMap { definition ->
-    listOf(definition) + allNodeTreeCteDefinitions(definition.queryBlock, parser)
+private fun scopedNodeTreeCteQueryBlock(nodeTreeText: String, hops: List<CteHop>, parser: PgNodeTreeParser): String? {
+  var scopeStack = listOf(parser.parseCteList(nodeTreeText).associateBy { it.name })
+  var resolvedQueryBlock: String? = null
+  for (hop in hops) {
+    val scope = scopeStack.getOrNull(hop.ctelevelsup) ?: return null
+    val definition = scope[hop.name] ?: return null
+    resolvedQueryBlock = definition.queryBlock
+    val ownScope = parser.parseCteList(definition.queryBlock).associateBy { it.name }
+    scopeStack = listOf(ownScope) + scopeStack
   }
+  return resolvedQueryBlock
+}
 
 /**
- * The SQL-text counterpart of [allNodeTreeCteDefinitions]: every [CteDefinition] reachable from
- * [originalSql], at any nesting depth, found by recursing into each CTE body's own text —
- * [parseCteClause] itself recognizes a nested `WITH` there when the body starts with one — the SAME
- * scopes [allNodeTreeCteDefinitions] recurses into, on the node-tree side.
+ * The SQL-text counterpart of [scopedNodeTreeCteQueryBlock]: replays [hops] against [sql]'s own
+ * lexically-nested `WITH` clauses, maintaining an analogous scope stack of [CteDefinition] lists
+ * (rather than [NodeTreeCteDefinition] maps), and returns the LAST hop's [CteDefinition] — the
+ * exact declaration in the text that corresponds to the node tree's own resolution.
  *
- * Each returned [CteDefinition]'s [CteDefinition.bodyOpenParenthesis]/[CteDefinition.bodyCloseParenthesis]
- * are always re-based to index into [originalSql] itself — never the (possibly deeply nested) body
- * substring a definition was actually found in — since [resolveNodeTreeProvenanceExpression] always
- * slices [originalSql] directly by whichever [CteDefinition] this function returns.
+ * Every returned (and intermediate) [CteDefinition]'s [CteDefinition.bodyOpenParenthesis]/
+ * [CteDefinition.bodyCloseParenthesis] are always re-based to index into [sql] itself — never the
+ * (possibly deeply nested) body substring a definition was actually found in — since
+ * [resolveNodeTreeProvenanceExpression] always slices [sql] directly by whichever [CteDefinition]
+ * this function returns.
  *
- * @param scanText the text currently being scanned for a leading `WITH` clause: [originalSql] itself
- *   on the initial (non-recursive) call, or a nested CTE body's own substring on every recursive one.
- * @param scanTextOffset [scanText]'s own start index within [originalSql]; `0` on the initial call.
+ * A single `WITH` clause can never legally declare the same name twice (PostgreSQL rejects that at
+ * parse time), so lookup within one scope level never needs a uniqueness check of its own — the
+ * scope stack itself is what supplies the disambiguation a flat, whole-statement name search
+ * cannot.
+ *
+ * @return `null` if any hop's [CteHop.ctelevelsup] addresses a scope-stack depth that does not
+ *   exist, or its [CteHop.name] does not fold-match ([foldIdentifier] against
+ *   [CteDefinition.rawName]) any definition in that scope
  */
-private fun allSqlCteDefinitions(
-  originalSql: String,
-  scanText: String = originalSql,
-  scanTextOffset: Int = 0,
-): List<CteDefinition> {
-  val clause = parseCteClause(scanText) ?: return emptyList()
-  return clause.definitions.flatMap { definition ->
-    val rebased = definition.copy(
-      bodyOpenParenthesis = definition.bodyOpenParenthesis + scanTextOffset,
-      bodyCloseParenthesis = definition.bodyCloseParenthesis + scanTextOffset,
-    )
-    val nestedBodyText = scanText.substring(definition.bodyOpenParenthesis + 1, definition.bodyCloseParenthesis)
-    val nestedBodyOffset = definition.bodyOpenParenthesis + scanTextOffset + 1
-    listOf(rebased) + allSqlCteDefinitions(originalSql, nestedBodyText, nestedBodyOffset)
+private fun scopedSqlCteDefinition(sql: String, hops: List<CteHop>): CteDefinition? {
+  var scopeStack = listOf(rebasedCteDefinitions(sql, 0))
+  var resolvedDefinition: CteDefinition? = null
+  for (hop in hops) {
+    val scope = scopeStack.getOrNull(hop.ctelevelsup) ?: return null
+    val definition = scope.filter { foldIdentifier(it.rawName) == hop.name }.singleOrNull() ?: return null
+    resolvedDefinition = definition
+    val bodyOffset = definition.bodyOpenParenthesis + 1
+    val bodyText = sql.substring(bodyOffset, definition.bodyCloseParenthesis)
+    scopeStack = listOf(rebasedCteDefinitions(bodyText, bodyOffset)) + scopeStack
   }
+  return resolvedDefinition
 }
+
+/**
+ * [parseCteClause]'s own definitions for [text], with every [CteDefinition.bodyOpenParenthesis]/
+ * [CteDefinition.bodyCloseParenthesis] shifted by [offset] so they index into the ORIGINAL SQL
+ * string [text] was sliced from, rather than [text] itself. See [scopedSqlCteDefinition]'s own
+ * KDoc for why every level of its scope stack needs definitions rebased this way.
+ */
+private fun rebasedCteDefinitions(text: String, offset: Int): List<CteDefinition> =
+  parseCteClause(text)?.definitions?.map {
+    it.copy(
+      bodyOpenParenthesis = it.bodyOpenParenthesis + offset,
+      bodyCloseParenthesis =
+      it.bodyCloseParenthesis + offset,
+    )
+  } ?: emptyList()
 
 /**
  * One body item's own [name] — the value PostgreSQL would report as `:resname` for it, the one

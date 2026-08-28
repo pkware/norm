@@ -110,19 +110,20 @@ private fun parseSingleCteDefinition(sql: String, startPosition: Int): Pair<CteD
   // Read CTE name: an unquoted identifier (isIdentifierStartChar, then a run of isIdentifierChar
   // characters), or a double-quoted one. The FIRST character is gated by isIdentifierStartChar,
   // not isIdentifierChar — a leading digit or "$" is not a legal identifier start (see
-  // isIdentifierStartChar's KDoc).
+  // isIdentifierStartChar's KDoc). The quoted branch uses QUOTED_IDENTIFIER_PATTERN, the SAME
+  // ""-escape-aware matcher parseAliasToken uses, rather than stopping at the FIRST '"' — a naive
+  // scan truncates a name like `"He""llo"` to `"He"` at the escaped quote's first half (#238).
   val nameStart = position
   if (position < sql.length && sql[position] == '"') {
-    position++ // skip opening quote
-    while (position < sql.length && sql[position] != '"') position++
-    if (position < sql.length) position++ // skip closing quote
+    val match = QUOTED_IDENTIFIER_PATTERN.matchAt(sql, position)
+    position = if (match != null) match.range.last + 1 else position + 1
   } else if (position < sql.length && isIdentifierStartChar(sql[position])) {
     position++
     while (position < sql.length && isIdentifierChar(sql[position])) position++
   }
   if (position == nameStart) return null
   val rawName = sql.substring(nameStart, position)
-  val name = rawName.trim('"')
+  val name = if (isQuotedIdentifier(rawName)) unescapeQuotedIdentifier(rawName) else rawName
 
   position = skipWhitespaceAndComments(sql, position)
 

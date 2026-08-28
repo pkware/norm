@@ -105,7 +105,12 @@ class NodeTreeProvenanceResolverTest {
         "CREATE TABLE t (d TEXT)",
         "WITH x AS (SELECT UPPER(d) AS d FROM t), y AS (SELECT d FROM x) SELECT d FROM y",
       )
-      assertThat(provenance).containsExactly(NodeTreeColumnProvenance("x", 1))
+      // "y" is declared at the top level (hop 1, ctelevelsup 0 relative to the outer query's own
+      // scope). y's own body has no nested WITH of its own, so its reference to "x" is one level
+      // FURTHER up (hop 2, ctelevelsup 1) -- back at the SAME top-level scope hop 1 was found in.
+      assertThat(provenance).containsExactly(
+        NodeTreeColumnProvenance(listOf(CteHop("y", 0), CteHop("x", 1)), 1),
+      )
     }
 
     @Test
@@ -133,10 +138,14 @@ class NodeTreeProvenanceResolverTest {
           "SELECT ux, n FROM d",
       )
       // "ux" resolves through d's own reference to its INNER "c" (ctelevelsup 0 relative to d's own
-      // body), landing on the inner CTE's own computed expression. "n" never enters a CTE reference
-      // at all -- d's own body position 2 is the literal "1 AS n" -- so it resolves to d's own body,
-      // not to either "c".
-      assertThat(provenance).containsExactly(NodeTreeColumnProvenance("c", 1), NodeTreeColumnProvenance("d", 2))
+      // body), landing on the inner CTE's own computed expression -- hop 1 is "d" (declared at the
+      // top level), hop 2 is the INNER "c" (declared inside d's own body, ctelevelsup 0 relative to
+      // that body). "n" never enters a CTE reference at all -- d's own body position 2 is the
+      // literal "1 AS n" -- so it resolves to d's own body alone, not to either "c".
+      assertThat(provenance).containsExactly(
+        NodeTreeColumnProvenance(listOf(CteHop("d", 0), CteHop("c", 0)), 1),
+        NodeTreeColumnProvenance("d", 2),
+      )
     }
 
     @Test
@@ -147,7 +156,9 @@ class NodeTreeProvenanceResolverTest {
           "b AS (WITH a AS (SELECT LOWER(y) AS ux FROM t) SELECT ux FROM a) " +
           "SELECT ux FROM b",
       )
-      assertThat(provenance).containsExactly(NodeTreeColumnProvenance("a", 1))
+      assertThat(provenance).containsExactly(
+        NodeTreeColumnProvenance(listOf(CteHop("b", 0), CteHop("a", 0)), 1),
+      )
     }
 
     @Test
@@ -158,7 +169,9 @@ class NodeTreeProvenanceResolverTest {
         "CREATE TABLE t (y TEXT)",
         "WITH d AS (WITH e AS (SELECT LOWER(y) AS uy FROM t) SELECT uy FROM e) SELECT uy FROM d",
       )
-      assertThat(provenance).containsExactly(NodeTreeColumnProvenance("e", 1))
+      assertThat(provenance).containsExactly(
+        NodeTreeColumnProvenance(listOf(CteHop("d", 0), CteHop("e", 0)), 1),
+      )
     }
   }
 

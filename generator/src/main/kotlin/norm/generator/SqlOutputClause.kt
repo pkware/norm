@@ -76,10 +76,12 @@ internal data class SelectItem(
  * lone star is left alone, and items at/after a star fall back to metadata unresolved.
  *
  * @return Items strictly before the first star, if any; the full list if there is no star or it's
- *   a single star item; or empty if the output clause can't be found (e.g. a parenthesized main
- *   query, a `VALUES` list, or a `TABLE` shorthand — none have a depth-0 `SELECT`/`RETURNING`).
- *   Both consumers degrade safely for a missing item, falling back to
- *   `ResultSetMetaData.getColumnName` rather than reporting a wrong original name.
+ *   a single star item; or empty if the output clause can't be found (e.g. a `VALUES` list, a
+ *   `TABLE` shorthand, or two SEPARATELY parenthesized set-operation branches like `(SELECT a)
+ *   UNION (SELECT b)` — none have a depth-0 `SELECT`/`RETURNING`; a main query or CTE body wrapped
+ *   in one redundant pair of parentheses, `(SELECT ...)`, DOES resolve — see
+ *   [stripRedundantOuterParentheses]). Both consumers degrade safely for a missing item, falling
+ *   back to `ResultSetMetaData.getColumnName` rather than reporting a wrong original name.
  */
 internal fun parseSelectItems(sql: String): List<SelectItem> = parseOutputItemsWithAlias(sql).map { it.selectItem }
 
@@ -140,7 +142,7 @@ internal data class OutputItemWithAlias(val selectItem: SelectItem, val alias: S
  */
 internal fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> {
   val mainQueryStart = parseCteClause(sql)?.mainQueryStart ?: 0
-  val window = sql.substring(mainQueryStart)
+  val window = stripRedundantOuterParentheses(sql.substring(mainQueryStart))
 
   // See parseSelectItems' KDoc for why RETURNING is gated on the main query's own leading keyword.
   val leadingKeywordStart = skipWhitespaceAndComments(window, 0)
@@ -187,6 +189,34 @@ internal fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> {
 
   val firstStarIndex = items.indexOfFirst { isStarItem(it.selectItem.expression) }
   return if (firstStarIndex < 0 || items.size == 1) items else items.take(firstStarIndex)
+}
+
+/**
+ * Strips a REDUNDANT `(`...`)` pair wrapping [text]'s ENTIRE remaining content, repeatedly, as
+ * long as one remains — `(SELECT ...)`, `((SELECT ...))`, etc.
+ *
+ * A CTE body (or a whole top-level query) may legally wrap its `SELECT`/`RETURNING`/DML statement
+ * in one or more redundant parenthesis pairs. Without stripping them first, [findTopLevelKeyword]
+ * never finds an unquoted `SELECT`/`RETURNING` at paren depth ZERO: the extra, unmatched leading
+ * `(` puts the whole rest of the text at depth ONE instead, so [parseOutputItemsWithAlias] returns
+ * no items at all for an otherwise-ordinary body (#238).
+ *
+ * A pair only counts as wrapping the ENTIRE remaining text when the first non-whitespace/comment
+ * character is `(` AND its own matching close parenthesis is the LAST non-whitespace/comment
+ * character in [text] — never merely "starts with ( and ends with )", which would also match two
+ * SEPARATELY parenthesized set-operation branches (`(SELECT a) UNION (SELECT b)`), where the first
+ * `(`'s own match is nowhere near the end.
+ */
+private fun stripRedundantOuterParentheses(text: String): String {
+  var current = text
+  while (true) {
+    val start = skipWhitespaceAndComments(current, 0)
+    if (start >= current.length || current[start] != '(') return current
+    val closeParenthesis = findMatchingCloseParenthesis(current, start)
+    if (closeParenthesis < 0) return current
+    if (skipWhitespaceAndComments(current, closeParenthesis + 1) != current.length) return current
+    current = current.substring(start + 1, closeParenthesis)
+  }
 }
 
 /**

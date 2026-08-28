@@ -18,6 +18,7 @@ import kotlin.jvm.JvmRecord
  * SELECT ux, n FROM outer_consumer
  * ```
  *
+ * @property ux (`LOWER(name)`)
  * @property n (`1`)
  */
 @JvmRecord

@@ -16,9 +16,10 @@ import kotlin.jvm.JvmRecord
  * ```
  *
  * @property source_parent_id (`parent.id`)
+ * @property merged_description (`UPPER(description)`)
  */
 @JvmRecord
 public data class MergeChildFromParentDescriptionUpper(
-  public val source_parent_id: UUID?,
+  public val source_parent_id: UUID,
   public val merged_description: String?,
 )

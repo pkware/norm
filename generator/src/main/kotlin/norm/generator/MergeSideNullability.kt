@@ -37,20 +37,26 @@ internal data class MergeSideNullability(val targetCanBeAbsent: Boolean, val sou
  * @param targetRelationName the REAL table name (not alias — resolved by the caller via the
  *   parsed query tree's own `:rtable`/`relid`, e.g. through [PgCatalogLoader]'s catalog lookups,
  *   never by re-parsing the SQL text) of the `MERGE`'s target relation
- * @param sourceRelationName the REAL table name of the `MERGE`'s source relation
+ * @param sourceRelationNames every name the `MERGE`'s source relation might be attributed under in
+ *   the plan — normally a single REAL table name, but a CTE source offers TWO candidates (its own
+ *   literal name, for a `MATERIALIZED` or otherwise non-inlined plan; and, when resolvable, the
+ *   single base table its body inlines to) since nothing in the parsed query tree says which shape
+ *   the planner will choose — see [PgCatalogLoader.mergeAbsentVarnos]'s own KDoc for how the
+ *   caller builds this set. At most ONE candidate can ever actually appear in a given plan, so
+ *   offering more than one never risks attributing the wrong side.
  * @return `null` when `EXPLAIN` fails, its JSON cannot be parsed, no plan node is UNIQUELY
  *   identifiable as the `ModifyTable` implementing this `MERGE` (see
  *   [findMergeModifyTableNode]'s KDoc), or NO join node within that node's own join tree (see
- *   [findOwnJoinNodes]'s KDoc) lets [targetRelationName] and [sourceRelationName] each be
- *   attributed to exactly one, DIFFERENT side (e.g. the `USING` clause has more than one relation
- *   of its own, so no single join is simply target-vs-source) — the caller must treat `null` as
- *   "cannot determine", never as "neither side is nullable".
+ *   [findOwnJoinNodes]'s KDoc) lets [targetRelationName] and exactly one name from
+ *   [sourceRelationNames] each be attributed to exactly one, DIFFERENT side (e.g. the `USING`
+ *   clause has more than one relation of its own, so no single join is simply target-vs-source) —
+ *   the caller must treat `null` as "cannot determine", never as "neither side is nullable".
  */
 internal fun explainMergeSideNullability(
   connection: Connection,
   @Language("PostgreSQL") sql: String,
   targetRelationName: String,
-  sourceRelationName: String,
+  sourceRelationNames: Set<String>,
 ): MergeSideNullability? {
   val explainJsonText = try {
     connection.createStatement().use { statement ->
@@ -71,7 +77,7 @@ internal fun explainMergeSideNullability(
   }
   val mergeModifyTableNode = findMergeModifyTableNode(planNode, targetRelationName) ?: return null
   for (joinNode in findOwnJoinNodes(mergeModifyTableNode)) {
-    val mapping = attributeJoinToSides(joinNode, targetRelationName, sourceRelationName)
+    val mapping = attributeJoinToSides(joinNode, targetRelationName, sourceRelationNames)
     if (mapping != null) return mapping
   }
   return null
@@ -80,7 +86,7 @@ internal fun explainMergeSideNullability(
 private fun attributeJoinToSides(
   joinNode: JsonValue.JsonObject,
   targetRelationName: String,
-  sourceRelationName: String,
+  sourceRelationNames: Set<String>,
 ): MergeSideNullability? {
   val joinType = (joinNode.fields["Join Type"] as? JsonValue.JsonString)?.value ?: return null
   if (joinType != "Inner" && joinType != "Left" && joinType != "Right" && joinType != "Full") return null
@@ -93,8 +99,8 @@ private fun attributeJoinToSides(
   val innerRelationNames = collectRelationNames(childPlans[1])
   val targetIsOuter = targetRelationName in outerRelationNames
   val targetIsInner = targetRelationName in innerRelationNames
-  val sourceIsOuter = sourceRelationName in outerRelationNames
-  val sourceIsInner = sourceRelationName in innerRelationNames
+  val sourceIsOuter = sourceRelationNames.any { it in outerRelationNames }
+  val sourceIsInner = sourceRelationNames.any { it in innerRelationNames }
   // Each relation must appear on EXACTLY ONE side, and target/source must be on DIFFERENT sides —
   // otherwise this ISN'T the join being searched for (e.g. it's an unrelated join the outer
   // statement introduces, or the USING clause has more than one relation of its own) and this
@@ -161,11 +167,18 @@ private fun findOwnJoinNodes(mergeModifyTableNode: JsonValue.JsonObject): List<J
   walk(mergeModifyTableNode)
 }
 
-/** Every `"Relation Name"` reachable from [node], including [node] itself, at any depth. */
+/**
+ * Every `"Relation Name"` (a base table or view) OR `"CTE Name"` (a `MATERIALIZED`, or otherwise
+ * non-inlined, CTE's own `"CTE Scan"` node) reachable from [node], including [node] itself, at any
+ * depth. Both fields are collected together because a CTE source can appear as EITHER, depending
+ * on a planner decision the parsed query tree cannot predict — see [explainMergeSideNullability]'s
+ * own KDoc for how its caller offers both candidate names to cover either shape.
+ */
 private fun collectRelationNames(node: JsonValue.JsonObject): Set<String> {
   val names = mutableSetOf<String>()
   fun walk(current: JsonValue.JsonObject) {
     (current.fields["Relation Name"] as? JsonValue.JsonString)?.let { names.add(it.value) }
+    (current.fields["CTE Name"] as? JsonValue.JsonString)?.let { names.add(it.value) }
     (current.fields["Plans"] as? JsonValue.JsonArray)?.items?.filterIsInstance<JsonValue.JsonObject>()?.forEach(::walk)
   }
   walk(node)

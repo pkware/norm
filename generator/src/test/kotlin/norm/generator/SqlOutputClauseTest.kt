@@ -530,23 +530,18 @@ class SqlOutputClauseTest {
     }
 
     @Test
-    fun `parenthesized main query following a CTE clause yields no items`() {
-      // Documented fail-safe: a top-level search inside the window cannot see into the
-      // parenthesized main query, so this falls back to an empty list rather than guessing wrong.
+    fun `a parenthesized main query following a CTE clause still resolves`() {
+      // #238: stripRedundantOuterParentheses peels the one pair wrapping the WHOLE main query
+      // before the depth-0 search runs, so this now resolves exactly like the unparenthesized form.
       val result = parseSelectItems("WITH c AS (SELECT 1 AS a) (SELECT a FROM c)")
-      assertThat(result).isEmpty()
+      assertThat(result).containsExactly(SelectItem("a", "a", null))
     }
 
     @Test
-    fun `parenthesized main query with no WITH clause yields no items`() {
-      // Fail-safe pin, NOT a bug reproduction: this passes on the current code by construction —
-      // there is no fix being verified here. HEAD's naive String.indexOf-based search did not
-      // track paren depth, so it found "SELECT a" inside the parentheses regardless of depth and
-      // resolved it to the correct [a]. The depth-0 search this function replaced it with cannot
-      // see a SELECT sitting at depth 1, so it now returns emptyList() instead — a KNOWN, accepted
-      // loss of precision (never a WRONG answer, just a lost one), documented on parseSelectItems.
+    fun `a parenthesized main query with no WITH clause still resolves`() {
+      // #238: same fix as above, with no leading WITH clause at all.
       val result = parseSelectItems("(SELECT a FROM x)")
-      assertThat(result).isEmpty()
+      assertThat(result).containsExactly(SelectItem("a", "a", null))
     }
 
     @Test
@@ -569,6 +564,33 @@ class SqlOutputClauseTest {
       // Regression guard, not a #212 reproduction: this already passed before the fix, for the
       // same reason as the VALUES case above.
       val result = parseSelectItems("TABLE t")
+      assertThat(result).isEmpty()
+    }
+
+    @Test
+    fun `a body wrapped in one redundant pair of parentheses still finds the top-level SELECT`() {
+      // #238: a CTE body like `(SELECT ...)` slices to exactly this text. The extra, unmatched
+      // leading "(" previously put the whole rest of the text at paren depth ONE, so
+      // findTopLevelKeyword never found "SELECT" at depth zero and this returned empty.
+      val result = parseSelectItems("(SELECT id, UPPER(name) AS name_upper FROM parent)")
+      assertThat(result).containsExactly(
+        SelectItem("id", "id", null),
+        SelectItem("UPPER(name)", null, null),
+      )
+    }
+
+    @Test
+    fun `a body wrapped in two redundant pairs of parentheses still finds the top-level SELECT`() {
+      val result = parseSelectItems("((SELECT id FROM parent))")
+      assertThat(result).containsExactly(SelectItem("id", "id", null))
+    }
+
+    @Test
+    fun `two separately parenthesized set-operation branches are NOT treated as one redundant wrapping`() {
+      // The first "(" here does NOT wrap the ENTIRE text -- its own matching ")" is followed by
+      // " UNION (...)", not the end of the string -- so stripping must decline rather than peel it
+      // off and misread only the first branch as the whole body.
+      val result = parseSelectItems("(SELECT id FROM parent) UNION (SELECT id FROM child)")
       assertThat(result).isEmpty()
     }
 

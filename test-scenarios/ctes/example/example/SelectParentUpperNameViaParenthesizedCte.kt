@@ -13,6 +13,7 @@ import kotlin.jvm.JvmRecord
  * ```
  *
  * @property id (`parent.id`)
+ * @property name_upper (`UPPER(name)`)
  */
 @JvmRecord
 public data class SelectParentUpperNameViaParenthesizedCte(

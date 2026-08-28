@@ -13,6 +13,7 @@ import kotlin.jvm.JvmRecord
  * ```
  *
  * @property id (`parent.id`)
+ * @property `My Col` (`UPPER(name)`)
  */
 @JvmRecord
 public data class SelectViaQuotedCteNameWithEmbeddedQuotes(

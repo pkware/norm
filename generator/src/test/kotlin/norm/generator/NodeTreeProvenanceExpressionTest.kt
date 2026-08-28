@@ -92,6 +92,22 @@ class NodeTreeProvenanceExpressionTest {
     }
 
     @Test
+    fun `a CTE body wrapped in redundant parentheses still resolves`() {
+      // #238: `parseOutputItemsWithAlias` previously found no top-level SELECT once the sliced
+      // body text started with an extra, unmatched "(", since that put the whole rest of the text
+      // at paren depth ONE.
+      val ddl = "CREATE TABLE parent (id INT, name TEXT)"
+      val sql = """
+        WITH a AS (
+          (SELECT id, UPPER(name) AS ux FROM parent)
+        )
+        SELECT ux FROM a
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql)).isEqualTo("UPPER(name)")
+    }
+
+    @Test
     fun `no WITH clause at all resolves to nothing`() {
       val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
       val sql = "SELECT UPPER(description) AS description_upper FROM parent"
@@ -425,14 +441,12 @@ class NodeTreeProvenanceExpressionTest {
   inner class NestedCteShadowing {
 
     @Test
-    fun `a nested WITH that shadows an outer CTE name never emits the outer body's expression`() {
-      // #238 P0 repro. Before this file's fix, both the node-tree AND SQL-text re-derivation only
-      // ever looked at nodeTreeText's/sql's own OUTERMOST WITH clause by name, so a reference
-      // NodeTreeProvenanceResolver correctly resolved against the INNER, shadowing "c" got handed
-      // the OUTER "c"'s body text instead -- "UPPER(name)" instead of "LOWER(description)". The name
-      // "c" is declared twice (outer and, inside "d"'s own body, a shadowing inner one), which is
-      // provably ambiguous from a bare name alone, so the correct, non-guessing answer is `null`, not
-      // either body's text.
+    fun `a nested WITH that shadows an outer CTE name resolves against the INNER, correctly-scoped body`() {
+      // #238: the name "c" is declared twice -- an outer one, and, inside "d"'s own body, a
+      // shadowing inner one with a DIFFERENT body. NodeTreeProvenanceResolver already walks to the
+      // INNER "c" correctly (it tracks each hop's own :ctelevelsup); resolveNodeTreeProvenanceExpression
+      // now replays that SAME hop path (["d", "c"], not a bare "c") against the SQL text, so it lands
+      // on the INNER "c"'s own body -- LOWER(description) -- never the OUTER one's UPPER(name).
       val ddl = "CREATE TABLE parent (name TEXT, description TEXT)"
       val sql = """
         WITH c AS (SELECT UPPER(name) AS ux FROM parent),
@@ -440,7 +454,7 @@ class NodeTreeProvenanceExpressionTest {
         SELECT ux, n FROM d
       """.trimIndent()
 
-      assertThat(resolvedExpression(ddl, sql, columnIndex = 0)).isNull()
+      assertThat(resolvedExpression(ddl, sql, columnIndex = 0)).isEqualTo("LOWER(description)")
       // The second column never enters either "c" at all -- it resolves against "d"'s own body
       // position 2, a plain literal -- so it is unaffected by the "c"/"c" name collision and still
       // resolves normally.
@@ -448,7 +462,7 @@ class NodeTreeProvenanceExpressionTest {
     }
 
     @Test
-    fun `sibling CTEs where the second one shadows the first's name never emit the outer body's expression`() {
+    fun `sibling CTEs where the second one shadows the first's name resolve against the INNER body`() {
       val ddl = "CREATE TABLE t (x TEXT, y TEXT)"
       val sql = """
         WITH a AS (SELECT UPPER(x) AS ux FROM t),
@@ -456,7 +470,8 @@ class NodeTreeProvenanceExpressionTest {
         SELECT ux FROM b
       """.trimIndent()
 
-      assertThat(resolvedExpression(ddl, sql)).isNull()
+      // Proves the INNER shadowing declaration wins, not the outer one: LOWER(y), never UPPER(x).
+      assertThat(resolvedExpression(ddl, sql)).isEqualTo("LOWER(y)")
     }
 
     @Test
@@ -649,6 +664,20 @@ class NodeTreeProvenanceExpressionTest {
       val sql = """
         WITH c AS (SELECT UPPER(a) AS "He""llo" FROM t)
         SELECT "He""llo" FROM c
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql)).isEqualTo("UPPER(a)")
+    }
+
+    @Test
+    fun `a CTE name with an escaped embedded double-quote resolves by its real, unescaped name`() {
+      // #238: parseSingleCteDefinition's quoted-name scan previously stopped at the FIRST '"',
+      // truncating rawName to `"He"` -- fold-comparing that against the node tree's real ctename
+      // `He"llo` never matched, so this resolved to nothing.
+      val ddl = "CREATE TABLE t (a TEXT, b TEXT)"
+      val sql = """
+        WITH "He""llo" AS (SELECT UPPER(a) AS ux FROM t)
+        SELECT ux FROM "He""llo"
       """.trimIndent()
 
       assertThat(resolvedExpression(ddl, sql)).isEqualTo("UPPER(a)")

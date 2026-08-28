@@ -828,7 +828,7 @@ public interface Queries : Transactable {
    * RETURNING desc_source.id AS source_parent_id, desc_source.description_upper AS merged_description
    * ```
    */
-  public fun <T : Any> mergeChildFromParentDescriptionUpper(mapper: (source_parent_id: UUID?, merged_description: String?) -> T): Many<T>
+  public fun <T : Any> mergeChildFromParentDescriptionUpper(mapper: (source_parent_id: UUID, merged_description: String?) -> T): Many<T>
 
   /**
    * #238: MERGE ... RETURNING resolves the returned CTE column to its body position.
@@ -845,7 +845,7 @@ public interface Queries : Transactable {
    */
   public fun mergeChildFromParentDescriptionUpper(): Many<MergeChildFromParentDescriptionUpper> = mergeChildFromParentDescriptionUpper(::MergeChildFromParentDescriptionUpper)
 
-  public fun <T : Any> mergeChildFromParentDescriptionUpperDynamically(mapper: (source_parent_id: UUID?, merged_description: String?) -> T): Query<T>
+  public fun <T : Any> mergeChildFromParentDescriptionUpperDynamically(mapper: (source_parent_id: UUID, merged_description: String?) -> T): Query<T>
 
   public fun mergeChildFromParentDescriptionUpperDynamically(): Query<MergeChildFromParentDescriptionUpper> = mergeChildFromParentDescriptionUpperDynamically(::MergeChildFromParentDescriptionUpper)
 
