@@ -40,3 +40,18 @@ CREATE TABLE document (
   title TEXT NOT NULL,
   metadata JSONB
 );
+
+-- Table with quoted, mixed-case, space-containing, and mixed-case-reserved-word column names: pins
+-- CrudQuerySynthesizer's own identifier quoting in the SQL it BUILDS (INSERT), a different surface
+-- from reading such columns back, which test-scenarios/comments/schema.sql's "tq" table already
+-- covers (#238). An embedded double quote (e.g. "a""b") is deliberately NOT added here: it produces
+-- valid SQL (JdbcAnalyzerTest and SqlParameterInferrerTest pin that at the unit level, #238 11.4),
+-- but the resulting Kotlin identifier containing a literal `"` still trips a kotlinc "problems on
+-- Windows" warning-as-error in a real compiling project -- the same pre-existing, out-of-scope
+-- naming-pipeline gap already documented for a backtick, "*/", ".", and a literal newline.
+CREATE TABLE quoted_columns (
+  id SERIAL PRIMARY KEY,
+  "Foo" TEXT NOT NULL,
+  "My Col" TEXT,
+  "Select" TEXT
+);

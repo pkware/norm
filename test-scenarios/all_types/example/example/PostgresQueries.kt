@@ -1317,8 +1317,8 @@ public class PostgresQueries(
       )
     }
     return driver.queryOne(sql, rowReader) {
-      setString(1, value)
-      setString(2, value)
+      setString(1, `value`)
+      setString(2, `value`)
     }
   }
 
@@ -1526,8 +1526,8 @@ public class PostgresQueries(
       )
     }
     val queryBinder: (PreparedStatement.() -> Unit)? = {
-      setString(1, value)
-      setString(2, value)
+      setString(1, `value`)
+      setString(2, `value`)
     }
     return processor.invoke(sql, rowReader, queryBinder)
   }

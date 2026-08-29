@@ -47,6 +47,19 @@ class SqlParameterInferrerTest {
     }
 
     @Test
+    fun `un-doubles an embedded double quote in a quoted INSERT column name`() {
+      // A column literally named a"b is spelled "a""b" in SQL, per PostgreSQL's own quoted-identifier
+      // escape rule (the embedded "" is one literal " character, not two) -- unquoteIdentifier
+      // stripped only the outer quotes, leaving the doubled internal quote as two literal characters
+      // instead of un-escaping it back to the one character the real column is actually named.
+      val result = inferrer.inferParameterInfo("""INSERT INTO t("a""b") VALUES (?)""")
+
+      assertThat(result.getValue(1)).isEqualTo(
+        InferredParameter("a\"b", "t", inheritsNullability = true, columnName = "a\"b"),
+      )
+    }
+
+    @Test
     fun `function arg names override INSERT column names but preserve columnName for nullability`() {
       val result = inferrer.inferParameterInfo(
         "INSERT INTO user_credentials(username, password_hash) VALUES (?, crypt(?, gen_salt('bf')))",
@@ -208,6 +221,28 @@ class SqlParameterInferrerTest {
     fun `SELECT without table has null tableName`() {
       val result = inferrer.inferParameterInfo("SELECT upper(?) AS result")
       assertThat(result.getValue(1).tableName).isNull()
+    }
+
+    @Test
+    fun `un-doubles an embedded double quote in a quoted WHERE column name`() {
+      // SQL_IDENTIFIER's quoted branch could not span a doubled internal quote, so `"a""b" = ?`
+      // matched only the trailing `"b"` fragment instead of the whole identifier -- the un-doubling
+      // added for the INSERT path was never reached from here. The WHERE path never sets
+      // `columnName` separately (it reuses `name` for both the parameter's display name and its
+      // catalog lookup key, via `inferred?.columnName ?: inferred?.name` in
+      // JdbcAnalyzer.buildParameters), so `name` alone must carry the un-doubled column name.
+      val result = inferrer.inferParameterInfo("""SELECT id FROM q WHERE "a""b" = ?""")
+      assertThat(result.getValue(1).name).isEqualTo("a\"b")
+    }
+
+    @Test
+    fun `un-doubles an embedded double quote in a quoted WHERE column name for a second column`() {
+      // Proves the whole WHERE clause is fixed, not just its first match -- distinct doubled-quote
+      // identifiers in the same clause must each resolve to their own real column name rather than
+      // colliding on a shared malformed fragment.
+      val result = inferrer.inferParameterInfo("""SELECT id FROM q WHERE "a""b" = ? AND "c""b" = ?""")
+      assertThat(result.getValue(1).name).isEqualTo("a\"b")
+      assertThat(result.getValue(2).name).isEqualTo("c\"b")
     }
   }
 

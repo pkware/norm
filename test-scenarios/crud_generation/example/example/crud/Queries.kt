@@ -929,4 +929,204 @@ public interface Queries : Transactable {
    */
   @Throws(SQLException::class)
   public fun deleteAllProduct(): Int
+
+  /**
+   * ```sql
+   * INSERT INTO quoted_columns ("Foo", "My Col", "Select") VALUES (?, ?, ?) RETURNING id
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> insertQuotedColumns(
+    Foo: String,
+    `My Col`: String?,
+    Select: String?,
+    mapper: (id: Int) -> T,
+  ): T
+
+  /**
+   * ```sql
+   * INSERT INTO quoted_columns ("Foo", "My Col", "Select") VALUES (?, ?, ?) RETURNING id
+   * ```
+   *
+   * @return A list containing the generated values for each inserted row, in insertion order.
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any, T : Any> insertQuotedColumns(
+    stream: Iterable<Input>,
+    Foo: (Input) -> String,
+    `My Col`: (Input) -> String?,
+    Select: (Input) -> String?,
+    mapper: (id: Int) -> T,
+    batchSize: Int,
+  ): List<T>
+
+  /**
+   * ```sql
+   * INSERT INTO quoted_columns ("Foo", "My Col", "Select") VALUES (?, ?, ?) RETURNING id
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return A list containing the generated values for each inserted row, in insertion order.
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> insertQuotedColumns(
+    stream: Iterable<Input>,
+    Foo: (Input) -> String,
+    `My Col`: (Input) -> String?,
+    Select: (Input) -> String?,
+  ): List<Int> = insertQuotedColumns(stream, Foo, `My Col`, Select, ::inputValue, 100)
+
+  /**
+   * ```sql
+   * INSERT INTO quoted_columns ("Foo", "My Col", "Select") VALUES (?, ?, ?) RETURNING id
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun insertQuotedColumns(
+    Foo: String,
+    `My Col`: String?,
+    Select: String?,
+  ): Int = insertQuotedColumns(Foo, `My Col`, Select, ::inputValue)
+
+  /**
+   * ```sql
+   * SELECT * FROM quoted_columns WHERE id = ?
+   * ```
+   */
+  public fun <T : Any> findQuotedColumnsById(id: Int, mapper: (
+    id: Int,
+    Foo: String,
+    `My Col`: String?,
+    Select: String?,
+  ) -> T): Many<T>
+
+  /**
+   * ```sql
+   * SELECT * FROM quoted_columns WHERE id = ?
+   * ```
+   */
+  public fun findQuotedColumnsById(id: Int): Many<QuotedColumns> = findQuotedColumnsById(id, ::QuotedColumns)
+
+  /**
+   * ```sql
+   * SELECT EXISTS(SELECT 1 FROM quoted_columns WHERE id = ?)
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> existsQuotedColumnsById(id: Int, mapper: (exists: Boolean) -> T): T
+
+  /**
+   * ```sql
+   * SELECT EXISTS(SELECT 1 FROM quoted_columns WHERE id = ?)
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun existsQuotedColumnsById(id: Int): Boolean = existsQuotedColumnsById(id, ::inputValue)
+
+  /**
+   * ```sql
+   * DELETE FROM quoted_columns WHERE id = ?
+   * ```
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> deleteQuotedColumnsById(
+    stream: Iterable<Input>,
+    id: (Input) -> Int,
+    batchSize: Int,
+  ): IntArray
+
+  /**
+   * ```sql
+   * DELETE FROM quoted_columns WHERE id = ?
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> deleteQuotedColumnsById(stream: Iterable<Input>, id: (Input) -> Int): IntArray = deleteQuotedColumnsById(stream, id, 100)
+
+  /**
+   * ```sql
+   * DELETE FROM quoted_columns WHERE id = ?
+   * ```
+   *
+   * @return The number of rows updated.
+   */
+  @Throws(SQLException::class)
+  public fun deleteQuotedColumnsById(id: Int): Int
+
+  /**
+   * ```sql
+   * SELECT * FROM quoted_columns
+   * ```
+   */
+  public fun <T : Any> findAllQuotedColumns(mapper: (
+    id: Int,
+    Foo: String,
+    `My Col`: String?,
+    Select: String?,
+  ) -> T): Many<T>
+
+  /**
+   * ```sql
+   * SELECT * FROM quoted_columns
+   * ```
+   */
+  public fun findAllQuotedColumns(): Many<QuotedColumns> = findAllQuotedColumns(::QuotedColumns)
+
+  public fun <T : Any> findAllQuotedColumnsDynamically(mapper: (
+    id: Int,
+    Foo: String,
+    `My Col`: String?,
+    Select: String?,
+  ) -> T): Query<T>
+
+  public fun findAllQuotedColumnsDynamically(): Query<QuotedColumns> = findAllQuotedColumnsDynamically(::QuotedColumns)
+
+  /**
+   * ```sql
+   * SELECT COUNT(*) FROM quoted_columns
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> countQuotedColumns(mapper: (count: Long) -> T): T
+
+  /**
+   * ```sql
+   * SELECT COUNT(*) FROM quoted_columns
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun countQuotedColumns(): Long = countQuotedColumns(::inputValue)
+
+  /**
+   * ```sql
+   * DELETE FROM quoted_columns
+   * ```
+   *
+   * @return The number of rows updated.
+   */
+  @Throws(SQLException::class)
+  public fun deleteAllQuotedColumns(): Int
 }

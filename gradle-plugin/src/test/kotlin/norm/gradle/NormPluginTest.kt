@@ -432,44 +432,34 @@ class NormPluginTest {
     assertThat(result.output).contains("Cannot mix named")
   }
 
-  @Test
-  fun `synthesized CRUD query failure identifies the source table`() {
-    val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
-    project.setupSettingsOnly()
-
-    // A table whose name contains a literal double-quote character (created via the "" escape in SQL DDL).
-    // CrudQuerySynthesizer wraps identifiers in double-quotes but does not escape embedded quotes,
-    // so the synthesized SQL contains an invalid identifier like `"tab"le"`, causing a SQL error.
-    val schema = projectDir.resolve("schema.sql")
-    schema.writeText("""CREATE TABLE "tab""le" (id serial PRIMARY KEY);""")
-
-    val queries = projectDir.resolve("queries.sql")
-    queries.writeText("")
-
-    project.buildFile.writeText(
-      """
-      plugins {
-        kotlin("jvm")
-        id("com.pkware.norm")
-      }
-
-      norm {
-        databases {
-          create("Test") {
-            packageName = "example"
-            schemas.addAll("$schema")
-            queries.addAll("$queries")
-            generateCrud = true
-          }
-        }
-      }
-      """.trimIndent(),
-    )
-
-    val result = project.gradle("normGenerateTest").buildAndFail()
-    assertThat(result.output).contains("synthesized CRUD for table")
-    assertThat(result.output).contains("tab")
-  }
+  // A dedicated "synthesized CRUD query failure identifies the source table" test used to live here,
+  // triggered by a table name containing a literal double quote ("tab""le") that CrudQuerySynthesizer
+  // wrapped without doubling the embedded quote, producing invalid SQL. That was a bug in the
+  // QUOTING, not an inherent property of the trigger (#238 11.4 fixed it), so the build started
+  // succeeding instead of failing and the test broke.
+  //
+  // Searched for a replacement trigger that fails to ANALYZE by construction, live against
+  // PostgreSQL 18, rather than by an escaping bug that could be fixed out from under it again:
+  // reserved/mixed-case/space-containing/quote-containing identifiers (all now correctly quoted),
+  // GENERATED ALWAYS AS IDENTITY and STORED-generated columns (already correctly excluded from
+  // INSERT via pgjdbc's own IS_AUTOINCREMENT/IS_GENERATEDCOLUMN metadata), a PRIMARY KEY of a type
+  // with no default btree operator class (point, json, xml -- these fail at CREATE TABLE itself,
+  // before CrudQuerySynthesizer ever sees the table), a zero-column table, a foreign table (already
+  // excluded -- introspectTables' own getTables() call never requests "FOREIGN TABLE" as one of its
+  // types), and a partitioned table with zero partitions attached (PREPARE never checks partition
+  // routing or writability -- those are execution-time concerns, and Norm's analysis phase only
+  // ever prepares a statement, never executes one). None reproduces a PREPARE-time failure.
+  //
+  // Every statement CrudQuerySynthesizer builds is one of: `INSERT INTO t (cols) VALUES (?, ...)`
+  // (each `?`'s type is resolved unambiguously from its target column, which is by definition a
+  // real column of a creatable type), or `... WHERE pk = ? [AND pk2 = ? ...]` (each `pk` column is,
+  // by definition, one PostgreSQL already required to have a working btree equality operator in
+  // order to create the primary key in the first place). There is no longer a live PostgreSQL
+  // relation shape that makes synthesized CRUD fail to analyze -- CrudQuerySynthesizer's own output
+  // is total over anything the catalog can hold. The shared error-wrapping mechanism itself
+  // (`NormGenerateTask.sourceLabel`) is still exercised by the sibling
+  // `query analysis failure includes the query name in the error` test above, via a hand-written
+  // query referencing a table that does not exist -- a trigger that can never be "fixed" away.
 
   @Test
   fun `schemas can be specified as a directory`() {
