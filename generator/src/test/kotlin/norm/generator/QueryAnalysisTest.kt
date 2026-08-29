@@ -4844,17 +4844,44 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `MERGE fed by a CTE source reports the passed-through column nullable`() {
+    fun `MERGE USING a non-MATERIALIZED CTE source correctly reports a passed-through key column NOT NULL`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "MERGE RETURNING requires PostgreSQL 17+")
+      // #238: end-to-end pin for the exact shape that previously lost provenance for the WHOLE
+      // query (queryColumnNullabilityViaProsqlbody's mergeAbsentVarnos ?: return null short-
+      // circuited the ENTIRE probe, so every column -- not just the CTE-sourced ones -- fell back
+      // to nullable with no provenance). "desc_source.id" is parent's own primary key, genuinely
+      // NOT NULL; "merged_description" is UPPER(description) over a nullable column, genuinely
+      // nullable regardless of this fix.
+      val query = analyzeWithSchema(
+        """
+        CREATE TABLE parent (id INT PRIMARY KEY, description TEXT);
+        CREATE TABLE child (id INT PRIMARY KEY, parent_id INT NOT NULL, name TEXT NOT NULL)
+        """.trimIndent(),
+        """
+        WITH desc_source AS (
+          SELECT id, UPPER(description) AS description_upper FROM parent
+        )
+        MERGE INTO child USING desc_source ON child.parent_id = desc_source.id
+        WHEN MATCHED THEN UPDATE SET name = desc_source.description_upper
+        WHEN NOT MATCHED THEN INSERT (parent_id, name) VALUES (desc_source.id, desc_source.description_upper)
+        RETURNING desc_source.id AS source_parent_id, desc_source.description_upper AS merged_description
+        """.trimIndent(),
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+    }
+
+    @Test
+    fun `MERGE fed by a CTE source correctly reports the passed-through column NOT NULL`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
-      // Verified against real Postgres 18 (an "a" row with no matching "b" row): the INSERT
-      // inserts one row into ins_target (id = 1, val = 'v', both columns genuinely NOT NULL for
-      // the row that WAS inserted), and the MERGE returns act = 'UPDATE', mergedval = 'v', id = 1
-      // — "mergedval" is, in fact, never NULL here. But PgCatalogLoader.mergeAbsentVarnos only
-      // attributes a MERGE's join to a source relation that is itself a plain base table (an
-      // :rtable entry with rtekind 0) — a CTE reference has no real relation OID or name EXPLAIN's
-      // plan can be correlated against (it shows a "CTE Name", not a "Relation Name"), so this
-      // shape falls back to reporting every column nullable rather than guessing. Accepted,
-      // safe-direction cost for a MERGE fed by a CTE rather than a plain table, not a regression.
+      // #238: PgCatalogLoader.mergeAbsentVarnos now attributes a MERGE's join to a CTE source too
+      // (previously only a plain base table), via the CTE's own literal name -- "ins" appears
+      // directly as a "CTE Scan" node's "CTE Name" here, since a data-modifying CTE is never
+      // inlined. With an "a" row and no matching "b" row, the INSERT inserts one row into
+      // ins_target (id = 1, val = 'v', both columns genuinely NOT NULL for the row that was
+      // inserted), and the MERGE returns act = 'UPDATE', mergedval = 'v', id = 1 — "mergedval" is
+      // never NULL here, and is now correctly reported as such.
       val query = analyzeWithSchema(
         """
         CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
@@ -4876,7 +4903,7 @@ class QueryAnalysisTest {
         """.trimIndent(),
       )
       assertThat(query.columns).hasSize(3)
-      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     @Test

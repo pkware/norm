@@ -127,7 +127,7 @@ class ExplainAnalysisTest {
             SELECT m.id, m.sval, other.label FROM m JOIN other ON other.id = m.id
             """.trimIndent(),
             targetRelationName = "tgt",
-            sourceRelationName = "src",
+            sourceRelationNames = setOf("src"),
           )
           assertThat(result).isEqualTo(MergeSideNullability(targetCanBeAbsent = false, sourceCanBeAbsent = true))
         } finally {
@@ -153,7 +153,7 @@ class ExplainAnalysisTest {
             WHEN NOT MATCHED BY SOURCE THEN DELETE
           """.trimIndent(),
           targetRelationName = "tgt",
-          sourceRelationName = "src",
+          sourceRelationNames = setOf("src"),
         )
       }
       assertThat(result).isEqualTo(MergeSideNullability(targetCanBeAbsent = false, sourceCanBeAbsent = true))
@@ -171,7 +171,7 @@ class ExplainAnalysisTest {
             WHEN NOT MATCHED BY SOURCE THEN DELETE
           """.trimIndent(),
           targetRelationName = "tgt",
-          sourceRelationName = "src",
+          sourceRelationNames = setOf("src"),
         )
       }
       assertThat(result).isEqualTo(MergeSideNullability(targetCanBeAbsent = false, sourceCanBeAbsent = true))
@@ -210,7 +210,7 @@ class ExplainAnalysisTest {
             SELECT m.id, m.name, other.label FROM m JOIN other ON other.id = m.id
             """.trimIndent(),
             targetRelationName = "tgt",
-            sourceRelationName = "src",
+            sourceRelationNames = setOf("src"),
           )
           assertThat(result).isEqualTo(MergeSideNullability(targetCanBeAbsent = false, sourceCanBeAbsent = true))
         } finally {
@@ -236,7 +236,7 @@ class ExplainAnalysisTest {
             WHEN NOT MATCHED BY SOURCE THEN DELETE
           """.trimIndent(),
           targetRelationName = "tgt",
-          sourceRelationName = "src",
+          sourceRelationNames = setOf("src"),
         )
       }
       assertThat(result).isEqualTo(MergeSideNullability(targetCanBeAbsent = false, sourceCanBeAbsent = true))
@@ -255,13 +255,57 @@ class ExplainAnalysisTest {
             connection,
             "MERGE INTO nonexistent_table t USING nonexistent_source s ON t.id = s.id WHEN MATCHED THEN DO NOTHING",
             targetRelationName = "nonexistent_table",
-            sourceRelationName = "nonexistent_source",
+            sourceRelationNames = setOf("nonexistent_source"),
           )
           assertThat(result).isNull()
         } finally {
           connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
         }
       }
+    }
+
+    @Test
+    fun `a MERGE fed by a single-reference, non-MATERIALIZED CTE source attributes through its inlined base table`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
+      // PostgreSQL inlines a CTE referenced exactly once (a MERGE's USING source always is) when it
+      // is not MATERIALIZED: the CTE's own name never appears anywhere in the plan, only "src" (the
+      // base table its body scans). "cte_src" alone would never match.
+      val result = withMergeSideNullabilitySchema { connection ->
+        explainMergeSideNullability(
+          connection,
+          """
+          WITH cte_src AS (SELECT id, name FROM src)
+          MERGE INTO tgt USING cte_src ON tgt.id = cte_src.id
+            WHEN MATCHED THEN UPDATE SET name = cte_src.name
+            WHEN NOT MATCHED BY SOURCE THEN DELETE
+          """.trimIndent(),
+          targetRelationName = "tgt",
+          sourceRelationNames = setOf("cte_src", "src"),
+        )
+      }
+      assertThat(result).isEqualTo(MergeSideNullability(targetCanBeAbsent = false, sourceCanBeAbsent = true))
+    }
+
+    @Test
+    fun `a MERGE fed by a MATERIALIZED CTE source attributes through its own CTE Scan node`() {
+      assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
+      // MATERIALIZED forces PostgreSQL to plan the CTE as its own "CTE Scan" node carrying "CTE
+      // Name" rather than inlining it, so the literal CTE name candidate is what must match here,
+      // never the underlying "src".
+      val result = withMergeSideNullabilitySchema { connection ->
+        explainMergeSideNullability(
+          connection,
+          """
+          WITH cte_src AS MATERIALIZED (SELECT id, name FROM src)
+          MERGE INTO tgt USING cte_src ON tgt.id = cte_src.id
+            WHEN MATCHED THEN UPDATE SET name = cte_src.name
+            WHEN NOT MATCHED BY SOURCE THEN DELETE
+          """.trimIndent(),
+          targetRelationName = "tgt",
+          sourceRelationNames = setOf("cte_src", "src"),
+        )
+      }
+      assertThat(result).isEqualTo(MergeSideNullability(targetCanBeAbsent = false, sourceCanBeAbsent = true))
     }
 
     /** A `tgt(id, name)`/`src(id, name)` schema, both primary-keyed on `id`, for [explainSql]. */
@@ -306,7 +350,7 @@ class ExplainAnalysisTest {
             connection,
             "MERGE INTO tgt USING src ON tgt.id = src.id\n$whenClauses",
             targetRelationName = "tgt",
-            sourceRelationName = "src",
+            sourceRelationNames = setOf("src"),
           )
           // Every case here is a real, live-executable MERGE — a null result would silently hide
           // a mapping failure behind the caller's own safe fallback, defeating this test's point.
