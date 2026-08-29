@@ -10,7 +10,7 @@ import kotlin.jvm.JvmRecord
  * ```
  *
  * @property id (`tq.id`)
- * @property bar Mixed-case column, only referenceable quoted. (`tq.Foo`)
+ * @property bar Mixed-case column, only referenceable quoted. (`tq."Foo"`)
  */
 @JvmRecord
 public data class GetQuotedColumnWithAlias(

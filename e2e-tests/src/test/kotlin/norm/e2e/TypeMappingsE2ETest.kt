@@ -18,7 +18,6 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import java.io.File
-import java.sql.Connection
 
 /**
  * E2E tests for the type_mappings test scenario.
@@ -48,21 +47,6 @@ class TypeMappingsE2ETest : PostgresTestBase() {
   }
 
   override fun schemaFile(): File = projectRoot.resolve("test-scenarios/type_mappings/schema.sql")
-
-  override fun cleanDatabase(connection: Connection) {
-    connection.createStatement().use { stmt ->
-      stmt.execute(
-        """
-        DROP TABLE IF EXISTS users CASCADE;
-        DROP TABLE IF EXISTS documents CASCADE;
-        DROP TYPE IF EXISTS mood;
-        DROP DOMAIN IF EXISTS positive_integer;
-        DROP DOMAIN IF EXISTS email;
-        DROP DOMAIN IF EXISTS json_document;
-        """.trimIndent(),
-      )
-    }
-  }
 
   @Test
   fun `type-level mood mapping decodes enum to idiomatic Kotlin constants`() {

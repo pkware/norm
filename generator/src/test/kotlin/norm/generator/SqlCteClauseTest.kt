@@ -126,6 +126,19 @@ class SqlCteClauseTest {
     }
 
     @Test
+    fun `a quoted name with an escaped embedded double quote keeps the WHOLE token in rawName`() {
+      // #238: the quoted-name scan previously stopped at the first '"', truncating rawName to
+      // `"He"` for a CTE actually named `He"llo` (SQL source `"He""llo"`) -- the escaped `""` in the
+      // middle was misread as the closing quote. `WITH "He""llo" AS (SELECT 1) SELECT 1 FROM
+      // "He""llo"` is valid PostgreSQL, and the CTE's real name is `He"llo` (one literal embedded
+      // quote).
+      val result = parseCteClause("""WITH "He""llo" AS (SELECT 1) SELECT 1 FROM "He""llo"""")
+      assertThat(result!!.definitions).hasSize(1)
+      assertThat(result.definitions[0].rawName).isEqualTo("\"He\"\"llo\"")
+      assertThat(result.definitions[0].name).isEqualTo("He\"llo")
+    }
+
+    @Test
     fun `a dollar-led CTE name is not recognized, since PostgreSQL itself rejects one`() {
       // Issue #219 follow-up: parseSingleCteDefinition's unquoted-name run originally used
       // isIdentifierChar -- the CONTINUATION predicate -- for the name's FIRST character too, so

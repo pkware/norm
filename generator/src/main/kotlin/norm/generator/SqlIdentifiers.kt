@@ -18,10 +18,10 @@ package norm.generator
  * (never [CteDefinition.name], which has already had its quotes stripped — quoting changes
  * case-folding, so a stripped name can no longer tell a quoted `"Foo"` apart from an unquoted
  * `foo`, a DIFFERENT relation in PostgreSQL; see [CteDefinition.rawName]'s own KDoc).
- * [CteDefinition.rawName] itself is NOT `""`-escape-aware — [parseSingleCteDefinition]'s own
- * quoted-name reading stops at the first `"` — so an escaped CTE name (`"He""llo"`) is already
- * truncated before it ever reaches this function, a known gap unrelated to and unfixed by this
- * function's own escape handling.
+ * [CteDefinition.rawName] IS `""`-escape-aware — [parseSingleCteDefinition]'s own quoted-name
+ * reading uses [QUOTED_IDENTIFIER_PATTERN] (the same escape-aware matcher [parseAliasToken] uses),
+ * never a naive scan that stops at the first `"` — so an escaped CTE name (`"He""llo"`) round-trips
+ * through [rawName] intact, and this function correctly unescapes it to `He"llo`.
  *
  * A [SelectItem.tableName]/[SelectItem.columnName], in CONTRAST, is a LOGICAL value with its
  * quotes already removed by [parseColumnReference] (see [SelectItem]'s own KDoc) — passing one of

@@ -47,13 +47,12 @@ private val ENUM_JDBC_TYPE_INFO =
  * @param catalog Postgres catalog to use when resolving projection information.
  * @param typeMappings User-configured type/column overrides. Type-level overrides take precedence
  *   over auto-generated enums/domains; column-level overrides take precedence over everything.
- * @param reservedWords The connected PostgreSQL server's reserved keywords (see
- *   [resolveCteOutputExpression]'s own `reservedWords` parameter doc), forwarded verbatim to it
- *   when resolving a CTE-wrapped column's provenance. Defaults to `emptySet()` for callers (mostly
- *   tests building an in-memory [Catalog] with no live connection) whose queries never alias a
- *   reserved word inside a `WITH` clause; [generateCode] — the real production entry point — always
- *   supplies [JdbcAnalyzer.fetchReservedWords]'s live result explicitly instead of relying on this
- *   default.
+ * @param reservedWords The connected PostgreSQL server's reserved keywords, from
+ *   [JdbcAnalyzer.fetchReservedWords] — threaded through to [addClassKdoc] for each property's
+ *   `` `table.column` `` source reference. Defaults to `emptySet()` for callers (mostly tests
+ *   building an in-memory [Catalog] with no live connection); [generateCode] — the real production
+ *   entry point — always supplies [JdbcAnalyzer.fetchReservedWords]'s live result explicitly instead
+ *   of relying on this default.
  */
 internal class TypeRepository(
   private val packageName: String,
@@ -286,33 +285,53 @@ internal class TypeRepository(
     } else {
       rawSelectItems
     }
+    // A top-level set operation (UNION/INTERSECT/EXCEPT) means parseSelectItems only parsed ONE
+    // branch's own items, so a computed expression documented from that branch alone would present
+    // it as the whole answer. A bare column reference is unaffected -- see hasTopLevelSetOperation.
+    val hasSetOperation = hasTopLevelSetOperation(queryText)
     typeBeingDefined.addClassKdoc(
       classComment = "",
       tableName = null,
       properties = queryResults.mapIndexed { columnIndex, column ->
         val selectItem = selectItems.getOrNull(columnIndex)
+        // A star item (`*`, `c.*`) is never itself a provenance expression -- parseOutputItemsWithAlias
+        // returns a lone star item with columnName == null, same as a genuine computed expression.
+        // Without this guard, isComputedExpression would document the wildcard's own literal text as
+        // the "expression", shadowing a CTE pass-through's real expression in provenanceExpression.
+        val isStarSelectItem = selectItem != null && isStarItem(selectItem.expression)
         // For computed expressions (no source table and not a simple column reference), include the SQL
         // expression so it can appear in KDoc. Simple column references (e.g. crosstab output columns)
         // are excluded because echoing the column name back adds no value.
-        val isComputedExpression = column.table == null && selectItem != null && selectItem.columnName == null
-        // A plain reference into a CTE's output (column.table == null, but the outer item IS a
-        // simple column reference) can still be expression-derived one level down, inside the
-        // CTE body -- see resolveCteOutputExpression's KDoc for the shape it resolves and every
-        // case it deliberately punts on rather than guessing.
-        val cteExpression = if (!isComputedExpression && column.table == null && selectItem?.columnName != null) {
-          resolveCteOutputExpression(queryText, selectItem, reservedWords)
-        } else {
-          null
-        }
+        val isComputedExpression =
+          column.table == null &&
+            selectItem != null &&
+            selectItem.columnName == null &&
+            !hasSetOperation &&
+            !isStarSelectItem
+        // A plain reference into a CTE's output (a simple column reference or a star item) can still
+        // be expression-derived one level down, inside the CTE body. column.provenanceExpression was
+        // already resolved and cross-validated against queryText during analysis -- see
+        // resolveNodeTreeProvenanceExpression. `null` means no resolved expression, so this property
+        // gets no source-reference line at all -- never the star text itself.
+        val cteExpression = if (!isComputedExpression && column.table == null) column.provenanceExpression else null
         PropertySource(
           propertyName = column.name,
           comment = column.comment,
           sourceTable = column.table?.name,
           sourceColumn = column.originalName.ifEmpty { null },
-          expression = if (isComputedExpression) selectItem.expression else cteExpression ?: "",
+          // This top-level path re-lexes selectItem.expression straight from queryText, so it must
+          // apply the same comment-stripping and whitespace-collapsing normalizations
+          // resolveNodeTreeProvenanceExpression applies on the CTE path, to avoid embedding comment
+          // text or leftover whitespace verbatim in generated KDoc.
+          expression = if (isComputedExpression) {
+            collapseCosmeticWhitespace(stripComments(selectItem.expression))
+          } else {
+            cteExpression ?: ""
+          },
         )
       },
       sql = queryText,
+      reservedWords = reservedWords,
     )
     typeBeingDefined.primaryConstructor(primaryConstructor.build())
     if (secondaryConstructor != null) {
@@ -791,16 +810,20 @@ internal data class PropertySource(
  * @param tableName The database table this class fully maps to. `null` for ad-hoc query projections.
  * @param properties Source information for each property.
  * @param sql The SQL query text. Included in query projection KDoc as a fenced code block.
+ * @param reservedWords The connected PostgreSQL server's reserved keywords for each property's
+ *   `` `table.column` `` source reference. Empty for a table projection, which never renders a
+ *   source reference at all.
  */
 internal fun TypeSpec.Builder.addClassKdoc(
   classComment: String,
   tableName: String?,
   properties: List<PropertySource>,
   sql: String = "",
+  reservedWords: Set<String> = emptySet(),
 ) {
   val hasTableMapping = tableName != null
   val hasSql = sql.isNotEmpty()
-  val documentedProperties = properties.filter { it.hasDocumentation(hasTableMapping) }
+  val documentedProperties = properties.filter { it.hasDocumentation(hasTableMapping, reservedWords) }
   if (classComment.isEmpty() && !hasTableMapping && !hasSql && documentedProperties.isEmpty()) return
 
   val kdoc = buildString {
@@ -825,7 +848,7 @@ internal fun TypeSpec.Builder.addClassKdoc(
           append(property.comment)
         }
         if (!hasTableMapping) {
-          val source = property.sourceReference()
+          val source = property.sourceReference(reservedWords)
           if (source != null) {
             if (property.comment.isNotEmpty()) append(" ")
             append("($source)")
@@ -841,8 +864,8 @@ internal fun TypeSpec.Builder.addClassKdoc(
 /**
  * Whether this property has any documentation to show in KDoc.
  */
-private fun PropertySource.hasDocumentation(hasTableMapping: Boolean): Boolean =
-  comment.isNotEmpty() || (!hasTableMapping && sourceReference() != null)
+private fun PropertySource.hasDocumentation(hasTableMapping: Boolean, reservedWords: Set<String>): Boolean =
+  comment.isNotEmpty() || (!hasTableMapping && sourceReference(reservedWords) != null)
 
 /**
  * A regular Kotlin identifier: matched WITHOUT surrounding backticks in KDoc's `@property` tag.
@@ -862,34 +885,101 @@ private fun String.formatAsKdocPropertyReference(): String =
   if (PLAIN_KOTLIN_IDENTIFIER.matches(this)) this else "`$this`"
 
 /**
+ * A PostgreSQL identifier that never needs double-quoting when written back into SQL: starts with
+ * a lowercase letter or underscore, followed by any number of lowercase letters, digits,
+ * underscores, or dollar signs (Postgres's own `SAFE_IDENTIFIER` rule, matching what an
+ * ALREADY-live-connected caller does in [JdbcAnalyzer.buildIdentifierQuoter] — this copy exists
+ * because [TypeRepository] has no connection of its own to query, per this file's own doc comment
+ * on why `TypeRepository` re-lexes rather than re-querying). Matching this pattern is necessary but
+ * NOT sufficient — [quoteSqlIdentifierIfNeeded] additionally rejects a RESERVED word, which this
+ * pattern alone cannot rule out (`order` and `user` both match it).
+ */
+private val SQL_UNQUOTED_IDENTIFIER = Regex("[a-z_][a-z0-9_\$]*")
+
+/**
+ * Double-quotes [identifier] exactly as PostgreSQL itself requires it to be written back into SQL
+ * unless [SQL_UNQUOTED_IDENTIFIER] accepts it bare AND it is not one of [reservedWords].
+ *
+ * Without the [SQL_UNQUOTED_IDENTIFIER] half, a mixed-case or space-containing column name (`"Foo"`,
+ * `"My Col"`) would render bare as `table.Foo`/`table.My Col` — text that reads back as PostgreSQL
+ * folding `Foo` to `foo`, or as two unrelated tokens instead of one qualified reference
+ * (`SELECT tq.Foo FROM tq` fails with `column tq.foo does not exist`).
+ *
+ * Without the [reservedWords] half, a relation or column named after a reserved word (`order`,
+ * `user`) — which [SQL_UNQUOTED_IDENTIFIER] alone cannot distinguish from any other all-lowercase
+ * identifier — would render bare too: `` `order.id` `` reads back as `SELECT order.id FROM "order"`,
+ * which PostgreSQL rejects with `syntax error at or near "."`, since an unquoted `order` is parsed as
+ * the reserved keyword, not a table reference. [reservedWords] is always the connected server's own
+ * live keyword set ([JdbcAnalyzer.fetchReservedWords]), since PostgreSQL's reserved-word list drifts
+ * across versions.
+ */
+private fun quoteSqlIdentifierIfNeeded(identifier: String, reservedWords: Set<String>): String =
+  if (SQL_UNQUOTED_IDENTIFIER.matches(identifier) && identifier !in reservedWords) {
+    identifier
+  } else {
+    "\"$identifier\""
+  }
+
+/**
  * Returns a source reference string for display in KDoc, or `null` if none is available.
  *
- * - For columns from a table: `` `table.column` ``
+ * - For columns from a table: `` `table."Column"` `` — each identifier individually quoted via
+ *   [quoteSqlIdentifierIfNeeded] exactly as PostgreSQL requires it written back into SQL.
  * - For computed expressions: `` `COUNT(*)` ``
+ *
+ * @param reservedWords The connected server's reserved keywords, forwarded to
+ *   [quoteSqlIdentifierIfNeeded].
  */
-private fun PropertySource.sourceReference(): String? = when {
-  sourceTable != null -> "`$sourceTable.$sourceColumn`"
+private fun PropertySource.sourceReference(reservedWords: Set<String>): String? = when {
+  sourceTable != null -> {
+    val qualifiedColumn = sourceColumn?.let { quoteSqlIdentifierIfNeeded(it, reservedWords) }.orEmpty()
+    "`${quoteSqlIdentifierIfNeeded(sourceTable, reservedWords)}.$qualifiedColumn`"
+  }
   expression.isNotEmpty() -> "`$expression`"
   else -> null
 }
 
 /**
- * Collapses the cosmetic whitespace [stripComments]' own single-space substitution can leave
- * behind in an expression about to be embedded VERBATIM in generated KDoc — a comment sitting
- * directly after an opening parenthesis or before a closing one (`UPPER(/* x */a)` strips to
- * `UPPER( a)`) reads oddly there, even though inserting that space is exactly right for
- * [stripComments]' OWN purpose of never fusing two tokens a comment used to separate.
+ * Collapses the cosmetic whitespace [stripComments]' own single-space substitution can leave behind
+ * in an expression about to be embedded verbatim in generated KDoc — a comment directly after an
+ * opening parenthesis or before a closing one (`UPPER(/* x */a)` strips to `UPPER( a)`) reads oddly
+ * there, even though that space is exactly right for [stripComments]' own purpose of never fusing two
+ * tokens a comment used to separate. Applied only where [resolveNodeTreeProvenanceExpression] returns
+ * an expression for KDoc, never inside [stripComments] itself.
  *
- * Applied ONLY at the point [resolveCteOutputExpression] returns an expression for KDoc, never
- * inside [stripComments] itself: [stripComments]' OTHER caller
- * ([mainQueryFromIsExactlyThisCte]'s own `fromText`) needs the inserted space PRESERVED, to keep
- * the token boundaries that caller's own exact-text comparison depends on intact.
+ * Collapses whitespace outside a single-quoted literal, a dollar-quoted string, a quoted identifier,
+ * or a comment to a single space, then removes a single such space immediately after `(` or before
+ * `)` — never semantically significant in SQL, so this can never change what the expression means.
  *
- * Collapses any run of whitespace to a single space, then removes a single space immediately
- * after `(` or immediately before `)` — whitespace directly adjacent to a parenthesis is never
- * semantically significant in SQL, so removing it here can never change what the expression means.
+ * Walks every span verbatim via [skipLexicalToken], the same primitive [stripComments] uses, rather
+ * than a second, independently-written scanner: a plain whitespace-collapse regex can't tell a
+ * cosmetic space from one inside the developer's own SQL, and would rewrite a quoted identifier's
+ * internal spacing (`"My  Col"` to `"My Col"`, a column name PostgreSQL then rejects) or a string
+ * literal's contents (`'( x )'` to `'(x)'`) instead of merely the padding around it.
  */
 internal fun collapseCosmeticWhitespace(text: String): String {
-  val singleSpaced = text.trim().replace(Regex("\\s+"), " ")
-  return singleSpaced.replace("( ", "(").replace(" )", ")")
+  val trimmed = text.trim()
+  val builder = StringBuilder(trimmed.length)
+  var i = 0
+  while (i < trimmed.length) {
+    val afterToken = skipLexicalToken(trimmed, i)
+    if (afterToken != i) {
+      builder.append(trimmed, i, afterToken)
+      i = afterToken
+      continue
+    }
+    val character = trimmed[i]
+    if (!character.isWhitespace()) {
+      builder.append(character)
+      i++
+      continue
+    }
+    var afterWhitespace = i
+    while (afterWhitespace < trimmed.length && trimmed[afterWhitespace].isWhitespace()) afterWhitespace++
+    val precededByOpenParenthesis = builder.isNotEmpty() && builder.last() == '('
+    val followedByCloseParenthesis = afterWhitespace < trimmed.length && trimmed[afterWhitespace] == ')'
+    if (!precededByOpenParenthesis && !followedByCloseParenthesis) builder.append(' ')
+    i = afterWhitespace
+  }
+  return builder.toString()
 }

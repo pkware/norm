@@ -428,7 +428,13 @@ internal class PgNodeTreeParser {
       if (cteQueryIndex == -1) return@mapNotNull null
       val braceStart = cteQueryIndex + cteQueryMarker.length - 1
       val queryBlock = extractBalancedBraces(block, braceStart) ?: return@mapNotNull null
-      NodeTreeCteDefinition(name = cteName, queryBlock = queryBlock)
+      // :cterecursive is serialized AFTER :ctequery in COMMONTABLEEXPR's own field order, so a naive
+      // whole-block scan could find a nested COMMONTABLEEXPR's same-named field first if queryBlock
+      // itself declares a nested WITH clause -- extractBoolFieldAtDepthOne scopes the search to
+      // block's own outermost brace to avoid that. :ctename above needs no such scoping: it is
+      // always serialized before :ctequery.
+      val recursive = extractBoolFieldAtDepthOne(block, ":cterecursive") ?: false
+      NodeTreeCteDefinition(name = cteName, queryBlock = queryBlock, recursive = recursive)
     }
   }
 
@@ -457,6 +463,54 @@ internal class PgNodeTreeParser {
         val cteName = extractStringField(rangeTableEntry, ":ctename") ?: return@forEachIndexed
         val ctelevelsup = extractIntField(rangeTableEntry, ":ctelevelsup") ?: 0
         put(index + 1, NodeTreeCteReference(name = cteName, ctelevelsup = ctelevelsup))
+      }
+    }
+  }
+
+  /**
+   * Parses EVERY range-table entry from [nodeTreeText]'s own `:rtable`, regardless of `rtekind`,
+   * into a [RangeTableEntry] — see that type's KDoc for why a resolver needs visibility into every
+   * kind, not just the ones [parseRangeTable], [parseSubqueryRangeTable], and
+   * [parseCteRangeTableEntries] each recognize individually.
+   *
+   * None of the fields read here need [findMarkerAtDepthOne]'s depth-one-awareness: a `JOINEXPR`
+   * range-table entry's own fields (`:jointype`, `:joinaliasvars`, etc.) contain no nested `QUERY`
+   * block that could shadow them (`:joinaliasvars`'s entries are scalar expressions, never a whole
+   * query), and a `CTE` range-table entry (`rtekind 6`) carries only the CTE's NAME and scope
+   * metadata, not its body — the body lives in `:cteList`, parsed separately by [parseCteList].
+   *
+   * @param nodeTreeText the raw `pg_rewrite.ev_action` text (or a bare `{QUERY ...}` block)
+   * @return a map from 1-based varno to [RangeTableEntry], or an empty map if [nodeTreeText] is
+   *   malformed or contains no `:rtable`
+   */
+  fun parseRangeTableEntries(nodeTreeText: String): Map<Int, RangeTableEntry> {
+    val rtableContent = extractOuterSectionContent(nodeTreeText, ":rtable (") ?: return emptyMap()
+    return buildMap {
+      splitBraceBlocks(rtableContent).forEachIndexed { index, rangeTableEntry ->
+        val rtekind = extractIntField(rangeTableEntry, ":rtekind") ?: return@forEachIndexed
+        val entry: RangeTableEntry = when (rtekind) {
+          0 -> {
+            val relid = extractIntField(rangeTableEntry, ":relid") ?: return@forEachIndexed
+            RangeTableEntry.Relation(relid)
+          }
+          1 -> {
+            val subqueryMarker = ":subquery {"
+            val subqueryIndex = rangeTableEntry.indexOf(subqueryMarker)
+            if (subqueryIndex == -1) return@forEachIndexed
+            val braceStart = subqueryIndex + subqueryMarker.length - 1
+            val subqueryBlock = extractBalancedBraces(rangeTableEntry, braceStart) ?: return@forEachIndexed
+            RangeTableEntry.Subquery(subqueryBlock)
+          }
+          2 -> RangeTableEntry.Join(joinAliasVars = parseArgList(rangeTableEntry, ":joinaliasvars"))
+          6 -> {
+            val cteName = extractStringField(rangeTableEntry, ":ctename") ?: return@forEachIndexed
+            val ctelevelsup = extractIntField(rangeTableEntry, ":ctelevelsup") ?: 0
+            val selfReference = extractBoolField(rangeTableEntry, ":self_reference") ?: false
+            RangeTableEntry.Cte(NodeTreeCteReference(cteName, ctelevelsup, selfReference))
+          }
+          else -> RangeTableEntry.Other(rtekind)
+        }
+        put(index + 1, entry) // varno is 1-based
       }
     }
   }
@@ -951,12 +1005,16 @@ internal class PgNodeTreeParser {
     val resultName = extractStringField(suffix, ":resname")
     val isJunk = suffix.contains(":resjunk true")
     val sortGroupRef = extractIntField(suffix, ":ressortgroupref") ?: 0
+    val originalTableOid = extractIntField(suffix, ":resorigtbl") ?: 0
+    val originalColumnNumber = extractIntField(suffix, ":resorigcol") ?: 0
     return TargetEntry(
       expression = expression,
       resultName = resultName,
       resultNumber = resultNumber,
       isJunk = isJunk,
       sortGroupRef = sortGroupRef,
+      originalTableOid = originalTableOid,
+      originalColumnNumber = originalColumnNumber,
     )
   }
 
@@ -983,26 +1041,21 @@ internal class PgNodeTreeParser {
       .find(text)?.groupValues?.get(1)?.let { it == "true" }
 
   /**
-   * Extracts a non-whitespace string field value from a node block, with backslash-escaping
-   * removed (see the class-level note on backslash escaping) — e.g. a `:resname` of `k\}x` (an
-   * alias `k}x` containing a literal `}`) is returned as `k}x`, not the raw escaped text.
+   * Extracts a string field value from a node block, with backslash-escaping removed (see the
+   * class-level note on backslash escaping) — e.g. a `:resname` of `k\}x` is returned as `k}x`.
    *
-   * This does NOT recover a value containing an escaped (literal) whitespace character — a space,
-   * tab, newline, or any other character `\S` excludes: the `\S+` capture group below has no
-   * escape-awareness of its own and stops at that byte regardless of the preceding backslash,
-   * truncating the match before [unescapeToken] ever runs (verified live: an alias `"t<TAB>x"`
-   * captures as just `t\`, dropping the escaped tab and everything after it). No current caller of
-   * this method depends on a field value containing whitespace, so this residual gap is left
-   * unaddressed rather than rewriting the capture into a full escape-aware scanner for a case no
-   * caller hits.
+   * The capture group matches a run of either a plain non-whitespace character or a backslash
+   * followed by any character (`\\[\s\S]`, tried first at each position) — not a bare `\S+`, which
+   * would stop at an escaped whitespace byte (e.g. `:ctename My\ Cte` for a CTE named `"My Cte"`)
+   * and truncate the match before [unescapeToken] ever runs. `[\s\S]`, not `.`, also lets the
+   * escaped-pair alternative consume an escaped newline without `Regex`'s DOTALL mode.
    *
    * @param text the full node block text
    * @param fieldName the field name including the leading colon, e.g. `":ctename"`
-   * @return the unescaped string value (first contiguous non-whitespace run after the field name
-   *   and space), or `null` if the field is absent
+   * @return the unescaped string value, or `null` if the field is absent
    */
   private fun extractStringField(text: String, fieldName: String): String? =
-    stringFieldPatterns.getOrPut(fieldName) { Regex("""$fieldName (\S+)""") }
+    stringFieldPatterns.getOrPut(fieldName) { Regex("""$fieldName ((?:\\[\s\S]|\S)+)""") }
       .find(text)?.groupValues?.get(1)?.let(::unescapeToken)
 
   /**
@@ -1042,6 +1095,25 @@ internal class PgNodeTreeParser {
     if (fieldIndex == -1) return emptySet()
     val content = bitmapsetPattern.find(text, fieldIndex + fieldName.length)?.groupValues?.get(1) ?: return emptySet()
     return content.trim().split(whitespace).mapNotNull { it.toIntOrNull() }.toSet()
+  }
+
+  /**
+   * Extracts a boolean field's value, scoped to [text]'s OWN outermost `{...}` block (brace depth
+   * 1) — the depth-one-aware counterpart to [extractBoolField], required whenever [fieldName] could
+   * also appear, deeper in [text], on a NESTED node of the same type (see [parseCteList]'s call site
+   * for the concrete case: a CTE body that declares its own nested `WITH` clause).
+   *
+   * @return `true`/`false` read directly after [fieldName]'s marker, or `null` if [fieldName] is
+   *   absent at depth 1 or its value is neither literal token
+   */
+  private fun extractBoolFieldAtDepthOne(text: String, fieldName: String): Boolean? {
+    val markerEnd = findMarkerAtDepthOne(text, "$fieldName ")
+    if (markerEnd == -1) return null
+    return when {
+      text.startsWith("true", markerEnd) -> true
+      text.startsWith("false", markerEnd) -> false
+      else -> null
+    }
   }
 
   /**

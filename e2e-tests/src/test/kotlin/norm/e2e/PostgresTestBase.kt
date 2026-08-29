@@ -67,20 +67,20 @@ abstract class PostgresTestBase {
   protected open fun schemaFile(): File = projectRoot.resolve("test-scenarios/all_types/schema.sql")
 
   /**
-   * Drops any objects left over from the previous test so the schema can be reapplied cleanly.
-   * Subclasses override to clean up scenario-specific types and tables.
+   * Drops every object left over from the previous test so [schemaFile] can be reapplied onto a
+   * clean `public` schema, regardless of which tables/views/types/domains it declares.
+   *
+   * Dropping and recreating the whole `public` schema, rather than hand-listing each scenario's own
+   * `DROP TABLE IF EXISTS ...` statements, is what keeps this working as scenario schema files grow:
+   * a table added to a shared fixture (e.g. `test-scenarios/crud_generation/schema.sql`) used to need
+   * a matching edit in every subclass override that pointed at it, and a MISSED one left the new
+   * table behind from the previous test, so the next `schemaFile()` reapplication's own
+   * `CREATE TABLE` failed with "relation already exists" (#238). A subclass only needs to override
+   * this when its scenario needs something [schemaFile]'s own reapplication can't recreate on its
+   * own (e.g. seed data outside the schema file, or a role/extension outside `public`).
    */
   protected open fun cleanDatabase(connection: Connection) {
-    connection.createStatement().use { stmt ->
-      stmt.execute(
-        """
-        DROP TABLE IF EXISTS project CASCADE;
-        DROP TABLE IF EXISTS employee CASCADE;
-        DROP TABLE IF EXISTS department CASCADE;
-        DROP TABLE IF EXISTS type CASCADE
-        """.trimIndent(),
-      )
-    }
+    connection.createStatement().use { stmt -> stmt.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public") }
   }
 
   /**

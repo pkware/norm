@@ -12,8 +12,8 @@ import kotlin.jvm.JvmRecord
  * SELECT new_parent."parentId", new_parent."parentDescription" FROM new_parent
  * ```
  *
- * @property parentId (`parent.parentId`)
- * @property parentDescription (`parent.parentDescription`)
+ * @property parentId (`parent.id`)
+ * @property parentDescription (`parent.description`)
  */
 @JvmRecord
 public data class CreateParentReturningQuotedAlias(
