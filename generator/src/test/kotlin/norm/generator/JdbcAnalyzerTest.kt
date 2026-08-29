@@ -29,7 +29,7 @@ import java.sql.DriverManager
 // enables concurrent JUnit test execution by default (JavaConventionsPlugin). Without pinning this
 // class to a single thread, two tests issuing overlapping statements on the shared connection race
 // (observed: an unrelated view-nullability assertion failed only once two backtick-column DDL tests
-// were added alongside it — see BacktickColumnNameSanitization, #238 10.5). GenerateCodeTest, which
+// were added alongside it — see BacktickColumnNamePreservation below). GenerateCodeTest, which
 // shares the same single-connection pattern, already applies this same fix.
 @Testcontainers
 @Execution(ExecutionMode.SAME_THREAD)
@@ -1192,15 +1192,15 @@ class JdbcAnalyzerTest {
   @Nested
   inner class BacktickColumnNamePreservation {
 
-    // #238 11.1: a prior fix (e15d412) rewrote a backtick in Column.name to an apostrophe to keep
-    // KotlinPoet's generated declaration compilable. That name field is also what CRUD synthesis
-    // builds SQL from and what Catalog.findColumn matches column comments by, so the rewrite was a
-    // REGRESSION worse than the invalid-Kotlin defect it fixed: generateCrud (the plugin default)
-    // aborted with "column \"a'b\" of relation ... does not exist", two distinct columns differing
-    // only by backtick-vs-apostrophe collided into one Kotlin declaration, and a column's comment
-    // silently stopped being found. Reverted. A column name containing a backtick still cannot
-    // produce a compilable Kotlin property declaration -- that is a pre-existing limitation of the
-    // whole naming pipeline (shared by "*/", ".", and a literal newline in a column name), not a
+    // A prior fix rewrote a backtick in Column.name to an apostrophe to keep KotlinPoet's generated
+    // declaration compilable. That name field is also what CRUD synthesis builds SQL from and what
+    // Catalog.findColumn matches column comments by, so the rewrite was a regression worse than the
+    // invalid-Kotlin defect it fixed: generateCrud (the plugin default) aborted with "column \"a'b\"
+    // of relation ... does not exist", two distinct columns differing only by backtick-vs-apostrophe
+    // collided into one Kotlin declaration, and a column's comment silently stopped being found.
+    // Reverted. A column name containing a backtick still cannot produce a compilable Kotlin
+    // property declaration -- that is a pre-existing limitation of the whole naming pipeline (shared
+    // by "*/", ".", and a literal newline in a column name), not a
     // provenance defect, and is out of scope here.
 
     @Test
@@ -1326,12 +1326,11 @@ class JdbcAnalyzerTest {
 
   @Test
   fun `buildIdentifierQuoter doubles an embedded double quote per PostgreSQL's own quoted-identifier escape rule`() {
-    // #238 11.4: a column literally named a"b (PostgreSQL: CREATE TABLE t ("a""b" INT)) wraps in
-    // double quotes unmodified ("a"b") without doubling the embedded quote -- PostgreSQL reads that
-    // as the quoted identifier "a" followed by a bare, syntactically invalid b" token, failing with
-    // "Unterminated identifier". PostgreSQL's own escape rule for a quoted identifier is to double
-    // every embedded double quote, exactly as it already is for a quoted STRING LITERAL's embedded
-    // single quote.
+    // A column literally named a"b (PostgreSQL: CREATE TABLE t ("a""b" INT)) wraps in double quotes
+    // unmodified ("a"b") without doubling the embedded quote -- PostgreSQL reads that as the quoted
+    // identifier "a" followed by a bare, syntactically invalid b" token, failing with "Unterminated
+    // identifier". PostgreSQL's own escape rule for a quoted identifier is to double every embedded
+    // double quote, exactly as it already is for a quoted string literal's embedded single quote.
     val quoter = analyzer.buildIdentifierQuoter()
 
     assertThat(quoter("a\"b")).isEqualTo("\"a\"\"b\"")

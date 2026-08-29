@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test
 /**
  * Unit coverage for [markdownInlineCodeSpan] and [markdownFenceDelimiter] — the two escape-or-decline
  * primitives [TypeRepository]'s KDoc emission uses so that a `@property` source reference or a
- * fenced `sql` block can never render as something other than the developer's own text (#238 8.1–8.3).
+ * fenced `sql` block can never render as something other than the developer's own text.
  * [TypeRepositoryTest] exercises these through [TypeRepository.buildTypeProjectionForQuery] itself;
  * this file pins the primitives' own edge cases directly.
  */
@@ -71,13 +71,12 @@ class MarkdownEscapingTest {
 
     @Test
     fun `a backslash already immediately before a backtick does not defeat the escape`() {
-      // #238 11.2: text.replace("`", "\\`") alone turns "weird \`" (a literal backslash then a
-      // backtick, e.g. from `COMMENT ON COLUMN ... IS 'weird \`'`) into "weird \\`" -- CommonMark
-      // reads the doubled backslash as an ESCAPED backslash (a literal "\"), leaving the backtick
-      // that follows UNESCAPED and free to open a code span that pairs forward with a LATER
-      // property's own source-reference span, exactly the corruption escaping this was meant to
-      // prevent. Escaping the text's own literal backslashes FIRST, before escaping backticks,
-      // keeps the two escapes from colliding.
+      // text.replace("`", "\\`") alone turns "weird \`" (a literal backslash then a backtick, e.g.
+      // from `COMMENT ON COLUMN ... IS 'weird \`'`) into "weird \\`" -- CommonMark reads the doubled
+      // backslash as an escaped backslash (a literal "\"), leaving the backtick that follows
+      // unescaped and free to open a code span that pairs forward with a later property's own
+      // source-reference span. Escaping the text's own literal backslashes first, before escaping
+      // backticks, keeps the two escapes from colliding.
       val textWithBackslashBeforeBacktick = "weird \\" + "`"
 
       val escaped = escapeMarkdownBacktick(textWithBackslashBeforeBacktick)

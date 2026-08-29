@@ -394,11 +394,9 @@ public class JdbcAnalyzer(private val connection: Connection) {
   public fun buildIdentifierQuoter(): (String) -> String {
     val reservedWords = fetchReservedWords()
     return { identifier ->
-      // #238 11.4: PostgreSQL's own quoted-identifier escape rule doubles every embedded double
-      // quote, the same way a quoted STRING LITERAL doubles an embedded single quote -- without it,
-      // a column literally named a"b wraps unmodified into "a"b", which PostgreSQL reads as the
-      // quoted identifier "a" followed by a bare, syntactically invalid b" token ("Unterminated
-      // identifier"), not the one identifier it was meant to be.
+      // PostgreSQL doubles every embedded double quote in a quoted identifier, the same way a quoted
+      // string literal doubles an embedded single quote -- without it, a column literally named a"b
+      // wraps unmodified into "a"b", read as "a" followed by an unterminated b" token.
       if (needsQuoting(identifier, reservedWords)) "\"${identifier.replace("\"", "\"\"")}\"" else identifier
     }
   }

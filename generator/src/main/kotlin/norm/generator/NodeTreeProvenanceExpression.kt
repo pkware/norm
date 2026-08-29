@@ -1,101 +1,50 @@
 package norm.generator
 
 /**
- * Extracts, from the developer's OWN original SQL text, the expression a [NodeTreeColumnProvenance]
- * points at — the second half of Route D (see the plan's KDoc on [NodeTreeProvenanceResolver] for
- * the first half, which answers only "where", never "what text").
+ * Extracts, from the developer's own original SQL text, the expression a [NodeTreeColumnProvenance]
+ * points at.
  *
- * [sql] MUST be the query's ORIGINAL text — never [nodeTreeText]'s own sentinel-substituted or
- * deparsed source — so a sentinel literal built only to satisfy `?`'s type during analysis can
- * never leak into generated KDoc; the developer's own token (a literal `?`, or whatever they wrote)
- * is what comes back instead. [nodeTreeText] and [sql] describe the SAME statement but are never
- * interchangeable for TEXT EXTRACTION: only [nodeTreeText] is trusted to say WHERE the expression
- * lives (`provenance`'s CTE name and body position), and only [sql] is trusted for WHAT the
- * expression actually says.
+ * [sql] must be the query's ORIGINAL text — never [nodeTreeText]'s sentinel-substituted or deparsed
+ * form — so a sentinel literal built only to satisfy `?`'s type during analysis can never leak into
+ * generated KDoc. [nodeTreeText] is trusted only for WHERE the expression lives ([provenance]'s CTE
+ * name and body position); [sql] is trusted only for WHAT it says.
  *
- * This function proves its answer rather than merely computing one: [provenance] alone would let a
- * caller re-run [PgNodeTreeParser.parseCteList]/[parseOutputItemsWithAlias] and read off item
- * [NodeTreeColumnProvenance.bodyPosition] directly, but a text-only re-lex of the CTE body can
+ * This proves its answer rather than merely computing one: a text-only re-lex of the CTE body can
  * mis-split or mis-merge an item boundary (an unbalanced-looking comment, a pathological string
- * literal, ...) without the resulting item COUNT changing, silently handing back the WRONG
- * neighboring item's expression instead. Every gate below is required to rule that out; per the
- * "correct or silent" invariant, ANY gate failing returns `null` (no provenance) rather than a wrong
- * expression:
- * - the CTE [provenance] points at must be findable by REPLAYING [NodeTreeColumnProvenance.hops]
- *   step by step — never a flat, name-only search across every `WITH` clause anywhere in the
- *   statement — both on the node-tree side (see [scopedNodeTreeCteQueryBlock]) and on the SQL-text
- *   side (see [scopedSqlCteDefinition]). Each hop's own [CteHop.ctelevelsup] says exactly which
- *   lexically-enclosing `WITH` clause declares it, so a nested `WITH` that shadows an outer CTE of
- *   the SAME name resolves against the EXACT declaration [NodeTreeProvenanceResolver] walked to,
- *   rather than failing outright merely because the name is declared more than once somewhere in
- *   the statement (#238). A single `WITH` clause can never legally declare the same name twice
- *   (PostgreSQL itself rejects that at parse time), so each hop's own lookup is unambiguous by
- *   construction — the scoping is what makes uniqueness free, not an additional check layered on
- *   top of a global search.
- * - [parseOutputItemsWithAlias] over that CTE's body text must yield EXACTLY as many top-level items
- *   as [nodeTreeText] has non-junk body target entries for that same CTE. A mis-split/mis-merge that
- *   happens to preserve the total item count survives this check alone.
- * - EVERY position's own name (see [verifiedItem]) — not merely
- *   [NodeTreeColumnProvenance.bodyPosition]'s — must fold-match that position's own `:resname`, in
- *   the SAME order. A one-mis-split-plus-
- *   one-mis-merge pair shifts items between its two error points while leaving the total count
- *   alone; checking only the requested position could still pass by accident if the shifted text
- *   happens to look like a legitimate expression. Checking every position closes that gap, PROVIDED
- *   the next gate also holds.
- * - the body's own `:resname`s must be pairwise unique. Without this, a shift could still satisfy
- *   the all-position check above by matching against a DIFFERENT item that happens to share the same
- *   name — uniqueness is what turns "every position matches" into "every position matches ITS OWN
- *   item".
- * - [NodeTreeColumnProvenance.bodyPosition]'s own item must have a VERIFIABLE name to prove its
- *   position against in the first place: an explicit `AS x`, an implicit (no-`AS`) trailing alias
- *   token (via [splitTrailingImplicitAlias]), or being itself a bare column reference (whose own
- *   name IS what PostgreSQL reports as `:resname` when there is no alias at all). A position whose
- *   `:resname` PostgreSQL auto-generated (e.g. `upper`, `?column?`) has no corresponding text to
- *   verify against, so it can never pass this gate — and per the point above, that failure alone
- *   already fails the WHOLE cross-validation, not merely that one position.
- * - [verifiedItem] NEVER cuts an implicit alias token off the matched item, unlike the explicit-`AS`
- *   case: whether a trailing bare word is an alias or the item's own last operand cannot be decided
- *   from text alone (`ts AT TIME ZONE timezone`'s trailing `timezone` is a required operand of `AT
- *   TIME ZONE`, not an alias, yet it is ALSO a legal implicit alias token, and PostgreSQL's own
- *   `:resname` for that item is `timezone` either way — the exact same string a genuine alias would
- *   produce). `:resname` is used only to VERIFY that some trailing token matches, never to decide
- *   where to cut — but per the point below, that COMPLETE text is only ever RETURNED when
- *   [provenance]'s own matched position verified via an explicit `AS` alias, never an implicit one.
- * - [provenance]'s own matched item must NOT have been verified via an implicit alias (the
- *   [AliasMatchKind.IMPLICIT_ALIAS] branch of [verifiedItem]) (#238 10.4). The complete, uncut text
- *   ([verifiedItem]'s own KDoc) is exactly right for cross-validating EVERY position's `:resname` —
- *   cutting it would risk the truncation defect above — but it is only ever a legal SELECT-LIST
- *   ITEM, `UPPER(name) y`, never a legal standalone EXPRESSION on its own (`(UPPER(name) y)` is a
- *   syntax error: PostgreSQL parses the bare trailing `y` as a second, unexpected token once the
- *   surrounding parentheses force expression context) — the exact context a `@property` source
- *   reference renders it in. An explicit `AS` alias never has this problem: [item]'s own
- *   [SelectItem.expression] there is ALREADY split off from the alias by [extractAlias], so nothing
- *   about the emitted text changes based on this gate. Declining an implicit-alias match affects
- *   only that ONE position; every OTHER position in the same CTE body — resolved by a SEPARATE call
- *   to this function — still verifies and emits normally.
- * - the matched item must not itself be a bare column reference (see [isBareColumnPassThrough]) —
- *   a CTE body that merely forwards another column unchanged (`description AS
- *   description_upper`, or the same shape spelled `description dx`) has nothing worth reporting as
- *   "the expression"; echoing a column name back adds no value (the same rule
- *   [TypeRepository.buildTypeProjectionForQuery] already applies to a top-level plain column
- *   reference).
+ * literal) without the item count changing, silently handing back a neighboring item's expression.
+ * Every gate below returns `null` (no provenance) instead of risking a wrong one:
+ * - the CTE [provenance] points at is found by replaying [NodeTreeColumnProvenance.hops] step by
+ *   step (see [scopedNodeTreeCteQueryBlock] and [scopedSqlCteDefinition]), never by a flat, name-only
+ *   search — so a nested `WITH` that shadows an outer CTE of the same name resolves against the exact
+ *   declaration [NodeTreeProvenanceResolver] walked to, not merely a same-named one elsewhere (#238).
+ * - [parseOutputItemsWithAlias] over that CTE's body must yield exactly as many top-level items as
+ *   [nodeTreeText] has non-junk body target entries for that CTE.
+ * - every position's own name — not merely [provenance]'s — must fold-match that position's own
+ *   `:resname`, in order, and those `:resname`s must be pairwise unique; otherwise a mis-split that
+ *   happens to preserve the item count could pass by shifting text between two positions sharing a
+ *   name.
+ * - [provenance]'s own item must have a verifiable name: an explicit `AS x`, an implicit trailing
+ *   alias token, or being itself a bare column reference — see [verifiedItem].
+ * - [provenance]'s own matched item must not have been verified only via an implicit alias: its
+ *   complete text is legal only as a SELECT-LIST ITEM (`UPPER(name) y`), never as a standalone
+ *   EXPRESSION — the context a `@property` source reference renders it in — because whether a
+ *   trailing bare word is an alias or a required operand (`ts AT TIME ZONE timezone`) cannot be
+ *   decided from text alone. An explicit `AS` alias has no such problem: [extractAlias] already
+ *   splits it off before the item's expression is formed.
+ * - the matched item must not be a bare column pass-through (see [isBareColumnPassThrough]) — a CTE
+ *   body that merely forwards a column unchanged has nothing of its own to report, the same rule
+ *   [TypeRepository.buildTypeProjectionForQuery] applies to a top-level plain column reference.
  *
- * @param sql The query's ORIGINAL SQL text (containing the developer's own `?` placeholders, if
+ * @param sql The query's original SQL text (containing the developer's own `?` placeholders, if
  *   any) — never [nodeTreeText]'s sentinel-substituted or deparsed form.
- * @param nodeTreeText The SAME node tree [NodeTreeProvenanceResolver] resolved [provenance] from
- *   (`pg_rewrite.ev_action` or `pg_proc.prosqlbody` text, or a bare `{QUERY ...}` block) — re-parsed
- *   here only via [scopedNodeTreeCteQueryBlock], to read the referenced CTE body's own `:resname`s
- *   for cross-validation. Never re-analyzed for nullability or re-queried against the server: this
- *   is the SAME text already in hand from the one probe round trip that produced [provenance].
- * @param provenance Where [NodeTreeProvenanceResolver] found the expression — a CTE name and
- *   1-based body position — or `null` if it found nothing, in which case this function is not
- *   called at all (there is nothing to extract).
+ * @param nodeTreeText The same node tree [NodeTreeProvenanceResolver] resolved [provenance] from
+ *   (`pg_rewrite.ev_action` or `pg_proc.prosqlbody` text, or a bare `{QUERY ...}` block).
+ * @param provenance Where [NodeTreeProvenanceResolver] found the expression; this function is only
+ *   called when it is non-`null`.
  * @param parser The node-tree parser to use; defaults to a fresh, stateless instance.
  * @return The CTE body's expression text, [collapseCosmeticWhitespace]-normalized and with any
- *   comment [stripComments]-removed, exactly as the developer wrote it — or `null` if any gate
- *   above fails, INCLUDING [provenance]'s own matched item having been verified only via an
- *   implicit alias (#238 10.4) — see this file's own KDoc for why that specific match kind is never
- *   emitted, unlike an explicit `AS` alias or a bare column reference's own name.
+ *   comment [stripComments]-removed, exactly as the developer wrote it — or `null` if any gate above
+ *   fails.
  */
 internal fun resolveNodeTreeProvenanceExpression(
   sql: String,
@@ -128,29 +77,24 @@ internal fun resolveNodeTreeProvenanceExpression(
   if (isBareColumnPassThrough(matchedItem)) return null
 
   val matched = verifiedItems[provenance.bodyPosition - 1]
-  // #238 10.4: the matched item's COMPLETE text (including its own implicit alias) is only ever a
-  // legal SELECT-LIST ITEM, never a legal standalone EXPRESSION -- see this file's own KDoc. An
-  // explicit AS alias or a bare column reference's own name never has this problem, since neither
-  // leaves anything extra glued onto the emitted expression.
+  // The matched item's complete text (including its own implicit alias) is only ever a legal
+  // select-list item, never a legal standalone expression -- see this function's own KDoc.
   if (matched.matchKind == AliasMatchKind.IMPLICIT_ALIAS) return null
 
   return collapseCosmeticWhitespace(stripComments(matched.expression))
 }
 
 /**
- * Whether [item] is nothing more than a bare column reference forwarded under a different name —
- * an explicit `AS` alias on a plain column (`description AS description_upper`), or the SAME shape
- * spelled with an implicit alias instead (`description dx`) — in which case there is nothing of
- * [item]'s own to report as "the expression".
+ * Whether [item] is nothing more than a bare column reference forwarded under a different name — an
+ * explicit `AS` alias on a plain column, or the same shape spelled with an implicit alias
+ * (`description dx`) — in which case there is nothing of [item]'s own to report as "the expression".
  *
- * The implicit-alias branch here is the ONE place [splitTrailingImplicitAlias]'s guessed split is
- * used to decide something about [item] rather than merely to VERIFY a `:resname` match (see
- * [verifiedItem]'s own KDoc) — safe here because a wrong guess can only make this function MORE
- * conservative (reporting a pass-through that, once split correctly, wasn't one — the caller bails
- * and reports nothing) or LESS conservative (missing a real pass-through, in which case the caller
- * falls through to [verifiedItem]'s own [AliasMatchKind.IMPLICIT_ALIAS] gate and declines there
- * instead — see [resolveNodeTreeProvenanceExpression]'s own KDoc, #238 10.4): a bad guess here never
- * causes a WRONG value to be emitted, only a missed or an extra decline.
+ * The implicit-alias branch here is the one place [splitTrailingImplicitAlias]'s guessed split
+ * decides something about [item], rather than merely verifying a `:resname` match (see
+ * [verifiedItem]). Safe because a wrong guess only makes this function more conservative (reporting
+ * a pass-through that wasn't one, so the caller reports nothing) or less conservative (missing a
+ * real pass-through, which then falls through to [verifiedItem]'s own [AliasMatchKind.IMPLICIT_ALIAS]
+ * decline instead) — never a wrong value emitted.
  */
 private fun isBareColumnPassThrough(item: OutputItemWithAlias): Boolean {
   if (item.selectItem.columnName != null) return true
@@ -160,43 +104,35 @@ private fun isBareColumnPassThrough(item: OutputItemWithAlias): Boolean {
 }
 
 /**
- * Which of PostgreSQL's own three ways of naming a select-list item verified [VerifiedItem.expression]
- * against its `:resname` — see [verifiedItem]'s own KDoc for what each one means.
- * [resolveNodeTreeProvenanceExpression] emits [VerifiedItem.expression] as-is for
- * [EXPLICIT_ALIAS]/[BARE_COLUMN_REFERENCE] (the latter is unreachable there in practice, since
- * [isBareColumnPassThrough] already declines a bare column reference before that point is reached),
- * but declines [IMPLICIT_ALIAS] outright (#238 10.4) — see that function's own KDoc for why.
+ * Which of PostgreSQL's three ways of naming a select-list item verified [VerifiedItem.expression]
+ * against its `:resname`. [resolveNodeTreeProvenanceExpression] emits the expression as-is for
+ * [EXPLICIT_ALIAS]/[BARE_COLUMN_REFERENCE] (the latter unreachable there in practice, since
+ * [isBareColumnPassThrough] already declines a bare column reference first), but declines
+ * [IMPLICIT_ALIAS] outright — see that function's own KDoc for why.
  */
 private enum class AliasMatchKind { EXPLICIT_ALIAS, BARE_COLUMN_REFERENCE, IMPLICIT_ALIAS }
 
 /**
- * @property expression [item]'s COMPLETE, UNCUT text — see [resolveNodeTreeProvenanceExpression]'s
- *   own KDoc for why cutting is never attempted.
- * @property matchKind Which naming rule verified [expression] against its `:resname` — see
- *   [AliasMatchKind]'s own KDoc for how the caller uses this.
+ * @property expression The item's complete, uncut text — see [resolveNodeTreeProvenanceExpression]
+ *   for why cutting is never attempted.
+ * @property matchKind Which naming rule verified [expression] against its `:resname`.
  */
 private data class VerifiedItem(val expression: String, val matchKind: AliasMatchKind)
 
 /**
- * [item]'s COMPLETE, UNCUT text, paired with which rule verified it — see [VerifiedItem]'s own KDoc
- * for why cutting is never attempted here, and [AliasMatchKind]'s own KDoc for what the caller does
- * with each kind — if [item]'s own name can be VERIFIED to fold-match [resultName] (the node tree's
- * authoritative `:resname` for this same position), `null` otherwise. Tried in this order, matching
- * PostgreSQL's own precedence for naming a select-list item:
+ * [item]'s complete, uncut text paired with which rule verified its name against [resultName] (the
+ * node tree's authoritative `:resname` for this position), or `null` if none did. Tried in
+ * PostgreSQL's own precedence order for naming a select-list item:
  *
- * 1. An explicit `AS alias` ([OutputItemWithAlias.alias]) — folded via [foldIdentifier]'s raw-text
- *    overload, since [OutputItemWithAlias.alias] still carries its own quotes, if any. Unambiguous:
- *    `AS` can only ever introduce an alias, so [item]'s own [SelectItem.expression] (already split
- *    off by [extractAlias]) is exactly the developer's expression with nothing extra attached.
- * 2. A bare column reference with NO alias at all ([SelectItem.columnName] non-`null`) — PostgreSQL
- *    exposes such an item under the column's own name.
- * 3. Neither of the above: [item]'s own text may still END with an implicit (no-`AS`) alias token
- *    that happens to be the SAME string PostgreSQL reports for a keyword-operand shape's own
- *    trailing operand (`ts AT TIME ZONE timezone`'s `:resname` is `timezone`, whether or not
- *    `timezone` is really an alias) — [splitTrailingImplicitAlias] over
- *    [item]'s [SelectItem.expression] is used ONLY to find that trailing token and fold-compare it
- *    against [resultName]; the [ItemAndImplicitAlias.expression] half of its result (the text with
- *    that token cut off) is never read.
+ * 1. An explicit `AS alias` — folded via [foldIdentifier]'s raw-text overload, since
+ *    [OutputItemWithAlias.alias] still carries its own quotes, if any.
+ * 2. A bare column reference with no alias at all — PostgreSQL exposes such an item under the
+ *    column's own name.
+ * 3. Neither of the above: the item's text may still end with an implicit (no-`AS`) alias token that
+ *    happens to be the same string PostgreSQL reports for a keyword-operand shape's own trailing
+ *    operand (`ts AT TIME ZONE timezone`'s `:resname` is `timezone`, whether or not `timezone` is
+ *    really an alias). [splitTrailingImplicitAlias] is used only to find that trailing token and
+ *    fold-compare it against [resultName]; the split-off expression half of its result is never read.
  */
 private fun verifiedItem(item: OutputItemWithAlias, resultName: String): VerifiedItem? {
   val alias = item.alias
@@ -218,24 +154,19 @@ private fun verifiedItem(item: OutputItemWithAlias, resultName: String): Verifie
 }
 
 /**
- * Replays [hops] against [nodeTreeText]'s own `:cteList` structure, maintaining the SAME
- * scope-stack shape [NodeTreeProvenanceResolver.resolveVar] built while producing [hops] in the
- * first place, and returns the LAST hop's CTE body (`:ctequery` block) — the exact declaration
- * [NodeTreeProvenanceResolver] resolved against, never merely a same-named one elsewhere in the
- * tree.
+ * Replays [hops] against [nodeTreeText]'s own `:cteList` structure, maintaining the same scope-stack
+ * shape [NodeTreeProvenanceResolver.resolveVar] built while producing [hops], and returns the last
+ * hop's CTE body (`:ctequery` block) — the exact declaration [NodeTreeProvenanceResolver] resolved
+ * against, never merely a same-named one elsewhere in the tree.
  *
- * Index `0` of the scope stack is always the CURRENT query block's own `:cteList`; entering a hop's
- * CTE body pushes that body's OWN `:cteList` onto the front of the scope AS IT EXISTED AT THAT
- * HOP'S OWN DECLARATION — `scopeStack.drop(hop.ctelevelsup)`, never the full accumulated
- * [scopeStack] — exactly mirroring [NodeTreeProvenanceResolver.resolveVar]'s `currentScopeStack`
- * bookkeeping (see that method's KDoc for why: a hop into a SIBLING CTE is not a nesting level, so
- * blindly prepending onto every frame accumulated so far drifts out of step with the node tree's own
- * `:ctelevelsup`, which only ever counts LEXICAL nesting).
+ * Mirrors [NodeTreeProvenanceResolver.resolveVar]'s scope-stack bookkeeping exactly: entering a hop's
+ * CTE body pushes that body's own `:cteList` onto `scopeStack.drop(hop.ctelevelsup)`, not the full
+ * accumulated stack, because a hop into a sibling CTE is not a nesting level.
  *
- * @return `null` if any hop's [CteHop.ctelevelsup] addresses a scope-stack depth that does not
- *   exist, or its [CteHop.name] is not declared in that scope's `:cteList` — neither can happen for
- *   [hops] genuinely produced by [NodeTreeProvenanceResolver] against THIS SAME [nodeTreeText], but
- *   the caller must still treat either as "cannot resolve" rather than assume it.
+ * @return `null` if any hop's [CteHop.ctelevelsup] addresses a scope-stack depth that does not exist,
+ *   or its [CteHop.name] is not declared in that scope's `:cteList` — neither can happen for [hops]
+ *   genuinely produced against this same [nodeTreeText], but the caller still treats either as
+ *   "cannot resolve" rather than assume it.
  */
 private fun scopedNodeTreeCteQueryBlock(nodeTreeText: String, hops: List<CteHop>, parser: PgNodeTreeParser): String? {
   var scopeStack = listOf(parser.parseCteList(nodeTreeText).associateBy { it.name })
@@ -252,24 +183,21 @@ private fun scopedNodeTreeCteQueryBlock(nodeTreeText: String, hops: List<CteHop>
 
 /**
  * The SQL-text counterpart of [scopedNodeTreeCteQueryBlock]: replays [hops] against [sql]'s own
- * lexically-nested `WITH` clauses, maintaining an analogous scope stack of [CteDefinition] lists
- * (rather than [NodeTreeCteDefinition] maps), and returns the LAST hop's [CteDefinition] — the
- * exact declaration in the text that corresponds to the node tree's own resolution.
+ * lexically-nested `WITH` clauses, maintaining an analogous scope stack of [CteDefinition] lists, and
+ * returns the last hop's [CteDefinition].
  *
  * Every returned (and intermediate) [CteDefinition]'s [CteDefinition.bodyOpenParenthesis]/
- * [CteDefinition.bodyCloseParenthesis] are always re-based to index into [sql] itself — never the
- * (possibly deeply nested) body substring a definition was actually found in — since
- * [resolveNodeTreeProvenanceExpression] always slices [sql] directly by whichever [CteDefinition]
- * this function returns.
+ * [CteDefinition.bodyCloseParenthesis] are re-based to index into [sql] itself — never the (possibly
+ * nested) body substring a definition was found in — since [resolveNodeTreeProvenanceExpression]
+ * slices [sql] directly by whichever [CteDefinition] this function returns.
  *
  * A single `WITH` clause can never legally declare the same name twice (PostgreSQL rejects that at
- * parse time), so lookup within one scope level never needs a uniqueness check of its own — the
- * scope stack itself is what supplies the disambiguation a flat, whole-statement name search
- * cannot.
+ * parse time), so lookup within one scope level never needs a uniqueness check: the scope stack
+ * itself supplies the disambiguation a flat, whole-statement name search cannot.
  *
- * @return `null` if any hop's [CteHop.ctelevelsup] addresses a scope-stack depth that does not
- *   exist, or its [CteHop.name] does not fold-match ([foldIdentifier] against
- *   [CteDefinition.rawName]) any definition in that scope
+ * @return `null` if any hop's [CteHop.ctelevelsup] addresses a scope-stack depth that does not exist,
+ *   or its [CteHop.name] does not fold-match ([foldIdentifier] against [CteDefinition.rawName]) any
+ *   definition in that scope
  */
 private fun scopedSqlCteDefinition(sql: String, hops: List<CteHop>): CteDefinition? {
   var scopeStack = listOf(rebasedCteDefinitions(sql, 0))
@@ -289,9 +217,9 @@ private fun scopedSqlCteDefinition(sql: String, hops: List<CteHop>): CteDefiniti
 
 /**
  * [parseCteClause]'s own definitions for [text], with every [CteDefinition.bodyOpenParenthesis]/
- * [CteDefinition.bodyCloseParenthesis] shifted by [offset] so they index into the ORIGINAL SQL
- * string [text] was sliced from, rather than [text] itself. See [scopedSqlCteDefinition]'s own
- * KDoc for why every level of its scope stack needs definitions rebased this way.
+ * [CteDefinition.bodyCloseParenthesis] shifted by [offset] so they index into the original SQL
+ * string [text] was sliced from, rather than [text] itself. See [scopedSqlCteDefinition] for why
+ * every level of its scope stack needs definitions rebased this way.
  */
 private fun rebasedCteDefinitions(text: String, offset: Int): List<CteDefinition> =
   parseCteClause(text)?.definitions?.map {

@@ -364,11 +364,11 @@ class CrudQuerySynthesizerTest {
 
   @Test
   fun `quoted, mixed-case, and space-containing column names are correctly quoted in every synthesized statement`() {
-    // #238: test-scenarios/comments/schema.sql's "tq" table (this is the same shape) covers
-    // reading these columns back via a hand-written query, but CrudQuerySynthesizer building SQL
-    // that WRITES to them is a different surface with no coverage of its own — this table has no
-    // PK-dependent CRUD method whose OWN name would need to embed the quoted names (its PK is the
-    // plain "id"), so only the raw SQL text below actually exercises the quoting.
+    // test-scenarios/comments/schema.sql's "tq" table (this is the same shape) covers reading these
+    // columns back via a hand-written query, but CrudQuerySynthesizer building SQL that writes to
+    // them is a different surface with no coverage of its own — this table has no PK-dependent CRUD
+    // method whose own name would need to embed the quoted names (its PK is the plain "id"), so
+    // only the raw SQL text below actually exercises the quoting.
     val table = table(
       "tq",
       column("id", "int4", notNull = true, isPrimaryKey = true, isAutoIncrement = true),
@@ -395,9 +395,9 @@ class CrudQuerySynthesizerTest {
 
   @Test
   fun `a column name containing a backtick generates SQL against the real column, not a folded one`() {
-    // #238 11.1: a prior fix rewrote Column.name's backtick to an apostrophe before this synthesizer
-    // ever saw it, so generated SQL referenced a column ("a'b") that does not exist. Column.name must
-    // stay the real database identifier here.
+    // A prior fix rewrote Column.name's backtick to an apostrophe before this synthesizer ever saw
+    // it, so generated SQL referenced a column ("a'b") that does not exist. Column.name must stay
+    // the real database identifier here.
     val table = table(
       "bt",
       column("id", "int4", notNull = true, isPrimaryKey = true, isAutoIncrement = true),

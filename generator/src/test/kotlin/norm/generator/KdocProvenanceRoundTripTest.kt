@@ -22,16 +22,14 @@ import java.sql.DriverManager
  * into generated KDoc ([TypeRepository.addClassKdoc]'s `` @property x (`EXPR`) `` line) is exactly
  * the developer's own SQL — not merely that the string computed internally looks right, but that
  * the text a developer would read off the generated `.kt` FILE, extracted back out of a REAL
- * Markdown render, still means what the original SQL meant when run against a real server (#238
- * 8.1–8.3, 9.1, 9.4).
+ * Markdown render, still means what the original SQL meant when run against a real server.
  *
  * Reads [renderedFileTextFor], which runs the [TypeSpec] through KotlinPoet's own [Any.toString]
  * emission — the SAME [com.squareup.kotlinpoet.CodeWriter] machinery a real generated `.kt` file
  * goes through — NEVER `typeSpec.kdoc.toString()`. `kdoc.toString()` is the pre-render [CodeBlock]
  * text, computed before [com.squareup.kotlinpoet.CodeWriter] ever sees it, so it cannot show
  * [com.squareup.kotlinpoet.CodeWriter]'s own unconditional `"/*"`/`"*/"` → `"/&#42;"`/`"&#42;/"`
- * rewrite inside every KDoc block (#238 9.1) — a defect five prior verification rounds all missed
- * for exactly this reason (see [BlockCommentDelimiterDeclines]).
+ * rewrite inside every KDoc block (see [BlockCommentDelimiterDeclines]).
  *
  * Extracts the rendered expression with a REAL CommonMark parse ([extractSourceReferenceExpression])
  * rather than cutting the surrounding text at the first `)` — the previous version of this test did
@@ -46,9 +44,9 @@ class KdocProvenanceRoundTripTest {
 
     @Test
     fun `the top-level path's rendered expression parses, and evaluates the same as the original select item`() {
-      // #238 8.1 repro: a "--" comment sitting mid-expression used to be embedded verbatim,
-      // rendering "a + -- note\n  b" -- PostgreSQL rejects that with a syntax error, since the
-      // comment swallows the "b" operand along with the rest of its own line.
+      // A "--" comment sitting mid-expression, embedded verbatim, would render "a + -- note\n  b" --
+      // PostgreSQL rejects that with a syntax error, since the comment swallows the "b" operand
+      // along with the rest of its own line.
       val queryText = "SELECT a + -- note\n  b AS sum2 FROM t"
       val sumColumn = Column(name = "sum2", notNull = true, type = Identifier(name = "int4"))
 
@@ -84,8 +82,8 @@ class KdocProvenanceRoundTripTest {
 
     @Test
     fun `the escaped inline code span decodes back to the exact original expression and evaluates correctly`() {
-      // #238 8.3 repro: a literal backtick inside the expression used to close a single-backtick
-      // inline span early, corrupting the rendered Markdown.
+      // A literal backtick inside the expression, unescaped, would close a single-backtick inline
+      // span early, corrupting the rendered Markdown.
       val expressionColumn = Column(
         name = "u",
         notNull = false,
@@ -157,9 +155,9 @@ class KdocProvenanceRoundTripTest {
 
     @Test
     fun `a newline-containing expression is declined entirely -- there is nothing to extract or run`() {
-      // #238 8.2 repro: rendering "s || 'a\nb'" as a single-line inline code span used to fold the
-      // literal's own newline to a space when rendered, silently changing "'a\nb'" into the
-      // DIFFERENT value "'a b'" (verified live: "SELECT ('a\nb' = 'a b')" is false).
+      // Rendering "s || 'a\nb'" as a single-line inline code span would fold the literal's own
+      // newline to a space, silently changing "'a\nb'" into the different value "'a b'"
+      // (`SELECT ('a\nb' = 'a b')` is false).
       val expressionColumn = Column(
         name = "u",
         notNull = false,
@@ -180,12 +178,12 @@ class KdocProvenanceRoundTripTest {
 
     @Test
     fun `an expression containing a block-comment close delimiter is declined, never rendered as an entity`() {
-      // #238 9.1: KotlinPoet's own KDoc emission (CodeWriter.emit, kdoc branch) unconditionally
-      // rewrites "*/" to "&#42;/" inside EVERY KDoc block it writes -- necessary so a literal block
-      // comment can never prematurely close the surrounding "/** ... */" comment, but CommonMark
-      // never decodes an HTML entity back to a literal character INSIDE a code span. Reading
-      // typeSpec.kdoc.toString() (the pre-render CodeBlock text) would MISS this rewrite entirely
-      // -- it only happens when the TypeSpec is actually rendered, which is exactly what
+      // KotlinPoet's own KDoc emission (CodeWriter.emit, kdoc branch) unconditionally rewrites "*/"
+      // to "&#42;/" inside every KDoc block it writes -- necessary so a literal block comment can
+      // never prematurely close the surrounding "/** ... */" comment, but CommonMark never decodes
+      // an HTML entity back to a literal character inside a code span. Reading
+      // typeSpec.kdoc.toString() (the pre-render CodeBlock text) would miss this rewrite entirely --
+      // it only happens when the TypeSpec is actually rendered, which is exactly what
       // renderedFileTextFor does here.
       val expressionColumn = Column(
         name = "u",
@@ -218,10 +216,10 @@ class KdocProvenanceRoundTripTest {
 
     @Test
     fun `a property name containing a block-comment close delimiter gets no @property line, never a rewritten one`() {
-      // #238 10.2: widening formatAsKdocPropertyReference's backtick delimiter fixes a literal
-      // backtick inside a property NAME, but not a literal block-comment delimiter -- KotlinPoet's
-      // rewrite (same as the expression case above) still substitutes an HTML entity for it, so the
-      // rendered tag would name a DIFFERENT property than the one actually declared.
+      // Widening formatAsKdocPropertyReference's backtick delimiter fixes a literal backtick inside
+      // a property name, but not a literal block-comment delimiter -- KotlinPoet's rewrite (same as
+      // the expression case above) still substitutes an HTML entity for it, so the rendered tag
+      // would name a different property than the one actually declared.
       val starSlashColumn = Column(
         name = "c*/d",
         notNull = true,
@@ -243,7 +241,7 @@ class KdocProvenanceRoundTripTest {
    * (`buildCodeString { emit(this, null) }`, the same [com.squareup.kotlinpoet.CodeWriter]-based
    * machinery `FileSpec.writeTo` uses to produce a real generated `.kt` file) — never
    * `typeSpec.kdoc.toString()`, which returns the [CodeBlock]'s own pre-render text, computed
-   * BEFORE [com.squareup.kotlinpoet.CodeWriter] ever applies its KDoc-block escaping (#238 9.1).
+   * before [com.squareup.kotlinpoet.CodeWriter] ever applies its KDoc-block escaping.
    */
   private fun renderedFileTextFor(repository: TypeRepository): String = repository.requiredTypes.first().toString()
 

@@ -320,9 +320,8 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
   private companion object {
     // Matches either a double-quoted SQL identifier ("name") or an unquoted one (word). The
     // quoted branch allows a doubled internal quote (`""`) so it can span PostgreSQL's own
-    // quoted-identifier escape for an embedded `"` character (#238 12.1) -- `"[^"]+"` alone
-    // stops at the first internal quote, matching only a trailing fragment like `"b"` out of
-    // `"a""b"`.
+    // quoted-identifier escape for an embedded `"` character -- `"[^"]+"` alone stops at the first
+    // internal quote, matching only a trailing fragment like `"b"` out of `"a""b"`.
     private const val SQL_IDENTIFIER = """(?:"(?:[^"]|"")+"|\w+)"""
 
     // Matches a possibly schema-qualified table name: `table`, `"table"`, or `"schema"."table"`.
@@ -362,10 +361,9 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
      */
     private fun unquoteIdentifier(identifier: String): String =
       if (identifier.startsWith('"') && identifier.endsWith('"')) {
-        // #238 11.4: PostgreSQL's own quoted-identifier escape rule reads an embedded "" inside a
-        // quoted identifier as ONE literal " character, not two -- un-doubling it here recovers the
-        // real column name (e.g. a"b), rather than leaving the SQL-escaped spelling (a""b) as the
-        // inferred parameter name.
+        // PostgreSQL reads an embedded "" inside a quoted identifier as one literal " character, not
+        // two -- un-doubling it here recovers the real column name (e.g. a"b), rather than leaving
+        // the SQL-escaped spelling (a""b) as the inferred parameter name.
         identifier.substring(1, identifier.length - 1).replace("\"\"", "\"")
       } else {
         identifier

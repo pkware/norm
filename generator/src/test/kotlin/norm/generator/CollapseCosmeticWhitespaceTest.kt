@@ -6,10 +6,9 @@ import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
 /**
- * #238 P1: [collapseCosmeticWhitespace] must never alter a byte inside a single-quoted literal, a
- * dollar-quoted string, a quoted identifier, or a comment — only whitespace OUTSIDE those spans is
- * cosmetic. Every expectation here is the developer's own SQL text, verified live against
- * PostgreSQL 18.4 to be exactly what a quoted identifier/literal containing that whitespace means.
+ * [collapseCosmeticWhitespace] must never alter a byte inside a single-quoted literal, a
+ * dollar-quoted string, a quoted identifier, or a comment — only whitespace outside those spans is
+ * cosmetic.
  */
 class CollapseCosmeticWhitespaceTest {
 

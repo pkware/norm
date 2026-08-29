@@ -16,8 +16,8 @@ import org.junit.jupiter.api.Test
  * Regression coverage for [addSqlStatementInterfaceMethod]'s `@param` KDoc lines: a stray backtick in
  * one parameter's column comment must not be free to pair with a backtick belonging to a LATER
  * parameter's own comment, the exact defect class [escapeMarkdownBacktick] already fixed for
- * [TypeRepository]'s `@property` lines (#238 10.3) — this emission path shares the same "single `\n`,
- * no blank line, between consecutive tags" shape, but is invisible to
+ * [TypeRepository]'s `@property` lines — this emission path shares the same "single `\n`, no blank
+ * line, between consecutive tags" shape, but is invisible to
  * [SourceReferenceLiveVerificationTest] since it produces no `@property` source-reference span.
  */
 class InterfaceBuilderKdocTest {
@@ -53,10 +53,10 @@ class InterfaceBuilderKdocTest {
 
   @Test
   fun `a backslash immediately before a backtick in one parameter comment cannot open a code span either`() {
-    // #238 11.2: escaping ONLY the backtick ("`" -> "\\`") is defeated when the comment already
-    // contains a backslash immediately before the backtick -- CommonMark reads the resulting "\\`"
-    // as an escaped backslash followed by an UNESCAPED, code-span-opening backtick, exactly the
-    // defect this test's sibling above already guards against for a bare backtick.
+    // Escaping only the backtick ("`" -> "\\`") is defeated when the comment already contains a
+    // backslash immediately before the backtick -- CommonMark reads the resulting "\\`" as an
+    // escaped backslash followed by an unescaped, code-span-opening backtick, exactly the defect
+    // this test's sibling above already guards against for a bare backtick.
     val statement = createStatement(
       sql = "SELECT 1",
       cmd = ":exec",
@@ -83,10 +83,9 @@ class InterfaceBuilderKdocTest {
 
   @Test
   fun `a percent sign in the query's own leading SQL comment does not abort generation`() {
-    // #238 11.3: addStandardKdoc appends query.comments (the developer's own "-- comment" lines
-    // preceding "-- name:") as a KotlinPoet KDoc FORMAT string with no arguments, the same class of
-    // defect fixed for EnumBuilder's catalog comment -- a literal "%" in the developer's own comment
-    // is read as a format specifier and throws building the KDoc.
+    // addStandardKdoc appending query.comments (the developer's own "-- comment" lines preceding
+    // "-- name:") as a KotlinPoet KDoc format string with no arguments would let a literal "%" in
+    // the comment be read as a format specifier and throw building the KDoc.
     val statement = createStatement(
       sql = "SELECT 1",
       cmd = ":exec",
@@ -102,12 +101,12 @@ class InterfaceBuilderKdocTest {
 
   @Test
   fun `an unescapable block-comment delimiter declines the fenced sql block, matching the data-class KDoc`() {
-    // #238 12.2: TypeRepository.addClassKdoc already declines its "sql" fenced block for the exact
-    // same query text (canRenderSqlVerbatim, guarded by containsUnescapableBlockCommentDelimiter)
-    // because KotlinPoet's own KDoc emission unconditionally rewrites "/*"/"*/" to "/&#42;"/"&#42;/"
-    // -- a rewrite CommonMark never decodes back inside a fenced code block. addStandardKdoc emitted
-    // its own "```sql" fence unconditionally, so the very same query rendered faithfully in one KDoc
-    // and corrupted in the other.
+    // TypeRepository.addClassKdoc already declines its "sql" fenced block for the exact same query
+    // text (canRenderSqlVerbatim, guarded by containsUnescapableBlockCommentDelimiter) because
+    // KotlinPoet's own KDoc emission unconditionally rewrites "/*"/"*/" to "/&#42;"/"&#42;/" -- a
+    // rewrite CommonMark never decodes back inside a fenced code block. addStandardKdoc must decline
+    // the same way, or the same query would render faithfully in one KDoc and corrupted in the
+    // other.
     val statement = createStatement(
       sql = "SELECT name || '/*x*/' AS block_delim",
       columns = listOf(column("block_delim")),
@@ -122,11 +121,11 @@ class InterfaceBuilderKdocTest {
 
   @Test
   fun `a query text line matching or exceeding a fixed 3-backtick fence does not truncate the sql block`() {
-    // Twin-site sweep for #238 12: TypeRepository.addClassKdoc already guards its "sql" fenced
-    // block against this exact hazard via markdownFenceDelimiter (a fence one backtick longer than
-    // any run already in the SQL), but addStandardKdoc still opens/closes with a FIXED "```sql"
-    // fence -- a query text containing its own line of 3+ backticks (e.g. inside a multi-line
-    // string literal) closes that fence early, silently truncating the rendered SQL.
+    // TypeRepository.addClassKdoc already guards its "sql" fenced block against this exact hazard
+    // via markdownFenceDelimiter (a fence one backtick longer than any run already in the SQL);
+    // addStandardKdoc must match, or a fixed "```sql" fence closes early on a query text containing
+    // its own line of 3+ backticks (e.g. inside a multi-line string literal), silently truncating
+    // the rendered SQL.
     val sqlWithTripleBacktickLine = "SELECT '\n```\n' AS x"
     val statement = createStatement(sql = sqlWithTripleBacktickLine, columns = listOf(column("x")))
 

@@ -87,17 +87,13 @@ internal fun parseSelectItems(sql: String): List<SelectItem> = parseOutputItemsW
 
 /**
  * The single window both [hasTopLevelSetOperation] and [parseOutputItemsWithAlias] scan: [sql]'s
- * MAIN query — after any leading `WITH` clause, via [parseCteClause]'s
- * [ParsedCteClause.mainQueryStart] — with any redundant outer `(`...`)` pair already stripped via
+ * main query, after any leading `WITH` clause ([parseCteClause]'s
+ * [ParsedCteClause.mainQueryStart]), with any redundant outer `(`...`)` pair stripped via
  * [stripRedundantOuterParentheses].
  *
- * A guard and the parser it guards must see the SAME text: [hasTopLevelSetOperation] once computed
- * this window WITHOUT the [stripRedundantOuterParentheses] step [parseOutputItemsWithAlias] applies,
- * so a set operation wrapped in one parenthesis pair (`(SELECT a UNION SELECT b)`) sat at paren depth
- * ONE in the guard's raw text — invisible to it — while the parser, seeing the parentheses already
- * stripped, still found and returned branch 1's items as if no set operation were present (#238).
- * Both callers now share this one function so they can never drift apart on what "the main query
- * window" means again.
+ * A guard and the parser it guards must see the same text: without sharing this function, a set
+ * operation wrapped in one parenthesis pair (`(SELECT a UNION SELECT b)`) sits at paren depth one in
+ * the raw text, invisible to a guard that skips the stripping step the parser applies (#238).
  */
 private fun mainQueryWindow(sql: String): String {
   val mainQueryStart = parseCteClause(sql)?.mainQueryStart ?: 0
@@ -105,26 +101,21 @@ private fun mainQueryWindow(sql: String): String {
 }
 
 /**
- * Whether [sql]'s own MAIN query — after any leading `WITH` clause, the exact window
- * [parseOutputItemsWithAlias] searches for its output clause — contains a top-level
- * `UNION`/`INTERSECT`/`EXCEPT` keyword: this statement's own visible `SELECT`/`RETURNING` list is
- * only ONE branch of a set operation, so [parseSelectItems] parsed only that branch's items, never
- * the other branch(es)' own (possibly differently-computed) expressions for the same result column.
+ * Whether [sql]'s main query ([mainQueryWindow]) contains a top-level `UNION`/`INTERSECT`/`EXCEPT`
+ * keyword: this statement's own visible `SELECT`/`RETURNING` list is only one branch of a set
+ * operation, so [parseSelectItems] parsed only that branch's items, never the other branch(es)' own
+ * (possibly differently-computed) expressions for the same result column.
  *
  * [TypeRepository.buildTypeProjectionForQuery] uses this to suppress a computed expression's own
  * `@property` source-reference line under a set operation — reporting `UPPER(x)` alone for `SELECT
- * UPPER(x) AS u FROM t UNION SELECT LOWER(x) FROM t` would present one branch as the whole answer,
- * which is a WRONG emission by this codebase's own "correct or silent" standard, not merely an
- * incomplete one. A bare column reference is UNAFFECTED — PostgreSQL itself names a set operation's
- * whole result column after branch 1 alone, so echoing that name back is not misleading the way a
- * branch-specific expression is.
+ * UPPER(x) AS u FROM t UNION SELECT LOWER(x) FROM t` would present one branch as the whole answer. A
+ * bare column reference is unaffected: PostgreSQL itself names a set operation's whole result column
+ * after branch 1 alone, so echoing that name back is not misleading.
  *
- * All three keywords are PostgreSQL RESERVED words (verified live against PostgreSQL 18.4's
- * `pg_get_keywords()`: `union`/`intersect`/`except` are all category `R`), so an unquoted occurrence
- * can never be a column/table identifier or alias — only [findTopLevelKeyword]'s lexical- and
- * depth-awareness is needed to rule out a string literal, comment, or nested subquery, not the
- * additional alias-position gating [findTopLevelReturningKeyword] needs for the non-reserved
- * `RETURNING`.
+ * All three keywords are PostgreSQL reserved words, so an unquoted occurrence can never be a
+ * column/table identifier or alias — only [findTopLevelKeyword]'s lexical- and depth-awareness is
+ * needed, not the additional alias-position gating [findTopLevelReturningKeyword] needs for the
+ * non-reserved `RETURNING`.
  */
 internal fun hasTopLevelSetOperation(sql: String): Boolean {
   val window = mainQueryWindow(sql)
@@ -373,39 +364,23 @@ private fun extractAlias(item: String): Pair<String, String?> {
 }
 
 /**
- * Extracts exactly the alias TOKEN starting at or after [start] in [item] (the position right
- * after the `AS` keyword [extractAlias] already found) — a bare identifier or a double-quoted
- * one, [QUOTED_IDENTIFIER_PATTERN]'s own `""`-escape handling included — discarding anything else
- * around it: leading whitespace/comments before the token (`AS /* c */ ux`), and any TRAILING
- * whitespace/comments after it (`AS ux -- trailing note`, `AS ux /* c */`). [extractAlias]'s own
- * KDoc documents `AS"ux"` (no separating whitespace before a quoted alias) already being
- * recognized as the `AS` keyword itself; this function is what turns whatever textually follows
- * it into the CLEAN alias [foldIdentifier] expects, rather than [extractAlias] returning the raw,
- * unbounded remainder of the item verbatim — which would silently swallow a trailing comment into
- * the "alias" and make it fold-compare unequal to any real name.
+ * Extracts exactly the alias token starting at or after [start] in [item] (the position right after
+ * the `AS` keyword [extractAlias] already found) — a bare identifier or a double-quoted one,
+ * discarding any leading/trailing whitespace or comments around it (`AS /* c */ ux -- note`).
  *
- * The quoted branch is escape-aware — via the SAME [QUOTED_IDENTIFIER_PATTERN] compiled pattern
- * [COLUMN_REFERENCE] itself uses, not a second, independently-written scanner — so a doubled `""`
- * inside the alias (`AS "zz""q"`) is correctly treated as an escaped literal `"`, not as the
- * token's end. Getting this wrong is worse than simply missing the escaped case: an
- * escape-UNAWARE scan on `AS "zz""q"` stops at the FIRST `"`, returning the raw token `"zz` (an
- * unterminated-looking fragment) that then still LOOKS quoted to [foldIdentifier] and, once its
- * outer quote is stripped, folds to the SHORTER name `zz` — which CAN collide with an unrelated,
- * genuinely-named `zz` elsewhere in the same body, wrongly matching an outer reference that was
- * never meant to reach this item at all. A punt has to come out as `null`, never a truncated name
- * that happens to still look like a real one.
+ * The quoted branch is escape-aware, via the same [QUOTED_IDENTIFIER_PATTERN] [COLUMN_REFERENCE]
+ * uses, so a doubled `""` inside the alias (`AS "zz""q"`) is treated as an escaped literal `"`, not
+ * the token's end — an escape-unaware scan would stop at the first `"`, returning the truncated
+ * fragment `"zz`, which still looks quoted and folds to the shorter name `zz`, wrongly colliding
+ * with an unrelated `zz` elsewhere in the same body.
  *
- * @return The alias token — WITH its surrounding quotes and any internal `""` escape still
- *   attached when quoted, exactly as [foldIdentifier] expects (see its own KDoc on why quotes
- *   must be preserved through to there) — or `null` when there is no legitimate alias token at
- *   all: nothing but whitespace/comments to the end of [item], an unterminated quoted identifier,
- *   a character that can neither start a bare identifier nor open a quoted one (e.g. a
- *   single-quoted STRING LITERAL — `AS 'x'` is not legal PostgreSQL syntax for an alias at all,
- *   and must never be treated as if it named one), OR anything other than trailing
- *   whitespace/comments following the token before the end of [item] (`AS ux zz` is not legal
- *   PostgreSQL either — a second bare word cannot follow a completed alias — so this returns
- *   `null` rather than silently discarding `zz` and keeping just `ux`; discarding unrecognized
- *   input is exactly the failure mode the escape-unaware quoted scan above had).
+ * @return The alias token — with its surrounding quotes and any internal `""` escape still attached
+ *   when quoted, exactly as [foldIdentifier] expects — or `null` when there is no legitimate alias
+ *   token: nothing but whitespace/comments to the end of [item], an unterminated quoted identifier, a
+ *   character that can neither start a bare identifier nor open a quoted one (e.g. `AS 'x'`, not
+ *   legal PostgreSQL), or anything other than trailing whitespace/comments following the token
+ *   (`AS ux zz` is not legal PostgreSQL either, so this returns `null` rather than silently
+ *   discarding `zz`).
  */
 private fun parseAliasToken(item: String, start: Int): String? {
   val tokenStart = skipWhitespaceAndComments(item, start)
@@ -447,20 +422,16 @@ private fun parseAliasToken(item: String, start: Int): String? {
  * to `ResultSetMetaData.getColumnName`, exactly the wrong-value-over-no-value mistake this whole
  * file exists to avoid.
  *
- * An UNQUOTED column/table name is folded via [foldAsciiCase] — PostgreSQL's own `downcase_identifier`
- * behavior, ASCII `A`-`Z` only, deliberately NOT Kotlin's `String.lowercase()` (see that function's
- * own KDoc for why) — so [SelectItem.columnName]/[SelectItem.tableName] agree with what
- * `ResultSetMetaData.getColumnName` reports for the same reference. Verified live against
- * PostgreSQL 18.4 + pgjdbc 42.7.11: `SELECT ID FROM t` parses column name `id`, matching pgjdbc's
- * own report, where an unfolded `ID` would silently miss `JdbcAnalyzer.buildResultColumns`'
- * `catalog.findColumn` lookup and drop the column's Postgres comment (#238). A QUOTED name is never
- * folded — quoting is precisely how PostgreSQL preserves a name's original case against this
- * default folding.
+ * An unquoted column/table name is folded via [foldAsciiCase] — PostgreSQL's own `downcase_identifier`
+ * behavior, ASCII `A`-`Z` only, not Kotlin's `String.lowercase()` — so [SelectItem.columnName]/
+ * [SelectItem.tableName] agree with what `ResultSetMetaData.getColumnName` reports for the same
+ * reference (an unfolded `ID` would miss `JdbcAnalyzer.buildResultColumns`'s `catalog.findColumn`
+ * lookup and drop the column's Postgres comment). A quoted name is never folded — quoting is how
+ * PostgreSQL preserves a name's original case against this default folding.
  *
  * Also called directly by [resolveNodeTreeProvenanceExpression] to re-classify an already
- * alias-stripped CTE body item — see that function's own KDoc for why the bare-column check needs
- * a fresh classification of the STRIPPED text rather than the item's own (pre-strip)
- * [SelectItem.columnName].
+ * alias-stripped CTE body item, since the bare-column check needs a fresh classification of the
+ * stripped text rather than the item's own pre-strip [SelectItem.columnName].
  */
 internal fun parseColumnReference(expression: String): SelectItem {
   val trimmed = expression.trim()

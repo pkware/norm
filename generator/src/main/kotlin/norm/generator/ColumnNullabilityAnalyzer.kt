@@ -49,22 +49,20 @@ internal const val VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET = 50
 
 /**
  * One result column's [nullable] flag (`true` means nullable) together with, when resolvable, its
- * [provenanceExpression] — the CTE-body SQL expression (verbatim from the developer's own query
- * text) that produced it, for a column whose own select item is merely a bare reference into a
- * CTE's output. `null` when [NodeTreeProvenanceResolver] found no CTE reference to attribute this
- * column to, or [resolveNodeTreeProvenanceExpression] could not PROVE the expression correct — see
- * those functions' own KDoc for the full list of gates.
+ * [provenanceExpression] — the CTE-body SQL expression, verbatim from the developer's own query
+ * text, for a column whose select item is merely a bare reference into a CTE's output. `null` when
+ * [NodeTreeProvenanceResolver] found no CTE reference to attribute this column to, or
+ * [resolveNodeTreeProvenanceExpression] could not prove the expression correct.
  *
- * Also carries [originalColumnName] — the REAL source column name, resolved from the outer target
+ * Also carries [originalColumnName] — the real source column name, resolved from the outer target
  * entry's own `:resorigtbl`/`:resorigcol` (see [PgCatalogLoader.columnNameByRelidAndAttnum]) rather
- * than whatever alias the select item's own text happens to spell. `null` when those fields are `0`
- * (no single source column) or the OID/attnum pair isn't in the catalog map for any reason — the
- * caller must fall back to its ordinary column-name resolution, never guess.
+ * than whatever alias the select item's text happens to spell. `null` when those fields are `0` (no
+ * single source column) or the OID/attnum pair isn't in the catalog map — the caller must fall back
+ * to its ordinary column-name resolution, never guess.
  *
  * Carries all three facts together, rather than as separate parallel lists, because
- * [ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody] resolves them from the SAME
- * parsed node tree in ONE round trip: nullability, provenance, and the original column name are
- * three independent readings of a probe function PostgreSQL was only ever asked to build once.
+ * [ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody] resolves them from the same parsed
+ * node tree in one round trip.
  */
 internal data class ColumnAnalysis(
   val nullable: Boolean,
@@ -246,25 +244,22 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    * A plain base-table source ([RangeTableEntry.Relation]) has exactly one name: its own catalog
    * name, via [resolveTableName].
    *
-   * A CTE source ([RangeTableEntry.Cte]) can appear EITHER way in the plan, and nothing in the
-   * parsed query tree says which one the planner will pick (a cost-based decision made only at
-   * plan time — verified live on PostgreSQL 18.4 for both):
+   * A CTE source ([RangeTableEntry.Cte]) can appear either way in the plan, and nothing in the
+   * parsed query tree says which the planner will pick, a cost-based decision made only at plan
+   * time:
    * - `MATERIALIZED`, or otherwise not eligible for inlining, it plans as its own `"CTE Scan"` node
    *   carrying `"CTE Name"` set to the literal name from the `WITH` clause.
-   * - referenced only once — always true of a `MERGE ... USING` source — and eligible for
-   *   inlining, PostgreSQL folds it directly into whatever it scans: the CTE's own name never
-   *   appears in the plan at all. [resolveInlinedBaseRelationName] recovers a second candidate name
-   *   for this shape, but ONLY for the simplest possible body — nothing but `SELECT ... FROM
-   *   oneBaseTable` — since that is the only shape whose entire body collapses to a single,
-   *   unambiguous relation name; anything with a join, a second relation, or a derived table has no
-   *   single name this can safely offer.
+   * - referenced only once (always true of a `MERGE ... USING` source) and eligible for inlining,
+   *   PostgreSQL folds it directly into whatever it scans, and the CTE's own name never appears in
+   *   the plan. [resolveInlinedBaseRelationName] recovers a second candidate name for this shape,
+   *   but only for the simplest possible body — nothing but `SELECT ... FROM oneBaseTable` — since
+   *   anything with a join, a second relation, or a derived table has no single name to offer.
    *
-   * Offering both candidates together never risks a false attribution: for a given plan, at most
-   * ONE of them can ever actually appear — the planner either inlines the CTE (hiding its own name
-   * entirely) or does not (never showing the inlined table's name in its place).
+   * Offering both candidates together never risks a false attribution: for a given plan, at most one
+   * of them can ever actually appear.
    *
-   * @return `null` when [sourceEntry] is neither a base table nor a CTE (a join, subquery,
-   *   function, `VALUES`, or another `rtekind` this cannot safely name at all)
+   * @return `null` when [sourceEntry] is neither a base table nor a CTE (a join, subquery, function,
+   *   `VALUES`, or another `rtekind` this cannot safely name)
    */
   private fun mergeSourceRelationNameCandidates(nodeTree: String, sourceEntry: RangeTableEntry): Set<String>? =
     when (sourceEntry) {
@@ -315,17 +310,15 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    * `RETURNING`) fails PostgreSQL's `RETURNS SETOF record` check on function creation — there is
    * nothing to probe, and the [SQLException] is caught here rather than propagated.
    *
-   * Provenance piggybacks the SAME round trip: [NodeTreeProvenanceResolver] resolves each column's
+   * Provenance piggybacks the same round trip: [NodeTreeProvenanceResolver] resolves each column's
    * CTE-body position from the identical [nodeTree] this method already builds for nullability, and
    * [resolveNodeTreeProvenanceExpression] extracts and cross-validates the actual expression text
-   * from [sql] — the ORIGINAL, un-substituted query text, never [substitutedSql] — so a sentinel
-   * literal built only to satisfy a `?`'s type can never leak into generated KDoc. This costs no
-   * additional server call: both readings are computed from the ONE probe function already created
-   * below.
+   * from [sql] — the original, un-substituted query text, never [substitutedSql] — so a sentinel
+   * literal built only to satisfy a `?`'s type can never leak into generated KDoc.
    *
    * @param sql the SQL query or DML statement to analyze; any `?` parameter placeholder is
    *   replaced with a typed non-null sentinel literal internally (see [buildViewSqlWithSentinels])
-   *   ONLY for building the probe function — [sql] itself, `?` intact, is what provenance
+   *   only for building the probe function — [sql] itself, `?` intact, is what provenance
    *   expression text is extracted from
    * @return one [ColumnAnalysis] per result column in `SELECT`/`RETURNING` order, or `null` if
    *   [sql] has no result columns to probe or the probe itself failed for any reason — the caller
@@ -400,10 +393,10 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    *
    * Each entry's own `:resorigtbl`/`:resorigcol` — [TargetEntry.originalTableOid] and
    * [TargetEntry.originalColumnNumber] — name the column PostgreSQL itself traced this result
-   * column back to, walking THROUGH a CTE or subquery reference rather than stopping at the
-   * immediate select item's own alias (verified live against PostgreSQL 18.4: `WITH c AS (SELECT id
-   * AS parent_id FROM parent) SELECT parent_id FROM c`'s outer target entry carries
-   * `:resorigtbl`/`:resorigcol` for `parent.id`, not the CTE's own `parent_id` alias).
+   * column back to, walking through a CTE or subquery reference rather than stopping at the
+   * immediate select item's own alias (`WITH c AS (SELECT id AS parent_id FROM parent) SELECT
+   * parent_id FROM c`'s outer target entry carries `:resorigtbl`/`:resorigcol` for `parent.id`, not
+   * the CTE's own `parent_id` alias).
    *
    * @return one entry per result column: the resolved column name, or `null` when
    *   [TargetEntry.originalTableOid]/[TargetEntry.originalColumnNumber] is `0` (no single source

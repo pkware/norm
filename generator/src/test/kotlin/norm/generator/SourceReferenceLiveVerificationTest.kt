@@ -31,17 +31,15 @@ import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.readText
 
 /**
- * Repository-wide, live-server proof that EVERY `@property` source-reference span in EVERY golden
+ * Repository-wide, live-server proof that every `@property` source-reference span in every golden
  * `.kt` file is SQL PostgreSQL accepts — the same standard [KdocProvenanceRoundTripTest] proves for
- * hand-built [Column] fixtures, extended here to the checked-in golden corpus itself (#238).
+ * hand-built [Column] fixtures, extended here to the checked-in golden corpus itself.
  *
- * A wrong or unparseable span is exactly what the last several verification passes over #238 found
- * by hand — driving the real generator, reading the generated FILE (never
- * `TypeSpec.kdoc.toString()`, which misses KotlinPoet's own KDoc-rendering rewrites — see
- * [KdocProvenanceRoundTripTest]'s KDoc), extracting each source reference with a real CommonMark
- * parse, and running the extracted text against a live server. This test makes that method a
- * permanent part of the suite: a future change that makes any golden span unparseable now fails the
- * build here, rather than waiting for the next manual review pass.
+ * Driving the real generator, reading the generated file (never `TypeSpec.kdoc.toString()`, which
+ * misses KotlinPoet's own KDoc-rendering rewrites — see [KdocProvenanceRoundTripTest]'s KDoc),
+ * extracting each source reference with a real CommonMark parse, and running the extracted text
+ * against a live server makes this a permanent part of the suite: a future change that makes any
+ * golden span unparseable now fails the build here.
  *
  * A golden `.kt` file IS the generated file, checked into the repository — [GenerateCodeTest]
  * already proves, for every one of these same scenarios, that a freshly generated file matches its
@@ -81,10 +79,10 @@ class SourceReferenceLiveVerificationTest {
     // backtick-wrapped -- so every occurrence means a span WAS emitted here, and each must parse
     // back out on its own. Comparing the FULL count -- not just checking spans is non-empty --
     // catches a PARTIAL loss too: losing one span while others survive still leaves the list
-    // non-empty, which a plain emptiness check would silently accept (#238 12.3). A mismatch means
-    // span delimitation broke somewhere in this file's KDoc paragraph (#238 11.2's own defect
-    // class): a stray, unpaired backtick or backslash elsewhere in the same paragraph closed,
-    // reopened, or swallowed a code span in the wrong place.
+    // non-empty, which a plain emptiness check would silently accept. A mismatch means span
+    // delimitation broke somewhere in this file's KDoc paragraph: a stray, unpaired backtick or
+    // backslash elsewhere in the same paragraph closed, reopened, or swallowed a code span in the
+    // wrong place.
     assertThat(
       spans.size,
       "found ${spans.size} source-reference span(s) in ${case.path} but its raw KDoc source " +
@@ -108,9 +106,9 @@ class SourceReferenceLiveVerificationTest {
 
   @Test
   fun `a swallowed span among surviving ones is a count mismatch, not silently accepted`() {
-    // #238 12.3: reproduces the exact shape a plain "spans.isEmpty()" check cannot see -- property
-    // b's own unescaped backtick ("Say `hello", the #238 10.3 defect class fixed elsewhere by
-    // escapeMarkdownBacktick) pairs with property c's marker backtick instead of a's, swallowing
+    // Reproduces the exact shape a plain "spans.isEmpty()" check cannot see -- property b's own
+    // unescaped backtick ("Say `hello", the defect class fixed elsewhere by escapeMarkdownBacktick)
+    // pairs with property c's marker backtick instead of a's, swallowing
     // c's ENTIRE span into a bigger code span that is not preceded by "(" at all. Property a's own
     // span, earlier in the same paragraph and fully self-contained, still parses correctly -- so
     // the result is non-empty (a's span alone), which the old guard would have accepted outright.
@@ -237,8 +235,8 @@ class SourceReferenceLiveVerificationTest {
    * Counts every raw `` (` `` marker in [markdown]'s own Markdown SOURCE, before CommonMark parses
    * it — the exact, and only, text [TypeSpec.Builder.addClassKdoc] emits via `append("($source)")`
    * where `$source` is itself backtick-wrapped. Compared against [extractSourceReferenceSpans]'s
-   * PARSED count, this is what catches a partial span loss (#238 12.3): [extractSourceReferenceSpans]
-   * alone cannot tell "every marker parsed" from "some markers parsed, one silently swallowed".
+   * parsed count, this is what catches a partial span loss: [extractSourceReferenceSpans] alone
+   * cannot tell "every marker parsed" from "some markers parsed, one silently swallowed".
    */
   private fun countSourceReferenceMarkers(markdown: String): Int {
     var count = 0

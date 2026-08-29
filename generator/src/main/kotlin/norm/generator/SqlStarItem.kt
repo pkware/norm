@@ -325,25 +325,16 @@ private fun matchTrailingAliasSegment(text: StrippedText, start: Int): Int? {
   if (!isIdentifierStartChar(text[start])) return null
   var i = start + 1
   while (i < text.length && isIdentifierChar(text[i]) && text.wereAdjacent(i - 1)) {
-    // Gated on adjacency for EVERY continuation character, not merely "$" (see below): stripping
-    // deletes the whitespace/comment that used to separate two INDEPENDENT identifiers PostgreSQL
-    // itself lexed apart — "description dx" (a bare column plus its own implicit alias) strips to
-    // "descriptiondx", and without this gate every character of that is `isIdentifierChar`, so the
-    // run swallows BOTH tokens into one fused "segment" spanning the whole text. That trips
-    // findTrailingImplicitAliasStart's own "a segment spanning the ENTIRE text is not an alias"
-    // guard, so no alias is found at all (#238) — the correct answer, expression "description",
-    // alias "dx", is never even computed. Stopping the run the moment a continuation character was
-    // NOT genuinely adjacent to the one before it correctly ends the FIRST identifier's segment at
-    // the real original token boundary, letting the walk in [findTrailingImplicitAliasStart] pick
-    // the SECOND identifier up as its own, later segment instead.
-    //
-    // "$" needs no separate case any more: it is merely the one isIdentifierChar character that can
-    // ALSO open an entirely different, opaque lexical token — a dollar-quoted string (see
-    // skipLexicalToken's own dollar-quote guard) — rather than merely continuing this identifier,
-    // and the general gate above already stops the run before a non-adjacent "$" is consumed,
-    // handing that position back to findTrailingImplicitAliasStart's own
-    // [StrippedText.skipLexicalToken] fallback, which correctly recognizes the dollar-quoted string
-    // as one opaque, non-segment token and walks over it whole.
+    // Gated on adjacency for every continuation character, not just "$": stripping deletes the
+    // whitespace/comment that used to separate two independent identifiers PostgreSQL itself lexed
+    // apart -- "description dx" strips to "descriptiondx", and without this gate the run would
+    // swallow both tokens into one fused segment spanning the whole text, tripping
+    // findTrailingImplicitAliasStart's "a segment spanning the entire text is not an alias" guard so
+    // no alias is found at all (#238). Stopping at the first non-adjacent character ends the first
+    // identifier's segment at its real token boundary, letting findTrailingImplicitAliasStart pick
+    // the second identifier up as its own later segment. This also covers "$": a non-adjacent "$"
+    // stops the run here and is handed back to [StrippedText.skipLexicalToken], which recognizes a
+    // dollar-quoted string as one opaque token and walks over it whole.
     i++
   }
   return i

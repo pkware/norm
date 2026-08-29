@@ -50,8 +50,8 @@ private val ENUM_JDBC_TYPE_INFO =
  * @param reservedWords The connected PostgreSQL server's reserved keywords, from
  *   [JdbcAnalyzer.fetchReservedWords] — consulted by [quoteSqlIdentifierIfNeeded] when rendering a
  *   `` `table.column` `` source reference, so a relation or column named after a reserved word
- *   (`order`, `user`) is quoted rather than emitted as text PostgreSQL rejects with a syntax error
- *   (#238 10.1). Defaults to `emptySet()` for callers (mostly tests building an in-memory [Catalog]
+ *   (`order`, `user`) is quoted rather than emitted as text PostgreSQL rejects with a syntax error.
+ *   Defaults to `emptySet()` for callers (mostly tests building an in-memory [Catalog]
  *   with no live connection) whose fixtures never name anything after a reserved word;
  *   [generateCode] — the real production entry point — always supplies
  *   [JdbcAnalyzer.fetchReservedWords]'s live result explicitly instead of relying on this default.
@@ -287,11 +287,9 @@ internal class TypeRepository(
     } else {
       rawSelectItems
     }
-    // A top-level set operation (UNION/INTERSECT/EXCEPT) means parseSelectItems only ever parsed
-    // ONE branch's own items -- a computed expression documented from that branch alone would
-    // present one branch as the whole answer, a WRONG emission by this pipeline's own "correct or
-    // silent" standard (#238). See hasTopLevelSetOperation's own KDoc for why a bare column
-    // reference is unaffected and stays documented exactly as before.
+    // A top-level set operation (UNION/INTERSECT/EXCEPT) means parseSelectItems only parsed ONE
+    // branch's own items, so a computed expression documented from that branch alone would present
+    // it as the whole answer. A bare column reference is unaffected -- see hasTopLevelSetOperation.
     val hasSetOperation = hasTopLevelSetOperation(queryText)
     typeBeingDefined.addClassKdoc(
       classComment = "",
@@ -299,13 +297,9 @@ internal class TypeRepository(
       properties = queryResults.mapIndexed { columnIndex, column ->
         val selectItem = selectItems.getOrNull(columnIndex)
         // A star item (`*`, `c.*`) is never itself a provenance expression -- parseOutputItemsWithAlias
-        // returns a LONE star item as-is (see its own KDoc), rather than the empty-list fail-safe it
-        // uses for a star followed by more items, so selectItem.columnName == null for it exactly as
-        // for a genuine computed expression. Without this guard, isComputedExpression fired on the
-        // star's own literal text ("*"/"c.*"), documenting the wildcard itself as the "expression"
-        // that produced the column -- even when the column is really a plain pass-through of a CTE's
-        // own computed expression, whose correct text is already sitting in provenanceExpression (see
-        // below) and gets shadowed by this branch's false claim (#238 9.2).
+        // returns a lone star item with columnName == null, same as a genuine computed expression.
+        // Without this guard, isComputedExpression would document the wildcard's own literal text as
+        // the "expression", shadowing a CTE pass-through's real expression in provenanceExpression.
         val isStarSelectItem = selectItem != null && isStarItem(selectItem.expression)
         // For computed expressions (no source table and not a simple column reference), include the SQL
         // expression so it can appear in KDoc. Simple column references (e.g. crosstab output columns)
@@ -316,28 +310,21 @@ internal class TypeRepository(
             selectItem.columnName == null &&
             !hasSetOperation &&
             !isStarSelectItem
-        // A plain reference into a CTE's output (column.table == null, but the outer item IS a
-        // simple column reference, OR is itself a star selectItem never doc'd as an expression above)
-        // can still be expression-derived one level down, inside the CTE body --
-        // column.provenanceExpression was already resolved from the query's own parsed node tree,
-        // cross-validated against this same queryText, during analysis (see
-        // ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody and
-        // resolveNodeTreeProvenanceExpression for the shape it resolves and every case it
-        // deliberately punts on rather than guessing). `null` here (no resolved expression) means
-        // this property gets no source-reference line at all -- never the star text itself.
+        // A plain reference into a CTE's output (a simple column reference or a star item) can still
+        // be expression-derived one level down, inside the CTE body. column.provenanceExpression was
+        // already resolved and cross-validated against queryText during analysis -- see
+        // resolveNodeTreeProvenanceExpression. `null` means no resolved expression, so this property
+        // gets no source-reference line at all -- never the star text itself.
         val cteExpression = if (!isComputedExpression && column.table == null) column.provenanceExpression else null
         PropertySource(
           propertyName = column.name,
           comment = column.comment,
           sourceTable = column.table?.name,
           sourceColumn = column.originalName.ifEmpty { null },
-          // #238 8.1: this top-level path re-lexes selectItem.expression straight from queryText,
-          // the SAME raw text the CTE path's own resolveNodeTreeProvenanceExpression extracts a
-          // comment/cosmetic-whitespace-free expression from before returning it (see that
-          // function's own KDoc) -- so this path must apply the SAME two normalizations to avoid
-          // embedding comment text (or the cosmetic whitespace stripComments' own substitution can
-          // leave behind) verbatim in generated KDoc, which a developer could paste back into
-          // PostgreSQL only to have the comment swallow part of the expression.
+          // This top-level path re-lexes selectItem.expression straight from queryText, so it must
+          // apply the same comment-stripping and whitespace-collapsing normalizations
+          // resolveNodeTreeProvenanceExpression applies on the CTE path, to avoid embedding comment
+          // text or leftover whitespace verbatim in generated KDoc.
           expression = if (isComputedExpression) {
             collapseCosmeticWhitespace(stripComments(selectItem.expression))
           } else {
@@ -826,8 +813,8 @@ internal data class PropertySource(
  * @param properties Source information for each property.
  * @param sql The SQL query text. Included in query projection KDoc as a fenced code block.
  * @param reservedWords The connected PostgreSQL server's reserved keywords, forwarded to
- *   [quoteSqlIdentifierIfNeeded] for each property's `` `table.column` `` source reference (#238
- *   10.1). Empty for a table projection, which never renders a source reference at all.
+ *   [quoteSqlIdentifierIfNeeded] for each property's `` `table.column` `` source reference. Empty
+ *   for a table projection, which never renders a source reference at all.
  */
 internal fun TypeSpec.Builder.addClassKdoc(
   classComment: String,
@@ -837,21 +824,15 @@ internal fun TypeSpec.Builder.addClassKdoc(
   reservedWords: Set<String> = emptySet(),
 ) {
   val hasTableMapping = tableName != null
-  // #238 9.1: KotlinPoet's own KDoc emission unconditionally rewrites "/*"/"*/" to "/&#42;"/"&#42;/"
-  // inside EVERY KDoc block (CodeWriter.emit, kdoc branch) so a literal block comment can never
-  // prematurely close the surrounding "/** ... */" comment -- necessary for the KDoc to compile at
-  // all, but CommonMark never decodes an HTML entity reference INSIDE a fenced code block (the exact
-  // construct the sql block below renders as), so once that rewrite happens there is no longer any
-  // way to render sql back to its own byte-exact text. Declining the whole fenced block for a query
-  // containing either sequence is the "correct or silent" choice -- see
-  // containsUnescapableBlockCommentDelimiter's own KDoc, and markdownInlineCodeSpan for the identical
-  // hazard on a single property's source-reference span.
+  // KotlinPoet's KDoc emission rewrites "/*"/"*/" to "/&#42;"/"&#42;/" inside every KDoc block so a
+  // literal block comment can't prematurely close the surrounding "/** ... */" comment, but CommonMark
+  // never decodes that HTML entity back inside a fenced code block -- see
+  // containsUnescapableBlockCommentDelimiter. Declining the whole fenced block is the only correct
+  // choice for a query containing either sequence.
   val canRenderSqlVerbatim = sql.isNotEmpty() && !containsUnescapableBlockCommentDelimiter(sql)
-  // #238 10.2: a property whose OWN name cannot be rendered as a `@property` name token at all
-  // (formatAsKdocPropertyReference returns `null` -- see its own KDoc) has no line to emit in the
-  // first place, not merely a corrupted one -- so it is dropped here, before the property/name pair
-  // is ever built, rather than emitted with a name that reads back as a DIFFERENT (mangled)
-  // property than the one actually declared.
+  // A property whose name can't be rendered as a `@property` name token at all
+  // (formatAsKdocPropertyReference returns `null`) is dropped here rather than emitted with a
+  // mangled name that reads back as a different property than the one actually declared.
   val documentedProperties = properties.mapNotNull { property ->
     if (!property.hasDocumentation(hasTableMapping, reservedWords)) return@mapNotNull null
     val formattedName = property.propertyName.formatAsKdocPropertyReference() ?: return@mapNotNull null
@@ -869,11 +850,9 @@ internal fun TypeSpec.Builder.addClassKdoc(
     }
     if (canRenderSqlVerbatim) {
       if (isNotEmpty()) append("\n\n")
-      // #238: a fixed 3-backtick fence breaks if sql ITSELF contains a run of 3+ backticks (e.g.
-      // inside a string literal) -- a line matching or exceeding the fence's own length terminates
-      // a CommonMark fenced code block early, same class of defect as sourceReference()'s inline
-      // span below. A fence one backtick longer than any run already in sql can never be mistaken
-      // for a closing fence.
+      // A fixed 3-backtick fence breaks if sql itself contains a run of 3+ backticks -- a line
+      // matching or exceeding the fence's own length terminates the fenced block early. A fence one
+      // backtick longer than any run already in sql can never be mistaken for a closing fence.
       val fence = markdownFenceDelimiter(sql)
       append(fence).append("sql\n")
       append(sql.trim())
@@ -885,13 +864,10 @@ internal fun TypeSpec.Builder.addClassKdoc(
         val (formattedName, property) = formattedNameAndProperty
         append("@property $formattedName ")
         if (property.comment.isNotEmpty()) {
-          // #238 10.3: property.comment is arbitrary PostgreSQL comment prose, appended into the
-          // SAME CommonMark paragraph as every OTHER property's own source-reference code span (no
-          // blank line separates consecutive `@property` lines) -- so an unescaped, unpaired
-          // backtick in ONE comment is free to pair with a backtick belonging to a LATER property's
-          // span instead of its own, corrupting every span in between. Escaping it here (never
-          // altering the comment TEXT PostgreSQL reports, only how CommonMark delimits it) keeps it
-          // from ever being read as a code-span delimiter at all.
+          // Every `@property` line shares one CommonMark paragraph (no blank line between them), so
+          // an unescaped backtick in one comment could pair with a later property's own
+          // source-reference span instead of closing here. Escaping it keeps it from ever being read
+          // as a code-span delimiter.
           append(escapeMarkdownBacktick(property.comment))
         }
         if (!hasTableMapping) {
@@ -923,36 +899,25 @@ private val PLAIN_KOTLIN_IDENTIFIER = Regex("[A-Za-z_][A-Za-z0-9_]*")
  * Formats a Kotlin property name for use as the name token in a KDoc `@property` tag.
  *
  * KDoc's `@property` tag takes exactly one name token before the description text begins, so a
- * property name containing a space or other non-identifier character (e.g. a quoted SQL column
- * name like `"My Col"`, generated as the Kotlin property `` `My Col` ``) must be wrapped in
- * backticks here too -- otherwise `@property My Col Some comment.` reads as a property literally
- * named `My`, with `Col Some comment.` swallowed into the description.
+ * property name containing a space or other non-identifier character (e.g. the Kotlin property
+ * `` `My Col` `` generated for a quoted SQL column `"My Col"`) must be wrapped in backticks here too
+ * -- otherwise `@property My Col Some comment.` reads as a property literally named `My`.
  *
- * Uses [wrapInBacktickDelimiter]'s same longest-run rule [markdownInlineCodeSpan] uses, rather than
- * a fixed single-backtick wrap (#238 9.5): a property name containing its OWN literal backtick
- * (only reachable via a source column name containing one, e.g. `` a`b ``) would otherwise close
- * the `@property` tag's span early, corrupting everything after it on the line -- the exact defect
- * class #238 8.3 already fixed for [sourceReference]'s own span.
+ * Uses [wrapInBacktickDelimiter]'s longest-run rule rather than a fixed single-backtick wrap, since a
+ * name containing its own literal backtick (e.g. `` a`b ``) would otherwise close the `@property`
+ * tag's span early, corrupting the rest of the line.
  *
- * Returns `null` — decline, emit no `@property` line for this property at all — when [this] contains
- * a literal block-comment open or close delimiter ([containsUnescapableBlockCommentDelimiter]):
- * widening the backtick delimiter fixes the SPAN, but KotlinPoet's own KDoc emission still rewrites
- * the block-comment delimiter itself to an HTML entity inside it, same as [markdownInlineCodeSpan]
- * already declines for a source-reference span (#238 9.1) — so a name containing that delimiter
- * would otherwise render with the entity substituted in, a tag naming a DIFFERENT property than the
- * one actually declared (#238 10.2).
+ * Returns `null` — decline, emit no `@property` line at all — when [this] contains a literal
+ * block-comment open or close delimiter ([containsUnescapableBlockCommentDelimiter]): widening the
+ * backtick delimiter fixes the span, but KotlinPoet's KDoc emission still rewrites the delimiter
+ * itself to an HTML entity, which would render a tag naming a different property than the one
+ * actually declared.
  *
- * This fixes only the KDoc SPAN; it does not and cannot fix the Kotlin PROPERTY declaration itself
- * (`` public val `a\`b`: ... ``), which is not valid Kotlin -- a backtick-quoted Kotlin identifier
- * cannot contain a backtick character, and there is no escape sequence for one inside a backtick
- * identifier at all. That is a distinct, pre-existing defect in how a column's raw database
- * identifier becomes a Kotlin property name (`JdbcAnalyzer.loadColumns`'s `columnName`,
- * `JdbcAnalyzer.buildResultColumns`'s `columnLabel`) shared by the rest of the naming pipeline's
- * unfixed identifiers (a block-comment delimiter, `.`, a literal newline) — sanitizing only the
- * [Column.name] used for Kotlin generation once caused a worse regression when the SAME field also
- * carries the identifier back into generated SQL and catalog lookups (`Column.name`/
- * `Catalog.findColumn`), so making the naming pipeline total is left for separate resolution, not
- * attempted here.
+ * This fixes only the KDoc span; it does not and cannot fix the Kotlin property declaration itself
+ * (`` public val `a\`b`: ... ``), which is not valid Kotlin — a backtick-quoted identifier cannot
+ * contain a backtick, and there is no escape for one. That is a separate, pre-existing defect in how
+ * a column's raw database identifier becomes a Kotlin property name, left unfixed here because the
+ * same field also carries the identifier back into generated SQL and catalog lookups.
  */
 private fun String.formatAsKdocPropertyReference(): String? = when {
   PLAIN_KOTLIN_IDENTIFIER.matches(this) -> this
@@ -968,7 +933,7 @@ private fun String.formatAsKdocPropertyReference(): String? = when {
  * because [TypeRepository] has no connection of its own to query, per this file's own doc comment
  * on why `TypeRepository` re-lexes rather than re-querying). Matching this pattern is necessary but
  * NOT sufficient — [quoteSqlIdentifierIfNeeded] additionally rejects a RESERVED word, which this
- * pattern alone cannot rule out (`order` and `user` both match it) (#238 10.1).
+ * pattern alone cannot rule out (`order` and `user` both match it).
  */
 private val SQL_UNQUOTED_IDENTIFIER = Regex("[a-z_][a-z0-9_\$]*")
 
@@ -977,19 +942,18 @@ private val SQL_UNQUOTED_IDENTIFIER = Regex("[a-z_][a-z0-9_\$]*")
  * — doubling any embedded `"` per PostgreSQL's own quoted-identifier escape rule — unless BOTH
  * [SQL_UNQUOTED_IDENTIFIER] accepts it bare AND it is not one of [reservedWords].
  *
- * Without the [SQL_UNQUOTED_IDENTIFIER] half, a mixed-case or space-containing original column name
- * (`"Foo"`, `"My Col"`) was rendered into a `` `table.column` `` source reference as bare
- * `table.Foo`/`table.My Col` — text that reads back as PostgreSQL folding `Foo` to `foo` (a column
- * `Foo` never has), or as two unrelated tokens instead of one qualified reference — verified live:
- * `SELECT tq.Foo FROM tq` fails with `column tq.foo does not exist` (#238 9.3).
+ * Without the [SQL_UNQUOTED_IDENTIFIER] half, a mixed-case or space-containing column name (`"Foo"`,
+ * `"My Col"`) would render bare as `table.Foo`/`table.My Col` — text that reads back as PostgreSQL
+ * folding `Foo` to `foo`, or as two unrelated tokens instead of one qualified reference
+ * (`SELECT tq.Foo FROM tq` fails with `column tq.foo does not exist`).
  *
- * Without the [reservedWords] half, a relation or column named after a PostgreSQL reserved word
- * (`order`, `user`) — which [SQL_UNQUOTED_IDENTIFIER] alone cannot distinguish from any other
- * all-lowercase identifier — was rendered bare too: `` `order.id` `` reads back as `SELECT order.id
- * FROM "order"`, which PostgreSQL rejects with `syntax error at or near "."`, since an unquoted
- * `order` is parsed as the reserved keyword, not a table reference (#238 10.1). [reservedWords] is
- * always the CONNECTED server's own live keyword set ([JdbcAnalyzer.fetchReservedWords]) — never a
- * hardcoded snapshot, which drifts as PostgreSQL's own reserved-word list changes across versions.
+ * Without the [reservedWords] half, a relation or column named after a reserved word (`order`,
+ * `user`) — which [SQL_UNQUOTED_IDENTIFIER] alone cannot distinguish from any other all-lowercase
+ * identifier — would render bare too: `` `order.id` `` reads back as `SELECT order.id FROM "order"`,
+ * which PostgreSQL rejects with `syntax error at or near "."`, since an unquoted `order` is parsed as
+ * the reserved keyword, not a table reference. [reservedWords] is always the connected server's own
+ * live keyword set ([JdbcAnalyzer.fetchReservedWords]), since PostgreSQL's reserved-word list drifts
+ * across versions.
  */
 private fun quoteSqlIdentifierIfNeeded(identifier: String, reservedWords: Set<String>): String =
   if (SQL_UNQUOTED_IDENTIFIER.matches(identifier) && identifier !in reservedWords) {
@@ -1004,12 +968,12 @@ private fun quoteSqlIdentifierIfNeeded(identifier: String, reservedWords: Set<St
  * that function's own KDoc for when that happens).
  *
  * - For columns from a table: `` `table."Column"` `` — each identifier individually quoted via
- *   [quoteSqlIdentifierIfNeeded] exactly as PostgreSQL itself would require it written back into
- *   SQL, so this can always be pasted into a query verbatim (#238 9.3, 10.1).
+ *   [quoteSqlIdentifierIfNeeded] exactly as PostgreSQL requires it written back into SQL, so this
+ *   can always be pasted into a query verbatim.
  * - For computed expressions: `` `COUNT(*)` ``
  *
  * @param reservedWords The connected server's reserved keywords, forwarded to
- *   [quoteSqlIdentifierIfNeeded] (#238 10.1).
+ *   [quoteSqlIdentifierIfNeeded].
  */
 private fun PropertySource.sourceReference(reservedWords: Set<String>): String? = when {
   sourceTable != null -> {
@@ -1040,30 +1004,20 @@ private fun longestBacktickRun(text: String): Int {
 }
 
 /**
- * Wraps [text] in a Markdown inline code span that renders back to EXACTLY [text] — never [text]
- * altered to fit the rendering (that is the same class of defect as the truncation #238 8.1
- * reverted) — or `null` if no inline code span can carry [text] faithfully at all.
+ * Wraps [text] in a Markdown inline code span that renders back to exactly [text], or `null` if no
+ * inline code span can carry it faithfully.
  *
- * Two hazards, both #238 emission-site defects rather than resolution defects (the text handed in
- * here is already the developer's own complete, correct SQL):
- * - A run of backticks INSIDE [text] as long as the span's own delimiter would be read as the
- *   CLOSING delimiter, ending the span early (#238 8.3, `s || '\`'` truncating the rendered span).
- *   Fixed by using a delimiter one backtick longer than [text]'s own longest run
- *   ([longestBacktickRun]) — CommonMark's own rule for an unambiguous code span delimiter — with a
- *   single padding space on each side when [text] itself starts or ends with a backtick, so that
- *   character never sits directly against the delimiter.
- * - A raw newline INSIDE [text] (#238 8.2, `s || 'a\nb'` — a string literal containing a genuine
- *   newline). CommonMark folds any line ending inside an inline code span to a single space when
- *   rendering, which would silently turn that into `s || 'a b'`, a DIFFERENT value (`'a\nb' =
- *   'a b'` is `false`). No inline-span delimiter choice can fix this — the corruption happens
- *   during RENDERING, not parsing — so per the "correct or silent" invariant this declines rather
- *   than emit a value that reads back as something else. (A multi-line expression could in
- *   principle be rendered as a fenced block instead of an inline span, but a `@property` tag's
- *   description begins on the SAME line as its name token, and KDoc has no established convention
- *   for interleaving one there — declining is the only choice provable correct today.)
- * - A literal block-comment open or close delimiter INSIDE [text] (#238 9.1) — see
- *   [containsUnescapableBlockCommentDelimiter]'s own KDoc for why KotlinPoet's own KDoc emission
- *   makes this a third, un-fixable-by-delimiter-choice hazard exactly like the newline case above.
+ * Two hazards:
+ * - A run of backticks inside [text] as long as the span's own delimiter would be read as the
+ *   closing delimiter, ending the span early. Fixed by using a delimiter one backtick longer than
+ *   [text]'s own longest run ([longestBacktickRun]), with a padding space on each side when [text]
+ *   itself starts or ends with a backtick.
+ * - A raw newline inside [text] (e.g. a string literal containing one). CommonMark folds a line
+ *   ending inside an inline code span to a single space when rendering, silently changing the value.
+ *   No delimiter choice can fix this — the corruption happens during rendering — so this declines.
+ * - A literal block-comment open or close delimiter inside [text] — see
+ *   [containsUnescapableBlockCommentDelimiter] for why that is a third, un-fixable-by-delimiter
+ *   hazard.
  */
 internal fun markdownInlineCodeSpan(text: String): String? {
   if (text.contains('\n') || text.contains('\r')) return null
@@ -1072,61 +1026,38 @@ internal fun markdownInlineCodeSpan(text: String): String? {
 }
 
 /**
- * Whether [text] contains `/*` or `*/` — either would be silently rewritten by KotlinPoet's own
- * KDoc emission (`CodeWriter.emit`, unconditionally, whenever writing inside a `/** ... */` block)
- * to `/&#42;`/`&#42;/`, so that a literal block comment inside generated KDoc text can never
- * prematurely close the surrounding KDoc comment — necessary for the generated `.kt` file to
- * compile at all. That rewrite is invisible to [CodeBlock.toString] (it happens only when the
- * containing [TypeSpec] is actually rendered, e.g. via `TypeSpec.toString()`/`FileSpec.writeTo`),
- * but it is NOT invisible to a developer reading the generated FILE: CommonMark never decodes an
- * HTML entity reference like `&#42;` back to `*` INSIDE an inline code span or a fenced code
- * block — only in ordinary prose text — so once KotlinPoet's rewrite happens, the exact two
- * constructs every source reference ([markdownInlineCodeSpan]) and the `sql` fenced block
- * ([TypeSpec.Builder.addClassKdoc]) render as, there is no delimiter choice left that can carry
- * [text] back to its own original value. Declining rather than emitting the rewritten text is this
- * file's "correct or silent" invariant applied to an emission-time hazard neither of those two
- * callers could see on its own (#238 9.1).
+ * Whether [text] contains `/*` or `*/`. KotlinPoet's KDoc emission unconditionally rewrites either to
+ * `/&#42;`/`&#42;/` so a literal block comment can never prematurely close the surrounding KDoc
+ * comment, but CommonMark never decodes that HTML entity back inside an inline code span or fenced
+ * code block — the two constructs [markdownInlineCodeSpan] and [TypeSpec.Builder.addClassKdoc]'s
+ * `sql` block render as. Once that rewrite happens there is no delimiter choice that can carry [text]
+ * back to its own value, so both callers decline instead.
  */
 internal fun containsUnescapableBlockCommentDelimiter(text: String): Boolean =
   text.contains("/*") || text.contains("*/")
 
 /**
- * Backslash-escapes every literal backtick in [text] so it can never be read as a CommonMark inline-
- * code-span delimiter, without altering the character [text] itself renders as: CommonMark treats a
- * backslash immediately before an ASCII punctuation character as a literal escape everywhere EXCEPT
- * inside an already-open code span, code block, autolink, or raw HTML — none of which apply to
- * [text] here, since it is plain prose (a PostgreSQL column comment), never itself wrapped in a code
- * span.
+ * Backslash-escapes every literal backtick in [text] so it can never be read as a CommonMark
+ * inline-code-span delimiter, without altering the character [text] renders as.
  *
- * [TypeSpec.Builder.addClassKdoc] appends every property's own [PropertySource.comment] into ONE
- * continuous CommonMark paragraph shared by every `@property` line (consecutive lines with no blank
- * line between them never start a new paragraph), so an odd, unescaped backtick in ONE property's
- * comment is free to pair with a backtick belonging to a DIFFERENT property's own source-reference
- * span later in that same paragraph — silently turning every span in between from a real inline code
- * span into plain, undelimited text (#238 10.3). Escaping here removes the character from
- * delimiter-matching ENTIRELY, rather than attempting to widen or relocate a delimiter the way
- * [wrapInBacktickDelimiter] does for a span [text] itself is wrapped in — there is no single
- * "delimiter" to widen for backtick characters scattered through plain prose.
+ * [TypeSpec.Builder.addClassKdoc] appends every property's [PropertySource.comment] into one
+ * continuous CommonMark paragraph shared by every `@property` line, so an unescaped backtick in one
+ * comment could pair with a backtick belonging to a later property's own source-reference span,
+ * corrupting every span in between. Escaping here removes the character from delimiter-matching
+ * entirely.
  *
- * Escapes [text]'s own literal backslashes FIRST, before escaping backticks (#238 11.2): escaping
- * only the backtick (`` text.replace("`", "\\`") ``) is defeated when [text] already contains a
- * backslash immediately before a backtick (e.g. a PostgreSQL comment `` 'weird \`' ``) — the naive
- * replacement produces `` \\` ``, which CommonMark reads as an ESCAPED backslash (a literal `\`)
- * followed by an UNESCAPED backtick, free to open a code span that pairs forward with a LATER
- * property's own source-reference span instead of closing here, corrupting every span in between —
- * the exact defect class this function exists to prevent. Escaping the backslash first means any
- * backslash the SECOND replacement introduces was never itself subject to the first.
+ * Escapes [text]'s own literal backslashes first, before escaping backticks: escaping only the
+ * backtick is defeated when [text] already has a backslash immediately before one (e.g.
+ * `` 'weird \`' ``) — the naive replacement produces `` \\` ``, which CommonMark reads as an escaped
+ * backslash followed by an unescaped, still-open backtick.
  */
 internal fun escapeMarkdownBacktick(text: String): String = text.replace("\\", "\\\\").replace("`", "\\`")
 
 /**
  * Wraps [text] in a backtick-delimited span using a delimiter one backtick longer than [text]'s own
- * longest internal run ([longestBacktickRun]) — CommonMark's own rule for an unambiguous code span
- * delimiter — with a single padding space on each side when [text] itself starts or ends with a
- * backtick, so that character never sits directly against the delimiter. Shared by
- * [markdownInlineCodeSpan] (a `@property` tag's source-reference span) and
- * [formatAsKdocPropertyReference] (that same tag's NAME token) — both are backtick-delimited spans
- * subject to the identical #238 8.3 hazard, so both need the identical fix.
+ * longest internal run ([longestBacktickRun]), with a padding space on each side when [text] starts
+ * or ends with a backtick. Shared by [markdownInlineCodeSpan] and [formatAsKdocPropertyReference],
+ * whose spans are both subject to the same backtick-collision hazard.
  */
 private fun wrapInBacktickDelimiter(text: String): String {
   val delimiter = "`".repeat(longestBacktickRun(text) + 1)
@@ -1135,39 +1066,30 @@ private fun wrapInBacktickDelimiter(text: String): String {
 }
 
 /**
- * A backtick-fence delimiter (` ``` `, or longer) that can be used to open a Markdown fenced code
- * block containing [text] without [text] itself ever being able to supply a same-length or longer
- * run of backticks that CommonMark would read as the block's own closing fence (#238) — one
- * backtick longer than [text]'s own longest run ([longestBacktickRun]), and never shorter than the
- * conventional 3.
+ * A backtick-fence delimiter (` ``` `, or longer) that can open a Markdown fenced code block
+ * containing [text] without [text] itself supplying a same-length or longer backtick run that
+ * CommonMark would read as the block's own closing fence — one backtick longer than [text]'s own
+ * longest run ([longestBacktickRun]), never shorter than the conventional 3.
  */
 internal fun markdownFenceDelimiter(text: String): String = "`".repeat(maxOf(3, longestBacktickRun(text) + 1))
 
 /**
- * Collapses the cosmetic whitespace [stripComments]' own single-space substitution can leave
- * behind in an expression about to be embedded VERBATIM in generated KDoc — a comment sitting
- * directly after an opening parenthesis or before a closing one (`UPPER(/* x */a)` strips to
- * `UPPER( a)`) reads oddly there, even though inserting that space is exactly right for
- * [stripComments]' OWN purpose of never fusing two tokens a comment used to separate.
+ * Collapses the cosmetic whitespace [stripComments]' own single-space substitution can leave behind
+ * in an expression about to be embedded verbatim in generated KDoc — a comment directly after an
+ * opening parenthesis or before a closing one (`UPPER(/* x */a)` strips to `UPPER( a)`) reads oddly
+ * there, even though that space is exactly right for [stripComments]' own purpose of never fusing two
+ * tokens a comment used to separate. Applied only where [resolveNodeTreeProvenanceExpression] returns
+ * an expression for KDoc, never inside [stripComments] itself.
  *
- * Applied ONLY at the point [resolveNodeTreeProvenanceExpression] returns an expression for KDoc,
- * never inside [stripComments] itself — see that function's own KDoc for why it inserts the space
- * in the first place, a purpose this whitespace-removal step would otherwise defeat for any OTHER
- * caller relying on the fusion-prevention guarantee.
+ * Collapses whitespace outside a single-quoted literal, a dollar-quoted string, a quoted identifier,
+ * or a comment to a single space, then removes a single such space immediately after `(` or before
+ * `)` — never semantically significant in SQL, so this can never change what the expression means.
  *
- * Collapses any run of whitespace OUTSIDE a single-quoted literal, a dollar-quoted string, a
- * quoted identifier, or a comment to a single space, then removes a single such space immediately
- * after `(` or immediately before `)` — whitespace directly adjacent to a parenthesis is never
- * semantically significant in SQL, so removing it here can never change what the expression means.
- *
- * Every one of those four spans is walked over VERBATIM, byte for byte, via [skipLexicalToken] —
- * the SAME primitive [stripComments] itself uses to decide what it may touch — rather than a
- * second, independently-written scanner: a plain `Regex("\\s+")` collapse, or a blind
- * `.replace("( ", "(")`, cannot tell a cosmetic space from one that is part of the developer's own
- * SQL, and would rewrite `UPPER("My  Col")` (a quoted identifier with two literal spaces) to
- * `UPPER("My Col")` — a column name PostgreSQL then rejects outright (#238 P1) — or turn
- * `name || '( x )'` into `name || '(x)'`, silently changing what the literal STRING itself
- * contains, never merely how it is padded.
+ * Walks every span verbatim via [skipLexicalToken], the same primitive [stripComments] uses, rather
+ * than a second, independently-written scanner: a plain whitespace-collapse regex can't tell a
+ * cosmetic space from one inside the developer's own SQL, and would rewrite a quoted identifier's
+ * internal spacing (`"My  Col"` to `"My Col"`, a column name PostgreSQL then rejects) or a string
+ * literal's contents (`'( x )'` to `'(x)'`) instead of merely the padding around it.
  */
 internal fun collapseCosmeticWhitespace(text: String): String {
   val trimmed = text.trim()

@@ -94,9 +94,9 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `a CTE body wrapped in redundant parentheses still resolves`() {
-      // #238: `parseOutputItemsWithAlias` previously found no top-level SELECT once the sliced
-      // body text started with an extra, unmatched "(", since that put the whole rest of the text
-      // at paren depth ONE.
+      // `parseOutputItemsWithAlias` previously found no top-level SELECT once the sliced body text
+      // started with an extra, unmatched "(", since that put the whole rest of the text at paren
+      // depth one (#238).
       val ddl = "CREATE TABLE parent (id INT, name TEXT)"
       val sql = """
         WITH a AS (
@@ -122,7 +122,7 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `MERGE RETURNING resolves a CTE source column's expression`() {
-      // #238: MERGE ... RETURNING is PostgreSQL 17+, so this shape has no test-scenarios coverage
+      // MERGE ... RETURNING is PostgreSQL 17+, so this shape has no test-scenarios coverage
       // (scenarios have no version gate) -- this test is that coverage instead, end to end from a
       // MERGE main query through to the extracted expression text.
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "MERGE RETURNING requires PostgreSQL 17+")
@@ -192,13 +192,12 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `a body item's implicit (no-AS) alias resolves to nothing, not its uncut select-item text`() {
-      // (#238 10.4) findTrailingImplicitAlias VERIFIES "ux" against the body's own `:resname`, but
-      // never CUTS it off -- whether a trailing bare word is an alias or the expression's own last
-      // operand cannot be decided from text alone. The item's complete, uncut text ("LOWER(name)
-      // ux") is a legal SELECT-LIST ITEM but NOT a legal standalone EXPRESSION: `SELECT (LOWER(name)
-      // ux)` is a syntax error, since the parentheses force expression context and the bare trailing
-      // "ux" is then an unexpected second token. Declining here (rather than emitting text that
-      // fails the very context a `@property` source reference renders it in) is the fix.
+      // findTrailingImplicitAlias verifies "ux" against the body's own `:resname`, but never cuts it
+      // off -- whether a trailing bare word is an alias or the expression's own last operand cannot
+      // be decided from text alone. The item's complete, uncut text ("LOWER(name) ux") is a legal
+      // select-list item but not a legal standalone expression: `SELECT (LOWER(name) ux)` is a
+      // syntax error, since the parentheses force expression context and the bare trailing "ux" is
+      // then an unexpected second token. Declining here is the fix.
       val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
       val sql = """
         WITH a AS (SELECT LOWER(name) ux FROM parent)
@@ -228,12 +227,11 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `an escaped-quote body alias no longer blocks cross-validation of a later item's own implicit alias`() {
-      // The exact #229 P0 repro shape: item 1 has an escaped-quote explicit alias "zz\"q", item 2 an
-      // IMPLICIT alias "zz". The retired whitelist could not support an implicit alias at all, so it
-      // punted on this whole body once it saw one -- Route D's own findTrailingImplicitAlias VERIFIES
-      // "zz" against item 2's own `:resname`, proving the all-position cross-validation gate holds,
-      // but (#238 10.4) the match itself is still declined: item 2's own COMPLETE text ("LOWER(b)
-      // zz") is a legal SELECT-LIST ITEM but not a legal standalone EXPRESSION.
+      // Item 1 has an escaped-quote explicit alias "zz\"q", item 2 an implicit alias "zz".
+      // findTrailingImplicitAlias verifies "zz" against item 2's own `:resname`, proving the
+      // all-position cross-validation gate holds, but the match itself is still declined: item 2's
+      // complete text ("LOWER(b) zz") is a legal select-list item but not a legal standalone
+      // expression.
       val ddl = "CREATE TABLE t (a TEXT, b TEXT)"
       val sql = """
         WITH c AS (SELECT UPPER(a) AS "zz""q", LOWER(b) zz FROM t)
@@ -249,11 +247,11 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `a bare column's own implicit alias no longer fuses into the next item, killing the whole body`() {
-      // #238 P2: "description dx" (a bare column immediately followed by its own implicit alias,
-      // no AS) used to fuse into ONE unverifiable segment once stripCommentsAndWhitespace deleted
-      // the separating space, so this position had no verifiable name at all -- and that alone
-      // failed NodeTreeProvenanceExpression's all-positions cross-validation gate for the WHOLE
-      // body, silencing "ux"'s own provenance too even though its own alias was perfectly fine.
+      // "description dx" (a bare column immediately followed by its own implicit alias, no AS)
+      // used to fuse into one unverifiable segment once stripCommentsAndWhitespace deleted the
+      // separating space, so this position had no verifiable name -- failing the all-positions
+      // cross-validation gate for the whole body and silencing "ux"'s own provenance too, even
+      // though its alias was fine.
       val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
       val sql = """
         WITH a AS (SELECT description dx, UPPER(name) AS ux FROM parent)
@@ -269,9 +267,8 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `an implicit alias on a genuine computed expression resolves to nothing, not its uncut text`() {
-      // #238 10.4 repro, the exact shape golden file SelectParentUpperNameImplicitAlias.kt emitted:
-      // "UPPER(name) y" is [name]'s COMPLETE select-item text (verified against its own `:resname`),
-      // but wrapping it as a standalone expression -- "SELECT (UPPER(name) y) FROM parent" -- is a
+      // "UPPER(name) y" is the item's complete select-item text, matching its own `:resname`, but
+      // wrapping it as a standalone expression -- "SELECT (UPPER(name) y) FROM parent" -- is a
       // syntax error PostgreSQL itself rejects, since the parentheses force expression context and
       // the bare trailing "y" is then an unexpected second token.
       val ddl = "CREATE TABLE parent (id INT, name TEXT)"
@@ -421,9 +418,9 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `two literal spaces inside a quoted identifier are never collapsed to one`() {
-      // #238 P1 repro: verified live on PostgreSQL 18.4 -- collapsing "My  Col" to "My Col" names a
-      // DIFFERENT, nonexistent column, which PostgreSQL rejects outright ("column \"My Col\" does
-      // not exist"). collapseCosmeticWhitespace must be lexer-aware, never a blind regex collapse.
+      // Collapsing "My  Col" to "My Col" names a different, nonexistent column, which PostgreSQL
+      // rejects outright ("column \"My Col\" does not exist"). collapseCosmeticWhitespace must be
+      // lexer-aware, never a blind regex collapse.
       val ddl = """CREATE TABLE t (id INT NOT NULL, "My  Col" TEXT NOT NULL)"""
       val sql = """
         WITH c AS (SELECT id, UPPER("My  Col") AS u FROM t)
@@ -557,13 +554,13 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `a matched body item that is a bare column with an implicit alias also resolves to nothing`() {
-      // #238 P3: the explicit-AS form of this exact pass-through (the test right above) already
-      // resolved to nothing -- matchedItem.selectItem.columnName is non-null for "description AS
+      // The explicit-AS form of this exact pass-through (the test right above) already resolved to
+      // nothing -- matchedItem.selectItem.columnName is non-null for "description AS
       // description_upper" because parseColumnReference runs on the alias-stripped expression
-      // "description". For the IMPLICIT-alias spelling below, extractAlias finds no top-level AS at
-      // all, so selectItem.columnName is null for the FULL unsplit text "description dx" (it isn't a
-      // bare column/table dotted pair) even though the item is exactly the same kind of unchanged
-      // pass-through once its own trailing alias token is split off. The two spellings must agree.
+      // "description". For the implicit-alias spelling below, extractAlias finds no top-level AS at
+      // all, so selectItem.columnName is null for the full unsplit text "description dx", even
+      // though the item is the same kind of unchanged pass-through once its trailing alias token is
+      // split off. The two spellings must agree.
       val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
       val sql = """
         WITH a AS (SELECT description dx FROM parent)
@@ -590,7 +587,7 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `a chain of three plain CTEs resolves the ORIGINAL computed expression, not nothing`() {
-      // #238 P1: previously resolved to nothing from the third hop on -- see
+      // Previously resolved to nothing from the third hop on -- see
       // NodeTreeProvenanceResolverTest.ChainedCtes for why.
       val ddl = "CREATE TABLE t (d TEXT)"
       val sql = """
@@ -631,10 +628,9 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `a sibling chain that hops through a CTE with its own shadowing nested WITH emits the OUTER sibling's value`() {
-      // #238 P0 repro (verified against live PostgreSQL 18.4). With the row ('alpha', 'zeta') this
-      // query actually returns "ALPHA" (UPPER(name), from the OUTER "c") -- never LOWER(description)
-      // from "e"'s own inner, shadowing "c", which "e"'s body does not even read from ("e" selects
-      // from "d", a plain pass-through of the OUTER "c"). See
+      // With the row ('alpha', 'zeta') this query actually returns "ALPHA" (UPPER(name), from the
+      // outer "c") -- never LOWER(description) from "e"'s own inner, shadowing "c", which "e"'s body
+      // does not even read from ("e" selects from "d", a plain pass-through of the outer "c"). See
       // NodeTreeProvenanceResolverTest.NestedCteShadowing for the full explanation of the scope bug
       // this reproduces.
       val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
@@ -650,11 +646,11 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `a nested WITH that shadows an outer CTE name resolves against the INNER, correctly-scoped body`() {
-      // #238: the name "c" is declared twice -- an outer one, and, inside "d"'s own body, a
-      // shadowing inner one with a DIFFERENT body. NodeTreeProvenanceResolver already walks to the
-      // INNER "c" correctly (it tracks each hop's own :ctelevelsup); resolveNodeTreeProvenanceExpression
-      // now replays that SAME hop path (["d", "c"], not a bare "c") against the SQL text, so it lands
-      // on the INNER "c"'s own body -- LOWER(description) -- never the OUTER one's UPPER(name).
+      // The name "c" is declared twice -- an outer one, and, inside "d"'s own body, a shadowing
+      // inner one with a different body. NodeTreeProvenanceResolver walks to the inner "c" correctly
+      // (it tracks each hop's own :ctelevelsup); resolveNodeTreeProvenanceExpression replays that
+      // same hop path (["d", "c"], not a bare "c") against the SQL text, so it lands on the inner
+      // "c"'s own body -- LOWER(description) -- never the outer one's UPPER(name).
       val ddl = "CREATE TABLE parent (name TEXT, description TEXT)"
       val sql = """
         WITH c AS (SELECT UPPER(name) AS ux FROM parent),
@@ -879,9 +875,9 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `a CTE name with an escaped embedded double-quote resolves by its real, unescaped name`() {
-      // #238: parseSingleCteDefinition's quoted-name scan previously stopped at the FIRST '"',
-      // truncating rawName to `"He"` -- fold-comparing that against the node tree's real ctename
-      // `He"llo` never matched, so this resolved to nothing.
+      // parseSingleCteDefinition's quoted-name scan previously stopped at the first '"', truncating
+      // rawName to `"He"` -- fold-comparing that against the node tree's real ctename `He"llo` never
+      // matched, so this resolved to nothing.
       val ddl = "CREATE TABLE t (a TEXT, b TEXT)"
       val sql = """
         WITH "He""llo" AS (SELECT UPPER(a) AS ux FROM t)

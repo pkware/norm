@@ -267,9 +267,9 @@ class ExplainAnalysisTest {
     @Test
     fun `a MERGE fed by a single-reference, non-MATERIALIZED CTE source attributes through its inlined base table`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
-      // #238: PostgreSQL inlines a CTE referenced exactly once (a MERGE's USING source always is)
-      // when it is not MATERIALIZED -- verified live: the CTE's own name never appears ANYWHERE in
-      // the plan, only "parent" (the base table its body scans). "src" alone would never match.
+      // PostgreSQL inlines a CTE referenced exactly once (a MERGE's USING source always is) when it
+      // is not MATERIALIZED: the CTE's own name never appears anywhere in the plan, only "src" (the
+      // base table its body scans). "cte_src" alone would never match.
       val result = withMergeSideNullabilitySchema { connection ->
         explainMergeSideNullability(
           connection,
@@ -289,9 +289,9 @@ class ExplainAnalysisTest {
     @Test
     fun `a MERGE fed by a MATERIALIZED CTE source attributes through its own CTE Scan node`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
-      // #238: MATERIALIZED forces PostgreSQL to plan the CTE as its own "CTE Scan" node carrying
-      // "CTE Name" -- verified live -- rather than inlining it, so the literal CTE name candidate is
-      // what must match here, never the underlying "src".
+      // MATERIALIZED forces PostgreSQL to plan the CTE as its own "CTE Scan" node carrying "CTE
+      // Name" rather than inlining it, so the literal CTE name candidate is what must match here,
+      // never the underlying "src".
       val result = withMergeSideNullabilitySchema { connection ->
         explainMergeSideNullability(
           connection,

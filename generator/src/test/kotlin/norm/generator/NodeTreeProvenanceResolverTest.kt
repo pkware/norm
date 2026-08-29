@@ -118,9 +118,9 @@ class NodeTreeProvenanceResolverTest {
 
     @Test
     fun `a chain of three plain CTEs resolves through every hop back to the one that computed the value`() {
-      // #238 P1: the resolver used to grow its scope stack by one frame per HOP, never per lexical
-      // nesting level, so by the third hop `:ctelevelsup 1` (which every hop here carries, since none
-      // of these CTEs nests its own WITH) indexed a frame that no longer held the top-level list at
+      // The resolver used to grow its scope stack by one frame per hop, never per lexical nesting
+      // level, so by the third hop `:ctelevelsup 1` (which every hop here carries, since none of
+      // these CTEs nests its own WITH) indexed a frame that no longer held the top-level list at
       // all, and this returned no provenance whatsoever.
       val provenance = provenanceFor(
         "CREATE TABLE t (d TEXT)",
@@ -166,20 +166,20 @@ class NodeTreeProvenanceResolverTest {
   @Nested
   inner class NestedCteShadowing {
 
-    // #238 P0 repro note: a resolver-level test asserting on [NodeTreeColumnProvenance] alone cannot
-    // distinguish the bug from a fix here. [CteHop] records only a CTE's NAME and its own
-    // `:ctelevelsup`, never WHICH `:ctequery` block that hop actually landed on, and in this exact
-    // repro shape both the wrongly-scoped inner "c" and the correctly-scoped outer "c" happen to
-    // yield the identical (name, ctelevelsup, bodyPosition) tuple despite reading completely
-    // different `:ctequery` bodies. Only reading the ACTUAL TEXT at that position observes the
-    // divergence -- see NodeTreeProvenanceExpressionTest.NestedCteShadowing's own test for this exact
-    // shape, which asserts the emitted expression is `UPPER(name)`, never `LOWER(description)`.
+    // A resolver-level test asserting on [NodeTreeColumnProvenance] alone cannot distinguish the bug
+    // from a fix here. [CteHop] records only a CTE's name and its own `:ctelevelsup`, never which
+    // `:ctequery` block that hop actually landed on, and in this exact shape both the wrongly-scoped
+    // inner "c" and the correctly-scoped outer "c" happen to yield the identical (name, ctelevelsup,
+    // bodyPosition) tuple despite reading completely different `:ctequery` bodies. Only reading the
+    // actual text at that position observes the divergence -- see
+    // NodeTreeProvenanceExpressionTest.NestedCteShadowing's own test for this exact shape, which
+    // asserts the emitted expression is `UPPER(name)`, never `LOWER(description)`.
 
     @Test
     fun `a nested WITH that shadows an outer CTE name resolves against the INNER, correctly-scoped body`() {
-      // #238 P0 repro: before the resolver tracked a scope stack, a flat, outermost-only CTE map
-      // resolved "c" against the OUTER definition (UPPER(name)) even when the reference was written
-      // from INSIDE "d"'s own body, which declares its own, shadowing "c" (LOWER(description)).
+      // Before the resolver tracked a scope stack, a flat, outermost-only CTE map resolved "c"
+      // against the outer definition (UPPER(name)) even when the reference was written from inside
+      // "d"'s own body, which declares its own, shadowing "c" (LOWER(description)).
       val provenance = provenanceFor(
         "CREATE TABLE parent (name TEXT, description TEXT)",
         "WITH c AS (SELECT UPPER(name) AS ux FROM parent), " +

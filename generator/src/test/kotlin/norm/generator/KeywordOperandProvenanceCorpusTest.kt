@@ -15,10 +15,10 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * One select-list expression whose LAST token, absent an explicit `AS`, is syntactically
- * indistinguishable from a trailing implicit alias — the exact ambiguity #238's cutting defect
- * mishandled (`a IS NOT NULL` truncated to the unparseable `a IS NOT`; `INTERVAL '1' DAY` truncated
- * to `INTERVAL '1'`, which evaluates to a DIFFERENT value, `1 SECOND`).
+ * One select-list expression whose last token, absent an explicit `AS`, is syntactically
+ * indistinguishable from a trailing implicit alias (`a IS NOT NULL` truncated to the unparseable
+ * `a IS NOT`; `INTERVAL '1' DAY` truncated to `INTERVAL '1'`, which evaluates to a different value,
+ * `1 SECOND`).
  *
  * @property expression The bare expression, no alias of any kind.
  * @property fromClause Appended after the expression (and, for the aliased variant, after the
@@ -34,13 +34,12 @@ internal data class KeywordOperandCase(
 }
 
 /**
- * Live-server proof that [resolveNodeTreeProvenanceExpression] never TRUNCATES a CTE body item
+ * Live-server proof that [resolveNodeTreeProvenanceExpression] never truncates a CTE body item
  * whose last token is a keyword operand rather than a genuine alias — see this file's own
- * [KeywordOperandCase] KDoc — but also never EMITS that item's complete, uncut text when the only
- * way to verify it is via that same implicit alias (#238 10.4): the complete text is a legal
- * SELECT-LIST ITEM (`ts AT TIME ZONE 'UTC' res`), never a legal standalone EXPRESSION
- * (`(ts AT TIME ZONE 'UTC' res)` is a syntax error), which is exactly the context a `@property`
- * source reference renders it in.
+ * [KeywordOperandCase] KDoc — but also never emits that item's complete, uncut text when the only
+ * way to verify it is via that same implicit alias: the complete text is a legal select-list item
+ * (`ts AT TIME ZONE 'UTC' res`), never a legal standalone expression (`(ts AT TIME ZONE 'UTC' res)`
+ * is a syntax error), which is exactly the context a `@property` source reference renders it in.
  *
  * Every shape is run through the REAL pipeline (a `prosqlbody` node tree built from a live
  * PostgreSQL server, exactly as production does) in two forms:

@@ -105,11 +105,11 @@ class TypeRepositoryTest {
 
     @Test
     fun `an implicitly aliased top-level computed expression emits its complete text, alias included`() {
-      // #238: whether a trailing bare word is an alias or the expression's own last operand cannot
-      // be decided from text alone without a grammar (`SELECT a IS NOT NULL` would truncate to the
+      // Whether a trailing bare word is an alias or the expression's own last operand cannot be
+      // decided from text alone without a grammar (`SELECT a IS NOT NULL` would truncate to the
       // unparseable `a IS NOT`, `SELECT INTERVAL '1' DAY` would truncate to `INTERVAL '1'`, which
-      // evaluates to a DIFFERENT value). So the top-level path never guesses: an item with no
-      // explicit `AS` is embedded in its ENTIRE, exactly-as-written form, alias or operand included.
+      // evaluates to a different value). So the top-level path never guesses: an item with no
+      // explicit `AS` is embedded in its entire, exactly-as-written form, alias or operand included.
       val countColumn = Column(name = "c", notNull = true, type = Identifier(name = "int8"))
       val maxColumn = Column(name = "m", notNull = false, type = Identifier(name = "text"))
 
@@ -131,13 +131,12 @@ class TypeRepositoryTest {
 
     @Test
     fun `a computed expression under a top-level UNION gets no source-reference KDoc line`() {
-      // #238: "SELECT UPPER(x) AS u FROM t UNION SELECT LOWER(x) FROM t" -- parseSelectItems only
-      // ever sees the FIRST branch (it has no concept of set operations at all), so before this
-      // fix, isComputedExpression fired on the first branch's own item and documented "UPPER(x)" as
-      // if that were the query's one true expression -- when branch 2 actually computes LOWER(x)
-      // for the same column. One branch presented as the whole answer is a WRONG emission, by the
-      // same "correct or silent" standard the rest of this KDoc pipeline holds to; there is no
-      // per-branch text to attribute a single property to, so this must emit NOTHING rather than
+      // "SELECT UPPER(x) AS u FROM t UNION SELECT LOWER(x) FROM t" -- parseSelectItems only ever
+      // sees the first branch (it has no concept of set operations at all), so isComputedExpression
+      // must not fire on the first branch's own item and document "UPPER(x)" as if that were the
+      // query's one true expression, when branch 2 actually computes LOWER(x) for the same column.
+      // One branch presented as the whole answer is a wrong emission; there is no per-branch text
+      // to attribute a single property to, so this must emit nothing rather than
       // guess branch 1's text.
       val queryText = "SELECT UPPER(x) AS u FROM t UNION SELECT LOWER(x) FROM t"
       val unionColumn = Column(name = "u", notNull = true, type = Identifier(name = "text"))
@@ -155,8 +154,8 @@ class TypeRepositoryTest {
 
     @Test
     fun `a computed expression under a parenthesized top-level UNION gets no source-reference KDoc line`() {
-      // #238 P0-1: hasTopLevelSetOperation used to inspect the RAW main-query window while
-      // parseOutputItemsWithAlias (via parseSelectItems) inspected the SAME window with redundant
+      // hasTopLevelSetOperation used to inspect the raw main-query window while
+      // parseOutputItemsWithAlias (via parseSelectItems) inspected the same window with redundant
       // outer parentheses stripped. Wrapping the whole set operation in one parenthesis pair sinks
       // the UNION to paren depth 1 in the raw window, so the guard missed it -- while the parser,
       // seeing the parentheses stripped, still split the (still branch-1-only) items and let
@@ -252,12 +251,12 @@ class TypeRepositoryTest {
 
     @Test
     fun `a comment inside a top-level computed expression is stripped, not embedded verbatim`() {
-      // #238 8.1: the top-level path (isComputedExpression == true) emitted selectItem.expression
-      // RAW, applying neither stripComments nor collapseCosmeticWhitespace -- unlike the CTE path
+      // The top-level path (isComputedExpression == true) must not emit selectItem.expression raw,
+      // applying neither stripComments nor collapseCosmeticWhitespace -- unlike the CTE path
       // (resolveNodeTreeProvenanceExpression), which applies both. A developer who read the KDoc
-      // and pasted the rendered text back into psql got "a + -- note\n  b", where the line comment
-      // swallows the rest of its own line -- including the "b" operand -- so PostgreSQL rejects it
-      // with "syntax error at end of input". Verified live against verify-pg18.
+      // and pasted the rendered text back into psql would get "a + -- note\n  b", where the line
+      // comment swallows the rest of its own line -- including the "b" operand -- so PostgreSQL
+      // rejects it with "syntax error at end of input".
       val queryText = "SELECT a + -- note\n  b AS sum2 FROM t"
       val sumColumn = Column(name = "sum2", notNull = true, type = Identifier(name = "int4"))
 
@@ -274,13 +273,12 @@ class TypeRepositoryTest {
 
     @Test
     fun `an expression containing a newline gets no source-reference KDoc line rather than a corrupted one`() {
-      // #238 8.2: a Markdown inline code span (the single backtick pair sourceReference() wraps
-      // an expression in) can never faithfully carry a raw newline -- CommonMark folds it to a
-      // single space when rendered, silently changing "s || 'a\nb'" (a string literal containing a
-      // real newline) into "s || 'a b'", a DIFFERENT value: verified live that
-      // "SELECT ('a\nb' = 'a b')" is false. The CTE-body text extraction is right to preserve that
-      // newline verbatim (75b1802) -- the defect is here, at emission -- so this must decline
-      // (emit nothing) rather than render a corrupted span.
+      // A Markdown inline code span (the single backtick pair sourceReference() wraps an expression
+      // in) can never faithfully carry a raw newline -- CommonMark folds it to a single space when
+      // rendered, silently changing "s || 'a\nb'" (a string literal containing a real newline) into
+      // "s || 'a b'", a different value (`SELECT ('a\nb' = 'a b')` is false). The CTE-body text
+      // extraction is right to preserve that newline verbatim -- the defect is at emission -- so
+      // this must decline (emit nothing) rather than render a corrupted span.
       val expressionColumn = Column(
         name = "u",
         notNull = false,
@@ -297,11 +295,11 @@ class TypeRepositoryTest {
 
     @Test
     fun `an expression containing a backtick is escaped with a longer backtick run, not truncated`() {
-      // #238 8.3: sourceReference() wrapped an expression in a SINGLE pair of backticks
-      // unconditionally, so a literal backtick inside the expression (e.g. "s || '`'") closed the
-      // inline code span early, corrupting the rendered Markdown. A run of backticks strictly
-      // longer than any run INSIDE the expression is a valid CommonMark delimiter that can never be
-      // mistaken for a closing delimiter, so the expression is escaped rather than declined.
+      // sourceReference() wrapping an expression in a single pair of backticks unconditionally would
+      // let a literal backtick inside the expression (e.g. "s || '`'") close the inline code span
+      // early, corrupting the rendered Markdown. A run of backticks strictly longer than any run
+      // inside the expression is a valid CommonMark delimiter that can never be mistaken for a
+      // closing delimiter, so the expression is escaped rather than declined.
       val expressionColumn = Column(
         name = "u",
         notNull = false,
@@ -343,8 +341,8 @@ class TypeRepositoryTest {
 
     @Test
     fun `a property name containing its own literal backtick gets a widened delimiter, not a broken span`() {
-      // #238 9.5: a fixed single-backtick wrap around a name containing a backtick would close the
-      // span early -- the same #238 8.3 hazard sourceReference()'s own span was already fixed for.
+      // A fixed single-backtick wrap around a name containing a backtick would close the span early
+      // -- the same hazard sourceReference()'s own span is already fixed for.
       val backtickNamedColumn = Column(
         name = "a`b",
         notNull = true,
@@ -365,9 +363,9 @@ class TypeRepositoryTest {
 
     @Test
     fun `a mixed-case original column name is double-quoted in its table_column source reference`() {
-      // #238 9.3: rendering the bare, unquoted originalName ("tq.Foo") reads back as PostgreSQL
-      // folding "Foo" to "foo" -- a column "tq" never has. Verified live: "SELECT tq.Foo FROM tq"
-      // fails with "column tq.foo does not exist", while "SELECT tq.\"Foo\" FROM tq" succeeds.
+      // Rendering the bare, unquoted originalName ("tq.Foo") reads back as PostgreSQL folding "Foo"
+      // to "foo" -- a column "tq" never has ("SELECT tq.Foo FROM tq" fails with "column tq.foo does
+      // not exist", while "SELECT tq.\"Foo\" FROM tq" succeeds).
       val quotedColumn = Column(
         name = "bar",
         notNull = true,
@@ -426,11 +424,11 @@ class TypeRepositoryTest {
 
     @Test
     fun `a reserved-word relation name is double-quoted in its table_column source reference`() {
-      // #238 10.1: SQL_UNQUOTED_IDENTIFIER alone accepts "order" -- it's already all-lowercase with
-      // no special characters -- so without consulting the live server's own reserved-word set, the
-      // relation name was rendered bare: "order.id" reads back as PostgreSQL parsing "order" as the
-      // RESERVED KEYWORD, not a table reference. Verified live: `SELECT order.id FROM "order"` fails
-      // with `syntax error at or near "."`.
+      // SQL_UNQUOTED_IDENTIFIER alone accepts "order" -- it's already all-lowercase with no special
+      // characters -- so without consulting the live server's own reserved-word set, the relation
+      // name would be rendered bare: "order.id" reads back as PostgreSQL parsing "order" as the
+      // reserved keyword, not a table reference (`SELECT order.id FROM "order"` fails with `syntax
+      // error at or near "."`).
       val orderColumn = Column(
         name = "id",
         notNull = true,
@@ -490,11 +488,11 @@ class TypeRepositoryTest {
 
     @Test
     fun `a property name containing a block-comment close delimiter gets no @property line at all`() {
-      // #238 10.2: widening the backtick delimiter (formatAsKdocPropertyReference's normal fix for
-      // a name containing its OWN literal backtick) does not help here -- KotlinPoet's own KDoc
-      // emission unconditionally rewrites "*/" to an HTML entity inside EVERY KDoc block it renders,
-      // so "@property `c*/d`" would render with the entity substituted in, naming a DIFFERENT
-      // property than the one actually declared (`` `c*/d` ``). Declining the whole line is the fix.
+      // Widening the backtick delimiter (formatAsKdocPropertyReference's normal fix for a name
+      // containing its own literal backtick) does not help here -- KotlinPoet's own KDoc emission
+      // unconditionally rewrites "*/" to an HTML entity inside every KDoc block it renders, so
+      // "@property `c*/d`" would render with the entity substituted in, naming a different property
+      // than the one actually declared (`` `c*/d` ``). Declining the whole line is the fix.
       val starSlashColumn = Column(
         name = "c*/d",
         notNull = true,
@@ -516,10 +514,10 @@ class TypeRepositoryTest {
 
     @Test
     fun `a backtick in one property's comment does not mis-pair a later property's own source-reference span`() {
-      // #238 10.3: every @property line lives in ONE continuous CommonMark paragraph (no blank line
-      // separates them), so an unescaped, unpaired backtick in property "x"'s own comment is free to
-      // pair with the backtick belonging to property "y"'s source-reference span instead of its own,
-      // turning "y"'s span from a real inline code span into plain, undelimited text.
+      // Every @property line lives in one continuous CommonMark paragraph (no blank line separates
+      // them), so an unescaped, unpaired backtick in property "x"'s own comment could pair with the
+      // backtick belonging to property "y"'s source-reference span instead of its own, turning "y"'s
+      // span from a real inline code span into plain, undelimited text.
       val xColumn = Column(
         name = "x",
         notNull = true,
@@ -549,12 +547,12 @@ class TypeRepositoryTest {
 
     @Test
     fun `a lone star select item over a CTE reports the CTE body's own resolved expression`() {
-      // #238 9.2: "WITH c AS (SELECT UPPER(s) AS u FROM t) SELECT * FROM c" -- parseSelectItems
-      // returns the single star item ("*") AS-IS rather than the empty-list fail-safe it uses for a
-      // star followed by more items (see parseOutputItemsWithAlias's own KDoc), so
-      // selectItem.columnName == null for it exactly as for a genuine computed expression. Before
-      // this fix, isComputedExpression fired on the star's own literal text, documenting "*" as if
-      // it were the expression that produced the column -- even though provenanceExpression (stood
+      // "WITH c AS (SELECT UPPER(s) AS u FROM t) SELECT * FROM c" -- parseSelectItems returns the
+      // single star item ("*") as-is rather than the empty-list fail-safe it uses for a star
+      // followed by more items (see parseOutputItemsWithAlias's own KDoc), so
+      // selectItem.columnName == null for it exactly as for a genuine computed expression.
+      // isComputedExpression must not fire on the star's own literal text and document "*" as if it
+      // were the expression that produced the column -- even though provenanceExpression (stood
       // in for here, as elsewhere in this file, for what the node-tree resolver would have
       // computed) already held the real answer.
       val queryText = "WITH c AS (SELECT UPPER(s) AS u FROM t) SELECT * FROM c"
@@ -614,12 +612,12 @@ class TypeRepositoryTest {
 
     @Test
     fun `an expression containing a block-comment close delimiter gets no source-reference KDoc line`() {
-      // #238 9.1: KotlinPoet's own KDoc emission unconditionally rewrites "*/" to "&#42;/" (and
-      // "/*" to "/&#42;") inside every KDoc block it renders, so a literal block-comment delimiter
-      // inside an expression can never survive being embedded in the generated FILE's inline code
-      // span -- CommonMark never decodes an HTML entity back to a literal character inside a code
-      // span. Proven by reading typeSpec.toString(), which runs through KotlinPoet's real emission
-      // (unlike kdoc.toString(), which does not).
+      // KotlinPoet's own KDoc emission unconditionally rewrites "*/" to "&#42;/" (and "/*" to
+      // "/&#42;") inside every KDoc block it renders, so a literal block-comment delimiter inside an
+      // expression can never survive being embedded in the generated file's inline code span --
+      // CommonMark never decodes an HTML entity back to a literal character inside a code span.
+      // Proven by reading typeSpec.toString(), which runs through KotlinPoet's real emission (unlike
+      // kdoc.toString(), which does not).
       val starSlashColumn = Column(
         name = "u",
         notNull = false,

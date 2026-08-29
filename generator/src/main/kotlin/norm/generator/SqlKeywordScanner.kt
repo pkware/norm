@@ -235,20 +235,19 @@ internal fun findTopLevelReturningKeyword(sql: String): Int {
 /**
  * Finds the top-level `FROM` keyword that opens a `SELECT`'s `FROM` clause, in [sql] starting at or
  * after [startIndex] — distinguishing it from a bare `FROM` that is really part of `IS [NOT]
- * DISTINCT FROM`'s own comparison syntax, which is a single boolean expression with no clause
- * boundary at that `FROM` at all (verified against PostgreSQL 18.4). A plain [findTopLevelKeyword]
- * search returns the FIRST depth-0 `FROM`, which for `SELECT a IS DISTINCT FROM b FROM t` is the
- * one inside `IS DISTINCT FROM` — truncating the select list to `a IS DISTINCT` and treating `b
- * FROM t`, the expression's own right-hand operand, as if it were the real clause.
+ * DISTINCT FROM`'s own comparison syntax, which has no clause boundary at that `FROM` at all. A
+ * plain [findTopLevelKeyword] search returns the first depth-0 `FROM`, which for `SELECT a IS
+ * DISTINCT FROM b FROM t` is the one inside `IS DISTINCT FROM` — truncating the select list to `a IS
+ * DISTINCT` and treating `b FROM t` as if it were the real clause.
  *
  * A forward single-pass walk in the style of [findTopLevelReturningKeyword]: a depth-0 `FROM` is
  * skipped when the word immediately preceding it is `DISTINCT` — the only grammar production in
  * which a bare, unparenthesized `FROM` can appear without opening a real `FROM` clause.
  * `EXTRACT(field FROM source)`, `SUBSTRING(x FROM y)`, and `OVERLAY(... FROM z ...)` all wrap their
- * own `FROM` inside that function call's own parentheses, so [findTopLevelKeyword]'s ordinary depth
- * tracking already excludes those without any special-casing here. A comment between `DISTINCT` and
- * `FROM` does not disturb this check, exactly as [findTopLevelReturningKeyword]'s own `AS` check
- * treats a comment between `AS` and its alias as a separator, not a token.
+ * own `FROM` inside that function call's own parentheses, already excluded by
+ * [findTopLevelKeyword]'s ordinary depth tracking. A comment between `DISTINCT` and `FROM` does not
+ * disturb this check, exactly as [findTopLevelReturningKeyword]'s own `AS` check treats a comment
+ * between `AS` and its alias as a separator, not a token.
  *
  * @return The index of the keyword, or `-1` if there is no top-level `FROM` at or after
  *   [startIndex] that isn't itself part of `IS [NOT] DISTINCT FROM`.

@@ -13,13 +13,13 @@ class SqlStarItemTest {
 
     @Test
     fun `a bare column with an implicit alias splits into the column and its own alias`() {
-      // #238 P2: stripCommentsAndWhitespace deletes the separating space before this function ever
-      // runs, so without gating the identifier-continuation run on OriginalAdjacency, "description
-      // dx" strips to "descriptiondx" and reads as ONE fused segment spanning the whole text --
-      // findTrailingImplicitAliasStart's own "a segment spanning the ENTIRE text is not an alias"
+      // stripCommentsAndWhitespace deletes the separating space before this function ever runs, so
+      // without gating the identifier-continuation run on OriginalAdjacency, "description dx" strips
+      // to "descriptiondx" and reads as one fused segment spanning the whole text --
+      // findTrailingImplicitAliasStart's own "a segment spanning the entire text is not an alias"
       // guard then refuses to report any split at all, so this position is left with no verifiable
       // name and fails NodeTreeProvenanceExpression's all-positions cross-validation gate for the
-      // WHOLE body, not merely this one position.
+      // whole body, not merely this one position.
       val result = splitTrailingImplicitAlias("description dx")
       assertThat(result).isEqualTo(ItemAndImplicitAlias("description", "dx"))
     }

@@ -16,10 +16,10 @@ import java.util.UUID
 
 /**
  * Brute-force, ground-truth sweep guarding [NodeTreeProvenanceResolver]'s "correct or silent"
- * invariant across the scope-stack bug class #238's P0/P1 both belong to — a bug class two unit
- * test suites (this one's own sibling files) already caught ONLY because a fresh-context verifier
- * happened to probe the exact shape that triggers it. This test exists so the NEXT scope defect,
- * whatever shape it takes, is caught by a systematic sweep instead of by luck.
+ * invariant across the scope-stack bug class fixed in #238 — a bug class two unit test suites (this
+ * one's own sibling files) already caught only because a fresh-context verifier happened to probe
+ * the exact shape that triggers it. This test exists so the next scope defect, whatever shape it
+ * takes, is caught by a systematic sweep instead of by luck.
  *
  * For every generated shape, this test does NOT compare against a hand-computed expected string —
  * it runs the ACTUAL query against seeded rows to capture what PostgreSQL itself returns for the
@@ -29,7 +29,7 @@ import java.util.UUID
  * something that does not reproduce what the query itself returns is the one and only failure
  * mode, matching this whole subsystem's design (see [NodeTreeProvenanceResolver]'s own KDoc).
  *
- * [generateSweepCases] crosses four axes, all named in issue #238's own review:
+ * [generateSweepCases] crosses four axes:
  * - **chain depth** (`1..6`): total CTEs in a straight reference chain `c1 <- c2 <- ... <- cN`.
  * - **sibling count** (`0..2`): extra, UNREFERENCED CTEs declared in the same top-level `WITH`
  *   clause, computing a DIFFERENT value than the real chain — proving their mere presence never
@@ -37,16 +37,15 @@ import java.util.UUID
  * - **nesting depth** (`0..2`): the whole chain wrapped in that many extra layers of a genuinely
  *   LEXICALLY nested `WITH` (`ctelevelsup 0` at every such layer, never a sibling hop) — proving
  *   real nesting neither breaks a correct resolution nor "accidentally" fixes a wrong one.
- * - **shadowing**: for `chainDepth >= 2`, the OUTERMOST CTE additionally declares its own nested
- *   `WITH c1 AS (...)`, re-declaring the FIRST CTE's name with a DIFFERENTLY-computed, easily
- *   distinguished body. This is the exact shape of the #238 P0 repro, generalized: at `chainDepth
- *   == 3` specifically, this reproduces a scope-stack index collision that made the OLD (buggy)
- *   resolver silently attribute the result to the WRONG CTE — a genuine non-null WRONG answer, not
- *   merely a missing one (see this file's own mutation note below). At other depths the same
- *   shadow shape does not happen to hit that exact index collision (the corrupted lookup falls
- *   further down the chain, past the SINGLE unrelated shadow frame this test declares, and
- *   correctly bails to `null` instead) — still asserted here, since "correct or silent" makes
- *   `null` a pass, not a gap in coverage.
+ * - **shadowing**: for `chainDepth >= 2`, the outermost CTE additionally declares its own nested
+ *   `WITH c1 AS (...)`, re-declaring the first CTE's name with a differently-computed, easily
+ *   distinguished body. At `chainDepth == 3` specifically, this reproduces a scope-stack index
+ *   collision that made the old (buggy) resolver silently attribute the result to the wrong CTE — a
+ *   genuine non-null wrong answer, not merely a missing one (see this file's own mutation note
+ *   below). At other depths the same shadow shape does not happen to hit that exact index collision
+ *   (the corrupted lookup falls further down the chain, past the single unrelated shadow frame this
+ *   test declares, and correctly bails to `null` instead) — still asserted here, since "correct or
+ *   silent" makes `null` a pass, not a gap in coverage.
  *
  * MUTATION TESTED: reverting [NodeTreeProvenanceResolver.resolveVar]'s `currentScopeStack =
  * listOf(ownScope) + currentScopeStack.drop(reference.ctelevelsup)` back to the old, unconditional

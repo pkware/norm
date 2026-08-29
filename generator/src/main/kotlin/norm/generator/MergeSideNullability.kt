@@ -16,41 +16,36 @@ internal data class MergeSideNullability(val targetCanBeAbsent: Boolean, val sou
  * absent (all-`NULL`) for some result row — via `EXPLAIN (FORMAT JSON)` rather than
  * `:mergeActionList`/text inspection.
  *
- * A `MERGE`'s match-optionality is invisible to `:varnullingrels` (verified live — see
- * [PgCatalogLoader.mergeAbsentVarnos]'s KDoc): `WHEN NOT MATCHED BY SOURCE` and `WHEN NOT
- * MATCHED [BY TARGET] THEN INSERT` each mean one side of the `MERGE`'s underlying target/source
- * comparison may have no matching row, but PostgreSQL's `Var` nodes for either relation carry an
- * EMPTY nulling-relations set regardless. The planner, however, MUST decide how to execute that
- * comparison, and it always does so as an ordinary join whose TYPE exactly encodes this — verified
- * live on PostgreSQL 17 for all three shapes below, confirming a table-side inspection of the
- * `WHEN` clauses is unnecessary once the plan itself is asked:
+ * A `MERGE`'s match-optionality is invisible to `:varnullingrels` (see
+ * [PgCatalogLoader.mergeAbsentVarnos]): `WHEN NOT MATCHED BY SOURCE` and `WHEN NOT MATCHED [BY
+ * TARGET] THEN INSERT` each mean one side of the underlying target/source comparison may have no
+ * matching row, but PostgreSQL's `Var` nodes for either relation carry an empty nulling-relations set
+ * regardless. The planner, however, executes that comparison as an ordinary join whose type encodes
+ * this directly:
  * - `WHEN MATCHED` only: `"Join Type": "Inner"` — both sides always present.
- * - `WHEN MATCHED` + `WHEN NOT MATCHED THEN INSERT`: `"Join Type": "Left"`, with the source
- *   relation as the preserved (outer) side and the target relation as the side that can be
- *   entirely absent (the row being inserted has no prior target row).
+ * - `WHEN MATCHED` + `WHEN NOT MATCHED THEN INSERT`: `"Join Type": "Left"`, source as the preserved
+ *   (outer) side, target as the side that can be entirely absent (an inserted row has no prior
+ *   target row).
  * - Adding `WHEN NOT MATCHED BY SOURCE`: `"Join Type": "Full"` — either side can be absent.
  *
- * `EXPLAIN` (with or without `FORMAT JSON`, and regardless of the statement being a `MERGE`,
- * `INSERT`, `UPDATE`, or `DELETE`) NEVER executes the statement — verified live and pinned by
- * [ExplainAnalysisTest.`EXPLAIN never executes the statement it plans`].
+ * `EXPLAIN` never executes the statement it plans, regardless of `FORMAT` or statement kind (see
+ * [ExplainAnalysisTest.`EXPLAIN never executes the statement it plans`]).
  *
- * @param targetRelationName the REAL table name (not alias — resolved by the caller via the
- *   parsed query tree's own `:rtable`/`relid`, e.g. through [PgCatalogLoader]'s catalog lookups,
- *   never by re-parsing the SQL text) of the `MERGE`'s target relation
+ * @param targetRelationName the real table name (not alias — resolved by the caller via the parsed
+ *   query tree's own `:rtable`/`relid`, never by re-parsing the SQL text) of the `MERGE`'s target
+ *   relation
  * @param sourceRelationNames every name the `MERGE`'s source relation might be attributed under in
- *   the plan — normally a single REAL table name, but a CTE source offers TWO candidates (its own
+ *   the plan — normally a single real table name, but a CTE source offers two candidates (its own
  *   literal name, for a `MATERIALIZED` or otherwise non-inlined plan; and, when resolvable, the
- *   single base table its body inlines to) since nothing in the parsed query tree says which shape
- *   the planner will choose — see [PgCatalogLoader.mergeAbsentVarnos]'s own KDoc for how the
- *   caller builds this set. At most ONE candidate can ever actually appear in a given plan, so
- *   offering more than one never risks attributing the wrong side.
- * @return `null` when `EXPLAIN` fails, its JSON cannot be parsed, no plan node is UNIQUELY
- *   identifiable as the `ModifyTable` implementing this `MERGE` (see
- *   [findMergeModifyTableNode]'s KDoc), or NO join node within that node's own join tree (see
- *   [findOwnJoinNodes]'s KDoc) lets [targetRelationName] and exactly one name from
- *   [sourceRelationNames] each be attributed to exactly one, DIFFERENT side (e.g. the `USING`
- *   clause has more than one relation of its own, so no single join is simply target-vs-source) —
- *   the caller must treat `null` as "cannot determine", never as "neither side is nullable".
+ *   single base table its body inlines to), since nothing in the parsed query tree says which shape
+ *   the planner will choose (see [PgCatalogLoader.mergeAbsentVarnos]). At most one candidate can
+ *   ever actually appear in a given plan, so offering more than one never risks attributing the
+ *   wrong side.
+ * @return `null` when `EXPLAIN` fails, its JSON cannot be parsed, no plan node is uniquely
+ *   identifiable as the `ModifyTable` implementing this `MERGE` (see [findMergeModifyTableNode]), or
+ *   no join node within that node's own join tree (see [findOwnJoinNodes]) lets [targetRelationName]
+ *   and exactly one name from [sourceRelationNames] each be attributed to exactly one, different
+ *   side — the caller must treat `null` as "cannot determine", never as "neither side is nullable".
  */
 internal fun explainMergeSideNullability(
   connection: Connection,
@@ -117,18 +112,15 @@ private fun attributeJoinToSides(
 }
 
 /**
- * The plan node that IS the `MERGE` targeting [targetRelationName]: a `"ModifyTable"` node whose
- * `"Operation"` is `"Merge"` and whose OWN `"Relation Name"` equals [targetRelationName] —
- * PostgreSQL sets a `MERGE`'s `ModifyTable` node's `"Relation Name"` to its target table's real
- * name, verified live on PostgreSQL 16, 17, and 18. Searches the WHOLE plan at any depth, not just
- * the top level, so a `MERGE` nested inside a CTE is found the same way a top-level one is; a
- * `MERGE` elsewhere in the SAME plan targeting a DIFFERENT table (e.g. `WITH x AS (MERGE INTO
- * other ...) MERGE INTO target ...`) is excluded by the relation-name match, never confused with
- * this one.
+ * The plan node that is the `MERGE` targeting [targetRelationName]: a `"ModifyTable"` node whose
+ * `"Operation"` is `"Merge"` and whose own `"Relation Name"` equals [targetRelationName]. Searches
+ * the whole plan at any depth, so a `MERGE` nested inside a CTE is found the same way a top-level one
+ * is; a `MERGE` elsewhere in the same plan targeting a different table is excluded by the
+ * relation-name match.
  *
- * @return `null` when no such node exists, or when more than one does (e.g. two `MERGE`s in the
- *   same plan targeting the SAME table) — either way there is no single node this method can
- *   safely treat as THE merge being searched for.
+ * @return `null` when no such node exists, or when more than one does (e.g. two `MERGE`s in the same
+ *   plan targeting the same table) — either way there is no single node to treat as the merge being
+ *   searched for.
  */
 private fun findMergeModifyTableNode(
   planRoot: JsonValue.JsonObject,
@@ -147,14 +139,14 @@ private fun findMergeModifyTableNode(
 }
 
 /**
- * Every join node reachable from [mergeModifyTableNode] while descending ONLY through children
- * whose `"Parent Relationship"` is `"Outer"` or `"Inner"` — i.e. the `MERGE`'s own join tree,
- * never an `"InitPlan"` or `"SubPlan"` sibling. An uncorrelated `EXISTS`/`IN` inside a `WHEN`
- * condition plans as an `"InitPlan"`; a correlated one plans as a `"SubPlan"` — both are
- * independent subplans PostgreSQL attaches alongside the `MERGE`'s real join, not part of it, and
- * EITHER can itself contain a join over the exact same target/source relation names (verified
- * live), which is why [explainMergeSideNullability] must not simply take the first join found
- * anywhere under the `ModifyTable` node.
+ * Every join node reachable from [mergeModifyTableNode] while descending only through children whose
+ * `"Parent Relationship"` is `"Outer"` or `"Inner"` — i.e. the `MERGE`'s own join tree, never an
+ * `"InitPlan"` or `"SubPlan"` sibling. An uncorrelated `EXISTS`/`IN` inside a `WHEN` condition plans
+ * as an `"InitPlan"`; a correlated one plans as a `"SubPlan"` — both are independent subplans
+ * PostgreSQL attaches alongside the `MERGE`'s real join, not part of it, and either can itself
+ * contain a join over the exact same target/source relation names, which is why
+ * [explainMergeSideNullability] must not simply take the first join found anywhere under the
+ * `ModifyTable` node.
  */
 private fun findOwnJoinNodes(mergeModifyTableNode: JsonValue.JsonObject): List<JsonValue.JsonObject> = buildList {
   fun walk(node: JsonValue.JsonObject) {

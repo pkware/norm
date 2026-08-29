@@ -131,10 +131,8 @@ class EnumBuilderTest {
 
   @Test
   fun `enum with a percent sign in its comment generates correct output`() {
-    // #238 11.3: the comment is interpolated directly into a KotlinPoet KDoc FORMAT string
-    // (`addKdoc("$comment\n\n")`), so a literal "%" in it is read as a format specifier -- KotlinPoet
-    // throws building the KDoc, aborting generation entirely, unlike the table/column/domain
-    // comment paths, which already pass their comment as an ARGUMENT to a "%L" placeholder.
+    // A comment interpolated directly into a KotlinPoet KDoc format string would have a literal "%"
+    // in it read as a format specifier, throwing while building the KDoc and aborting generation.
     val moodEnum =
       Enum(name = "mood", vals = listOf("happy", "sad", "angry"), comment = "Feeling 100% of the time.")
     val output = generateEnumCode(moodEnum, "example")

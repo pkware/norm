@@ -48,10 +48,9 @@ class SqlParameterInferrerTest {
 
     @Test
     fun `un-doubles an embedded double quote in a quoted INSERT column name`() {
-      // #238 11.4: a column literally named a"b (one embedded double-quote character) is spelled
-      // "a""b" in SQL, per PostgreSQL's own quoted-identifier escape rule (the embedded "" is ONE
-      // literal " character, not two) -- unquoteIdentifier stripped only the OUTER quotes, leaving
-      // the doubled internal quote as two literal characters in the inferred column/parameter name
+      // A column literally named a"b is spelled "a""b" in SQL, per PostgreSQL's own quoted-identifier
+      // escape rule (the embedded "" is one literal " character, not two) -- unquoteIdentifier
+      // stripped only the outer quotes, leaving the doubled internal quote as two literal characters
       // instead of un-escaping it back to the one character the real column is actually named.
       val result = inferrer.inferParameterInfo("""INSERT INTO t("a""b") VALUES (?)""")
 
@@ -226,11 +225,11 @@ class SqlParameterInferrerTest {
 
     @Test
     fun `un-doubles an embedded double quote in a quoted WHERE column name`() {
-      // #238 12.1: SQL_IDENTIFIER's quoted branch could not span a doubled internal quote, so
-      // `"a""b" = ?` matched only the trailing `"b"` fragment instead of the whole identifier --
-      // the un-doubling added for the INSERT path (#238 11.4) was never reached from here. The
-      // WHERE path never sets `columnName` separately (it reuses `name` for both the parameter's
-      // display name and its catalog lookup key, via `inferred?.columnName ?: inferred?.name` in
+      // SQL_IDENTIFIER's quoted branch could not span a doubled internal quote, so `"a""b" = ?`
+      // matched only the trailing `"b"` fragment instead of the whole identifier -- the un-doubling
+      // added for the INSERT path was never reached from here. The WHERE path never sets
+      // `columnName` separately (it reuses `name` for both the parameter's display name and its
+      // catalog lookup key, via `inferred?.columnName ?: inferred?.name` in
       // JdbcAnalyzer.buildParameters), so `name` alone must carry the un-doubled column name.
       val result = inferrer.inferParameterInfo("""SELECT id FROM q WHERE "a""b" = ?""")
       assertThat(result.getValue(1).name).isEqualTo("a\"b")

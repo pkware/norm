@@ -4878,10 +4878,10 @@ class QueryAnalysisTest {
       // #238: PgCatalogLoader.mergeAbsentVarnos now attributes a MERGE's join to a CTE source too
       // (previously only a plain base table), via the CTE's own literal name -- "ins" appears
       // directly as a "CTE Scan" node's "CTE Name" here, since a data-modifying CTE is never
-      // inlined. Verified against real Postgres 18 (an "a" row with no matching "b" row): the
-      // INSERT inserts one row into ins_target (id = 1, val = 'v', both columns genuinely NOT NULL
-      // for the row that WAS inserted), and the MERGE returns act = 'UPDATE', mergedval = 'v', id
-      // = 1 — "mergedval" is, in fact, never NULL here, and is now correctly reported as such.
+      // inlined. With an "a" row and no matching "b" row, the INSERT inserts one row into
+      // ins_target (id = 1, val = 'v', both columns genuinely NOT NULL for the row that was
+      // inserted), and the MERGE returns act = 'UPDATE', mergedval = 'v', id = 1 — "mergedval" is
+      // never NULL here, and is now correctly reported as such.
       val query = analyzeWithSchema(
         """
         CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);

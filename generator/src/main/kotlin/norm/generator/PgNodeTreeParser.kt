@@ -428,12 +428,11 @@ internal class PgNodeTreeParser {
       if (cteQueryIndex == -1) return@mapNotNull null
       val braceStart = cteQueryIndex + cteQueryMarker.length - 1
       val queryBlock = extractBalancedBraces(block, braceStart) ?: return@mapNotNull null
-      // :cterecursive is serialized AFTER :ctequery in COMMONTABLEEXPR's own field order (verified
-      // live), so a naive whole-block scan for it would find a NESTED COMMONTABLEEXPR's same-named
-      // field first, were [queryBlock] itself to declare its own nested WITH clause —
-      // depth-one-aware extraction (via [extractBoolFieldAtDepthOne], scoped to [block]'s own
-      // outermost brace) is required here, unlike :ctename above, which is always serialized BEFORE
-      // :ctequery and so can never be shadowed by anything nested inside it.
+      // :cterecursive is serialized AFTER :ctequery in COMMONTABLEEXPR's own field order, so a naive
+      // whole-block scan could find a nested COMMONTABLEEXPR's same-named field first if queryBlock
+      // itself declares a nested WITH clause -- extractBoolFieldAtDepthOne scopes the search to
+      // block's own outermost brace to avoid that. :ctename above needs no such scoping: it is
+      // always serialized before :ctequery.
       val recursive = extractBoolFieldAtDepthOne(block, ":cterecursive") ?: false
       NodeTreeCteDefinition(name = cteName, queryBlock = queryBlock, recursive = recursive)
     }
@@ -1043,21 +1042,13 @@ internal class PgNodeTreeParser {
 
   /**
    * Extracts a string field value from a node block, with backslash-escaping removed (see the
-   * class-level note on backslash escaping) — e.g. a `:resname` of `k\}x` (an alias `k}x`
-   * containing a literal `}`) is returned as `k}x`, not the raw escaped text.
+   * class-level note on backslash escaping) — e.g. a `:resname` of `k\}x` is returned as `k}x`.
    *
-   * The capture group matches a run of EITHER a plain non-whitespace character OR a backslash
-   * followed by ANY character (`\\[\s\S]`, matched as one unit, tried FIRST at each position) —
-   * not a bare `\S+`, which has no escape-awareness of its own and stops at a literal escaped
-   * whitespace byte regardless of the preceding backslash, truncating the match before
-   * [unescapeToken] ever runs. Verified live: a CTE named `"My Cte"` serializes as `:ctename
-   * My\ Cte` (the embedded space backslash-escaped, exactly like any other special character this
-   * format escapes) — a bare `\S+` would capture only `My\`, silently dropping ` Cte` and every
-   * following field in the same node block from that regex's own next `find()` (the `:ctename`
-   * that follows next would still be found, since `\S+`'s truncation only shortens THIS field's
-   * captured value, but that shortened value is a distinct, colliding CTE name if two CTEs happen
-   * to share the same truncated prefix). `[\s\S]`, not `.`, is what lets the escaped-pair
-   * alternative consume an escaped newline too, without depending on `Regex`'s DOTALL mode.
+   * The capture group matches a run of either a plain non-whitespace character or a backslash
+   * followed by any character (`\\[\s\S]`, tried first at each position) — not a bare `\S+`, which
+   * would stop at an escaped whitespace byte (e.g. `:ctename My\ Cte` for a CTE named `"My Cte"`)
+   * and truncate the match before [unescapeToken] ever runs. `[\s\S]`, not `.`, also lets the
+   * escaped-pair alternative consume an escaped newline without `Regex`'s DOTALL mode.
    *
    * @param text the full node block text
    * @param fieldName the field name including the leading colon, e.g. `":ctename"`
