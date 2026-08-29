@@ -362,6 +362,55 @@ class CrudQuerySynthesizerTest {
     assertThat(findByPk.name).isEqualTo("findEventByEventTypeId")
   }
 
+  @Test
+  fun `quoted, mixed-case, and space-containing column names are correctly quoted in every synthesized statement`() {
+    // test-scenarios/comments/schema.sql's "tq" table (this is the same shape) covers reading these
+    // columns back via a hand-written query, but CrudQuerySynthesizer building SQL that writes to
+    // them is a different surface with no coverage of its own — this table has no PK-dependent CRUD
+    // method whose own name would need to embed the quoted names (its PK is the plain "id"), so
+    // only the raw SQL text below actually exercises the quoting.
+    val table = table(
+      "tq",
+      column("id", "int4", notNull = true, isPrimaryKey = true, isAutoIncrement = true),
+      column("Foo", "text", notNull = true),
+      column("My Col", "text"),
+    )
+    val catalog = catalog(table)
+    // Mirrors JdbcAnalyzer.buildIdentifierQuoter's real policy (needsQuoting: any character
+    // outside "[a-z_][a-z0-9_$]*", which "Foo"'s uppercase "F" and "My Col"'s space both are)
+    // without needing a live connection just to fetch the (here, irrelevant) reserved-word set.
+    val quoter = { identifier: String ->
+      if (identifier.matches(Regex("[a-z_][a-z0-9_\$]*"))) identifier else "\"$identifier\""
+    }
+
+    val queries = CrudQuerySynthesizer.synthesize(catalog, quoter)
+    val byName = queries.associateBy { it.name }
+
+    assertThat(byName.getValue("insertTq").sql)
+      .isEqualTo("""INSERT INTO tq ("Foo", "My Col") VALUES (?, ?) RETURNING id""")
+    assertThat(byName.getValue("findAllTq").sql).isEqualTo("SELECT * FROM tq")
+    assertThat(byName.getValue("countTq").sql).isEqualTo("SELECT COUNT(*) FROM tq")
+    assertThat(byName.getValue("deleteAllTq").sql).isEqualTo("DELETE FROM tq")
+  }
+
+  @Test
+  fun `a column name containing a backtick generates SQL against the real column, not a folded one`() {
+    // A prior fix rewrote Column.name's backtick to an apostrophe before this synthesizer ever saw
+    // it, so generated SQL referenced a column ("a'b") that does not exist. Column.name must stay
+    // the real database identifier here.
+    val table = table(
+      "bt",
+      column("id", "int4", notNull = true, isPrimaryKey = true, isAutoIncrement = true),
+      column("a`b", "text", notNull = true),
+    )
+    val catalog = catalog(table)
+    val quoter = quoteOnly("a`b")
+
+    val insert = CrudQuerySynthesizer.synthesize(catalog, quoter).first { it.name == "insertBt" }
+
+    assertThat(insert.sql).isEqualTo("""INSERT INTO bt ("a`b") VALUES (?) RETURNING id""")
+  }
+
   // --- Helpers ---
 
   /**

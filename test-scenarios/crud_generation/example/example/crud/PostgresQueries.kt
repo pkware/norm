@@ -883,4 +883,195 @@ public class PostgresQueries(
     val sql = "DELETE FROM product"
     return driver.executeRows(sql)
   }
+
+  @Throws(SQLException::class)
+  override fun <T : Any> insertQuotedColumns(
+    Foo: String,
+    `My Col`: String?,
+    Select: String?,
+    mapper: (id: Int) -> T,
+  ): T {
+    val sql = "INSERT INTO quoted_columns (\"Foo\", \"My Col\", \"Select\") VALUES (?, ?, ?) RETURNING id"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+      )
+    }
+    return driver.queryOne(sql, rowReader) {
+      setString(1, Foo)
+      setString(2, `My Col`)
+      setString(3, Select)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any, T : Any> insertQuotedColumns(
+    stream: Iterable<Input>,
+    Foo: (Input) -> String,
+    `My Col`: (Input) -> String?,
+    Select: (Input) -> String?,
+    mapper: (id: Int) -> T,
+    batchSize: Int,
+  ): List<T> {
+    val sql = "INSERT INTO quoted_columns (\"Foo\", \"My Col\", \"Select\") VALUES (?, ?, ?)"
+    val columnNames = arrayOf("id")
+    return driver.executeBatchWithGeneratedKeys(sql, columnNames) {
+      val rowReader: ResultSet.() -> T = {
+        mapper(
+          getInt(1),
+        )
+      }
+      val results = mutableListOf<T>()
+      var batchCount = 0
+      for (entry in stream) {
+        setString(1, Foo(entry))
+        setString(2, `My Col`(entry))
+        setString(3, Select(entry))
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          executeBatch()
+          generatedKeys.use { readGeneratedKeys(it, rowReader, results) }
+          batchCount = 0
+        }
+      }
+      if (batchCount > 0) {
+        executeBatch()
+        generatedKeys.use { readGeneratedKeys(it, rowReader, results) }
+      }
+      results
+    }
+  }
+
+  private fun <T : Any, Return> findQuotedColumnsById(
+    id: Int,
+    mapper: (
+      id: Int,
+      Foo: String,
+      `My Col`: String?,
+      Select: String?,
+    ) -> T,
+    processor: ManyProcessor<T, Return>,
+  ): Return {
+    val sql = "SELECT * FROM quoted_columns WHERE id = ?"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        getString(2),
+        getString(3),
+        getString(4),
+      )
+    }
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setInt(1, id)
+    }
+    return processor.invoke(sql, rowReader, queryBinder)
+  }
+
+  override fun <T : Any> findQuotedColumnsById(id: Int, mapper: (
+    id: Int,
+    Foo: String,
+    `My Col`: String?,
+    Select: String?,
+  ) -> T): Many<T> = findQuotedColumnsById(id, mapper, driver::queryMany)
+
+  @Throws(SQLException::class)
+  override fun <T : Any> existsQuotedColumnsById(id: Int, mapper: (exists: Boolean) -> T): T {
+    val sql = "SELECT EXISTS(SELECT 1 FROM quoted_columns WHERE id = ?)"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getBoolean(1),
+      )
+    }
+    return driver.queryOne(sql, rowReader) {
+      setInt(1, id)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun deleteQuotedColumnsById(id: Int): Int {
+    val sql = "DELETE FROM quoted_columns WHERE id = ?"
+    return driver.executeRows(sql) {
+      setInt(1, id)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any> deleteQuotedColumnsById(
+    stream: Iterable<Input>,
+    id: (Input) -> Int,
+    batchSize: Int,
+  ): IntArray {
+    val sql = "DELETE FROM quoted_columns WHERE id = ?"
+    return driver.execute(sql) {
+      var totalCount = 0
+      var batchCount = 0
+      val results = mutableListOf<IntArray>()
+      for (entry in stream) {
+        setInt(1, id(entry))
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          results.add(executeBatch())
+          batchCount = 0
+          // Performance optimization to reduce register updates per loop iteration
+          totalCount += batchSize
+        }
+      }
+      if (batchCount > 0) {
+        results.add(executeBatch())
+        totalCount += batchCount
+      }
+      combineExecBatchResults(results, totalCount, batchSize)
+    }
+  }
+
+  private fun <T : Any, Return> findAllQuotedColumns(mapper: (
+    id: Int,
+    Foo: String,
+    `My Col`: String?,
+    Select: String?,
+  ) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = "SELECT * FROM quoted_columns"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        getString(2),
+        getString(3),
+        getString(4),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> findAllQuotedColumns(mapper: (
+    id: Int,
+    Foo: String,
+    `My Col`: String?,
+    Select: String?,
+  ) -> T): Many<T> = findAllQuotedColumns(mapper, driver::queryMany)
+
+  override fun <T : Any> findAllQuotedColumnsDynamically(mapper: (
+    id: Int,
+    Foo: String,
+    `My Col`: String?,
+    Select: String?,
+  ) -> T): Query<T> = findAllQuotedColumns(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  @Throws(SQLException::class)
+  override fun <T : Any> countQuotedColumns(mapper: (count: Long) -> T): T {
+    val sql = "SELECT COUNT(*) FROM quoted_columns"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getLong(1),
+      )
+    }
+    return driver.queryOne(sql, rowReader)
+  }
+
+  @Throws(SQLException::class)
+  override fun deleteAllQuotedColumns(): Int {
+    val sql = "DELETE FROM quoted_columns"
+    return driver.executeRows(sql)
+  }
 }
