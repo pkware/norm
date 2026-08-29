@@ -265,8 +265,12 @@ internal sealed interface PgNodeExpression {
  *
  * @property name The CTE name (from `:ctename`).
  * @property queryBlock The full `{QUERY ...}` block text of the CTE's body (from `:ctequery`).
+ * @property recursive Whether this CTE is one term of a `WITH RECURSIVE` (from `:cterecursive`).
+ *   [NodeTreeProvenanceResolver] refuses to attribute a result column to a recursive CTE's body —
+ *   the "same" `resno` position can be fed by a different branch on every recursive iteration, so
+ *   no single body position honestly describes the whole CTE's output.
  */
-internal data class NodeTreeCteDefinition(val name: String, val queryBlock: String)
+internal data class NodeTreeCteDefinition(val name: String, val queryBlock: String, val recursive: Boolean = false)
 
 /**
  * A CTE range-table-entry reference (`rtekind 6`) parsed from a query block's own `:rtable`.
@@ -277,8 +281,60 @@ internal data class NodeTreeCteDefinition(val name: String, val queryBlock: Stri
  *   enclosing scope. The distinction is required when a block declares its own `WITH c` that shadows
  *   an enclosing `WITH c` of the same name with a different body — see
  *   [ColumnNullabilityAnalyzer.analyzeQueryBlockNullability].
+ * @property selfReference Whether this specific reference is a recursive CTE's OWN recursive term
+ *   referring back to itself (from `:self_reference`). `false` for every ordinary CTE reference —
+ *   this is only ever `true` inside a `WITH RECURSIVE` CTE's own recursive query term. Defaults to
+ *   `false` since only [RangeTableEntry.Cte] (built by [PgNodeTreeParser.parseRangeTableEntries])
+ *   currently reads it; [PgNodeTreeParser.parseCteRangeTableEntries]'s existing callers never did.
  */
-internal data class NodeTreeCteReference(val name: String, val ctelevelsup: Int)
+internal data class NodeTreeCteReference(val name: String, val ctelevelsup: Int, val selfReference: Boolean = false)
+
+/**
+ * A single range-table entry, keyed by 1-based `varno`, covering EVERY `rtekind` — unlike
+ * [PgNodeTreeParser.parseRangeTable] ([Relation] only), [PgNodeTreeParser.parseSubqueryRangeTable]
+ * ([Subquery] only), and [PgNodeTreeParser.parseCteRangeTableEntries] ([Cte] only), which each
+ * recognize exactly one kind and silently skip every entry of any other kind.
+ * [NodeTreeProvenanceResolver] walks an arbitrary `Var`'s `varno` and must be able to see an
+ * unrecognized or not-yet-modeled kind ([Other]) so it can bail rather than misinterpret that varno
+ * as one of the recognized kinds.
+ *
+ * Built by [PgNodeTreeParser.parseRangeTableEntries].
+ */
+internal sealed interface RangeTableEntry {
+
+  /** `rtekind 0`: an ordinary base table or view. */
+  data class Relation(val relid: Int) : RangeTableEntry
+
+  /** `rtekind 1`: a derived table (a subquery in `FROM`), NOT a CTE. */
+  data class Subquery(val queryBlock: String) : RangeTableEntry
+
+  /** `rtekind 6`: a reference to a CTE declared by a `WITH` clause. */
+  data class Cte(val reference: NodeTreeCteReference) : RangeTableEntry
+
+  /**
+   * `rtekind 2`: a `JOIN` (including its `USING`/`NATURAL`-merged output columns).
+   *
+   * @property joinAliasVars One parsed expression per join OUTPUT column, in order — 1-based
+   *   `varattno - 1` indexes into this list. An ordinary (non-merged) column's entry is a bare
+   *   [PgNodeExpression.Var] pointing at whichever side produced it; a `USING`/`NATURAL`-merged
+   *   column's entry is a [PgNodeExpression.CoalesceExpr] of the two sides' Vars. That distinction
+   *   is exactly what [NodeTreeProvenanceResolver.resolveVar] relies on: it casts an entry `as?
+   *   Var` and bails (`return null`) when it is anything else — a `CoalesceExpr` under an outer
+   *   join, whose honest provenance is not one side's expression alone — so the type-specific
+   *   `jointype`/`joinmergedcols`/`joinleftcols`/`joinrightcols` fields PostgreSQL also serializes
+   *   here are never needed to make that call and are not parsed into this class at all.
+   */
+  data class Join(val joinAliasVars: List<PgNodeExpression>) : RangeTableEntry
+
+  /**
+   * Any `rtekind` this parser does not model individually: `3` (function), `4` (tablefunc, e.g.
+   * `JSON_TABLE`), `5` (`VALUES`), `7` (named tuplestore), `8` (result, a FROM-less `SELECT`), or
+   * `9` (a PostgreSQL 18+ `*GROUP*` RTE — see [PgNodeTreeParser.parseGroupRteMap]). Named
+   * `rtekind`, not e.g. `kind`, to match the field name so a reader cross-referencing raw
+   * `pg_node_tree` text does not need to translate.
+   */
+  data class Other(val rtekind: Int) : RangeTableEntry
+}
 
 /**
  * A single result column from a query's `targetList`.
@@ -293,6 +349,14 @@ internal data class NodeTreeCteReference(val name: String, val ctelevelsup: Int)
  *   BY`/`DISTINCT` key. When non-zero and this value appears among the `:tleSortGroupRef`s referenced by
  *   `:groupClause`/`:groupingSets`, this entry IS a `GROUP BY` grouping key — see
  *   [NodeTreeNullabilityAnalyzer]'s GROUPING SETS/CUBE/ROLLUP handling.
+ * @property originalTableOid The entry's `:resorigtbl` value — the OID of the real relation this
+ *   column ultimately traces back to (PostgreSQL's own `markTargetListOrigins` walks THROUGH a CTE
+ *   or subquery reference to find it, not merely the immediate FROM item), or `0` when there is no
+ *   single source column (a computed expression, an aggregate, a set-operation branch, or a
+ *   `USING`/`NATURAL`-merged join column).
+ * @property originalColumnNumber The entry's `:resorigcol` value — the source relation's 1-based
+ *   attribute number — or `0` under the same conditions as [originalTableOid]. The two fields are
+ *   set together: one is `0` if and only if the other is.
  */
 internal data class TargetEntry(
   val expression: PgNodeExpression,
@@ -300,4 +364,6 @@ internal data class TargetEntry(
   val resultNumber: Int,
   val isJunk: Boolean,
   val sortGroupRef: Int = 0,
+  val originalTableOid: Int = 0,
+  val originalColumnNumber: Int = 0,
 )

@@ -8,9 +8,7 @@ import assertk.assertions.hasSize
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
-import assertk.assertions.isNotEmpty
 import assertk.assertions.isNotNull
-import assertk.assertions.isNull
 import assertk.assertions.isTrue
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
@@ -1072,29 +1070,6 @@ class JdbcAnalyzerTest {
     }
 
     assertThat(fromFetchReservedWords).isEqualTo(fromIndependentLiveQuery)
-  }
-
-  @Test
-  fun `resolveCteOutputExpression rejects a bare reference to every word the live server reports as reserved`() {
-    // Closes the loop between fetchReservedWords()'s own liveness (proven above) and
-    // resolveCteOutputExpression's consumption of it: sweeps the FULL live-fetched set — never a
-    // fixed subset — through the same CTE-wrapped-reserved-word shape SqlUtilsTest exercises
-    // per-word, proving the plumbing genuinely threads this connection's live result all the way
-    // through rather than silently falling back to resolveCteOutputExpression's own test-only
-    // emptySet() default (which would make every one of these wrongly resolve to "UPPER(a)"
-    // instead of null).
-    val liveReservedWords = analyzer.fetchReservedWords()
-    assertThat(liveReservedWords).isNotEmpty()
-
-    for (word in liveReservedWords) {
-      val sql = """
-        WITH c AS (SELECT UPPER(a) AS "$word" FROM t)
-        SELECT $word FROM c
-      """.trimIndent()
-      val selectItem = SelectItem(expression = word, columnName = word, tableName = null)
-
-      assertThat(resolveCteOutputExpression(sql, selectItem, liveReservedWords)).isNull()
-    }
   }
 
   @Nested

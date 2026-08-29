@@ -76,12 +76,53 @@ internal data class SelectItem(
  * lone star is left alone, and items at/after a star fall back to metadata unresolved.
  *
  * @return Items strictly before the first star, if any; the full list if there is no star or it's
- *   a single star item; or empty if the output clause can't be found (e.g. a parenthesized main
- *   query, a `VALUES` list, or a `TABLE` shorthand — none have a depth-0 `SELECT`/`RETURNING`).
- *   Both consumers degrade safely for a missing item, falling back to
- *   `ResultSetMetaData.getColumnName` rather than reporting a wrong original name.
+ *   a single star item; or empty if the output clause can't be found (e.g. a `VALUES` list, a
+ *   `TABLE` shorthand, or two SEPARATELY parenthesized set-operation branches like `(SELECT a)
+ *   UNION (SELECT b)` — none have a depth-0 `SELECT`/`RETURNING`; a main query or CTE body wrapped
+ *   in one redundant pair of parentheses, `(SELECT ...)`, DOES resolve — see
+ *   [stripRedundantOuterParentheses]). Both consumers degrade safely for a missing item, falling
+ *   back to `ResultSetMetaData.getColumnName` rather than reporting a wrong original name.
  */
 internal fun parseSelectItems(sql: String): List<SelectItem> = parseOutputItemsWithAlias(sql).map { it.selectItem }
+
+/**
+ * The single window both [hasTopLevelSetOperation] and [parseOutputItemsWithAlias] scan: [sql]'s
+ * main query, after any leading `WITH` clause ([parseCteClause]'s
+ * [ParsedCteClause.mainQueryStart]), with any redundant outer `(`...`)` pair stripped via
+ * [stripRedundantOuterParentheses].
+ *
+ * A guard and the parser it guards must see the same text: without sharing this function, a set
+ * operation wrapped in one parenthesis pair (`(SELECT a UNION SELECT b)`) sits at paren depth one in
+ * the raw text, invisible to a guard that skips the stripping step the parser applies (#238).
+ */
+private fun mainQueryWindow(sql: String): String {
+  val mainQueryStart = parseCteClause(sql)?.mainQueryStart ?: 0
+  return stripRedundantOuterParentheses(sql.substring(mainQueryStart))
+}
+
+/**
+ * Whether [sql]'s main query ([mainQueryWindow]) contains a top-level `UNION`/`INTERSECT`/`EXCEPT`
+ * keyword: this statement's own visible `SELECT`/`RETURNING` list is only one branch of a set
+ * operation, so [parseSelectItems] parsed only that branch's items, never the other branch(es)' own
+ * (possibly differently-computed) expressions for the same result column.
+ *
+ * [TypeRepository.buildTypeProjectionForQuery] uses this to suppress a computed expression's own
+ * `@property` source-reference line under a set operation — reporting `UPPER(x)` alone for `SELECT
+ * UPPER(x) AS u FROM t UNION SELECT LOWER(x) FROM t` would present one branch as the whole answer. A
+ * bare column reference is unaffected: PostgreSQL itself names a set operation's whole result column
+ * after branch 1 alone, so echoing that name back is not misleading.
+ *
+ * All three keywords are PostgreSQL reserved words, so an unquoted occurrence can never be a
+ * column/table identifier or alias — only [findTopLevelKeyword]'s lexical- and depth-awareness is
+ * needed, not the additional alias-position gating [findTopLevelReturningKeyword] needs for the
+ * non-reserved `RETURNING`.
+ */
+internal fun hasTopLevelSetOperation(sql: String): Boolean {
+  val window = mainQueryWindow(sql)
+  return SET_OPERATION_KEYWORDS.any { keyword -> findTopLevelKeyword(window, keyword) >= 0 }
+}
+
+private val SET_OPERATION_KEYWORDS = listOf("UNION", "INTERSECT", "EXCEPT")
 
 /**
  * A single item from [parseOutputItemsWithAlias], pairing the [selectItem] parsed from the
@@ -102,14 +143,15 @@ internal data class OutputItemWithAlias(val selectItem: SelectItem, val alias: S
 
 /**
  * The shared parsing core behind both [parseSelectItems] (which discards [OutputItemWithAlias.alias])
- * and [resolveCteOutputExpression] (which needs the alias to match a CTE body item against the
- * outer name it's exposed under — see that function's KDoc for why the alias can't be dropped
- * there). Locates the same output clause [parseSelectItems] documents finding — see its KDoc for
- * the window/`RETURNING`-gating/star-truncation rules, all of which apply identically here.
+ * and [resolveNodeTreeProvenanceExpression] (which needs the alias to cross-validate a CTE body
+ * item's own name against the node tree's authoritative `:resname` — see that function's KDoc for
+ * why the alias can't be dropped there). Locates the same output clause [parseSelectItems]
+ * documents finding — see its KDoc for the window/`RETURNING`-gating/star-truncation rules, all of
+ * which apply identically here. The window itself is [mainQueryWindow] — see its KDoc for why
+ * [hasTopLevelSetOperation] must compute that SAME window rather than its own copy.
  */
 internal fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> {
-  val mainQueryStart = parseCteClause(sql)?.mainQueryStart ?: 0
-  val window = sql.substring(mainQueryStart)
+  val window = mainQueryWindow(sql)
 
   // See parseSelectItems' KDoc for why RETURNING is gated on the main query's own leading keyword.
   val leadingKeywordStart = skipWhitespaceAndComments(window, 0)
@@ -156,6 +198,34 @@ internal fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> {
 
   val firstStarIndex = items.indexOfFirst { isStarItem(it.selectItem.expression) }
   return if (firstStarIndex < 0 || items.size == 1) items else items.take(firstStarIndex)
+}
+
+/**
+ * Strips a REDUNDANT `(`...`)` pair wrapping [text]'s ENTIRE remaining content, repeatedly, as
+ * long as one remains — `(SELECT ...)`, `((SELECT ...))`, etc.
+ *
+ * A CTE body (or a whole top-level query) may legally wrap its `SELECT`/`RETURNING`/DML statement
+ * in one or more redundant parenthesis pairs. Without stripping them first, [findTopLevelKeyword]
+ * never finds an unquoted `SELECT`/`RETURNING` at paren depth ZERO: the extra, unmatched leading
+ * `(` puts the whole rest of the text at depth ONE instead, so [parseOutputItemsWithAlias] returns
+ * no items at all for an otherwise-ordinary body (#238).
+ *
+ * A pair only counts as wrapping the ENTIRE remaining text when the first non-whitespace/comment
+ * character is `(` AND its own matching close parenthesis is the LAST non-whitespace/comment
+ * character in [text] — never merely "starts with ( and ends with )", which would also match two
+ * SEPARATELY parenthesized set-operation branches (`(SELECT a) UNION (SELECT b)`), where the first
+ * `(`'s own match is nowhere near the end.
+ */
+private fun stripRedundantOuterParentheses(text: String): String {
+  var current = text
+  while (true) {
+    val start = skipWhitespaceAndComments(current, 0)
+    if (start >= current.length || current[start] != '(') return current
+    val closeParenthesis = findMatchingCloseParenthesis(current, start)
+    if (closeParenthesis < 0) return current
+    if (skipWhitespaceAndComments(current, closeParenthesis + 1) != current.length) return current
+    current = current.substring(start + 1, closeParenthesis)
+  }
 }
 
 /**
@@ -294,39 +364,23 @@ private fun extractAlias(item: String): Pair<String, String?> {
 }
 
 /**
- * Extracts exactly the alias TOKEN starting at or after [start] in [item] (the position right
- * after the `AS` keyword [extractAlias] already found) — a bare identifier or a double-quoted
- * one, [QUOTED_IDENTIFIER_PATTERN]'s own `""`-escape handling included — discarding anything else
- * around it: leading whitespace/comments before the token (`AS /* c */ ux`), and any TRAILING
- * whitespace/comments after it (`AS ux -- trailing note`, `AS ux /* c */`). [extractAlias]'s own
- * KDoc documents `AS"ux"` (no separating whitespace before a quoted alias) already being
- * recognized as the `AS` keyword itself; this function is what turns whatever textually follows
- * it into the CLEAN alias [foldIdentifier] expects, rather than [extractAlias] returning the raw,
- * unbounded remainder of the item verbatim — which would silently swallow a trailing comment into
- * the "alias" and make it fold-compare unequal to any real name.
+ * Extracts exactly the alias token starting at or after [start] in [item] (the position right after
+ * the `AS` keyword [extractAlias] already found) — a bare identifier or a double-quoted one,
+ * discarding any leading/trailing whitespace or comments around it (`AS /* c */ ux -- note`).
  *
- * The quoted branch is escape-aware — via the SAME [QUOTED_IDENTIFIER_PATTERN] compiled pattern
- * [COLUMN_REFERENCE] itself uses, not a second, independently-written scanner — so a doubled `""`
- * inside the alias (`AS "zz""q"`) is correctly treated as an escaped literal `"`, not as the
- * token's end. Getting this wrong is worse than simply missing the escaped case: an
- * escape-UNAWARE scan on `AS "zz""q"` stops at the FIRST `"`, returning the raw token `"zz` (an
- * unterminated-looking fragment) that then still LOOKS quoted to [foldIdentifier] and, once its
- * outer quote is stripped, folds to the SHORTER name `zz` — which CAN collide with an unrelated,
- * genuinely-named `zz` elsewhere in the same body, wrongly matching an outer reference that was
- * never meant to reach this item at all. A punt has to come out as `null`, never a truncated name
- * that happens to still look like a real one.
+ * The quoted branch is escape-aware, via the same [QUOTED_IDENTIFIER_PATTERN] [COLUMN_REFERENCE]
+ * uses, so a doubled `""` inside the alias (`AS "zz""q"`) is treated as an escaped literal `"`, not
+ * the token's end — an escape-unaware scan would stop at the first `"`, returning the truncated
+ * fragment `"zz`, which still looks quoted and folds to the shorter name `zz`, wrongly colliding
+ * with an unrelated `zz` elsewhere in the same body.
  *
- * @return The alias token — WITH its surrounding quotes and any internal `""` escape still
- *   attached when quoted, exactly as [foldIdentifier] expects (see its own KDoc on why quotes
- *   must be preserved through to there) — or `null` when there is no legitimate alias token at
- *   all: nothing but whitespace/comments to the end of [item], an unterminated quoted identifier,
- *   a character that can neither start a bare identifier nor open a quoted one (e.g. a
- *   single-quoted STRING LITERAL — `AS 'x'` is not legal PostgreSQL syntax for an alias at all,
- *   and must never be treated as if it named one), OR anything other than trailing
- *   whitespace/comments following the token before the end of [item] (`AS ux zz` is not legal
- *   PostgreSQL either — a second bare word cannot follow a completed alias — so this returns
- *   `null` rather than silently discarding `zz` and keeping just `ux`; discarding unrecognized
- *   input is exactly the failure mode the escape-unaware quoted scan above had).
+ * @return The alias token — with its surrounding quotes and any internal `""` escape still attached
+ *   when quoted, exactly as [foldIdentifier] expects — or `null` when there is no legitimate alias
+ *   token: nothing but whitespace/comments to the end of [item], an unterminated quoted identifier, a
+ *   character that can neither start a bare identifier nor open a quoted one (e.g. `AS 'x'`, not
+ *   legal PostgreSQL), or anything other than trailing whitespace/comments following the token
+ *   (`AS ux zz` is not legal PostgreSQL either, so this returns `null` rather than silently
+ *   discarding `zz`).
  */
 private fun parseAliasToken(item: String, start: Int): String? {
   val tokenStart = skipWhitespaceAndComments(item, start)
@@ -367,8 +421,12 @@ private fun parseAliasToken(item: String, start: Int): String? {
  * `JdbcAnalyzer.buildResultColumns`' `originalName` fall to `""` instead of correctly falling back
  * to `ResultSetMetaData.getColumnName`, exactly the wrong-value-over-no-value mistake this whole
  * file exists to avoid.
+ *
+ * Also called directly by [resolveNodeTreeProvenanceExpression] to re-classify an already
+ * alias-stripped CTE body item, since the bare-column check needs a fresh classification of the
+ * stripped text rather than the item's own pre-strip [SelectItem.columnName].
  */
-private fun parseColumnReference(expression: String): SelectItem {
+internal fun parseColumnReference(expression: String): SelectItem {
   val trimmed = expression.trim()
   // A simple column reference is one or two identifiers separated by a dot, with no parentheses or operators
   val match = COLUMN_REFERENCE.matchEntire(trimmed)

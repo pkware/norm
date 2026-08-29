@@ -4,6 +4,7 @@ import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.util.UUID
 import kotlin.Any
+import kotlin.Int
 import kotlin.String
 import kotlin.Unit
 import norm.ConnectionProvider
@@ -280,4 +281,677 @@ public class PostgresQueries(
     name: String,
     descriptionUpper: String?,
   ) -> T): Many<T> = deleteParentReturningQuotedDescriptionUpperViaCte(id, mapper, driver::queryMany)
+
+  private fun <T : Any, Return> selectUpperNamesFromTwoCtes(mapper: (parent_name_upper: String, child_name_upper: String) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH parent_upper AS (
+        |  SELECT id, UPPER(name) AS name_upper FROM parent
+        |),
+        |child_upper AS (
+        |  SELECT id, UPPER(name) AS name_upper FROM child
+        |)
+        |SELECT parent_upper.name_upper AS parent_name_upper, child_upper.name_upper AS child_name_upper
+        |FROM parent_upper, child_upper
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getString(1),
+        getString(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectUpperNamesFromTwoCtes(mapper: (parent_name_upper: String, child_name_upper: String) -> T): Many<T> = selectUpperNamesFromTwoCtes(mapper, driver::queryMany)
+
+  override fun <T : Any> selectUpperNamesFromTwoCtesDynamically(mapper: (parent_name_upper: String, child_name_upper: String) -> T): Query<T> = selectUpperNamesFromTwoCtes(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectSiblingCtesWithSameOutputName(mapper: (parent_same: String, child_same: String) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH parent_same AS (
+        |  SELECT UPPER(name) AS same FROM parent
+        |),
+        |child_same AS (
+        |  SELECT UPPER(name) AS same FROM child
+        |)
+        |SELECT parent_same.same AS parent_same, child_same.same AS child_same
+        |FROM parent_same, child_same
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getString(1),
+        getString(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectSiblingCtesWithSameOutputName(mapper: (parent_same: String, child_same: String) -> T): Many<T> = selectSiblingCtesWithSameOutputName(mapper, driver::queryMany)
+
+  override fun <T : Any> selectSiblingCtesWithSameOutputNameDynamically(mapper: (parent_same: String, child_same: String) -> T): Query<T> = selectSiblingCtesWithSameOutputName(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectCteViaExplicitFromAliasAs(mapper: (parent_id: UUID, aliased_name_upper: String) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH parent_upper2 AS (
+        |  SELECT id, UPPER(name) AS name_upper FROM parent
+        |)
+        |SELECT x.id AS parent_id, x.name_upper AS aliased_name_upper FROM parent_upper2 AS x
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getObject(1, UUID::class.java),
+        getString(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectCteViaExplicitFromAliasAs(mapper: (parent_id: UUID, aliased_name_upper: String) -> T): Many<T> = selectCteViaExplicitFromAliasAs(mapper, driver::queryMany)
+
+  override fun <T : Any> selectCteViaExplicitFromAliasAsDynamically(mapper: (parent_id: UUID, aliased_name_upper: String) -> T): Query<T> = selectCteViaExplicitFromAliasAs(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectCteViaImplicitFromAlias(mapper: (parent_id: UUID, aliased_name_upper: String) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH parent_upper3 AS (
+        |  SELECT id, UPPER(name) AS name_upper FROM parent
+        |)
+        |SELECT x.id AS parent_id, x.name_upper AS aliased_name_upper FROM parent_upper3 x
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getObject(1, UUID::class.java),
+        getString(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectCteViaImplicitFromAlias(mapper: (parent_id: UUID, aliased_name_upper: String) -> T): Many<T> = selectCteViaImplicitFromAlias(mapper, driver::queryMany)
+
+  override fun <T : Any> selectCteViaImplicitFromAliasDynamically(mapper: (parent_id: UUID, aliased_name_upper: String) -> T): Query<T> = selectCteViaImplicitFromAlias(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectCtesJoinedOnPredicate(mapper: (parent_name_upper: String, child_name_upper: String) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH parent_upper4 AS (
+        |  SELECT id, UPPER(name) AS name_upper FROM parent
+        |),
+        |child_upper4 AS (
+        |  SELECT parent_id, UPPER(name) AS name_upper FROM child
+        |)
+        |SELECT parent_upper4.name_upper AS parent_name_upper, child_upper4.name_upper AS child_name_upper
+        |FROM parent_upper4 JOIN child_upper4 ON parent_upper4.id = child_upper4.parent_id
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getString(1),
+        getString(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectCtesJoinedOnPredicate(mapper: (parent_name_upper: String, child_name_upper: String) -> T): Many<T> = selectCtesJoinedOnPredicate(mapper, driver::queryMany)
+
+  override fun <T : Any> selectCtesJoinedOnPredicateDynamically(mapper: (parent_name_upper: String, child_name_upper: String) -> T): Query<T> = selectCtesJoinedOnPredicate(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectCtesInnerJoinUsingMergedColumn(mapper: (shared_label: String, child_own_name: String) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH parent_label AS (
+        |  SELECT UPPER(name) AS shared_label FROM parent
+        |),
+        |child_label AS (
+        |  SELECT UPPER(name) AS shared_label, name AS child_own_name FROM child
+        |)
+        |SELECT shared_label, child_own_name FROM parent_label JOIN child_label USING (shared_label)
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getString(1),
+        getString(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectCtesInnerJoinUsingMergedColumn(mapper: (shared_label: String, child_own_name: String) -> T): Many<T> = selectCtesInnerJoinUsingMergedColumn(mapper, driver::queryMany)
+
+  override fun <T : Any> selectCtesInnerJoinUsingMergedColumnDynamically(mapper: (shared_label: String, child_own_name: String) -> T): Query<T> = selectCtesInnerJoinUsingMergedColumn(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectCtesFullJoinUsingMergedColumn(mapper: (shared_label: String?, child_own_name: String?) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH parent_label AS (
+        |  SELECT UPPER(name) AS shared_label FROM parent
+        |),
+        |child_label AS (
+        |  SELECT UPPER(name) AS shared_label, name AS child_own_name FROM child
+        |)
+        |SELECT shared_label, child_own_name FROM parent_label FULL JOIN child_label USING (shared_label)
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getString(1),
+        getString(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectCtesFullJoinUsingMergedColumn(mapper: (shared_label: String?, child_own_name: String?) -> T): Many<T> = selectCtesFullJoinUsingMergedColumn(mapper, driver::queryMany)
+
+  override fun <T : Any> selectCtesFullJoinUsingMergedColumnDynamically(mapper: (shared_label: String?, child_own_name: String?) -> T): Query<T> = selectCtesFullJoinUsingMergedColumn(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectCtesNaturalJoin(mapper: (shared_label: String, child_own_name: String) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH parent_label AS (
+        |  SELECT UPPER(name) AS shared_label FROM parent
+        |),
+        |child_label AS (
+        |  SELECT UPPER(name) AS shared_label, name AS child_own_name FROM child
+        |)
+        |SELECT shared_label, child_own_name FROM parent_label NATURAL JOIN child_label
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getString(1),
+        getString(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectCtesNaturalJoin(mapper: (shared_label: String, child_own_name: String) -> T): Many<T> = selectCtesNaturalJoin(mapper, driver::queryMany)
+
+  override fun <T : Any> selectCtesNaturalJoinDynamically(mapper: (shared_label: String, child_own_name: String) -> T): Query<T> = selectCtesNaturalJoin(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectCtesNaturalFullJoin(mapper: (shared_label: String?, child_own_name: String?) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH parent_label AS (
+        |  SELECT UPPER(name) AS shared_label FROM parent
+        |),
+        |child_label AS (
+        |  SELECT UPPER(name) AS shared_label, name AS child_own_name FROM child
+        |)
+        |SELECT shared_label, child_own_name FROM parent_label NATURAL FULL JOIN child_label
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getString(1),
+        getString(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectCtesNaturalFullJoin(mapper: (shared_label: String?, child_own_name: String?) -> T): Many<T> = selectCtesNaturalFullJoin(mapper, driver::queryMany)
+
+  override fun <T : Any> selectCtesNaturalFullJoinDynamically(mapper: (shared_label: String?, child_own_name: String?) -> T): Query<T> = selectCtesNaturalFullJoin(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectMixedFromSourcesCommaSeparated(mapper: (
+    parent_name_upper: String,
+    child_name: String,
+    summary_name: String,
+    constant_label: String,
+    generated_number: Int?,
+  ) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH parent_label2 AS (
+        |  SELECT id, UPPER(name) AS name_upper FROM parent
+        |)
+        |SELECT
+        |  parent_label2.name_upper AS parent_name_upper,
+        |  child.name AS child_name,
+        |  child_summary.name AS summary_name,
+        |  derived.constant_label,
+        |  generated.generated_number
+        |FROM parent_label2, child, child_summary, (SELECT 'literal'::TEXT AS constant_label) derived,
+        |  generate_series(1, 3) AS generated(generated_number)
+        |WHERE child.parent_id = parent_label2.id AND child_summary.id = child.id
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getString(1),
+        getString(2),
+        getString(3),
+        getString(4),
+        getInt(5).takeUnless { wasNull() },
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectMixedFromSourcesCommaSeparated(mapper: (
+    parent_name_upper: String,
+    child_name: String,
+    summary_name: String,
+    constant_label: String,
+    generated_number: Int?,
+  ) -> T): Many<T> = selectMixedFromSourcesCommaSeparated(mapper, driver::queryMany)
+
+  override fun <T : Any> selectMixedFromSourcesCommaSeparatedDynamically(mapper: (
+    parent_name_upper: String,
+    child_name: String,
+    summary_name: String,
+    constant_label: String,
+    generated_number: Int?,
+  ) -> T): Query<T> = selectMixedFromSourcesCommaSeparated(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectChainedCteProvenance(mapper: (id: UUID, name_upper: String) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH parent_label3 AS (
+        |  SELECT id, UPPER(name) AS name_upper FROM parent
+        |),
+        |parent_label3_relay AS (
+        |  SELECT id, name_upper FROM parent_label3
+        |)
+        |SELECT id, name_upper FROM parent_label3_relay
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getObject(1, UUID::class.java),
+        getString(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectChainedCteProvenance(mapper: (id: UUID, name_upper: String) -> T): Many<T> = selectChainedCteProvenance(mapper, driver::queryMany)
+
+  override fun <T : Any> selectChainedCteProvenanceDynamically(mapper: (id: UUID, name_upper: String) -> T): Query<T> = selectChainedCteProvenance(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectNestedCteShadowingOuterName(mapper: (ux: String, n: Int) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH shadow_cte AS (
+        |  SELECT UPPER(name) AS ux FROM parent
+        |),
+        |outer_consumer AS (
+        |  WITH shadow_cte AS (
+        |    SELECT LOWER(name) AS ux FROM parent
+        |  )
+        |  SELECT ux, 1 AS n FROM shadow_cte
+        |)
+        |SELECT ux, n FROM outer_consumer
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getString(1),
+        getInt(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectNestedCteShadowingOuterName(mapper: (ux: String, n: Int) -> T): Many<T> = selectNestedCteShadowingOuterName(mapper, driver::queryMany)
+
+  override fun <T : Any> selectNestedCteShadowingOuterNameDynamically(mapper: (ux: String, n: Int) -> T): Query<T> = selectNestedCteShadowingOuterName(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> updateChildNameFromParentDescriptionUpper(mapper: (source_parent_id: UUID, updated_description: String?) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH desc_source AS (
+        |  SELECT id, UPPER(description) AS description_upper FROM parent
+        |)
+        |UPDATE child SET name = desc_source.description_upper
+        |FROM desc_source
+        |WHERE child.parent_id = desc_source.id
+        |RETURNING desc_source.id AS source_parent_id, desc_source.description_upper AS updated_description
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getObject(1, UUID::class.java),
+        getString(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> updateChildNameFromParentDescriptionUpper(mapper: (source_parent_id: UUID, updated_description: String?) -> T): Many<T> = updateChildNameFromParentDescriptionUpper(mapper, driver::queryMany)
+
+  override fun <T : Any> updateChildNameFromParentDescriptionUpperDynamically(mapper: (source_parent_id: UUID, updated_description: String?) -> T): Query<T> = updateChildNameFromParentDescriptionUpper(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> deleteChildUsingParentDescriptionUpper(mapper: (source_parent_id: UUID, deleted_description: String?) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH desc_source AS (
+        |  SELECT id, UPPER(description) AS description_upper FROM parent
+        |)
+        |DELETE FROM child USING desc_source
+        |WHERE child.parent_id = desc_source.id
+        |RETURNING desc_source.id AS source_parent_id, desc_source.description_upper AS deleted_description
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getObject(1, UUID::class.java),
+        getString(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> deleteChildUsingParentDescriptionUpper(mapper: (source_parent_id: UUID, deleted_description: String?) -> T): Many<T> = deleteChildUsingParentDescriptionUpper(mapper, driver::queryMany)
+
+  override fun <T : Any> deleteChildUsingParentDescriptionUpperDynamically(mapper: (source_parent_id: UUID, deleted_description: String?) -> T): Query<T> = deleteChildUsingParentDescriptionUpper(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> insertChildFromParentDescriptionUpper(mapper: (inserted_parent_id: UUID, inserted_name: String?) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH desc_source AS (
+        |  SELECT id, UPPER(description) AS description_upper FROM parent
+        |)
+        |INSERT INTO child (parent_id, name)
+        |SELECT id, description_upper FROM desc_source
+        |RETURNING parent_id AS inserted_parent_id, name AS inserted_name
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getObject(1, UUID::class.java),
+        getString(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> insertChildFromParentDescriptionUpper(mapper: (inserted_parent_id: UUID, inserted_name: String?) -> T): Many<T> = insertChildFromParentDescriptionUpper(mapper, driver::queryMany)
+
+  override fun <T : Any> insertChildFromParentDescriptionUpperDynamically(mapper: (inserted_parent_id: UUID, inserted_name: String?) -> T): Query<T> = insertChildFromParentDescriptionUpper(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectParentViaCteWithExplicitColumnList(mapper: (parent_label: String, parent_id: UUID) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH renamed_parent(parent_label, parent_id) AS (
+        |  SELECT UPPER(name), id FROM parent
+        |)
+        |SELECT parent_label, parent_id FROM renamed_parent
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getString(1),
+        getObject(2, UUID::class.java),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectParentViaCteWithExplicitColumnList(mapper: (parent_label: String, parent_id: UUID) -> T): Many<T> = selectParentViaCteWithExplicitColumnList(mapper, driver::queryMany)
+
+  override fun <T : Any> selectParentViaCteWithExplicitColumnListDynamically(mapper: (parent_label: String, parent_id: UUID) -> T): Query<T> = selectParentViaCteWithExplicitColumnList(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> countChildGenerationsRecursive(mapper: (
+    id: UUID,
+    name: String,
+    depth: Int,
+  ) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH RECURSIVE parent_chain AS (
+        |  SELECT id, name, 0 AS depth FROM parent
+        |  UNION ALL
+        |  SELECT p.id, p.name, parent_chain.depth + 1
+        |  FROM parent p
+        |  JOIN parent_chain ON p.id = parent_chain.id AND parent_chain.depth < 3
+        |)
+        |SELECT id, name, depth FROM parent_chain
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getObject(1, UUID::class.java),
+        getString(2),
+        getInt(3),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> countChildGenerationsRecursive(mapper: (
+    id: UUID,
+    name: String,
+    depth: Int,
+  ) -> T): Many<T> = countChildGenerationsRecursive(mapper, driver::queryMany)
+
+  override fun <T : Any> countChildGenerationsRecursiveDynamically(mapper: (
+    id: UUID,
+    name: String,
+    depth: Int,
+  ) -> T): Query<T> = countChildGenerationsRecursive(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectUpperNameViaCteWithSetOperationBody(mapper: (id: UUID, name_upper: String) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH combined_upper AS (
+        |  SELECT id, UPPER(name) AS name_upper FROM parent
+        |  UNION
+        |  SELECT id, UPPER(name) FROM child
+        |)
+        |SELECT id, name_upper FROM combined_upper
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getObject(1, UUID::class.java),
+        getString(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectUpperNameViaCteWithSetOperationBody(mapper: (id: UUID, name_upper: String) -> T): Many<T> = selectUpperNameViaCteWithSetOperationBody(mapper, driver::queryMany)
+
+  override fun <T : Any> selectUpperNameViaCteWithSetOperationBodyDynamically(mapper: (id: UUID, name_upper: String) -> T): Query<T> = selectUpperNameViaCteWithSetOperationBody(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectParentViaCteTable(mapper: (
+    id: UUID,
+    name_upper: String,
+    description: String?,
+  ) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH all_parents AS (
+        |  TABLE parent
+        |)
+        |SELECT id, UPPER(name) AS name_upper, description FROM all_parents
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getObject(1, UUID::class.java),
+        getString(2),
+        getString(3),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectParentViaCteTable(mapper: (
+    id: UUID,
+    name_upper: String,
+    description: String?,
+  ) -> T): Many<T> = selectParentViaCteTable(mapper, driver::queryMany)
+
+  override fun <T : Any> selectParentViaCteTableDynamically(mapper: (
+    id: UUID,
+    name_upper: String,
+    description: String?,
+  ) -> T): Query<T> = selectParentViaCteTable(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectViaCteValues(mapper: (column1: Int?, column2: String?) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH constant_rows AS (
+        |  VALUES (1, 'a'), (2, 'b')
+        |)
+        |SELECT column1, column2 FROM constant_rows
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1).takeUnless { wasNull() },
+        getString(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectViaCteValues(mapper: (column1: Int?, column2: String?) -> T): Many<T> = selectViaCteValues(mapper, driver::queryMany)
+
+  override fun <T : Any> selectViaCteValuesDynamically(mapper: (column1: Int?, column2: String?) -> T): Query<T> = selectViaCteValues(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectParentUpperNameViaParenthesizedCte(mapper: (id: UUID, name_upper: String) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH upper_name AS (
+        |  (SELECT id, UPPER(name) AS name_upper FROM parent)
+        |)
+        |SELECT id, name_upper FROM upper_name
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getObject(1, UUID::class.java),
+        getString(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectParentUpperNameViaParenthesizedCte(mapper: (id: UUID, name_upper: String) -> T): Many<T> = selectParentUpperNameViaParenthesizedCte(mapper, driver::queryMany)
+
+  override fun <T : Any> selectParentUpperNameViaParenthesizedCteDynamically(mapper: (id: UUID, name_upper: String) -> T): Query<T> = selectParentUpperNameViaParenthesizedCte(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectUpperNameUnionAcrossTables(mapper: (id: UUID?, name_upper: String?) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH parent_names AS (
+        |  SELECT id, UPPER(name) AS name_upper FROM parent
+        |)
+        |SELECT id, name_upper FROM parent_names
+        |UNION
+        |SELECT id, UPPER(name) FROM child
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getObject(1, UUID::class.java),
+        getString(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectUpperNameUnionAcrossTables(mapper: (id: UUID?, name_upper: String?) -> T): Many<T> = selectUpperNameUnionAcrossTables(mapper, driver::queryMany)
+
+  override fun <T : Any> selectUpperNameUnionAcrossTablesDynamically(mapper: (id: UUID?, name_upper: String?) -> T): Query<T> = selectUpperNameUnionAcrossTables(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectAllColumnsOuterFromCte(mapper: (
+    id: UUID,
+    name: String,
+    description: String?,
+    name_upper: String,
+  ) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH all_cols AS (
+        |  SELECT id, name, description, UPPER(name) AS name_upper FROM parent
+        |)
+        |SELECT * FROM all_cols
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getObject(1, UUID::class.java),
+        getString(2),
+        getString(3),
+        getString(4),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectAllColumnsOuterFromCte(mapper: (
+    id: UUID,
+    name: String,
+    description: String?,
+    name_upper: String,
+  ) -> T): Many<T> = selectAllColumnsOuterFromCte(mapper, driver::queryMany)
+
+  override fun <T : Any> selectAllColumnsOuterFromCteDynamically(mapper: (
+    id: UUID,
+    name: String,
+    description: String?,
+    name_upper: String,
+  ) -> T): Query<T> = selectAllColumnsOuterFromCte(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectAllColumnsInnerCte(mapper: (
+    id: UUID,
+    name_upper: String,
+    description: String?,
+  ) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH all_cols AS (
+        |  SELECT * FROM parent
+        |)
+        |SELECT id, UPPER(name) AS name_upper, description FROM all_cols
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getObject(1, UUID::class.java),
+        getString(2),
+        getString(3),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectAllColumnsInnerCte(mapper: (
+    id: UUID,
+    name_upper: String,
+    description: String?,
+  ) -> T): Many<T> = selectAllColumnsInnerCte(mapper, driver::queryMany)
+
+  override fun <T : Any> selectAllColumnsInnerCteDynamically(mapper: (
+    id: UUID,
+    name_upper: String,
+    description: String?,
+  ) -> T): Query<T> = selectAllColumnsInnerCte(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectParentUpperNameImplicitAlias(mapper: (id: UUID, y: String) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH upper_name AS (
+        |  SELECT id, UPPER(name) y FROM parent
+        |)
+        |SELECT id, y FROM upper_name
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getObject(1, UUID::class.java),
+        getString(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectParentUpperNameImplicitAlias(mapper: (id: UUID, y: String) -> T): Many<T> = selectParentUpperNameImplicitAlias(mapper, driver::queryMany)
+
+  override fun <T : Any> selectParentUpperNameImplicitAliasDynamically(mapper: (id: UUID, y: String) -> T): Query<T> = selectParentUpperNameImplicitAlias(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectViaQuotedCteNameWithEmbeddedQuotes(mapper: (id: UUID, `My Col`: String) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH "He""llo" AS (
+        |  SELECT id, UPPER(name) AS "My Col" FROM parent
+        |)
+        |SELECT id, "My Col" FROM "He""llo"
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getObject(1, UUID::class.java),
+        getString(2),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectViaQuotedCteNameWithEmbeddedQuotes(mapper: (id: UUID, `My Col`: String) -> T): Many<T> = selectViaQuotedCteNameWithEmbeddedQuotes(mapper, driver::queryMany)
+
+  override fun <T : Any> selectViaQuotedCteNameWithEmbeddedQuotesDynamically(mapper: (id: UUID, `My Col`: String) -> T): Query<T> = selectViaQuotedCteNameWithEmbeddedQuotes(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  private fun <T : Any, Return> selectComputedColumnFirstViaOuterStar(mapper: (name_upper: String, id: UUID) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = """
+        |WITH name_upper_first AS (
+        |  SELECT UPPER(name) AS name_upper, id FROM parent
+        |)
+        |SELECT * FROM name_upper_first
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getString(1),
+        getObject(2, UUID::class.java),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> selectComputedColumnFirstViaOuterStar(mapper: (name_upper: String, id: UUID) -> T): Many<T> = selectComputedColumnFirstViaOuterStar(mapper, driver::queryMany)
+
+  override fun <T : Any> selectComputedColumnFirstViaOuterStarDynamically(mapper: (name_upper: String, id: UUID) -> T): Query<T> = selectComputedColumnFirstViaOuterStar(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
 }

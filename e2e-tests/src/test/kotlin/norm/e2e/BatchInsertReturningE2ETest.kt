@@ -16,7 +16,6 @@ import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import java.io.File
 import java.math.BigDecimal
-import java.sql.Connection
 
 class BatchInsertReturningE2ETest : PostgresTestBase() {
 
@@ -25,21 +24,6 @@ class BatchInsertReturningE2ETest : PostgresTestBase() {
   private lateinit var queries: PostgresQueries
 
   override fun schemaFile(): File = projectRoot.resolve("test-scenarios/crud_generation/schema.sql")
-
-  override fun cleanDatabase(connection: Connection) {
-    connection.createStatement().use { stmt ->
-      stmt.execute(
-        """
-        DROP VIEW IF EXISTS author_names CASCADE;
-        DROP TABLE IF EXISTS document CASCADE;
-        DROP TABLE IF EXISTS product CASCADE;
-        DROP TABLE IF EXISTS order_item CASCADE;
-        DROP TABLE IF EXISTS audit_log CASCADE;
-        DROP TABLE IF EXISTS author CASCADE;
-        """.trimIndent(),
-      )
-    }
-  }
 
   @BeforeEach
   fun setupQueries() {

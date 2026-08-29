@@ -148,6 +148,17 @@ public data class Identifier(val catalog: String = "", val schema: String = "", 
  * @property isAutoIncrement `true` when JDBC reports `IS_AUTOINCREMENT = "YES"`.
  * @property hasDefault `true` when the column has a server-side `DEFAULT` expression.
  * @property isGenerated `true` when JDBC reports `IS_GENERATEDCOLUMN = "YES"`.
+ * @property provenanceExpression The SQL expression, verbatim from the developer's own query text,
+ *   that produced this column's value one level down inside a CTE body — populated when this
+ *   column's own select item is merely a bare reference into a CTE's output (e.g. the outer query
+ *   reads `description_upper`, but the CTE body actually computed it as `UPPER(description)`).
+ *   `null` when there is no such CTE-body expression to report: a plain table column, a column
+ *   whose defining expression was written directly in the OUTER query (already covered by
+ *   [TypeRepository]'s own top-level computed-expression handling), a CTE body pass-through of
+ *   another column with no transformation, or a shape [NodeTreeProvenanceResolver] and
+ *   [resolveNodeTreeProvenanceExpression] could not PROVE correct by cross-validating the query's
+ *   own parsed node tree against its original SQL text — see those functions' KDoc for the full
+ *   list of gates that must all hold before this is ever populated.
  */
 public data class Column(
   val name: String = "",
@@ -170,6 +181,7 @@ public data class Column(
   val isAutoIncrement: Boolean = false,
   val hasDefault: Boolean = false,
   val isGenerated: Boolean = false,
+  val provenanceExpression: String? = null,
 ) {
 
   internal val fullyQualifiedName: String

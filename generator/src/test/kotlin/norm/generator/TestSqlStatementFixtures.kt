@@ -37,6 +37,7 @@ internal fun column(
   isArray: Boolean = false,
   table: Identifier? = null,
   embedTable: Identifier? = null,
+  originalName: String = "",
 ) = Column(
   name = name,
   notNull = notNull,
@@ -44,4 +45,5 @@ internal fun column(
   isArray = isArray,
   table = table,
   embedTable = embedTable,
+  originalName = originalName,
 )
