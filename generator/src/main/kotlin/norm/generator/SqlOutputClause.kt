@@ -183,7 +183,7 @@ internal fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> {
     return emptyList()
   }
 
-  val fromIndex = if (hasFromClause) findTopLevelKeyword(window, "FROM", afterKeyword) else -1
+  val fromIndex = if (hasFromClause) findTopLevelFromClauseKeyword(window, afterKeyword) else -1
   val rawClause = if (fromIndex >= 0) {
     window.substring(itemsStart, fromIndex)
   } else {
@@ -422,6 +422,13 @@ private fun parseAliasToken(item: String, start: Int): String? {
  * to `ResultSetMetaData.getColumnName`, exactly the wrong-value-over-no-value mistake this whole
  * file exists to avoid.
  *
+ * An unquoted column/table name is folded via [foldAsciiCase] — PostgreSQL's own `downcase_identifier`
+ * behavior, ASCII `A`-`Z` only, not Kotlin's `String.lowercase()` — so [SelectItem.columnName]/
+ * [SelectItem.tableName] agree with what `ResultSetMetaData.getColumnName` reports for the same
+ * reference (an unfolded `ID` would miss `JdbcAnalyzer.buildResultColumns`'s `catalog.findColumn`
+ * lookup and drop the column's Postgres comment). A quoted name is never folded — quoting is how
+ * PostgreSQL preserves a name's original case against this default folding.
+ *
  * Also called directly by [resolveNodeTreeProvenanceExpression] to re-classify an already
  * alias-stripped CTE body item, since the bare-column check needs a fresh classification of the
  * stripped text rather than the item's own pre-strip [SelectItem.columnName].
@@ -437,8 +444,8 @@ internal fun parseColumnReference(expression: String): SelectItem {
   val rawColumn = match.groups["column"]!!.value
   val tableIsQuoted = rawTable?.startsWith('"') == true
   val columnIsQuoted = rawColumn.startsWith('"')
-  val column = if (columnIsQuoted) unescapeQuotedIdentifier(rawColumn) else rawColumn
-  val table = rawTable?.let { if (tableIsQuoted) unescapeQuotedIdentifier(it) else it }
+  val column = if (columnIsQuoted) unescapeQuotedIdentifier(rawColumn) else foldAsciiCase(rawColumn)
+  val table = rawTable?.let { if (tableIsQuoted) unescapeQuotedIdentifier(it) else foldAsciiCase(it) }
   if (column.isEmpty() || table?.isEmpty() == true) return noMatch
 
   return SelectItem(

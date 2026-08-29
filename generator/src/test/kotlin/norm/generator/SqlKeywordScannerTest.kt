@@ -318,6 +318,50 @@ class SqlKeywordScannerTest {
   }
 
   @Nested
+  inner class FindTopLevelFromClauseKeywordTest {
+
+    @Test
+    fun `a FROM that is really part of IS DISTINCT FROM is not mistaken for the clause boundary`() {
+      // #238: a plain findTopLevelKeyword search returns the FIRST depth-0 "FROM", which here is
+      // the one glued to "IS DISTINCT" -- truncating the select list to "a IS DISTINCT" and leaving
+      // "b FROM t" (the expression's own right-hand operand) looking like the real clause.
+      val sql = "SELECT a IS DISTINCT FROM b FROM t"
+      val result = findTopLevelFromClauseKeyword(sql, 0)
+      assertThat(result).isEqualTo(sql.indexOf("FROM t"))
+    }
+
+    @Test
+    fun `a FROM that is really part of IS NOT DISTINCT FROM is not mistaken for the clause boundary`() {
+      val sql = "SELECT a IS NOT DISTINCT FROM b FROM t"
+      val result = findTopLevelFromClauseKeyword(sql, 0)
+      assertThat(result).isEqualTo(sql.indexOf("FROM t"))
+    }
+
+    @Test
+    fun `a FROM inside EXTRACT's own parentheses is not mistaken for the clause boundary`() {
+      // Ordinary depth tracking already handles this -- included as a regression guard that the
+      // new DISTINCT-preceded exclusion did not accidentally widen matching in the other direction.
+      val sql = "SELECT EXTRACT(DAY FROM ts) FROM tbl"
+      val result = findTopLevelFromClauseKeyword(sql, 0)
+      assertThat(result).isEqualTo(sql.indexOf("FROM tbl"))
+    }
+
+    @Test
+    fun `still finds an ordinary FROM clause with no DISTINCT anywhere`() {
+      val sql = "SELECT a, b FROM t"
+      val result = findTopLevelFromClauseKeyword(sql, 0)
+      assertThat(result).isEqualTo(sql.indexOf("FROM t"))
+    }
+
+    @Test
+    fun `a comment between DISTINCT and FROM still suppresses the match`() {
+      val sql = "SELECT a IS DISTINCT/*c*/FROM b FROM t"
+      val result = findTopLevelFromClauseKeyword(sql, 0)
+      assertThat(result).isEqualTo(sql.indexOf("FROM t"))
+    }
+  }
+
+  @Nested
   inner class FindMatchingCloseParenthesisTest {
 
     @Test
