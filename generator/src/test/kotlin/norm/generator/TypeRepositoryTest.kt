@@ -269,6 +269,53 @@ class TypeRepositoryTest {
   }
 
   @Nested
+  inner class ComputedExpressionSpecialCharacterRendering {
+
+    @Test
+    fun `an expression containing a newline gets no source-reference KDoc line rather than a corrupted one`() {
+      // A Markdown inline code span (the single backtick pair sourceReference() wraps an expression
+      // in) can never faithfully carry a raw newline -- CommonMark folds it to a single space when
+      // rendered, silently changing "s || 'a\nb'" (a string literal containing a real newline) into
+      // "s || 'a b'", a different value (`SELECT ('a\nb' = 'a b')` is false). The CTE-body text
+      // extraction is right to preserve that newline verbatim -- the defect is at emission -- so
+      // this must decline (emit nothing) rather than render a corrupted span.
+      val expressionColumn = Column(
+        name = "u",
+        notNull = false,
+        type = Identifier(name = "text"),
+        provenanceExpression = "s || 'a\nb'",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("newlineExpression", listOf(expressionColumn), "SELECT u FROM c")
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).doesNotContain("@property u")
+    }
+
+    @Test
+    fun `an expression containing a backtick is escaped with a longer backtick run, not truncated`() {
+      // sourceReference() wrapping an expression in a single pair of backticks unconditionally would
+      // let a literal backtick inside the expression (e.g. "s || '`'") close the inline code span
+      // early, corrupting the rendered Markdown. A run of backticks strictly longer than any run
+      // inside the expression is a valid CommonMark delimiter that can never be mistaken for a
+      // closing delimiter, so the expression is escaped rather than declined.
+      val expressionColumn = Column(
+        name = "u",
+        notNull = false,
+        type = Identifier(name = "text"),
+        provenanceExpression = "s || '`'",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("backtickExpression", listOf(expressionColumn), "SELECT u FROM c")
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).contains("@property u (``s || '`'``)")
+    }
+  }
+
+  @Nested
   inner class PropertyNameNeedingBackticks {
 
     @Test
@@ -290,6 +337,24 @@ class TypeRepositoryTest {
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).contains("@property `My Col` Column name containing a space.")
       assertThat(kdoc).doesNotContain("@property My Col ")
+    }
+
+    @Test
+    fun `a property name containing its own literal backtick gets a widened delimiter, not a broken span`() {
+      // A fixed single-backtick wrap around a name containing a backtick would close the span early
+      // -- the same hazard sourceReference()'s own span is already fixed for.
+      val backtickNamedColumn = Column(
+        name = "a`b",
+        notNull = true,
+        type = Identifier(name = "text"),
+        comment = "Comment.",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("getBacktickNamed", listOf(backtickNamedColumn), "SELECT x FROM t")
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).contains("@property ``a`b`` Comment.")
     }
   }
 
@@ -419,6 +484,65 @@ class TypeRepositoryTest {
   }
 
   @Nested
+  inner class PropertyNameBlockCommentDelimiterDeclines {
+
+    @Test
+    fun `a property name containing a block-comment close delimiter gets no @property line at all`() {
+      // Widening the backtick delimiter (formatAsKdocPropertyReference's normal fix for a name
+      // containing its own literal backtick) does not help here -- KotlinPoet's own KDoc emission
+      // unconditionally rewrites "*/" to an HTML entity inside every KDoc block it renders, so
+      // "@property `c*/d`" would render with the entity substituted in, naming a different property
+      // than the one actually declared (`` `c*/d` ``). Declining the whole line is the fix.
+      val starSlashColumn = Column(
+        name = "c*/d",
+        notNull = true,
+        type = Identifier(name = "text"),
+        comment = "has a comment",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("getCStarSlashD", listOf(starSlashColumn), "SELECT x FROM t")
+
+      val renderedFile = repository.requiredTypes.first().toString()
+      assertThat(renderedFile).doesNotContain("@property")
+      assertThat(renderedFile).doesNotContain("&#42;")
+    }
+  }
+
+  @Nested
+  inner class CommentBacktickEscaping {
+
+    @Test
+    fun `a backtick in one property's comment does not mis-pair a later property's own source-reference span`() {
+      // Every @property line lives in one continuous CommonMark paragraph (no blank line separates
+      // them), so an unescaped, unpaired backtick in property "x"'s own comment could pair with the
+      // backtick belonging to property "y"'s source-reference span instead of its own, turning "y"'s
+      // span from a real inline code span into plain, undelimited text.
+      val xColumn = Column(
+        name = "x",
+        notNull = true,
+        type = Identifier(name = "text"),
+        table = Identifier(name = "t"),
+        originalName = "x",
+        comment = "use ` here",
+      )
+      val yColumn = Column(
+        name = "y",
+        notNull = true,
+        type = Identifier(name = "text"),
+        table = Identifier(name = "t"),
+        originalName = "y",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("getXAndY", listOf(xColumn, yColumn), "SELECT x, y FROM t")
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).contains("@property y (`t.y`)")
+    }
+  }
+
+  @Nested
   inner class StarSelectItemNeverBecomesAnExpression {
 
     @Test
@@ -480,6 +604,46 @@ class TypeRepositoryTest {
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).doesNotContain("@property u")
+    }
+  }
+
+  @Nested
+  inner class BlockCommentDelimiterDeclines {
+
+    @Test
+    fun `an expression containing a block-comment close delimiter gets no source-reference KDoc line`() {
+      // KotlinPoet's own KDoc emission unconditionally rewrites "*/" to "&#42;/" (and "/*" to
+      // "/&#42;") inside every KDoc block it renders, so a literal block-comment delimiter inside an
+      // expression can never survive being embedded in the generated file's inline code span --
+      // CommonMark never decodes an HTML entity back to a literal character inside a code span.
+      // Proven by reading typeSpec.toString(), which runs through KotlinPoet's real emission (unlike
+      // kdoc.toString(), which does not).
+      val starSlashColumn = Column(
+        name = "u",
+        notNull = false,
+        type = Identifier(name = "text"),
+        provenanceExpression = "s || '*/'",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("starSlashExpression", listOf(starSlashColumn), "SELECT u FROM c")
+
+      val renderedFile = repository.requiredTypes.first().toString()
+      assertThat(renderedFile).doesNotContain("@property u")
+      assertThat(renderedFile).doesNotContain("&#42;")
+    }
+
+    @Test
+    fun `a query containing a block comment gets no fenced sql block rather than a corrupted one`() {
+      val plainColumn = Column(name = "id", notNull = true, type = Identifier(name = "int4"))
+      val queryText = "SELECT id /* note */ FROM t"
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("getIdWithComment", listOf(plainColumn), queryText)
+
+      val renderedFile = repository.requiredTypes.first().toString()
+      assertThat(renderedFile).doesNotContain("```sql")
+      assertThat(renderedFile).doesNotContain("&#42;")
     }
   }
 }

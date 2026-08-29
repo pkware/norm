@@ -130,6 +130,47 @@ class EnumBuilderTest {
   }
 
   @Test
+  fun `enum with a percent sign in its comment generates correct output`() {
+    // A comment interpolated directly into a KotlinPoet KDoc format string would have a literal "%"
+    // in it read as a format specifier, throwing while building the KDoc and aborting generation.
+    val moodEnum =
+      Enum(name = "mood", vals = listOf("happy", "sad", "angry"), comment = "Feeling 100% of the time.")
+    val output = generateEnumCode(moodEnum, "example")
+
+    val expected =
+      """
+      |package example
+      |
+      |import kotlin.String
+      |
+      |/**
+      | * Feeling 100% of the time.
+      | *
+      | * @property databaseValue The representation of this enum in Postgres.
+      | */
+      |public enum class Mood(
+      |  public val databaseValue: String,
+      |) {
+      |  HAPPY("happy"),
+      |  SAD("sad"),
+      |  ANGRY("angry"),
+      |  ;
+      |
+      |  public companion object {
+      |    /**
+      |     * @returns the enum constant matching [value], or `null` if no match exists.
+      |     */
+      |    public fun fromDatabaseValue(`value`: String): Mood? = entries.firstOrNull { it.databaseValue == value }
+      |  }
+      |}
+      |
+      """
+        .trimMargin()
+
+    assertThat(output).isEqualTo(expected)
+  }
+
+  @Test
   fun `adapter generates correct output`() {
     val moodEnum = Enum(name = "mood", vals = listOf("happy", "sad", "angry"), comment = "Enum comment")
     val output = generateAdapterCode(moodEnum, "example", emptySet())

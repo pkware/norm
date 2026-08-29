@@ -54,3 +54,7 @@ SELECT id, "My Col" FROM tq WHERE id = ?;
 SELECT id, title FROM book
 -- only rows with a title
 ;
+
+-- Returns an order's id and its "user" column -- both "order" and "user" are reserved words.
+-- name: getOrderIdAndUser :one
+SELECT id, "user" FROM "order" WHERE id = ?;

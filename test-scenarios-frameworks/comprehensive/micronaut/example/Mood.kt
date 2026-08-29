@@ -3,6 +3,8 @@ package example
 import kotlin.String
 
 /**
+ * Feeling 100% of the time.
+ *
  * @property databaseValue The representation of this enum in Postgres.
  */
 public enum class Mood(

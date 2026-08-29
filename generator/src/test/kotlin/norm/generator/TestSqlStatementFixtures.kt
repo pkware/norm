@@ -38,6 +38,7 @@ internal fun column(
   table: Identifier? = null,
   embedTable: Identifier? = null,
   originalName: String = "",
+  comment: String = "",
 ) = Column(
   name = name,
   notNull = notNull,
@@ -46,4 +47,5 @@ internal fun column(
   table = table,
   embedTable = embedTable,
   originalName = originalName,
+  comment = comment,
 )

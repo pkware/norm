@@ -371,4 +371,18 @@ public class PostgresQueries(
   override fun <T : Any> getBooksWithTrailingComment(mapper: (id: Int, title: String) -> T): Many<T> = getBooksWithTrailingComment(mapper, driver::queryMany)
 
   override fun <T : Any> getBooksWithTrailingCommentDynamically(mapper: (id: Int, title: String) -> T): Query<T> = getBooksWithTrailingComment(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  @Throws(SQLException::class)
+  override fun <T : Any> getOrderIdAndUser(id: Int, mapper: (id: Int, user: String) -> T): T {
+    val sql = "SELECT id, \"user\" FROM \"order\" WHERE id = ?"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        getString(2),
+      )
+    }
+    return driver.queryOne(sql, rowReader) {
+      setInt(1, id)
+    }
+  }
 }

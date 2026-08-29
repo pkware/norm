@@ -152,6 +152,11 @@ class GenerateCodeTest {
       analyzedQueries,
       effectivePackageName,
       frameworks,
+      // Must match NormGenerateTask's own production call: without the real, live-fetched reserved
+      // word set, a scenario naming a relation/column after a reserved word (e.g. "order", "user")
+      // would render an unquoted source reference that never actually runs against PostgreSQL, and
+      // golden comparison would silently accept text this repository's own live-server verification
+      // test (SourceReferenceLiveVerificationTest) would then reject.
       analyzer.fetchReservedWords(),
       typeMappings,
     )
