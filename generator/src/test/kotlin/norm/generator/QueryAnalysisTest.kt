@@ -1710,18 +1710,21 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `constant-only CASE column under grouping sets is an accepted over-widening`() {
+    fun `constant-only CASE column under grouping sets is non-null — issue 240's Var-free immunity leg`() {
       // CASE WHEN true THEN 1 ELSE 2 END is never actually null-extended by Postgres (its leaves
-      // are all Const, which the planner never matches to a grouping key), but
-      // isSafeFromGroupingSetNullExtension requires an Aggref/GroupingFunc descendant to prove
-      // safety and this expression has none, so it widens to nullable — an accepted, deliberate
-      // cost documented on isSafeFromGroupingSetNullExtension's KDoc, not a bug to chase.
+      // are all Const, which the planner never matches to a grouping key). Before issue #240's
+      // immuneByNoGroupingKeyMatch leg, isSafeFromGroupingSetNullExtension required an
+      // Aggref/GroupingFunc descendant to prove safety and this expression has none, so it widened
+      // to nullable — an accepted, deliberate cost at the time. The new leg now recognizes it: the
+      // whole CASE expression (including its WHEN condition and both branches, all Const) contains
+      // no Var, no lossy node, and matches no grouping-key expression (the key here is the
+      // unrelated bare column a), so it is genuinely immune.
       val query = analyzeWithSchema(
         "CREATE TABLE t (a TEXT NOT NULL)",
         "SELECT CASE WHEN true THEN 1 ELSE 2 END AS constant_case, a FROM t GROUP BY ROLLUP(a)",
       )
       assertThat(query.columns).hasSize(2)
-      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[0].notNull).isTrue()
       assertThat(query.columns[1].notNull).isFalse()
     }
 
@@ -2137,22 +2140,22 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `concat_ws with a literal separator over a null-extended later argument is an accepted over-widening`() {
+    fun `concat_ws with a literal separator over a null-extended later argument is non-null — issue 240 shape 7`() {
       // Verified live on PostgreSQL 16, 17, and 18: concat_ws(',', a, b) is NEVER null under
       // GROUP BY ROLLUP(a, b), including the fully null-extended summary row — a non-null literal
       // separator makes concat_ws total regardless of the other (even null-extended) arguments.
-      // This analyzer still reports it nullable: the grouping-sets safety gate's generic rule
-      // requires an Aggref/GroupingFunc/WindowFunc descendant to prove safety, and this expression
-      // has none — concat_ws gets no special "only the separator argument matters" reasoning built
-      // into the gate (that would need the same fragile structural-identity matching the
-      // grouping-sets rewrite deliberately avoids elsewhere). This is a known, accepted
-      // over-widening (the safe direction), not a bug to chase in this round.
+      // Before the issue #240 fix, this analyzer reported it nullable: the grouping-sets safety
+      // gate's generic rule requires an Aggref/GroupingFunc/WindowFunc descendant to prove safety,
+      // and this expression has none. isSafeFromGroupingSetNullExtension's new
+      // isNonNullIffFirstArgumentNonNull leg now recognizes that concat_ws's result depends ONLY on
+      // its first (separator) argument, which here is a Const — safe regardless of the other,
+      // null-extendable arguments.
       val query = analyzeWithSchema(
         "CREATE TABLE t2 (a TEXT NOT NULL, b TEXT NOT NULL)",
         "SELECT concat_ws(',', a, b) AS k, count(*) AS n FROM t2 GROUP BY ROLLUP(a, b)",
       )
       assertThat(query.columns).hasSize(2)
-      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[0].notNull).isTrue()
       assertThat(query.columns[1].notNull).isTrue()
     }
 
@@ -2324,6 +2327,144 @@ class QueryAnalysisTest {
       )
       assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    // GitHub issue #240: GROUPING SETS/CUBE/ROLLUP over-widening. isSafeFromGroupingSetNullExtension
+    // gained a self-match guard (a nested occurrence of the grouping key is unsafe at ANY depth, not
+    // merely at the target-list entry's own root) plus new legs for node kinds isNonNull already
+    // proves are argument-nullability-independent (isNonNullIffFirstArgumentNonNull FuncExpr,
+    // xmlelement/xmlforest/processing-instruction XmlExpr, JSON_OBJECT/JSON_ARRAY
+    // JsonConstructorExpr, SqlValueFunction, NextValExpr) and a Var-free/no-structural-match leg for
+    // constructs with no per-node-kind rule at all (e.g. now()). See NodeTreeNullabilityAnalyzer's
+    // own KDoc and PLAN-240.md's "Measured ground truth" table for the full soundness argument and
+    // live verification (PostgreSQL 16, 17, and 18) behind every test below.
+
+    @Test
+    fun `now() is non-null under a ROLLUP key it is not itself part of — issue 240 shape 1`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t2 (a TEXT NOT NULL)",
+        "SELECT now() AS generated_at, a, count(*) AS c FROM t2 GROUP BY ROLLUP(a)",
+      )
+      assertThat(query.columns).hasSize(3)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isFalse()
+      assertThat(query.columns[2].notNull).isTrue()
+    }
+
+    @Test
+    fun `current_date is non-null under a ROLLUP key it is not itself part of — issue 240 shape 2`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t2 (a TEXT NOT NULL)",
+        "SELECT current_date AS as_of, count(*) AS c FROM t2 GROUP BY ROLLUP(a)",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isTrue()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `xmlelement is non-null under a nullable ROLLUP expression key — issue 240 shape 8`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t2 (a TEXT NOT NULL)",
+        "SELECT xmlelement(name e, xmlattributes(lower(a) AS q), count(*)::text) AS x FROM t2 GROUP BY ROLLUP(a)",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `xmlforest under a ROLLUP key is nullable — XMLFOREST is not total over null fields`() {
+      // Live on PostgreSQL 16, 17 and 18: xmlforest(NULL::text AS q) IS NULL, so null-extending the
+      // only field nulls the whole forest in the ROLLUP summary row.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t2 (a TEXT NOT NULL)",
+        "SELECT xmlforest(lower(a) AS q) AS x, count(*) AS c FROM t2 GROUP BY ROLLUP(a)",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `xmlpi under a ROLLUP key is nullable — a null content expression nulls the result`() {
+      // Live on PostgreSQL 16, 17 and 18: xmlpi(name php, NULL::text) IS NULL.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t2 (a TEXT NOT NULL)",
+        "SELECT xmlpi(name php, lower(a)) AS x, count(*) AS c FROM t2 GROUP BY ROLLUP(a)",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `JSON_OBJECT is non-null under a nullable ROLLUP expression key — issue 240 shape 9`() {
+      val query = analyzeWithSchema(
+        "CREATE TABLE t2 (a TEXT NOT NULL)",
+        "SELECT JSON_OBJECT('k': lower(a)) AS j FROM t2 GROUP BY ROLLUP(a)",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `a nested occurrence of the grouping key inside an always-non-null call is nullable — the self-match guard`() {
+      // Measured at HEAD (PLAN-240.md, PostgreSQL 16 and 18): before the self-match guard, the
+      // OLD walk reached concat(a, b) — a child of the || operator, itself IDENTICAL to the
+      // grouping key — and let isAlwaysNonNull("concat") rescue it outright, wrongly reporting
+      // notNull = true even though live PostgreSQL returns NULL for label in the ROLLUP summary
+      // row. The guard now checks every subexpression the walk reaches against
+      // groupingKeyExpressions, not merely the target-list entry's own root.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t2 (a TEXT NOT NULL, b TEXT NOT NULL)",
+        "SELECT count(*)::text || concat(a, b) AS label FROM t2 GROUP BY ROLLUP(concat(a, b))",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `now() as its own ROLLUP grouping key stays nullable despite the new Var-free immunity leg`() {
+      // Negative control for the new immuneByNoGroupingKeyMatch leg: now() is Var-free and would
+      // otherwise qualify, but here it IS the grouping key itself, so the self-match guard at the
+      // top of isSafeFromGroupingSetNullExtension must still force it nullable. Verified live
+      // (PostgreSQL 16 and 18): NULL in the ROLLUP summary row.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t2 (a TEXT NOT NULL)",
+        "SELECT now() AS n, count(*) AS c FROM t2 GROUP BY ROLLUP(now())",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `concat_ws whose separator is the grouping key stays nullable despite the new leg`() {
+      // Negative control for the new isNonNullIffFirstArgumentNonNull leg: the separator argument
+      // (concat(a, b)) is itself the grouping key, so the leg must recurse into it — and the
+      // self-match guard on that recursive call is what forces the result nullable. Verified live
+      // (PostgreSQL 16 and 18): NULL in the ROLLUP summary row.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t2 (a TEXT NOT NULL, b TEXT NOT NULL)",
+        "SELECT concat_ws(concat(a, b), 'x', 'y') AS label, count(*) AS n FROM t2 GROUP BY ROLLUP(concat(a, b))",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
+    }
+
+    @Test
+    fun `an expression built on a Var-free grouping key stays nullable — the cross-version divergence`() {
+      // Negative control for the new immuneByNoGroupingKeyMatch leg: now() is a subexpression of
+      // now() || 'x', matching groupingKeyExpressions, so condition 3 must force the whole
+      // expression nullable even though now() || 'x' itself is Var-free. PostgreSQL 16
+      // null-extends this live; PostgreSQL 18 does not (a genuine cross-version divergence) — this
+      // analyzer reports nullable on every version, the only answer that is never wrong.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t2 (a TEXT NOT NULL)",
+        "SELECT now() || 'x' AS label, count(*) AS n FROM t2 GROUP BY ROLLUP(now())",
+      )
+      assertThat(query.columns).hasSize(2)
+      assertThat(query.columns[0].notNull).isFalse()
+      assertThat(query.columns[1].notNull).isTrue()
     }
 
     // GitHub issue #241: on PostgreSQL 18, an RTE_GROUP range-table entry (:rtekind 9, alias
@@ -7410,6 +7551,57 @@ class QueryAnalysisTest {
       val query = analyzeWithSchema(
         "CREATE TABLE t (name TEXT NOT NULL, val INT NOT NULL)",
         "SELECT xmlforest(name, val) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `XMLFOREST over a single nullable field is nullable`() {
+      // Live on PostgreSQL 16, 17 and 18: xmlforest(NULL::text AS q) IS NULL. XMLFOREST omits a null
+      // field and yields null only once every field has been omitted.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (name TEXT)",
+        "SELECT xmlforest(name) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `XMLFOREST with one non-null field among nullable ones is non-null`() {
+      // Live: xmlforest(NULL::text AS q, 'x' AS r) is NOT null — one surviving field is enough.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (name TEXT, kept TEXT NOT NULL)",
+        "SELECT xmlforest(name, kept) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `XMLPI without a content expression is non-null`() {
+      // Live: xmlpi(name php) is NOT null — the processing instruction still materializes.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL)",
+        "SELECT xmlpi(name php) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
+    @Test
+    fun `XMLPI over a nullable content expression is nullable`() {
+      // Live: xmlpi(name php, NULL::text) IS NULL.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (body TEXT)",
+        "SELECT xmlpi(name php, body) AS result FROM t",
+      )
+      assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `XMLELEMENT over a nullable child stays non-null`() {
+      // Live: xmlelement(name e, NULL::text) is NOT null — the element tag always materializes.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (name TEXT)",
+        "SELECT xmlelement(NAME e, name) AS result FROM t",
       )
       assertThat(query.columns[0].notNull).isTrue()
     }

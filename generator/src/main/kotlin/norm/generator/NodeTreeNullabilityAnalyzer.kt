@@ -60,7 +60,8 @@ import norm.generator.NodeTreeNullabilityAnalyzer.Companion.MAX_EXPRESSION_DEPTH
  *   parameter's guarantee does NOT cover: it is `null` when `arr` itself is `null` even though the
  *   literal separator is non-null (also verified live on PostgreSQL 16, 17, and 18). See
  *   [PgCatalogLoader.nonNullIffFirstArgumentNonNullFunctionOids] for the safe-list this is normally
- *   backed by, and why it is intentionally separate from [isAlwaysNonNull].
+ *   backed by, and why it is intentionally separate from [isAlwaysNonNull]. Also consulted by
+ *   [isSafeFromGroupingSetNullExtension] for the identical non-`VARIADIC` `FuncExpr` shape.
  * @param hasGroupingSets `true` when the query block this analyzer evaluates uses GROUPING SETS,
  *   CUBE, or ROLLUP (see [PgNodeTreeParser.hasGroupingSets]). When `true`, [extractColumnNullability]
  *   forces a result column nullable when it is itself a grouping key, or when its expression is not
@@ -220,7 +221,7 @@ internal class NodeTreeNullabilityAnalyzer(
     if (hasGroupingSets) {
       val isGroupingKey = (entry.sortGroupRef != 0 && entry.sortGroupRef in groupingSortGroupRefs) ||
         entry.expression in groupingKeyExpressions
-      if (isGroupingKey || !isSafeFromGroupingSetNullExtension(entry.expression)) return false
+      if (isGroupingKey || !isSafeFromGroupingSetNullExtension(entry.expression, groupingKeyExpressions)) return false
     }
     return isNonNull(entry.expression)
   }
@@ -330,31 +331,113 @@ internal class NodeTreeNullabilityAnalyzer(
    * is exactly the scenario this leg exists to guard against for the (much narrower) functions
    * that ARE on [isAlwaysNonNull]'s list.
    *
+   * Several `when` branches below answer the same argument-independence question the fourth leg does:
+   * null-extension substitutes `NULL` for an ARGUMENT's value, so any rule that proves a result
+   * non-null without consulting its arguments' nullability already answers it. The
+   * [isNonNullIffFirstArgumentNonNull] branch is the one conditional case — safe iff its FIRST
+   * argument is itself safe, since a `concat_ws` separator can be a grouping key.
+   * [immuneByNoGroupingKeyMatch] is a structurally different leg, for constructs with no
+   * per-node-kind rule at all, e.g. `now()`.
+   *
+   * `XML_IS_XMLFOREST` and `XML_IS_XMLPI` are excluded because neither is total over `null` input
+   * (measurements in [evaluateXmlExpr]); admitting them produced a real wrong non-null — `SELECT
+   * xmlforest(lower(a) AS q), count(*) FROM t2 GROUP BY ROLLUP(a)`, which live PostgreSQL 16, 17 and
+   * 18 all return `NULL` for in the rollup summary row. PostgreSQL has no equality operator for `xml`
+   * or for `json` (verified live), so neither an `XmlExpr` nor a default-`RETURNING`
+   * `JSON_OBJECT`/`JSON_ARRAY` (which yields `json`) can itself BE a grouping key; `jsonb` does have
+   * one, so a `RETURNING jsonb` call can be.
+   *
+   * The self-match guard runs before every leg because the legs prove only that an expression's own
+   * result survives null-extension of a DEEPER subexpression, never that the expression itself is not
+   * replaced by `NULL` wholesale. Running it at every node the walk reaches, not only at
+   * [isEffectivelyNonNull]'s entry root, fixes a measured wrong non-null: `SELECT count(*)::text ||
+   * concat(a, b) FROM t2 GROUP BY ROLLUP(concat(a, b))` reported non-null where live PostgreSQL 16
+   * and 18 return `NULL`.
+   *
+   * @param groupingKeyExpressions the same set [isEffectivelyNonNull] receives; see that method's
+   *   identically-named parameter.
    * @param depth remaining recursion budget, mirroring [MAX_EXPRESSION_DEPTH]; returns `false`
    *   (safe: assume UNSAFE — i.e. possibly null-extended) once exhausted
    */
-  private fun isSafeFromGroupingSetNullExtension(
+  internal fun isSafeFromGroupingSetNullExtension(
     expression: PgNodeExpression,
+    groupingKeyExpressions: Set<PgNodeExpression>,
     depth: Int = MAX_EXPRESSION_DEPTH,
   ): Boolean {
     if (depth <= 0) return false
+    if (expression in groupingKeyExpressions) return false
     if (foldsToConst(expression, depth)) return true
     if (expression is PgNodeExpression.FuncExpr && !expression.isVariadic && isAlwaysNonNull(expression.functionOid)) {
       return true
     }
+    if (immuneByNoGroupingKeyMatch(expression, groupingKeyExpressions, depth)) return true
     return when (expression) {
       is PgNodeExpression.Aggref, is PgNodeExpression.GroupingFunc -> true
       is PgNodeExpression.Const -> true
       is PgNodeExpression.JsonExpr, is PgNodeExpression.Unknown -> false
-      is PgNodeExpression.WindowFunc ->
-        safetyWalkChildren(expression).all { isSafeFromGroupingSetNullExtension(it, depth - 1) }
+      is PgNodeExpression.XmlExpr ->
+        expression.op == PgNodeExpression.XML_IS_XMLELEMENT ||
+          isDominatedWithSafeChildren(expression, groupingKeyExpressions, depth)
 
-      else -> {
-        val children = safetyWalkChildren(expression)
-        containsDominatingConstruct(expression, depth) &&
-          children.all { isSafeFromGroupingSetNullExtension(it, depth - 1) }
-      }
+      is PgNodeExpression.JsonConstructorExpr ->
+        expression.type == PgNodeExpression.JSON_CONSTRUCTOR_TYPE_OBJECT ||
+          expression.type == PgNodeExpression.JSON_CONSTRUCTOR_TYPE_ARRAY ||
+          isDominatedWithSafeChildren(expression, groupingKeyExpressions, depth)
+
+      is PgNodeExpression.FuncExpr ->
+        if (!expression.isVariadic && isNonNullIffFirstArgumentNonNull(expression.functionOid)) {
+          expression.arguments.firstOrNull()
+            ?.let { isSafeFromGroupingSetNullExtension(it, groupingKeyExpressions, depth - 1) } == true
+        } else {
+          isDominatedWithSafeChildren(expression, groupingKeyExpressions, depth)
+        }
+
+      is PgNodeExpression.WindowFunc ->
+        safetyWalkChildren(expression).all { isSafeFromGroupingSetNullExtension(it, groupingKeyExpressions, depth - 1) }
+
+      else -> isDominatedWithSafeChildren(expression, groupingKeyExpressions, depth)
     }
+  }
+
+  private fun isDominatedWithSafeChildren(
+    expression: PgNodeExpression,
+    groupingKeyExpressions: Set<PgNodeExpression>,
+    depth: Int,
+  ): Boolean = containsDominatingConstruct(expression, depth) &&
+    safetyWalkChildren(expression).all { isSafeFromGroupingSetNullExtension(it, groupingKeyExpressions, depth - 1) }
+
+  /**
+   * Returns `true` when [expression] and every descendant [safetyWalkChildren] reaches contain
+   * nothing GROUPING SETS/CUBE/ROLLUP null-extension could act on: no [PgNodeExpression.Var], no
+   * lossily-parsed node, and no structural match against [groupingKeyExpressions]. A `Var`-free
+   * expression's value is fixed for the row whichever grouping set that row belongs to, so `now()`
+   * under `GROUP BY ROLLUP(a)` is immune without [containsDominatingConstruct].
+   *
+   * The lossy nodes are [PgNodeExpression.JsonExpr] and [PgNodeExpression.Unknown], for the reason
+   * [isSafeFromGroupingSetNullExtension] gives, plus [PgNodeExpression.SubLink], which that method
+   * need not name: [PgNodeExpression.SubLink.subselectBlock] keeps the subselect as unparsed raw text
+   * and [safetyWalkChildren] walks only [PgNodeExpression.SubLink.outerOperand], so a correlated
+   * `Var` inside the subselect is invisible to the `Var` check.
+   *
+   * The match is sound in this direction: [PgNodeExpression]'s subtypes retain a SUBSET of the fields
+   * PostgreSQL's own `equal()` compares (e.g. [PgNodeExpression.Const] keeps only `isNull`), so this
+   * class's structural equality is COARSER than PostgreSQL's — a false "no match" verdict can never
+   * arise from a field this parser dropped.
+   *
+   * @param depth remaining recursion budget, mirroring [MAX_EXPRESSION_DEPTH]; returns `false` (not
+   *   provably immune) once exhausted.
+   */
+  private fun immuneByNoGroupingKeyMatch(
+    expression: PgNodeExpression,
+    groupingKeyExpressions: Set<PgNodeExpression>,
+    depth: Int = MAX_EXPRESSION_DEPTH,
+  ): Boolean {
+    if (depth <= 0) return false
+    if (expression is PgNodeExpression.Var) return false
+    if (expression is PgNodeExpression.JsonExpr || expression is PgNodeExpression.Unknown) return false
+    if (expression is PgNodeExpression.SubLink) return false
+    if (expression in groupingKeyExpressions) return false
+    return safetyWalkChildren(expression).all { immuneByNoGroupingKeyMatch(it, groupingKeyExpressions, depth - 1) }
   }
 
   /**
@@ -785,13 +868,32 @@ internal class NodeTreeNullabilityAnalyzer(
       behaviorType == PgNodeExpression.JSON_BEHAVIOR_TRUE ||
       behaviorType == PgNodeExpression.JSON_BEHAVIOR_FALSE
 
+  /**
+   * Evaluates an `XMLELEMENT`/`XMLFOREST`/`XMLPI`/`XMLCONCAT`/`XMLROOT`/`XMLPARSE`/`XMLSERIALIZE`
+   * construct, branching on [PgNodeExpression.XmlExpr.op]. Only `XMLELEMENT` is total over `null`
+   * input. Measured live on PostgreSQL 16, 17 and 18, which agree:
+   * - `xmlelement(name e, NULL::text)` is NOT `null` — a null child renders as empty content, and a
+   *   null `xmlattributes` value omits that attribute, so the element tag itself always materializes.
+   * - `xmlforest(NULL::text AS q)` IS `null`, while `xmlforest(NULL::text AS q, 'x' AS r)` is NOT —
+   *   a null field is omitted and the result nulls only once EVERY field is gone, hence
+   *   [Iterable.any]. `xmlforest()` is a syntax error, and `any` on an empty list would answer
+   *   `false` (nullable) anyway.
+   * - `xmlpi(name php, NULL::text)` IS `null`, while the content-less `xmlpi(name php)` is NOT, which
+   *   [Iterable.all] states exactly: vacuously `true` for the zero-argument form, content required
+   *   otherwise.
+   *
+   * [PgNodeExpression.XmlExpr.arguments] merges the node's `:named_args` with its `:args` (see
+   * `PgNodeTreeParser.parseXmlExpr`), so an `XMLFOREST` field value — which lives in `:named_args` —
+   * is visible to the [Iterable.any] check rather than silently absent. Any other op code falls
+   * through to `false` (nullable), the safe default.
+   */
   private fun evaluateXmlExpr(expression: PgNodeExpression.XmlExpr, recurse: (PgNodeExpression) -> Boolean): Boolean =
     when (expression.op) {
-      PgNodeExpression.XML_IS_XMLELEMENT,
-      PgNodeExpression.XML_IS_XMLFOREST,
-      PgNodeExpression.XML_IS_XMLPI,
-      -> true
+      PgNodeExpression.XML_IS_XMLELEMENT -> true
 
+      PgNodeExpression.XML_IS_XMLFOREST -> expression.arguments.any(recurse)
+
+      PgNodeExpression.XML_IS_XMLPI,
       PgNodeExpression.XML_IS_XMLCONCAT,
       PgNodeExpression.XML_IS_XMLROOT,
       PgNodeExpression.XML_IS_XMLPARSE,
