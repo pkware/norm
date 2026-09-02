@@ -2537,4 +2537,59 @@ class ColumnTypeMappingTest {
       assertThat(kotlinType).isEqualTo(expectedType)
     }
   }
+
+  @Nested
+  inner class OverLengthIdentifierColumnOverride {
+
+    // Exactly 70 ASCII characters -- what a user would write into typeMapping.column.<table>.<column>
+    // configuration, taken straight from their own DDL.
+    private val overLengthTableName =
+      "table_column_override_truncation_test_over_length_identifier_namezzzzz"
+
+    private val overLengthColumnName =
+      "column_override_truncation_test_case_over_length_identifier_namezzzzzz"
+
+    @Test
+    fun `column override configured with the full over-length name matches the server-truncated catalog column`() {
+      // The catalog only ever holds the truncated name, so an override keyed by the full name the
+      // user wrote would never match.
+      val mappings = listOf(
+        TypeMapping(
+          "",
+          overLengthTableName,
+          overLengthColumnName,
+          "com.example.CustomType",
+          "com.example.CustomTypeAdapter",
+        ),
+      )
+      val repository = TypeRepository("test", Catalog(), mappings)
+      val serverTruncatedColumn = column(
+        name = "value",
+        type = "jsonb",
+        table = Identifier(name = truncateIdentifier(overLengthTableName)),
+        originalName = truncateIdentifier(overLengthColumnName),
+      )
+
+      assertThat(repository.resolveColumnType(serverTruncatedColumn))
+        .isEqualTo(ClassName("com.example", "CustomType"))
+    }
+
+    @Test
+    fun `column override with a name already within the byte budget still resolves`() {
+      // Companion to the over-length case above: an override whose names are already <= 63 bytes must
+      // keep matching exactly, catching an over-eager truncation that would corrupt a short name too.
+      val mappings = listOf(
+        TypeMapping("", "short_table", "short_column", "com.example.CustomType", "com.example.CustomTypeAdapter"),
+      )
+      val repository = TypeRepository("test", Catalog(), mappings)
+      val shortNamedColumn = column(
+        name = "value",
+        type = "jsonb",
+        table = Identifier(name = "short_table"),
+        originalName = "short_column",
+      )
+
+      assertThat(repository.resolveColumnType(shortNamedColumn)).isEqualTo(ClassName("com.example", "CustomType"))
+    }
+  }
 }

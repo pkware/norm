@@ -89,9 +89,17 @@ internal class TypeRepository(
   private val typeLevelOverrides: Map<String, TypeMapping> =
     typeMappings.filter { it.isTypeLevel }.associateBy { it.postgresType }
 
-  /** Column-level overrides, keyed by (table, column) pair. */
+  /**
+   * Column-level overrides, keyed by (table, column) pair.
+   *
+   * Both are truncated because a user configures an override with the full name they wrote in DDL,
+   * while the catalog names these keys are matched against came back from the server already
+   * truncated. Left untruncated, an override on an over-length name would never match and would be
+   * silently dropped.
+   */
   private val columnLevelOverrides: Map<Pair<String, String>, TypeMapping> =
-    typeMappings.filter { it.isColumnLevel }.associateBy { it.table!! to it.column!! }
+    typeMappings.filter { it.isColumnLevel }
+      .associateBy { truncateIdentifier(it.table!!) to truncateIdentifier(it.column!!) }
 
   /**
    * Enum types that are actually referenced by columns in resolved queries.
@@ -383,7 +391,10 @@ internal class TypeRepository(
   private fun tryResolveColumnOverride(column: Column): SqlMappable? {
     val tableName = column.table?.name ?: return null
     val columnName = column.originalName.ifEmpty { column.name }
-    val mapping = columnLevelOverrides[tableName to columnName] ?: return null
+    // Truncated on both sides so the lookup stays symmetric with columnLevelOverrides' own keys,
+    // whatever the caller built this Column from.
+    val mapping = columnLevelOverrides[truncateIdentifier(tableName) to truncateIdentifier(columnName)]
+      ?: return null
     return buildUserConfiguredMappable(mapping, column.type.name, column.notNull, column.isArray)
   }
 

@@ -444,8 +444,12 @@ internal fun parseColumnReference(expression: String): SelectItem {
   val rawColumn = match.groups["column"]!!.value
   val tableIsQuoted = rawTable?.startsWith('"') == true
   val columnIsQuoted = rawColumn.startsWith('"')
-  val column = if (columnIsQuoted) unescapeQuotedIdentifier(rawColumn) else foldAsciiCase(rawColumn)
-  val table = rawTable?.let { if (tableIsQuoted) unescapeQuotedIdentifier(it) else foldAsciiCase(it) }
+  // Truncated here so callers comparing these against server-reported names, such as
+  // catalog.findColumn, are comparing like with like.
+  val column = truncateIdentifier(if (columnIsQuoted) unescapeQuotedIdentifier(rawColumn) else foldAsciiCase(rawColumn))
+  val table = rawTable?.let {
+    truncateIdentifier(if (tableIsQuoted) unescapeQuotedIdentifier(it) else foldAsciiCase(it))
+  }
   if (column.isEmpty() || table?.isEmpty() == true) return noMatch
 
   return SelectItem(

@@ -123,7 +123,8 @@ private fun parseSingleCteDefinition(sql: String, startPosition: Int): Pair<CteD
   }
   if (position == nameStart) return null
   val rawName = sql.substring(nameStart, position)
-  val name = if (isQuotedIdentifier(rawName)) unescapeQuotedIdentifier(rawName) else rawName
+  // rawName deliberately keeps its quotes, so only the unescaped form is truncated.
+  val name = truncateIdentifier(if (isQuotedIdentifier(rawName)) unescapeQuotedIdentifier(rawName) else rawName)
 
   position = skipWhitespaceAndComments(sql, position)
 

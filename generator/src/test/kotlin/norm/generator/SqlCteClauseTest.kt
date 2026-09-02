@@ -150,5 +150,23 @@ class SqlCteClauseTest {
       val result = parseCteClause("WITH \$x AS (SELECT 1) SELECT a FROM x")
       assertThat(result).isNull()
     }
+
+    @Test
+    fun `an over-length unquoted CTE name is truncated to 63 bytes, while rawName keeps the full untruncated text`() {
+      val overLongName = "c".repeat(70)
+      val sql = "WITH $overLongName AS (SELECT 1) SELECT * FROM $overLongName"
+      val result = parseCteClause(sql)
+      assertThat(result!!.definitions[0].name).isEqualTo("c".repeat(63))
+      assertThat(result.definitions[0].rawName).isEqualTo(overLongName)
+    }
+
+    @Test
+    fun `an over-length quoted CTE name is truncated to 63 bytes, while rawName keeps the quotes and full text`() {
+      val overLongName = "c".repeat(70)
+      val sql = "WITH \"$overLongName\" AS (SELECT 1) SELECT * FROM \"$overLongName\""
+      val result = parseCteClause(sql)
+      assertThat(result!!.definitions[0].name).isEqualTo("c".repeat(63))
+      assertThat(result.definitions[0].rawName).isEqualTo("\"$overLongName\"")
+    }
   }
 }

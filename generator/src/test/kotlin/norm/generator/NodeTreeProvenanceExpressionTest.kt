@@ -263,6 +263,58 @@ class NodeTreeProvenanceExpressionTest {
   }
 
   @Nested
+  inner class OverLengthIdentifierTruncation {
+
+    // Aliases and CTE names reach these comparisons as raw text, still quoted, so they are
+    // truncated after folding rather than when parsed.
+
+    @Test
+    fun `an over-length implicit alias on a sibling item no longer blocks resolution of the position being read`() {
+      // The over-length name here is an implicit alias on a sibling item. Resolution is gated on
+      // every position verifying, so failing to match it would silence ux's provenance as well.
+      val overLongAlias = "z".repeat(70)
+      val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
+      val sql = """
+        WITH a AS (SELECT description $overLongAlias, UPPER(name) AS ux FROM parent)
+        SELECT $overLongAlias, ux FROM a
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql, columnIndex = 1)).isEqualTo("UPPER(name)")
+    }
+
+    @Test
+    fun `an over-length CTE name still resolves through its truncated server-side ctename`() {
+      // Site NodeTreeProvenanceExpression.kt:207. scopedSqlCteDefinition must truncate the folded
+      // rawName before comparing it against hop.name (the node tree's own, already-truncated
+      // :ctename), or an over-length CTE name can never be found in scope at all.
+      val overLongCteName = "w".repeat(70)
+      val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
+      val sql = """
+        WITH $overLongCteName AS (SELECT UPPER(description) AS description_upper FROM parent)
+        SELECT description_upper FROM $overLongCteName
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql)).isEqualTo("UPPER(description)")
+    }
+
+    @Test
+    fun `an over-length explicit alias on a computed expression still resolves through its truncated resname`() {
+      // Site NodeTreeProvenanceExpression.kt:140 (AliasMatchKind.EXPLICIT_ALIAS). verifiedItem must
+      // truncate the RAW, over-length alias before fold-comparing it against the node tree's own
+      // server-truncated :resname, or a computed expression named with an over-length "AS alias"
+      // never verifies and resolves to null instead of its real expression.
+      val overLongAlias = "v".repeat(70)
+      val ddl = "CREATE TABLE parent (id INT, name TEXT)"
+      val sql = """
+        WITH a AS (SELECT UPPER(name) AS $overLongAlias FROM parent)
+        SELECT $overLongAlias FROM a
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql)).isEqualTo("UPPER(name)")
+    }
+  }
+
+  @Nested
   inner class ImplicitAliasOnComputedExpressionDeclines {
 
     @Test

@@ -337,13 +337,20 @@ private fun resolveWireTypeName(mapping: TypeMapping, catalog: Catalog): TypeNam
 
 /**
  * Looks up a column's Postgres type name from the catalog.
+ *
+ * [table] and [column] come from a user-configured [TypeMapping], spelled the way the user wrote
+ * them in DDL, while the catalog's names came back from the server already truncated. Both are
+ * truncated here so an override on an over-length name resolves instead of failing this lookup.
  */
-private fun resolveColumnPostgresType(catalog: Catalog, table: String, column: String): String =
-  catalog.schemas.flatMap { it.tables }
-    .firstOrNull { it.rel.name == table }
-    ?.columns?.firstOrNull { it.name == column }
+private fun resolveColumnPostgresType(catalog: Catalog, table: String, column: String): String {
+  val truncatedTable = truncateIdentifier(table)
+  val truncatedColumn = truncateIdentifier(column)
+  return catalog.schemas.flatMap { it.tables }
+    .firstOrNull { it.rel.name == truncatedTable }
+    ?.columns?.firstOrNull { it.name == truncatedColumn }
     ?.type?.name
-    ?: error("Column '$table.$column' not found in catalog")
+    ?: error("Column '$truncatedTable.$truncatedColumn' not found in catalog")
+}
 
 /**
  * Maps a Postgres type name to the Kotlin type that JDBC delivers it as (the wire type).
