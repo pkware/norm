@@ -87,6 +87,21 @@ class SqlParameterInferrerTest {
       assertThat(result.getValue(3).name).isEqualTo("password")
       assertThat(result.getValue(3).columnName).isEqualTo("nullable_password_hash")
     }
+
+    @Test
+    fun `an over-length INSERT column name is truncated to 63 bytes`() {
+      // catalog.findColumn matches columnName by exact == against a server-truncated name.
+      val overLongColumn = "d".repeat(70)
+      val result = inferrer.inferParameterInfo("INSERT INTO users($overLongColumn) VALUES (?)")
+      assertThat(result.getValue(1).columnName).isEqualTo("d".repeat(63))
+    }
+
+    @Test
+    fun `an over-length INSERT table name is truncated to 63 bytes`() {
+      val overLongTable = "e".repeat(70)
+      val result = inferrer.inferParameterInfo("INSERT INTO $overLongTable(name) VALUES (?)")
+      assertThat(result.getValue(1).tableName).isEqualTo("e".repeat(63))
+    }
   }
 
   @Nested

@@ -356,10 +356,14 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
       )
 
     /**
-     * Strips surrounding double-quotes from a SQL identifier, if present.
-     * For example, `"name"` becomes `name`, and `author` stays `author`.
+     * Strips surrounding double-quotes from a SQL identifier, if present, and truncates the result
+     * to PostgreSQL's identifier limit. For example, `"name"` becomes `name`, and `author` stays
+     * `author`.
+     *
+     * The truncation matters because `catalog.findColumn` matches this value against a catalog name
+     * the server already truncated.
      */
-    private fun unquoteIdentifier(identifier: String): String =
+    private fun unquoteIdentifier(identifier: String): String = truncateIdentifier(
       if (identifier.startsWith('"') && identifier.endsWith('"')) {
         // PostgreSQL reads an embedded "" inside a quoted identifier as one literal " character, not
         // two -- un-doubling it here recovers the real column name (e.g. a"b), rather than leaving
@@ -367,7 +371,8 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
         identifier.substring(1, identifier.length - 1).replace("\"\"", "\"")
       } else {
         identifier
-      }
+      },
+    )
 
     /**
      * Extracts the simple (unqualified, unquoted) table name from a possibly

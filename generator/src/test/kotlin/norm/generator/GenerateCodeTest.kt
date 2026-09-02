@@ -1,11 +1,13 @@
 package norm.generator
 
 import assertk.assertThat
+import assertk.assertions.contains
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isTrue
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
+import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
 import org.junit.jupiter.params.ParameterizedTest
@@ -175,6 +177,76 @@ class GenerateCodeTest {
     }
 
     assertThat(createdFiles, "More files were created than expected").isEmpty()
+  }
+
+  /**
+   * Goes through [generateCode] rather than calling `resolveColumnPostgresType` directly, which is
+   * private. Looking that column up under the name the user configured, rather than the truncated
+   * one the catalog holds, used to fail the whole generation with "not found in catalog".
+   */
+  @Test
+  fun `column-level type mapping on an over-length table and column name resolves through the catalog`() {
+    connection.createStatement().use {
+      it.execute(
+        """
+        DEALLOCATE ALL;
+        DROP SCHEMA public CASCADE;
+        CREATE SCHEMA public;
+        GRANT ALL ON SCHEMA public TO public;
+        """.trimIndent(),
+      )
+    }
+
+    // Both names are exactly 70 ASCII characters -- one byte over PostgreSQL's 63-byte identifier
+    // limit -- so the server truncates the real relation/column names on CREATE TABLE.
+    val overLengthTableName = "over_length_table_used_for_main_kt_column_mapping_crash_regressionzzzz"
+    val overLengthColumnName = "over_length_column_used_for_main_kt_column_mapping_crash_regressionzzz"
+    connection.createStatement().use {
+      it.execute(
+        """
+        CREATE TABLE $overLengthTableName (
+          id integer PRIMARY KEY,
+          $overLengthColumnName jsonb NOT NULL
+        );
+        """.trimIndent(),
+      )
+    }
+
+    val analyzer = JdbcAnalyzer(connection)
+    val catalog = analyzer.buildCatalog()
+    val truncatedTableName = truncateIdentifier(overLengthTableName)
+
+    val parsedQueries = QueryFileParser.parse(
+      """
+      -- name: getRow :one
+      SELECT * FROM $truncatedTableName WHERE id = ?;
+      """.trimIndent(),
+    )
+    val analyzedQueries = parsedQueries.map { analyzer.analyzeQuery(it, catalog) }
+
+    // Configured with the FULL, untruncated names -- exactly what a user would write, taken straight
+    // from their own DDL -- not the server-truncated forms the catalog actually holds.
+    val mapping = TypeMapping(
+      "",
+      overLengthTableName,
+      overLengthColumnName,
+      "com.example.CustomJson",
+      "com.example.CustomJsonAdapter",
+    )
+
+    val result = generateCode(
+      catalog,
+      analyzedQueries,
+      "example",
+      emptySet(),
+      analyzer.fetchReservedWords(),
+      listOf(mapping),
+    )
+
+    val expectedAdapterPropertyName = userAdapterPropertyName(mapping)
+    val implementationFile = result.first { it.name.endsWith("PostgresQueries.kt") }
+    assertThat(implementationFile.contents).contains(expectedAdapterPropertyName)
+    assertThat(implementationFile.contents).contains("CustomJson")
   }
 
   companion object {

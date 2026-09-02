@@ -1570,4 +1570,40 @@ class SqlOutputClauseTest {
       assertThat(result.tableName).isNull()
     }
   }
+
+  @Nested
+  inner class IdentifierTruncation {
+
+    @Test
+    fun `an over-length unquoted column name is truncated to 63 bytes at parse time`() {
+      // catalog.findColumn matches columnName by exact == against a server-truncated name.
+      val overLongName = "a".repeat(70)
+      val result = parseSelectItems("SELECT $overLongName FROM t").single()
+      assertThat(result.columnName).isEqualTo("a".repeat(63))
+    }
+
+    @Test
+    fun `an over-length quoted column name is truncated to 63 bytes at parse time`() {
+      val overLongName = "a".repeat(70)
+      val result = parseSelectItems("SELECT \"$overLongName\" FROM t").single()
+      assertThat(result.columnName).isEqualTo("a".repeat(63))
+    }
+
+    @Test
+    fun `an over-length table qualifier is truncated to 63 bytes at parse time`() {
+      val overLongTable = "b".repeat(70)
+      val result = parseSelectItems("SELECT $overLongTable.col FROM t").single()
+      assertThat(result.tableName).isEqualTo("b".repeat(63))
+    }
+
+    @Test
+    fun `parseAliasToken's alias is RAW, not truncated -- an over-length quoted alias still ends in its quote`() {
+      // Truncating text that still carries its quotes would count those bytes and could drop the
+      // closing one. The alias stays raw here and is truncated after folding instead.
+      val overLongName = "a".repeat(70)
+      val result = parseOutputItemsWithAlias("SELECT x AS \"$overLongName\"").single()
+      assertThat(result.alias).isEqualTo("\"$overLongName\"")
+      assertThat(result.alias!!.endsWith("\"")).isTrue()
+    }
+  }
 }

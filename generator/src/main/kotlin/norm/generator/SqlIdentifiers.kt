@@ -190,3 +190,45 @@ internal val COLUMN_REFERENCE = Regex(
  */
 internal fun unescapeQuotedIdentifier(rawQuotedToken: String): String =
   rawQuotedToken.substring(1, rawQuotedToken.length - 1).replace("\"\"", "\"")
+
+/** PostgreSQL's `NAMEDATALEN - 1`: the byte length an identifier is truncated to by the server. */
+internal const val MAX_IDENTIFIER_LENGTH_BYTES = 63
+
+/**
+ * Truncates [identifier] the way PostgreSQL does when it reaches the server
+ * (`downcase_truncate_identifier` in `scan.l`): to the longest prefix of at most
+ * [MAX_IDENTIFIER_LENGTH_BYTES] UTF-8 bytes, dropping whole characters rather than splitting one.
+ * A 32-character name of `é` is 64 bytes and truncates to 31 characters, not to a broken 63rd byte.
+ *
+ * The server applies this to references as well as declarations, so `SELECT <70-char name>`
+ * resolves against a column created with that same name — both sides were already truncated to the
+ * same 63 bytes before being compared. Norm has to do the same to any name it reads out of SQL text
+ * or build configuration, since everything it reads from the server arrives truncated already.
+ *
+ * [identifier] must be the logical value, with quotes and any `""` escape already resolved; this
+ * only measures bytes and has no opinion on quoting. Truncating a still-quoted name would count the
+ * quote characters and can drop the closing one.
+ *
+ * Not part of [foldIdentifier], despite both being identifier-comparison rules: `parse_ident()`
+ * does not truncate, and `JdbcAnalyzerTest`'s `FoldIdentifierParseIdentDifferentialTest` pins
+ * [foldIdentifier] against it.
+ */
+internal fun truncateIdentifier(identifier: String): String {
+  var byteLength = 0
+  var index = 0
+  while (index < identifier.length) {
+    val codePoint = identifier.codePointAt(index)
+    val codePointByteLength = when {
+      codePoint <= 0x7F -> 1
+      codePoint <= 0x7FF -> 2
+      codePoint <= 0xFFFF -> 3
+      else -> 4
+    }
+    if (byteLength + codePointByteLength > MAX_IDENTIFIER_LENGTH_BYTES) {
+      return identifier.substring(0, index)
+    }
+    byteLength += codePointByteLength
+    index += Character.charCount(codePoint)
+  }
+  return identifier
+}

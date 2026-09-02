@@ -137,19 +137,22 @@ private data class VerifiedItem(val expression: String, val matchKind: AliasMatc
 private fun verifiedItem(item: OutputItemWithAlias, resultName: String): VerifiedItem? {
   val alias = item.alias
   if (alias != null) {
-    return item.selectItem.expression.takeIf { foldIdentifier(alias) == resultName }
+    // resultName comes from the server and is already truncated. Truncating after the fold, not
+    // before: the raw alias still carries its quotes, and those bytes are not part of the name.
+    return item.selectItem.expression.takeIf { truncateIdentifier(foldIdentifier(alias)) == resultName }
       ?.let { VerifiedItem(it, AliasMatchKind.EXPLICIT_ALIAS) }
   }
 
   val columnName = item.selectItem.columnName
   if (columnName != null) {
+    // parseColumnReference already truncated columnName.
     val folded = foldIdentifier(columnName, item.selectItem.isColumnNameQuoted)
     return item.selectItem.expression.takeIf { folded == resultName }
       ?.let { VerifiedItem(it, AliasMatchKind.BARE_COLUMN_REFERENCE) }
   }
 
   val implicitAlias = splitTrailingImplicitAlias(item.selectItem.expression)?.alias ?: return null
-  return item.selectItem.expression.takeIf { foldIdentifier(implicitAlias) == resultName }
+  return item.selectItem.expression.takeIf { truncateIdentifier(foldIdentifier(implicitAlias)) == resultName }
     ?.let { VerifiedItem(it, AliasMatchKind.IMPLICIT_ALIAS) }
 }
 
@@ -204,7 +207,9 @@ private fun scopedSqlCteDefinition(sql: String, hops: List<CteHop>): CteDefiniti
   var resolvedDefinition: CteDefinition? = null
   for (hop in hops) {
     val scope = scopeStack.getOrNull(hop.ctelevelsup) ?: return null
-    val definition = scope.filter { foldIdentifier(it.rawName) == hop.name }.singleOrNull() ?: return null
+    // hop.name comes from the node tree and is already truncated.
+    val definition = scope.filter { truncateIdentifier(foldIdentifier(it.rawName)) == hop.name }.singleOrNull()
+      ?: return null
     resolvedDefinition = definition
     val bodyOffset = definition.bodyOpenParenthesis + 1
     val bodyText = sql.substring(bodyOffset, definition.bodyCloseParenthesis)
