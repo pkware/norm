@@ -41,7 +41,7 @@ class SqlStarItemTest {
     @Test
     fun `a dollar-quoted string's own opening dollar sign is not mistaken for an identifier boundary`() {
       // Regression guard for the adjacency gate this generalizes: "$" still only breaks a run when
-      // it was NOT genuinely adjacent to the identifier character before it -- a real adjacency
+      // it was not genuinely adjacent to the identifier character before it -- a real adjacency
       // (never separated by whitespace/comment in the original text) must keep continuing the run
       // exactly as before.
       val result = splitTrailingImplicitAlias("a\$b dx")

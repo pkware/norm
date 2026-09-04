@@ -37,10 +37,10 @@ internal sealed interface PgNodeExpression {
 
   /**
    * @property isVariadic `true` when the call uses `VARIADIC` (e.g. `concat(VARIADIC arr)`) —
-   *   from `:funcvariadic`. In this form the LAST entry of [arguments] is the array expression
+   *   from `:funcvariadic`. In this form the last entry of [arguments] is the array expression
    *   itself, passed through as one value, not exploded into its elements. This matters for
-   *   nullability: `concat(VARIADIC arr)` is `null` when `arr` itself is `null` (verified live on
-   *   PostgreSQL 16, 17, and 18), which neither [PgCatalogLoader.alwaysNonNullFunctionOids] nor
+   *   nullability: `concat(VARIADIC arr)` is `null` when `arr` itself is `null` on PostgreSQL
+   *   16, 17, and 18, which neither [PgCatalogLoader.alwaysNonNullFunctionOids] nor
    *   [PgCatalogLoader.nonNullIffFirstArgumentNonNullFunctionOids] account for on their own — both
    *   assume the ordinary (non-`VARIADIC`) calling form where every argument is an individual
    *   scalar value, and [NodeTreeNullabilityAnalyzer.isNonNull] must check this flag before
@@ -155,8 +155,8 @@ internal sealed interface PgNodeExpression {
    *
    * @property type The `JsonConstructorType` code — see the `JSON_CONSTRUCTOR_TYPE_*` constants below.
    * @property arguments The parsed `:args` list: each flattened key/value pair for `OBJECT`, each
-   *   element for `ARRAY`, the single value argument for `PARSE`/`SCALAR`/`SERIALIZE`. ALWAYS EMPTY for
-   *   `OBJECTAGG`/`ARRAYAGG`, which put the underlying aggregate in [function] instead.
+   *   element for `ARRAY`, the single value argument for `PARSE`/`SCALAR`/`SERIALIZE`. Always empty
+   *   for `OBJECTAGG`/`ARRAYAGG`, which put the underlying aggregate in [function] instead.
    * @property function The parsed `:func` node — `null` (from `:func <>`) for every type except
    *   `OBJECTAGG`/`ARRAYAGG`, where it holds the [Aggref] (or [WindowFunc], when `OVER` is used) that
    *   computes the aggregated JSON value. [NodeTreeNullabilityAnalyzer.isNonNull] recurses into this
@@ -276,12 +276,12 @@ internal data class NodeTreeCteDefinition(val name: String, val queryBlock: Stri
  * A CTE range-table-entry reference (`rtekind 6`) parsed from a query block's own `:rtable`.
  *
  * @property name The referenced CTE's name (from `:ctename`).
- * @property ctelevelsup `0` when the CTE is declared in the SAME query block's own `:cteList`; a
+ * @property ctelevelsup `0` when the CTE is declared in the same query block's own `:cteList`; a
  *   value greater than `0` means the declaration is that many query levels further up, in an
  *   enclosing scope. The distinction is required when a block declares its own `WITH c` that shadows
  *   an enclosing `WITH c` of the same name with a different body — see
  *   [ColumnNullabilityAnalyzer.analyzeQueryBlockNullability].
- * @property selfReference Whether this specific reference is a recursive CTE's OWN recursive term
+ * @property selfReference Whether this specific reference is a recursive CTE's own recursive term
  *   referring back to itself (from `:self_reference`). `false` for every ordinary CTE reference —
  *   this is only ever `true` inside a `WITH RECURSIVE` CTE's own recursive query term. Defaults to
  *   `false` since only [RangeTableEntry.Cte] (built by [PgNodeTreeParser.parseRangeTableEntries])
@@ -290,7 +290,7 @@ internal data class NodeTreeCteDefinition(val name: String, val queryBlock: Stri
 internal data class NodeTreeCteReference(val name: String, val ctelevelsup: Int, val selfReference: Boolean = false)
 
 /**
- * A single range-table entry, keyed by 1-based `varno`, covering EVERY `rtekind` — unlike
+ * A single range-table entry, keyed by 1-based `varno`, covering every `rtekind` — unlike
  * [PgNodeTreeParser.parseRangeTable] ([Relation] only), [PgNodeTreeParser.parseSubqueryRangeTable]
  * ([Subquery] only), and [PgNodeTreeParser.parseCteRangeTableEntries] ([Cte] only), which each
  * recognize exactly one kind and silently skip every entry of any other kind.
@@ -314,7 +314,7 @@ internal sealed interface RangeTableEntry {
   /**
    * `rtekind 2`: a `JOIN` (including its `USING`/`NATURAL`-merged output columns).
    *
-   * @property joinAliasVars One parsed expression per join OUTPUT column, in order — 1-based
+   * @property joinAliasVars One parsed expression per join output column, in order — 1-based
    *   `varattno - 1` indexes into this list. An ordinary (non-merged) column's entry is a bare
    *   [PgNodeExpression.Var] pointing at whichever side produced it; a `USING`/`NATURAL`-merged
    *   column's entry is a [PgNodeExpression.CoalesceExpr] of the two sides' Vars. That distinction
@@ -350,7 +350,7 @@ internal sealed interface RangeTableEntry {
  *   `:groupClause`/`:groupingSets`, this entry IS a `GROUP BY` grouping key — see
  *   [NodeTreeNullabilityAnalyzer]'s GROUPING SETS/CUBE/ROLLUP handling.
  * @property originalTableOid The entry's `:resorigtbl` value — the OID of the real relation this
- *   column ultimately traces back to (PostgreSQL's own `markTargetListOrigins` walks THROUGH a CTE
+ *   column ultimately traces back to (PostgreSQL's own `markTargetListOrigins` walks through a CTE
  *   or subquery reference to find it, not merely the immediate FROM item), or `0` when there is no
  *   single source column (a computed expression, an aggregate, a set-operation branch, or a
  *   `USING`/`NATURAL`-merged join column).

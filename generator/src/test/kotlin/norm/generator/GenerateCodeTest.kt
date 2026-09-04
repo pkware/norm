@@ -135,10 +135,10 @@ class GenerateCodeTest {
       if (propsFile.exists()) propsFile.inputStream().use { load(it) }
     }
     val allParsedQueries = if (scenarioProperties.getProperty("generateCrud", "false").toBoolean()) {
-      // Must match NormGenerateTask's own production call exactly: without the real quoter, a
-      // synthesized statement referencing a quoted/mixed-case/space-containing column (e.g. the
-      // crud_generation scenario's "quoted_columns" table, #238) comes back unquoted and fails
-      // with a genuine PostgreSQL syntax error at analysis time, never reaching golden comparison.
+      // Must match NormGenerateTask's production call: without the real quoter, a synthesized
+      // statement referencing a quoted/mixed-case/space-containing column (e.g. the
+      // crud_generation scenario's "quoted_columns" table) comes back unquoted and fails with a
+      // PostgreSQL syntax error at analysis time, before reaching golden comparison.
       CrudQuerySynthesizer.synthesizeAndMerge(catalog, parsedQueries, analyzer.buildIdentifierQuoter())
     } else {
       parsedQueries
@@ -154,11 +154,10 @@ class GenerateCodeTest {
       analyzedQueries,
       effectivePackageName,
       frameworks,
-      // Must match NormGenerateTask's own production call: without the real, live-fetched reserved
-      // word set, a scenario naming a relation/column after a reserved word (e.g. "order", "user")
-      // would render an unquoted source reference that never actually runs against PostgreSQL, and
-      // golden comparison would silently accept text this repository's own live-server verification
-      // test (SourceReferenceLiveVerificationTest) would then reject.
+      // Must match NormGenerateTask's production call: without the live-fetched reserved word
+      // set, a scenario naming a relation/column after a reserved word (e.g. "order", "user")
+      // renders an unquoted source reference that never runs against PostgreSQL, and golden
+      // comparison would silently accept text SourceReferenceLiveVerificationTest would reject.
       analyzer.fetchReservedWords(),
       typeMappings,
     )
@@ -224,8 +223,8 @@ class GenerateCodeTest {
     )
     val analyzedQueries = parsedQueries.map { analyzer.analyzeQuery(it, catalog) }
 
-    // Configured with the FULL, untruncated names -- exactly what a user would write, taken straight
-    // from their own DDL -- not the server-truncated forms the catalog actually holds.
+    // Configured with the full, untruncated names -- what a user would write, taken from their
+    // own DDL -- not the server-truncated forms the catalog actually holds.
     val mapping = TypeMapping(
       "",
       overLengthTableName,

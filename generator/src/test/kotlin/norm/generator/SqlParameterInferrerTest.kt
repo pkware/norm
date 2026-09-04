@@ -20,8 +20,7 @@ class SqlParameterInferrerTest {
     "encode" to listOf(FunctionOverload(emptyList(), isStrict = true)),
     "hmac" to listOf(FunctionOverload(emptyList(), isStrict = true)),
     "upper" to listOf(FunctionOverload(listOf("str"), isStrict = true)),
-    // Matches real PostgreSQL pg_proc for the 3-arg overload, verified directly:
-    // proargnames = {string,pattern,replacement}.
+    // PostgreSQL's pg_proc for the 3-arg overload has proargnames = {string,pattern,replacement}.
     "regexp_replace" to listOf(FunctionOverload(listOf("string", "pattern", "replacement"), isStrict = true)),
   )
 
@@ -204,18 +203,16 @@ class SqlParameterInferrerTest {
 
     @Test
     fun `resolves the formal argument name even when a later argument's literal contains an unbalanced parenthesis`() {
-      // Pins a behavior change: findMatchingCloseParenthesis previously miscounted the "(" inside
-      // the string literal '\(' as a real parenthesis, so extractFunctionCalls's own paren search
-      // never found a balanced close for this call — the call was skipped entirely (not "found
-      // with the wrong args"), and the parameter fell through to a caller-level generic default
-      // (p1) instead of a real name. Fixed by SqlUtils.kt's lexical-aware findMatchingCloseParenthesis.
-      // "string" IS the correct name per Norm's own established rule (see "infers formal argument
-      // names from pg_proc" above): a pg_proc formal argument name always wins over a generic
-      // fallback, and regexp_replace(string, pattern, replacement) is regexp_replace's real
-      // 3-argument signature (verified directly against PostgreSQL pg_proc), so the FIRST ? is
-      // "string" here for exactly the same reason the first ? in crypt(?, gen_salt('bf')) is
-      // "password" above — this is not new behavior, just this shape finally reaching the rule
-      // that was always intended for it.
+      // findMatchingCloseParenthesis previously miscounted the "(" inside the string literal
+      // '\(' as a real parenthesis, so extractFunctionCalls's own paren search never found a
+      // balanced close for this call — the call was skipped entirely, and the parameter fell
+      // through to a caller-level generic default (p1) instead of a real name. Fixed by
+      // SqlUtils.kt's lexical-aware findMatchingCloseParenthesis.
+      // "string" is the correct name per Norm's own rule (see "infers formal argument names from
+      // pg_proc" above): a pg_proc formal argument name always wins over a generic fallback, and
+      // regexp_replace(string, pattern, replacement) is regexp_replace's real 3-argument
+      // signature, so the first ? is "string" here for the same reason the first ? in
+      // crypt(?, gen_salt('bf')) is "password" above.
       val result = inferrer.inferParameterInfo(
         """SELECT id FROM p WHERE name = regexp_replace(?, '\(', '')""",
       )
@@ -337,27 +334,27 @@ class SqlParameterInferrerTest {
     fun `captures the whole dollar-containing function name, not just the run after the dollar sign`() {
       // FUNCTION_CALL_START previously used a bare "\w+", which excludes "$" -- "\w+" cannot match
       // "my$fn" as one run, so findAll instead matched the shorter run "fn" immediately before the
-      // "(", handing SqlParameterInferrer.extractFunctionCalls the WRONG function name. Verified
-      // against a real PostgreSQL 18.4: "my$fn" is a legal unquoted function name (CREATE FUNCTION
-      // "my$fn"(...) and the unquoted call my$fn(...) resolve to the same function).
+      // "(", handing SqlParameterInferrer.extractFunctionCalls the wrong function name. In
+      // PostgreSQL 18.4, "my$fn" is a legal unquoted function name (CREATE FUNCTION "my$fn"(...)
+      // and the unquoted call my$fn(...) resolve to the same function).
       val match = FUNCTION_CALL_START.find("SELECT my\$fn(?)")
       assertThat(match!!.groupValues[1]).isEqualTo("my\$fn")
     }
 
     @Test
     fun `captures a function name continuing with a non-ASCII character`() {
-      // "\w+" is ASCII-only, so it also excludes any ">= 0x80" character -- verified against a
-      // real PostgreSQL 18.4: an unquoted function named "fn€" is legal and callable unquoted.
+      // "\w+" is ASCII-only, so it also excludes any ">= 0x80" character. In PostgreSQL 18.4, an
+      // unquoted function named "fn€" is legal and callable unquoted.
       val match = FUNCTION_CALL_START.find("SELECT fn€(?)")
       assertThat(match!!.groupValues[1]).isEqualTo("fn€")
     }
 
     @Test
     fun `does not capture a digit as the start of a function name`() {
-      // Verified against a real PostgreSQL 18.4: "2fn(...)" is rejected outright ("trailing junk
-      // after numeric literal") -- a digit may never START an identifier. The regex's own
-      // leading-character restriction means a match beginning with "2" is impossible; the only
-      // match found here starts at "f".
+      // In PostgreSQL 18.4, "2fn(...)" is rejected outright ("trailing junk after numeric
+      // literal") -- a digit may never start an identifier. The regex's own leading-character
+      // restriction means a match beginning with "2" is impossible; the only match found here
+      // starts at "f".
       val match = FUNCTION_CALL_START.find("SELECT 2fn(?)")
       assertThat(match!!.groupValues[1]).isEqualTo("fn")
     }

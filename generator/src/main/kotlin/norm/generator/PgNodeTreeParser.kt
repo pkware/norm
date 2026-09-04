@@ -10,23 +10,19 @@ import java.util.logging.Logger
  * integers, booleans, bitmapsets (`(b N ...)`), or nested `{...}` blocks.
  *
  * **Escaping**: Postgres's node-tree writer (`outToken` in `outfuncs.c`) backslash-escapes any
- * character in a string/identifier VALUE that would otherwise be misread as structural by the
- * reader: `{`, `}`, `(`, `)`, whitespace, and the backslash character itself (verified empirically
- * against a live server — e.g. a column alias of `k}x` is written as `:resname k\}x`, and a
- * literal backslash in a value is written as `\\`). Every backslash-prefixed pair is exactly two
- * characters (the escaping is never multi-character, e.g. there is no `\n`-for-newline mnemonic —
- * a literal newline is written as a backslash followed by the raw newline byte). Every function in
- * this class that scans raw text character-by-character for structural `{`, `}`, `(`, or `)` must
- * treat a `\`-prefixed pair as an opaque, non-structural unit — see [nextUnescapedIndexOf],
- * [findMarkerAtDepthOne], and [extractBalancedDelimiters]. Field-name markers (e.g. `:targetList (`,
- * `:expr {`) are Postgres's own fixed labels, never user data, so they are never escaped, and the
- * plain (non-escape-aware) substring searches for them elsewhere in this class ([extractArgListSection]
- * and similar) remain safe as long as they hand off to an escape-aware balanced-delimiter scan for
- * everything past the marker. [extractFieldExpression] is the one exception worth calling out
- * explicitly: unlike those, it searches via the escape-aware AND depth-one-aware
- * [findMarkerAtDepthOne] rather than a plain `indexOf` — see its own KDoc for why depth-one-awareness
- * is required there specifically (several node types have a field whose own value can legally
- * contain another node of the same outer type carrying the same field name, nested deeper).
+ * character in a string/identifier value that would otherwise be misread as structural: `{`, `}`,
+ * `(`, `)`, whitespace, and the backslash itself. A column alias of `k}x` is written as
+ * `:resname k\}x`; a literal backslash in a value is written as `\\`. Every backslash-prefixed pair
+ * is exactly two characters — there is no `\n`-for-newline mnemonic; a literal newline is written as
+ * a backslash followed by the raw newline byte. Every function here that scans raw text
+ * character-by-character for structural `{`, `}`, `(`, or `)` must treat a `\`-prefixed pair as an
+ * opaque unit — see [nextUnescapedIndexOf], [findMarkerAtDepthOne], and [extractBalancedDelimiters].
+ * Field-name markers (e.g. `:targetList (`, `:expr {`) are Postgres's own fixed labels, never user
+ * data, so they are never escaped, and the plain substring searches for them elsewhere in this class
+ * ([extractArgListSection] and similar) are safe as long as they hand off to an escape-aware scan
+ * for everything past the marker. [extractFieldExpression] is the exception: it searches via the
+ * escape-aware and depth-one-aware [findMarkerAtDepthOne] rather than a plain `indexOf` — see its
+ * own KDoc for why depth-one-awareness is needed there specifically.
  *
  * This class is stateless. Call [parseExpression] with any `{NODE_TYPE ...}` text to get a typed
  * node. Unrecognized node types become [PgNodeExpression.Unknown] and malformed input becomes
@@ -158,16 +154,16 @@ internal class PgNodeTreeParser {
   }
 
   /**
-   * Parses GROUP RTE (`rtekind 9`) group expressions — the FULLY PARSED counterpart to
+   * Parses GROUP RTE (`rtekind 9`) group expressions — the fully-parsed counterpart to
    * [parseGroupRteMap] — from a full `pg_node_tree` text.
    *
    * PostgreSQL 18 introduced an `RTE_GROUP` range-table entry (`:rtekind 9`, alias `*GROUP*`) that
-   * carries a `:groupexprs` list of the query's grouping-key expressions, and rewrites EVERY
-   * target-list occurrence of a grouping-key expression (not merely the one PostgreSQL assigns
+   * carries a `:groupexprs` list of the query's grouping-key expressions, and rewrites every
+   * target-list occurrence of a grouping-key expression (not just the one PostgreSQL assigns
    * `:ressortgroupref` to) into a bare `Var` referencing this RTE. PostgreSQL 16 and 17 have no
-   * such RTE — no `:rtable` entry there ever has `:rtekind 9` — so on those versions this method's
-   * return value is always an empty map, and the original expression is left in place in the
-   * target list for [parseTargetList] to see directly.
+   * such RTE — no `:rtable` entry there ever has `:rtekind 9` — so on those versions this method
+   * always returns an empty map, and the original expression is left in place in the target list
+   * for [parseTargetList] to see directly.
    *
    * Unlike [parseGroupRteMap], which only resolves a GROUP RTE entry that is itself a bare `VAR`
    * (mapping it back to a `(baseVarno, baseVarattno)` pair), this method parses the `:groupexprs`
@@ -352,14 +348,13 @@ internal class PgNodeTreeParser {
    * ROLLUP/CUBE/SETS (`:kind` 2/3/4) nest further `{GROUPINGSET ...}` blocks in `:content` instead —
    * PostgreSQL does not pre-expand ROLLUP/CUBE into their individual grouping sets at parse-analysis
    * time, that happens later in the planner. Rather than modeling that nesting, this method takes the
-   * union of every `(i ...)` integer list found anywhere inside `:groupingSets`, which — since a
-   * `GROUPINGSET`'s only other fields are the scalar `:kind` and `:location` integers, never
-   * `(i ...)`-formatted — is exactly the set of grouping-key `tleSortGroupRef`s regardless of nesting.
+   * union of every `(i ...)` integer list found anywhere inside `:groupingSets`, which is exactly the
+   * set of grouping-key `tleSortGroupRef`s regardless of nesting, since a `GROUPINGSET`'s only other
+   * fields are the scalar `:kind` and `:location` integers, never `(i ...)`-formatted.
    *
-   * Both halves matter: relying on `:groupClause` alone would miss a `GROUPING SETS`/`CUBE`/`ROLLUP`
-   * grouping key that a target-list entry's `:ressortgroupref` still points at, and relying on
-   * `:groupingSets` alone is needlessly fragile against alternate/older node-tree shapes — the union
-   * is taken defensively rather than trusting either source alone.
+   * Relying on `:groupClause` alone would miss a `GROUPING SETS`/`CUBE`/`ROLLUP` grouping key that a
+   * target-list entry's `:ressortgroupref` still points at, and relying on `:groupingSets` alone is
+   * needlessly fragile against alternate/older node-tree shapes, so both sources are unioned.
    *
    * @param nodeTreeText the raw `pg_rewrite.ev_action` text
    * @return the set of `tleSortGroupRef` values that are `GROUP BY` grouping keys; empty if the
@@ -428,11 +423,11 @@ internal class PgNodeTreeParser {
       if (cteQueryIndex == -1) return@mapNotNull null
       val braceStart = cteQueryIndex + cteQueryMarker.length - 1
       val queryBlock = extractBalancedBraces(block, braceStart) ?: return@mapNotNull null
-      // :cterecursive is serialized AFTER :ctequery in COMMONTABLEEXPR's own field order, so a naive
+      // :cterecursive is serialized after :ctequery in COMMONTABLEEXPR's field order, so a naive
       // whole-block scan could find a nested COMMONTABLEEXPR's same-named field first if queryBlock
-      // itself declares a nested WITH clause -- extractBoolFieldAtDepthOne scopes the search to
-      // block's own outermost brace to avoid that. :ctename above needs no such scoping: it is
-      // always serialized before :ctequery.
+      // itself declares a nested WITH clause; extractBoolFieldAtDepthOne scopes the search to
+      // block's own outermost brace to avoid that. :ctename needs no such scoping — it is always
+      // serialized before :ctequery.
       val recursive = extractBoolFieldAtDepthOne(block, ":cterecursive") ?: false
       NodeTreeCteDefinition(name = cteName, queryBlock = queryBlock, recursive = recursive)
     }
@@ -444,8 +439,8 @@ internal class PgNodeTreeParser {
    * Extracts the `:rtable` section and returns a map from 1-based `varno` to a
    * [NodeTreeCteReference] (the CTE's `:ctename` and `:ctelevelsup`) for each range table entry
    * with `rtekind 6`. `:ctelevelsup` defaults to `0` when absent, matching PostgreSQL's own default
-   * for a same-level reference (verified live, PostgreSQL 18: the field is always present on a real
-   * CTE RTE, so this default is defensive only).
+   * for a same-level reference; on PostgreSQL 18 the field is always present on a real CTE RTE, so
+   * this default is defensive only.
    *
    * This is the CTE counterpart to [parseRangeTable] (which handles `rtekind 0` base tables)
    * and [parseSubqueryRangeTable] (which handles `rtekind 1` subqueries).
@@ -468,7 +463,7 @@ internal class PgNodeTreeParser {
   }
 
   /**
-   * Parses EVERY range-table entry from [nodeTreeText]'s own `:rtable`, regardless of `rtekind`,
+   * Parses every range-table entry from [nodeTreeText]'s own `:rtable`, regardless of `rtekind`,
    * into a [RangeTableEntry] — see that type's KDoc for why a resolver needs visibility into every
    * kind, not just the ones [parseRangeTable], [parseSubqueryRangeTable], and
    * [parseCteRangeTableEntries] each recognize individually.
@@ -476,7 +471,7 @@ internal class PgNodeTreeParser {
    * None of the fields read here need [findMarkerAtDepthOne]'s depth-one-awareness: a `JOINEXPR`
    * range-table entry's own fields (`:jointype`, `:joinaliasvars`, etc.) contain no nested `QUERY`
    * block that could shadow them (`:joinaliasvars`'s entries are scalar expressions, never a whole
-   * query), and a `CTE` range-table entry (`rtekind 6`) carries only the CTE's NAME and scope
+   * query), and a `CTE` range-table entry (`rtekind 6`) carries only the CTE's name and scope
    * metadata, not its body — the body lives in `:cteList`, parsed separately by [parseCteList].
    *
    * @param nodeTreeText the raw `pg_rewrite.ev_action` text (or a bare `{QUERY ...}` block)
@@ -558,12 +553,11 @@ internal class PgNodeTreeParser {
    * table an `INSERT`/`UPDATE`/`DELETE`/`MERGE` writes to, or `0` for a plain `SELECT` (`0` is
    * never a valid `rtable` index, so it is a safe "no target relation" sentinel for callers).
    *
-   * [extractIntField] finds the FIRST unscoped textual occurrence of `:resultRelation` in
+   * [extractIntField] finds the first unscoped textual occurrence of `:resultRelation` in
    * [nodeTreeText], which is always the outermost QUERY's own field, never a nested CTE's or
-   * subquery's: `:resultRelation` is serialized immediately after `:utilityStmt` — before
-   * `:cteList` or `:rtable`, both of which is where any nested `{QUERY ...}` block would appear —
-   * on every PostgreSQL version this class supports (16, 17, 18), the same field-order argument
-   * [parseVar]'s own KDoc already relies on for `:varreturningtype`.
+   * subquery's: `:resultRelation` is serialized immediately after `:utilityStmt`, before
+   * `:cteList` or `:rtable` — where a nested `{QUERY ...}` block would appear — on PostgreSQL 16,
+   * 17, and 18.
    *
    * @param nodeTreeText the raw `pg_rewrite.ev_action` or `pg_proc.prosqlbody` text, or a bare
    *   `{QUERY ...}` block
@@ -584,8 +578,8 @@ internal class PgNodeTreeParser {
   fun parseCommandType(nodeTreeText: String): Int = extractIntField(nodeTreeText, ":commandType") ?: 0
 
   /**
-   * `true` when [nodeTreeText]'s outermost `MERGE` statement declares AT LEAST ONE `WHEN ... THEN
-   * DELETE` action — i.e. at least one `{MERGEACTION ...}` block in `:mergeActionList` whose OWN
+   * `true` when [nodeTreeText]'s outermost `MERGE` statement declares at least one `WHEN ... THEN
+   * DELETE` action — i.e. at least one `{MERGEACTION ...}` block in `:mergeActionList` whose own
    * `:commandType` is `4` (`DELETE`, same enum as [parseCommandType]'s top-level use, but scoped
    * here to each individual action rather than the outermost statement).
    *
@@ -611,9 +605,9 @@ internal class PgNodeTreeParser {
       ?: error("Missing :varattno in VAR node")
     val nullingRelations = extractBitmapset(text, ":varnullingrels")
     val levelsUp = extractIntField(text, ":varlevelsup") ?: 0
-    // ":varreturningtype" only appears on PostgreSQL 18+ (RETURNING WITH (OLD AS o, NEW AS n)) and
-    // is absent entirely on 16/17 — see PgNodeExpression.Var.returningType's KDoc for why 0 (never
-    // 1, "OLD") is the correct default for a missing field.
+    // :varreturningtype only appears on PostgreSQL 18+ (RETURNING WITH (OLD AS o, NEW AS n)) and is
+    // absent on 16/17 — see PgNodeExpression.Var.returningType's KDoc for why 0 (never 1, "OLD") is
+    // the correct default for a missing field.
     val returningType = extractIntField(text, ":varreturningtype") ?: 0
     return PgNodeExpression.Var(
       varno = varno,
@@ -625,11 +619,9 @@ internal class PgNodeTreeParser {
   }
 
   private fun parseConst(text: String): PgNodeExpression.Const {
-    // Default to `true` (nullable) when `:constisnull` cannot be read — never `false`. `:constisnull`
-    // is always emitted by a live server, but that guarantee only covers today's known-good format;
-    // if a future Postgres version ever renamed or reordered the field, this default is what a
-    // malformed/absent read degrades to, and it must fail toward nullable, never toward a confidently
-    // wrong NOT NULL.
+    // Default to `true` (nullable) when `:constisnull` cannot be read, never `false`: a future
+    // Postgres version renaming or reordering the field must degrade toward nullable, not toward a
+    // confidently wrong NOT NULL.
     val isNull = extractBoolField(text, ":constisnull") ?: true
     return PgNodeExpression.Const(isNull = isNull)
   }
@@ -637,22 +629,16 @@ internal class PgNodeTreeParser {
   /**
    * Parses a `{FUNCEXPR ...}` block.
    *
-   * Correctness of [PgNodeExpression.FuncExpr.isVariadic] rests on an invariant of the
-   * `pg_node_tree` format, verified live on PostgreSQL 16, 17, and 18: `:funcvariadic` is a
-   * scalar field of `FUNCEXPR` that always precedes `:args` in that node's own field order, and
-   * it is always emitted explicitly — including `:funcvariadic false` for an ordinary call, never
-   * omitted. [extractBoolField] matches the FIRST occurrence of `:funcvariadic` anywhere in
-   * [text], including inside nested blocks, so this is only safe because the outer node's own
-   * field is textually guaranteed to appear before any nested `FUNCEXPR`'s field, regardless of
-   * whether the nesting is variadic-in-non-variadic or non-variadic-in-variadic (both directions
-   * verified live — see `PgNodeTreeParserTest`). If a future PostgreSQL version ever reordered
-   * `FUNCEXPR`'s fields or made `:funcvariadic` conditional, this extraction would silently start
-   * reading the wrong node's flag — which is exactly why the fallback below defaults to `true`
-   * (variadic) rather than `false`: the "always emitted" guarantee describes today's known-good
-   * format, not a reason to trust an optimistic default should that ever stop holding.
-   * [NodeTreeNullabilityAnalyzer.isNonNull]'s `FuncExpr` branch treats a variadic call far more
-   * conservatively than an ordinary one (see its own KDoc), so defaulting `true` here can only
-   * make an unreadable flag resolve toward nullable, never toward a confidently wrong NOT NULL.
+   * `:funcvariadic` always precedes `:args` in `FUNCEXPR`'s field order on PostgreSQL 16, 17, and
+   * 18, and is always emitted explicitly, including `:funcvariadic false`. [extractBoolField]
+   * matches the first occurrence of `:funcvariadic` anywhere in [text], including nested blocks, so
+   * this relies on the outer node's own field appearing before any nested `FUNCEXPR`'s field — both
+   * nesting directions are covered by `PgNodeTreeParserTest`. If a future PostgreSQL version ever
+   * reordered the fields, this extraction would silently read the wrong node's flag instead, and
+   * the fallback below cannot catch that: it only fires when `:funcvariadic` is absent from [text]
+   * entirely. For that absent-field case, the default is `true` (variadic), not `false`: variadic
+   * calls are treated more conservatively by [NodeTreeNullabilityAnalyzer.isNonNull]'s `FuncExpr`
+   * branch, so this default fails toward nullable, never toward a wrong NOT NULL.
    */
   private fun parseFuncExpr(text: String): PgNodeExpression.FuncExpr {
     val functionOid = extractIntField(text, ":funcid") ?: error("Missing :funcid in FUNCEXPR node")
@@ -707,10 +693,9 @@ internal class PgNodeTreeParser {
     // :testexpr is extracted unconditionally, not just for ANY/ALL: outerOperand also feeds
     // NodeTreeNullabilityAnalyzer.safetyWalkChildren/containsVarOutsideRelation and
     // GroupRteSubstitution's Var walk. Every other sublink type either emits no :testexpr or emits a
-    // ROWCOMPAREEXPR with no readable :args, so those consumers see nothing new today; what this buys
-    // is that a future SubLinkType carrying a real testexpr becomes visible automatically instead of
-    // being silently hidden by a subLinkType gate. isNonNull's ANY/ALL proof stays gated below, so
-    // this alone cannot make any sublink provably non-null.
+    // ROWCOMPAREEXPR with no readable :args, so a future SubLinkType carrying a real testexpr becomes
+    // visible automatically instead of being hidden by a subLinkType gate. isNonNull's ANY/ALL proof
+    // stays gated below, so this alone cannot make any sublink provably non-null.
     val testExprBlock = extractFieldExpression(text, ":testexpr")
     val outerOperand = testExprBlock?.let { testExpr ->
       extractArgListSection(testExpr, ":args")?.let { splitBraceBlocks(it).firstOrNull()?.let(::parseExpression) }
@@ -718,11 +703,10 @@ internal class PgNodeTreeParser {
     val testExpressionOperatorOid = (testExprBlock?.let(::parseExpression) as? PgNodeExpression.OpExpr)
       ?.operatorFunctionOid
     // :subselect holds the sublink's subquery body ({QUERY ...}), mirroring parseSubqueryRangeTable
-    // and parseCteList's extraction of the same node shape — see subselectBlock's KDoc for why it
-    // is captured verbatim rather than parsed here. Depth-one-aware (via extractFieldExpression)
-    // is mandatory, not incidental: :testexpr precedes :subselect in SUBLINK's own field order, and
-    // :testexpr's own value can contain a NESTED sublink with its own :subselect — see
-    // extractFieldExpression's KDoc for the live-verified repro this guards against.
+    // and parseCteList's extraction of the same node shape. Depth-one-awareness (via
+    // extractFieldExpression) is required: :testexpr precedes :subselect in SUBLINK's field order,
+    // and :testexpr's own value can contain a nested sublink with its own :subselect — see
+    // extractFieldExpression's KDoc for the repro this guards against.
     val subselectBlock = extractFieldExpression(text, ":subselect")
     return PgNodeExpression.SubLink(
       subLinkType = subLinkType,
@@ -844,10 +828,10 @@ internal class PgNodeTreeParser {
    * needing `FORMAT`-aware coercion — by transparently unwrapping to its `:formatted_expr` child
    * rather than modeling it as its own [PgNodeExpression] variant.
    *
-   * Load-bearing, not defensive: without this case a `{JSONVALUEEXPR ...}` parses to
-   * [PgNodeExpression.Unknown], which [NodeTreeNullabilityAnalyzer.isNonNull] always treats as
-   * nullable, so `JSON(a_not_null_column)`/`JSON_SERIALIZE(a_not_null_column)` would be reported
-   * nullable regardless of the source column's constraint. `JSON()`'s single argument always wraps;
+   * Without this case a `{JSONVALUEEXPR ...}` parses to [PgNodeExpression.Unknown], which
+   * [NodeTreeNullabilityAnalyzer.isNonNull] always treats as nullable, so
+   * `JSON(a_not_null_column)`/`JSON_SERIALIZE(a_not_null_column)` would be reported nullable
+   * regardless of the source column's constraint. `JSON()`'s single argument always wraps;
    * `JSON_SERIALIZE`'s wraps only when its argument is not already `jsonb`; `JSON_SCALAR`'s never does.
    *
    * `:formatted_expr`, not `:raw_expr`, is the value this node contributes to the enclosing
@@ -901,14 +885,14 @@ internal class PgNodeTreeParser {
    * Extracts the content of the `(...)` list after [fieldName] — a direct field of the node [text]
    * itself represents, at brace depth 1 — without parsing it.
    *
-   * Depth-one-awareness (via [findMarkerAtDepthOne]) is load-bearing here, not only for
-   * [extractFieldExpression]'s `{...}`-valued fields: when [text]'s own [fieldName] value is EMPTY
-   * (`fieldName <>`, no `(` at all) but [text] also contains a deeper node carrying its own
-   * `fieldName (` — a `JSONCONSTRUCTOREXPR` with an empty `:args <>` whose `:func` holds an `AGGREF`
-   * with a real `:args (...)`, exactly how `JSON_OBJECTAGG`/`JSON_ARRAYAGG` are shaped — a plain
-   * `text.indexOf("$fieldName (")` finds that unrelated nested list and silently attributes the inner
-   * node's arguments to the outer one. See [extractFieldExpression] for why scanning for literal
-   * marker text is nonetheless safe against a string value that resembles a field marker.
+   * Depth-one-awareness (via [findMarkerAtDepthOne]) matters here too: when [text]'s own [fieldName]
+   * value is empty (`fieldName <>`, no `(` at all) but [text] also contains a deeper node carrying
+   * its own `fieldName (` — a `JSONCONSTRUCTOREXPR` with an empty `:args <>` whose `:func` holds an
+   * `AGGREF` with a real `:args (...)`, exactly how `JSON_OBJECTAGG`/`JSON_ARRAYAGG` are shaped — a
+   * plain `text.indexOf("$fieldName (")` would find that unrelated nested list and silently
+   * attribute the inner node's arguments to the outer one. See [extractFieldExpression] for why
+   * scanning for literal marker text is nonetheless safe against a string value that resembles a
+   * field marker.
    *
    * @return `null` if the field is absent at depth 1, or its value is `<>` (empty/absent in
    *   `pg_node_tree`), or the value at that position is not actually a `(...)` list.
@@ -936,23 +920,22 @@ internal class PgNodeTreeParser {
    * represents, not a same-named field belonging to some node NESTED inside one of [text]'s own
    * field values.
    *
-   * Depth-one-awareness is load-bearing, not defensive polish: [fieldName] is often a field whose
-   * OWN value is a full expression subtree that can legally contain another node of the SAME
-   * outer type carrying the SAME field name — e.g. a `SUBLINK`'s `:testexpr` field can itself
-   * contain a nested `SUBLINK` with its own `:testexpr`/`:subselect`, a `CASEWHEN`'s `:expr`
-   * condition can contain a nested `CASEEXPR` with its own `:result`/`:defresult`, and a
-   * `JSONEXPR`'s `:on_empty`/`:on_error` behavior can nest another `JSONEXPR`. Because Postgres
-   * serializes a node depth-first, a same-named field belonging to a NESTED node is written
-   * INSIDE the outer field's own value — textually EARLIER than the outer node's OWN later field
-   * of that name would be, whenever the outer field being searched for comes before the nested
-   * one in that node's field order. Verified live, PostgreSQL 17 and 18, for `SUBLINK`: its
-   * `:testexpr` field precedes its `:subselect` field, so for `SELECT EXISTS (SELECT v FROM u) =
-   * ANY (SELECT b FROM x) FROM t`, the OUTER `ANY_SUBLINK`'s `:testexpr` (an `OPEXPR` whose first
-   * argument is the nested `EXISTS` sublink, itself a genuine `{SUBLINK ... :subselect {QUERY
-   * ... u ...} ...}` block) textually precedes the outer `ANY_SUBLINK`'s OWN `:subselect {QUERY
-   * ... x ...}` — a naive first-match `text.indexOf(":subselect {")` scan over the OUTER
-   * `ANY_SUBLINK`'s full text therefore returns the INNER `EXISTS` sublink's `u`-block, not the
-   * outer sublink's own `x`-block, silently proving the wrong subquery's column nullable or not.
+   * Depth-one-awareness matters here: [fieldName] is often a field whose own value is a full
+   * expression subtree that can legally contain another node of the same outer type carrying the
+   * same field name — e.g. a `SUBLINK`'s `:testexpr` field can itself contain a nested `SUBLINK`
+   * with its own `:testexpr`/`:subselect`, a `CASEWHEN`'s `:expr` condition can contain a nested
+   * `CASEEXPR` with its own `:result`/`:defresult`, and a `JSONEXPR`'s `:on_empty`/`:on_error`
+   * behavior can nest another `JSONEXPR`. Postgres serializes a node depth-first, so a same-named
+   * field belonging to a nested node is written inside the outer field's own value — textually
+   * earlier than the outer node's own later field of that name, whenever the outer field being
+   * searched for comes before the nested one in that node's field order. On PostgreSQL 17 and 18,
+   * `SUBLINK`'s `:testexpr` field precedes its `:subselect` field, so for `SELECT EXISTS (SELECT v
+   * FROM u) = ANY (SELECT b FROM x) FROM t`, the outer `ANY_SUBLINK`'s `:testexpr` (an `OPEXPR`
+   * whose first argument is the nested `EXISTS` sublink, itself a genuine `{SUBLINK ... :subselect
+   * {QUERY ... u ...} ...}` block) textually precedes the outer `ANY_SUBLINK`'s own `:subselect
+   * {QUERY ... x ...}` — a naive first-match `text.indexOf(":subselect {")` scan over the outer
+   * `ANY_SUBLINK`'s full text would return the inner `EXISTS` sublink's `u`-block, not the outer
+   * sublink's own `x`-block, silently proving the wrong subquery's column nullable or not.
    * [findMarkerAtDepthOne] (reused here, the same helper [parseWhereQuals] uses for its
    * `:jointree`/`:quals` extraction) only matches [fieldName] directly inside [text]'s own
    * outermost `{...}` block, so a nested node's same-named field can never shadow it.

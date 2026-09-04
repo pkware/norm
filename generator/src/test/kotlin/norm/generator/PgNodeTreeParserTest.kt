@@ -45,7 +45,7 @@ class PgNodeTreeParserTest {
     @Test
     fun `hasGroupingSets is not fooled by a backslash immediately followed by a brace`() {
       // An alias containing a literal backslash followed by a literal `}` (e.g. an identifier
-      // "k\}m") is written as THREE consecutive backslashes then `}` — the escaped backslash
+      // "k\}m") is written as three consecutive backslashes then `}` — the escaped backslash
       // ("\\") immediately followed by the escaped brace ("\}"). A scanner that does not process
       // escapes strictly left-to-right, two characters at a time, can lose parity here and either
       // treat the final `}` as real or desynchronize entirely.
@@ -55,7 +55,7 @@ class PgNodeTreeParserTest {
 
     @Test
     fun `parseTargetList reads the full, unescaped resname of an entry whose alias contains an escaped brace`() {
-      // Without escape-awareness, extractBalancedBraces closes the FIRST {TARGETENTRY ...} block
+      // Without escape-awareness, extractBalancedBraces closes the first {TARGETENTRY ...} block
       // early at the escaped `}` inside its own :resname, truncating the block before ":resname"'s
       // real value ends — resultName comes back as "k\}" (missing the trailing "x") instead of
       // the correctly-bounded and unescaped "k}x". This is the same brace-counting bug
@@ -79,18 +79,18 @@ class PgNodeTreeParserTest {
   @Nested
   inner class FuncVariadicFieldExtraction {
 
-    // parseFuncExpr's :funcvariadic extraction matches the FIRST occurrence anywhere in a node's
+    // parseFuncExpr's :funcvariadic extraction matches the first occurrence anywhere in a node's
     // text, including inside nested blocks — see its KDoc for why that is only safe because the
     // outer FUNCEXPR's own :funcvariadic always precedes :args textually. These two tests use real
-    // ev_action text (verified live on PostgreSQL 17: `upper(concat(VARIADIC arr))` and
+    // ev_action text from PostgreSQL 17 (`upper(concat(VARIADIC arr))` and
     // `concat(VARIADIC ARRAY[upper(a)])`) covering both nesting directions, so a future PostgreSQL
     // format change that broke this invariant would fail a test here instead of silently flipping
     // a nullability verdict.
 
     @Test
     fun `a non-variadic outer FuncExpr wrapping a variadic inner one keeps both flags correct`() {
-      // upper(concat(VARIADIC arr)): the OUTER upper(...) call is not variadic, but its own :args
-      // contains a nested concat(VARIADIC ...) call that IS.
+      // upper(concat(VARIADIC arr)): the outer upper(...) call is not variadic, but its own :args
+      // contains a nested concat(VARIADIC ...) call that is.
       val text = "{FUNCEXPR :funcid 871 :funcresulttype 25 :funcretset false :funcvariadic false " +
         ":funcformat 0 :funccollid 100 :inputcollid 100 :args " +
         "({FUNCEXPR :funcid 3058 :funcresulttype 25 :funcretset false :funcvariadic true " +
@@ -105,8 +105,8 @@ class PgNodeTreeParserTest {
 
     @Test
     fun `a variadic outer FuncExpr wrapping a non-variadic inner one keeps both flags correct`() {
-      // concat(VARIADIC ARRAY[upper(a)]): the reverse nesting — the OUTER concat(...) call IS
-      // variadic, but its array literal argument contains a nested upper(...) call that is NOT.
+      // concat(VARIADIC ARRAY[upper(a)]): the reverse nesting — the outer concat(...) call is
+      // variadic, but its array literal argument contains a nested upper(...) call that is not.
       val text = "{FUNCEXPR :funcid 3058 :funcresulttype 25 :funcretset false :funcvariadic true " +
         ":funcformat 0 :funccollid 100 :inputcollid 100 :args " +
         "({ARRAYEXPR :array_typeid 1009 :array_collid 100 :element_typeid 25 :elements " +
@@ -165,9 +165,9 @@ class PgNodeTreeParserTest {
 
     @Test
     fun `a PostgreSQL 18 GROUP RTE's groupexprs entry parses into the expression it describes`() {
-      // Shape verified live against a real PostgreSQL 18 pg_rewrite.ev_action for
+      // Shape taken from PostgreSQL 18 pg_rewrite.ev_action for
       // `SELECT count(*) + 0::bigint AS c, 0::bigint AS k FROM t GROUP BY ROLLUP((0::bigint))`: the
-      // GROUP RTE (rtekind 9) is the SECOND :rtable entry, so its varno is 2, and its :groupexprs
+      // GROUP RTE (rtekind 9) is the second :rtable entry, so its varno is 2, and its :groupexprs
       // holds one FUNCEXPR (the implicit int4->int8 cast of the literal 0) wrapping one CONST.
       val text = """
         {QUERY :rtable (
@@ -247,11 +247,11 @@ class PgNodeTreeParserTest {
   @Nested
   inner class SubLinkParsing {
 
-    // Shapes verified live against a real PostgreSQL 17 ev_action for `a = ANY (SELECT v FROM u)`
-    // (see issue #239's own repro) — a SUBLINK's :testexpr is a single top-level OPEXPR whose
-    // :opfuncid is the comparison operator's function OID, and :subselect holds the subquery's own
-    // {QUERY ...} block. These synthetic texts reproduce that shape at a level a unit test can
-    // construct directly, without depending on a live server.
+    // Shape taken from a PostgreSQL 17 ev_action for `a = ANY (SELECT v FROM u)` — a SUBLINK's
+    // :testexpr is a single top-level OPEXPR whose :opfuncid is the comparison operator's function
+    // OID, and :subselect holds the subquery's own {QUERY ...} block. These synthetic texts
+    // reproduce that shape at a level a unit test can construct directly, without depending on a
+    // live server.
 
     private val anyOpexprTestexpr = "{OPEXPR :opno 98 :opfuncid 67 :args " +
       "({VAR :varno 1 :varattno 2 :varlevelsup 0 :location -1} " +
@@ -335,19 +335,19 @@ class PgNodeTreeParserTest {
 
     // extractFieldExpression must find a field at brace depth 1 of the node it is given, not the
     // first textual occurrence of that field name anywhere in the text — several node types have
-    // an earlier-serialized field whose OWN value can legally contain ANOTHER node of the same
-    // type, carrying the same field name, nested deeper. A first-match indexOf scan finds the
-    // NESTED (wrong) occurrence whenever the earlier field's value textually precedes the node's
-    // OWN later field of that name, silently proving the wrong subtree.
+    // an earlier-serialized field whose own value can legally contain another node of the same
+    // type, carrying the same field name, nested deeper. A first-match indexOf scan finds that
+    // nested (wrong) occurrence whenever the earlier field's value textually precedes the node's
+    // own later field of that name, silently proving the wrong subtree.
 
     @Test
     fun `a SUBLINK's testexpr containing a nested SUBLINK does not shadow the outer subselect`() {
-      // Live-verified repro (PostgreSQL 17 and 18): `SELECT EXISTS (SELECT v FROM u) = ANY
+      // Repro on PostgreSQL 17 and 18: `SELECT EXISTS (SELECT v FROM u) = ANY
       // (SELECT b FROM x) FROM t` — the outer ANY_SUBLINK's :testexpr (an OPEXPR whose first
       // argument is the nested EXISTS sublink) precedes its own :subselect in SUBLINK's field
-      // order, and the nested EXISTS sublink has its OWN :subselect (the `u` query) textually
+      // order, and the nested EXISTS sublink has its own :subselect (the `u` query) textually
       // inside that :testexpr, before the outer sublink's real :subselect (the `x` query) ever
-      // appears. A naive first-match scan for ":subselect {" returns the INNER (u) block.
+      // appears. A naive first-match scan for ":subselect {" returns the inner (u) block.
       val innerSubselect = "{QUERY :targetList (" +
         "{TARGETENTRY :expr {VAR :varno 900 :varattno 1 :varlevelsup 0 :location -1} :resno 1 " +
         ":resname inner_col :resjunk false}) :setOperations <>}"
@@ -413,8 +413,8 @@ class PgNodeTreeParserTest {
       // syntactically-repeated grouping key expression (e.g. `concat(a, '-')` written twice in
       // the same SELECT list — see QueryAnalysisTest.Grouping's "duplicate concat call that IS
       // the ROLLUP key" test) by comparing parsed PgNodeExpression subtrees with `==`. Postgres
-      // assigns each occurrence of the SAME literal its OWN :location (a source-text byte
-      // offset), so this equality must hold across TWO Consts whose :location values genuinely
+      // assigns each occurrence of the same literal its own :location (a source-text byte
+      // offset), so this equality must hold across two Consts whose :location values genuinely
       // differ — pinning this directly, rather than only through the end-to-end grouping-sets
       // test, so a future change adding a location-like field to Const (this project already
       // tried once, for prosqlbody's per-assignment parameter-trust check, and reverted it for
@@ -538,7 +538,7 @@ class PgNodeTreeParserTest {
   @Nested
   inner class AggrefArgumentExtraction {
 
-    // Both fixtures are VERBATIM `{AGGREF ...}` blocks from a live PostgreSQL 18.4 ev_action dump.
+    // Both fixtures are verbatim `{AGGREF ...}` blocks from a PostgreSQL 18.4 ev_action dump.
     // extractArgListSection's prior non-depth-aware `indexOf(":args (")` mis-parsed both, attributing
     // a nested node's argument list to the aggregate. No isNonNull answer moved (that branch never
     // reads Aggref.arguments), but the arguments also feed containsVarOutsideRelation and
@@ -565,7 +565,7 @@ class PgNodeTreeParserTest {
     @Test
     fun `an AGGREF with WITHIN GROUP does not attribute aggdirectargs' nested args to the aggregate`() {
       // `:aggdirectargs` (the `0.5`, wrapped in a numeric-cast FUNCEXPR with its own nested `:args`)
-      // is serialized BEFORE the aggregate's real `:args` — so a plain scan returns just the literal.
+      // is serialized before the aggregate's real `:args` — so a plain scan returns just the literal.
       val text = "{AGGREF :aggfnoid 3974 :aggtype 701 :aggcollid 0 :inputcollid 0 :aggtranstype 0 " +
         ":aggargtypes (o 701 701) :aggdirectargs ({FUNCEXPR :funcid 1746 :funcresulttype 701 " +
         ":funcretset false :funcvariadic false :funcformat 2 :funccollid 0 :inputcollid 0 " +

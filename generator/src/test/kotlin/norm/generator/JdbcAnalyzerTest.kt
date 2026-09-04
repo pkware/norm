@@ -24,7 +24,7 @@ import org.testcontainers.junit.jupiter.Testcontainers
 import java.sql.Connection
 import java.sql.DriverManager
 
-// Every test in this class shares ONE JDBC Connection (see the companion object below) -- a
+// Every test in this class shares one JDBC Connection (see the companion object below) -- a
 // java.sql.Connection is not safe for concurrent use from multiple threads, and this repository
 // enables concurrent JUnit test execution by default (JavaConventionsPlugin). Without pinning this
 // class to a single thread, two tests issuing overlapping statements on the shared connection race
@@ -1061,18 +1061,16 @@ class JdbcAnalyzerTest {
 
   @Test
   fun `fetchReservedWords matches an independently issued pg_get_keywords query against the same connection`() {
-    // Proves fetchReservedWords() genuinely round-trips to the CONNECTED server on every call
-    // rather than returning a hardcoded snapshot — a membership assertion over a fixed list (as
-    // the two tests above use) cannot tell a live query apart from a hardcoded set that happens to
-    // contain those few words. This test instead issues its OWN pg_get_keywords() query, entirely
-    // independent of fetchReservedWords()'s own implementation, against the SAME live connection,
-    // and compares the two results for EXACT set equality. A hardcoded set baked into
-    // fetchReservedWords() would have to happen to match this exact connection's live keyword set
-    // byte-for-byte to pass this comparison — any staleness, transcription slip, or drift from a
-    // PostgreSQL version whose reserved set differs (verified: system_user became reserved only in
-    // PostgreSQL 16, and a hardcoded set predating that change once missed it silently) fails here
-    // outright. Run at every PostgreSQL major version this project supports (-Dnorm.test.pgVersion)
-    // so a hardcoded snapshot has no single version left where staleness could hide.
+    // Confirms fetchReservedWords() round-trips to the connected server rather than returning a
+    // hardcoded snapshot — a membership assertion over a fixed list (as the two tests above use)
+    // cannot tell a live query apart from a hardcoded set that happens to contain those few words.
+    // This test issues its own pg_get_keywords() query, independent of fetchReservedWords()'s own
+    // implementation, against the same live connection, and compares the two results for exact set
+    // equality. Any staleness, transcription slip, or drift from a PostgreSQL version whose
+    // reserved set differs (system_user became reserved only in PostgreSQL 16, and a hardcoded set
+    // predating that change once missed it silently) fails here outright. Run at every PostgreSQL
+    // major version this project supports (-Dnorm.test.pgVersion) so a hardcoded snapshot has no
+    // single version left where staleness could hide.
     val fromFetchReservedWords = analyzer.fetchReservedWords()
     val fromIndependentLiveQuery = connection.createStatement().use { statement ->
       statement.executeQuery("SELECT word FROM pg_get_keywords() WHERE catcode IN ('R', 'T')").use { resultSet ->
@@ -1105,18 +1103,18 @@ class JdbcAnalyzerTest {
 
     @Test
     fun `foldIdentifier matches the live server's parse_ident across a representative identifier corpus`() {
-      // Each pair's second value is what live parse_ident ALREADY reported when this corpus was
-      // written (verified against PostgreSQL 18.4) -- re-querying it here, rather than trusting
-      // that literal, is what makes this a genuine differential test: it fails if THIS run's
-      // connected server (any of PG16/17/18 -- see -Dnorm.test.pgVersion) disagrees with either
-      // the recorded expectation or foldIdentifier's own answer, not merely with a fixed list.
+      // Each pair's second value is what live parse_ident reported on PostgreSQL 18.4 when this
+      // corpus was written -- re-querying it here, rather than trusting that literal, is what
+      // makes this a genuine differential test: it fails if this run's connected server (any of
+      // PG16/17/18 -- see -Dnorm.test.pgVersion) disagrees with either the recorded expectation or
+      // foldIdentifier's own answer, not merely with a fixed list.
       val corpus = listOf(
         "foo" to "foo", // ASCII lowercase, unquoted
         "FooBar" to "foobar", // ASCII mixed case, unquoted -- folds
         "FOO" to "foo", // ASCII uppercase, unquoted -- folds
         "\"FooBar\"" to "FooBar", // quoted -- case preserved, never folded
         "\"He\"\"llo\"" to "He\"llo", // quoted, doubled-quote escape collapsed
-        "Ü" to "Ü", // non-ASCII uppercase, unquoted -- NOT folded (see foldAsciiCase's own KDoc)
+        "Ü" to "Ü", // non-ASCII uppercase, unquoted -- not folded (see foldAsciiCase's own KDoc)
         "ü" to "ü", // non-ASCII lowercase, unquoted -- unchanged
         "\"2fn\"" to "2fn", // quoted leading-digit -- legal only when quoted
         "\"select\"" to "select", // quoted reserved keyword
@@ -1138,13 +1136,13 @@ class JdbcAnalyzerTest {
 
     @Test
     fun `foldIdentifier's divergences from parse_ident are all unreachable via this file's own token capture`() {
-      // These are DOCUMENTED, not fixed -- each has a reason it can never bite through any actual
+      // These are documented, not fixed -- each has a reason it can never bite through any actual
       // foldIdentifier call site in this file. This test exists so the corpus test above is never
       // read as claiming universal agreement.
 
       // 1. Empty quoted identifier: real PostgreSQL rejects this outright ("zero-length delimited
-      //    identifier"), and parse_ident agrees ("Quoted identifier must not be empty" -- verified
-      //    directly). foldIdentifier has no such guard, but its own real caller,
+      //    identifier"), and parse_ident agrees ("Quoted identifier must not be empty").
+      //    foldIdentifier has no such guard, but its own real caller,
       //    parseColumnReference, already treats an empty logical value as no match at all (see
       //    that function's own KDoc), so an empty result here never reaches a real comparison.
       assertThat(
@@ -1152,8 +1150,8 @@ class JdbcAnalyzerTest {
       ).isTrue()
       assertThat(foldIdentifier("\"\"")).isEqualTo("")
 
-      // 2. A syntactically invalid UNQUOTED identifier (leading digit, leading `$`): parse_ident
-      //    rejects both outright (verified directly). foldIdentifier does not validate identifier
+      // 2. A syntactically invalid unquoted identifier (leading digit, leading `$`): parse_ident
+      //    rejects both outright. foldIdentifier does not validate identifier
       //    shape at all -- but neither input can ever reach it as a whole raw token in the first
       //    place: every regex in this file that captures a raw identifier token
       //    (COLUMN_REFERENCE_IDENTIFIER_START and its uses) already requires a legal start
@@ -1163,8 +1161,8 @@ class JdbcAnalyzerTest {
       assertThat(foldIdentifier("\$foo")).isEqualTo("\$foo")
 
       // 3. A Unicode-escape identifier (U&"..."): parse_ident does not understand this syntax at
-      //    all ("string is not a valid identifier" -- verified directly). isQuotedIdentifier also
-      //    rejects it (it only recognizes a PLAIN "..." token), so foldIdentifier would, if ever
+      //    all ("string is not a valid identifier"). isQuotedIdentifier also
+      //    rejects it (it only recognizes a plain "..." token), so foldIdentifier would, if ever
       //    handed one, wrongly ASCII-fold the literal "U&..." text instead of resolving the
       //    escape -- but QUOTED_IDENTIFIER (the only pattern that ever captures a raw
       //    table/column/alias/CTE-name token in this file) matches a plain quote only, so
@@ -1172,15 +1170,15 @@ class JdbcAnalyzerTest {
       assertThat(runCatching { liveParseIdent("U&\"foo\"") }.isFailure).isTrue()
 
       // 4. NAMEDATALEN truncation: a real, overlong (>63-byte) identifier is silently truncated to
-      //    63 bytes once it becomes a genuine catalog object (verified directly:
-      //    "CREATE TEMP TABLE t AS SELECT 1 AS <100 a's>" truncates the real column to 63 a's).
-      //    parse_ident itself does NOT reproduce that truncation for EITHER a quoted or an
-      //    unquoted overlong name (verified directly: parse_ident(repeat('a', 100)) returns all
+      //    63 bytes once it becomes a genuine catalog object
+      //    ("CREATE TEMP TABLE t AS SELECT 1 AS <100 a's>" truncates the real column to 63 a's).
+      //    parse_ident itself does not reproduce that truncation for either a quoted or an
+      //    unquoted overlong name (parse_ident(repeat('a', 100)) returns all
       //    100 a's, on PostgreSQL 16, 17, and 18 alike) -- so foldIdentifier agrees with
-      //    parse_ident here (neither truncates); both merely disagree with what a REAL, already-
+      //    parse_ident here (neither truncates); both merely disagree with what a real, already-
       //    created 100-character column would actually be named. That residual gap has no
       //    reachable call site in the current codebase: every foldIdentifier comparison in this
-      //    file is between two RAW-TEXT-parsed values read from the SAME query text (a CTE body
+      //    file is between two raw-text-parsed values read from the same query text (a CTE body
       //    alias vs. an outer reference) -- never against a JDBC-reported, already-truncated real
       //    column name.
       val overlongName = "a".repeat(100)
@@ -1194,7 +1192,7 @@ class JdbcAnalyzerTest {
 
     /**
      * Creates a real one-column table named [tableName] whose column is [logicalColumnName]
-     * (quoted verbatim, so any character is legal), reads back the server's OWN truncated
+     * (quoted verbatim, so any character is legal), reads back the server's own truncated
      * `pg_attribute.attname` for that column, then drops the table -- proving [truncateIdentifier]
      * agrees with what PostgreSQL itself actually stores, not merely with a re-derivation of the
      * same logic.
@@ -1221,7 +1219,7 @@ class JdbcAnalyzerTest {
       // A property sweep, not a membership test: the corpus is generated by construction (ASCII at
       // every named boundary, plus 2-, 3-, and 4-byte multi-byte characters crossing byte 63 at
       // every possible phase via a run of consecutive prefix lengths), and every entry is checked
-      // for EQUALITY against the live server's own answer -- a wrong truncateIdentifier
+      // for equality against the live server's own answer -- a wrong truncateIdentifier
       // implementation fails this, not merely a hand-picked case.
       val corpus = listOf(62, 63, 64, 70).map { length -> "a".repeat(length) } +
         (58..66).flatMap { prefixLength ->
@@ -1251,8 +1249,8 @@ class JdbcAnalyzerTest {
 
     @Test
     fun `buildCatalog keeps a backtick in a column's name and originalName identical`() {
-      // A table name distinct from sibling tests' own -- these tests can run CONCURRENTLY (parallel
-      // test execution is enabled repository-wide), and all create/drop DDL against the SAME shared
+      // A table name distinct from sibling tests' own -- these tests can run concurrently (parallel
+      // test execution is enabled repository-wide), and all create/drop DDL against the same shared
       // connection/schema.
       connection.createStatement().use {
         it.execute("""CREATE TABLE backtick_test_catalog (id INT, "a`b" TEXT)""")
@@ -1414,7 +1412,7 @@ class JdbcAnalyzerTest {
         val parsed = ParsedQuery(
           "getOverLengthDomainRow",
           ":one",
-          // Written with the FULL, over-length column name -- exactly as a developer would copy it
+          // Written with the full, over-length column name -- exactly as a developer would copy it
           // from their own DDL -- while the server-side relation/column are already truncated.
           "SELECT * FROM $truncatedTableName WHERE $overLengthColumnName = ?",
           emptyList(),

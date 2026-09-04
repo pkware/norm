@@ -53,8 +53,8 @@ public fun Array<*>.toSqlArray(connection: Connection, typeName: String): java.s
  * with the element's own OID, so reading column `2` goes through exactly the same code path as
  * reading a scalar column of that type.
  *
- * The cost is one [ResultSet] row per element where the bulk path allocated none. That is accepted
- * deliberately: correctness for `timetz[]` and `time[]` is not available any other way.
+ * The cost is one [ResultSet] row per element where the bulk path allocated none, accepted because
+ * correctness for `timetz[]` and `time[]` is not available any other way.
  *
  * Elements are always nullable, because a Postgres array can contain `NULL` values regardless of
  * the column's `NOT NULL` constraint. `T` is inferred from [read]'s return type, so

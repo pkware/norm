@@ -83,7 +83,7 @@ class SqlLexerTest {
 
     @Test
     fun `does not open a dollar quote immediately after a non-ASCII identifier-continuation character`() {
-      // Issue #219: under PostgreSQL's flex longest-match, "x€\$\$y\$\$" is ONE identifier, since
+      // Under PostgreSQL's flex longest-match, "x€\$\$y\$\$" is one identifier, since
       // "€" (>= 0x80) is itself a legal identifier-continuation character -- so the "\$" right
       // after it must not be treated as opening a dollar-quoted string.
       val sql = "x€\$\$y\$\$"
@@ -105,7 +105,7 @@ class SqlLexerTest {
 
     @Test
     fun `a digit-leading dollar-quote tag is not recognized as a tag`() {
-      // Verified against PostgreSQL 18.4: scan.l's dolq_start excludes digits (unlike dolq_cont,
+      // PostgreSQL 18.4 scan.l: dolq_start excludes digits (unlike dolq_cont,
       // which admits them after the first character) -- "$1$foo$1$" is not a dollar-quoted
       // string at all; "$1" is left as an ordinary "$"-prefixed token. Before the fix, the tag
       // run's start character used the same letter/digit/underscore class as its continuation, so
@@ -120,19 +120,19 @@ class SqlLexerTest {
 
     @Test
     fun `a non-ASCII character before a standalone E means it is not standalone, matching PostgreSQL`() {
-      // Real PostgreSQL treats "x€E" as ONE identifier -- "€" is a legal identifier-continuation
-      // character -- so the "E" immediately before the quote is NOT a standalone E'...'
+      // Real PostgreSQL treats "x€E" as one identifier -- "€" is a legal identifier-continuation
+      // character -- so the "E" immediately before the quote is not a standalone E'...'
       // escape-string marker here. With no escape-string mode, the backslash before the closing
       // quote is an ordinary character, not an escape: the first bare "'" after it -- not a
       // doubled "''" -- ends the string.
       //
       // Before OriginalAdjacency existed, this lookback used a narrow letter/digit/underscore-only
       // class that did not recognize "€" as an identifier character at all, wrongly treating "E"
-      // as standalone here and accepting this as a deliberate, KNOWN deviation from PostgreSQL's
-      // lexer (issue #222). Now that the lookback can distinguish a genuinely fused character from
+      // as standalone here and accepting this as a deliberate, known deviation from PostgreSQL's
+      // lexer. Now that the lookback can distinguish a genuinely fused character from
       // one a stripped-away separator merely left adjacent (see OriginalAdjacency's KDoc), it is
-      // safe to use the full isIdentifierChar class -- and for this RAW, never-stripped call
-      // (using the default ALL_ADJACENT, correct here since every neighbour genuinely IS
+      // safe to use the full isIdentifierChar class -- and for this raw, never-stripped call
+      // (using the default ALL_ADJACENT, correct here since every neighbour genuinely is
       // adjacent), that makes this call match PostgreSQL's real answer instead of deviating from
       // it.
       val sql = "x€E'a\\' FROM t"
@@ -143,7 +143,7 @@ class SqlLexerTest {
 
     @Test
     fun `a genuinely separate string immediately after an E-string is not swallowed by a stripped-away separator`() {
-      // Point 3 of issue #223's fix: fusion composes with escape-string mode. "E'a'" (a complete
+      // Fusion composes with escape-string mode. "E'a'" (a complete
       // escape string) followed by a real separator, then another, entirely independent "'\'"
       // strips (the separator is plain whitespace, which stripCommentsAndWhitespace removes the
       // same as a comment) to "E'a''\'", where the fused "''" reads as a doubled-quote escape and
@@ -151,19 +151,19 @@ class SqlLexerTest {
       // text, which would defeat findTrailingImplicitAliasStart's "last segment must end exactly
       // at text.length" anchor in the dangerous direction (see isStarItem's KDoc).
       //
-      // NOT achievable as valid SQL end to end, so this is a defensive gate, not a repro of a
-      // reachable bug: verified against a real PostgreSQL 18.4 container, PostgreSQL only
+      // Not achievable as valid SQL end to end, so this is a defensive gate, not a repro of a
+      // reachable bug: on PostgreSQL 18.4, it only
       // concatenates two adjacent bare string literals when the whitespace between them contains
       // an actual newline ("SELECT 'a' 'b'" and "SELECT 'a'/*c*/'b'" are both syntax errors --
       // neither a plain space nor a comment alone licenses concatenation), and a genuine
       // newline-separated concatenation is a different construct with its own surprising semantics
-      // -- "SELECT E'a'\n'\'" is ITSELF "unterminated" on real PostgreSQL, because the escape-string
+      // -- "SELECT E'a'\n'\'" is itself "unterminated" on real PostgreSQL, because the escape-string
       // mode is inherited across the concatenation boundary. No PostgreSQL-valid SELECT item was
       // found that exercises this specific composition end to end; the gate is kept anyway, for
       // the same structural reason every other multi-character adjacency decision in this file is
       // gated (see OriginalAdjacency's KDoc), not because a concrete wrong-answer case was found.
       val stripped = stripCommentsAndWhitespace("E'a' '\\'")
-      // Without the gate, an ungated re-scan of stripCommentsAndWhitespace's own OUTPUT (simulated
+      // Without the gate, an ungated re-scan of stripCommentsAndWhitespace's own output (simulated
       // here via ALL_ADJACENT, i.e. pretending every neighbour really was adjacent) overruns to the
       // end of the stripped text.
       assertThat(skipLexicalToken(stripped.asPlainString(), 1, ALL_ADJACENT)).isEqualTo(stripped.length)
@@ -210,12 +210,12 @@ class SqlLexerTest {
   inner class LexicalTokenParityTest {
 
     /**
-     * Walks [sql] position by position, collecting the text of every OPAQUE lexical token
+     * Walks [sql] position by position, collecting the text of every opaque lexical token
      * [skipLexicalToken] recognizes (a string literal, a quoted identifier, a dollar-quoted
      * string) as one list entry, and every other non-whitespace character as its own
      * single-character entry. A recognized comment is dropped entirely, matching what
      * [stripCommentsAndWhitespace] itself deletes. This is exactly the token sequence
-     * [stripCommentsAndWhitespace]'s output SHOULD still contain, in order — see
+     * [stripCommentsAndWhitespace]'s output should still contain, in order — see
      * [lexicalTokensOfStripped] and this class's own test.
      */
     private fun lexicalTokensOfOriginal(sql: String): List<String> {
@@ -266,32 +266,32 @@ class SqlLexerTest {
 
     @Test
     fun `a stripped-away separator does not fuse unrelated dollar signs and a tag run into a dollar-quote`() {
-      // Verifier-supplied regression: "$q  b $/ /" strips (removing the two spaces after "q" and
+      // Regression: "$q  b $/ /" strips (removing the two spaces after "q" and
       // the one after "b" and each "/") to "$qb$//", whose fused "$qb$" would otherwise be read as
       // an opening dollar-quote delimiter with tag "qb", and the following "//" as its (unterminated)
       // body -- one manufactured token in place of six independent original ones ("$", "q", "$",
-      // "/", "/", plus the surrounding words), the same "danger" direction as every other fusion
-      // class in this file (see OriginalAdjacency's KDoc): skipDollarQuotedString's OPENING-delimiter
+      // "/", "/", plus the surrounding words), the same fusion direction as every other class in
+      // this file (see OriginalAdjacency's KDoc): skipDollarQuotedString's opening-delimiter
       // adjacency gate (see its KDoc) must refuse this fusion. (The closing delimiter needs, and
       // has, no gate of its own -- see that function's KDoc for why.)
       //
-      // No PostgreSQL-valid input is known to reach this composition: verified against a real
-      // PostgreSQL 18.4 container, even the simpler "SELECT \$q FROM t" is rejected outright
-      // ("syntax error at or near "\$"") -- a bare "\$" not immediately followed by a digit (a
-      // positional parameter) or a genuine dollar-quote tag is not valid PostgreSQL syntax at all.
-      // Like the "''"/E-string composition gate above, this closes the class structurally rather
-      // than fixing an observed user-visible bug.
+      // No PostgreSQL-valid input is known to reach this composition (checked on PostgreSQL 18.4):
+      // even the simpler "SELECT \$q FROM t" is rejected outright ("syntax error at or near "\$""),
+      // since a bare "\$" not immediately followed by a digit (a positional parameter) or a genuine
+      // dollar-quote tag is not valid PostgreSQL syntax at all. Like the "''"/E-string composition
+      // gate above, this closes the class structurally rather than fixing an observed user-visible
+      // bug.
       val input = "SELECT \$q  b \$/ / FROM t"
       assertThat(lexicalTokensOfStripped(input)).isEqualTo(lexicalTokensOfOriginal(input))
     }
 
     @Test
     fun `stripping never changes what skipLexicalToken sees, for every issue 223 fusion class and every star shape`() {
-      // The invariant issue #223 relies on: walking the ORIGINAL text and the STRIPPED text with
-      // skipLexicalToken must find the SAME lexical tokens, in the SAME order — if stripping ever
+      // The invariant this relies on: walking the original text and the stripped text with
+      // skipLexicalToken must find the same lexical tokens, in the same order — if stripping ever
       // fuses two characters into a token that was never in the original query (or hides one that
-      // WAS there), this comparison catches it directly, rather than relying on each individual
-      // gate's own, narrower unit test. Includes every fusion-class input from the issue, plus a
+      // was there), this comparison catches it directly, rather than relying on each individual
+      // gate's own, narrower unit test. Includes every fusion-class input below, plus a
       // representative sample of the star shapes already covered elsewhere in this file (line and
       // block comments, string literals, dollar-quoted strings, double-quoted identifiers
       // containing a literal star, a Unicode-escape identifier with a UESCAPE clause, and

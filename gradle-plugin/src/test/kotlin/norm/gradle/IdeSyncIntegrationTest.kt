@@ -20,18 +20,18 @@ import kotlin.io.path.writeText
 
 /**
  * Verifies Norm's sync-time generation mechanism (`IdeIntegration.configureGenerationOnIdeSync`): wiring
- * `normGenerate<Name>` tasks as dependencies of `prepareKotlinIdeaImportNorm`, a task Norm registers under
- * its own name and that IntelliJ IDEA runs on every Gradle sync (see [IdeIntegration] for why the name
+ * `normGenerate<Name>` tasks as dependencies of `prepareKotlinIdeaImportNorm`, the task Norm registers
+ * under its own name that IntelliJ IDEA runs on every Gradle sync (see [IdeIntegration] for why the name
  * matters).
  *
- * This mechanism replaces an earlier `gradle-idea-ext` `afterSync`-based approach, which required reaching
- * from a project into `project.rootProject` and was therefore illegal under Gradle's Isolated Projects for
- * any project other than the root. `configureGenerationOnIdeSync` only ever touches its own project's
- * `tasks` container, so it needs no such guard.
+ * Replaces an earlier `gradle-idea-ext` `afterSync` approach, which reached from a project into
+ * `project.rootProject` and was illegal under Gradle's Isolated Projects for any project but the root.
+ * `configureGenerationOnIdeSync` only touches its own project's `tasks` container, so it needs no such
+ * guard.
  *
- * Shares [TestProject.COMPOSITE_BUILD_RESOURCE_LOCK] with `NormPluginTest`: both classes run TestKit builds
- * that `includeBuild` the Norm root project, and running two of those builds at once races on the shared
- * `buildSrc` project's incremental compilation caches. See the lock's KDoc for details.
+ * Shares [TestProject.COMPOSITE_BUILD_RESOURCE_LOCK] with `NormPluginTest`: both run TestKit builds that
+ * `includeBuild` the Norm root project, and two running at once race on the shared `buildSrc` project's
+ * incremental compilation cache. See the lock's KDoc for details.
  */
 @ResourceLock(TestProject.COMPOSITE_BUILD_RESOURCE_LOCK)
 @Execution(ExecutionMode.SAME_THREAD)
@@ -44,12 +44,9 @@ class IdeSyncIntegrationTest {
   inner class SubprojectUnderIsolatedProjects {
 
     /**
-     * Covers the case named in the task's acceptance criteria: Norm applied to a subproject, not the
-     * root. A real Testcontainers-backed run of `:app:normGenerateTest` is exercised more cheaply in
-     * [RealGenerationOnSync], as a single-project build; here, `--dry-run` is enough to prove the
-     * *dependency* exists without paying for a real container start, and is what actually needs a
-     * multi-project shape to be meaningful (a single-project build can't demonstrate the subproject case
-     * at all).
+     * Norm applied to a subproject, not the root. `--dry-run` proves the dependency edge exists without
+     * paying for a real container start; [RealGenerationOnSync] covers actual execution more cheaply as a
+     * single-project build.
      */
     @Test
     fun `dry run shows normGenerateTest as a dependency of prepareKotlinIdeaImportNorm`() {
@@ -57,9 +54,8 @@ class IdeSyncIntegrationTest {
 
       val result = gradleRunner(":app:prepareKotlinIdeaImportNorm", "--dry-run", "--isolated-projects").build()
 
-      // ":app:normGenerateTest" is not itself on the command line, so its appearance here is only
-      // explained by the dependency edge under test, unlike ":app:prepareKotlinIdeaImportNorm" (the
-      // requested task), which dry-run would always echo regardless of whether the edge exists.
+      // ":app:normGenerateTest" isn't on the command line, so it only appears here because of the
+      // dependency edge under test — unlike ":app:prepareKotlinIdeaImportNorm", which dry-run always echoes.
       assertThat(result.output).contains(":app:normGenerateTest")
     }
 
@@ -67,10 +63,9 @@ class IdeSyncIntegrationTest {
     fun `configures cleanly with zero cross-project problems`() {
       setUpMultiProjectAppBuild(appDirectory = projectDir.resolve("app"))
 
-      // Under Gradle 9.7, an Isolated Projects violation fails the build rather than merely printing a
-      // diagnostic. `.build()` returning at all — instead of throwing `UnexpectedBuildFailure` — is
-      // therefore already the proof that no cross-project access occurred; there is no build output left
-      // to assert against for a violation that, by construction, could not have happened here.
+      // Under Gradle 9.7, an Isolated Projects violation fails the build instead of printing a
+      // diagnostic. `.build()` returning at all (not throwing `UnexpectedBuildFailure`) is the proof no
+      // cross-project access occurred.
       val result = gradleRunner(":app:help", "--isolated-projects").build()
 
       assertThat(result.task(":app:help")?.outcome).isEqualTo(SUCCESS)
@@ -81,11 +76,10 @@ class IdeSyncIntegrationTest {
   inner class RealGenerationOnSync {
 
     /**
-     * Proves the wiring actually runs generation, not just that a dependency edge exists on paper. Uses a
-     * single-project build (cheaper than starting a second Testcontainers-backed build against a
-     * multi-project shape) since [SubprojectUnderIsolatedProjects] already covers the subproject-specific
-     * dependency wiring via `--dry-run`. Isolated Projects is also enabled here to demonstrate that real
-     * execution, not just configuration, is unaffected by it.
+     * Confirms the wiring actually runs generation, not just that a dependency edge exists on paper.
+     * Single-project build, cheaper than a second Testcontainers-backed multi-project build, since
+     * [SubprojectUnderIsolatedProjects] already covers the subproject dependency wiring via `--dry-run`.
+     * Isolated Projects stays enabled here too, to confirm real execution is unaffected by it.
      */
     @Test
     fun `running prepareKotlinIdeaImportNorm actually generates code on first sync`() {
@@ -103,12 +97,10 @@ class IdeSyncIntegrationTest {
   inner class ResolvedTaskGraph {
 
     /**
-     * Asserts directly on [org.gradle.api.tasks.TaskDependency], not on `--dry-run` text or a successful
-     * build outcome: a verification task queries `prepareKotlinIdeaImportNorm`'s resolved
-     * [org.gradle.api.tasks.TaskDependency] and fails the build itself if `normGenerateTest` is not one of
-     * the tasks it resolves to. This is what would have caught the aliasing bug directly — a refactor that
-     * left `prepareKotlinIdeaImportNorm`'s `dependsOn` resolving to an empty list would fail *this*
-     * assertion even if the overall build still happened to succeed.
+     * Asserts directly on [org.gradle.api.tasks.TaskDependency] rather than `--dry-run` text or build
+     * outcome: a verification task queries `prepareKotlinIdeaImportNorm`'s resolved dependencies and fails
+     * the build if `normGenerateTest` is not among them. Catches a `dependsOn` resolving to an empty list
+     * even if the rest of the build still happens to succeed.
      */
     @Test
     fun `prepareKotlinIdeaImportNorm resolves normGenerateTest as a task dependency`() {
@@ -150,13 +142,11 @@ class IdeSyncIntegrationTest {
   inner class ConsumerRegistersItsOwnPrepareKotlinIdeaImportTask {
 
     /**
-     * Guarantees a consumer may register their own task named exactly `prepareKotlinIdeaImport` at any
-     * point — including from inside their own `afterEvaluate { }` block — without colliding with Norm.
-     * This is safe because Norm registers its sync-time task under
-     * [IdeIntegration.PREPARE_KOTLIN_IDEA_IMPORT_TASK_NAME] (`prepareKotlinIdeaImportNorm`), a name Norm
-     * owns outright and never shares with a consumer or with Kotlin Gradle Plugin's own task, so there is
-     * no task named exactly `prepareKotlinIdeaImport` for a consumer's task of that name to collide with,
-     * however or whenever they register it.
+     * A consumer may register their own task named exactly `prepareKotlinIdeaImport` at any point —
+     * including inside `afterEvaluate { }` — without colliding with Norm. Norm's sync-time task is
+     * [IdeIntegration.PREPARE_KOTLIN_IDEA_IMPORT_TASK_NAME] (`prepareKotlinIdeaImportNorm`), a name it
+     * owns outright, so no `prepareKotlinIdeaImport`-named task from Kotlin Gradle Plugin or a consumer
+     * can collide with it.
      */
     @Test
     fun `builds successfully when the consumer's task is registered inside afterEvaluate`() {
@@ -168,9 +158,9 @@ class IdeSyncIntegrationTest {
     }
 
     /**
-     * The same scenario, but with the consumer's task registered at build-script top level, which already
-     * ran before Norm's `afterEvaluate` in the pre-fix design and so already passed. Kept to cover the
-     * ordering that never triggered the defect, alongside the one above that did.
+     * Same scenario, but the consumer's task is registered at build-script top level, which ran before
+     * Norm's `afterEvaluate` even in the pre-fix design and so already passed. Kept alongside the test
+     * above to cover both orderings.
      */
     @Test
     fun `builds successfully when the consumer's task is registered at top level`() {
@@ -186,15 +176,12 @@ class IdeSyncIntegrationTest {
   inner class GenerateOnIdeSyncOptOut {
 
     /**
-     * With `generateOnIdeSync = false`, `prepareKotlinIdeaImportNorm` is still registered — it is Norm's
-     * own task, so registering it unconditionally is harmless — but must depend on nothing.
-     * `project.gradle(":prepareKotlinIdeaImportNorm", ...).build()` succeeding at all already proves the
-     * task exists (Gradle fails outright if a requested task is unregistered); asserting `:normGenerateTest`
-     * is absent from the `--dry-run` output on top of that proves the flag specifically suppressed the
-     * dependency. Unlike a fixture that pre-registers a consumer's own `prepareKotlinIdeaImport` task, this
-     * fixture registers nothing besides what Norm itself registers, so there is no other source of a
-     * `prepareKotlinIdeaImport*` task name that could make the "no dependency" assertion pass for the wrong
-     * reason.
+     * With `generateOnIdeSync = false`, `prepareKotlinIdeaImportNorm` is still registered — it's Norm's
+     * own task, so registering it unconditionally is harmless — but depends on nothing. The build
+     * succeeding at all proves the task exists (Gradle fails outright on an unregistered task); the
+     * `--dry-run` output missing `:normGenerateTest` proves the flag suppressed the dependency. This
+     * fixture registers nothing besides Norm's own tasks, so there's no other source of a
+     * `prepareKotlinIdeaImport*` task name.
      */
     @Test
     fun `disables the dependency when set before the databases block`() {
@@ -219,11 +206,10 @@ class IdeSyncIntegrationTest {
   inner class TaskNamePrefixContract {
 
     /**
-     * Pins the single most fragile fact in this design: IntelliJ IDEA discovers sync-time tasks by
-     * matching task names that START WITH `prepareKotlinIdeaImport`, not by exact name (see
-     * [IdeIntegration.PREPARE_KOTLIN_IDEA_IMPORT_TASK_NAME]'s KDoc). Renaming Norm's task to anything that
-     * doesn't keep this prefix would silently break IDE sync generation with no build failure to catch it
-     * — this test is the cheap guard against that happening by accident.
+     * Pins the most fragile fact in this design: IntelliJ IDEA discovers sync-time tasks by matching names
+     * that start with `prepareKotlinIdeaImport`, not by exact match (see
+     * [IdeIntegration.PREPARE_KOTLIN_IDEA_IMPORT_TASK_NAME]'s KDoc). Renaming Norm's task to drop that
+     * prefix would silently break IDE sync generation with no build failure to catch it.
      */
     @Test
     fun `Norm's sync task name starts with prepareKotlinIdeaImport`() {
@@ -232,9 +218,8 @@ class IdeSyncIntegrationTest {
   }
 
   /**
-   * Writes a minimal, valid `author` table schema and a matching query into [directory], for tests that
-   * need Norm to configure (and, in [RealGenerationOnSync], actually run) generation without exercising
-   * any particular SQL feature.
+   * Minimal, valid `author` schema and matching query — enough for Norm to configure generation without
+   * exercising any particular SQL feature.
    */
   private fun writeAuthorSchemaAndQueries(directory: Path) {
     directory.resolve("schema.sql").writeText(AUTHOR_TABLE_SCHEMA_SQL)
@@ -258,8 +243,8 @@ class IdeSyncIntegrationTest {
   """.trimIndent()
 
   /**
-   * Builds a single-project build with Norm configured against a valid schema and query, and no
-   * `prepareKotlinIdeaImport*` task registered by anything other than Norm itself.
+   * Single-project build with Norm configured against a valid schema and query; no
+   * `prepareKotlinIdeaImport*` task other than Norm's own is registered.
    */
   private fun singleProjectWithNormConfigured(): TestProject {
     writeAuthorSchemaAndQueries(projectDir)
@@ -282,11 +267,11 @@ class IdeSyncIntegrationTest {
   }
 
   /**
-   * Builds a single-project build where the consumer registers their own, unrelated task named exactly
-   * `prepareKotlinIdeaImport`, either inside an `afterEvaluate { }` block (matching how Kotlin Gradle
-   * Plugin's own tooling — or a future release of it — might register the task lazily, per
-   * [IdeIntegration.PREPARE_KOTLIN_IDEA_IMPORT_TASK_NAME]'s KDoc) or at build-script top level, depending
-   * on [registerInsideAfterEvaluate].
+   * Single-project build where the consumer registers their own, unrelated task named exactly
+   * `prepareKotlinIdeaImport`, either inside `afterEvaluate { }` (matching how Kotlin Gradle Plugin's own
+   * tooling might register the task lazily, per
+   * [IdeIntegration.PREPARE_KOTLIN_IDEA_IMPORT_TASK_NAME]'s KDoc) or at top level, depending on
+   * [registerInsideAfterEvaluate].
    */
   private fun singleProjectWithConsumerPrepareKotlinIdeaImportTask(registerInsideAfterEvaluate: Boolean): TestProject {
     writeAuthorSchemaAndQueries(projectDir)
@@ -323,9 +308,9 @@ class IdeSyncIntegrationTest {
   }
 
   /**
-   * Builds a single-project build with `generateOnIdeSync = false`, set either before or after the
-   * `databases { }` block depending on [setBeforeDatabasesBlock]. Registers nothing besides Norm itself, so
-   * the only `prepareKotlinIdeaImport*` task that can appear in the build is Norm's own.
+   * Single-project build with `generateOnIdeSync = false`, set either before or after the
+   * `databases { }` block depending on [setBeforeDatabasesBlock]. Registers nothing besides Norm itself,
+   * so the only `prepareKotlinIdeaImport*` task that can appear is Norm's own.
    */
   private fun singleProjectWithGenerateOnIdeSyncDisabled(setBeforeDatabasesBlock: Boolean): TestProject {
     writeAuthorSchemaAndQueries(projectDir)
@@ -355,9 +340,9 @@ class IdeSyncIntegrationTest {
   }
 
   /**
-   * Sets up a two-project build: an empty root project and an included `app` subproject applying the
-   * Kotlin JVM plugin and Norm. No `gradle-idea-ext` is involved — `prepareKotlinIdeaImportNorm` wiring is
-   * entirely project-local, so the root project needs no configuration at all.
+   * Two-project build: an empty root project and an included `app` subproject applying Kotlin JVM and
+   * Norm. No `gradle-idea-ext` involved — `prepareKotlinIdeaImportNorm` wiring is project-local, so the
+   * root project needs no configuration.
    */
   private fun setUpMultiProjectAppBuild(appDirectory: Path) {
     appDirectory.createDirectories()

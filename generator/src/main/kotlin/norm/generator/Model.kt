@@ -153,10 +153,10 @@ public data class Identifier(val catalog: String = "", val schema: String = "", 
  *   column's own select item is merely a bare reference into a CTE's output (e.g. the outer query
  *   reads `description_upper`, but the CTE body actually computed it as `UPPER(description)`).
  *   `null` when there is no such CTE-body expression to report: a plain table column, a column
- *   whose defining expression was written directly in the OUTER query (already covered by
+ *   whose defining expression was written directly in the outer query (already covered by
  *   [TypeRepository]'s own top-level computed-expression handling), a CTE body pass-through of
  *   another column with no transformation, or a shape [NodeTreeProvenanceResolver] and
- *   [resolveNodeTreeProvenanceExpression] could not PROVE correct by cross-validating the query's
+ *   [resolveNodeTreeProvenanceExpression] could not prove correct by cross-validating the query's
  *   own parsed node tree against its original SQL text — see those functions' KDoc for the full
  *   list of gates that must all hold before this is ever populated.
  */

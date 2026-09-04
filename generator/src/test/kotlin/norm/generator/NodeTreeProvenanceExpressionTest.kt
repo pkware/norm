@@ -23,8 +23,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * resolved (see [NodeTreeProvenanceResolverTest] for that half).
  *
  * Ports the shape corpus from the deleted `SqlCteOutputExpressionTest` (the retired text-only
- * whitelist's own live-verified test suite): a shape the whitelist resolved must resolve to the
- * SAME string here; a shape it declined that Route D now proves correct gets its expectation
+ * whitelist's own test suite): a shape the whitelist resolved must resolve to the
+ * same string here; a shape it declined that Route D now resolves correctly gets its expectation
  * updated (each such update is called out below, and was independently confirmed against
  * `verify-pg18` before being written); a shape that must stay `null` (an ambiguous body, an
  * unverifiable auto-generated alias, a niladic keyword reference, ...) still does. A handful of the
@@ -96,7 +96,7 @@ class NodeTreeProvenanceExpressionTest {
     fun `a CTE body wrapped in redundant parentheses still resolves`() {
       // `parseOutputItemsWithAlias` previously found no top-level SELECT once the sliced body text
       // started with an extra, unmatched "(", since that put the whole rest of the text at paren
-      // depth one (#238).
+      // depth one.
       val ddl = "CREATE TABLE parent (id INT, name TEXT)"
       val sql = """
         WITH a AS (
@@ -147,12 +147,12 @@ class NodeTreeProvenanceExpressionTest {
   @Nested
   inner class WhitelistPreconditionsRouteDNoLongerNeeds {
 
-    // These shapes were previously null ONLY because the retired text-only whitelist required
+    // These shapes were previously null only because the retired text-only whitelist required
     // "exactly one declared CTE" and "the main query's FROM is exactly that CTE's bare name" as
     // proxies for "this reference can only mean the CTE" -- proxies needed because pure text has no
     // other way to rule out a same-named schema table or an ambiguous multi-source FROM. Route D
     // needs neither proxy: it starts from the outer query's own parsed Var, which PostgreSQL has
-    // ALREADY resolved unambiguously by the time the node tree exists. Each expectation below was
+    // already resolved unambiguously by the time the node tree exists. Each expectation below was
     // confirmed against verify-pg18 before being written.
 
     @Test
@@ -209,11 +209,10 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `a syntactically WITH RECURSIVE CTE that never actually self-references resolves normally`() {
-      // Verified live: PostgreSQL's own ":cterecursive" flag is false here -- a CTE declared under
-      // WITH RECURSIVE with NO self-reference in its body genuinely runs once, exactly like an
-      // ordinary CTE, and PostgreSQL itself knows that. The retired whitelist bailed on the SQL
-      // TEXT alone ("WITH RECURSIVE" present anywhere), overly conservative for this shape; Route D
-      // reads the authoritative flag instead.
+      // PostgreSQL's own ":cterecursive" flag is false here -- a CTE declared under WITH RECURSIVE
+      // with no self-reference in its body genuinely runs once, exactly like an ordinary CTE. The
+      // retired whitelist bailed on the SQL text alone ("WITH RECURSIVE" present anywhere), overly
+      // conservative for this shape; Route D reads the authoritative flag instead.
       val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
       val sql = """
         WITH RECURSIVE a AS (
@@ -300,7 +299,7 @@ class NodeTreeProvenanceExpressionTest {
     @Test
     fun `an over-length explicit alias on a computed expression still resolves through its truncated resname`() {
       // Site NodeTreeProvenanceExpression.kt:140 (AliasMatchKind.EXPLICIT_ALIAS). verifiedItem must
-      // truncate the RAW, over-length alias before fold-comparing it against the node tree's own
+      // truncate the raw, over-length alias before fold-comparing it against the node tree's own
       // server-truncated :resname, or a computed expression named with an over-length "AS alias"
       // never verifies and resolves to null instead of its real expression.
       val overLongAlias = "v".repeat(70)
@@ -334,10 +333,10 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `declining an implicit-alias position leaves an explicit-AS sibling position in the same body emitting`() {
-      // The all-position cross-validation gate (this file's own top-level KDoc) still requires EVERY
+      // The all-position cross-validation gate (this file's own top-level KDoc) still requires every
       // position's name to verify -- including the implicit-alias one -- to prove the body wasn't
-      // mis-split. Declining that one position's OWN emission must not also silence a DIFFERENT
-      // position resolved by a SEPARATE call against the SAME body.
+      // mis-split. Declining that one position's own emission must not also silence a different
+      // position resolved by a separate call against the same body.
       val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
       val sql = """
         WITH a AS (SELECT UPPER(name) AS ux, LOWER(description) dx FROM parent)
@@ -726,7 +725,7 @@ class NodeTreeProvenanceExpressionTest {
         SELECT ux FROM b
       """.trimIndent()
 
-      // Proves the INNER shadowing declaration wins, not the outer one: LOWER(y), never UPPER(x).
+      // Proves the inner shadowing declaration wins, not the outer one: LOWER(y), never UPPER(x).
       assertThat(resolvedExpression(ddl, sql)).isEqualTo("LOWER(y)")
     }
 
@@ -752,7 +751,7 @@ class NodeTreeProvenanceExpressionTest {
       // An unqualified "SELECT ux FROM a" cannot be used here at all -- PostgreSQL itself refuses to
       // parse it ("column reference \"ux\" is ambiguous"), since the CTE's own two output columns
       // fold to the identical name. "SELECT *" sidesteps that: PostgreSQL expands it into one bare
-      // Var per attribute POSITIONALLY, with no by-name lookup involved, so the outer query itself
+      // Var per attribute positionally, with no by-name lookup involved, so the outer query itself
       // stays valid even though the body's own two names collide.
       val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
       val sql = """
@@ -766,16 +765,14 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `without the uniqueness gate, a duplicated resname would let a shifted match through`() {
-      // Regression-shaped proof that the uniqueness check is load-bearing, not redundant with the
-      // all-position check: body positions 1 and 3 both fold to "same", and position 2 sits between
-      // them with a DIFFERENT, correctly-matching alias "mid". A per-position check alone (comparing
-      // text position i against resname position i) already can't be fooled by this SPECIFIC swap --
-      // position 1 and 3's own text/resname still line up index-for-index -- but this is exactly the
-      // shape the uniqueness gate exists to reject regardless: with "same" appearing twice, nothing
-      // here can tell purely from folded names alone whether position 1's or position 3's OWN text
-      // is truly bound to position 1, so the whole body remains provably ambiguous, and the uniqueness
-      // gate is what turns "duplicated names exist" into an outright refusal rather than trusting
-      // either occurrence. Uses "SELECT *" for the same by-name-ambiguity reason as the test above.
+      // Body positions 1 and 3 both fold to "same", with position 2's own, differently-named "mid"
+      // alias sitting between them and matching correctly. A per-position check alone (comparing
+      // text position i against resname position i) already can't be fooled by this specific swap --
+      // position 1 and 3's own text/resname still line up index-for-index -- but the uniqueness gate
+      // exists to reject this shape regardless: with "same" appearing twice, nothing here can tell
+      // purely from folded names whether position 1's or position 3's text is truly bound to
+      // position 1, so the whole body remains ambiguous. Uses "SELECT *" for the same by-name-
+      // ambiguity reason as the test above.
       val ddl = "CREATE TABLE t (a TEXT, b TEXT, c TEXT)"
       val sql = """
         WITH x AS (SELECT UPPER(a) AS same, LOWER(b) AS mid, UPPER(c) AS same FROM t)
@@ -792,17 +789,16 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `a text-resname mismatch at a position OTHER than the requested one still blocks resolution`() {
-      // Proves the all-position check is load-bearing, distinct from the uniqueness check above: a
-      // mismatch confined to a position the caller never asked about must still block resolution of
-      // the position it DID ask about, because a text/resname disagreement anywhere in the body is
-      // exactly the symptom a paired lexer mis-split/mis-merge would leave behind (see this class's
-      // own KDoc's discussion of NodeTreeProvenanceExpression's cross-validation).
+      // A mismatch confined to a position the caller never asked about still blocks resolution of
+      // the position it did ask about: a text/resname disagreement anywhere in the body is exactly
+      // the symptom a paired lexer mis-split/mis-merge would leave behind, distinct from the
+      // uniqueness check above.
       //
-      // This needs a hand-crafted node tree, not a live round trip: under CORRECT parsing, the text
-      // this file's own parseOutputItemsWithAlias computes for a position ALWAYS agrees with
+      // This needs a hand-crafted node tree, not a live round trip: under correct parsing, the text
+      // this file's own parseOutputItemsWithAlias computes for a position always agrees with
       // PostgreSQL's own real `:resname` for it (whatever alias you write becomes the resname
       // verbatim) -- there is no way to make a genuinely valid, live-executable query disagree with
-      // itself, only a designed one exercising the code path a bug WOULD trigger. Synthetic
+      // itself, only a designed one exercising the code path a bug would trigger. Synthetic
       // `pg_node_tree` fixtures are an established pattern for exactly this in this codebase already
       // (see PgNodeTreeParserTest).
       val nodeTree =
@@ -991,19 +987,18 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `every reserved word PostgreSQL itself accepts as a bare outer reference resolves to nothing`() {
-      // Sweeps the FULL live-fetched reserved-keyword set -- never a fixed subset -- through the
+      // Sweeps the full live-fetched reserved-keyword set -- never a fixed subset -- through the
       // identical CTE-wrapped shape the named tests above exercise individually. A reserved word
       // that PostgreSQL itself refuses to parse as a bare, unaliased value at all (e.g. "select",
-      // "join" -- not niladic keywords, and not usable as a bare expression at all: verified live
-      // that even a QUOTED body alias changes nothing here, since the rejection is always the OUTER
-      // bare reference, never the alias) can never reach TypeRepository from a real query in the
-      // first place, since JdbcAnalyzer's own PreparedStatement.prepareStatement would already have
-      // rejected it -- those words are simply skipped here, the same "never reachable" reasoning
-      // applied throughout this file. Every word PostgreSQL DOES accept as a bare reference must
-      // still resolve to nothing.
+      // "join" -- not niladic keywords, and not usable as a bare expression at all, even with a
+      // quoted body alias, since the rejection is always the outer bare reference, never the alias)
+      // can never reach TypeRepository from a real query in the first place, since JdbcAnalyzer's own
+      // PreparedStatement.prepareStatement would already have rejected it -- those words are simply
+      // skipped here, the same "never reachable" reasoning applied throughout this file. Every word
+      // PostgreSQL does accept as a bare reference must still resolve to nothing.
       //
-      // The skip is proven CORRECT, not merely present: [expectedReachableWords] independently
-      // determines -- via a SEPARATE live query the resolution pipeline never touches -- exactly
+      // The skip is proven correct, not merely present: [expectedReachableWords] independently
+      // determines -- via a separate live query the resolution pipeline never touches -- exactly
       // which words PostgreSQL's own grammar allows as a bare, FROM-less `SELECT word`. If the main
       // loop's own skip decisions ever drifted from that independent answer (attempting a word
       // PostgreSQL cannot actually parse bare, or skipping one it can), this equality fails; a bare
@@ -1047,11 +1042,11 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `a parameterised query still emits the developer's own question mark, never the sentinel literal`() {
-      // The node tree passed to resolveNodeTreeProvenanceExpression is built from SENTINEL-
-      // SUBSTITUTED SQL (a real '?' is not valid standalone PostgreSQL syntax, so the temp probe
-      // function cannot be created from the ORIGINAL text directly) -- exactly as
+      // The node tree passed to resolveNodeTreeProvenanceExpression is built from sentinel-
+      // substituted SQL (a real '?' is not valid standalone PostgreSQL syntax, so the temp probe
+      // function cannot be created from the original text directly) -- exactly as
       // ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody does in production. The
-      // ORIGINAL text, question mark intact, is what must come back.
+      // original text, question mark intact, is what must come back.
       val ddl = "CREATE TABLE parent (description TEXT)"
       val substitutedForNodeTree = """
         WITH c AS (SELECT UPPER(description) || '' AS d FROM parent)
@@ -1088,9 +1083,8 @@ class NodeTreeProvenanceExpressionTest {
    * independent of [resolvedExpression]'s own CTE-wrapped probe, so it cannot share a bug with
    * whatever it is being used to check. Only a reserved word with its own niladic-keyword-shaped
    * grammar production (`user`, `current_date`, `true`, ...) parses this way; an ordinary reserved
-   * word (`table`, `select`, ...) has no bare-expression production at all, in ANY context -- verified
-   * live that neither quoting the alias it is bound to, nor parenthesizing the bare reference itself,
-   * changes that.
+   * word (`table`, `select`, ...) has no bare-expression production at all, in any context -- neither
+   * quoting the alias it is bound to, nor parenthesizing the bare reference itself, changes that.
    */
   private fun isParseableAsBareSelectItem(connection: Connection, word: String): Boolean = try {
     connection.createStatement().use { it.execute("SELECT $word") }
@@ -1100,7 +1094,7 @@ class NodeTreeProvenanceExpressionTest {
   }
 
   /**
-   * Builds the SAME `prosqlbody` node tree [ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody]
+   * Builds the same `prosqlbody` node tree [ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody]
    * does: a temporary, zero-argument `BEGIN ATOMIC ... END` SQL-standard function. See
    * [NodeTreeProvenanceResolverTest]'s identical helper for why no parameter-substitution logic is
    * needed here — every caller in this file either has no `?` at all, or (in

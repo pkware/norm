@@ -17,8 +17,8 @@ class CollapseCosmeticWhitespaceTest {
 
     @Test
     fun `two literal spaces inside a quoted identifier survive untouched`() {
-      // Verified live: CREATE TABLE t (id INT NOT NULL, "My  Col" TEXT NOT NULL) then
-      // UPPER("My  Col") -- collapsing the internal double space to one names a DIFFERENT,
+      // PostgreSQL: CREATE TABLE t (id INT NOT NULL, "My  Col" TEXT NOT NULL) then
+      // UPPER("My  Col") -- collapsing the internal double space to one names a different,
       // nonexistent column ("My Col"), which PostgreSQL rejects outright.
       assertThat(collapseCosmeticWhitespace("""UPPER("My  Col")""")).isEqualTo("""UPPER("My  Col")""")
     }
@@ -79,10 +79,10 @@ class CollapseCosmeticWhitespaceTest {
 
     @Test
     fun `a block comment between two tokens is walked over as one opaque unit, never rewritten`() {
-      // collapseCosmeticWhitespace runs AFTER stripComments in the real pipeline, so a raw comment
-      // is not expected input here -- this pins that a comment reached directly is copied through
-      // VERBATIM (never a byte inside it rewritten), matching every other opaque span this
-      // function protects; removing the comment itself is stripComments' own job, not this one's.
+      // collapseCosmeticWhitespace runs after stripComments in the real pipeline, so a raw comment is
+      // not expected input here -- this pins that a comment reached directly is copied through
+      // verbatim, like every other opaque span this function protects. Removing the comment itself is
+      // stripComments' own job, not this one's.
       assertThat(collapseCosmeticWhitespace("UPPER(/* a  b */name)")).isEqualTo("UPPER(/* a  b */name)")
     }
 

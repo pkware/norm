@@ -219,10 +219,10 @@ public class JdbcAnalyzer(private val connection: Connection) {
       // bounds.
       val analysis = columnNullability.getOrElse(i - 1) { ColumnAnalysis(nullable = true, provenanceExpression = null) }
 
-      // analysis.originalColumnName (from the node tree's own :resorigtbl/:resorigcol) is the REAL
+      // analysis.originalColumnName (from the node tree's own :resorigtbl/:resorigcol) is the real
       // source column, resolved by PostgreSQL itself even through an intervening CTE alias -- prefer
-      // it over the parsed SELECT item, which only sees the select-list TEXT and would otherwise
-      // report a CTE's own output alias as if it were the original column (#238). PostgreSQL JDBC
+      // it over the parsed SELECT item, which only sees the select-list text and would otherwise
+      // report a CTE's own output alias as if it were the original column. PostgreSQL JDBC
       // returns the alias for both getColumnName and getColumnLabel when AS is used, so
       // rsmd.getColumnName is the least reliable of the three and stays the last resort.
       val originalColumnName = analysis.originalColumnName ?: selectItem?.columnName ?: rsmd.getColumnName(i)

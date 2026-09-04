@@ -64,9 +64,9 @@ class SqlCteClauseTest {
     fun `CTE body containing a closing parenthesis inside a string literal parses correctly`() {
       // Latent bug fixed alongside the DML lexer work: findMatchingCloseParenthesis previously
       // counted the ')' inside 'closing )' as if it closed the CTE body, truncating it and
-      // corrupting everything parsed after — including a SECOND CTE that follows. With lexical
+      // corrupting everything parsed after — including a second CTE that follows. With lexical
       // awareness, the literal's ')' is skipped as part of the string token, so the CTE body's
-      // TRUE closing paren (the one right before the comma) is what's found.
+      // real closing paren (the one right before the comma) is what's found.
       val sql = """
         WITH note AS (
           SELECT 'closing )'::TEXT AS msg
@@ -89,11 +89,11 @@ class SqlCteClauseTest {
 
     @Test
     fun `CTE body containing a column named with two dollar signs parses correctly`() {
-      // Behavior CHANGE from the dollar-quote identifier fix: before it, the "$" between "b" and
-      // "c" in "a$b$c" was misread as opening a "$b$"-tagged dollar-quote, swallowing the CTE
-      // body's own closing ")" (and everything after) as unterminated string content — parseCteClause
-      // would have found only ONE (corrupted) definition, or none at all. This is the corrected,
-      // intended behavior: "a$b$c" is an ordinary identifier, not a dollar-quoted string.
+      // Before the dollar-quote identifier fix, the "$" between "b" and "c" in "a$b$c" was
+      // misread as opening a "$b$"-tagged dollar-quote, swallowing the CTE body's own closing ")"
+      // (and everything after) as unterminated string content — parseCteClause would have found
+      // only one (corrupted) definition, or none at all. "a$b$c" is an ordinary identifier, not a
+      // dollar-quoted string.
       val sql = """
         WITH renamed AS (
           SELECT a${'$'}b${'$'}c AS msg FROM note
@@ -111,9 +111,9 @@ class SqlCteClauseTest {
 
     @Test
     fun `CTE name containing a non-ASCII character parses correctly`() {
-      // Verified against a real PostgreSQL 18.4: "WITH data€x AS (SELECT 1 AS inner_name) SELECT
-      // inner_name AS outer_name FROM data€x" is accepted -- "data€x" is an ordinary unquoted
-      // identifier (PostgreSQL's lexer admits any byte >= 0x80 inside one). Before the fix, the
+      // In PostgreSQL 18.4, "WITH data€x AS (SELECT 1 AS inner_name) SELECT inner_name AS
+      // outer_name FROM data€x" is accepted -- "data€x" is an ordinary unquoted identifier
+      // (PostgreSQL's lexer admits any byte >= 0x80 inside one). Before the fix, the
       // CTE-name run used the narrow letter/digit/underscore class, which stopped at "€", leaving
       // "x AS (SELECT 1 AS inner_name) SELECT inner_name AS outer_name FROM data€x" where an "AS"
       // keyword was expected -- so parsing failed and this returned null instead of one definition.
@@ -127,7 +127,7 @@ class SqlCteClauseTest {
 
     @Test
     fun `a quoted name with an escaped embedded double quote keeps the WHOLE token in rawName`() {
-      // #238: the quoted-name scan previously stopped at the first '"', truncating rawName to
+      // The quoted-name scan previously stopped at the first '"', truncating rawName to
       // `"He"` for a CTE actually named `He"llo` (SQL source `"He""llo"`) -- the escaped `""` in the
       // middle was misread as the closing quote. `WITH "He""llo" AS (SELECT 1) SELECT 1 FROM
       // "He""llo"` is valid PostgreSQL, and the CTE's real name is `He"llo` (one literal embedded
@@ -140,11 +140,11 @@ class SqlCteClauseTest {
 
     @Test
     fun `a dollar-led CTE name is not recognized, since PostgreSQL itself rejects one`() {
-      // Issue #219 follow-up: parseSingleCteDefinition's unquoted-name run originally used
-      // isIdentifierChar -- the CONTINUATION predicate -- for the name's FIRST character too, so
-      // a leading "$" was wrongly accepted as starting a CTE name. Verified against a real
-      // PostgreSQL 18.4: "WITH $x AS (SELECT 1) SELECT a FROM x" is a syntax error ("at or near
-      // $") -- "$" may only continue an identifier, never start one. With the first character
+      // parseSingleCteDefinition's unquoted-name run originally used isIdentifierChar -- the
+      // continuation predicate -- for the name's first character too, so a leading "$" was
+      // wrongly accepted as starting a CTE name. In PostgreSQL 18.4, "WITH $x AS (SELECT 1)
+      // SELECT a FROM x" is a syntax error ("at or near $") -- "$" may only continue an
+      // identifier, never start one. With the first character
       // correctly gated by isIdentifierStartChar, no CTE name is found here at all, so this
       // returns null exactly as it does on main.
       val result = parseCteClause("WITH \$x AS (SELECT 1) SELECT a FROM x")

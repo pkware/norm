@@ -432,34 +432,27 @@ class NormPluginTest {
     assertThat(result.output).contains("Cannot mix named")
   }
 
-  // A dedicated "synthesized CRUD query failure identifies the source table" test used to live here,
-  // triggered by a table name containing a literal double quote ("tab""le") that CrudQuerySynthesizer
-  // wrapped without doubling the embedded quote, producing invalid SQL. That was a bug in the
-  // QUOTING, not an inherent property of the trigger (#238 11.4 fixed it), so the build started
+  // A "synthesized CRUD query failure identifies the source table" test used to live here, triggered by a
+  // table name containing a literal double quote ("tab""le") that CrudQuerySynthesizer wrapped without
+  // doubling the embedded quote, producing invalid SQL. That quoting bug was fixed, so the build started
   // succeeding instead of failing and the test broke.
   //
-  // Searched for a replacement trigger that fails to ANALYZE by construction, live against
-  // PostgreSQL 18, rather than by an escaping bug that could be fixed out from under it again:
-  // reserved/mixed-case/space-containing/quote-containing identifiers (all now correctly quoted),
-  // GENERATED ALWAYS AS IDENTITY and STORED-generated columns (already correctly excluded from
-  // INSERT via pgjdbc's own IS_AUTOINCREMENT/IS_GENERATEDCOLUMN metadata), a PRIMARY KEY of a type
-  // with no default btree operator class (point, json, xml -- these fail at CREATE TABLE itself,
-  // before CrudQuerySynthesizer ever sees the table), a zero-column table, a foreign table (already
-  // excluded -- introspectTables' own getTables() call never requests "FOREIGN TABLE" as one of its
-  // types), and a partitioned table with zero partitions attached (PREPARE never checks partition
-  // routing or writability -- those are execution-time concerns, and Norm's analysis phase only
-  // ever prepares a statement, never executes one). None reproduces a PREPARE-time failure.
+  // No replacement trigger was found that fails to analyze by construction, live against PostgreSQL 18:
+  // reserved/mixed-case/space-containing/quote-containing identifiers are now correctly quoted;
+  // GENERATED ALWAYS AS IDENTITY and STORED-generated columns are already excluded from INSERT via
+  // pgjdbc's IS_AUTOINCREMENT/IS_GENERATEDCOLUMN metadata; a primary key of a type with no default btree
+  // operator class (point, json, xml) fails at CREATE TABLE, before CrudQuerySynthesizer sees the table;
+  // a zero-column table; foreign tables are already excluded (introspectTables never requests
+  // "FOREIGN TABLE"); a partitioned table with no partitions attached still succeeds, since PREPARE
+  // never checks partition routing or writability.
   //
-  // Every statement CrudQuerySynthesizer builds is one of: `INSERT INTO t (cols) VALUES (?, ...)`
-  // (each `?`'s type is resolved unambiguously from its target column, which is by definition a
-  // real column of a creatable type), or `... WHERE pk = ? [AND pk2 = ? ...]` (each `pk` column is,
-  // by definition, one PostgreSQL already required to have a working btree equality operator in
-  // order to create the primary key in the first place). There is no longer a live PostgreSQL
-  // relation shape that makes synthesized CRUD fail to analyze -- CrudQuerySynthesizer's own output
-  // is total over anything the catalog can hold. The shared error-wrapping mechanism itself
+  // Every statement CrudQuerySynthesizer builds is either `INSERT INTO t (cols) VALUES (?, ...)`, where
+  // each `?` resolves unambiguously from a real column, or `... WHERE pk = ? [AND pk2 = ? ...]`, where each
+  // `pk` column already has a working btree equality operator by virtue of being a primary key. There is no
+  // longer a schema shape that makes synthesized CRUD fail to analyze. The shared error-wrapping mechanism
   // (`NormGenerateTask.sourceLabel`) is still exercised by the sibling
-  // `query analysis failure includes the query name in the error` test above, via a hand-written
-  // query referencing a table that does not exist -- a trigger that can never be "fixed" away.
+  // `query analysis failure includes the query name in the error` test, via a query referencing a
+  // nonexistent table.
 
   @Test
   fun `schemas can be specified as a directory`() {

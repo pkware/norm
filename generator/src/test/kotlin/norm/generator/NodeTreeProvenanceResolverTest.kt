@@ -15,14 +15,14 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Live-database pins for [NodeTreeProvenanceResolver]: every shape it resolves a
- * [NodeTreeColumnProvenance] for, AND every shape the "correct or silent" invariant requires it to
+ * [NodeTreeColumnProvenance] for, and every shape the "correct or silent" invariant requires it to
  * return `null` for instead of guessing.
  *
- * Each test builds the SAME node tree production analysis uses — a temporary, zero-argument
+ * Each test builds the same node tree production analysis uses — a temporary, zero-argument
  * `BEGIN ATOMIC ... END` SQL-standard function's `prosqlbody` (see
  * [ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody]'s own KDoc for why this is the
  * production path, not `CREATE VIEW`: only `prosqlbody` is populated for a data-modifying
- * statement) — against a REAL PostgreSQL server, then feeds that raw text straight to the resolver
+ * statement) — against a real PostgreSQL server, then feeds that raw text straight to the resolver
  * under test. No node-tree text is hand-written.
  */
 @Testcontainers
@@ -97,7 +97,7 @@ class NodeTreeProvenanceResolverTest {
       )
       // "y" is declared at the top level (hop 1, ctelevelsup 0 relative to the outer query's own
       // scope). y's own body has no nested WITH of its own, so its reference to "x" is one level
-      // FURTHER up (hop 2, ctelevelsup 1) -- back at the SAME top-level scope hop 1 was found in.
+      // further up (hop 2, ctelevelsup 1) -- back at the same top-level scope hop 1 was found in.
       assertThat(provenance).containsExactly(
         NodeTreeColumnProvenance(listOf(CteHop("y", 0), CteHop("x", 1)), 1),
       )
@@ -186,9 +186,9 @@ class NodeTreeProvenanceResolverTest {
           "d AS (WITH c AS (SELECT LOWER(description) AS ux FROM parent) SELECT ux, 1 AS n FROM c) " +
           "SELECT ux, n FROM d",
       )
-      // "ux" resolves through d's own reference to its INNER "c" (ctelevelsup 0 relative to d's own
+      // "ux" resolves through d's own reference to its inner "c" (ctelevelsup 0 relative to d's own
       // body), landing on the inner CTE's own computed expression -- hop 1 is "d" (declared at the
-      // top level), hop 2 is the INNER "c" (declared inside d's own body, ctelevelsup 0 relative to
+      // top level), hop 2 is the inner "c" (declared inside d's own body, ctelevelsup 0 relative to
       // that body). "n" never enters a CTE reference at all -- d's own body position 2 is the
       // literal "1 AS n" -- so it resolves to d's own body alone, not to either "c".
       assertThat(provenance).containsExactly(
@@ -281,15 +281,14 @@ class NodeTreeProvenanceResolverTest {
   @Nested
   inner class LevelsUpGuards {
 
-    // Both shapes below cannot occur through a real, live PostgreSQL round trip: a top-level
+    // Neither shape below can occur through a real, live PostgreSQL round trip: a top-level
     // statement's own :targetList Var always has :varlevelsup 0 (there is no enclosing scope to
     // point past), and an ordinary (non-merged) :joinaliasvars entry always references one of the
-    // JOIN's own two inputs at :varlevelsup 0. Each guard is nonetheless load-bearing defensive code
-    // -- see NodeTreeProvenanceResolver's own KDoc -- so these are hand-crafted `pg_node_tree`
-    // fixtures (the same established pattern PgNodeTreeParserTest and
+    // JOIN's own two inputs at :varlevelsup 0. Both guards are defensive code for a shape PostgreSQL
+    // never actually produces -- see NodeTreeProvenanceResolver's own KDoc -- so these are
+    // hand-crafted `pg_node_tree` fixtures (the same established pattern PgNodeTreeParserTest and
     // NodeTreeProvenanceExpressionTest's AllPositionCheckGate test use) exercising exactly the shape
-    // each guard exists to refuse. Both mutations (deleting the guarded line) were run by hand against
-    // this class and confirmed to turn the corresponding test red before being reverted.
+    // each guard exists to refuse.
 
     @Test
     fun `an outer target-list Var with a nonzero levelsup resolves to nothing, never an enclosing scope's CTE`() {
@@ -414,9 +413,9 @@ class NodeTreeProvenanceResolverTest {
 
     @Test
     fun `INSERT SELECT FROM cte RETURNING resolves to nothing, since provenance comes from the INSERT target`() {
-      // Verified live: the RETURNING Var's varno points at the INSERT's OWN target relation "b"
-      // (rtekind 0), never at the feeding subquery's CTE reference — this is the CORRECT node-tree
-      // reading, not a resolver gap, so "nothing" here is the right answer, not a missing feature.
+      // The RETURNING Var's varno points at the INSERT's own target relation "b" (rtekind 0), never
+      // at the feeding subquery's CTE reference — this is the correct node-tree reading, not a
+      // resolver gap, so "nothing" here is the right answer, not a missing feature.
       val provenance = provenanceFor(
         "CREATE TABLE t (d TEXT); CREATE TABLE b (id INT, d TEXT)",
         "WITH c AS (SELECT UPPER(d) AS d FROM t) " +
@@ -444,7 +443,7 @@ class NodeTreeProvenanceResolverTest {
     resolver.resolveColumnProvenance(nodeTreeFor(ddl, sql))
 
   /**
-   * Builds the SAME `prosqlbody` node tree
+   * Builds the same `prosqlbody` node tree
    * [ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody] does: a temporary, zero-argument
    * `BEGIN ATOMIC ... END` SQL-standard function, so `?` parameters never need to appear (this
    * resolver has no parameter-substitution logic of its own to exercise).

@@ -9,19 +9,19 @@ import java.util.UUID
  * of NESTED `ANY_SUBLINK`/`ALL_SUBLINK` (a `SubLink` whose own subselect contains another
  * `SubLink`) are resolved before defaulting to nullable — see that method's KDoc.
  *
- * This is NOT required to prevent an infinite loop: [PgNodeExpression.SubLink.subselectBlock] is
- * always extracted, via [PgNodeTreeParser.extractFieldExpression], as a genuine SUBSTRING of its
+ * This does not prevent an infinite loop: [PgNodeExpression.SubLink.subselectBlock] is
+ * always extracted, via [PgNodeTreeParser.extractFieldExpression], as a genuine substring of its
  * enclosing `SubLink`'s own text, strictly shorter than it — [PgNodeTreeParser] has no mechanism to
  * produce a cyclic or self-referential node-tree text, so this recursion is provably bounded by the
- * ORIGINAL query text's finite length regardless of this constant's value, or even its presence.
- * The budget exists instead as a defensive bound on STACK DEPTH and repeated analysis WORK for a
+ * original query text's finite length regardless of this constant's value, or even its presence.
+ * The budget exists instead as a defensive bound on stack depth and repeated analysis work for a
  * pathologically deep (if syntactically legal) chain of nested `= ANY (...)`/`ALL (...)` sublinks,
  * the same role [NodeTreeNullabilityAnalyzer.MAX_EXPRESSION_DEPTH] plays for a deeply nested parsed
  * expression tree elsewhere in this codebase. Deliberately small: this analysis is only ever needed
  * for the (typically shallow) nullability proof of an `IN`/`= ANY` subquery's single output column,
  * not for arbitrarily deep query nesting in general — see `QueryAnalysisTest`'s four-level-nesting
- * test for a query shape that is semantically NOT NULL end-to-end but is reported nullable at this
- * budget, pinning that the budget's specific VALUE (not merely its presence) is what is enforced.
+ * test for a query shape that is semantically not null end-to-end but is reported nullable at this
+ * budget, pinning that the budget's specific value, not merely its presence, is what is enforced.
  */
 private const val SUBLINK_ANALYSIS_DEPTH_BUDGET = 3
 
@@ -36,7 +36,7 @@ private const val SUBLINK_ANALYSIS_DEPTH_BUDGET = 3
  * cycles, possible at much shallower depths, are handled by
  * [ColumnNullabilityAnalyzer.viewColumnNullabilityInProgress] instead.
  *
- * Views within this many levels of the deepest point of a chain that ITSELF exceeds the budget can
+ * Views within this many levels of the deepest point of a chain that itself exceeds the budget can
  * get either the truncated or the fully-resolved answer, depending on which views were memoized
  * first: the depth check runs before the memo lookup, so a relid at or past the budget always
  * truncates, but an untainted cached answer for a strictly shallower relid is reused without
@@ -101,7 +101,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    * relid is not a view or materialized view at all, so [isColumnNotNull] must fall through to
    * base-table resolution.
    *
-   * Written UNCONDITIONALLY by every successful resolution, even for a tainted answer — see
+   * Written unconditionally by every successful resolution, even for a tainted answer — see
    * [viewColumnNullabilityTaintedRelids]. Needs no synchronization (single-threaded [connection]).
    */
   private val viewColumnNullabilityMemo = mutableMapOf<Int, List<Boolean>?>()
@@ -110,10 +110,10 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    * Relids currently being resolved by [resolveViewColumnNullability] — guards against infinite
    * recursion through a view dependency cycle.
    *
-   * Load-bearing, not merely defensive: `CREATE OR REPLACE VIEW` only requires the relations the new
+   * Not merely defensive: `CREATE OR REPLACE VIEW` only requires the relations the new
    * definition references to exist at replace time, so both a mutual cycle (`a` selects from `b`,
    * then `b` is replaced to select from `a`) and a direct self-cycle are constructible. PostgreSQL
-   * refuses to QUERY such a view at all, so the nullable placeholder this guard returns has no true
+   * refuses to query such a view at all, so the nullable placeholder this guard returns has no true
    * answer to under-approximate.
    */
   private val viewColumnNullabilityInProgress = mutableSetOf<Int>()
@@ -176,25 +176,25 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
   }
 
   /**
-   * For [nodeTree]'s OWN outermost statement — never recursing into a CTE it declares; each CTE's
+   * For [nodeTree]'s own outermost statement — never recursing into a CTE it declares; each CTE's
    * own body resolves its own MERGE independently (see [analyzeCteBodyNullability]) — determines
    * which of its two base-table relations (identified by `:rtable` varno) can be entirely absent
    * for some result row, via [explainMergeSideNullability] rather than `:mergeActionList`/text
    * inspection.
    *
    * A `MERGE`'s match-optionality (`WHEN NOT MATCHED BY SOURCE`, `WHEN NOT MATCHED [BY TARGET]
-   * THEN INSERT`) is invisible to `:varnullingrels` — verified live: a `MERGE ... WHEN NOT MATCHED
-   * BY SOURCE THEN DELETE RETURNING src.col` has an EMPTY `:varnullingrels` on `src.col`'s `Var`,
+   * THEN INSERT`) is invisible to `:varnullingrels`: a `MERGE ... WHEN NOT MATCHED
+   * BY SOURCE THEN DELETE RETURNING src.col` has an empty `:varnullingrels` on `src.col`'s `Var`,
    * identical to an ordinary, always-present reference. [explainMergeSideNullability]'s KDoc has
    * the full reasoning for why `EXPLAIN`'s own join type answers this precisely instead.
    *
    * @param sql the EXACT (already sentinel-substituted) statement text to run `EXPLAIN` against —
-   *   the WHOLE top-level statement, including any leading `WITH` clause, so a `MERGE` nested
-   *   inside a CTE resolves through the SAME call as a top-level one, keyed by ITS OWN
+   *   the whole top-level statement, including any leading `WITH` clause, so a `MERGE` nested
+   *   inside a CTE resolves through the same call as a top-level one, keyed by its own
    *   target/source relation names
    * @return an EMPTY map when [nodeTree]'s own outermost statement is not a `MERGE` at all; a map
    *   from varno to whether THAT relation can be entirely absent (containing the target and/or
-   *   source varno, per [MergeSideNullability]) when it IS a `MERGE` and `EXPLAIN` successfully
+   *   source varno, per [MergeSideNullability]) when it is a `MERGE` and `EXPLAIN` successfully
    *   attributed the join; `null` when it's a `MERGE` but `EXPLAIN` could not resolve it (e.g. a
    *   `USING` clause with more than one relation of its own) — the caller must then treat this
    *   `MERGE` as entirely untrustworthy, never guessing at a partial answer
@@ -217,8 +217,8 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
       return emptyMap()
     }
     val targetRelid = rangeTable[targetVarno] ?: return null
-    // A simple `MERGE INTO target USING source ON ...` has exactly one OTHER :rtable entry besides
-    // the target — the source, of ANY rtekind. A `USING` clause with more than one relation of its
+    // A simple `MERGE INTO target USING source ON ...` has exactly one other :rtable entry besides
+    // the target — the source, of any rtekind. A `USING` clause with more than one relation of its
     // own (e.g. a join or subquery source) has no single relation this method can attribute a join
     // side to, so it bails rather than guess. Reads the FULL range table, not [rangeTable] (base
     // tables only) — a CTE source's own varno never appears there at all — since the returned map
@@ -272,7 +272,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     }
 
   /**
-   * The bare table name [cteName]'s body resolves to, ONLY when that body is nothing but a plain
+   * The bare table name [cteName]'s body resolves to, only when that body is nothing but a plain
    * `SELECT ... FROM oneBaseTable` — a single `rtekind 0` range-table entry and nothing else. See
    * [mergeSourceRelationNameCandidates]'s own KDoc for why this narrow shape is the only one this
    * offers as an inlining candidate.
@@ -331,11 +331,11 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
       connection.createStatement().use { statement ->
         statement.execute(
           "CREATE FUNCTION pg_temp.$functionName() RETURNS SETOF record LANGUAGE sql " +
-            // The newline before "; END" is load-bearing, not style: [substitutedSql] is caller-
+            // The newline before "; END" is required, not style: [substitutedSql] is caller-
             // supplied SQL text that can legitimately end in a trailing `--` line comment (ordinary
-            // in a queries.sql), which extends to end of LINE. Without a newline separating it from
+            // in a queries.sql), which extends to end of line. Without a newline separating it from
             // "; END", the comment swallows the terminator too, and PostgreSQL sees unterminated
-            // input instead of a syntax error naming the real cause. Verified live.
+            // input instead of a syntax error naming the real cause.
             "BEGIN ATOMIC $substitutedSql\n; END",
         )
       }
@@ -357,9 +357,9 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
         val mergeAbsent = mergeAbsentVarnos(nodeTree, rangeTable, substitutedSql) ?: return null
         // '?' in sql, not substitutedSql: a sentinel-substituted CONST is byte-identical to a
         // hand-written literal once embedded in the SQL text — the parsed tree retains no memory
-        // of which one it was. trustAssignedExpressions=false whenever the ORIGINAL sql had ANY
+        // of which one it was. trustAssignedExpressions=false whenever the original sql had any
         // parameter blocks analyzeNodeTree's :targetList-to-:returningList substitution (see its
-        // KDoc) for the WHOLE statement, not just the specific assignment a parameter feeds,
+        // KDoc) for the whole statement, not just the specific assignment a parameter feeds,
         // because there is no structural way from here to tell which assignment(s) it was.
         val nullability = analyzeNodeTree(
           nodeTree,
@@ -426,7 +426,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    * Reads the `:targetList` first — this covers every plain `SELECT`, including one that reaches
    * this function only because it CONTAINS a data-modifying CTE (the outer statement is still a
    * `SELECT`, so PostgreSQL's own `CREATE VIEW` restriction, and by extension nothing here, ever
-   * blocked it). Falls back to `:returningList` when the outer statement's OWN target list is
+   * blocked it). Falls back to `:returningList` when the outer statement's own target list is
    * empty — true only for a topmost `UPDATE`/`DELETE`/`MERGE ... RETURNING`: a plain `SELECT`
    * always has a non-empty target list, or [connection] would have rejected it as a query with no
    * result columns before ever reaching this point.
@@ -473,21 +473,21 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     val subqueryColumnNotNull = buildSubqueryColumnNotNull(nodeTree, resolvedCtes, applyQualNarrowing, sql)
     val cteColumnNotNull = buildCteColumnNotNull(nodeTree, resolvedCtes)
     // A non-zero :resultRelation means this is an INSERT/UPDATE/DELETE/MERGE, not a SELECT — see
-    // parseResultRelation's KDoc. Its :targetList holds the value expressions being WRITTEN to
+    // parseResultRelation's KDoc. Its :targetList holds the value expressions being written to
     // each explicitly-assigned column of the target relation (keyed by :resno = the column's
-    // attribute number), which is exactly what a :returningList Var referencing that SAME
-    // (resultRelationVarno, attno) pair actually reads back — NOT the column's general catalog
-    // constraint, which says nothing about what THIS statement is about to write. See
+    // attribute number), which is exactly what a :returningList Var referencing that same
+    // (resultRelationVarno, attno) pair actually reads back — not the column's general catalog
+    // constraint, which says nothing about what this statement is about to write. See
     // targetListByResno's use below.
     val resultRelationVarno = nodeTreeParser.parseResultRelation(nodeTree)
     val targetListByResno = if (resultRelationVarno == 0 || !trustAssignedExpressions) {
-      // !trustAssignedExpressions means the ORIGINAL sql (before sentinel substitution) contained
+      // !trustAssignedExpressions means the original sql (before sentinel substitution) contained
       // a `?` parameter placeholder somewhere — see queryColumnNullabilityViaProsqlbody's call
       // site KDoc. A sentinel-substituted CONST is byte-identical, in the parsed tree, to a
       // hand-written literal: there is no structural signal left to tell "the caller supplied
       // this at runtime, and could supply NULL" from "the query text itself guarantees this value"
-      // for any SPECIFIC assignment, so trusting :targetList at all is unsafe for the WHOLE
-      // statement once ANY parameter exists anywhere in it. Verified live: `INSERT INTO t(name)
+      // for any specific assignment, so trusting :targetList at all is unsafe for the whole
+      // statement once any parameter exists anywhere in it. `INSERT INTO t(name)
       // VALUES (?) RETURNING name` reports NOT NULL if the sentinel substitution is trusted here,
       // even though the caller can bind an actual `NULL` for that exact parameter.
       emptyMap()
@@ -526,7 +526,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
         // A MERGE relation EXPLAIN determined can be entirely absent for some result row (see
         // mergeAbsentVarnos' KDoc) can never be proven non-null here, regardless of what a qual or
         // this column's own catalog constraint would otherwise say — those both describe the
-        // relation's rows WHEN PRESENT, which says nothing about whether this specific result row
+        // relation's rows when present, which says nothing about whether this specific result row
         // has one at all.
         false
       } else if (isProvenByQuals(qualNotNullVars, groupRteMap, varno, varattno)) {
@@ -555,21 +555,21 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
       resolvedCtes = resolvedCtes,
       isSourceColumnNotNull = plainIsSourceColumnNotNull,
     )
-    // :returningList must be checked FIRST, not as a fallback for an empty :targetList: an INSERT
-    // or UPDATE's OWN :targetList holds the value expressions being WRITTEN to each assigned
+    // :returningList must be checked first, not as a fallback for an empty :targetList: an INSERT
+    // or UPDATE's own :targetList holds the value expressions being written to each assigned
     // column — a completely different, and typically shorter or differently-shaped, list than its
     // RETURNING projection — so it is very often non-empty even when :returningList is what this
-    // call actually needs to read (verified live: `INSERT INTO t(name) VALUES ('test') RETURNING
+    // call actually needs to read (`INSERT INTO t(name) VALUES ('test') RETURNING
     // *` against `t(id, name)` has a one-entry :targetList for "name" alone, but a two-entry
     // :returningList for "id, name"). A plain `SELECT` never populates :returningList at all, so
     // this ordering only ever matters for the DML-with-RETURNING case
     // [queryColumnNullabilityViaProsqlbody] reaches at the top level.
     val returningEntries = nodeTreeParser.parseReturningList(nodeTree)
     if (returningEntries.isNotEmpty()) {
-      // A SEPARATE analyzer whose isSourceColumnNotNull substitutes a Var referencing
-      // (resultRelationVarno, resno) with the ASSIGNED expression's own nullability — evaluated by
-      // the PLAIN analyzer, deliberately NOT this substituting one, so a self-referencing
-      // assignment (`SET note = note || 'x'`) reads note's OLD (plain, un-substituted) value for
+      // A separate analyzer whose isSourceColumnNotNull substitutes a Var referencing
+      // (resultRelationVarno, resno) with the assigned expression's own nullability — evaluated by
+      // the plain analyzer, deliberately not this substituting one, so a self-referencing
+      // assignment (`SET note = note || 'x'`) reads note's old (plain, un-substituted) value for
       // that inner reference rather than looping back into its own substitution forever. A column
       // the statement never assigns (no entry in targetListByResno) falls through to the identical
       // plain catalog/qual/subquery/CTE resolution [analyzer] itself uses, which is exactly correct
@@ -619,7 +619,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
   /**
    * Resolves [relid]'s per-column nullability by fully evaluating its view definition's own node
    * tree (`pg_rewrite`'s `_RETURN` rule) rather than inheriting a same-named source column's
-   * constraint the way the `pg_depend` name-join this replaces did (`#256`: `SELECT NULLIF(v, 'x') AS
+   * constraint the way the `pg_depend` name-join this replaces did (`SELECT NULLIF(v, 'x') AS
    * v FROM u` was reported NOT NULL whenever `u.v` was).
    *
    * @return one nullable flag per user-visible column (`attnum > 0 AND NOT attisdropped`), index `i`
@@ -633,7 +633,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
   internal fun resolveViewColumnNullability(relid: Int): List<Boolean>? {
     if (viewColumnNullabilityRecursionDepth >= VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET) {
       // Depth guard — a deep but acyclic pass-through chain can exhaust the JVM stack before ever
-      // revisiting a relid the cycle guard below would catch. Runs BEFORE the memo lookup so a relid
+      // revisiting a relid the cycle guard below would catch. Runs before the memo lookup so a relid
       // at or past the budget always truncates rather than returning a cached answer; see
       // VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET's KDoc. A taint event: correct only while this deep.
       viewColumnNullabilityTaintEventCount++
@@ -778,15 +778,15 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    * subquery).
    *
    * @param applyQualNarrowing See [analyzeNodeTree]'s parameter of the same name — passed through
-   *   only so [isSubLinkSubqueryColumnNotNull]'s wiring below can apply the SAME qual-narrowing
+   *   only so [isSubLinkSubqueryColumnNotNull]'s wiring below can apply the same qual-narrowing
    *   policy to a `SubLink`'s subselect that the caller applies to everything else.
    * @param depth The [subLinkSubqueryColumnNotNull] recursion budget for a `SubLink` encountered by
    *   the returned analyzer — see that method's KDoc for why a budget is mandatory (a subselect can
    *   itself contain a `SubLink`, whose own subselect can contain another). Defaults to
    *   [SUBLINK_ANALYSIS_DEPTH_BUDGET] for every analyzer built directly from a top-level node tree,
    *   CTE body, or subquery-RTE body; [subLinkSubqueryColumnNotNull] passes `depth - 1` when
-   *   building the analyzer for a `SubLink`'s OWN subselect, so the budget only ever decreases
-   *   along a chain of NESTED sublinks, never along the unrelated CTE/subquery-RTE recursion this
+   *   building the analyzer for a `SubLink`'s own subselect, so the budget only ever decreases
+   *   along a chain of nested sublinks, never along the unrelated CTE/subquery-RTE recursion this
    *   class already performs independently of it.
    *
    *   No `MERGE`-resolution parameter is threaded through here: a sublink's `:subselect` is, by SQL
@@ -797,7 +797,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    * @param resolvedCtes CTE bodies declared directly in the query block this analyzer is built for —
    *   see [analyzeQueryBlockNullability]'s parameter of the same name for the invariant every caller
    *   must uphold. Threaded to [subLinkSubqueryColumnNotNull] so a `SubLink`'s subselect can resolve a
-   *   reference to an ENCLOSING `WITH` clause (`#257`). Defaults to `emptyMap()`, the safe (nullable)
+   *   reference to an enclosing `WITH` clause. Defaults to `emptyMap()`, the safe (nullable)
    *   answer for a query block with no CTEs of its own.
    */
   private fun buildAnalyzer(
@@ -827,7 +827,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
   /**
    * Backs [NodeTreeNullabilityAnalyzer]'s `isSubLinkSubqueryColumnNotNull` callback: `true` when
    * [subselectBlock] — the raw `{QUERY ...}` text of an `ANY_SUBLINK`'s or `ALL_SUBLINK`'s
-   * `:subselect` — produces EXACTLY ONE non-junk output column and that column is provably non-null.
+   * `:subselect` — produces exactly one non-junk output column and that column is provably non-null.
    *
    * Set-operation subselects (`UNION`/`INTERSECT`/`EXCEPT`) are rejected outright, the same
    * conservative default [buildSubqueryColumnNotNull] applies to a `FROM`-clause subquery RTE for
@@ -839,7 +839,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    *   `SubLink`'s subselect cannot recurse indefinitely.
    * @param resolvedCtes See [buildAnalyzer]'s parameter of the same name — CTE bodies declared
    *   directly in [subselectBlock]'s own enclosing query block, so [subselectBlock] can resolve a
-   *   reference to one of them (`#257`).
+   *   reference to one of them.
    */
   private fun subLinkSubqueryColumnNotNull(
     subselectBlock: String,
@@ -861,7 +861,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    */
   private fun forcesNewNullable(nodeTree: String): Boolean = when (nodeTreeParser.parseCommandType(nodeTree)) {
     PgNodeTreeParser.COMMAND_TYPE_DELETE -> true
-    // Only a MERGE with at least one DELETE action can leave NO new row behind for SOME result
+    // Only a MERGE with at least one DELETE action can leave no new row behind for some result
     // row — see hasDeleteMergeAction's KDoc. A MERGE with only UPDATE/INSERT actions always
     // writes or inserts a row, so NEW is exactly as trustworthy there as an ordinary column.
     PgNodeTreeParser.COMMAND_TYPE_MERGE -> nodeTreeParser.hasDeleteMergeAction(nodeTree)
@@ -910,14 +910,14 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
   }
 
   /**
-   * Analyzes every CTE declared in [nodeTree]'s OWN `:cteList` and returns each one's per-column
+   * Analyzes every CTE declared in [nodeTree]'s own `:cteList` and returns each one's per-column
    * nullability, keyed by CTE name.
    *
-   * Shared by [buildCteColumnNotNull] (resolving a CTE reference in [nodeTree]'s OWN `:rtable`)
+   * Shared by [buildCteColumnNotNull] (resolving a CTE reference in [nodeTree]'s own `:rtable`)
    * and [buildSubqueryColumnNotNull] (resolving a CTE reference — `:ctelevelsup 1` — one level
-   * DOWN, inside a nested subquery's OWN `:rtable`): a CTE's declaration scope is [nodeTree]'s
+   * down, inside a nested subquery's own `:rtable`): a CTE's declaration scope is [nodeTree]'s
    * level regardless of which nesting level actually references it, so both callers resolve
-   * against the SAME set of CTE bodies.
+   * against the same set of CTE bodies.
    */
   private fun resolveCteBodies(
     nodeTree: String,
@@ -936,8 +936,8 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
 
   /**
    * @param sql See [mergeAbsentVarnos]'s parameter of the same name — passed through unchanged so
-   *   a MERGE nested in [cte]'s own body can be resolved by the SAME EXPLAIN call this parameter
-   *   documents, keyed by ITS OWN target/source relation names.
+   *   a MERGE nested in [cte]'s own body can be resolved by the same EXPLAIN call this parameter
+   *   documents, keyed by its own target/source relation names.
    */
   private fun analyzeCteBodyNullability(
     cte: NodeTreeCteDefinition,
@@ -951,11 +951,11 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     val cteRangeTable = nodeTreeParser.parseRangeTable(cte.queryBlock)
     val mergeAbsent = mergeAbsentVarnos(cte.queryBlock, cteRangeTable, sql) ?: return null
     val analyzer = buildCteBodyAnalyzer(cte.queryBlock, previouslyResolved, applyQualNarrowing, mergeAbsent, sql)
-    // :returningList must be checked FIRST, not as a fallback for an empty :targetList — see
-    // analyzeNodeTree's identical guard for the full reasoning (an INSERT/UPDATE's OWN :targetList
-    // holds the value expressions being WRITTEN, a completely different list from its RETURNING
+    // :returningList must be checked first, not as a fallback for an empty :targetList — see
+    // analyzeNodeTree's identical guard for the full reasoning (an INSERT/UPDATE's own :targetList
+    // holds the value expressions being written, a completely different list from its RETURNING
     // projection, and is very often non-empty even when :returningList is what must be read). A
-    // data-modifying CTE body reaches this method with its RAW, un-rewritten :returningList only
+    // data-modifying CTE body reaches this method with its raw, un-rewritten :returningList only
     // via [queryColumnNullabilityViaProsqlbody] — `prosqlbody` is the only mechanism that ever
     // populates a node tree for a data-modifying CTE in the first place (see that function's
     // KDoc), so there is no other caller shape this ordering needs to account for.
@@ -973,21 +973,21 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
   /**
    * Analyzes a `UNION`/`UNION ALL`/`INTERSECT`/`EXCEPT` [queryBlock] branch-by-branch and combines
    * each branch's per-column nullability with OR: a column is nullable in the combined result if
-   * ANY branch can produce `null` for it.
+   * any branch can produce `null` for it.
    *
    * A `WITH RECURSIVE` CTE's recursive term(s) reference the CTE by name ([cteName]) — resolved by
    * [buildCteBodyAnalyzer] via `previouslyResolved` — creating a genuine fixpoint problem: the
-   * recursive term's own nullability depends on the CTE's OWN combined nullability, which this
-   * function is what computes. PostgreSQL requires the FIRST branch (the seed/non-recursive term)
+   * recursive term's own nullability depends on the CTE's own combined nullability, which this
+   * function is what computes. PostgreSQL requires the first branch (the seed/non-recursive term)
    * to never reference the CTE itself, so it alone is computed once, outside the loop, as a known
    * starting point. Every subsequent branch (there is always exactly one recursive term for a
    * `WITH RECURSIVE` CTE, but this handles a plain multi-branch `UNION` identically) is then
-   * re-analyzed, feeding back the CURRENT combined result as [cteName]'s own nullability, and the
+   * re-analyzed, feeding back the current combined result as [cteName]'s own nullability, and the
    * combined result is recomputed — repeated until a pass changes nothing.
    *
    * This converges because the per-column nullability lattice (`false` = NOT NULL, `true` =
    * nullable, ordered `false < true`) is monotone under this loop's own update rule: OR-combining
-   * MORE branch results (now including a possibly-wider self-reference) can only ever ADD `true`
+   * more branch results (now including a possibly-wider self-reference) can only ever add `true`
    * bits, never remove one. Starting from the seed's own (fixed, correct) nullability — the
    * narrowest value the CTE's self-reference could possibly have — and iterating a
    * monotone-widening step over a `columnCount`-bit lattice reaches its fixpoint in at most
@@ -1038,7 +1038,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
         val result = branchAnalyzer.extractColumnNullability(branchBlock)
         // An empty result means this branch's own nullability could not be determined at all — not
         // "this branch has zero columns" (impossible; every branch of a set operation has the same
-        // column count). Silently dropping it from the OR-combination would let the OTHER
+        // column count). Silently dropping it from the OR-combination would let the other
         // branches' (possibly narrower, even all-NOT-NULL) answer stand as if this branch
         // contributed nothing, when in truth its contribution is simply unknown. Flagging it here
         // forces every column nullable below instead.
@@ -1063,7 +1063,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    * `:ctelevelsup 0` means [queryBlock] declares that CTE itself, possibly shadowing a sibling of the
    * same name one level up, so it resolves from [ownResolvedCtes]; anything greater resolves from
    * [previouslyResolved]. Without this split a local shadowing `WITH` resolved against the wrong
-   * sibling body — an unsound answer, not merely a widened one (`#257`).
+   * sibling body — an unsound answer, not merely a widened one.
    *
    * @param ownResolvedCtes CTE bodies declared directly in [queryBlock]'s own `:cteList`.
    * @param previouslyResolved CTE bodies declared in the same outer `:cteList` [queryBlock]'s own CTE
@@ -1089,15 +1089,15 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
   /**
    * @param applyQualNarrowing See [analyzeNodeTree]'s parameter of the same name.
    * @param mergeAbsentVarnos See [analyzeNodeTree]'s parameter of the same name — [queryBlock]'s
-   *   OWN varno-to-canBeAbsent map when [queryBlock] itself is a `MERGE` (resolved by
+   *   own varno-to-canBeAbsent map when [queryBlock] itself is a `MERGE` (resolved by
    *   [analyzeCteBodyNullability] before ever calling this method), empty otherwise.
    * @param sql See [mergeAbsentVarnos]'s (the method, not this parameter) `sql` parameter — passed
-   *   through only so a subquery WITHIN [queryBlock] that references a CTE declared in
-   *   [queryBlock]'s OWN nested `WITH` clause can resolve THAT (deeper) CTE's `MERGE`, if it has
+   *   through only so a subquery within [queryBlock] that references a CTE declared in
+   *   [queryBlock]'s own nested `WITH` clause can resolve that (deeper) CTE's `MERGE`, if it has
    *   one, through [buildSubqueryColumnNotNull]. Defaults to an empty string for the (`SELECT`-only,
    *   never `MERGE`-shaped) set-operation branch callers in [analyzeSetOperationBranches], where an
    *   empty `EXPLAIN` target simply fails harmlessly (caught, treated as "cannot resolve") for the
-   *   narrow, deeper case of a subquery nested that deep referencing ITS OWN local `MERGE` CTE.
+   *   narrow, deeper case of a subquery nested that deep referencing its own local `MERGE` CTE.
    */
   private fun buildCteBodyAnalyzer(
     queryBlock: String,
@@ -1117,9 +1117,9 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     } else {
       nodeTreeParser.parseGroupRteMap(queryBlock)
     }
-    // queryBlock's OWN nested WITH clause, distinct from previouslyResolved (sibling CTEs one level
+    // queryBlock's own nested WITH clause, distinct from previouslyResolved (sibling CTEs one level
     // further up). Resolving any of the three uses below against previouslyResolved instead would
-    // resolve a shadowing local WITH against the wrong body — see #257.
+    // resolve a shadowing local WITH against the wrong body.
     val ownResolvedCtes = resolveCteBodies(queryBlock, applyQualNarrowing, sql)
     val innerCteNotNull = buildInnerCteNotNull(queryBlock, ownResolvedCtes, previouslyResolved)
     val subqueryColumnNotNull = buildSubqueryColumnNotNull(queryBlock, ownResolvedCtes, applyQualNarrowing, sql)
@@ -1127,9 +1127,9 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     // hasGroupingSets: a grouping key is exactly the thing a GROUPING SETS/CUBE/ROLLUP query
     // null-extends after WHERE has already run. A non-zero :resultRelation suppresses narrowing
     // for the identical reason analyzeNodeTree's own guard does: a data-modifying CTE body's WHERE
-    // clause can prove something about a column its OWN SET clause is about to overwrite — see
+    // clause can prove something about a column its own SET clause is about to overwrite — see
     // e.g. `WITH c AS (UPDATE t SET a = NULL FROM u WHERE u.id = t.id AND t.a IS NOT NULL
-    // RETURNING t.a) SELECT a FROM c`, verified against real Postgres to return `a = NULL`, not the
+    // RETURNING t.a) SELECT a FROM c` returns `a = NULL`, not the
     // value the WHERE clause proved before the SET ran.
     val isDml = nodeTreeParser.parseResultRelation(queryBlock) != 0
     val qualNotNullVars = if (applyQualNarrowing && !hasGroupingSets && !isDml) {
@@ -1187,7 +1187,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    *   nested `{QUERY ...}` block reached via [analyzeQueryBlockNullability] (a `SubLink`'s own
    *   subselect, or a derived table nested inside one)
    * @param resolvedCtes CTE bodies declared directly in [nodeTree]'s own `:cteList`. A subquery
-   *   nested inside [nodeTree] can reference one of these via `:ctelevelsup 1` inside its OWN
+   *   nested inside [nodeTree] can reference one of these via `:ctelevelsup 1` inside its own
    *   `:rtable`, not [nodeTree]'s. Computed by every caller so the same resolution also feeds
    *   [buildAnalyzer] for a `SubLink` nested in [nodeTree].
    * @param applyQualNarrowing See [analyzeNodeTree]'s parameter of the same name.
@@ -1196,8 +1196,8 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    *   Callers resolving [nodeTree]'s own top-level subquery RTEs use the default, full budget — a
    *   `FROM`-clause hop is not a nested-sublink hop. [analyzeQueryBlockNullability]'s own recursive
    *   call passes its current, possibly already-decremented `depth` through unchanged: it is the only
-   *   path reaching a derived table nested INSIDE a `SubLink`'s subselect, and refilling the budget
-   *   there would let a chain of `= ANY` sublinks separated by derived tables bypass it (`#257`).
+   *   path reaching a derived table nested inside a `SubLink`'s subselect, and refilling the budget
+   *   there would let a chain of `= ANY` sublinks separated by derived tables bypass it.
    * @return A map from `(varno, varattno)` pairs to `true` when the subquery column is non-null
    */
   private fun buildSubqueryColumnNotNull(
@@ -1209,7 +1209,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
   ): Map<Pair<Int, Int>, Boolean> {
     // Set-operation queries (UNION ALL, INTERSECT, EXCEPT) store their branches as rtekind=1
     // subquery RTEs. Tracing through them would incorrectly report the first branch's nullability
-    // as the result's nullability — the true result is the union across ALL branches, some of which
+    // as the result's nullability — the true result is the union across all branches, some of which
     // may introduce nulls (e.g., a branch with LEFT JOIN). Return empty so the analyzer conservatively
     // treats set-operation output columns as nullable (the correct safe default). This also covers
     // analyzeQueryBlockNullability's recursive call into this method.
@@ -1232,17 +1232,17 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    * Computes per-column nullability for a single query block ([queryBlock]) — the shared core of
    * [buildSubqueryColumnNotNull] (a `FROM`-clause subquery RTE) and [subLinkSubqueryColumnNotNull]
    * (an `ANY_SUBLINK`'s or `ALL_SUBLINK`'s `:subselect`): given a raw `{QUERY ...}` block, build a resolver over the
-   * block's OWN `parseRangeTable`/`parseCteRangeTableEntries`/`parseGroupRteMap`/subquery-RTE/qual
+   * block's own `parseRangeTable`/`parseCteRangeTableEntries`/`parseGroupRteMap`/subquery-RTE/qual
    * narrowing, then run [NodeTreeNullabilityAnalyzer.extractColumnNullability] against it.
    *
    * [queryBlock]'s own `:rtable` can hold three things resolved differently: a base table (via
    * [isColumnNotNull]), a nested subquery RTE (a derived table, resolved by recursing into
-   * [buildSubqueryColumnNotNull] on [queryBlock] itself), and a CTE RTE. Before `#257` only the
+   * [buildSubqueryColumnNotNull] on [queryBlock] itself), and a CTE RTE. Before this fix only the
    * base-table case was handled, so a `SubLink`'s subselect reading either of the others degraded to
    * nullable.
    *
    * @param resolvedCtes CTE bodies visible via `:ctelevelsup` greater than `0` relative to
-   *   [queryBlock] — declared in whichever scope ENCLOSES it, never [queryBlock]'s own nested `WITH`
+   *   [queryBlock] — declared in whichever scope encloses it, never [queryBlock]'s own nested `WITH`
    *   clause. Every caller must uphold this; resolving a `Var` against the wrong CTE body is silently
    *   worse than widening — see [NodeTreeCteReference.ctelevelsup]. A CTE at `:ctelevelsup 2` (a
    *   sibling of [queryBlock]'s own enclosing CTE) is out of this flat map's reach and stays
@@ -1282,10 +1282,10 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     } else {
       emptySet()
     }
-    // A ctelevelsup-0 reference must resolve against queryBlock's OWN CTEs, never the resolvedCtes
+    // A ctelevelsup-0 reference must resolve against queryBlock's own CTEs, never the resolvedCtes
     // parameter, which belongs to an enclosing scope.
     val ownResolvedCtes = resolveCteBodies(queryBlock, applyQualNarrowing, sql)
-    // depth is threaded, not defaulted: this is the recursive hop that must NOT refill the budget.
+    // depth is threaded, not defaulted: this is the recursive hop that must not refill the budget.
     val subqueryColumnNotNull = buildSubqueryColumnNotNull(queryBlock, ownResolvedCtes, applyQualNarrowing, sql, depth)
     val subAnalyzer = buildAnalyzer(
       hasGroupingSets = hasGroupingSets,
@@ -1323,7 +1323,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    *
    * @return `true` only when [relid] and every transitive inheritance/partition descendant is a
    *   plain table with no risky `relkind`, no mutating row-level trigger, and no non-view rewrite
-   *   rule — `false` for every other case, INCLUDING the catalog query itself failing to execute
+   *   rule — `false` for every other case, including the catalog query itself failing to execute
    *   (treated exactly like a confirmed risk: [analyzeNodeTree] must not trust the substitution
    *   when it cannot rule the risk out).
    */
@@ -1375,7 +1375,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
 
   /**
    * The bare (unqualified) table name for [relid], via `pg_class.relname` — used to attribute
-   * an `EXPLAIN` plan's `"Relation Name"` fields (which are always the REAL table name, never an
+   * an `EXPLAIN` plan's `"Relation Name"` fields (which are always the real table name, never an
    * alias) back to a specific `:rtable` entry this class already resolved structurally, without
    * ever re-parsing the SQL text for a table name or alias. See [mergeAbsentVarnos]'s only caller.
    *

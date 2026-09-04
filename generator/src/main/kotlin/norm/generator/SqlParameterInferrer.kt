@@ -391,10 +391,10 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
  * [isIdentifierChar]). For `SELECT my$fn(?)`, `\w+` cannot match `my$fn` as one run (`$` breaks
  * it), so `findAll` instead matches the shorter run `fn` immediately before the `(` — handing
  * `SqlParameterInferrer.extractFunctionCalls` the wrong function name, `fn` instead of `my$fn`.
- * Verified against a real PostgreSQL 18.4: `CREATE FUNCTION "my$fn"(...)` and the unquoted call
- * `my$fn(...)` both resolve to the same function, and an unquoted `>= 0x80`-named function
- * (`fn€(...)`) is likewise legal, while a digit-led name (`2fn(...)`) is rejected outright
- * ("trailing junk after numeric literal") — exactly the identifier shape this regex now encodes.
+ * On PostgreSQL 18.4, `CREATE FUNCTION "my$fn"(...)` and the unquoted call `my$fn(...)` both
+ * resolve to the same function, and an unquoted `>= 0x80`-named function (`fn€(...)`) is likewise
+ * legal, while a digit-led name (`2fn(...)`) is rejected outright ("trailing junk after numeric
+ * literal") — exactly the identifier shape this regex now encodes.
  */
 internal val FUNCTION_CALL_START = Regex(
   """($COLUMN_REFERENCE_IDENTIFIER_START$COLUMN_REFERENCE_IDENTIFIER_CONTINUATION*)\(""",

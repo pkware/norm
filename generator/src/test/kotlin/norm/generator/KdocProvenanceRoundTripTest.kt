@@ -20,21 +20,21 @@ import java.sql.DriverManager
 /**
  * End-to-end proof, against a live PostgreSQL server, that a source-reference expression rendered
  * into generated KDoc ([TypeRepository.addClassKdoc]'s `` @property x (`EXPR`) `` line) is exactly
- * the developer's own SQL — not merely that the string computed internally looks right, but that
- * the text a developer would read off the generated `.kt` FILE, extracted back out of a REAL
+ * the developer's own SQL -- not merely that the string computed internally looks right, but that
+ * the text a developer would read off the generated `.kt` file, extracted back out of a real
  * Markdown render, still means what the original SQL meant when run against a real server.
  *
  * Reads [renderedFileTextFor], which runs the [TypeSpec] through KotlinPoet's own [Any.toString]
- * emission — the SAME [com.squareup.kotlinpoet.CodeWriter] machinery a real generated `.kt` file
- * goes through — NEVER `typeSpec.kdoc.toString()`. `kdoc.toString()` is the pre-render [CodeBlock]
+ * emission -- the same [com.squareup.kotlinpoet.CodeWriter] machinery a real generated `.kt` file
+ * goes through -- never `typeSpec.kdoc.toString()`. `kdoc.toString()` is the pre-render [CodeBlock]
  * text, computed before [com.squareup.kotlinpoet.CodeWriter] ever sees it, so it cannot show
  * [com.squareup.kotlinpoet.CodeWriter]'s own unconditional `"/*"`/`"*/"` → `"/&#42;"`/`"&#42;/"`
  * rewrite inside every KDoc block (see [BlockCommentDelimiterDeclines]).
  *
- * Extracts the rendered expression with a REAL CommonMark parse ([extractSourceReferenceExpression])
- * rather than cutting the surrounding text at the first `)` — the previous version of this test did
- * that, which cannot handle an expression containing its own parenthesis at all (nearly every real
- * expression — see [ParenthesisContainingExpressionRoundTrips]).
+ * Extracts the rendered expression with a real CommonMark parse ([extractSourceReferenceExpression])
+ * rather than cutting the surrounding text at the first `)` -- the previous version of this test did
+ * that, which cannot handle an expression containing its own parenthesis (nearly every real
+ * expression -- see [ParenthesisContainingExpressionRoundTrips]).
  */
 @Testcontainers
 class KdocProvenanceRoundTripTest {
@@ -95,8 +95,8 @@ class KdocProvenanceRoundTripTest {
       repository.buildTypeProjectionForQuery("backtickExpression", listOf(expressionColumn), "SELECT u FROM c")
       val renderedExpression = extractSourceReferenceExpression("u", renderedFileTextFor(repository))
 
-      // Decoding the REAL Markdown render must recover the developer's own expression BYTE FOR
-      // BYTE -- proving the escaping never altered the text itself, only how it is delimited.
+      // Decoding the real Markdown render must recover the developer's own expression byte for byte
+      // -- the escaping never altered the text itself, only how it is delimited.
       assertThat(renderedExpression).isEqualTo("'x' || '`'")
 
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
@@ -116,10 +116,10 @@ class KdocProvenanceRoundTripTest {
 
     @Test
     fun `an expression containing its own nested parentheses round-trips whole, not truncated at the first one`() {
-      // This test's own point: the OLD extraction helper cut the span at the first ")" in the
-      // surrounding text, so ANY expression containing a parenthesis -- nearly every real one --
-      // would have been truncated to "COALESCE(a, 0" here, which does not even parse. A real
-      // CommonMark parse locates the actual Code node instead of guessing from a bracket count.
+      // The old extraction helper cut the span at the first ")" in the surrounding text, so any
+      // expression containing a parenthesis -- nearly every real one -- would have been truncated to
+      // "COALESCE(a, 0" here, which does not even parse. A real CommonMark parse locates the actual
+      // Code node instead of guessing from a bracket count.
       val expressionColumn = Column(
         name = "u",
         notNull = false,
@@ -237,29 +237,26 @@ class KdocProvenanceRoundTripTest {
   }
 
   /**
-   * Renders [repository]'s first generated type through KotlinPoet's OWN [Any.toString] emission
-   * (`buildCodeString { emit(this, null) }`, the same [com.squareup.kotlinpoet.CodeWriter]-based
-   * machinery `FileSpec.writeTo` uses to produce a real generated `.kt` file) — never
-   * `typeSpec.kdoc.toString()`, which returns the [CodeBlock]'s own pre-render text, computed
-   * before [com.squareup.kotlinpoet.CodeWriter] ever applies its KDoc-block escaping.
+   * Renders [repository]'s first generated type through KotlinPoet's own [Any.toString] emission --
+   * the same [com.squareup.kotlinpoet.CodeWriter] machinery `FileSpec.writeTo` uses for a real
+   * generated `.kt` file -- never `typeSpec.kdoc.toString()`, which returns the pre-render
+   * [CodeBlock] text before KDoc-block escaping is applied.
    */
   private fun renderedFileTextFor(repository: TypeRepository): String = repository.requiredTypes.first().toString()
 
   /**
-   * Extracts the rendered Markdown CONTENT of the inline code span following
+   * Extracts the rendered Markdown content of the inline code span following
    * `` @property [propertyName] ( `` in [generatedFileText]'s KDoc block, or `null` if there is no
-   * such `@property` line with a source-reference span at all (the "declined" case).
+   * such `@property` line with a source-reference span (the "declined" case).
    *
-   * Unlike cutting the surrounding text at the first `)` (what this test used to do, and which
-   * cannot handle an expression containing its own parenthesis — see
-   * [ParenthesisContainingExpressionRoundTrips]), this locates the actual [Code] inline node a REAL
-   * CommonMark parse produces: [generatedFileText]'s `/** ... */` block is unwrapped back to its
-   * own Markdown source first (stripping the ` * `/` *` line prefix
-   * [com.squareup.kotlinpoet.CodeWriter] adds to every KDoc line — a real KDoc renderer, e.g. an
-   * IDE's quick-doc popup or Dokka, strips that same prefix before treating the remainder as
-   * Markdown), then parsed, then walked tracking the plain-text stream immediately preceding each
-   * [Code] node so the marker match is by POSITION, not merely by "some code span exists somewhere
-   * in the document" (which would misattribute if more than one property has a source reference).
+   * Unlike cutting the surrounding text at the first `)` (see
+   * [ParenthesisContainingExpressionRoundTrips] for why that fails), this locates the actual [Code]
+   * inline node a real CommonMark parse produces: [generatedFileText]'s `/** ... */` block is
+   * unwrapped back to its own Markdown source (stripping the ` * `/` *` line prefix
+   * [com.squareup.kotlinpoet.CodeWriter] adds -- the same prefix a real KDoc renderer strips before
+   * treating the remainder as Markdown), then parsed and walked, tracking the plain-text stream
+   * immediately preceding each [Code] node so the marker match is by position, not merely by "some
+   * code span exists somewhere in the document."
    */
   private fun extractSourceReferenceExpression(propertyName: String, generatedFileText: String): String? {
     val kdocMarkdown = extractKdocMarkdown(generatedFileText)

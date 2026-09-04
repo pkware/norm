@@ -77,36 +77,33 @@ internal class PgCatalogLoader(internal val connection: Connection) {
   val aggregateHasNonNullInitialValue: Map<Int, Boolean> by lazy(::loadAggregateInitialValues)
 
   /**
-   * OIDs of non-strict functions that are guaranteed to never return `null` for ANY combination of
-   * argument values passed in the ORDINARY (non-`VARIADIC`) calling form, including when EVERY
-   * argument is `null`. Currently `concat` only: verified live `concat(NULL::text, NULL::text)`
-   * returns `''` (empty string), never `null`.
+   * OIDs of non-strict functions that are guaranteed to never return `null` for any combination of
+   * argument values passed in the ordinary (non-`VARIADIC`) calling form, including when every
+   * argument is `null`. Currently `concat` only: `concat(NULL::text, NULL::text)` returns `''`
+   * (empty string), never `null`.
    *
-   * The `VARIADIC` calling form (`concat(VARIADIC arr)`) is a DIFFERENT case this list's claim does
-   * NOT cover: it passes the array argument itself as one value rather than exploding it into
-   * elements, and `concat(VARIADIC arr)` IS `null` when `arr` itself is `null` (verified live on
-   * PostgreSQL 16, 17, and 18). [PgNodeExpression.FuncExpr.isVariadic] exists specifically so
-   * [NodeTreeNullabilityAnalyzer.isNonNull] and
-   * [NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension] can detect this form and
+   * The `VARIADIC` calling form (`concat(VARIADIC arr)`) is a different case this list's claim does
+   * not cover: it passes the array argument itself as one value rather than exploding it into
+   * elements, and `concat(VARIADIC arr)` is `null` when `arr` itself is `null` (PostgreSQL 16-18).
+   * [PgNodeExpression.FuncExpr.isVariadic] exists specifically so [NodeTreeNullabilityAnalyzer.isNonNull]
+   * and [NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension] can detect this form and
    * require every argument non-null instead of trusting this list unconditionally — see both
    * methods' KDoc.
    *
-   * `concat_ws` is deliberately NOT on this list at all, even for the ordinary calling form, despite
-   * also being non-strict: it is non-null only when its FIRST argument (the separator) is non-null
-   * — `concat_ws(NULL, 'x', 'y')` returns `null` (verified live on PostgreSQL 16, 17, and 18),
-   * because a `null` separator poisons the whole result even though the later arguments are
-   * individually null-tolerant. That argument-position-dependent condition does not fit
-   * "unconditionally non-null" at all, so it is modeled separately — see
-   * [nonNullIffFirstArgumentNonNullFunctionOids] and [NodeTreeNullabilityAnalyzer]'s `concat_ws`
-   * handling in `isNonNull`'s `FuncExpr` branch.
+   * `concat_ws` is not on this list at all, even for the ordinary calling form, despite also being
+   * non-strict: it is non-null only when its first argument (the separator) is non-null —
+   * `concat_ws(NULL, 'x', 'y')` returns `null` (PostgreSQL 16-18), because a `null` separator
+   * poisons the whole result even though the later arguments are individually null-tolerant. That
+   * argument-position-dependent condition does not fit "unconditionally non-null", so it is modeled
+   * separately — see [nonNullIffFirstArgumentNonNullFunctionOids] and
+   * [NodeTreeNullabilityAnalyzer]'s `concat_ws` handling in `isNonNull`'s `FuncExpr` branch.
    *
-   * This distinction matters beyond precision: [NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension]
-   * treats membership on THIS list (for a non-`VARIADIC` call) as an unconditional safety proof for
-   * the grouping-sets null-extension gate specifically because "non-null regardless of input" also
-   * means "non-null regardless of which argument grouping-set null-extension replaces with `null`".
-   * A function that is only non-null for a PARTICULAR argument (like `concat_ws`'s separator) does
-   * not have that property — null-extension could target exactly that argument — so it must never
-   * be added here.
+   * [NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension] treats membership on this list
+   * (for a non-`VARIADIC` call) as an unconditional safety proof for the grouping-sets
+   * null-extension gate specifically because "non-null regardless of input" also means "non-null
+   * regardless of which argument grouping-set null-extension replaces with `null`". A function that
+   * is only non-null for a particular argument (like `concat_ws`'s separator) does not have that
+   * property — null-extension could target exactly that argument — so it must never be added here.
    *
    * Restricted to `pronamespace = 'pg_catalog'` at query time — a user-defined function sharing the
    * name `concat` must not ride along onto this list; see the loader.
@@ -114,21 +111,21 @@ internal class PgCatalogLoader(internal val connection: Connection) {
   val alwaysNonNullFunctionOids: Set<Int> by lazy(::loadAlwaysNonNullFunctions)
 
   /**
-   * OIDs of functions that are non-null if and only if their FIRST argument is non-null, regardless
-   * of any other argument's nullability, in the ORDINARY (non-`VARIADIC`) calling form. Currently
-   * `concat_ws` only: verified live `concat_ws(',', NULL, NULL)` returns `','`-joined empty string
-   * (`''`, non-null) but `concat_ws(NULL, 'x', 'y')` returns `null` — the separator (first argument)
-   * alone determines whether the whole call can be `null`.
+   * OIDs of functions that are non-null if and only if their first argument is non-null, regardless
+   * of any other argument's nullability, in the ordinary (non-`VARIADIC`) calling form. Currently
+   * `concat_ws` only: `concat_ws(',', NULL, NULL)` returns `','`-joined empty string (`''`,
+   * non-null) but `concat_ws(NULL, 'x', 'y')` returns `null` — the separator (first argument) alone
+   * determines whether the whole call can be `null`.
    *
-   * The `VARIADIC` calling form (`concat_ws(',', VARIADIC arr)`) does NOT get this treatment: it
-   * passes the array argument itself as one value, and `concat_ws(',', VARIADIC arr)` IS `null`
-   * when `arr` itself is `null` even though the literal separator is non-null (verified live on
-   * PostgreSQL 16, 17, and 18) — see [PgNodeExpression.FuncExpr.isVariadic]'s KDoc.
+   * The `VARIADIC` calling form (`concat_ws(',', VARIADIC arr)`) does not get this treatment: it
+   * passes the array argument itself as one value, and `concat_ws(',', VARIADIC arr)` is `null`
+   * when `arr` itself is `null` even though the literal separator is non-null (PostgreSQL 16-18) —
+   * see [PgNodeExpression.FuncExpr.isVariadic]'s KDoc.
    *
    * Used by [NodeTreeNullabilityAnalyzer.isNonNull]'s [PgNodeExpression.FuncExpr] branch (for the
    * non-`VARIADIC` form only). Not used by the grouping-sets safety gate
    * ([NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension]) at all, `VARIADIC` or not:
-   * unlike [alwaysNonNullFunctionOids], this property depends on WHICH argument is non-null, so a
+   * unlike [alwaysNonNullFunctionOids], this property depends on which argument is non-null, so a
    * `Var` in the first-argument position is exactly as unsafe under grouping-set null-extension as
    * any other `Var` — the generic aggregate/window-domination rule already handles it correctly
    * without a dedicated leg.
@@ -140,84 +137,85 @@ internal class PgCatalogLoader(internal val connection: Connection) {
 
   /**
    * OIDs of functions, cast functions, and operators (materialized to their implementing function
-   * OID via `pg_operator.oprcode`) that are proven TOTAL on non-null input — every combination of
-   * non-null arguments produces a non-null result. An ERROR is fine; only a silent `null` return
+   * OID via `pg_operator.oprcode`) that are proven total on non-null input — every combination of
+   * non-null arguments produces a non-null result. An error is fine; only a silent `null` return
    * disqualifies a candidate.
    *
-   * This is verified only for the ORDINARY, element-wise calling convention (see `SafeListSweepTest`).
+   * This is verified only for the ordinary, element-wise calling convention (see `SafeListSweepTest`).
    * [NodeTreeNullabilityAnalyzer.isNonNull]'s [PgNodeExpression.FuncExpr] branch never consults
    * this set for a `VARIADIC` call: a non-null array argument says nothing about whether an
-   * element inside it is non-null, and no function on this list is variadic today (verified live
-   * on PostgreSQL 16, 17, and 18: `provariadic <> 0` intersected with every safe-listed name here
-   * is empty) — but this must not silently start trusting the list for that shape the moment one
-   * is added. See [NodeTreeNullabilityAnalyzer]'s `isNeverNullForNonNullInput` KDoc.
+   * element inside it is non-null, and no function on this list is variadic today (`provariadic <>
+   * 0` intersected with every safe-listed name here is empty on PostgreSQL 16-18) — but this must
+   * not silently start trusting the list for that shape the moment one is added. See
+   * [NodeTreeNullabilityAnalyzer]'s `isNeverNullForNonNullInput` KDoc.
    *
-   * `pg_proc.proisstrict` is NOT sufficient for this on its own. STRICT only guarantees
+   * `pg_proc.proisstrict` is not sufficient for this on its own. Strict only guarantees
    * NULL-in => NULL-out; it says nothing about the converse. `substring(text, '(z)')` (regex, no
    * match), `regexp_match(text, pattern)` (no match), and `array_length(ARRAY[]::text[], 1)`
-   * (empty array) are all STRICT and all return `null` on fully non-null, well-typed input. Any
+   * (empty array) are all strict and all return `null` on fully non-null, well-typed input. Any
    * inference rule built from strictness alone is therefore unsound. This set exists to be an
-   * ADDITIONAL conjunct alongside strictness in [NodeTreeNullabilityAnalyzer], never a
+   * additional conjunct alongside strictness in [NodeTreeNullabilityAnalyzer], never a
    * replacement for it — so an unforeseen non-strict overload of a listed name can never slip
    * through.
    *
-   * Functions are safe-listed by `pg_proc.proname` PLUS ARGUMENT TYPE SIGNATURE — see
+   * Functions are safe-listed by `pg_proc.proname` plus argument type signature — see
    * [NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES] — restricted to `pronamespace = 'pg_catalog'`. Keying by
-   * name alone is NOT safe: `lower(anyrange)`/`upper(anyrange)`/`lower(anymultirange)`/
+   * name alone is not safe: `lower(anyrange)`/`upper(anyrange)`/`lower(anymultirange)`/
    * `upper(anymultirange)` share `proname` with the totally-safe `lower(text)`/`upper(text)` but
    * return `null` on a non-null, well-typed, non-empty-but-unbounded range or an empty range —
    * `SELECT upper(int4range '[1,)')` and `SELECT lower(int4range 'empty')` both return `null`.
    * `substring` is the reason a signature-only match still is not always enough on its own:
    * `substring(text, int, int)` is total but `substring(text FROM pattern)` is not, and both
-   * would share the SAME two-argument-count shape if only argument count were checked — this is
-   * why the match is on the full ordered list of argument TYPE NAMES (via `pg_type.typname`), not
+   * would share the same two-argument-count shape if only argument count were checked — this is
+   * why the match is on the full ordered list of argument type names (via `pg_type.typname`), not
    * just arity. `substring` itself is simply left off the list entirely rather than enumerated,
    * since its regex overloads are non-total.
    *
-   * Casts are safe-listed by (source type, target type) PAIR — see [NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES] —
-   * rather than a class-wide blanket over every `pg_cast.castfunc` in `pg_catalog`. A blanket was
-   * tried first and is FALSE: `('null'::jsonb)::int4` (and every other `jsonb` → numeric/`boolean`
+   * Casts are safe-listed by (source type, target type) pair — see
+   * [NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES] — rather than a class-wide blanket over every
+   * `pg_cast.castfunc` in `pg_catalog`. A blanket was
+   * tried first and is false: `('null'::jsonb)::int4` (and every other `jsonb` → numeric/`boolean`
    * cast) returns `null` on well-typed, non-null input with no error, because the cast function
-   * special-cases the JSON literal `null` rather than raising "cannot convert". A brute-force
-   * sweep against live PostgreSQL of every `jsonb`-targeting numeric/`boolean` cast confirmed this
-   * for all seven overloads (`int2`, `int4`, `int8`, `numeric`, `float4`, `float8`, `bool`); none
-   * of the seven appear in [NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES]. The same sweep also found
-   * `timestamp`/`timestamptz` → `time`/`timetz` silently returns `null` for the infinite
-   * (`'infinity'`/`'-infinity'`) input, rather than erroring the way `'infinity'::interval::time`
-   * does — so those three pairs are excluded too. Every other pair the sweep checked (see
-   * [SafeListSweepTest] for the corpus and the full case count) proved total, including on `NaN`,
-   * `Infinity`, `-Infinity`, min/max integer values, and empty strings.
+   * special-cases the JSON literal `null` rather than raising "cannot convert". A sweep of every
+   * `jsonb`-targeting numeric/`boolean` cast confirmed this for all seven overloads (`int2`, `int4`,
+   * `int8`, `numeric`, `float4`, `float8`, `bool`); none of the seven appear in
+   * [NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES]. The same sweep also found `timestamp`/`timestamptz` →
+   * `time`/`timetz` silently returns `null` for the infinite (`'infinity'`/`'-infinity'`) input,
+   * rather than erroring the way `'infinity'::interval::time` does — so those three pairs are
+   * excluded too. Every other pair the sweep checked (see [SafeListSweepTest] for the corpus and the
+   * full case count) proved total, including on `NaN`, `Infinity`, `-Infinity`, min/max integer
+   * values, and empty strings.
    *
    * pgcrypto's `digest` and `hmac` are the one extension carve-out, keyed through `pg_depend`
    * (`deptype = 'e'`) to the `pgcrypto` extension itself, so a user-defined `digest` in `public`
    * cannot ride this carve-out. `encode`/`decode` are ordinary `pg_catalog` functions and are
    * safe-listed on the main function list above, not here. All four `digest`/`hmac` overloads
    * (`digest(text, text)`, `digest(bytea, text)`, `hmac(text, text, text)`, `hmac(bytea, bytea,
-   * text)`) were verified total on empty non-null input; an unrecognized hash algorithm name
-   * errors rather than returning `null`.
+   * text)`) are total on empty non-null input; an unrecognized hash algorithm name errors rather
+   * than returning `null`.
    *
-   * Operators are safe-listed by (symbol, left operand type, right operand type) TRIPLE — see
+   * Operators are safe-listed by (symbol, left operand type, right operand type) triple — see
    * [NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES] — restricted to `oprnamespace = 'pg_catalog'`, and
    * materialized to the OID of the implementing function via `oprcode`, the same OID space
    * [PgNodeExpression.OpExpr] and [PgNodeExpression.ScalarArrayOpExpr] (e.g. `= ANY(...)`) are
-   * keyed by, so no separate operator-specific lookup is needed. Symbol alone is NOT safe: `path +
+   * keyed by, so no separate operator-specific lookup is needed. Symbol alone is not safe: `path +
    * path` (`path_add`) shares the `+` symbol with the totally-safe `int4 + int4`, but returns
-   * `null`, not an error, when either operand is a CLOSED path (`SELECT ((0,0),(1,1),(2,0)) +
-   * ((0,0),(1,1),(2,0))` on two well-typed, non-null closed paths). A brute-force sweep against
-   * live PostgreSQL of every symbol-restricted-but-unrestricted-by-type combination found exactly
-   * this one bad shape; `path` is entirely absent from [NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES] as a
+   * `null`, not an error, when either operand is a closed path (`SELECT ((0,0),(1,1),(2,0)) +
+   * ((0,0),(1,1),(2,0))` on two well-typed, non-null closed paths). A sweep of every
+   * symbol-restricted-but-unrestricted-by-type combination found exactly this one bad shape; `path`
+   * is entirely absent from [NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES] as a
    * result — every triple that remains was independently swept and found total (see
    * [SafeListSweepTest]). A left or right type of `null` in a signature means the operator is
    * unary on that side (no left operand for a prefix operator, no right operand for a postfix
    * operator), mirroring `pg_operator.oprleft`/`oprright` themselves being `0` (no operand) for a
    * unary operator — e.g. unary (prefix) `-` (negation), `+`, and `~` (bitwise complement) are all
-   * PREFIX-only overloads of symbols that are ALSO binary elsewhere in this same list (binary `-`
+   * prefix-only overloads of symbols that are also binary elsewhere in this same list (binary `-`
    * is subtraction, binary `~` is regex match); they needed adding here alongside the binary
-   * overloads specifically because the earlier symbol-only blanket rule this list replaced made
-   * every overload — unary and binary alike — safe together, and losing the unary overloads
-   * would have been an unintended narrowing this fix must not introduce.
+   * overloads because the earlier symbol-only blanket rule this list replaced made every overload —
+   * unary and binary alike — safe together, and losing the unary overloads would have been an
+   * unintended narrowing.
    *
-   * Omitting a signature from this set only WIDENS the result to nullable — it never narrows a
+   * Omitting a signature from this set only widens the result to nullable — it never narrows a
    * truly nullable expression to non-null — so when in doubt about whether a specific signature is
    * total on every non-null, well-typed input (including infinite/empty/unbounded edge values, not
    * just "typical" ones — see [NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES] for the `extract`/`date_part`
@@ -251,7 +249,7 @@ internal class PgCatalogLoader(internal val connection: Connection) {
    * just base tables.
    *
    * Used by [ColumnNullabilityAnalyzer] to resolve a `TargetEntry`'s `:resorigtbl`/`:resorigcol`
-   * back to the REAL source column name, for a result column whose own select-list item is merely a
+   * back to the real source column name, for a result column whose own select-list item is merely a
    * reference to an alias assigned somewhere upstream (a CTE's own `RETURNING`/`SELECT` list
    * renaming a column, e.g.) — PostgreSQL's `markTargetListOrigins` walks through such a reference to
    * find the ultimate source column, so this is a plain OID/attnum lookup, not a name-based one.
@@ -354,8 +352,8 @@ internal class PgCatalogLoader(internal val connection: Connection) {
       // No separate pg_operator/oprcode query is needed: an operator's implementing function
       // (oprcode) is itself a row in pg_proc, so this single query already covers operators too —
       // PgNodeExpression.OpExpr/ScalarArrayOpExpr are keyed by that same function OID, not by any
-      // pg_operator-specific ID. Measured empirically: zero operator oprcode OIDs satisfying the
-      // volatility/proretset filter fall outside this query's result.
+      // pg_operator-specific ID. No operator oprcode OID satisfying the volatility/proretset filter
+      // falls outside this query's result.
       stmt.executeQuery(
         "SELECT oid::integer FROM pg_catalog.pg_proc WHERE provolatile = 'i' AND NOT proretset AND prokind IN ('f', 'w')",
       ).use { rs ->
@@ -382,9 +380,8 @@ internal class PgCatalogLoader(internal val connection: Connection) {
 
   private fun loadAlwaysNonNullFunctions(): Set<Int> = buildSet {
     connection.createStatement().use { stmt ->
-      // pronamespace restricted to pg_catalog: a user-defined function named `concat` must not
-      // ride onto this list just by sharing the name (verified live: CREATE FUNCTION
-      // us.concat(...) with different null behavior gets picked up without this restriction).
+      // pronamespace restricted to pg_catalog: without this, a user-defined function named
+      // `concat` with different null behavior would ride onto this list by sharing the name.
       stmt.executeQuery(
         """
         SELECT p.oid::integer AS oid
@@ -528,8 +525,8 @@ internal class PgCatalogLoader(internal val connection: Connection) {
    *
    * A thin name-resolution adapter over [ColumnNullabilityAnalyzer.isColumnNotNull], the single
    * relid-keyed source of truth for column nullability, base table and view alike. Unlike the
-   * `pg_depend` name-join this replaces (`#256`), a view column's answer comes from fully evaluating
-   * the view's own defining query rather than from tracing a same-named source column and inheriting
+   * `pg_depend` name-join this replaces, a view column's answer comes from fully evaluating the
+   * view's own defining query rather than from tracing a same-named source column and inheriting
    * its constraint. This function does no computation of its own.
    *
    * @param schemaName The schema to check.
@@ -544,7 +541,7 @@ internal class PgCatalogLoader(internal val connection: Connection) {
    * [schemaName] — the name-resolution half of [loadViewColumnNullability]'s adapter over
    * [ColumnNullabilityAnalyzer.isColumnNotNull].
    *
-   * `ORDER BY c.oid, a.attnum` is load-bearing, not cosmetic: [loadViewColumnNullability] resolves
+   * `ORDER BY c.oid, a.attnum` matters, not just style: [loadViewColumnNullability] resolves
    * these rows one at a time through a single shared [ColumnNullabilityAnalyzer], whose answer for a
    * view deep enough to hit [ColumnNullabilityAnalyzer.VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET] can
    * depend on which views were memoized beforehand. Absent an `ORDER BY`, PostgreSQL may return these
@@ -757,16 +754,16 @@ internal class PgCatalogLoader(internal val connection: Connection) {
    * Routes every statement — a plain `SELECT` exactly the same as a data-modifying statement or
    * CTE — through [ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody]. `prosqlbody`
    * holds the identical post-parse-analysis `{QUERY ...}` shape `CREATE VIEW`'s `pg_rewrite.ev_action`
-   * does (see that method's KDoc), so a plain `SELECT` needs no separate route of its own: a live
-   * sweep across PostgreSQL 16/17/18 of every shape `CREATE VIEW` accepts but a SQL-standard
-   * function body might plausibly reject or
-   * reinterpret — `UNION`/`INTERSECT`/`EXCEPT`, `WITH RECURSIVE`, `ORDER BY`/`LIMIT`/`OFFSET`,
-   * `FOR UPDATE`/`FOR SHARE`, `DISTINCT ON`, a `VALUES` list, a set-returning function in the
-   * target list, `LATERAL`, `TABLESAMPLE`, `WITH ORDINALITY`, and a query selecting from another
-   * view — found no disagreement on any of them (see [QueryAnalysisTest]'s `SELECT DISTINCT ON`
-   * and `TABLESAMPLE` cases, the two shapes the corpus had no other coverage for; every other
-   * shape is exercised elsewhere in [QueryAnalysisTest] and in the `test-scenarios` golden-file
-   * corpus, which pins the exact generated Kotlin type derived from this function's answer).
+   * does (see that method's KDoc), so a plain `SELECT` needs no separate route of its own: on
+   * PostgreSQL 16-18, every shape `CREATE VIEW` accepts but a SQL-standard function body might
+   * plausibly reject or reinterpret — `UNION`/`INTERSECT`/`EXCEPT`, `WITH RECURSIVE`,
+   * `ORDER BY`/`LIMIT`/`OFFSET`, `FOR UPDATE`/`FOR SHARE`, `DISTINCT ON`, a `VALUES` list, a
+   * set-returning function in the target list, `LATERAL`, `TABLESAMPLE`, `WITH ORDINALITY`, and a
+   * query selecting from another view — agrees between the two routes (see [QueryAnalysisTest]'s
+   * `SELECT DISTINCT ON` and `TABLESAMPLE` cases, the two shapes the corpus had no other coverage
+   * for; every other shape is exercised elsewhere in [QueryAnalysisTest] and in the
+   * `test-scenarios` golden-file corpus, which pins the exact generated Kotlin type derived from
+   * this function's answer).
    *
    * @return one [ColumnAnalysis] per result column. If
    *   [ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody] cannot produce an answer at
@@ -775,8 +772,8 @@ internal class PgCatalogLoader(internal val connection: Connection) {
    *   result column (via `PreparedStatement.getMetaData()`, the only source of a column count this
    *   deep into a fallback) is reported nullable with no provenance: the safe direction, and
    *   consistent with every other fallback in this file. A statement with no result columns at all
-   *   (`INSERT`/`UPDATE`/`DELETE`/`MERGE` with no `RETURNING`) naturally reports an EMPTY list here,
-   *   since its real column count is `0` — there is nothing for a caller to treat as nullable OR
+   *   (`INSERT`/`UPDATE`/`DELETE`/`MERGE` with no `RETURNING`) naturally reports an empty list here,
+   *   since its real column count is `0` — there is nothing for a caller to treat as nullable or
    *   not.
    */
   fun queryColumnNullability(@Language("PostgreSQL") sql: String): List<ColumnAnalysis> =
@@ -785,9 +782,9 @@ internal class PgCatalogLoader(internal val connection: Connection) {
 
   /**
    * The real number of result columns [sql] produces, via `PreparedStatement.getMetaData()` — used
-   * ONLY by [queryColumnNullability]'s final, otherwise-blind fallback to size its all-nullable
+   * only by [queryColumnNullability]'s final, otherwise-blind fallback to size its all-nullable
    * default correctly (in particular, `0` for a `RETURNING`-less `INSERT`/`UPDATE`/`DELETE`/
-   * `MERGE`, which must report an EMPTY list, not a list of one `true` per some guessed count).
+   * `MERGE`, which must report an empty list, not a list of one `true` per some guessed count).
    */
   private fun realColumnCount(@Language("PostgreSQL") sql: String): Int = try {
     connection.prepareStatement(sql).use { it.metaData?.columnCount ?: 0 }

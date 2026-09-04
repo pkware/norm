@@ -4,19 +4,19 @@ package norm.generator
  * Extracts, from the developer's own original SQL text, the expression a [NodeTreeColumnProvenance]
  * points at.
  *
- * [sql] must be the query's ORIGINAL text — never [nodeTreeText]'s sentinel-substituted or deparsed
+ * [sql] must be the query's original text — never [nodeTreeText]'s sentinel-substituted or deparsed
  * form — so a sentinel literal built only to satisfy `?`'s type during analysis can never leak into
- * generated KDoc. [nodeTreeText] is trusted only for WHERE the expression lives ([provenance]'s CTE
- * name and body position); [sql] is trusted only for WHAT it says.
+ * generated KDoc. [nodeTreeText] is trusted only for where the expression lives ([provenance]'s CTE
+ * name and body position); [sql] is trusted only for what it says.
  *
- * This proves its answer rather than merely computing one: a text-only re-lex of the CTE body can
- * mis-split or mis-merge an item boundary (an unbalanced-looking comment, a pathological string
- * literal) without the item count changing, silently handing back a neighboring item's expression.
- * Every gate below returns `null` (no provenance) instead of risking a wrong one:
+ * A text-only re-lex of the CTE body can mis-split or mis-merge an item boundary (an
+ * unbalanced-looking comment, a pathological string literal) without the item count changing,
+ * silently handing back a neighboring item's expression. Every gate below returns `null` (no
+ * provenance) instead of risking a wrong one:
  * - the CTE [provenance] points at is found by replaying [NodeTreeColumnProvenance.hops] step by
  *   step (see [scopedNodeTreeCteQueryBlock] and [scopedSqlCteDefinition]), never by a flat, name-only
  *   search — so a nested `WITH` that shadows an outer CTE of the same name resolves against the exact
- *   declaration [NodeTreeProvenanceResolver] walked to, not merely a same-named one elsewhere (#238).
+ *   declaration [NodeTreeProvenanceResolver] walked to, not merely a same-named one elsewhere.
  * - [parseOutputItemsWithAlias] over that CTE's body must yield exactly as many top-level items as
  *   [nodeTreeText] has non-junk body target entries for that CTE.
  * - every position's own name — not merely [provenance]'s — must fold-match that position's own
@@ -26,8 +26,8 @@ package norm.generator
  * - [provenance]'s own item must have a verifiable name: an explicit `AS x`, an implicit trailing
  *   alias token, or being itself a bare column reference — see [verifiedItem].
  * - [provenance]'s own matched item must not have been verified only via an implicit alias: its
- *   complete text is legal only as a SELECT-LIST ITEM (`UPPER(name) y`), never as a standalone
- *   EXPRESSION — the context a `@property` source reference renders it in — because whether a
+ *   complete text is legal only as a select-list item (`UPPER(name) y`), never as a standalone
+ *   expression — the context a `@property` source reference renders it in — because whether a
  *   trailing bare word is an alias or a required operand (`ts AT TIME ZONE timezone`) cannot be
  *   decided from text alone. An explicit `AS` alias has no such problem: [extractAlias] already
  *   splits it off before the item's expression is formed.

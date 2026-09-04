@@ -41,15 +41,15 @@ internal data class KeywordOperandCase(
  * (`ts AT TIME ZONE 'UTC' res`), never a legal standalone expression (`(ts AT TIME ZONE 'UTC' res)`
  * is a syntax error), which is exactly the context a `@property` source reference renders it in.
  *
- * Every shape is run through the REAL pipeline (a `prosqlbody` node tree built from a live
+ * Every shape is run through the real pipeline (a `prosqlbody` node tree built from a live
  * PostgreSQL server, exactly as production does) in two forms:
- * - WITH a real trailing implicit (no-`AS`) alias: PostgreSQL's own `:resname` for the item DOES
- *   verify against that alias — proving the cross-validation gate itself still works for every one
- *   of these keyword-operand shapes — but [resolveNodeTreeProvenanceExpression] must still resolve
- *   to `null`, never [case]'s truncated OR complete text.
- * - WITHOUT any alias at all: PostgreSQL's own auto-generated `:resname` (`?column?`, `case`, ...)
+ * - With a real trailing implicit (no-`AS`) alias: PostgreSQL's own `:resname` for the item does
+ *   verify against that alias, proving the cross-validation gate itself still works for every one
+ *   of these keyword-operand shapes, but [resolveNodeTreeProvenanceExpression] must still resolve
+ *   to `null`, never [case]'s truncated or complete text.
+ * - Without any alias at all: PostgreSQL's own auto-generated `:resname` (`?column?`, `case`, ...)
  *   has no corresponding text to verify against either, so the resolved expression must be `null`
- *   here too — never a guess.
+ *   here too, never a guess.
  */
 @Testcontainers
 internal class KeywordOperandProvenanceCorpusTest {
@@ -152,8 +152,8 @@ internal class KeywordOperandProvenanceCorpusTest {
       "INSERT INTO t VALUES (5, 3, true, NULL, 'abc', '2024-01-01 10:00:00', ARRAY[10, 20, 30])"
 
     /**
-     * Every shape the issue calls out, verified live against PostgreSQL 18.4 before being encoded
-     * here (`docker exec verify-pg18 psql -U postgres`) — see this file's own KDoc.
+     * Every shape here was run against PostgreSQL 18.4 (`docker exec verify-pg18 psql -U postgres`)
+     * before being encoded.
      */
     private val CORPUS = listOf(
       KeywordOperandCase("IS NULL", "a IS NULL"),

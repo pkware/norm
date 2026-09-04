@@ -19,35 +19,30 @@ import java.sql.SQLException
 import java.sql.Statement
 
 /**
- * Brute-force verification, against a LIVE PostgreSQL instance, that every entry in
+ * Brute-force check, against a live PostgreSQL instance, that every entry in
  * [NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES], [NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES],
- * [NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES], and pgcrypto's `digest`/`hmac` really is TOTAL
- * on non-null input — the property [NodeTreeNullabilityAnalyzer] relies on those lists for, in
- * addition to `pg_proc.proisstrict`/an equivalent implicit-strictness check, licensing the claim
- * that a call is non-null whenever every one of its arguments is non-null.
+ * [NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES], and pgcrypto's `digest`/`hmac` really is total
+ * on non-null input. [NodeTreeNullabilityAnalyzer] relies on these lists, alongside
+ * `pg_proc.proisstrict`/an equivalent implicit-strictness check, to conclude a call is non-null
+ * whenever every one of its arguments is non-null.
  *
- * This sweep — not hand-reasoning about a specific overload's documented behavior — is what
- * LICENSES an entry on any of these lists. For each signature, this test substitutes every
- * combination (the cartesian product across argument positions) of non-null EDGE-CASE values
- * from [EDGE_VALUE_CORPUS] for that signature's argument(s) and asserts the resulting call
- * `IS NOT NULL`. The corpus specifically targets the values that have historically broken a
- * "total" claim for some `pg_catalog` overload: empty strings, `NaN`/`Infinity`/`-Infinity`,
- * PostgreSQL's `infinity`/`-infinity` date/time sentinels, zero, negative and min/max integer
- * values, empty and unbounded ranges, empty arrays and multiranges, and a CLOSED geometric path
- * (the exact shape that broke `path + path` — see [NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES]).
+ * For each signature, this test substitutes every combination (the cartesian product across
+ * argument positions) of non-null edge-case values from [EDGE_VALUE_CORPUS] and asserts the
+ * resulting call `IS NOT NULL`. The corpus targets values that have historically broken a "total"
+ * claim for some `pg_catalog` overload: empty strings, `NaN`/`Infinity`/`-Infinity`, PostgreSQL's
+ * `infinity`/`-infinity` date/time sentinels, zero, negative and min/max integer values, empty and
+ * unbounded ranges, empty arrays and multiranges, and a closed geometric path (the shape that broke
+ * `path + path` — see [NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES]).
  *
- * A case that raises a [SQLException] is a PASS only when the exception proves the call actually
- * EVALUATED and then genuinely errored — see [isNotEvaluatedSqlState] for the syntax-error /
- * undefined-function / cannot-coerce PostgreSQL SQLSTATE classes that mean the call never got that
- * far (a syntax error is not evidence about the function's runtime behavior). An actual `null`
- * RESULT is always a failure, named by the exact entry and the exact literal SQL expression that
- * produced it.
+ * A [SQLException] only counts as a pass when it proves the call actually evaluated and then
+ * genuinely errored — see [isNotEvaluatedSqlState] for the syntax-error / undefined-function /
+ * cannot-coerce SQLSTATE classes that mean the call never got that far. An actual `null` result is
+ * always a failure, named by the exact entry and the exact literal SQL expression that produced it.
  *
- * A case being a PASS is not, by itself, enough to license a signature: [CoverageTracker] requires
- * every signature to additionally accumulate at least one case that actually EVALUATED and
- * returned a non-null value. A signature whose every case errored (or, worse, never got past
- * parsing) provides ZERO information about whether the signature is actually total, and is
- * reported as a failure in its own right — see `requirePositiveCoverage`.
+ * Passing every case is not enough to license a signature: [CoverageTracker] requires each
+ * signature to also accumulate at least one case that evaluated and returned a non-null value. A
+ * signature whose every case errored (or never got past parsing) proves nothing about whether it's
+ * actually total, and is reported as a failure in its own right — see `requirePositiveCoverage`.
  */
 @Testcontainers
 class SafeListSweepTest {
@@ -175,11 +170,10 @@ class SafeListSweepTest {
   /**
    * pgcrypto's `digest`/`hmac` are keyed through `pg_depend` rather than appearing on any of the
    * three static safe lists (see [PgCatalogLoader.loadNeverNullForNonNullInputOids]'s pgcrypto
-   * carve-out), so none of the three tests above ever exercises them. This test brings all four
-   * documented-total overloads (`digest(text, text)`, `digest(bytea, text)`, `hmac(text, text,
-   * text)`, `hmac(bytea, bytea, text)`) into the same brute-force sweep, backing the KDoc's claim
-   * that they were verified total. `postgres:$pgVersion-alpine` can `CREATE EXTENSION pgcrypto`
-   * without any extra setup, so there is no need for an alternate verification path.
+   * carve-out), so none of the three tests above exercises them. This test runs the same
+   * brute-force sweep over all four documented-total overloads (`digest(text, text)`,
+   * `digest(bytea, text)`, `hmac(text, text, text)`, `hmac(bytea, bytea, text)`).
+   * `postgres:$pgVersion-alpine` can `CREATE EXTENSION pgcrypto` without any extra setup.
    */
   @Test
   fun `every pgcrypto digest and hmac signature is total on the edge-value corpus`() {
@@ -207,21 +201,19 @@ class SafeListSweepTest {
 
   /**
    * A sweep with no positive-coverage requirement, and no distinction between "evaluated and
-   * errored" and "never evaluated", is a sweep that can silently rot into a no-op — it would keep
-   * reporting BUILD SUCCESSFUL forever, even for a signature added later that is provably NOT
-   * total, as long as every one of its cases happens to error. This test drives [checkTotal] and
-   * [CoverageTracker] directly against `extract(text, timestamp)` — a signature deliberately never
-   * added to [NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES] because
-   * `extract(hour FROM 'infinity'::timestamp)` returns `null` with no error (see that list's KDoc)
-   * — and asserts the sweep machinery reports it as a failure. If this test ever passes without
-   * failures being produced, the sweep's core safety property has silently stopped working.
+   * errored" and "never evaluated", can rot into a no-op: it would keep passing even for a
+   * signature that is provably not total, as long as every one of its cases happens to error. This
+   * test drives [checkTotal] and [CoverageTracker] directly against `extract(text, timestamp)` — a
+   * signature deliberately never added to [NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES]
+   * because `extract(hour FROM 'infinity'::timestamp)` returns `null` with no error (see that
+   * list's KDoc) — and asserts the sweep machinery reports it as a failure.
    *
-   * This test alone only proves [checkTotal] catches an actual `null` RESULT — `extract` still
+   * This test alone only proves [checkTotal] catches an actual `null` result — `extract` still
    * accumulates plenty of `EvaluatedNonNull` cases from every non-infinity timestamp in the corpus,
    * so it says nothing about [CoverageTracker.requirePositiveCoverage] itself. The two tests below
    * it (`requirePositiveCoverage fails ...` / `requirePositiveCoverage passes ...`) close that gap
    * by calling `requirePositiveCoverage` directly against a synthetic zero-coverage and a synthetic
-   * real-coverage [CoverageTracker], the only way to exercise the ZERO-coverage branch, since every
+   * real-coverage [CoverageTracker] — the only way to exercise the zero-coverage branch, since every
    * signature actually on a safe list has real coverage by construction.
    */
   @Test
@@ -273,7 +265,7 @@ class SafeListSweepTest {
   }
 
   /**
-   * The positive counterpart to the test above: a [CoverageTracker] that HAS recorded a genuine
+   * The positive counterpart to the test above: a [CoverageTracker] that has recorded a genuine
    * [CaseOutcome.EvaluatedNonNull] case reports no failure. Without this test, a
    * `requirePositiveCoverage` that always failed (rather than one that failed only on zero
    * coverage) would also make the test above pass, hiding a rule that rejects every signature.
@@ -292,7 +284,7 @@ class SafeListSweepTest {
    * The signature this test models: `int2->bytea`, safe-listed but only castfunc-backed starting
    * in PostgreSQL 18 — on 16/17 every corpus case dies on `42846: cannot cast type smallint to
    * bytea`, a class-42 (never-evaluated) SQLSTATE, for every single literal regardless of value.
-   * [CoverageTracker.neverResolvedOnThisServer] must recognize this as a SKIP, not a failure — see
+   * [CoverageTracker.neverResolvedOnThisServer] must recognize this as a skip, not a failure — see
    * that method's KDoc for why "every case NotEvaluated" reliably means "does not resolve here".
    */
   @Test
@@ -304,9 +296,9 @@ class SafeListSweepTest {
   }
 
   /**
-   * The counterpart to the test above: a signature that DOES resolve here but happens to error on
+   * The counterpart to the test above: a signature that does resolve here but happens to error on
    * every corpus value it was given (a genuine "corpus is insufficient" bug, not a version gap)
-   * must NOT be classified as a skip — that mix ([CaseOutcome.EvaluatedError] alongside
+   * must not be classified as a skip — that mix ([CaseOutcome.EvaluatedError] alongside
    * [CaseOutcome.NotEvaluated], or [CaseOutcome.EvaluatedError] alone) is impossible for a
    * signature that never resolves at all (see [CoverageTracker.neverResolvedOnThisServer]'s
    * KDoc), so it is left to fail normally via [CoverageTracker.requirePositiveCoverage] instead.
@@ -330,13 +322,13 @@ class SafeListSweepTest {
   /**
    * Builds the literal SQL call expression for one case of [signature] given [rawArguments] (one
    * literal per argument position, already present in [EDGE_VALUE_CORPUS] order) and
-   * [argumentTypeNames] — the CONCRETE type to cast each literal to at the call site. Defaults to
+   * [argumentTypeNames] — the concrete type to cast each literal to at the call site. Defaults to
    * [SafeFunctionSignature.argumentTypeNames] itself, which is correct for every ordinary,
    * non-pseudo-typed signature; a signature with a pseudo-type argument (e.g.
    * `cardinality(anyarray)`) passes the concrete instantiation actually under test for this case
    * (e.g. `integer[]`) instead, since a literal cannot be cast directly to a pseudo-type. Most
    * functions use ordinary `name(arg, arg, ...)` call syntax with each argument explicitly cast
-   * (`$literal::$typeName`) so PostgreSQL resolves the EXACT overload under test. Three names need
+   * (`$literal::$typeName`) so PostgreSQL resolves the exact overload under test. Three names need
    * special-casing because their only valid invocation form differs from an ordinary function
    * call:
    * - `ntile` is a window function (`prokind = 'w'`) — it cannot be called as an ordinary function,
@@ -344,7 +336,7 @@ class SafeListSweepTest {
    * - `extract` is SQL-standard grammar, not an ordinary function call — `extract('hour'::text,
    *   x::time)` is a syntax error (`extract` cannot be followed by a parenthesized, comma-separated
    *   argument list the way a real function can); the only valid call form is `EXTRACT(<field>
-   *   FROM <value>)`, with `<field>` a BARE keyword (`HOUR`, not `'hour'::text`).
+   *   FROM <value>)`, with `<field>` a bare keyword (`HOUR`, not `'hour'::text`).
    * - `position` is likewise SQL-standard grammar, not an ordinary function call —
    *   `position('a'::text, 'abc'::text)` is a syntax error; the only valid call form is
    *   `POSITION(<substring> IN <string>)`.
@@ -411,19 +403,19 @@ class SafeListSweepTest {
 
   /**
    * The mirror image of [checkTotal]: executes `SELECT (<expression>) IS NULL` and requires the
-   * result to actually BE `null` — used by the [nonNullIffFirstArgumentNonNullFunctionOids] sweep's
+   * result to actually be `null` — used by the [nonNullIffFirstArgumentNonNullFunctionOids] sweep's
    * property (ii), where a `NULL` first argument must poison the whole result regardless of every
    * other argument.
    *
-   * Returns `true` ONLY when the case genuinely EVALUATED and CONFIRMED a `null` result — the one
+   * Returns `true` only when the case genuinely evaluated and confirmed a `null` result — the one
    * outcome that actually proves the property, mirroring how only [CaseOutcome.EvaluatedNonNull]
    * proves totality for [checkTotal]. Returns `false` for a non-`null` result (also recorded as a
-   * failure) and `null` for anything that did NOT confirm the property one way or the other: a
-   * class-42 (never-evaluated) SQLSTATE, matching [isNotEvaluatedSqlState], AND a genuine runtime
-   * error. An earlier version of this method conflated "evaluated to `null`" with "raised ANY
+   * failure) and `null` for anything that did not confirm the property one way or the other: a
+   * class-42 (never-evaluated) SQLSTATE, matching [isNotEvaluatedSqlState], or a genuine runtime
+   * error. An earlier version of this method conflated "evaluated to `null`" with "raised any
    * non-class-42 exception", returning `true` for both — a future entry whose every NULL-first case
    * happened to raise a real (non-class-42) runtime error, rather than actually returning `null`,
-   * would then have passed this sweep having proven NOTHING about the property under test. The
+   * would then have passed this sweep having proven nothing about the property under test. The
    * caller must require at least one `true` case per signature, exactly the way
    * [CoverageTracker.requirePositiveCoverage] requires at least one [CaseOutcome.EvaluatedNonNull]
    * for [checkTotal] — a `false`/`null` case is not proof, the same way an [CaseOutcome.EvaluatedError]/
@@ -453,18 +445,18 @@ class SafeListSweepTest {
 
   /**
    * Brute-force verification that every entry in [PgCatalogLoader.alwaysNonNullFunctionOids]
-   * really is non-null for ANY combination of argument values, including when EVERY argument is
+   * really is non-null for any combination of argument values, including when every argument is
    * `NULL` — the exact claim [concat_ws] shipping on this list would have violated (`concat_ws`
    * returns `null` when its separator is `NULL`, even though every other argument is non-null).
-   * This is the test the `concat_ws` bug this file's KDoc describes needed: unlike the totality
-   * sweep above, which never substitutes an actual `NULL` literal for any argument,
-   * [nullEveryPositionCases] specifically forces a `NULL` into every position, one at a time (with
-   * every other position drawn from [EDGE_VALUE_CORPUS]), plus the all-`NULL` combination.
+   * Unlike the totality sweep above, which never substitutes an actual `NULL` literal for any
+   * argument, [nullEveryPositionCases] specifically forces a `NULL` into every position, one at a
+   * time (with every other position drawn from [EDGE_VALUE_CORPUS]), plus the all-`NULL`
+   * combination.
    *
    * OIDs are read from [PgCatalogLoader.alwaysNonNullFunctionOids] itself — computed live, the same
    * way production does — rather than a hardcoded OID, and resolved back to a `pg_proc.proname` via
    * [resolveProcName] so this test automatically covers whatever the production list actually
-   * contains today. [NULL_ARGUMENT_SWEEP_SIGNATURES_BY_NAME] supplies the CONCRETE arity/types to
+   * contains today. [NULL_ARGUMENT_SWEEP_SIGNATURES_BY_NAME] supplies the concrete arity/types to
    * call each name with, since `concat`'s single `pg_catalog` row is declared `VARIADIC "any"` — a
    * pseudo-type with no literal form of its own, unlike `anyarray`/`anyrange`/`anyelement`, which
    * [concreteInstantiationsFor] already knows how to instantiate.
@@ -501,13 +493,13 @@ class SafeListSweepTest {
   }
 
   /**
-   * Brute-force verification of BOTH directions of
+   * Brute-force verification of both directions of
    * [PgCatalogLoader.nonNullIffFirstArgumentNonNullFunctionOids]'s claim: (i) a non-null first
    * argument with `NULL`(s) anywhere else never produces a `null` result, and (ii) a `NULL` first
-   * argument ALWAYS produces a `null` result, regardless of the other arguments. Property (ii) is
+   * argument always produces a `null` result, regardless of the other arguments. Property (ii) is
    * what distinguishes this list from [alwaysNonNullFunctionOids] — an entry here is non-null only
-   * CONDITIONALLY, and a signature that turns out to be non-null even with a `NULL` first argument
-   * belongs on that list instead, not this one.
+   * conditionally, and a signature that turns out to be non-null even with a `NULL` first argument
+   * belongs on that list instead.
    *
    * OIDs and corpus signatures are resolved the same way as the `alwaysNonNullFunctionOids` sweep
    * above — see that test's KDoc.
@@ -566,13 +558,13 @@ class SafeListSweepTest {
 
   /**
    * Verification of [PgCatalogLoader.lagLeadWithDefaultOids]'s claim: the 3-argument `lag`/`lead`
-   * overloads are non-null when their value and default expressions are non-null, EVEN at a window
+   * overloads are non-null when their value and default expressions are non-null, even at a window
    * boundary where the 1- and 2-argument forms would return `null` (no such row exists to fetch).
    * Runs both `lag` and `lead` over a small non-null, ordered dataset with a non-null literal
-   * default and asserts every row's output is non-null, then asserts the actual BOUNDARY row (the
+   * default and asserts every row's output is non-null, then asserts the actual boundary row (the
    * one with no preceding/following row for the given offset) equals the literal default exactly —
    * proving the default genuinely filled in the boundary, not merely that no row happened to be
-   * `null` for some other reason. Also asserts the 2-argument form is NOT on this list: it has no
+   * `null` for some other reason. Also asserts the 2-argument form is not on this list: it has no
    * default to fall back on, so it genuinely does return `null` at a window boundary.
    */
   @Test
@@ -627,7 +619,7 @@ class SafeListSweepTest {
      * generic text corpus (empty string, `'abc'`) would only ever error (invalid field name),
      * never exercising the field-dependent `null`-on-infinity behavior these functions are
      * documented (see [NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES]) to special-case for only
-     * SOME fields. Quoted, since `date_trunc`/`date_part` take the field name as an ordinary
+     * some fields. Quoted, since `date_trunc`/`date_part` take the field name as an ordinary
      * `text` argument; [functionCallExpression] strips the quotes back off for `extract`, whose
      * SQL-standard grammar takes the field name as a bare keyword instead.
      */
@@ -648,7 +640,7 @@ class SafeListSweepTest {
     /**
      * Format-name literals for `encode`/`decode`'s second argument. `base64`/`hex`/`escape` are
      * PostgreSQL's only three recognized formats — without at least one of them in the corpus,
-     * EVERY case dies on `unrecognized encoding: ""` (a genuine runtime error, but never a
+     * every case dies on `unrecognized encoding: ""` (a genuine runtime error, but never a
      * successful non-null result), leaving the signature with zero positive coverage despite the
      * sweep having run dozens of cases against it. The empty-string entry is kept specifically so
      * an unrecognized-format case stays in the corpus too, landing in the "evaluated and errored"
@@ -666,7 +658,7 @@ class SafeListSweepTest {
 
     /**
      * Codepoint literals for `chr`'s single argument. `chr`'s min/max-`int4` edge values (`0`,
-     * `-2147483648`, `2147483647`) ALL error (`null character not permitted` / `character number
+     * `-2147483648`, `2147483647`) all error (`null character not permitted` / `character number
      * must be positive` / `requested character too large for encoding`), so sweeping only
      * [EDGE_VALUE_CORPUS]'s plain `int4` corpus would leave `chr` with zero positive coverage
      * despite genuinely being total. `65` (`'A'`) and `1114111` (the maximum valid Unicode code
@@ -679,17 +671,17 @@ class SafeListSweepTest {
     /**
      * Edge-case literal values (unquoted where bare numeric literals suffice, single-quoted
      * otherwise), keyed by `pg_type.typname`. Every literal is cast explicitly (`$literal::type`)
-     * at the call site rather than left untyped, so PostgreSQL resolves the EXACT overload under
+     * at the call site rather than left untyped, so PostgreSQL resolves the exact overload under
      * test instead of picking whichever overload its untyped-literal defaulting rules prefer.
      */
     private val EDGE_VALUE_CORPUS: Map<String, List<String>> = mapOf(
       // The minimum-integer literals are parenthesized because every call site embeds a corpus
-      // entry as `$literal::$typeName` (`::` binds tighter than unary `-`), so an UNPARENTHESIZED
-      // `-32768::int2` parses as `-(32768::int2)` — the INNER, still-positive literal overflows
+      // entry as `$literal::$typeName` (`::` binds tighter than unary `-`), so an unparenthesized
+      // `-32768::int2` parses as `-(32768::int2)` — the inner, still-positive literal overflows
       // int2 on its own coercion before the outer negation ever runs, raising a data-exception
-      // SQLSTATE (class `22`) that [isNotEvaluatedSqlState] correctly treats as an evaluated PASS,
+      // SQLSTATE (class `22`) that [isNotEvaluatedSqlState] correctly treats as an evaluated pass,
       // even though the minimum value never actually reached the entry under test. Parenthesizing
-      // forces `(-32768)::int2` — negate the untyped literal FIRST, then coerce the already-signed
+      // forces `(-32768)::int2` — negate the untyped literal first, then coerce the already-signed
       // `-32768` to `int2`, which is in range. `-1` needs no parentheses: `-1::int2` parses as
       // `-(1::int2)`, and `1` is in range for every one of these types, so there is no overflow to
       // mask.
@@ -715,7 +707,7 @@ class SafeListSweepTest {
       "interval" to listOf("'1 day'", "'infinity'", "'-infinity'", "'0'"),
       "uuid" to listOf("'00000000-0000-0000-0000-000000000000'"),
       "lseg" to listOf("'[(0,0),(1,1)]'"),
-      // A CLOSED path and an OPEN path — the exact distinction that makes `path + path` unsafe.
+      // A closed path and an open path — the exact distinction that makes `path + path` unsafe.
       "path" to listOf("'((0,0),(1,1),(2,0))'", "'[(0,0),(1,1)]'"),
       "tsvector" to listOf("''", "'a b c'"),
       "integer[]" to listOf("'{}'", "'{1,2}'", "'{1,NULL}'"),
@@ -729,7 +721,7 @@ class SafeListSweepTest {
 
     /**
      * pgcrypto's `digest`/`hmac` overloads, brute-force-swept for total-ness the same way as the
-     * three static [PgCatalogLoader] safe lists, but NOT sourced from any of them: they are an
+     * three static [PgCatalogLoader] safe lists, but not sourced from any of them: they are an
      * extension carve-out keyed through `pg_depend`, not a name/argument-type entry on a list (see
      * [PgCatalogLoader.loadNeverNullForNonNullInputOids]). Defined here, in the test, rather than
      * in production code, since nothing else needs a [SafeFunctionSignature] for them.
@@ -742,10 +734,10 @@ class SafeListSweepTest {
     )
 
     /**
-     * A self-cast (source type == target type, e.g. `varchar` -> `varchar`) with NO typmod on the
+     * A self-cast (source type == target type, e.g. `varchar` -> `varchar`) with no typmod on the
      * target folds away to a no-op: `EXPLAIN (VERBOSE) SELECT v::varchar FROM t` (`v` a `varchar`
      * column) shows bare `Output: v` — no cast node at all, and `pg_cast.castfunc` is never called.
-     * These entries are licensed as typmod-ENFORCEMENT casts (see
+     * These entries are licensed as typmod-enforcement casts (see
      * [NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES]'s KDoc), so sweeping them without a typmod would
      * grant coverage while never invoking the function the entry actually licenses. The target
      * side of every self-cast entry here therefore carries an explicit typmod shorter than at least
@@ -766,9 +758,9 @@ class SafeListSweepTest {
     )
 
     /**
-     * Literal corpus for the TYPMOD form of each self-cast entry — a superset of
+     * Literal corpus for the typmod form of each self-cast entry — a superset of
      * [EDGE_VALUE_CORPUS]'s plain corpus for the same source type, with at least one literal added
-     * that is LONGER/more-precise than the typmod in [SELF_CAST_TYPMOD_SUFFIX], so truncation or
+     * that is longer/more-precise than the typmod in [SELF_CAST_TYPMOD_SUFFIX], so truncation or
      * rounding is actually exercised (`'abcdef'::varchar(3)` truncates to `'abc'`;
      * `123.456::numeric(5,2)` rounds to `123.46`) rather than every case happening to already fit.
      */
@@ -790,17 +782,17 @@ class SafeListSweepTest {
     )
 
     /**
-     * Source-side typmod override for [SELF_CAST_TYPMOD_LITERAL_CORPUS] entries whose type's BARE
-     * form (no typmod at all) does NOT mean "unconstrained" — unlike `varchar`/`numeric`/
+     * Source-side typmod override for [SELF_CAST_TYPMOD_LITERAL_CORPUS] entries whose type's bare
+     * form (no typmod at all) does not mean "unconstrained" — unlike `varchar`/`numeric`/
      * `timestamp`/etc., whose bare form has no length/precision limit, bare `bit` means `bit(1)`
      * (the SQL-standard default length). Casting a literal straight to bare `bit` therefore
-     * truncates it to a single bit BEFORE the self-cast under test ever runs, making every
+     * truncates it to a single bit before the self-cast under test ever runs, making every
      * source-side value length-1 and defeating the truncation [SELF_CAST_TYPMOD_SUFFIX]'s KDoc
      * describes this whole mechanism as existing to exercise: `('101'::bit)::bit(1)` would
-     * truncate `'101'` down to `'1'` at the FIRST cast, so the outer, narrower `bit(1)` cast would
+     * truncate `'101'` down to `'1'` at the first cast, so the outer, narrower `bit(1)` cast would
      * receive an already-1-bit value and never do any truncation of its own. This override casts
      * the source side to an explicit typmod wide enough to hold every literal in
-     * `SELF_CAST_TYPMOD_LITERAL_CORPUS["bit"]` first (`bit(3)`), so the OUTER cast — to
+     * `SELF_CAST_TYPMOD_LITERAL_CORPUS["bit"]` first (`bit(3)`), so the outer cast — to
      * [SELF_CAST_TYPMOD_SUFFIX]'s narrower `bit(1)` — is the one actually doing the truncation.
      */
     private val SELF_CAST_SOURCE_TYPMOD_SUFFIX: Map<String, String> = mapOf("bit" to "(3)")
@@ -808,11 +800,11 @@ class SafeListSweepTest {
     /**
      * Concrete arities/types to sweep for [PgCatalogLoader.alwaysNonNullFunctionOids]'s and
      * [PgCatalogLoader.nonNullIffFirstArgumentNonNullFunctionOids]'s NULL-argument properties,
-     * keyed by `pg_proc.proname`. Both properties are keyed by NAME ALONE in production (see
+     * keyed by `pg_proc.proname`. Both properties are keyed by name alone in production (see
      * [PgCatalogLoader.loadAlwaysNonNullFunctions]/
      * [PgCatalogLoader.loadNonNullIffFirstArgumentNonNullFunctionOids]'s `proname = '...'`
      * predicates), because `concat`/`concat_ws`'s single `pg_catalog` row for each is declared
-     * `VARIADIC "any"`/`VARIADIC "any"` — the DECLARED argument type is the pseudo-type `any`
+     * `VARIADIC "any"`/`VARIADIC "any"` — the declared argument type is the pseudo-type `any`
      * itself, with no literal form of its own, unlike `anyarray`/`anyrange`/`anyelement`, which
      * [concreteInstantiationsFor] already knows how to instantiate. This map supplies the concrete
      * arity/types actually exercised at the call site instead.
@@ -820,7 +812,7 @@ class SafeListSweepTest {
      * `concat_ws` is registered here even though production correctly never lists it under
      * [PgCatalogLoader.alwaysNonNullFunctionOids] today — if that regressed (this is exactly the
      * shipped bug this whole file's KDoc describes), the always-non-null sweep must actually
-     * EXERCISE `concat_ws`'s real NULL-argument behavior and fail on the genuine semantic violation
+     * exercise `concat_ws`'s real NULL-argument behavior and fail on the genuine semantic violation
      * (`concat_ws(NULL, 'x', 'y')` returns `null`), not merely fail on a missing corpus
      * registration that would just as easily hide a real regression.
      */
@@ -835,9 +827,9 @@ class SafeListSweepTest {
     )
 
     /**
-     * Every argument combination needed to prove a function is non-null for ANY combination of
-     * argument values INCLUDING when every argument is `NULL`: the all-`NULL` combination, plus,
-     * for each argument position, that position forced to `NULL` with every OTHER position drawn
+     * Every argument combination needed to prove a function is non-null for any combination of
+     * argument values including when every argument is `NULL`: the all-`NULL` combination, plus,
+     * for each argument position, that position forced to `NULL` with every other position drawn
      * from the cartesian product of [EDGE_VALUE_CORPUS] for that position's type. `"NULL"` needs no
      * special handling from [functionCallExpression] — it is a valid raw argument literal the same
      * way `"'abc'"` or `"0"` is, since `$literal::$typeName` becomes plain `NULL::$typeName`.
@@ -856,7 +848,7 @@ class SafeListSweepTest {
     /**
      * Resolves [oid] to its unqualified `pg_proc.proname` — lets the
      * `alwaysNonNullFunctionOids`/`nonNullIffFirstArgumentNonNullFunctionOids` sweeps look up which
-     * concrete [NULL_ARGUMENT_SWEEP_SIGNATURES_BY_NAME] entry to test for an OID computed LIVE by
+     * concrete [NULL_ARGUMENT_SWEEP_SIGNATURES_BY_NAME] entry to test for an OID computed live by
      * [PgCatalogLoader] (the same way production does), rather than hardcoding an OID that would
      * silently go stale across a PostgreSQL version bump.
      */
@@ -894,7 +886,7 @@ class SafeListSweepTest {
 
     /**
      * The literal SQL cast expressions to sweep for [signature]. A self-cast entry (source ==
-     * target, and present in [SELF_CAST_TYPMOD_SUFFIX]) is swept in its TYPMOD form — see
+     * target, and present in [SELF_CAST_TYPMOD_SUFFIX]) is swept in its typmod form — see
      * [SELF_CAST_TYPMOD_SUFFIX]'s KDoc for why the plain, no-typmod form would be a no-op. Every
      * other entry keeps the original bare `($literal::source)::target` form.
      */
@@ -917,7 +909,7 @@ class SafeListSweepTest {
 
     /**
      * Concrete (type name, corpus) instantiations for [typeName]. A pseudo-type — `anyarray`,
-     * `anyrange`, `anymultirange`, `anyelement` — instantiates to SEVERAL concrete types, because
+     * `anyrange`, `anymultirange`, `anyelement` — instantiates to several concrete types, because
      * a single generic `pg_operator` row (e.g. `anyrange && anyrange`) is shared by every
      * concrete range type at runtime; sweeping only one concrete instantiation would leave the
      * others unverified. A concrete type instantiates to itself.
@@ -963,7 +955,7 @@ class SafeListSweepTest {
 
     /**
      * `true` when [signature] resolves to a real `pg_proc` row on this connected server, checked
-     * by the SAME lookup [PgCatalogLoader.loadNeverNullForNonNullInputOids] performs in
+     * by the same lookup [PgCatalogLoader.loadNeverNullForNonNullInputOids] performs in
      * production (name plus the exact ordered list of declared argument `pg_type.typname`
      * values, restricted to `pronamespace = 'pg_catalog'`) — just run per-signature here instead
      * of batched. This is the independent check [neverResolvedOnThisServer]'s KDoc says every
@@ -1072,9 +1064,9 @@ class SafeListSweepTest {
      * cannot-coerce type mismatch (`42846`) alike. A `SQLException` in this class is not evidence
      * the underlying function/cast/operator is total; the call never got far enough to say
      * anything about that. Every other class (a data exception, an out-of-range value, a
-     * feature-not-supported unit, ...) means the call DID reach the function's body and it chose
-     * to raise rather than return — which IS evidence of total-ness, so it counts as a pass (see
-     * [checkTotal]) even though it is not POSITIVE coverage (see [CoverageTracker]).
+     * feature-not-supported unit, ...) means the call did reach the function's body and it chose
+     * to raise rather than return — which is evidence of total-ness, so it counts as a pass (see
+     * [checkTotal]) even though it is not positive coverage (see [CoverageTracker]).
      */
     private fun isNotEvaluatedSqlState(sqlState: String?): Boolean = sqlState != null && sqlState.take(2) == "42"
   }

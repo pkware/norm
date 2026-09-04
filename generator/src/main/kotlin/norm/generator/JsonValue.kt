@@ -5,7 +5,7 @@ package norm.generator
  *
  * PostgreSQL's `EXPLAIN (FORMAT JSON)` output is the only JSON this generator ever reads. JSON's
  * grammar is small, deterministic, and unambiguous — unlike SQL, which is why the codebase's own
- * "no hand-rolled SQL text scanning" concern does not apply here: this is a REAL, complete parser
+ * "no hand-rolled SQL text scanning" concern does not apply here: this is a real, complete parser
  * for the format, not an ad-hoc scanner for specific field names inside SQL text.
  *
  * Only the value shapes this generator's own EXPLAIN consumers need are modeled: objects

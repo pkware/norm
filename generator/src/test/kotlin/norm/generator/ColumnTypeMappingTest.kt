@@ -982,7 +982,7 @@ class ColumnTypeMappingTest {
 
     /**
      * Anti-drift sweep for [postgresArrayElementTypeName], the same intent as
-     * [DomainBaseTypeAntiDriftSweep] but pinned against a HARDCODED, independently-verified
+     * [DomainBaseTypeAntiDriftSweep] but pinned against a hardcoded, independently-verified
      * classification rather than [BASE_TYPE_RESOLVERS] membership. A membership check is a
      * tautology here: every [BASE_TYPE_RESOLVERS] key that is not folded still passes itself
      * through unchanged (`postgresArrayElementTypeName`'s `else` branch), and every SQL-spelling
@@ -990,12 +990,12 @@ class ColumnTypeMappingTest {
      * would still leave every folded result a [BASE_TYPE_RESOLVERS] key and a membership check
      * green.
      *
-     * [expectedCanonicalNameByAlias] and [alreadyCanonicalNames] below are hand-verified against a
-     * live PostgreSQL 17 server via `SELECT typname FROM pg_type WHERE oid = to_regtype(?)` — see
+     * [expectedCanonicalNameByAlias] and [alreadyCanonicalNames] below come from a PostgreSQL 17
+     * server via `SELECT typname FROM pg_type WHERE oid = to_regtype(?)` — see
      * [postgresArrayElementTypeName]'s KDoc — and never derived from [BASE_TYPE_RESOLVERS] or
      * [postgresArrayElementTypeName] themselves. The set-equality assertion catches a new
      * [BASE_TYPE_RESOLVERS] key added without being classified into either bucket; the per-alias
-     * assertions catch a fold branch that is deleted, or wrong, by checking the ACTUAL fold result
+     * assertions catch a fold branch that is deleted, or wrong, by checking the actual fold result
      * against this table's fixed expectation rather than a self-referential set.
      *
      * Serial variants (`serial`, `bigserial`, ...) are excluded: [postgresArrayElementTypeName]'s
@@ -2182,7 +2182,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `unsupported type returns null`() {
       // xml has no entry anywhere -- Norm has never mapped it to a Kotlin type, as a plain column
-      // type or a domain base. bytea IS supported (see BASE_TYPE_RESOLVERS/DomainBaseTypes below) --
+      // type or a domain base. bytea is supported (see BASE_TYPE_RESOLVERS/DomainBaseTypes below) --
       // it used to return null here, which is exactly the bug this fix closes: CREATE DOMAIN d AS
       // bytea aborted code generation entirely.
       assertThat(resolveJdbcTypeInfo("xml")).isEqualTo(null)
@@ -2191,7 +2191,7 @@ class ColumnTypeMappingTest {
 
   /**
    * Anti-drift sweep for the bug where a domain over a common base type (e.g. `CREATE DOMAIN d AS
-   * timestamptz`) aborted code generation: [resolveJdbcTypeInfo] must have an entry for EVERY
+   * timestamptz`) aborted code generation: [resolveJdbcTypeInfo] must have an entry for every
    * canonical type name [BASE_TYPE_RESOLVERS] accepts, since [TypeRepository]'s domain resolution
    * chains through [resolveJdbcTypeInfo] for the domain's base type. The corpus is
    * [BASE_TYPE_RESOLVERS]'s own keys -- the exact set [TypeRepository.resolveBaseType] accepts --
@@ -2378,10 +2378,10 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `column override matches the real source column, not a CTE's own output alias`() {
-      // #238: JdbcAnalyzer.buildResultColumns now populates originalName from the node tree's own
-      // :resorigtbl/:resorigcol -- the REAL source column, resolved through a CTE even when the
+      // JdbcAnalyzer.buildResultColumns now populates originalName from the node tree's own
+      // :resorigtbl/:resorigcol -- the real source column, resolved through a CTE even when the
       // outer select item is a plain reference to the CTE's own (possibly renamed) output alias.
-      // tryResolveColumnOverride keys columnLevelOverrides off that SAME originalName, so a
+      // tryResolveColumnOverride keys columnLevelOverrides off that same originalName, so a
       // columnMapping("parent", "id") must match a column whose outer name is "parentId" as long as
       // its originalName is "id" -- before this fix, originalName mirrored the alias itself
       // ("parentId"), and the mapping silently never matched.

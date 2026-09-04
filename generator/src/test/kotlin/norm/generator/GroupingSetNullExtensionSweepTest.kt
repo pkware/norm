@@ -10,26 +10,24 @@ import java.sql.DriverManager
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Live cross-version brute-force verification, against a REAL PostgreSQL instance, of issue #240's
- * own precondition for its "suggested direction" option 2: "option 2 should only land with a live
- * cross-version sweep behind it." For every [cases] entry, this test runs the query through the real
- * pipeline ([JdbcAnalyzer.analyzeQuery]) AND executes it live, then fails on any column where the
- * analyzer reports `notNull = true` but PostgreSQL actually returned `null` in some row — a
- * WRONG-NON-NULL, the one direction of error this whole gate exists to prevent. A column the
- * analyzer reports nullable while PostgreSQL never actually returns `null` for it is NOT a failure
- * here — that is an accepted, safe over-widening (imprecise, never wrong), the same standard
- * [NodeTreeNullabilityAnalyzer]'s own KDoc holds itself to throughout.
+ * Cross-version brute-force verification, against a real PostgreSQL instance, that the analyzer's
+ * `notNull` decisions for grouping-set queries never disagree with what PostgreSQL actually returns.
+ * For every [cases] entry, this test runs the query through the real pipeline
+ * ([JdbcAnalyzer.analyzeQuery]) and executes it live, then fails on any column where the analyzer
+ * reports `notNull = true` but PostgreSQL returned `null` in some row -- a wrong non-null, the one
+ * direction of error this gate exists to prevent. A column the analyzer reports nullable while
+ * PostgreSQL never actually returns `null` is not a failure here -- that is an accepted, safe
+ * over-widening, the same standard [NodeTreeNullabilityAnalyzer]'s own KDoc holds itself to.
  *
- * This sweep reads its expectation from live PostgreSQL alone — never from a hand-written
- * true/false table — mirroring [SafeListSweepTest]'s own reasoning for why a brute-force sweep,
- * not hand-reasoning about a specific shape, is what LICENSES a claim like this.
+ * This sweep reads its expectation from live PostgreSQL alone, never from a hand-written true/false
+ * table, mirroring [SafeListSweepTest]'s reasoning for why a brute-force sweep -- not hand-reasoning
+ * about a specific shape -- backs a claim like this.
  *
- * [cases] covers, at minimum: the five shapes recovered by this fix (issue #240's shapes 1, 2, 7, 8,
- * 9 — see `PLAN-240.md`'s "Measured ground truth" table), every row of that plan's "negative tests"
- * table (constructs that must stay nullable despite superficially resembling a recovered shape), the
- * self-match-guard shape from that plan's criterion 5 (a nested occurrence of a grouping key inside
- * an already-shipped `isAlwaysNonNull` call), a `Var`-free grouping key that is never itself selected
- * in the target list, and a `SubLink` in a target entry alongside a grouping-sets key.
+ * [cases] covers: the five grouping-set null-extension shapes this fix recovers (`now()`,
+ * `current_date`, `concat_ws`, `xmlelement`, `JSON_OBJECT`), constructs that must stay nullable
+ * despite superficially resembling a recovered shape, the self-match guard (a nested occurrence of
+ * the grouping key inside an already-shipped `isAlwaysNonNull` call), a `Var`-free grouping key never
+ * itself selected in the target list, and a `SubLink` in a target entry alongside a grouping-sets key.
  */
 @Testcontainers
 class GroupingSetNullExtensionSweepTest {
@@ -42,7 +40,7 @@ class GroupingSetNullExtensionSweepTest {
   """.trimIndent()
 
   private val cases = listOf(
-    // Issue #240 shapes 1, 2, 7, 8, 9 — recovered by this fix, must now be non-null (criterion 1).
+    // Shapes recovered by this fix -- must now be non-null.
     Case(
       "shape 1 — now() is non-null under ROLLUP(a)",
       twoNotNullTextColumns,
@@ -93,7 +91,7 @@ class GroupingSetNullExtensionSweepTest {
       "SELECT xmlpi(name php, a) AS x, count(*) AS c FROM t2 GROUP BY GROUPING SETS ((a), ())",
     ),
 
-    // Negative-tests table (PLAN-240.md, criterion 6) — must stay nullable on every version.
+    // Constructs that must stay nullable on every version despite resembling a recovered shape.
     Case(
       "negative — now() as its own grouping key stays nullable",
       twoNotNullTextColumns,
@@ -124,25 +122,23 @@ class GroupingSetNullExtensionSweepTest {
       // A pass-through CoerceViaIo (now()::text) wrapping the exact grouping key: ordinary isNonNull
       // for CoerceViaIo is an unconditional pass-through to its argument (now() is independently
       // non-null via the isNeverNullForNonNullInput safe list), so the grouping-set gate's own
-      // structural-match condition (leg B, condition 3) is the ONLY thing standing between this and
-      // a wrong non-null — unlike the `now() || 'x'` case above, which stays nullable for an
-      // unrelated reason (the `||` overload PostgreSQL actually picks for a non-text left operand is
-      // not on the operator safe list at all, masking the gate's own answer). Verified live
-      // (PostgreSQL 16): NULL in the ROLLUP summary row.
+      // structural-match condition (leg B, condition 3) is the only thing standing between this and a
+      // wrong non-null -- unlike the `now() || 'x'` case above, which stays nullable for an unrelated
+      // reason (the `||` overload PostgreSQL picks for a non-text left operand is not on the operator
+      // safe list at all, masking the gate's own answer). PostgreSQL 16: NULL in the ROLLUP summary row.
       "negative — a cast pass-through wrapping the exact grouping key stays nullable",
       twoNotNullTextColumns,
       "SELECT now()::text AS label, count(*) AS n FROM t2 GROUP BY ROLLUP(now())",
     ),
 
-    // Criterion 5 — the self-match guard: a nested occurrence of the grouping key inside an
-    // already-shipped isAlwaysNonNull call must stay nullable.
+    // Self-match guard: a nested occurrence of the grouping key inside an already-shipped
+    // isAlwaysNonNull call must stay nullable.
     Case(
       "criterion 5 — a nested occurrence of the grouping key inside concat() stays nullable",
       twoNotNullTextColumns,
       "SELECT count(*)::text || concat(a, b) AS label FROM t2 GROUP BY ROLLUP(concat(a, b))",
     ),
 
-    // A Var-free grouping key selected nowhere in the target list.
     Case(
       "a Var-free grouping key not selected anywhere leaves the aggregate non-null",
       twoNotNullTextColumns,
