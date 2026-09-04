@@ -4,6 +4,7 @@ import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.doesNotContain
 import assertk.assertions.isEqualTo
+import assertk.assertions.isTrue
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
@@ -355,6 +356,144 @@ class TypeRepositoryTest {
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).contains("@property ``a`b`` Comment.")
+    }
+  }
+
+  @Nested
+  inner class PropertyNameKdocDeclarationAgreement {
+
+    @Test
+    fun `a Unicode-letter property name is bare in both the property tag and the declaration`() {
+      // Kotlin identifiers accept Unicode letters, so this one needs backticks in neither place.
+      val unicodeColumn = Column(
+        name = "café",
+        notNull = true,
+        type = Identifier(name = "text"),
+        comment = "Comment.",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("getCafe", listOf(unicodeColumn), "SELECT café FROM t")
+
+      val renderedFile = repository.requiredTypes.first().toString()
+      assertThat(renderedFile).contains("@property café Comment.")
+      assertThat(renderedFile).contains("val café:")
+      assertThat(renderedFile).doesNotContain("`café`")
+    }
+
+    @Test
+    fun `a KotlinPoet keyword property name is backtick-quoted in both the property tag and the declaration`() {
+      // A Kotlin keyword is a legal Java identifier, so only KotlinPoet's own KEYWORDS set catches it.
+      val keywordColumn = Column(
+        name = "object",
+        notNull = true,
+        type = Identifier(name = "text"),
+        comment = "Comment.",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("getObject", listOf(keywordColumn), "SELECT \"object\" FROM t")
+
+      val renderedFile = repository.requiredTypes.first().toString()
+      assertThat(renderedFile).contains("@property `object` Comment.")
+      assertThat(renderedFile).contains("val `object`:")
+    }
+
+    @Test
+    fun `an all-underscore property name is backtick-quoted in both the property tag and the declaration`() {
+      val underscoreColumn = Column(
+        name = "_",
+        notNull = true,
+        type = Identifier(name = "text"),
+        comment = "Comment.",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("getUnderscore", listOf(underscoreColumn), "SELECT \"_\" FROM t")
+
+      val renderedFile = repository.requiredTypes.first().toString()
+      assertThat(renderedFile).contains("@property `_` Comment.")
+      assertThat(renderedFile).contains("val `_`:")
+    }
+
+    @Test
+    fun `a dollar-sign-containing property name is backtick-quoted in both the property tag and the declaration`() {
+      // Character.isJavaIdentifierPart('$') is true, so widening only to the Java identifier rule
+      // would leave this bare while KotlinPoet still backticks the declaration.
+      val dollarColumn = Column(
+        name = "a\$b",
+        notNull = true,
+        type = Identifier(name = "text"),
+        comment = "Comment.",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("getDollar", listOf(dollarColumn), "SELECT \"a\$b\" FROM t")
+
+      val renderedFile = repository.requiredTypes.first().toString()
+      assertThat(renderedFile).contains("@property `a\$b` Comment.")
+      assertThat(renderedFile).contains("val `a\$b`:")
+    }
+
+    @Test
+    fun `a space-containing property name is backtick-quoted in both the property tag and the declaration`() {
+      val spacedColumn = Column(
+        name = "My Col",
+        notNull = true,
+        type = Identifier(name = "text"),
+        comment = "Comment.",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("getMyColAgreement", listOf(spacedColumn), "SELECT \"My Col\" FROM t")
+
+      val renderedFile = repository.requiredTypes.first().toString()
+      assertThat(renderedFile).contains("@property `My Col` Comment.")
+      assertThat(renderedFile).contains("val `My Col`:")
+    }
+
+    @Test
+    fun `an interpunct-containing property name is backtick-quoted in the property tag`() {
+      // KotlinPoet reserves U+00B7 as a line-wrapping marker and renders it as a space, so this name
+      // is escaped in the output without appearing there verbatim. Asserting only that the tag is
+      // backtick-wrapped: the same substitution mangles the name text in tag and declaration alike,
+      // which is KotlinPoet's behavior, not this function's.
+      val interpunctColumn = Column(
+        name = "col·lecció d'art",
+        notNull = true,
+        type = Identifier(name = "text"),
+        comment = "Comment.",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery(
+        "getInterpunct",
+        listOf(interpunctColumn),
+        "SELECT \"col·lecció d'art\" FROM t",
+      )
+
+      val renderedFile = repository.requiredTypes.first().toString()
+      val backtickWrappedPropertyTag = Regex("@property `[^`]*` Comment\\.")
+      assertThat(backtickWrappedPropertyTag.containsMatchIn(renderedFile)).isTrue()
+    }
+
+    @Test
+    fun `an ordinary ASCII property name is bare in both the property tag and the declaration`() {
+      // Regression guard: an ordinary identifier must not gain spurious backticks in either place.
+      val plainColumn = Column(
+        name = "id",
+        notNull = true,
+        type = Identifier(name = "int4"),
+        comment = "Comment.",
+      )
+
+      val repository = TypeRepository("test", Catalog())
+      repository.buildTypeProjectionForQuery("getIdAgreement", listOf(plainColumn), "SELECT id FROM t")
+
+      val renderedFile = repository.requiredTypes.first().toString()
+      assertThat(renderedFile).contains("@property id Comment.")
+      assertThat(renderedFile).contains("val id:")
+      assertThat(renderedFile).doesNotContain("`id`")
     }
   }
 

@@ -1,5 +1,6 @@
 package norm.generator
 
+import com.squareup.kotlinpoet.ANY
 import com.squareup.kotlinpoet.ARRAY
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
@@ -902,9 +903,21 @@ private fun PropertySource.hasDocumentation(hasTableMapping: Boolean, reservedWo
   comment.isNotEmpty() || (!hasTableMapping && sourceReference(reservedWords) != null)
 
 /**
- * A regular Kotlin identifier: matched WITHOUT surrounding backticks in KDoc's `@property` tag.
+ * Whether KotlinPoet would backtick-quote the property declaration it renders for [name].
+ *
+ * KotlinPoet escapes a declaration name for four independent reasons -- not a legal Java identifier,
+ * one of its own reserved `KEYWORDS`, contains `$`, or is all underscores -- and both the rule and
+ * the keyword set are `internal` to it, so a copy here would drift. Rendering a throwaway
+ * [PropertySpec] asks KotlinPoet directly instead.
+ *
+ * Tests for a backtick anywhere in the rendered text rather than for `` `$name` `` specifically:
+ * KotlinPoet's line wrapper substitutes a space for the characters it reserves as wrapping markers
+ * (U+00B7 and U+2662), so such a name is escaped in the output without appearing there verbatim.
+ * Callers must rule out a name containing its own backtick first -- KotlinPoet treats one as already
+ * escaped and skips all four checks.
  */
-private val PLAIN_KOTLIN_IDENTIFIER = Regex("[A-Za-z_][A-Za-z0-9_]*")
+private fun needsKotlinPoetDeclarationBackticks(name: String): Boolean =
+  PropertySpec.builder(name, ANY).build().toString().contains('`')
 
 /**
  * Formats a Kotlin property name for use as the name token in a KDoc `@property` tag.
@@ -912,7 +925,9 @@ private val PLAIN_KOTLIN_IDENTIFIER = Regex("[A-Za-z_][A-Za-z0-9_]*")
  * KDoc's `@property` tag takes exactly one name token before the description text begins, so a
  * property name containing a space or other non-identifier character (e.g. the Kotlin property
  * `` `My Col` `` generated for a quoted SQL column `"My Col"`) must be wrapped in backticks here too
- * -- otherwise `@property My Col Some comment.` reads as a property literally named `My`.
+ * -- otherwise `@property My Col Some comment.` reads as a property literally named `My`. The name is
+ * left bare only when the declaration KotlinPoet renders for it is bare too, so the two never
+ * disagree.
  *
  * Uses [wrapInBacktickDelimiter]'s longest-run rule rather than a fixed single-backtick wrap, since a
  * name containing its own literal backtick (e.g. `` a`b ``) would otherwise close the `@property`
@@ -931,7 +946,7 @@ private val PLAIN_KOTLIN_IDENTIFIER = Regex("[A-Za-z_][A-Za-z0-9_]*")
  * same field also carries the identifier back into generated SQL and catalog lookups.
  */
 private fun String.formatAsKdocPropertyReference(): String? = when {
-  PLAIN_KOTLIN_IDENTIFIER.matches(this) -> this
+  !contains('`') && !needsKotlinPoetDeclarationBackticks(this) -> this
   containsUnescapableBlockCommentDelimiter(this) -> null
   else -> wrapInBacktickDelimiter(this)
 }
