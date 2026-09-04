@@ -343,8 +343,8 @@ internal class JsonSqlMappable(private val notNull: Boolean) : SqlMappable {
  *   legacy `java.sql.Date`/`Time`/`Timestamp` even at runtime, and `uuid`, where pgjdbc's plain
  *   `getObject(int)` does return a `java.util.UUID` at runtime (`PgResultSet.internalGetObject`
  *   special-cases the Postgres `uuid` type by name) but the static type is still `Any` — the class hint
- *   is required in both cases, for different reasons (verified against pgjdbc 42.7.13's
- *   `PgResultSet.getObject(int, Class)`, which special-cases each of these classes explicitly).
+ *   is required in both cases, for different reasons (pgjdbc 42.7.13's
+ *   `PgResultSet.getObject(int, Class)` special-cases each of these classes explicitly).
  *   `null` only for types read via a named, non-generic getter (e.g. `getString`, `getBlob`, `getBytes`),
  *   whose declared return type already is [kotlinType].
  * @property convertOffsetDateTimeToInstant When `true`, the wire value read via [getterClassHint]

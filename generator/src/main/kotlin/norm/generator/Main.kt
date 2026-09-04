@@ -28,9 +28,9 @@ private val TRANSACTABLE = ClassName(RUNTIME_PACKAGE, "Transactable")
  *   [JdbcAnalyzer.fetchReservedWords] — used when rendering a `` `table.column` `` KDoc source
  *   reference for a relation or column named after a reserved word (`order`, `user`), which must be
  *   quoted rather than emitted as text PostgreSQL rejects with a syntax error. Required rather than
- *   defaulted here deliberately: this is the seam where a per-database, per-run value must be
- *   threaded through explicitly rather than silently falling back to an empty set (or, worse, a
- *   hardcoded snapshot that could drift from whichever server this run actually targets).
+ *   defaulted here: this is the seam where a per-database, per-run value must be threaded through
+ *   explicitly rather than silently falling back to an empty set (or, worse, a hardcoded snapshot
+ *   that could drift from whichever server this run actually targets).
  * @param typeMappings User-configured type/column overrides. Type-level overrides suppress
  *   auto-generation of the matching enum or domain.
  * @return The generated files. File names include the package hierarchy.

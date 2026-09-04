@@ -17,14 +17,13 @@ class GroupRteSubstitutionTest {
 
   @Test
   fun `a Var buried inside an Aggref argument is substituted — synthetic input, not a shape PG18 produces`() {
-    // safetyWalkChildren (NodeTreeNullabilityAnalyzer's OTHER child-walk) deliberately treats
-    // Aggref as childless. This substitution must NOT copy that behavior, since it needs SOME branch
-    // for Aggref regardless (the when is exhaustive) — but unlike the OpExpr case this file also
-    // covers, no live PG18 tree is known to put a GROUP-RTE Var inside an Aggref's OWN arguments:
-    // verified live that PostgreSQL never rewrites aggregate arguments at all (they are evaluated
-    // PRE-grouping, before any GROUP RTE substitution could apply — see substituteGroupRteVars's own
-    // KDoc). This input is therefore synthetic, constructed purely to prove the traversal itself is
-    // correct and defensive, not to reproduce a real node-tree shape.
+    // safetyWalkChildren (NodeTreeNullabilityAnalyzer's other child-walk) treats Aggref as
+    // childless, but this substitution needs a branch for Aggref regardless (the when is
+    // exhaustive). Unlike the OpExpr case this file also covers, no live PG18 tree puts a
+    // GROUP-RTE Var inside an Aggref's own arguments -- PostgreSQL never rewrites aggregate
+    // arguments; they're evaluated pre-grouping, before any GROUP RTE substitution could apply
+    // (see substituteGroupRteVars's own KDoc). This input is synthetic, constructed to prove the
+    // traversal itself is correct and defensive, not to reproduce a real node-tree shape.
     val groupRteVar = PgNodeExpression.Var(varno = 2, varattno = 1, nullingRelations = emptySet())
     val aggref = PgNodeExpression.Aggref(aggregateFunctionOid = 2147, arguments = listOf(groupRteVar))
     val groupExpressionsByVarno = mapOf(2 to listOf(baseColumn))
@@ -36,7 +35,7 @@ class GroupRteSubstitutionTest {
 
   @Test
   fun `a Var with levelsUp greater than 0 is left unchanged`() {
-    // levelsUp > 0 means this Var refers to an OUTER query level's range table, which
+    // levelsUp > 0 means this Var refers to an outer query level's range table, which
     // groupExpressionsByVarno does not describe — substituting against it would resolve against
     // the wrong query level entirely, if the varno happened to collide.
     val outerVar = PgNodeExpression.Var(varno = 2, varattno = 1, nullingRelations = emptySet(), levelsUp = 1)
@@ -61,7 +60,7 @@ class GroupRteSubstitutionTest {
   fun `a Var whose resolved group expression is Unknown is left unchanged`() {
     // An Unknown resolution means the groupexprs entry is either a parse failure or an unmodelled
     // node type. Substituting it in would replace a Var that PgNodeTreeParser.parseGroupRteMap's
-    // coarser, VAR-only fallback might still be able to resolve — so this Var must be left exactly
+    // coarser, Var-only fallback might still be able to resolve — so this Var must be left exactly
     // as parsed, not swapped for Unknown.
     val groupRteVar = PgNodeExpression.Var(varno = 2, varattno = 1, nullingRelations = emptySet())
     val groupExpressionsByVarno = mapOf(2 to listOf<PgNodeExpression>(PgNodeExpression.Unknown("XMLTABLE")))
@@ -73,7 +72,7 @@ class GroupRteSubstitutionTest {
 
   @Test
   fun `substitution is single-pass — a resolved expression's own GROUP-RTE-shaped Var is not re-rewritten`() {
-    // The resolved groupexprs entry for varno 2 is ITSELF a Var that would match varno 3's entry if
+    // The resolved groupexprs entry for varno 2 is itself a Var that would match varno 3's entry if
     // recursed into again. A correct single-pass substitution returns it verbatim; a buggy
     // multi-pass implementation would keep rewriting until it reached baseColumn instead.
     val innerGroupRteShapedVar = PgNodeExpression.Var(varno = 3, varattno = 1, nullingRelations = emptySet())
@@ -90,10 +89,10 @@ class GroupRteSubstitutionTest {
 
   @Test
   fun `nothing is inherited from the replaced Var — the resolved expression's own fields win`() {
-    // Verified live (PostgreSQL 18): `SELECT b.x, count(*) FROM t LEFT JOIN u b ON b.id = t.id
-    // GROUP BY b.x` — the target-list Var referencing the GROUP RTE has EMPTY :varnullingrels,
-    // while the GROUP RTE's own :groupexprs entry carries the real, non-empty nulling relations
-    // from the LEFT JOIN. The wrapper Var's empty nullingRelations must not leak into the result.
+    // In PostgreSQL 18, `SELECT b.x, count(*) FROM t LEFT JOIN u b ON b.id = t.id GROUP BY b.x`
+    // — the target-list Var referencing the GROUP RTE has empty :varnullingrels, while the GROUP
+    // RTE's own :groupexprs entry carries the real, non-empty nulling relations from the LEFT
+    // JOIN. The wrapper Var's empty nullingRelations must not leak into the result.
     val wrapperVar = PgNodeExpression.Var(varno = 4, varattno = 1, nullingRelations = emptySet())
     val resolvedJoinColumn = PgNodeExpression.Var(varno = 2, varattno = 2, nullingRelations = setOf(3))
     val groupExpressionsByVarno = mapOf(4 to listOf<PgNodeExpression>(resolvedJoinColumn))

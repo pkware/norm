@@ -498,7 +498,7 @@ internal const val MAPPER_PARAMETER_NAME = "mapper"
 /**
  * Produces a [CodeBlock] per JDBC bind position that sets the parameter on the [PreparedStatement].
  *
- * @param nameTransform Converts the parameter's NAME reference (built via `%N`, so a name needing
+ * @param nameTransform Converts the parameter's name reference (built via `%N`, so a name needing
  *   backtick-escaping — e.g. `My Col` — is escaped exactly as [ParameterSpec]'s own declaration
  *   already is, unlike the plain string interpolation this replaced) into the code expression that
  *   provides the value. For single-item functions this is just the name reference itself; for batch

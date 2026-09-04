@@ -563,8 +563,8 @@ internal class TypeRepository(
  * enforces between the two maps.
  *
  * Includes the `serial`/`smallserial`/`bigserial` pseudo-types even though Postgres rejects
- * `CREATE DOMAIN ... AS serial` outright (`type "serial" does not exist` — verified against a live
- * server; a domain's base is always a REAL registered `pg_type`, so `domain.baseType` can never
+ * `CREATE DOMAIN ... AS serial` outright (`type "serial" does not exist` on a live
+ * server; a domain's base is always a real, registered `pg_type`, so `domain.baseType` can never
  * actually be one of these), and even though `resolveJdbcTypeInfo`'s only other callers
  * ([TypeRepository.buildUserConfiguredMappable]'s user-configured type mappings) also only ever
  * see the real, JDBC-reported type name, never a serial alias: keeping them out would make this
@@ -633,12 +633,12 @@ internal val BASE_TYPE_RESOLVERS: Map<String, (notNull: Boolean) -> SqlMappable>
  * `createArrayOf` would fail with `Unable to find server array type for provided name {0}`, since
  * `pg_type` has no row named `integer` — only `int4`.
  *
- * Every branch below was verified against a live PostgreSQL 17 server via
+ * Every branch below was checked against a live PostgreSQL 17 server via
  * `SELECT typname FROM pg_type WHERE oid = to_regtype(?)`: every alias here resolves to the
  * canonical name on its right-hand side, and every `pg_catalog.`-qualified spelling of an
- * ALREADY-canonical name (e.g. `pg_catalog.uuid`, `pg_catalog.timestamptz`) resolves to itself —
+ * already-canonical name (e.g. `pg_catalog.uuid`, `pg_catalog.timestamptz`) resolves to itself —
  * confirming the universal `removePrefix` below is sufficient for those without a dedicated
- * branch. `pg_catalog.boolean` and `pg_catalog.integer` do NOT resolve on a live server (`boolean`
+ * branch. `pg_catalog.boolean` and `pg_catalog.integer` do not resolve on a live server (`boolean`
  * and `integer` are SQL-standard keyword aliases recognized only unqualified, not as schema-
  * qualified `pg_catalog` names) — but that combination can never actually reach this function:
  * JDBC's `TYPE_NAME`/`getColumnTypeName` always report the canonical, unqualified name.
@@ -677,7 +677,7 @@ internal fun postgresArrayElementTypeName(typeName: String): String =
  * mapping for the same key exactly — see [JdbcTypeInfo.getterClassHint] and
  * [JdbcTypeInfo.convertOffsetDateTimeToInstant] for the cases (`java.time` types, `uuid`, and
  * `timestamptz` specifically) where matching the non-domain path requires more than a plain
- * `getX`/`setX` method pair, each verified against pgjdbc 42.7.13's source rather than assumed.
+ * `getX`/`setX` method pair, each checked against pgjdbc 42.7.13's source rather than assumed.
  */
 internal fun resolveJdbcTypeInfo(baseTypeName: String): JdbcTypeInfo? = when (baseTypeName) {
   "smallserial", "serial2", "smallint", "int2" ->
@@ -717,11 +717,11 @@ internal fun resolveJdbcTypeInfo(baseTypeName: String): JdbcTypeInfo? = when (ba
   "bytea" ->
     JdbcTypeInfo("getBytes", "setBytes", false, "BINARY", kotlinType = ByteArray::class.asTypeName())
   // Matches PostgresSupportedTypes.LOCAL_DATE/LOCAL_TIME/OFFSET_TIME/LOCAL_DATE_TIME: pgjdbc's
-  // plain getObject(int) returns java.sql.Date/Time/Timestamp for these columns, NOT the java.time
+  // plain getObject(int) returns java.sql.Date/Time/Timestamp for these columns, not the java.time
   // type, so the read needs the class-qualified getObject(int, Class) overload (getterClassHint).
   // The write side needs no such qualification: PgPreparedStatement.setObject(int, Object) already
   // dispatches on the runtime type of a LocalDate/LocalTime/OffsetTime/LocalDateTime/OffsetDateTime
-  // argument directly (verified against pgjdbc 42.7.13's source).
+  // argument directly (pgjdbc 42.7.13's source).
   "date" ->
     JdbcTypeInfo(
       "getObject",
@@ -759,7 +759,7 @@ internal fun resolveJdbcTypeInfo(baseTypeName: String): JdbcTypeInfo? = when (ba
       getterClassHint = LocalDateTime::class.asClassName(),
     )
   // Matches InstantSqlMappable: the wire representation is OffsetDateTime (read via the
-  // class-qualified getObject, written via plain setObject — both verified against pgjdbc's
+  // class-qualified getObject, written via plain setObject — both checked against pgjdbc's
   // source the same way as the other java.time entries above), but the Kotlin representation the
   // non-domain scalar path uses is Instant, via a `.toInstant()`/`OffsetDateTime.ofInstant(...)`
   // conversion — see JdbcTypeInfo.convertOffsetDateTimeToInstant's KDoc.
@@ -776,7 +776,7 @@ internal fun resolveJdbcTypeInfo(baseTypeName: String): JdbcTypeInfo? = when (ba
   // Matches PostgresSupportedTypes.UUID: java.sql.ResultSet.getObject(int) is declared to return
   // Object, so a bare getObject(index) call is statically Any in Kotlin regardless of what pgjdbc
   // returns at runtime — PgResultSet's internalGetObject does special-case the Postgres "uuid"
-  // type by name and hands back a java.util.UUID instance (verified against pgjdbc 42.7.13's
+  // type by name and hands back a java.util.UUID instance (per pgjdbc 42.7.13's
   // source), but that's a runtime fact, not a static type, and ColumnAdapter<Application,
   // UUID>.decode requires a statically-typed UUID argument. The class-qualified
   // getObject(int, Class) overload (getterClassHint) fixes the static type; pgjdbc's
@@ -955,17 +955,17 @@ private fun String.formatAsKdocPropertyReference(): String? = when {
  * A PostgreSQL identifier that never needs double-quoting when written back into SQL: starts with
  * a lowercase letter or underscore, followed by any number of lowercase letters, digits,
  * underscores, or dollar signs (Postgres's own `SAFE_IDENTIFIER` rule, matching what an
- * ALREADY-live-connected caller does in [JdbcAnalyzer.buildIdentifierQuoter] — this copy exists
+ * already-live-connected caller does in [JdbcAnalyzer.buildIdentifierQuoter] — this copy exists
  * because [TypeRepository] has no connection of its own to query, per this file's own doc comment
  * on why `TypeRepository` re-lexes rather than re-querying). Matching this pattern is necessary but
- * NOT sufficient — [quoteSqlIdentifierIfNeeded] additionally rejects a RESERVED word, which this
+ * not sufficient — [quoteSqlIdentifierIfNeeded] additionally rejects a reserved word, which this
  * pattern alone cannot rule out (`order` and `user` both match it).
  */
 private val SQL_UNQUOTED_IDENTIFIER = Regex("[a-z_][a-z0-9_\$]*")
 
 /**
  * Double-quotes [identifier] exactly as PostgreSQL itself requires it to be written back into SQL
- * — doubling any embedded `"` per PostgreSQL's own quoted-identifier escape rule — unless BOTH
+ * — doubling any embedded `"` per PostgreSQL's own quoted-identifier escape rule — unless both
  * [SQL_UNQUOTED_IDENTIFIER] accepts it bare AND it is not one of [reservedWords].
  *
  * Without the [SQL_UNQUOTED_IDENTIFIER] half, a mixed-case or space-containing column name (`"Foo"`,

@@ -33,7 +33,7 @@ class NodeTreeNullabilityAnalyzerTest {
     isSubLinkSubqueryColumnNotNull = isSubLinkSubqueryColumnNotNull,
   )
 
-  // JsonBehaviorType codes below are verified live (PostgreSQL 17 and 18): a JSON_VALUE/JSON_QUERY
+  // JsonBehaviorType codes below, on PostgreSQL 17 and 18: a JSON_VALUE/JSON_QUERY
   // `ON EMPTY ERROR`/`ON ERROR ERROR` clause emits `:btype 1` with `:expr <>` (absent); `ON EMPTY
   // EMPTY ARRAY`/`EMPTY OBJECT` emit `:btype 6`/`7` with `:expr {CONST ... :constisnull false
   // ...}` (Postgres's own internal `[]`/`{}` constant); `DEFAULT expr ON EMPTY`/`ON ERROR` emits
@@ -62,11 +62,11 @@ class NodeTreeNullabilityAnalyzerTest {
   inner class JsonValueIsUnconditionallyNullable {
 
     // JSON_VALUE unwraps a path match to an SQL/JSON `null` value into a genuine SQL NULL. That
-    // is a SUCCESSFUL match, not the "no match" (EMPTY)/"error" (ERROR) case the ON EMPTY/ON ERROR
+    // is a successful match, not the "no match" (EMPTY)/"error" (ERROR) case the ON EMPTY/ON ERROR
     // clauses control, so no combination of those codes — however "safe" they looked for the
-    // no-match/error case — can rule the successful-match-to-JSON-null case out. Verified live
-    // (PostgreSQL 17 and 18): `JSON_VALUE('{"name": null}'::jsonb, '$.name' RETURNING TEXT ERROR
-    // ON EMPTY ERROR ON ERROR) IS NULL` is `true`.
+    // no-match/error case — can rule the successful-match-to-JSON-null case out. On PostgreSQL 17
+    // and 18, `JSON_VALUE('{"name": null}'::jsonb, '$.name' RETURNING TEXT ERROR ON EMPTY ERROR ON
+    // ERROR) IS NULL` is `true`.
 
     @Test
     fun `ON EMPTY ERROR combined with ON ERROR ERROR is still nullable`() {
@@ -116,10 +116,10 @@ class NodeTreeNullabilityAnalyzerTest {
   inner class JsonQueryEmptyErrorBehavior {
 
     // Unlike JSON_VALUE, JSON_QUERY never unwraps a matched JSON `null` into a genuine SQL NULL —
-    // it returns the JSON text `null` instead (verified live: `JSON_QUERY('{"a": null}'::jsonb,
+    // it returns the JSON text `null` instead (`JSON_QUERY('{"a": null}'::jsonb,
     // '$.a' EMPTY ARRAY ON EMPTY EMPTY OBJECT ON ERROR) IS NULL` is `false`). So, unlike
     // JSON_VALUE, its ON EMPTY/ON ERROR behavior codes remain a valid non-null signal — provided
-    // the context item itself is also proven non-null (verified live: `JSON_QUERY(NULL::jsonb,
+    // the context item itself is also proven non-null (`JSON_QUERY(NULL::jsonb,
     // '$' EMPTY ARRAY ON EMPTY EMPTY OBJECT ON ERROR) IS NULL` is `true`).
 
     private fun jsonQuery(
@@ -196,9 +196,9 @@ class NodeTreeNullabilityAnalyzerTest {
     @Test
     fun `an unrecognized ON EMPTY behavior code defaults to nullable, the safe direction`() {
       // This is the deny-list bug: a hypothetical future JsonBehaviorType Postgres has not added
-      // yet (modeled here as an arbitrary out-of-range code) must NOT be treated as non-null
-      // merely because it is not JSON_BEHAVIOR_NULL. ON ERROR is pinned to the verified-safe
-      // ERROR code so this test isolates the ON EMPTY allow-list check specifically.
+      // yet (modeled here as an arbitrary out-of-range code) must not be treated as non-null
+      // merely because it is not JSON_BEHAVIOR_NULL. ON ERROR is pinned to the safe ERROR code so
+      // this test isolates the ON EMPTY allow-list check specifically.
       val unrecognizedFutureBehaviorCode = 42
       val expression =
         jsonQuery(onEmpty = unrecognizedFutureBehaviorCode, onError = PgNodeExpression.JSON_BEHAVIOR_ERROR)
@@ -219,11 +219,11 @@ class NodeTreeNullabilityAnalyzerTest {
 
     // JSON_EXISTS has no ON EMPTY clause at all — only ON ERROR, whose codes are TRUE(3)/
     // FALSE(4)/ERROR(1)/UNKNOWN(5), never NULL(0)/EMPTY_ARRAY(6)/EMPTY_OBJECT(7)/DEFAULT(8) (all
-    // rejected by Postgres's parser for JSON_EXISTS). Verified live: with no ON ERROR clause
-    // written, Postgres materializes `:btype 4` (FALSE) — the SQL-standard default — so absence of
-    // the clause is exactly as safe as writing FALSE/TRUE/ERROR explicitly. Only UNKNOWN ON ERROR,
-    // or a NULL context item, produces a genuine SQL NULL (verified live:
-    // `JSON_EXISTS(NULL::jsonb, '$.a') IS NULL` is `true`).
+    // rejected by Postgres's parser for JSON_EXISTS). With no ON ERROR clause written, Postgres
+    // materializes `:btype 4` (FALSE) — the SQL-standard default — so absence of the clause is
+    // exactly as safe as writing FALSE/TRUE/ERROR explicitly. Only UNKNOWN ON ERROR, or a NULL
+    // context item, produces a genuine SQL NULL (`JSON_EXISTS(NULL::jsonb, '$.a') IS NULL` is
+    // `true`).
 
     private fun jsonExists(argument: PgNodeExpression = PgNodeExpression.Const(isNull = false), onError: Int) =
       jsonExpr(op = PgNodeExpression.JSON_EXISTS_OP, argument = argument, onError = onError)
@@ -286,12 +286,12 @@ class NodeTreeNullabilityAnalyzerTest {
   @Nested
   inner class SubLinks {
 
-    // See issue #239's own live-verified repro (PostgreSQL 17): `a = ANY (SELECT v FROM u)` is
-    // NULL, not FALSE, when u.v is nullable and the subquery yields a NULL row with no match —
-    // three-valued logic, not the two-valued logic a naive "outer operand is non-null" check
-    // assumes. Proving ANY_SUBLINK non-null therefore requires ALL of: a non-null outer operand,
-    // a strict-and-total comparison operator, and a provably non-null single-column subquery
-    // result — see NodeTreeNullabilityAnalyzer's SubLink branch for the full rule.
+    // On PostgreSQL 17, `a = ANY (SELECT v FROM u)` is NULL, not FALSE, when u.v is nullable and
+    // the subquery yields a NULL row with no match — three-valued logic, not the two-valued logic
+    // a naive "outer operand is non-null" check assumes. Proving ANY_SUBLINK non-null therefore
+    // requires all of: a non-null outer operand, a strict-and-total comparison operator, and a
+    // provably non-null single-column subquery result — see NodeTreeNullabilityAnalyzer's SubLink
+    // branch for the full rule.
 
     private val comparisonOperatorOid = 100
 
@@ -337,7 +337,7 @@ class NodeTreeNullabilityAnalyzerTest {
 
     @Test
     fun `ROWCOMPARE sublink is nullable even when all three ANY-style conditions are satisfied`() {
-      // An EMPTY subquery yields NULL for ROWCOMPARE, unlike ANY/ALL, so no combination of the three
+      // An empty subquery yields NULL for ROWCOMPARE, unlike ANY/ALL, so no combination of the three
       // conditions can rescue it — it is deliberately excluded from isNonNull's SubLink proof.
       val expression = PgNodeExpression.SubLink(
         subLinkType = PgNodeExpression.SUBLINK_TYPE_ROWCOMPARE,
@@ -417,7 +417,7 @@ class NodeTreeNullabilityAnalyzerTest {
 
     @Test
     fun `a Var with levelsUp 1 is nullable even when isSourceColumnNotNull returns true`() {
-      // A Var with levelsUp greater than 0 indexes an ENCLOSING query's range table (see
+      // A Var with levelsUp greater than 0 indexes an enclosing query's range table (see
       // PgNodeExpression.Var.levelsUp's own KDoc) — this block's isSourceColumnNotNull says
       // nothing trustworthy about it, so it must stay nullable regardless of what that callback
       // returns. This guard is what makes the ANY_SUBLINK subquery-column-nullability leg sound
@@ -429,11 +429,11 @@ class NodeTreeNullabilityAnalyzerTest {
   }
 
   /**
-   * Unit tests for [NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension]'s issue-#240
-   * "leg A" additions: node kinds whose [NodeTreeNullabilityAnalyzer.isNonNull] rule already ignores
+   * Unit tests for [NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension]'s "leg A"
+   * additions: node kinds whose [NodeTreeNullabilityAnalyzer.isNonNull] rule already ignores
    * argument nullability entirely, so a deeper subexpression being null-extended cannot change the
    * result — see that method's own KDoc for the full soundness argument for each leg. Each of these
-   * synthetic trees would be reported UNSAFE by the pre-#240 gate (no `Aggref`/`GroupingFunc`/
+   * synthetic trees would be reported unsafe by the earlier gate (no `Aggref`/`GroupingFunc`/
    * `WindowFunc` descendant to satisfy [NodeTreeNullabilityAnalyzer.containsDominatingConstruct]),
    * which is exactly what each leg here exists to fix.
    */
@@ -445,9 +445,9 @@ class NodeTreeNullabilityAnalyzerTest {
 
     @Test
     fun `self-match guard makes a grouping key itself unsafe even though it would otherwise qualify for a leg`() {
-      // Regression guard for the bug the plan's self-match guard fixes: without it, a FuncExpr on
-      // isAlwaysNonNull's list would be rescued by that (already-shipped) leg even when the call
-      // itself IS the grouping key being null-extended wholesale.
+      // Regression guard for the self-match bug: without it, a FuncExpr on isAlwaysNonNull's list
+      // would be rescued by that (already-shipped) leg even when the call itself is the grouping
+      // key being null-extended wholesale.
       val key = PgNodeExpression.FuncExpr(functionOid = someFunctionOid, arguments = listOf(varArgument))
       val safe = analyzer(isAlwaysNonNull = { it == someFunctionOid })
         .isSafeFromGroupingSetNullExtension(key, groupingKeyExpressions = setOf(key))
@@ -485,10 +485,10 @@ class NodeTreeNullabilityAnalyzerTest {
     @Test
     fun `a VARIADIC FuncExpr with isNonNullIffFirstArgumentNonNull ignores this leg even for a safe first argument`() {
       // Models concat_ws(',', VARIADIC arr) under GROUP BY ROLLUP(arr): in the VARIADIC form, the
-      // array itself (the LAST argument, not the first) is a single value that can be
-      // null-extended, and concat_ws(',', VARIADIC arr) really is NULL when arr is NULL (verified
-      // live) regardless of the separator. Without the isVariadic guard, this leg would wrongly
-      // treat the safe literal separator as proof the whole call is safe.
+      // array itself (the last argument, not the first) is a single value that can be
+      // null-extended, and concat_ws(',', VARIADIC arr) really is NULL when arr is NULL, regardless
+      // of the separator. Without the isVariadic guard, this leg would wrongly treat the safe
+      // literal separator as proof the whole call is safe.
       val arrayArgument = PgNodeExpression.Var(varno = 2, varattno = 1, nullingRelations = emptySet())
       val expression = PgNodeExpression.FuncExpr(
         functionOid = someFunctionOid,
@@ -577,12 +577,12 @@ class NodeTreeNullabilityAnalyzerTest {
   }
 
   /**
-   * Unit tests for [NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension]'s issue-#240 "leg
-   * B" addition — the private `immuneByNoGroupingKeyMatch` helper, exercised here only through the
+   * Unit tests for [NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension]'s "leg B"
+   * addition — the private `immuneByNoGroupingKeyMatch` helper, exercised here only through the
    * public [NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension] entry point since it has
    * no test-visible seam of its own. Each test isolates one of its three required conditions by
-   * constructing a case where the OTHER two conditions hold (and the generic aggregate/window-domination
-   * rule also cannot rescue the case on its own, since none of these trees contains an
+   * constructing a case where the other two conditions hold (and the generic aggregate/window-
+   * domination rule also cannot rescue the case on its own, since none of these trees contains an
    * `Aggref`/`GroupingFunc`/`WindowFunc`), so only the condition under test can flip the answer.
    */
   @Nested

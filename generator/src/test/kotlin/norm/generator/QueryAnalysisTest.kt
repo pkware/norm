@@ -40,17 +40,17 @@ internal data class WindowFunctionCase(
 }
 
 /**
- * One live-DB view-graph shape for `ViewNullability`'s
+ * One view-graph shape for `ViewNullability`'s
  * `resolving one view first does not change a later, independent resolution of another` pin.
  *
  * @property ddl Creates every view in [views], run against a fresh, isolated schema.
- * @property views Every view the [ddl] creates — the CHECK axis. Each one's answer on a completely
- *   untouched analyzer is the ground truth every warmed resolution must still match.
- * @property warmTriggers The views resolved first, each as its own complete top-level call — the
- *   WARM axis. NOT necessarily all of [views]: for the straight chain, only the DEEPEST tip is
- *   proven safe, since its resolution taints and evicts every other view before returning. Warming
- *   with an intermediate view can complete untainted and stay memoized permanently, which a later
- *   deeper resolution then reuses instead of truncating — see
+ * @property views Every view the [ddl] creates. Each one's answer on a completely untouched
+ *   analyzer is the ground truth every warmed resolution must still match.
+ * @property warmTriggers The views resolved first, each as its own complete top-level call. Not
+ *   necessarily all of [views]: for the straight chain, only the deepest tip is proven safe, since
+ *   its resolution taints and evicts every other view before returning. Warming with an
+ *   intermediate view can complete untainted and stay memoized permanently, which a later deeper
+ *   resolution then reuses instead of truncating — see
  *   [ColumnNullabilityAnalyzer.VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET] for why that residual is
  *   accepted.
  */
@@ -107,8 +107,8 @@ class QueryAnalysisTest {
 
     @Test
     fun `an unquoted uppercase column reference still resolves the column's Postgres comment`() {
-      // #238: pgjdbc's ResultSetMetaData.getColumnName reports the FOLDED name ("id"), but
-      // JdbcAnalyzer.buildResultColumns prefers the PARSED select-item's columnName when present.
+      // pgjdbc's ResultSetMetaData.getColumnName reports the folded name ("id"), but
+      // JdbcAnalyzer.buildResultColumns prefers the parsed select-item's columnName when present.
       // Before ASCII-folding was applied there, an unquoted "ID" stayed "ID" verbatim, so
       // catalog.findColumn("t", "ID") missed the catalog row keyed by "id" and silently dropped the
       // column's comment.
@@ -126,8 +126,8 @@ class QueryAnalysisTest {
 
     @Test
     fun `a CTE output column referenced through its own alias resolves to the real source column`() {
-      // #238: the outer query references the CTE's OWN output alias ("parentId"), not the real
-      // underlying column ("id") -- before this fix, originalName fell back to that alias, so
+      // The outer query references the CTE's own output alias ("parentId"), not the real
+      // underlying column ("id"). Before this fix, originalName fell back to that alias, so
       // generated KDoc's "@property parentId (`parent.parentId`)" named a column "parent" never
       // had, instead of the real "parent.id". The node tree's :resorigtbl/:resorigcol on the outer
       // target entry name the true source column regardless of what alias the CTE assigned it.
@@ -146,9 +146,9 @@ class QueryAnalysisTest {
 
     @Test
     fun `a UNION's output column has no single original column, so originalName falls back rather than guessing`() {
-      // #238: :resorigtbl/:resorigcol are both 0 for a SetOp's own target list -- there is no
-      // single source column a union's result traces back to -- so this must fall back to the
-      // ordinary selectItem/JDBC-label resolution rather than reporting a wrong source column.
+      // :resorigtbl/:resorigcol are both 0 for a SetOp's own target list: there is no single
+      // source column a union's result traces back to, so this falls back to the ordinary
+      // selectItem/JDBC-label resolution instead of reporting a wrong source column.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT id FROM t UNION SELECT id FROM t",
@@ -582,11 +582,10 @@ class QueryAnalysisTest {
 
     @Test
     fun `concat_ws with a nullable separator is nullable`() {
-      // concat_ws is non-null iff its FIRST argument (the separator) is non-null — a null
+      // concat_ws is non-null iff its first argument (the separator) is non-null. A null
       // separator poisons the whole result even though later arguments are individually
-      // null-tolerant. Verified live on PostgreSQL 16, 17, and 18: concat_ws(NULL, 'x', 'y') IS
-      // NULL. This is the pre-existing bug (present before grouping-sets work ever touched this
-      // file): concat_ws was wrongly on the unconditional always-non-null list.
+      // null-tolerant. PostgreSQL 16-18: concat_ws(NULL, 'x', 'y') IS NULL. This bug predates the
+      // grouping-sets work: concat_ws was wrongly on the unconditional always-non-null list.
       val query = analyzeWithSchema(
         "CREATE TABLE t3 (s TEXT)",
         "SELECT concat_ws(s, 'x', 'y') AS k FROM t3",
@@ -599,7 +598,7 @@ class QueryAnalysisTest {
     // isAlwaysNonNull's "regardless of any argument" and isNonNullIffFirstArgumentNonNull's "only
     // the first argument matters" both assume the ordinary calling form and are unsound for
     // VARIADIC: concat(VARIADIC arr) and concat_ws(',', VARIADIC arr) are both NULL when arr
-    // itself is NULL. Verified live on PostgreSQL 16, 17, and 18.
+    // itself is NULL. PostgreSQL 16-18.
 
     @Test
     fun `concat with VARIADIC over a nullable array is nullable`() {
@@ -643,9 +642,9 @@ class QueryAnalysisTest {
 
     @Test
     fun `concat_ws with VARIADIC over an array literal containing a NULL element is still non-null`() {
-      // Verified live on PostgreSQL 16, 17, and 18: concat_ws(',', VARIADIC ARRAY['a', NULL]) is
-      // 'a', never NULL — the ARRAY[] constructor itself is never NULL even when an element is,
-      // and that (not "every element non-null") is the condition that matters here.
+      // PostgreSQL 16-18: concat_ws(',', VARIADIC ARRAY['a', NULL]) is 'a', never NULL. The
+      // ARRAY[] constructor itself is never NULL even when an element is, and that (not "every
+      // element non-null") is the condition that matters here.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT concat_ws(',', VARIADIC ARRAY['a', NULL]) AS w FROM t",
@@ -733,15 +732,13 @@ class QueryAnalysisTest {
     }
 
     /**
-     * P0-2 audit finding (issue #226 follow-up, discovered while re-auditing every safe-listed
-     * entry, not one of the verifier's originally measured defects): `extract`/`date_part` over
-     * `date`, `interval`, `timestamp`, or `timestamp with time zone` is NOT total, unlike
-     * `date_trunc` over the same types. All four base types support an `'infinity'` value, and
-     * `extract`/`date_part` special-case only a FEW fields (`epoch`, `year`, `century`, ...) to
-     * return an infinite result for infinite input — every OTHER field (`hour`, `month`, `day`,
+     * Found while re-auditing every safe-listed entry: `extract`/`date_part` over `date`,
+     * `interval`, `timestamp`, or `timestamp with time zone` is not total, unlike `date_trunc`
+     * over the same types. All four base types support an `'infinity'` value, and
+     * `extract`/`date_part` special-case only a few fields (`epoch`, `year`, `century`, ...) to
+     * return an infinite result for infinite input — every other field (`hour`, `month`, `day`,
      * ...) silently returns `null`, with no error, even though the input is a well-typed non-null
-     * value. Verified against real PostgreSQL 18.4:
-     * `extract(hour FROM 'infinity'::timestamp)` returns `null`, and
+     * value. PostgreSQL 18.4: `extract(hour FROM 'infinity'::timestamp)` returns `null`, and
      * `extract(month FROM 'infinity'::interval)` and `extract(day FROM 'infinity'::date)` do too.
      * Because the safe-list is keyed by the function's OID (one per `(name, argument types)`
      * signature), not by the field-name string literal passed at a given call site, the whole
@@ -759,12 +756,12 @@ class QueryAnalysisTest {
     }
 
     /**
-     * Issue #226 root cause: `proisstrict` only guarantees NULL-in => NULL-out, never the
-     * converse. `substring(text FROM pattern)` is STRICT, yet returns `null` on a non-matching
-     * pattern even though every input is non-null. `substring` shares its `proname` with the
-     * TOTAL `substring(text, int, int)` overload, so the safe-list excludes the name wholesale
-     * (see [PgCatalogLoader.neverNullForNonNullInputOids]) rather than trying to key it by
-     * argument signature.
+     * Root cause: `proisstrict` only guarantees NULL-in => NULL-out, never the converse.
+     * `substring(text FROM pattern)` is STRICT, yet returns `null` on a non-matching pattern even
+     * though every input is non-null. `substring` shares its `proname` with the total
+     * `substring(text, int, int)` overload, so the safe-list excludes the name wholesale (see
+     * [PgCatalogLoader.neverNullForNonNullInputOids]) rather than trying to key it by argument
+     * signature.
      */
     @Test
     fun `substring with a non-matching regex reports nullable over a NOT NULL source column`() {
@@ -776,8 +773,8 @@ class QueryAnalysisTest {
     }
 
     /**
-     * Issue #226: `regexp_match` is STRICT but returns `null` (not an empty array) when the
-     * pattern does not match, even over a non-null input string.
+     * `regexp_match` is STRICT but returns `null` (not an empty array) when the pattern does not
+     * match, even over a non-null input string.
      */
     @Test
     fun `regexp_match with a non-matching pattern reports nullable over a NOT NULL source column`() {
@@ -789,8 +786,8 @@ class QueryAnalysisTest {
     }
 
     /**
-     * Issue #226: `array_length` is STRICT but returns `null` (not `0`) for an empty array, even
-     * though the array literal itself is a non-null value.
+     * `array_length` is STRICT but returns `null` (not `0`) for an empty array, even though the
+     * array literal itself is a non-null value.
      */
     @Test
     fun `array_length of an empty array reports nullable over a NOT NULL source column`() {
@@ -802,8 +799,8 @@ class QueryAnalysisTest {
     }
 
     /**
-     * Closes the class of unsoundness issue #226 fixes for user code: a STRICT function is no
-     * longer inferred non-null just because it is strict. Only functions on the
+     * Closes a class of unsoundness for user code: a STRICT function is no longer inferred
+     * non-null just because it is strict. Only functions on the
      * [PgCatalogLoader.neverNullForNonNullInputOids] safe-list — which is restricted to
      * `pg_catalog` — get that inference; a user-defined STRICT function in `public` does not,
      * because Norm cannot prove it is total on non-null input.
@@ -839,10 +836,10 @@ class QueryAnalysisTest {
     }
 
     /**
-     * P0-2 measured defect: `upper(anyrange)` shares `proname = 'upper'` with the total
-     * `upper(text)`, but is STRICT and returns `null` for a non-null, well-typed, UNBOUNDED range
-     * — `SELECT upper(int4range '[1,)')` returns `null` with no error. Verified against real
-     * PostgreSQL 18.4. Before this fix, keying the safe list by name alone reported this NOT NULL.
+     * `upper(anyrange)` shares `proname = 'upper'` with the total `upper(text)`, but is STRICT
+     * and returns `null` for a non-null, well-typed, unbounded range — `SELECT upper(int4range
+     * '[1,)')` returns `null` with no error. PostgreSQL 18.4. Before this fix, keying the safe
+     * list by name alone reported this NOT NULL.
      */
     @Test
     fun `upper of an unbounded NOT NULL int4range reports nullable`() {
@@ -854,9 +851,9 @@ class QueryAnalysisTest {
     }
 
     /**
-     * P0-2 measured defect: same as the `upper` test above, but for `lower(anyrange)` over an
-     * EMPTY (rather than unbounded) range — `SELECT lower(int4range 'empty')` returns `null` with
-     * no error. Verified against real PostgreSQL 18.4.
+     * Same as the `upper` test above, but for `lower(anyrange)` over an empty (rather than
+     * unbounded) range — `SELECT lower(int4range 'empty')` returns `null` with no error.
+     * PostgreSQL 18.4.
      */
     @Test
     fun `lower of an empty NOT NULL int4range reports nullable`() {
@@ -868,10 +865,9 @@ class QueryAnalysisTest {
     }
 
     /**
-     * P0-2 measured defect: `lower(anymultirange)` shares `proname = 'lower'` with the total
-     * `lower(text)`, but is STRICT and returns `null` for a non-null, well-typed, EMPTY
-     * multirange — `SELECT lower(int4multirange '{}')` returns `null` with no error. Verified
-     * against real PostgreSQL 18.4.
+     * `lower(anymultirange)` shares `proname = 'lower'` with the total `lower(text)`, but is
+     * STRICT and returns `null` for a non-null, well-typed, empty multirange — `SELECT
+     * lower(int4multirange '{}')` returns `null` with no error. PostgreSQL 18.4.
      */
     @Test
     fun `lower of an empty NOT NULL int4multirange reports nullable`() {
@@ -883,12 +879,12 @@ class QueryAnalysisTest {
     }
 
     /**
-     * P0-2 measured defect: `to_char(timestamp, text)` is STRICT but returns `null` for a
-     * non-null, well-typed, EMPTY format string — `SELECT to_char(now(), '')` returns `null` with
-     * no error. Verified against real PostgreSQL 18.4. `to_char` is now dropped from the safe
-     * list entirely (see [NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES]) rather than narrowed,
-     * since the empty-format behavior is a property of every overload's shared formatting engine,
-     * not of the first argument's type.
+     * `to_char(timestamp, text)` is STRICT but returns `null` for a non-null, well-typed, empty
+     * format string — `SELECT to_char(now(), '')` returns `null` with no error. PostgreSQL 18.4.
+     * `to_char` is now dropped from the safe list entirely (see
+     * [NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES]) rather than narrowed, since the
+     * empty-format behavior is a property of every overload's shared formatting engine, not of
+     * the first argument's type.
      */
     @Test
     fun `to_char with a NOT NULL empty format string reports nullable`() {
@@ -1011,9 +1007,6 @@ class QueryAnalysisTest {
       assertThat(query.columns[0].notNull).isFalse()
     }
 
-    /**
-     * Verifies the JSONB `->>` operator.
-     */
     @Test
     fun `jsonb operator 1`() {
       val query = analyzeWithSchema(
@@ -1023,9 +1016,6 @@ class QueryAnalysisTest {
       assertThat(query.columns[0].notNull).isFalse()
     }
 
-    /**
-     * Verifies the JSONB `->` operator.
-     */
     @Test
     fun `jsonb operator 2`() {
       val query = analyzeWithSchema(
@@ -1038,7 +1028,7 @@ class QueryAnalysisTest {
     /**
      * Regression guard for the operator blanket rule this fix replaces with signature keying:
      * `path_add` (the `+` operator's `path` overload) returns `null`, not an error, when either
-     * operand is a CLOSED path — even though both operands are non-null and well-typed. A
+     * operand is a closed path — even though both operands are non-null and well-typed. A
      * symbol-only safe-list (every `pg_catalog` overload of `+` is safe) cannot see this, because
      * `+` is also the totally-safe `int4 + int4`. See
      * [NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES]'s KDoc.
@@ -1578,11 +1568,11 @@ class QueryAnalysisTest {
       assertThat(query.columns[2].notNull).isTrue()
     }
 
-    // These exercise the expression-grouping-key rule directly, WITHOUT a proving WHERE clause.
+    // These exercise the expression-grouping-key rule directly, without a proving WHERE clause.
     // A bare-Var grouping key (e.g. GROUP BY ROLLUP(a)) also resolves via ordinary Var evaluation
     // on PostgreSQL 18 because the *GROUP* RTE masks it, but on PostgreSQL 16/17 the target-list
     // Var for that key sits at the same varno/varattno as the base table column, so this rule is
-    // needed even for bare keys there. An EXPRESSION grouping key (e.g. lower(a)) never produces a
+    // needed even for bare keys there. An expression grouping key (e.g. lower(a)) never produces a
     // {VAR } target-list entry at all — only walking the typed expression tree
     // (NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension) catches these on every
     // PostgreSQL version.
@@ -1712,7 +1702,7 @@ class QueryAnalysisTest {
     @Test
     fun `constant-only CASE column under grouping sets is non-null — issue 240's Var-free immunity leg`() {
       // CASE WHEN true THEN 1 ELSE 2 END is never actually null-extended by Postgres (its leaves
-      // are all Const, which the planner never matches to a grouping key). Before issue #240's
+      // are all Const, which the planner never matches to a grouping key). Before the
       // immuneByNoGroupingKeyMatch leg, isSafeFromGroupingSetNullExtension required an
       // Aggref/GroupingFunc descendant to prove safety and this expression has none, so it widened
       // to nullable — an accepted, deliberate cost at the time. The new leg now recognizes it: the
@@ -1731,7 +1721,7 @@ class QueryAnalysisTest {
     // JSON_EXISTS/JSON_VALUE/JSON_QUERY do not retain their PASSING clause's values (see
     // PgNodeExpression.JsonExpr's KDoc), so a Var living only there is invisible to
     // isSafeFromGroupingSetNullExtension's walk. Unlike a CaseExpr's dropped children, this one is
-    // not recovered by parsing more — it is closed by hardcoding JsonExpr as always UNSAFE,
+    // not recovered by parsing more — it is closed by hardcoding JsonExpr as always unsafe,
     // matching Unknown, regardless of an Aggref elsewhere in the tree.
 
     @Test
@@ -1771,7 +1761,7 @@ class QueryAnalysisTest {
     // A `}`, `{`, or `\` in a column alias is backslash-escaped by Postgres in the raw node-tree
     // text (e.g. an alias `k}x` is written as `:resname k\}x`). PgNodeTreeParser's brace-counting
     // scanners must skip escaped pairs, or an escaped brace derails brace-depth tracking and
-    // hasGroupingSets silently returns false for the WHOLE query block — not just the offending
+    // hasGroupingSets silently returns false for the whole query block — not just the offending
     // column, since the scan that finds `:groupingSets` runs once over the entire node tree.
 
     @Test
@@ -1812,7 +1802,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `a brace in one column's alias does not poison a different column's nullability`() {
-      // The exact reported repro shape: the brace-bearing alias sits on the AGGREGATE column, and
+      // The exact reported repro shape: the brace-bearing alias sits on the aggregate column, and
       // the grouping key with no alias issue at all is a separate column — proving the derailment
       // is block-wide (hasGroupingSets), not confined to whichever column carries the brace.
       val query = analyzeWithSchema(
@@ -1828,7 +1818,7 @@ class QueryAnalysisTest {
     // structural match against the grouping key's own (stable, non-folded) subexpression — a Const
     // key still gets null-extended, and so does any larger expression built on top of one, even
     // though a lone Const is itself immune (the planner never matches a bare Const). This is why
-    // isEffectivelyNonNull needs BOTH the sortGroupRef-based key check AND
+    // isEffectivelyNonNull needs both the sortGroupRef-based key check and
     // isSafeFromGroupingSetNullExtension's aggregate-domination walk — neither alone is sufficient.
 
     @Test
@@ -1879,8 +1869,8 @@ class QueryAnalysisTest {
       // count(*)::text || ('2026-01-01'::text::timestamptz)::text: the '::text::timestamptz' cast
       // chain is a real, non-folded coercion function call (unlike a single literal cast, which
       // resolves directly to a Const), so it is a stable, matchable subexpression in its own right
-      // — even though its only leaf is a Const. Verified live: PG16 returns NULL for this column in
-      // the ROLLUP summary row; PG18 does not (a genuine cross-version behavioral divergence, not
+      // — even though its only leaf is a Const. PG16 returns NULL for this column in the ROLLUP
+      // summary row; PG18 does not (a genuine cross-version behavioral divergence, not
       // an analysis difference). Since the generated Kotlin type must be correct on every supported
       // Postgres version, this column must be nullable — which is an accepted over-widening on
       // PG18, not something to "fix" in the PG18 direction.
@@ -1897,7 +1887,7 @@ class QueryAnalysisTest {
       assertThat(query.columns[1].notNull).isTrue()
     }
 
-    // The following must NOT widen: each has an Aggref/GroupingFunc dominating every part of its
+    // The following must not widen: each has an Aggref/GroupingFunc dominating every part of its
     // expression tree (modulo Consts), so isSafeFromGroupingSetNullExtension proves it immune to
     // null-extension, and none of them is itself a grouping key.
 
@@ -1908,9 +1898,9 @@ class QueryAnalysisTest {
       // grouping-sets safety walk, not general operator-safelist coverage. 'B' (not 'A') on the
       // concatenation side deliberately differs from the 'A' grouping key: on PostgreSQL 18, the
       // GROUP RTE mechanism structurally substitutes a GROUP-RTE Var for any target-list
-      // subexpression that EXACTLY matches the grouping key — reusing 'A'::text here would trigger
-      // that substitution and make `d` genuinely nullable, verified live, which is a different,
-      // legitimate case, not this one.
+      // subexpression that exactly matches the grouping key — reusing 'A'::text here would trigger
+      // that substitution and make `d` genuinely nullable, a different, legitimate case, not this
+      // one.
       val query = analyzeWithSchema(
         "CREATE TABLE t (a TEXT NOT NULL)",
         "SELECT count(*)::text || 'B'::text AS d, 'A'::text AS k FROM t GROUP BY ROLLUP('A'::text)",
@@ -1956,8 +1946,8 @@ class QueryAnalysisTest {
 
     // isSafeFromGroupingSetNullExtension's aggregate-domination rule alone over-widens: an implicit
     // int4->int8 literal like `0::bigint` is a FuncExpr over a Const, not a folded Const, so
-    // `count(*) + 0::bigint` has no Aggref descendant on ITS OWN unless the whole subtree is
-    // examined together — the domination check finds count(*)'s Aggref for the OUTER `+`, but the
+    // `count(*) + 0::bigint` has no Aggref descendant on its own unless the whole subtree is
+    // examined together — the domination check finds count(*)'s Aggref for the outer `+`, but the
     // literal side still needs to be proven safe independently via constant-folding
     // (isSafeFromGroupingSetNullExtension's foldsToConst leg), not via any aggregate. Without that
     // leg, ordinary aggregate arithmetic like `coalesce(count(*), 0)` was wrongly nullable.
@@ -1985,15 +1975,15 @@ class QueryAnalysisTest {
 
     @Test
     fun `count plus an implicit widening cast of a literal stays non-null while a different literal is the key`() {
-      // The aggregate side deliberately uses a DIFFERENT literal (5, not 0) than the key (0): on
-      // PostgreSQL 18, using the SAME literal on both sides makes the GROUP RTE mechanism
+      // The aggregate side deliberately uses a different literal (5, not 0) than the key (0): on
+      // PostgreSQL 18, using the same literal on both sides makes the GROUP RTE mechanism
       // structurally substitute a nullingrels-flagged Var for the aggregate side's matching
-      // subexpression too — verified live this substitution does NOT actually make that combined
-      // value null at runtime (count(*) + 0::bigint is never null even in the summary row), but our
-      // analyzer cannot see through that PG18-only substitution artifact to know that, so it
-      // conservatively (and, for this exact same-literal case, needlessly) reports nullable. Using
-      // a different literal avoids the substitution entirely and tests the real feature under test
-      // — aggregate arithmetic over an implicit-cast literal — without hitting that artifact.
+      // subexpression too. That substitution does not actually make the combined value null at
+      // runtime (count(*) + 0::bigint is never null even in the summary row), but our analyzer
+      // cannot see through that PG18-only substitution artifact to know that, so it conservatively
+      // (and, for this exact same-literal case, needlessly) reports nullable. Using a different
+      // literal avoids the substitution entirely and tests the real feature under test — aggregate
+      // arithmetic over an implicit-cast literal — without hitting that artifact.
       val query = analyzeWithSchema(
         "CREATE TABLE t (a TEXT NOT NULL)",
         "SELECT count(*) + 5::bigint AS c, 0::bigint AS k FROM t GROUP BY ROLLUP((0::bigint))",
@@ -2080,10 +2070,10 @@ class QueryAnalysisTest {
 
     @Test
     fun `a window function whose own argument is not dominated by an aggregate stays nullable`() {
-      // Regression guard for the WindowFunc special case: it must NOT get Aggref's blanket safety.
+      // Regression guard for the WindowFunc special case: it must not get Aggref's blanket safety.
       // first_value(b)'s argument is a bare Var — evaluated over already-grouped, null-extended
-      // rows — so it is genuinely nullable even though b is NOT NULL. Verified live: all three
-      // ROLLUP(b) rows return NULL for this column on both PG16 and PG18.
+      // rows — so it is genuinely nullable even though b is NOT NULL. All three ROLLUP(b) rows
+      // return NULL for this column on both PG16 and PG18.
       val query = analyzeWithSchema(
         "CREATE TABLE t2 (b TEXT NOT NULL, c INT NOT NULL)",
         "SELECT first_value(b) OVER (ORDER BY grouping(b) DESC) AS fv FROM t2 GROUP BY ROLLUP(b)",
@@ -2094,10 +2084,10 @@ class QueryAnalysisTest {
 
     @Test
     fun `a folded-constant expression that IS the grouping key is still nullable via rule (b)`() {
-      // Proves the foldsToConst leg did not break the sortGroupRef-based key check: lower('X'::text)
-      // folds to a Const (lower is IMMUTABLE), which would make it "safe" under foldsToConst alone —
-      // but it is also the literal grouping key, so rule (b) must still force it nullable. Verified
-      // live: NULL in the ROLLUP summary row.
+      // The foldsToConst leg must not break the sortGroupRef-based key check: lower('X'::text)
+      // folds to a Const (lower is IMMUTABLE), which would make it "safe" under foldsToConst alone
+      // — but it is also the literal grouping key, so rule (b) must still force it nullable. NULL
+      // in the ROLLUP summary row.
       val query = analyzeWithSchema(
         "CREATE TABLE t (a TEXT NOT NULL)",
         "SELECT lower('X'::text) AS k, count(*) AS n FROM t GROUP BY ROLLUP(lower('X'::text))",
@@ -2110,9 +2100,9 @@ class QueryAnalysisTest {
     @Test
     fun `concat stays non-null under a nullable ROLLUP key because it is on the always-non-null list`() {
       // concat is non-strict — it renders a null argument as an empty string — so null-extending
-      // one of its arguments cannot make the result null. Verified live on PG16, 17, and 18: never
-      // NULL for the plain ROLLUP case, for a LEFT JOIN that null-extends one argument, and for an
-      // empty input table.
+      // one of its arguments cannot make the result null. PostgreSQL 16-18: never NULL for the
+      // plain ROLLUP case, for a LEFT JOIN that null-extends one argument, and for an empty input
+      // table.
       val query = analyzeWithSchema(
         "CREATE TABLE t2 (a TEXT NOT NULL, b TEXT NOT NULL)",
         "SELECT concat(a, '-', b) AS label, count(*) AS n FROM t2 GROUP BY ROLLUP(a, b)",
@@ -2125,11 +2115,10 @@ class QueryAnalysisTest {
     @Test
     fun `concat_ws with a null-extended separator argument is nullable — the P0 regression`() {
       // concat_ws's non-nullness depends on its separator (first argument) specifically, not on
-      // whether SOME argument is non-null — unlike concat, it must NOT get the always-non-null
-      // short-circuit. Here the separator IS the ROLLUP key, so it is null-extended for the
-      // summary row, and concat_ws(NULL, 'x', 'y') really is NULL there (verified live on
-      // PostgreSQL 16, 17, and 18). Before this fix, concat_ws's presence on the always-non-null
-      // list made this wrongly non-null.
+      // whether some argument is non-null — unlike concat, it must not get the always-non-null
+      // short-circuit. Here the separator is the ROLLUP key, so it is null-extended for the
+      // summary row, and concat_ws(NULL, 'x', 'y') really is NULL there (PostgreSQL 16-18). Before
+      // this fix, concat_ws's presence on the always-non-null list made this wrongly non-null.
       val query = analyzeWithSchema(
         "CREATE TABLE t2 (a TEXT NOT NULL, b TEXT NOT NULL)",
         "SELECT concat_ws(a, 'x', 'y') AS k, count(*) AS n FROM t2 GROUP BY ROLLUP(a)",
@@ -2141,15 +2130,14 @@ class QueryAnalysisTest {
 
     @Test
     fun `concat_ws with a literal separator over a null-extended later argument is non-null — issue 240 shape 7`() {
-      // Verified live on PostgreSQL 16, 17, and 18: concat_ws(',', a, b) is NEVER null under
-      // GROUP BY ROLLUP(a, b), including the fully null-extended summary row — a non-null literal
-      // separator makes concat_ws total regardless of the other (even null-extended) arguments.
-      // Before the issue #240 fix, this analyzer reported it nullable: the grouping-sets safety
-      // gate's generic rule requires an Aggref/GroupingFunc/WindowFunc descendant to prove safety,
-      // and this expression has none. isSafeFromGroupingSetNullExtension's new
-      // isNonNullIffFirstArgumentNonNull leg now recognizes that concat_ws's result depends ONLY on
-      // its first (separator) argument, which here is a Const — safe regardless of the other,
-      // null-extendable arguments.
+      // PostgreSQL 16-18: concat_ws(',', a, b) is never null under GROUP BY ROLLUP(a, b),
+      // including the fully null-extended summary row — a non-null literal separator makes
+      // concat_ws total regardless of the other (even null-extended) arguments. Before this fix,
+      // this analyzer reported it nullable: the grouping-sets safety gate's generic rule requires
+      // an Aggref/GroupingFunc/WindowFunc descendant to prove safety, and this expression has
+      // none. isSafeFromGroupingSetNullExtension's new isNonNullIffFirstArgumentNonNull leg now
+      // recognizes that concat_ws's result depends only on its first (separator) argument, which
+      // here is a Const — safe regardless of the other, null-extendable arguments.
       val query = analyzeWithSchema(
         "CREATE TABLE t2 (a TEXT NOT NULL, b TEXT NOT NULL)",
         "SELECT concat_ws(',', a, b) AS k, count(*) AS n FROM t2 GROUP BY ROLLUP(a, b)",
@@ -2161,11 +2149,10 @@ class QueryAnalysisTest {
 
     @Test
     fun `concat with VARIADIC over a null-extended NOT NULL array ROLLUP key is nullable`() {
-      // arr is NOT NULL by schema, but IS the ROLLUP key, so it is null-extended for the summary
-      // row, and concat(VARIADIC arr) really is NULL there — verified live on PostgreSQL 16, 17,
-      // and 18. Before this fix, concat's VARIADIC form was wrongly reported non-null via the
-      // isAlwaysNonNull short-circuit, which is unconditional and does not (and cannot) inspect
-      // arguments at all.
+      // arr is NOT NULL by schema, but is the ROLLUP key, so it is null-extended for the summary
+      // row, and concat(VARIADIC arr) really is NULL there (PostgreSQL 16-18). Before this fix,
+      // concat's VARIADIC form was wrongly reported non-null via the isAlwaysNonNull short-circuit,
+      // which is unconditional and does not (and cannot) inspect arguments at all.
       val query = analyzeWithSchema(
         "CREATE TABLE t4 (arr TEXT[] NOT NULL)",
         "SELECT concat(VARIADIC arr) AS c, count(*) AS n FROM t4 GROUP BY ROLLUP(arr)",
@@ -2178,16 +2165,16 @@ class QueryAnalysisTest {
     @Test
     fun `duplicate concat call that IS the ROLLUP key is nullable in both occurrences`() {
       // GROUP BY ROLLUP(concat(a, '-')) makes concat(a, '-') itself the grouping key. PostgreSQL's
-      // grouping-set null-extension (setrefs.c) assigns :ressortgroupref to only ONE of the two
-      // syntactically-identical target-list entries (verified live: the first), but its
-      // null-extension matching is STRUCTURAL, not ressortgroupref-keyed — it null-extends every
-      // target-list entry that structurally equals the grouping key, including the duplicate with
-      // ressortgroupref 0. Verified live (PostgreSQL 16 and 17): both x and y are NULL in the
-      // ROLLUP summary row, alongside 'p-'/'p-' and 'q-'/'q-' in the per-group rows. Before this
-      // fix, the isAlwaysNonNull short-circuit for concat wrongly reported y non-null: that
-      // short-circuit only proves concat tolerates a null ARGUMENT (it renders one as an empty
-      // string), which says nothing about the case at hand, where the entire concat(...) call is
-      // itself null-extended wholesale and never evaluated at all.
+      // grouping-set null-extension (setrefs.c) assigns :ressortgroupref to only one of the two
+      // syntactically-identical target-list entries (the first), but its null-extension matching
+      // is structural, not ressortgroupref-keyed — it null-extends every target-list entry that
+      // structurally equals the grouping key, including the duplicate with ressortgroupref 0.
+      // PostgreSQL 16-17: both x and y are NULL in the ROLLUP summary row, alongside 'p-'/'p-' and
+      // 'q-'/'q-' in the per-group rows. Before this fix, the isAlwaysNonNull short-circuit for
+      // concat wrongly reported y non-null: that short-circuit only proves concat tolerates a null
+      // argument (it renders one as an empty string), which says nothing about the case at hand,
+      // where the entire concat(...) call is itself null-extended wholesale and never evaluated at
+      // all.
       val query = analyzeWithSchema(
         "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
         "SELECT concat(a, '-') AS x, concat(a, '-') AS y, count(*) AS c FROM gs_t GROUP BY ROLLUP(concat(a, '-'))",
@@ -2200,12 +2187,12 @@ class QueryAnalysisTest {
 
     @Test
     fun `concat over a bare-Var ROLLUP key stays non-null, unlike the identical-expression-as-key case above`() {
-      // GROUP BY ROLLUP(a): the grouping key is the bare column a, NOT concat(a, '-') itself, so
+      // GROUP BY ROLLUP(a): the grouping key is the bare column a, not concat(a, '-') itself, so
       // concat(a, '-') is never a candidate for whole-expression substitution — only the nested a
       // reference can be null-extended, and concat tolerates that (renders it as an empty string).
-      // Verified live (PostgreSQL 16, 17, and 18): 'p-'/'q-' per group, '-' (never NULL) in the
-      // ROLLUP summary row. This is the positive control the fix for the case above must not
-      // over-correct: concat's isAlwaysNonNull short-circuit must still apply here.
+      // PostgreSQL 16-18: 'p-'/'q-' per group, '-' (never NULL) in the ROLLUP summary row. This is
+      // the positive control the fix for the case above must not over-correct: concat's
+      // isAlwaysNonNull short-circuit must still apply here.
       val query = analyzeWithSchema(
         "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
         "SELECT concat(a, '-') AS z, count(*) AS c FROM gs_t GROUP BY ROLLUP(a)",
@@ -2217,20 +2204,19 @@ class QueryAnalysisTest {
 
     @Test
     fun `duplicate bare Const grouping key stays non-null in the un-ref'd occurrence`() {
-      // GROUP BY ROLLUP('ALL') matches the FIRST 'ALL'::text occurrence (l1) by ressortgroupref.
-      // Verified live on EVERY supported version (16, 17, and 18): l1 is NULL, l2 stays 'ALL', in
-      // the ROLLUP summary row — PostgreSQL's structural null-extension (setrefs.c) explicitly
-      // refuses to match a bare Const node at all (see isSafeFromGroupingSetNullExtension's
-      // KDoc), so the un-ref'd duplicate l2 is genuinely never NULL on any version. This pins the
-      // asymmetry groupingKeyExpressions' Const/foldsToConst exclusion depends on — including l2
-      // in that set would wrongly force it nullable.
+      // GROUP BY ROLLUP('ALL') matches the first 'ALL'::text occurrence (l1) by ressortgroupref.
+      // PostgreSQL 16-18: l1 is NULL, l2 stays 'ALL', in the ROLLUP summary row — PostgreSQL's
+      // structural null-extension (setrefs.c) explicitly refuses to match a bare Const node at all
+      // (see isSafeFromGroupingSetNullExtension's KDoc), so the un-ref'd duplicate l2 is genuinely
+      // never NULL on any version. This pins the asymmetry groupingKeyExpressions'
+      // Const/foldsToConst exclusion depends on — including l2 in that set would wrongly force it
+      // nullable.
       //
-      // Unconditional across every supported version: the GroupRteSubstitution fix restores the
-      // PostgreSQL 16/17 tree shape on PostgreSQL 18 too — both l1 and l2 arrive at
-      // groupingKeyExpressions as the genuine bare Const '"ALL"' PostgreSQL 16/17 always showed
-      // directly, not a Var referencing the synthesized "*GROUP*" RTE, so the Const-vs-key
-      // distinction this exclusion depends on is available on every version, not lost to PG18's
-      // pre-resolution.
+      // Holds on every supported version: the GroupRteSubstitution fix restores the PostgreSQL
+      // 16/17 tree shape on PostgreSQL 18 too — both l1 and l2 arrive at groupingKeyExpressions as
+      // the genuine bare Const '"ALL"' PostgreSQL 16/17 always showed directly, not a Var
+      // referencing the synthesized "*GROUP*" RTE, so the Const-vs-key distinction this exclusion
+      // depends on is available on every version, not lost to PG18's pre-resolution.
       val query = analyzeWithSchema(
         "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
         "SELECT 'ALL'::text AS l1, 'ALL'::text AS l2, count(*) AS c FROM gs_t GROUP BY ROLLUP('ALL'::text)",
@@ -2244,17 +2230,16 @@ class QueryAnalysisTest {
     @Test
     fun `duplicate IMMUTABLE-folding call stays non-null in the un-ref'd occurrence`() {
       // upper('a') is IMMUTABLE over a literal argument, so PostgreSQL's early constant folding
-      // (eval_const_expressions, well before setrefs.c's null-extension substitution) reduces
-      // BOTH occurrences to a bare Const('A') before the substitution pass ever runs. Verified
-      // live on EVERY supported version (16, 17, and 18): u1 is NULL, u2 stays 'A', in the ROLLUP
-      // summary row — u2 is genuinely never NULL on any version (unlike a STABLE call over the
-      // same shape, which does NOT fold and IS null-extended in both occurrences — see the
-      // date_trunc case below).
+      // (eval_const_expressions, well before setrefs.c's null-extension substitution) reduces both
+      // occurrences to a bare Const('A') before the substitution pass ever runs. PostgreSQL 16-18:
+      // u1 is NULL, u2 stays 'A', in the ROLLUP summary row — u2 is genuinely never NULL on any
+      // version (unlike a STABLE call over the same shape, which does not fold and is
+      // null-extended in both occurrences — see the date_trunc case below).
       //
-      // Unconditional across every supported version — same reasoning as the bare-Const case
-      // above: the GroupRteSubstitution fix resolves both u1 and u2's target-list Var back to the
-      // real upper('a') FuncExpr before groupingKeyExpressions ever runs, so both fold to the same
-      // bare Const('A') on PostgreSQL 18 exactly as they always did on 16/17.
+      // Holds on every supported version — same reasoning as the bare-Const case above: the
+      // GroupRteSubstitution fix resolves both u1 and u2's target-list Var back to the real
+      // upper('a') FuncExpr before groupingKeyExpressions ever runs, so both fold to the same bare
+      // Const('A') on PostgreSQL 18 exactly as they always did on 16/17.
       val query = analyzeWithSchema(
         "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
         "SELECT upper('a') AS u1, upper('a') AS u2, count(*) AS c FROM gs_t GROUP BY ROLLUP(upper('a'))",
@@ -2268,20 +2253,20 @@ class QueryAnalysisTest {
     @Test
     fun `duplicate STABLE call is null-extended in BOTH occurrences — the sharpest proof matching is structural`() {
       // date_trunc('month', current_date) is STABLE, not IMMUTABLE, so — unlike upper('a') above —
-      // it survives constant folding and remains a genuine, matchable subexpression when setrefs.c's
-      // null-extension substitution runs. Since that substitution matches STRUCTURALLY rather than
-      // by ressortgroupref, it null-extends d1 (the ref'd occurrence) AND d2 (the un-ref'd
-      // duplicate) alike — this is the same mechanism, applied to a non-Const, non-folding
-      // expression, that the concat bug this fix addresses exploited. Verified live (PostgreSQL 16
-      // and 17): BOTH d1 and d2 are NULL in the ROLLUP summary row.
+      // it survives constant folding and remains a genuine, matchable subexpression when
+      // setrefs.c's null-extension substitution runs. Since that substitution matches structurally
+      // rather than by ressortgroupref, it null-extends d1 (the ref'd occurrence) and d2 (the
+      // un-ref'd duplicate) alike — this is the same mechanism, applied to a non-Const, non-folding
+      // expression, that the concat bug this fix addresses exploited. PostgreSQL 16-17: both d1
+      // and d2 are NULL in the ROLLUP summary row.
       //
-      // PostgreSQL 18's own RUNTIME actually diverges here (verified live): only d1 (the entry
-      // PostgreSQL assigned :ressortgroupref to) is NULL in the summary row; d2 keeps its real
-      // value. Norm deliberately does NOT chase that: after GroupRteSubstitution, d2's target-list
-      // Var resolves to the SAME structural expression as d1's — indistinguishable from the
-      // ressortgroupref-carrying occurrence once resolved — so d2 is reported nullable on every
-      // version, including 18. This is a safe, accepted over-widening (matches the true PG16/17
-      // runtime, and is never wrong in the PG18-confident-NOT-NULL direction), not an oversight.
+      // PostgreSQL 18's own runtime actually diverges here: only d1 (the entry PostgreSQL assigned
+      // :ressortgroupref to) is NULL in the summary row; d2 keeps its real value. Norm deliberately
+      // does not chase that: after GroupRteSubstitution, d2's target-list Var resolves to the same
+      // structural expression as d1's — indistinguishable from the ressortgroupref-carrying
+      // occurrence once resolved — so d2 is reported nullable on every version, including 18. This
+      // is a safe, accepted over-widening (matches the true PG16/17 runtime, and is never wrong in
+      // the PG18-confident-NOT-NULL direction), not an oversight.
       val query = analyzeWithSchema(
         "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
         """
@@ -2301,10 +2286,10 @@ class QueryAnalysisTest {
       // random() is VOLATILE, yet it is still matched and null-extended in both occurrences —
       // proving the null-extension substitution is a pure structural-equality check
       // (PostgreSQL's equal()), never a volatility check that would otherwise justify treating a
-      // VOLATILE call as immune to whole-expression substitution. Verified live (PostgreSQL 16 and
-      // 17): both r1 and r2 are NULL in the ROLLUP summary row, and in the per-group rows, r1 and
-      // r2 hold the SAME value within a row (the executor evaluates the target list once per row,
-      // not once per occurrence).
+      // VOLATILE call as immune to whole-expression substitution. PostgreSQL 16-17: both r1 and r2
+      // are NULL in the ROLLUP summary row, and in the per-group rows, r1 and r2 hold the same
+      // value within a row (the executor evaluates the target list once per row, not once per
+      // occurrence).
       val query = analyzeWithSchema(
         "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
         "SELECT random() AS r1, random() AS r2, count(*) AS c FROM gs_t GROUP BY ROLLUP(random())",
@@ -2319,8 +2304,8 @@ class QueryAnalysisTest {
     fun `aggregate domination — count(*) + 1 over a nullable ROLLUP key is never null`() {
       // count(*) never returns null (it has a non-null initial transition value), and the OpExpr
       // wrapping it (+ 1) is on the isNeverNullForNonNullInput safe-list, so n is provably
-      // non-null regardless of a itself being nullable in the ROLLUP summary row. Verified live
-      // (PostgreSQL 16 and 17): n is 3 in the summary row, never NULL.
+      // non-null regardless of a itself being nullable in the ROLLUP summary row. PostgreSQL
+      // 16-17: n is 3 in the summary row, never NULL.
       val query = analyzeWithSchema(
         "CREATE TABLE gs_t (a TEXT NOT NULL, b INT NOT NULL)",
         "SELECT count(*) + 1 AS n FROM gs_t GROUP BY ROLLUP(a)",
@@ -2329,15 +2314,15 @@ class QueryAnalysisTest {
       assertThat(query.columns[0].notNull).isTrue()
     }
 
-    // GitHub issue #240: GROUPING SETS/CUBE/ROLLUP over-widening. isSafeFromGroupingSetNullExtension
-    // gained a self-match guard (a nested occurrence of the grouping key is unsafe at ANY depth, not
-    // merely at the target-list entry's own root) plus new legs for node kinds isNonNull already
-    // proves are argument-nullability-independent (isNonNullIffFirstArgumentNonNull FuncExpr,
+    // GROUPING SETS/CUBE/ROLLUP over-widening. isSafeFromGroupingSetNullExtension gained a
+    // self-match guard (a nested occurrence of the grouping key is unsafe at any depth, not merely
+    // at the target-list entry's own root) plus new legs for node kinds isNonNull already proves
+    // are argument-nullability-independent (isNonNullIffFirstArgumentNonNull FuncExpr,
     // xmlelement/xmlforest/processing-instruction XmlExpr, JSON_OBJECT/JSON_ARRAY
     // JsonConstructorExpr, SqlValueFunction, NextValExpr) and a Var-free/no-structural-match leg for
     // constructs with no per-node-kind rule at all (e.g. now()). See NodeTreeNullabilityAnalyzer's
-    // own KDoc and PLAN-240.md's "Measured ground truth" table for the full soundness argument and
-    // live verification (PostgreSQL 16, 17, and 18) behind every test below.
+    // own KDoc for the soundness argument. Every test below was checked on PostgreSQL 16, 17,
+    // and 18.
 
     @Test
     fun `now() is non-null under a ROLLUP key it is not itself part of — issue 240 shape 1`() {
@@ -2374,8 +2359,8 @@ class QueryAnalysisTest {
 
     @Test
     fun `xmlforest under a ROLLUP key is nullable — XMLFOREST is not total over null fields`() {
-      // Live on PostgreSQL 16, 17 and 18: xmlforest(NULL::text AS q) IS NULL, so null-extending the
-      // only field nulls the whole forest in the ROLLUP summary row.
+      // PostgreSQL 16-18: xmlforest(NULL::text AS q) IS NULL, so null-extending the only field
+      // nulls the whole forest in the ROLLUP summary row.
       val query = analyzeWithSchema(
         "CREATE TABLE t2 (a TEXT NOT NULL)",
         "SELECT xmlforest(lower(a) AS q) AS x, count(*) AS c FROM t2 GROUP BY ROLLUP(a)",
@@ -2386,7 +2371,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `xmlpi under a ROLLUP key is nullable — a null content expression nulls the result`() {
-      // Live on PostgreSQL 16, 17 and 18: xmlpi(name php, NULL::text) IS NULL.
+      // PostgreSQL 16-18: xmlpi(name php, NULL::text) IS NULL.
       val query = analyzeWithSchema(
         "CREATE TABLE t2 (a TEXT NOT NULL)",
         "SELECT xmlpi(name php, lower(a)) AS x, count(*) AS c FROM t2 GROUP BY ROLLUP(a)",
@@ -2407,12 +2392,12 @@ class QueryAnalysisTest {
 
     @Test
     fun `a nested occurrence of the grouping key inside an always-non-null call is nullable — the self-match guard`() {
-      // Measured at HEAD (PLAN-240.md, PostgreSQL 16 and 18): before the self-match guard, the
-      // OLD walk reached concat(a, b) — a child of the || operator, itself IDENTICAL to the
-      // grouping key — and let isAlwaysNonNull("concat") rescue it outright, wrongly reporting
-      // notNull = true even though live PostgreSQL returns NULL for label in the ROLLUP summary
-      // row. The guard now checks every subexpression the walk reaches against
-      // groupingKeyExpressions, not merely the target-list entry's own root.
+      // PostgreSQL 16 and 18: before the self-match guard, the old walk reached
+      // concat(a, b) — a child of the || operator, itself identical to the grouping key — and let
+      // isAlwaysNonNull("concat") rescue it outright, wrongly reporting notNull = true even though
+      // live PostgreSQL returns NULL for label in the ROLLUP summary row. The guard now checks
+      // every subexpression the walk reaches against groupingKeyExpressions, not merely the
+      // target-list entry's own root.
       val query = analyzeWithSchema(
         "CREATE TABLE t2 (a TEXT NOT NULL, b TEXT NOT NULL)",
         "SELECT count(*)::text || concat(a, b) AS label FROM t2 GROUP BY ROLLUP(concat(a, b))",
@@ -2424,9 +2409,9 @@ class QueryAnalysisTest {
     @Test
     fun `now() as its own ROLLUP grouping key stays nullable despite the new Var-free immunity leg`() {
       // Negative control for the new immuneByNoGroupingKeyMatch leg: now() is Var-free and would
-      // otherwise qualify, but here it IS the grouping key itself, so the self-match guard at the
-      // top of isSafeFromGroupingSetNullExtension must still force it nullable. Verified live
-      // (PostgreSQL 16 and 18): NULL in the ROLLUP summary row.
+      // otherwise qualify, but here it is the grouping key itself, so the self-match guard at the
+      // top of isSafeFromGroupingSetNullExtension must still force it nullable. PostgreSQL 16 and
+      // 18: NULL in the ROLLUP summary row.
       val query = analyzeWithSchema(
         "CREATE TABLE t2 (a TEXT NOT NULL)",
         "SELECT now() AS n, count(*) AS c FROM t2 GROUP BY ROLLUP(now())",
@@ -2440,8 +2425,8 @@ class QueryAnalysisTest {
     fun `concat_ws whose separator is the grouping key stays nullable despite the new leg`() {
       // Negative control for the new isNonNullIffFirstArgumentNonNull leg: the separator argument
       // (concat(a, b)) is itself the grouping key, so the leg must recurse into it — and the
-      // self-match guard on that recursive call is what forces the result nullable. Verified live
-      // (PostgreSQL 16 and 18): NULL in the ROLLUP summary row.
+      // self-match guard on that recursive call is what forces the result nullable. PostgreSQL 16
+      // and 18: NULL in the ROLLUP summary row.
       val query = analyzeWithSchema(
         "CREATE TABLE t2 (a TEXT NOT NULL, b TEXT NOT NULL)",
         "SELECT concat_ws(concat(a, b), 'x', 'y') AS label, count(*) AS n FROM t2 GROUP BY ROLLUP(concat(a, b))",
@@ -2456,7 +2441,7 @@ class QueryAnalysisTest {
       // Negative control for the new immuneByNoGroupingKeyMatch leg: now() is a subexpression of
       // now() || 'x', matching groupingKeyExpressions, so condition 3 must force the whole
       // expression nullable even though now() || 'x' itself is Var-free. PostgreSQL 16
-      // null-extends this live; PostgreSQL 18 does not (a genuine cross-version divergence) — this
+      // null-extends this; PostgreSQL 18 does not (a genuine cross-version divergence) — this
       // analyzer reports nullable on every version, the only answer that is never wrong.
       val query = analyzeWithSchema(
         "CREATE TABLE t2 (a TEXT NOT NULL)",
@@ -2467,14 +2452,14 @@ class QueryAnalysisTest {
       assertThat(query.columns[1].notNull).isTrue()
     }
 
-    // GitHub issue #241: on PostgreSQL 18, an RTE_GROUP range-table entry (:rtekind 9, alias
-    // *GROUP*) rewrites EVERY target-list occurrence of a grouping-key expression — not merely the
-    // one entry PostgreSQL assigns :ressortgroupref to — into a bare Var referencing that RTE. Prior
-    // to the GroupRteSubstitution fix, the aggregate side of these two queries (c below) fell
-    // through to "source column not found" for that buried Var and was wrongly reported nullable on
-    // PostgreSQL 18 whenever the SAME literal/alias appeared on both the aggregate and the key side
-    // — exactly what these two tests use, unlike the pre-existing tests elsewhere in this class that
-    // deliberately used a DIFFERENT literal to sidestep the bug. These are the issue's own repro
+    // On PostgreSQL 18, an RTE_GROUP range-table entry (:rtekind 9, alias *GROUP*) rewrites every
+    // target-list occurrence of a grouping-key expression — not merely the one entry PostgreSQL
+    // assigns :ressortgroupref to — into a bare Var referencing that RTE. Prior to the
+    // GroupRteSubstitution fix, the aggregate side of these two queries (c below) fell through to
+    // "source column not found" for that buried Var and was wrongly reported nullable on
+    // PostgreSQL 18 whenever the same literal/alias appeared on both the aggregate and the key
+    // side — exactly what these two tests use, unlike the pre-existing tests elsewhere in this
+    // class that deliberately used a different literal to sidestep the bug. These are the repro
     // shapes and must be unconditionally correct on every supported PostgreSQL version.
 
     @Test
@@ -2501,11 +2486,10 @@ class QueryAnalysisTest {
 
     @Test
     fun `a plain GROUP BY on a constant-folding key is non-null — no ROLLUP, still a GROUP RTE on PostgreSQL 18`() {
-      // A GROUP RTE is created for a PLAIN GROUP BY too, not only GROUPING SETS/CUBE/ROLLUP
-      // (verified live). hasGroupingSets is false here — parseGroupRteMap alone cannot resolve this
-      // key, because its groupexprs entry is a FUNCEXPR/CONST, not a bare VAR (see that method's
-      // KDoc) — so this exercises the substitution fix on the code path GROUPING SETS tests never
-      // touch.
+      // A GROUP RTE is created for a plain GROUP BY too, not only GROUPING SETS/CUBE/ROLLUP.
+      // hasGroupingSets is false here — parseGroupRteMap alone cannot resolve this key, because
+      // its groupexprs entry is a FUNCEXPR/CONST, not a bare VAR (see that method's KDoc) — so
+      // this exercises the substitution fix on the code path GROUPING SETS tests never touch.
       val query = analyzeWithSchema(
         "CREATE TABLE t (a TEXT NOT NULL)",
         "SELECT 0::bigint AS k, count(*) AS n FROM t GROUP BY 0::bigint",
@@ -2517,13 +2501,14 @@ class QueryAnalysisTest {
 
     @Test
     fun `plain GROUP BY on the nullable side of a LEFT JOIN is nullable — the wrong-NOT-NULL regression`() {
-      // Before the GroupRteSubstitution fix, this was a CONFIDENTLY WRONG NOT NULL on PostgreSQL 18,
-      // not merely an over-widening: the target-list Var wrapping the GROUP RTE reference carries an
-      // EMPTY :varnullingrels (PostgreSQL does not propagate the outer join's nulling relations onto
-      // it), while parseGroupRteMap's coarser VAR-only resolution maps it back to the base column by
-      // (varno, varattno) alone and discards the GROUP RTE's OWN :groupexprs entry — the one that
-      // actually carries the correct, non-empty nulling relations from the LEFT JOIN. x is NOT NULL
-      // by schema, but the join can still leave it absent for an unmatched t row.
+      // Before the GroupRteSubstitution fix, this was a confidently wrong NOT NULL on PostgreSQL
+      // 18, not merely an over-widening: the target-list Var wrapping the GROUP RTE reference
+      // carries an empty :varnullingrels (PostgreSQL does not propagate the outer join's nulling
+      // relations onto it), while parseGroupRteMap's coarser VAR-only resolution maps it back to
+      // the base column by (varno, varattno) alone and discards the GROUP RTE's own :groupexprs
+      // entry — the one that actually carries the correct, non-empty nulling relations from the
+      // LEFT JOIN. x is NOT NULL by schema, but the join can still leave it absent for an unmatched
+      // t row.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL);
@@ -2553,23 +2538,23 @@ class QueryAnalysisTest {
     @Test
     fun `a second ROLLUP key at varattno 2 resolves its own groupexprs entry, not the first key's`() {
       // Two grouping keys means the GROUP RTE's :groupexprs has two entries: index 0 for u.x (the
-      // FIRST key, join-nullable), index 1 for the literal 5::bigint (the SECOND key, always
-      // non-null). c's aggregate arithmetic reuses the literal 5, so PostgreSQL rewrites THAT
+      // first key, join-nullable), index 1 for the literal 5::bigint (the second key, always
+      // non-null). c's aggregate arithmetic reuses the literal 5, so PostgreSQL rewrites that
       // occurrence to a Var whose :varattno is 2 (1-based) — resolving it correctly requires
       // picking groupexprs[1] (the Const), not groupexprs[0] (u.x). A duplicate-of-a-raw-Var
       // detection shortcut (matching k1's own un-substituted Var structurally) cannot rescue this
       // case the way it does for a bare duplicate key — c's Var sits inside an OpExpr, a
-      // structurally DIFFERENT shape from k1's bare Var, so only correct varattno-to-list-index
-      // resolution can prove c non-null. The columns[0] (c) assertion is the ONLY one that
+      // structurally different shape from k1's bare Var, so only correct varattno-to-list-index
+      // resolution can prove c non-null. The columns[0] (c) assertion is the only one that
       // discriminates an off-by-one or reversed-order bug in either the parser or the substitution:
-      // such a bug would resolve c's buried Var to u.x instead of the Const — genuinely nullable via
-      // the LEFT JOIN — and wrongly report c nullable instead of non-null. columns[1] (k1) is NOT a
-      // discriminator despite also referencing u.x: k1 IS the grouping key itself (its own
+      // such a bug would resolve c's buried Var to u.x instead of the Const — genuinely nullable
+      // via the LEFT JOIN — and wrongly report c nullable instead of non-null. columns[1] (k1) is
+      // not a discriminator despite also referencing u.x: k1 is the grouping key itself (its own
       // :ressortgroupref is 1, in groupingSortGroupRefs), so isEffectivelyNonNull's first condition
-      // (NodeTreeNullabilityAnalyzer.kt's groupingSortGroupRefs check) forces it nullable before its
-      // substituted expression is ever consulted — an off-by-one bug could resolve k1 to the WRONG
-      // groupexprs entry and it would still come out nullable regardless. columns[1]/[2] are kept as
-      // controls (proving both keys are still correctly nullable), not because they catch this bug.
+      // (NodeTreeNullabilityAnalyzer.kt's groupingSortGroupRefs check) forces it nullable before
+      // its substituted expression is ever consulted — an off-by-one bug could resolve k1 to the
+      // wrong groupexprs entry and it would still come out nullable regardless. columns[1]/[2] are
+      // kept as controls (both keys are still correctly nullable), not because they catch this bug.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL);
@@ -2618,10 +2603,10 @@ class QueryAnalysisTest {
 
     @Test
     fun `the key column and a derived expression over it both stay nullable`() {
-      // k is the grouping key itself (sortGroupRef match); d is a DIFFERENT expression built on top
+      // k is the grouping key itself (sortGroupRef match); d is a different expression built on top
       // of the same key (upper(lower(a)), not lower(a) itself) — d's own sortGroupRef is 0 and it
-      // only matches structurally, deep inside upper(...), which only isSafeFromGroupingSetNullExtension's
-      // tree walk over the SUBSTITUTED expression can catch.
+      // only matches structurally, deep inside upper(...), which only
+      // isSafeFromGroupingSetNullExtension's tree walk over the substituted expression can catch.
       val query = analyzeWithSchema(
         "CREATE TABLE t (a TEXT NOT NULL)",
         "SELECT lower(a) AS k, upper(lower(a)) AS d, count(*) AS c FROM t GROUP BY ROLLUP(lower(a))",
@@ -2791,10 +2776,10 @@ class QueryAnalysisTest {
 
     @Test
     fun `ANY sublink over a subquery with a nullable column is nullable even with a non-null outer operand`() {
-      // Issue #239's own repro, verified live against PostgreSQL 17: `a = ANY (SELECT v FROM u)` is
-      // NULL, not FALSE, when u.v is nullable, u has a row whose v IS NULL, and no row matches —
-      // three-valued logic. Before this fix, the old ANY branch only checked the outer operand's
-      // own nullability and reported this NOT NULL, which is wrong.
+      // PostgreSQL 17: `a = ANY (SELECT v FROM u)` is NULL, not FALSE, when u.v is nullable, u has
+      // a row whose v IS NULL, and no row matches — three-valued logic. Before this fix, the old
+      // ANY branch only checked the outer operand's own nullability and reported this NOT NULL,
+      // which is wrong.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE u (v TEXT)",
         "SELECT a = ANY (SELECT v FROM u) AS result FROM t",
@@ -2805,15 +2790,15 @@ class QueryAnalysisTest {
 
     @Test
     fun `ANY sublink whose outer operand is itself a SUBLINK does not shadow the outer subselect`() {
-      // Live-verified repro (PostgreSQL 17 and 18): `SELECT EXISTS (SELECT v FROM u) = ANY (SELECT
-      // b FROM x) FROM t` returns NULL when x.b is nullable, u.v is NOT NULL, and no row of x
-      // matches — the same three-valued ANY_SUBLINK logic as the issue's own repro. This pins the
-      // P0 fix specifically: the outer ANY_SUBLINK's :testexpr contains the nested EXISTS
-      // sublink's own :subselect (over u), which textually precedes the outer sublink's OWN
-      // :subselect (over x). Before extractFieldExpression became depth-one-aware, a raw
-      // first-match scan for ":subselect {" found u's block (NOT NULL) instead of x's (nullable),
-      // reporting this NOT NULL — the control below (u nullable too) would have flipped the wrong
-      // way if that bug were still present, proving it reads x.b, not u.v.
+      // PostgreSQL 17 and 18: `SELECT EXISTS (SELECT v FROM u) = ANY (SELECT b FROM x) FROM t`
+      // returns NULL when x.b is nullable, u.v is NOT NULL, and no row of x matches — the same
+      // three-valued ANY_SUBLINK logic as the repro above. This pins the fix specifically: the
+      // outer ANY_SUBLINK's :testexpr contains the nested EXISTS sublink's own :subselect (over
+      // u), which textually precedes the outer sublink's own :subselect (over x). Before
+      // extractFieldExpression became depth-one-aware, a raw first-match scan for ":subselect {"
+      // found u's block (NOT NULL) instead of x's (nullable), reporting this NOT NULL — the
+      // control below (u nullable too) would have flipped the wrong way if that bug were still
+      // present, proving it reads x.b, not u.v.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL); CREATE TABLE u (v BOOLEAN NOT NULL); CREATE TABLE x (b BOOLEAN)",
         "SELECT EXISTS (SELECT v FROM u) = ANY (SELECT b FROM x) AS result FROM t",
@@ -2869,9 +2854,9 @@ class QueryAnalysisTest {
 
     @Test
     fun `correlated ANY sublink whose subselect target list is an outer reference is nullable`() {
-      // SELECT t.a FROM u's target-list Var refers to the OUTER query's t (levelsUp 1), not u's
+      // SELECT t.a FROM u's target-list Var refers to the outer query's t (levelsUp 1), not u's
       // own range table — resolving it against u's own schema (as the pre-fix code would have,
-      // absent the levelsUp guard) risks a varno collision: u's OWN varno-1/attno-2 column
+      // absent the levelsUp guard) risks a varno collision: u's own varno-1/attno-2 column
       // (dummy2, NOT NULL below) is a completely different column that happens to share the same
       // (varno, varattno) pair as t.a purely because each query block numbers its range table
       // independently starting from 1. The correct answer is "not proven" (nullable), regardless
@@ -2889,14 +2874,14 @@ class QueryAnalysisTest {
 
     @Test
     fun `LATERAL derived table column over a nullable outer column is nullable, fixing a real collision`() {
-      // s's own subselect body (`SELECT t.a AS x FROM u`) has ONE local range-table entry, u, at
-      // local varno 1. t.a is an outer reference (varlevelsup 1) whose :varno ALSO happens to be
-      // 1, because it indexes the OUTER query's OWN rtable position for t — each query block
+      // s's own subselect body (`SELECT t.a AS x FROM u`) has one local range-table entry, u, at
+      // local varno 1. t.a is an outer reference (varlevelsup 1) whose :varno also happens to be
+      // 1, because it indexes the outer query's own rtable position for t — each query block
       // numbers its range table independently starting from 1, so this collision is not contrived,
       // it is the general case. Before the levelsUp guard, isSourceColumnNotNull for this Var
-      // resolved against the SUBQUERY's own range table (u), i.e. against u.junk's NOT NULL
+      // resolved against the subquery's own range table (u), i.e. against u.junk's NOT NULL
       // constraint, which has nothing to do with t.a. PostgreSQL's real answer here is NULL, since
-      // t.a is nullable — pinning that the guard fixes this, not merely widens it in this case.
+      // t.a is nullable — the guard fixes this, not merely widens it in this case.
       val query = analyzeWithSchema(
         "CREATE TABLE t (a TEXT); CREATE TABLE u (junk TEXT NOT NULL)",
         "SELECT s.x FROM t CROSS JOIN LATERAL (SELECT t.a AS x FROM u) s",
@@ -2908,18 +2893,18 @@ class QueryAnalysisTest {
     @Test
     fun `LATERAL derived table column referencing a NOT NULL outer column is still conservatively nullable`() {
       // Identical shape to the test above, except t.a is NOT NULL here — PostgreSQL's real answer
-      // is therefore NEVER NULL (t.a can never be null, so s.x can't either). The blunt levelsUp
+      // is therefore never NULL (t.a can never be null, so s.x can't either). The blunt levelsUp
       // guard cannot tell this case apart from the one above: resolving an outer-reference Var
-      // against the INNER block's own range table (u) is unsound in BOTH directions — it could
+      // against the inner block's own range table (u) is unsound in both directions — it could
       // read a NOT NULL column that has nothing to do with the real (nullable) source, as above,
-      // or, as here, it could just as easily have collided with a NULLABLE column of u and
+      // or, as here, it could just as easily have collided with a nullable column of u and
       // under-reported a genuinely NOT NULL outer column. Correctly distinguishing this case would
-      // require resolving levelsUp > 0 Vars against the ENCLOSING query's own range table, which
+      // require resolving levelsUp > 0 Vars against the enclosing query's own range table, which
       // this analyzer's architecture does not support (see the levelsUp guard's own KDoc) — nested
       // blocks are analyzed eagerly into memoized maps with no live handle back to an enclosing
       // scope, and the varlevelsup chain has its own traps (set-operation branches the analyzer
       // never enters as their own level; CTE bodies not in the chain at all) where mis-counting
-      // would resolve a Var against the WRONG table entirely, strictly worse than this widening.
+      // would resolve a Var against the wrong table entirely, strictly worse than this widening.
       // main's earlier NOT NULL answer for this exact shape was accidental — a coincidence of
       // t.a's own NOT NULL constraint matching what u.junk's collision happened to resolve to, not
       // a real proof — not a real signal this analyzer intentionally computed.
@@ -2933,8 +2918,8 @@ class QueryAnalysisTest {
 
     @Test
     fun `NOT IN subquery with a nullable inner column is nullable`() {
-      // `a NOT IN (subquery)` does NOT compile to an ALL_SUBLINK — verified live (PostgreSQL 17)
-      // against pg_rewrite.ev_action: it is a BOOLEXPR :boolop not wrapping an ordinary
+      // `a NOT IN (subquery)` does not compile to an ALL_SUBLINK — checked against
+      // pg_rewrite.ev_action on PostgreSQL 17: it is a BOOLEXPR :boolop not wrapping an ordinary
       // ANY_SUBLINK (subLinkType 2, operName "="), i.e. `NOT (a = ANY (subquery))`. This test pins
       // that the BoolExpr branch's `expression.arguments.all(recurse)` correctly propagates the
       // wrapped ANY_SUBLINK's own nullability (NULL NOT is NULL) rather than the wrapping NOT
@@ -2964,12 +2949,12 @@ class QueryAnalysisTest {
 
     @Test
     fun `two levels of nested ANY sublinks resolve to a precise NOT NULL, well within the depth budget`() {
-      // Two levels of ANY_SUBLINK nesting terminate and resolve correctly. Note this alone does
-      // NOT pin the depth guard's necessity — a sublink's :subselect is always a genuine substring
-      // of its parent's own text (see PgNodeTreeParser), so this recursion is provably bounded by
-      // input length regardless of any explicit budget, and two levels resolve identically with
-      // the budget removed entirely. See the next test for a case that actually depends on the
-      // budget's value.
+      // Two levels of ANY_SUBLINK nesting terminate and resolve correctly. This alone does not pin
+      // the depth guard's necessity — a sublink's :subselect is always a genuine substring of its
+      // parent's own text (see PgNodeTreeParser), so this recursion is provably bounded by input
+      // length regardless of any explicit budget, and two levels resolve identically with the
+      // budget removed entirely. See the next test for a case that actually depends on the budget's
+      // value.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT NOT NULL, a BOOLEAN NOT NULL);
@@ -2985,14 +2970,15 @@ class QueryAnalysisTest {
     @Test
     fun `four levels of nested ANY sublinks exceed the depth budget and degrade to nullable`() {
       // Every level here uses a NOT NULL boolean column and the safe-listed, strict, total boolean
-      // `=` operator, so the semantically correct answer — and the answer this analyzer WOULD give
-      // with a larger (or no) budget, verified by temporarily raising SUBLINK_ANALYSIS_DEPTH_BUDGET
-      // during development — is NOT NULL, all the way out. With the budget at 3, the 4th (innermost)
-      // ANY_SUBLINK's own callback is invoked at depth 0 — isSubLinkSubqueryColumnNotNull's `depth
-      // <= 0` guard fires before it even looks at u4, forcing that innermost sublink nullable, which
-      // cascades outward through every enclosing level. This is the case the two-level test above
-      // cannot exercise: it depends on the budget's actual VALUE, not merely on recursion
-      // terminating — raising the budget (or removing it) flips this test's expected answer.
+      // `=` operator, so the semantically correct answer — and the answer this analyzer would give
+      // with a larger (or no) budget, checked by temporarily raising SUBLINK_ANALYSIS_DEPTH_BUDGET
+      // during development — is NOT NULL, all the way out. With the budget at 3, the 4th
+      // (innermost) ANY_SUBLINK's own callback is invoked at depth 0 —
+      // isSubLinkSubqueryColumnNotNull's `depth <= 0` guard fires before it even looks at u4,
+      // forcing that innermost sublink nullable, which cascades outward through every enclosing
+      // level. This is the case the two-level test above cannot exercise: it depends on the
+      // budget's actual value, not merely on recursion terminating — raising the budget (or
+      // removing it) flips this test's expected answer.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT NOT NULL, a BOOLEAN NOT NULL);
@@ -3048,14 +3034,13 @@ class QueryAnalysisTest {
 
     @Test
     fun `ANY sublink over a subquery reading a derived table is non-null, issue #257`() {
-      // #257's own repro, verified live against PostgreSQL 18: `a = ANY (SELECT z.v FROM (SELECT v
-      // FROM u) z) FROM t` returns false, never null, when u.v is NOT NULL — identical semantics to
-      // the un-wrapped `a = ANY (SELECT v FROM u)` case above, just with the subquery's single
-      // output column read through an intervening derived table (a subquery range-table entry)
-      // instead of directly from u. Before this fix, analyzeQueryBlockNullability resolved a Var
-      // only against its OWN base-table range table, so z.v's varno (indexing the derived table's
-      // rtekind-1 range-table entry, not a base table) fell through to nullable regardless of what
-      // u.v's own constraint said.
+      // PostgreSQL 18: `a = ANY (SELECT z.v FROM (SELECT v FROM u) z) FROM t` returns false, never
+      // null, when u.v is NOT NULL — identical semantics to the un-wrapped `a = ANY (SELECT v FROM
+      // u)` case above, just with the subquery's single output column read through an intervening
+      // derived table (a subquery range-table entry) instead of directly from u. Before this fix,
+      // analyzeQueryBlockNullability resolved a Var only against its own base-table range table,
+      // so z.v's varno (indexing the derived table's rtekind-1 range-table entry, not a base
+      // table) fell through to nullable regardless of what u.v's own constraint said.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE u (v TEXT NOT NULL)",
         "SELECT a = ANY (SELECT z.v FROM (SELECT v FROM u) z) AS result FROM t",
@@ -3067,8 +3052,8 @@ class QueryAnalysisTest {
     @Test
     fun `ANY sublink over a subquery reading a derived table two levels deep is non-null`() {
       // Pins that the derived-table recursion is not one-level-only: y is itself a derived table
-      // read from within z's own body, not directly from u. Verified live against PostgreSQL 18:
-      // returns false, never null.
+      // read from within z's own body, not directly from u. PostgreSQL 18: returns false, never
+      // null.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE u (v TEXT NOT NULL)",
         "SELECT a = ANY (SELECT z2.v FROM (SELECT y.v FROM (SELECT v FROM u) y) z2) AS result FROM t",
@@ -3079,12 +3064,11 @@ class QueryAnalysisTest {
 
     @Test
     fun `ANY sublink over a subquery reading an enclosing CTE is non-null, issue #257`() {
-      // #257's own repro, verified live against PostgreSQL 18: identical semantics to the derived-
-      // table case above, but the sublink's own subselect reads an ENCLOSING CTE (declared in the
-      // outer query's own WITH clause) rather than a FROM-clause derived table. Before this fix,
-      // subLinkSubqueryColumnNotNull passed an EMPTY resolvedCtes map into
-      // analyzeQueryBlockNullability, so a CTE reference always fell through to nullable regardless
-      // of the CTE body's own provable nullability.
+      // PostgreSQL 18: identical semantics to the derived-table case above, but the sublink's own
+      // subselect reads an enclosing CTE (declared in the outer query's own WITH clause) rather
+      // than a FROM-clause derived table. Before this fix, subLinkSubqueryColumnNotNull passed an
+      // empty resolvedCtes map into analyzeQueryBlockNullability, so a CTE reference always fell
+      // through to nullable regardless of the CTE body's own provable nullability.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE u (v TEXT NOT NULL)",
         "WITH c AS (SELECT v FROM u) SELECT a = ANY (SELECT v FROM c) AS result FROM t",
@@ -3095,11 +3079,11 @@ class QueryAnalysisTest {
 
     @Test
     fun `ANY sublink over a derived table reading a genuinely nullable column stays nullable`() {
-      // The #239 three-valued-logic hazard, now reached through a derived table instead of directly
+      // The three-valued-logic hazard, now reached through a derived table instead of directly
       // from a base table: w.v is nullable, so a row with v IS NULL and no match makes the whole
-      // ANY_SUBLINK NULL, not false. Verified live against PostgreSQL 18: returns null once w has a
-      // NULL row and t.a matches no non-null row. An unsound fix that widens purely because a
-      // derived table is now traced would flip this to notNull incorrectly.
+      // ANY_SUBLINK NULL, not false. PostgreSQL 18: returns null once w has a NULL row and t.a
+      // matches no non-null row. An unsound fix that widens purely because a derived table is now
+      // traced would flip this to notNull incorrectly.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE w (v TEXT)",
         "SELECT a = ANY (SELECT z.v FROM (SELECT v FROM w) z) AS result FROM t",
@@ -3110,9 +3094,8 @@ class QueryAnalysisTest {
 
     @Test
     fun `ANY sublink over an enclosing CTE reading a genuinely nullable column stays nullable`() {
-      // Same #239 hazard as above, reached through an enclosing CTE reference instead of a derived
-      // table. Verified live against PostgreSQL 18: returns null once w has a NULL row and t.a
-      // matches no non-null row.
+      // Same hazard as above, reached through an enclosing CTE reference instead of a derived
+      // table. PostgreSQL 18: returns null once w has a NULL row and t.a matches no non-null row.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE w (v TEXT)",
         "WITH c AS (SELECT v FROM w) SELECT a = ANY (SELECT v FROM c) AS result FROM t",
@@ -3125,9 +3108,9 @@ class QueryAnalysisTest {
     fun `ANY sublink over a derived table wrapping a UNION subquery stays nullable, the conservative bail-out`() {
       // Mirrors the existing plain-UNION bail-out test, but with the UNION reached through an
       // intervening derived table — pinning that buildSubqueryColumnNotNull's own hasSetOperations
-      // guard still fires when it is THIS recursive call (from inside analyzeQueryBlockNullability),
-      // not only the top-level one. Verified live against PostgreSQL 18: every row of both branches
-      // is NOT NULL, but the bail-out is still deliberately conservative here.
+      // guard still fires when it is this recursive call (from inside
+      // analyzeQueryBlockNullability), not only the top-level one. PostgreSQL 18: every row of
+      // both branches is NOT NULL, but the bail-out is still deliberately conservative here.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT NOT NULL, a TEXT NOT NULL);
@@ -3146,7 +3129,7 @@ class QueryAnalysisTest {
       // the same four-level chain the un-wrapped test above pins. If the derived-table hop refilled
       // the budget instead of threading it, v1's chain would restart at 3 rather than the threaded 2
       // and all four levels would resolve, reporting this NOT NULL. PostgreSQL's own unbounded
-      // answer for this shape IS NOT NULL; Norm's defensive bound truncates deliberately.
+      // answer for this shape is NOT NULL; Norm's defensive bound truncates deliberately.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT NOT NULL, a BOOLEAN NOT NULL);
@@ -3175,12 +3158,12 @@ class QueryAnalysisTest {
 
     @Test
     fun `a sublink's own WITH shadows an enclosing CTE of the same name with a different, wrong-answer body`() {
-      // Pins the ctelevelsup handling: the OUTER WITH c reads a nullable column (outer_source.v has
-      // no NOT NULL constraint), while the sublink's OWN WITH c — same name, different body — reads
+      // Pins the ctelevelsup handling: the outer WITH c reads a nullable column (outer_source.v has
+      // no NOT NULL constraint), while the sublink's own WITH c — same name, different body — reads
       // a NOT NULL column instead. Resolving against the wrong (outer) map would report this
-      // nullable; the correct, ctelevelsup-aware resolution reports it non-null. Verified live
-      // against PostgreSQL 18: inner_source is empty, so ANY over it is always false, never null,
-      // regardless of outer_source's own contents.
+      // nullable; the correct, ctelevelsup-aware resolution reports it non-null. PostgreSQL 18:
+      // inner_source is empty, so ANY over it is always false, never null, regardless of
+      // outer_source's own contents.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT NOT NULL, a TEXT NOT NULL);
@@ -3200,9 +3183,9 @@ class QueryAnalysisTest {
 
     @Test
     fun `ANY sublink over a derived table reading a NULLIF-wrapped view column stays nullable`() {
-      // Confirms #256's fix is what carries this, not a coincidence: the view's OWN target-list
-      // expression (NULLIF) is analyzed, not the source column's name-matched constraint. Verified
-      // live against PostgreSQL 18: NULLIF(v, 'x') is null whenever v = 'x', so this stays nullable
+      // Confirms the view-target-list fix is what carries this, not a coincidence: the view's own
+      // target-list expression (NULLIF) is analyzed, not the source column's name-matched
+      // constraint. PostgreSQL 18: NULLIF(v, 'x') is null whenever v = 'x', so this stays nullable
       // even though u.v itself is NOT NULL. See the paired NOT-NULL view test below.
       val query = analyzeWithSchema(
         """
@@ -3221,7 +3204,7 @@ class QueryAnalysisTest {
       // Paired with the NULLIF view test above: a plain pass-through view column over a NOT NULL
       // source is correctly non-null, proving the previous test's nullable result comes from
       // NULLIF's own semantics, not from every view-backed derived table being conservatively
-      // widened regardless of its actual defining expression. Verified live against PostgreSQL 18.
+      // widened regardless of its actual defining expression. PostgreSQL 18.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT NOT NULL, a TEXT NOT NULL);
@@ -3262,13 +3245,13 @@ class QueryAnalysisTest {
 
     @Test
     fun `ALL sublink over a subquery with a nullable column stays nullable, the ALL three-valued-logic hazard`() {
-      // #239's own three-valued-logic hazard, now reached through ALL_SUBLINK instead of
-      // ANY_SUBLINK: `x op ALL (S)` is NULL, not TRUE, when some row's comparison is NULL and no
-      // row's comparison is FALSE. Verified live against PostgreSQL 18.4: `CREATE TABLE t (id INT
-      // PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE w (v TEXT); INSERT INTO t VALUES (1, 'x');
-      // INSERT INTO w VALUES (NULL); SELECT a <> ALL (SELECT v FROM w) FROM t;` is NULL — w's only
-      // row has v IS NULL, so `a <> v` for that row is itself NULL, and no other row exists to make
-      // the whole comparison FALSE.
+      // The three-valued-logic hazard, now reached through ALL_SUBLINK instead of ANY_SUBLINK:
+      // `x op ALL (S)` is NULL, not TRUE, when some row's comparison is NULL and no row's
+      // comparison is FALSE. PostgreSQL 18.4: `CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT
+      // NULL); CREATE TABLE w (v TEXT); INSERT INTO t VALUES (1, 'x'); INSERT INTO w VALUES
+      // (NULL); SELECT a <> ALL (SELECT v FROM w) FROM t;` is NULL — w's only row has v IS NULL,
+      // so `a <> v` for that row is itself NULL, and no other row exists to make the whole
+      // comparison FALSE.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE w (v TEXT)",
         "SELECT a <> ALL (SELECT v FROM w) AS result FROM t",
@@ -3292,14 +3275,14 @@ class QueryAnalysisTest {
 
     @Test
     fun `multi-column ALL sublink is nullable even when every column is NOT NULL, the ROWCOMPAREEXPR form`() {
-      // Unlike the `<>`/`=` row-comparison forms above (a BOOLEXPR testexpr), `(a, id) < ALL (SELECT
-      // v, 1 FROM u)` compiles its testexpr to a ROWCOMPAREEXPR instead — verified live on
-      // PostgreSQL 18.4 by dumping this exact query's ev_action: `{ROWCOMPAREEXPR :cmptype 1 :opnos
-      // (o 97 97) ... :largs (...) :rargs (...)}`, no `:location` field of its own. This parser's
-      // `when` dispatch does not recognize ROWCOMPAREEXPR, so it parses to Unknown; that alone
-      // already makes testExpressionOperatorOid null (no OPEXPR to cast) and outerOperand null (no
-      // `:args` field — ROWCOMPAREEXPR carries `:largs`/`:rargs` instead), so the proof fails on both
-      // legs, independently of the BOOLEXPR mechanism the `<>`/`=` forms use.
+      // Unlike the `<>`/`=` row-comparison forms above (a BOOLEXPR testexpr), `(a, id) < ALL
+      // (SELECT v, 1 FROM u)` compiles its testexpr to a ROWCOMPAREEXPR instead — confirmed on
+      // PostgreSQL 18.4 by dumping this exact query's ev_action: `{ROWCOMPAREEXPR :cmptype 1
+      // :opnos (o 97 97) ... :largs (...) :rargs (...)}`, no `:location` field of its own. This
+      // parser's `when` dispatch does not recognize ROWCOMPAREEXPR, so it parses to Unknown; that
+      // alone already makes testExpressionOperatorOid null (no OPEXPR to cast) and outerOperand
+      // null (no `:args` field — ROWCOMPAREEXPR carries `:largs`/`:rargs` instead), so the proof
+      // fails on both legs, independently of the BOOLEXPR mechanism the `<>`/`=` forms use.
       val query = analyzeWithSchema(
         "CREATE TABLE t (a INT NOT NULL, id INT NOT NULL); CREATE TABLE u (v INT NOT NULL)",
         "SELECT (a, id) < ALL (SELECT v, 1 FROM u) AS result FROM t",
@@ -3324,11 +3307,11 @@ class QueryAnalysisTest {
     @Test
     fun `ROWCOMPARE sublink, a row comparison against a one-row subquery, stays nullable`() {
       // (a, id) < (SELECT v, 1 FROM u), with no ALL/ANY keyword, compiles to a ROWCOMPARE_SUBLINK
-      // (subLinkType 3 — verified live on PostgreSQL 18.4 by dumping this exact query's prosqlbody
-      // node tree), genuinely different from ALL/ANY: an EMPTY subquery yields NULL for ROWCOMPARE,
+      // (subLinkType 3 — confirmed on PostgreSQL 18.4 by dumping this exact query's prosqlbody
+      // node tree), genuinely different from ALL/ANY: an empty subquery yields NULL for ROWCOMPARE,
       // not TRUE/FALSE, so no combination of operand/operator/column conditions can rescue it — it
-      // is deliberately excluded from isNonNull's SubLink proof. Verified live against PostgreSQL
-      // 18.4: with `u` empty, `(a, id) < (SELECT v, 1 FROM u)` is NULL, not FALSE.
+      // is deliberately excluded from isNonNull's SubLink proof. PostgreSQL 18.4: with `u` empty,
+      // `(a, id) < (SELECT v, 1 FROM u)` is NULL, not FALSE.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL, a INT NOT NULL); CREATE TABLE u (v INT NOT NULL)",
         "SELECT (a, id) < (SELECT v, 1 FROM u) AS result FROM t",
@@ -3384,13 +3367,13 @@ class QueryAnalysisTest {
 
     @Test
     fun `a recursive CTE column that only becomes nullable through later iterations is reported nullable`() {
-      // Verified live on PostgreSQL: this query produces rows 1|1, 1|<NULL>, <NULL>|<NULL> — "n"
-      // IS genuinely nullable, even though the seed term's own "n" (1) is NOT NULL. Analyzing the
-      // recursive term ("SELECT m, NULL::int FROM r WHERE n < 5") only ONCE against the SEED's
-      // nullability (n=NOT NULL, m=NOT NULL) misses this: the recursive term's own "n" column reads
-      // "m" from the PREVIOUS iteration, which becomes nullable starting at the second iteration
-      // (its own second column is a literal NULL) — a fixpoint over the whole recursion is required
-      // to see that "m" (and therefore "n") widens to nullable.
+      // On PostgreSQL, this query produces rows 1|1, 1|<NULL>, <NULL>|<NULL> — "n" is genuinely
+      // nullable, even though the seed term's own "n" (1) is NOT NULL. Analyzing the recursive term
+      // ("SELECT m, NULL::int FROM r WHERE n < 5") only once against the seed's nullability
+      // (n=NOT NULL, m=NOT NULL) misses this: the recursive term's own "n" column reads "m" from
+      // the previous iteration, which becomes nullable starting at the second iteration (its own
+      // second column is a literal NULL) — a fixpoint over the whole recursion is required to see
+      // that "m" (and therefore "n") widens to nullable.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL)",
         """
@@ -3661,8 +3644,8 @@ class QueryAnalysisTest {
 
     @Test
     fun `chained data-modifying CTEs referencing earlier CTE with trailing no-RETURNING CTE`() {
-      // Reproduces #202: a later data-modifying CTE ("inserted") references an earlier CTE
-      // ("input"), and a trailing CTE ("logged") has no RETURNING clause at all.
+      // A later data-modifying CTE ("inserted") references an earlier CTE ("input"), and a
+      // trailing CTE ("logged") has no RETURNING clause at all.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL);
@@ -3689,10 +3672,9 @@ class QueryAnalysisTest {
 
     @Test
     fun `forward-referencing data-modifying CTE under WITH RECURSIVE`() {
-      // Reproduces #203: "ins" is a data-modifying CTE whose body references "later", a CTE
-      // declared AFTER it in the same WITH RECURSIVE clause. A prefix built only from preceding
-      // CTE definitions omits "later" and fails to prepare; the probe must use the full WITH
-      // clause instead.
+      // "ins" is a data-modifying CTE whose body references "later", a CTE declared after it in
+      // the same WITH RECURSIVE clause. A prefix built only from preceding CTE definitions omits
+      // "later" and fails to prepare; the probe must use the full WITH clause instead.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL)",
         """
@@ -3754,12 +3736,12 @@ class QueryAnalysisTest {
 
     @Test
     fun `plain WITH does not let a later CTE shadow a base table referenced by an earlier body`() {
-      // Regression guard: the full-WITH-clause probe prefix must not be tried FIRST for a
-      // non-recursive WITH clause. "src" is both a base table AND the name of a CTE declared
-      // AFTER "upd". A plain WITH clause resolves "upd"'s reference to "src" against the base
-      // table (a later CTE never shadows for an earlier body) — verified against real Postgres
-      // by inserting distinguishable rows: the query returns the base table's value, not the
-      // CTE's, so "c" must report the base table src.name's nullability (nullable).
+      // Regression guard: the full-WITH-clause probe prefix must not be tried first for a
+      // non-recursive WITH clause. "src" is both a base table and the name of a CTE declared
+      // after "upd". A plain WITH clause resolves "upd"'s reference to "src" against the base
+      // table (a later CTE never shadows for an earlier body): inserting distinguishable rows
+      // shows the query returns the base table's value, not the CTE's, so "c" must report the
+      // base table src.name's nullability (nullable).
       val query = analyzeWithSchema(
         """
         CREATE TABLE other (name TEXT NOT NULL);
@@ -3784,9 +3766,8 @@ class QueryAnalysisTest {
       // every CTE name in a WITH RECURSIVE clause visible to every other CTE's body (this is
       // what permits forward and mutual references), so "src" in "upd" resolves to the sibling
       // CTE "src" (backed by "other", whose name column is NOT NULL) instead of the base table
-      // "src" (nullable name) — verified against real Postgres by inserting distinguishable
-      // rows: the query returns the CTE's value, not the base table's, so "c" must report the
-      // CTE's column nullability (non-null).
+      // "src" (nullable name): inserting distinguishable rows shows the query returns the CTE's
+      // value, not the base table's, so "c" must report the CTE's column nullability (non-null).
       val query = analyzeWithSchema(
         """
         CREATE TABLE other (name TEXT NOT NULL);
@@ -3812,8 +3793,8 @@ class QueryAnalysisTest {
       // "helper" verbatim in front of "SELECT src.name AS c FROM t, src, helper" — which then
       // goes through the same node-tree analysis as any other CTE, resolving "src" against the
       // sibling CTE (declared before "upd", so it shadows the base table normally) rather than a
-      // metadata probe that would be blind to this either way. Verified against real Postgres by
-      // inserting a NULL row into "other": the sibling CTE "src" wins, so "c" must be nullable.
+      // metadata probe that would be blind to this either way. Inserting a NULL row into "other"
+      // shows the sibling CTE "src" wins, so "c" must be nullable.
       val query = analyzeWithSchema(
         """
         CREATE TABLE other (name TEXT);
@@ -3835,11 +3816,10 @@ class QueryAnalysisTest {
 
     @Test
     fun `WITH RECURSIVE variant of nested-WITH shadowing also resolves the sibling CTE`() {
-      // Same shape as the test above, but WITH RECURSIVE. Verified against real Postgres
-      // (inserting a NULL row into "other"): the sibling CTE "src" wins here too — RECURSIVE
-      // does not change which "src" a body sharing scope with a PRECEDING sibling resolves to,
-      // only whether FOLLOWING siblings are visible — so "c" must be nullable, same as the
-      // plain-WITH case.
+      // Same shape as the test above, but WITH RECURSIVE. Inserting a NULL row into "other"
+      // shows the sibling CTE "src" wins here too — RECURSIVE does not change which "src" a
+      // body sharing scope with a preceding sibling resolves to, only whether following siblings
+      // are visible — so "c" must be nullable, same as the plain-WITH case.
       val query = analyzeWithSchema(
         """
         CREATE TABLE other (name TEXT);
@@ -3861,7 +3841,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `no-RETURNING data-modifying CTE with its own nested WITH at a non-zero index`() {
-      // "logged" is the SECOND CTE (index > 0, so the bare-body candidate that commit d4f8d7c
+      // "logged" is the second CTE (index > 0, so the bare-body candidate that commit d4f8d7c
       // relied on is never tried, by design) and has no RETURNING clause, so the true-scope
       // probe ("SELECT * FROM logged") itself fails to prepare. This exercises the further
       // fallback: "<full clause> SELECT 1" confirms the WITH clause is otherwise sound, so a
@@ -3911,11 +3891,11 @@ class QueryAnalysisTest {
         """.trimIndent(),
       )
       assertThat(query.columns).hasSize(1)
-      // Verified directly against the driver: PostgreSQL's target-list origin tracking traces
-      // "id" all the way through "SELECT * FROM \"MyIns\"" back to t.id, so isNullable reports
-      // NOT NULL precisely here (tableName came back as "t", not unknown) — a bare column
-      // RETURNING with no intervening expression preserves lineage. "MyIns" is a plain INSERT
-      // (no FROM/USING/MERGE join in the OUTER statement, only inside its own SELECT source),
+      // PostgreSQL's target-list origin tracking traces "id" all the way through "SELECT * FROM
+      // \"MyIns\"" back to t.id, so isNullable reports NOT NULL precisely here (tableName came
+      // back as "t", not unknown) — a bare column RETURNING with no intervening expression
+      // preserves lineage. "MyIns" is a plain INSERT (no FROM/USING/MERGE join in the outer
+      // statement, only inside its own SELECT source),
       // so it never reaches convertDmlCteBodyToSelect's join-preserving conversion and stays on
       // the probe/stub path — which is fine specifically because INSERT's RETURNING sees only
       // the just-inserted row: there is no outer join here for the probe to be blind to. The
@@ -3928,9 +3908,9 @@ class QueryAnalysisTest {
     fun `UPDATE FROM LEFT JOIN RETURNING joined column inside a data-modifying CTE`() {
       // A metadata probe (PreparedStatement.getMetaData().isNullable) reports base-table
       // attnotnull — b.val is NOT NULL in the schema — and is blind to the LEFT JOIN
-      // null-extending it at runtime. Verified against real Postgres by inserting an "a" row
-      // with no matching "b" row: the query returns v = NULL, so this MUST be nullable. Before
-      // convertDmlCteBodyToSelect existed, the probe/stub path reported this NOT NULL.
+      // null-extending it at runtime. Inserting an "a" row with no matching "b" row: the query
+      // returns v = NULL, so this must be nullable. Before convertDmlCteBodyToSelect existed,
+      // the probe/stub path reported this NOT NULL.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id SERIAL NOT NULL, name TEXT);
@@ -3953,7 +3933,7 @@ class QueryAnalysisTest {
       // Same shape as the test above, but "upd"'s body carries its own nested WITH ("helper"),
       // exercising convertDmlCteBodyToSelect's nested-WITH reattachment path (WITH helper AS
       // (...) SELECT b.val AS v FROM t, a LEFT JOIN b ON ..., helper) rather than the plain
-      // conversion path. Verified against real Postgres the same way: v = NULL.
+      // conversion path. Confirmed the same way: v = NULL.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id SERIAL NOT NULL, name TEXT);
@@ -3974,18 +3954,17 @@ class QueryAnalysisTest {
 
     @Test
     fun `sibling CTE body with its own nested WITH keeps its LEFT JOIN nullability alongside a DML CTE`() {
-      // Issue #205's exact repro. "j"'s body starts with its own nested WITH ("inner_cte"), so
-      // isNonDataModifyingCteBody must classify it by "inner_cte"'s own main statement (a plain
-      // SELECT) rather than stubbing "j" outright — a stub is built from
-      // PreparedStatement.getMetaData().isNullable, which reflects base-table attnotnull and is
-      // blind to the LEFT JOIN inside "j". Before the fix, "j" fell into the stub branch, whose
-      // hasOuterJoin safety net (PgCatalogLoader.kt's forceAllNullable) then forced EVERY column
-      // of "j" nullable — so "did", which is genuinely NOT NULL, was wrongly reported nullable;
-      // "label" also came back nullable, but only because it was forced along with everything
-      // else, not because the stub actually saw the LEFT JOIN. "did" comes from the LEFT JOIN's
-      // preserved side (d), so it stays NOT NULL; "label" comes from the null-extended side (u),
-      // so it must be nullable. Verified against real Postgres by inserting a "d" row with no
-      // matching "u" row: the query returns did = <value>, label = NULL.
+      // "j"'s body starts with its own nested WITH ("inner_cte"), so isNonDataModifyingCteBody
+      // must classify it by "inner_cte"'s own main statement (a plain SELECT) rather than
+      // stubbing "j" outright — a stub is built from PreparedStatement.getMetaData().isNullable,
+      // which reflects base-table attnotnull and is blind to the LEFT JOIN inside "j". Before the
+      // fix, "j" fell into the stub branch, whose hasOuterJoin safety net (PgCatalogLoader.kt's
+      // forceAllNullable) then forced every column of "j" nullable — so "did", which is
+      // genuinely NOT NULL, was wrongly reported nullable; "label" also came back nullable, but
+      // only because it was forced along with everything else, not because the stub actually saw
+      // the LEFT JOIN. "did" comes from the LEFT JOIN's preserved side (d), so it stays NOT NULL;
+      // "label" comes from the null-extended side (u), so it must be nullable. Inserting a "d"
+      // row with no matching "u" row: the query returns did = <value>, label = NULL.
       val query = analyzeWithSchema(
         """
         CREATE TABLE d (id INT NOT NULL);
@@ -4017,8 +3996,8 @@ class QueryAnalysisTest {
       // the new nested-WITH handling. If it were misclassified, the embedded UPDATE would still
       // be present when this SQL is used to CREATE VIEW, which PostgreSQL rejects, and the whole
       // analysis would fall back to asserting every column NOT NULL — masking the LEFT JOIN's
-      // real nullability. Verified against real Postgres by inserting an "a" row with no
-      // matching "b" row: the query returns v = NULL.
+      // real nullability. Inserting an "a" row with no matching "b" row: the query returns v =
+      // NULL.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id SERIAL NOT NULL, name TEXT);
@@ -4042,7 +4021,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `parenthesized nested-WITH CTE body keeps its LEFT JOIN nullability, alongside a data-modifying CTE`() {
-      // Same shape as issue #205's repro, but "j"'s body is additionally wrapped in its own
+      // Same shape as the nested-WITH CTE-body test above, but "j"'s body is additionally wrapped in its own
       // parentheses (PostgreSQL accepts this: confirmed directly against a real server that
       // "j AS ((WITH inner_cte AS (...) SELECT ...))" parses and returns did = 1, label = NULL
       // for a "d" row with no matching "u" row). isNonDataModifyingCteBody must skip the extra
@@ -4075,8 +4054,8 @@ class QueryAnalysisTest {
 
     @Test
     fun `DELETE USING LEFT JOIN RETURNING joined column inside a data-modifying CTE`() {
-      // Same defect as the UPDATE case, for DELETE ... USING. Verified against real Postgres
-      // (inserting an "a" row with no matching "b" row): the query returns v = NULL.
+      // Same defect as the UPDATE case, for DELETE ... USING. Inserting an "a" row with no
+      // matching "b" row: the query returns v = NULL.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id SERIAL NOT NULL, name TEXT);
@@ -4097,14 +4076,14 @@ class QueryAnalysisTest {
     @Test
     fun `self-join LEFT JOIN RETURNING kills the rejected getTableName heuristic`() {
       // This is the shape that rules out a metadata heuristic considered and rejected in favor
-      // of structural conversion: "t2" is an alias for the TARGET table "t" itself, sitting on
+      // of structural conversion: "t2" is an alias for the target table "t" itself, sitting on
       // the nullable side of a LEFT JOIN. ResultSetMetaData.getTableName() reports the base
       // relation "t" for t2.name — indistinguishable, by name alone, from the actual DML target
       // "t" — so a heuristic keyed on "does getTableName() match the target table name" would
-      // conclude t2.name is NOT the join side and keep it fabricated NOT NULL. Structural
+      // conclude t2.name is not the join side and keep it fabricated NOT NULL. Structural
       // conversion sidesteps this entirely: it operates on the real join structure via aliases,
-      // not on relation names. Verified against real Postgres (inserting an "a" row with no
-      // matching "k"): the query returns v = NULL.
+      // not on relation names. Inserting an "a" row with no matching "k": the query returns v =
+      // NULL.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id SERIAL NOT NULL, k INT NOT NULL, name TEXT NOT NULL);
@@ -4127,9 +4106,9 @@ class QueryAnalysisTest {
     @Test
     fun `MERGE WHEN NOT MATCHED BY SOURCE THEN DELETE RETURNING source column inside a CTE`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
-      // WHEN NOT MATCHED BY SOURCE fires for TARGET rows with no matching source row — the
-      // shape convertMergeToSelect models as a LEFT JOIN. Verified against real Postgres: a
-      // target row with no matching source row returns s.name = NULL through this RETURNING.
+      // WHEN NOT MATCHED BY SOURCE fires for target rows with no matching source row — the
+      // shape convertMergeToSelect models as a LEFT JOIN. On real Postgres, a target row with no
+      // matching source row returns s.name = NULL through this RETURNING.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT PRIMARY KEY, name TEXT NOT NULL);
@@ -4153,8 +4132,8 @@ class QueryAnalysisTest {
     fun `MERGE without WHEN NOT MATCHED BY SOURCE keeps source column NOT NULL`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "MERGE RETURNING requires PostgreSQL 17+")
       // No "WHEN NOT MATCHED BY SOURCE" clause: convertMergeToSelect models this as a plain
-      // (inner) join, since every row RETURNING can see has a genuine source match. Verified
-      // against real Postgres: s.name is never NULL through this RETURNING.
+      // (inner) join, since every row RETURNING can see has a genuine source match. On real
+      // Postgres, s.name is never NULL through this RETURNING.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT PRIMARY KEY, name TEXT NOT NULL);
@@ -4176,12 +4155,12 @@ class QueryAnalysisTest {
 
     @Test
     fun `RETURNING star on UPDATE with a joined relation returns every relation's columns`() {
-      // Verified against real Postgres (via psql \gdesc on the actual UPDATE): "RETURNING *" on
-      // UPDATE ... FROM is NOT limited to the target table's columns — it expands to every
-      // relation in the statement's scope, target AND joined, identically to a plain "SELECT *"
-      // over the same FROM list (t.id, t.name, a.id, a.label — 4 columns, not 2). This is why
-      // convertDmlToSelect passes RETURNING clauses through verbatim rather than qualifying a
-      // bare "*" to the target alone (which would have produced the WRONG column count here).
+      // Checked via psql \gdesc on the actual UPDATE: "RETURNING *" on UPDATE ... FROM is not
+      // limited to the target table's columns — it expands to every relation in the statement's
+      // scope, target and joined, identically to a plain "SELECT *" over the same FROM list
+      // (t.id, t.name, a.id, a.label — 4 columns, not 2). This is why convertDmlToSelect passes
+      // RETURNING clauses through verbatim rather than qualifying a bare "*" to the target alone
+      // (which would have produced the wrong column count here).
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL);
@@ -4204,10 +4183,10 @@ class QueryAnalysisTest {
     @Test
     fun `target-table NOT NULL column stays NOT NULL alongside an outer-joined nullable column`() {
       // Guard against over-nullability: converting the CTE body to a join-preserving SELECT
-      // must not make EVERYTHING nullable just because a join is present — only the columns
+      // must not make everything nullable just because a join is present — only the columns
       // actually reached through the LEFT JOIN's nullable side. "t.id" comes from the target
       // row, which always exists (UPDATE only touches rows that exist), so it must stay NOT
-      // NULL even though "v" (from the LEFT JOIN) is nullable. Verified against real Postgres.
+      // NULL even though "v" (from the LEFT JOIN) is nullable.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id SERIAL NOT NULL, name TEXT);
@@ -4231,8 +4210,7 @@ class QueryAnalysisTest {
       // Regression guard: findTopLevelKeyword previously counted parens inside string literals,
       // so the "(" inside '\(' hid the real FROM from convertDmlToSelect, silently falling back
       // to the metadata probe/stub path — which is blind to the LEFT JOIN and fabricates NOT
-      // NULL. Verified against real Postgres (inserting an "a" row with no matching "b" row):
-      // the query returns v = NULL.
+      // NULL. Inserting an "a" row with no matching "b" row: the query returns v = NULL.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id SERIAL NOT NULL, name TEXT);
@@ -4256,8 +4234,8 @@ class QueryAnalysisTest {
     fun `MERGE RETURNING source column survives an unbalanced parenthesis inside a string literal`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
       // Same defect as above, for MERGE: the "(" inside a SET expression's string literal must
-      // not hide the real WHEN NOT MATCHED BY SOURCE clause from convertMergeToSelect. Verified
-      // against real Postgres: a target row with no matching source row returns sname = NULL.
+      // not hide the real WHEN NOT MATCHED BY SOURCE clause from convertMergeToSelect. On real
+      // Postgres, a target row with no matching source row returns sname = NULL.
       val query = analyzeWithSchema(
         """
         CREATE TABLE mt (tid INT PRIMARY KEY, tname TEXT NOT NULL);
@@ -4280,11 +4258,11 @@ class QueryAnalysisTest {
 
     @Test
     fun `a string literal containing the word FROM with no real FROM clause does not abort generation`() {
-      // REGRESSION guard vs main: before the lexer fix, an unvalidated conversion could replace
+      // Regression guard: before the lexer fix, an unvalidated conversion could replace
       // PostgreSQL's own parse with garbled text derived from misreading "from" inside a string
       // literal as if it introduced a real FROM clause — aborting generation entirely on SQL
-      // PostgreSQL accepts fine. Verified against real Postgres: id = 1 (NOT NULL, as expected
-      // for a SERIAL primary key) — there is no join here at all, real or otherwise.
+      // PostgreSQL accepts fine. On real Postgres, id = 1 (NOT NULL, as expected for a SERIAL
+      // primary key) — there is no join here at all, real or otherwise.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id SERIAL NOT NULL, name TEXT NOT NULL)",
         """
@@ -4300,12 +4278,12 @@ class QueryAnalysisTest {
 
     @Test
     fun `a line comment containing FROM between SET and the real FROM clause does not abort generation`() {
-      // The comment must sit BETWEEN "SET ..." and the real "FROM" — a comment before "UPDATE"
+      // The comment must sit between "SET ..." and the real "FROM" — a comment before "UPDATE"
       // is already skipped by the leading-whitespace/comment handling every DML-recognition
       // check starts with, on both old and new code, so it would not exercise this bug (that
-      // shape doesn't demonstrate anything). This one forces findTopLevelKeyword to scan THROUGH
-      // the comment while searching for the real FROM. Verified against real Postgres (inserting
-      // an "a" row with no matching "b" row): the query returns v = NULL.
+      // shape doesn't demonstrate anything). This one forces findTopLevelKeyword to scan through
+      // the comment while searching for the real FROM. Inserting an "a" row with no matching "b"
+      // row: the query returns v = NULL.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id SERIAL NOT NULL, name TEXT);
@@ -4326,8 +4304,8 @@ class QueryAnalysisTest {
 
     @Test
     fun `a block comment containing FROM between SET and the real FROM clause does not abort generation`() {
-      // Same reasoning as the line-comment variant above. Verified against real Postgres
-      // (inserting an "a" row with no matching "b" row): the query returns v = NULL.
+      // Same reasoning as the line-comment variant above. Inserting an "a" row with no matching
+      // "b" row: the query returns v = NULL.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id SERIAL NOT NULL, name TEXT);
@@ -4349,9 +4327,8 @@ class QueryAnalysisTest {
     @Test
     fun `a string literal containing the word from alongside a real FROM LEFT JOIN is still nullable`() {
       // Combines the two failure modes: the SET expression's literal contains "from" (which must
-      // not be mistaken for, or hide, anything), and there IS a real FROM with a LEFT JOIN right
-      // after it. Verified against real Postgres (inserting an "a" row with no matching "b"
-      // row): the query returns v = NULL.
+      // not be mistaken for, or hide, anything), and there is a real FROM with a LEFT JOIN right
+      // after it. Inserting an "a" row with no matching "b" row: the query returns v = NULL.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id SERIAL NOT NULL, name TEXT);
@@ -4372,12 +4349,12 @@ class QueryAnalysisTest {
     @Test
     fun `MERGE WHEN NOT MATCHED BY SOURCE RETURNING star has correct column order, names, and nullability`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
-      // Verified against real Postgres (\gdesc plus executing the query): "RETURNING *" expands
-      // SOURCE-first — sid, sname, tid, tname — regardless of which WHEN clauses are present,
-      // and for a target row with no matching source row the actual returned values are
-      // [NULL, NULL, 1, 'target-row']. convertMergeToSelect must emit "FROM source RIGHT JOIN
-      // target" (source first) to match — a target-first conversion would report the nullability
-      // for the WRONG columns even though the metadata (names/types) could look plausible.
+      // Checked via \gdesc plus executing the query: "RETURNING *" expands source-first — sid,
+      // sname, tid, tname — regardless of which WHEN clauses are present, and for a target row
+      // with no matching source row the actual returned values are [NULL, NULL, 1, 'target-row'].
+      // convertMergeToSelect must emit "FROM source RIGHT JOIN target" (source first) to match —
+      // a target-first conversion would report the nullability for the wrong columns even though
+      // the metadata (names/types) could look plausible.
       val query = analyzeWithSchema(
         """
         CREATE TABLE mt (tid INT PRIMARY KEY, tname TEXT NOT NULL);
@@ -4405,8 +4382,8 @@ class QueryAnalysisTest {
     fun `literal text matching the WHEN NOT MATCHED BY SOURCE phrase does not trigger the LEFT JOIN model`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "MERGE RETURNING requires PostgreSQL 17+")
       // hasWhenNotMatchedBySourceClause must not misfire on a SET expression's string literal
-      // that happens to contain the phrase "when not matched by source ". Verified against real
-      // Postgres: with no genuine WHEN NOT MATCHED BY SOURCE clause, ms.sname is never NULL.
+      // that happens to contain the phrase "when not matched by source ". On real Postgres, with
+      // no genuine WHEN NOT MATCHED BY SOURCE clause, ms.sname is never NULL.
       val query = analyzeWithSchema(
         """
         CREATE TABLE mt (tid INT PRIMARY KEY, tname TEXT NOT NULL);
@@ -4428,17 +4405,16 @@ class QueryAnalysisTest {
 
     @Test
     fun `data-modifying CTE preceded by a sibling CTE containing a closing parenthesis in a literal`() {
-      // End-to-end companion to the SqlUtilsTest paren-in-literal coverage: the FIRST CTE's body
+      // End-to-end companion to the SqlUtilsTest paren-in-literal coverage: the first CTE's body
       // contains a ')' inside a string literal, which (before the lexer fix) corrupted
       // findMatchingCloseParenthesis's body-boundary detection for that CTE — parseCteClause
-      // then stopped after that ONE (corrupted) definition, treating "upd" as part of the
-      // garbled MAIN QUERY text instead of a second CTE. "upd" has a LEFT JOIN specifically so
+      // then stopped after that one (corrupted) definition, treating "upd" as part of the
+      // garbled main-query text instead of a second CTE. "upd" has a LEFT JOIN specifically so
       // this is visible: the garbled-query fallback (the top-level no-join-structure DML path,
-      // "assume every column non-null" before issue #207's fix) happens to give the RIGHT answer
-      // for a plain INSERT (as in the SqlUtilsTest e2e companion above), but gives the WRONG
-      // answer here, where the true answer is nullable. Verified against real Postgres (inserting
-      // an "a" row with no matching "b"
-      // row): the query returns v = NULL.
+      // "assume every column non-null" before the not-null-fallback fix) happens to give the
+      // right answer for a plain INSERT (as in the SqlUtilsTest e2e companion above), but gives
+      // the wrong answer here, where the true answer is nullable. Inserting an "a" row with no
+      // matching "b" row: the query returns v = NULL.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id SERIAL NOT NULL, name TEXT);
@@ -4486,8 +4462,8 @@ class QueryAnalysisTest {
       // findTopLevelKeyword's word-boundary check, so "valid_from" matched the keyword "FROM"
       // at its own position — before the real "FROM a LEFT JOIN b" clause — corrupting
       // conversion (which then failed validation) and falling back to the metadata probe/stub,
-      // which is blind to the LEFT JOIN and fabricated NOT NULL. Verified against real Postgres
-      // (inserting an "a" row with no matching "b" row): the query returns bval = NULL.
+      // which is blind to the LEFT JOIN and fabricated NOT NULL. Inserting an "a" row with no
+      // matching "b" row: the query returns bval = NULL.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT NOT NULL, valid_from TEXT);
@@ -4509,13 +4485,13 @@ class QueryAnalysisTest {
 
     @Test
     fun `SET-clause column named returning_note no longer aborts generation`() {
-      // REGRESSION guard vs main: before the word-boundary fix, "returning_note" matched
-      // "RETURNING" as a keyword, making returningIndex point INSIDE the SET clause — earlier
-      // than the join clause start computed from the (correctly found) later FROM — and
+      // Regression guard: before the word-boundary fix, "returning_note" matched "RETURNING" as
+      // a keyword, making returningIndex point inside the SET clause — earlier than the join
+      // clause start computed from the (correctly found) later FROM — and
       // buildSelectFromDml's substring(joinClauseStart, returningIndex) threw
       // StringIndexOutOfBoundsException, aborting generation on SQL PostgreSQL itself accepts
-      // fine. Verified against real Postgres: id = 1 (NOT NULL, as expected for a plain UPDATE
-      // with no outer join at all).
+      // fine. On real Postgres, id = 1 (NOT NULL, as expected for a plain UPDATE with no outer
+      // join at all).
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT NOT NULL, returning_note TEXT);
@@ -4538,16 +4514,16 @@ class QueryAnalysisTest {
       // PostgreSQL 18's RETURNING OLD.col forces this body onto the stub path: the structural
       // conversion builds a plain SELECT where "OLD" is not a valid range variable, so it fails
       // to prepare and validatedConversion correctly rejects it. Before the stub-path safety
-      // net, the metadata probe reported the UNRELATED sibling column b.bval as NOT NULL (blind
+      // net, the metadata probe reported the unrelated sibling column b.bval as NOT NULL (blind
       // to the real LEFT JOIN elsewhere in the same body) even though oldname's own OLD-based
-      // imprecision was already an accepted limitation. Verified against real Postgres (inserting
-      // an "a" row with no matching "b" row): oldname = 'orig' (the target row always exists for
-      // a plain UPDATE, so OLD.name is never actually null here), bval = NULL. The safety net
-      // deliberately over-approximates — marking every stub column nullable once any outer join
-      // is detected in the body, not just the ones actually reached through it — so oldname is
-      // ALSO reported nullable here even though its true answer is NOT NULL: safe-direction
-      // imprecision, not a regression, and a documented tradeoff (see PgCatalogLoader's
-      // buildSelectStub and tryPrepareStub KDoc).
+      // imprecision was already an accepted limitation. Inserting an "a" row with no matching
+      // "b" row: oldname = 'orig' (the target row always exists for a plain UPDATE, so OLD.name
+      // is never actually null here), bval = NULL. The safety net deliberately
+      // over-approximates — marking every stub column nullable once any outer join is detected
+      // in the body, not just the ones actually reached through it — so oldname is also reported
+      // nullable here even though its true answer is NOT NULL: safe-direction imprecision, not a
+      // regression, and a documented tradeoff (see PgCatalogLoader's buildSelectStub and
+      // tryPrepareStub KDoc).
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL);
@@ -4570,11 +4546,11 @@ class QueryAnalysisTest {
     @Test
     fun `MERGE detects WHEN NOT MATCHED BY SOURCE despite a comment abutting NOT and MATCHED`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
-      // skipOptionalKeyword previously required LITERAL whitespace immediately after each
+      // skipOptionalKeyword previously required literal whitespace immediately after each
       // keyword, so a comment directly abutting NOT and MATCHED with no surrounding whitespace
       // broke clause detection entirely, choosing a plain JOIN and fabricating NOT NULL for the
-      // source column. Verified against real Postgres: id = 1 (NOT NULL, target row), sval =
-      // NULL (nullable, no matching source row).
+      // source column. On real Postgres, id = 1 (NOT NULL, target row), sval = NULL (nullable,
+      // no matching source row).
       val query = analyzeWithSchema(
         """
         CREATE TABLE tgt (id INT PRIMARY KEY, name TEXT NOT NULL);
@@ -4597,13 +4573,13 @@ class QueryAnalysisTest {
 
     @Test
     fun `INSERT with a LEFT JOIN in its own SELECT source reports NOT NULL, not fabricated nullable`() {
-      // REGRESSION guard: the stub-path safety net previously fired for ANY body with a
+      // Regression guard: the stub-path safety net previously fired for any body with a
       // detectable outer join, INSERT included — but an INSERT's RETURNING sees only the row
       // just inserted, and nothing in its own SELECT source (however joined) can null-extend
-      // it. Verified against real Postgres: INSERT INTO b(id, bval) SELECT a.id, 'v' FROM a
-      // LEFT JOIN b2 ON b2.id = a.id RETURNING id, bval returns id=1, bval='v' — both non-null —
-      // despite the LEFT JOIN in its source. See the companion test below for the UPDATE shape,
-      // where the net must still fire.
+      // it. On real Postgres, INSERT INTO b(id, bval) SELECT a.id, 'v' FROM a LEFT JOIN b2 ON
+      // b2.id = a.id RETURNING id, bval returns id=1, bval='v' — both non-null — despite the
+      // LEFT JOIN in its source. See the companion test below for the UPDATE shape, where the
+      // net must still fire.
       val query = analyzeWithSchema(
         """
         CREATE TABLE a (id INT NOT NULL);
@@ -4626,8 +4602,8 @@ class QueryAnalysisTest {
     @Test
     fun `UPDATE with a LEFT JOIN still reports nullable — the safety net must keep working`() {
       // Companion to the INSERT test above: confirms excluding INSERT from the safety net did
-      // NOT also (over-broadly) exclude UPDATE, which genuinely needs it. Verified against real
-      // Postgres (inserting an "a" row with no matching "b" row): the query returns bval = NULL.
+      // not also (over-broadly) exclude UPDATE, which genuinely needs it. Inserting an "a" row
+      // with no matching "b" row: the query returns bval = NULL.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT NOT NULL, name TEXT);
@@ -4653,8 +4629,7 @@ class QueryAnalysisTest {
       // "$b$"-tagged dollar-quote, swallowing the rest of the statement — including the real
       // "FROM a LEFT JOIN b" — as unterminated string content. Conversion then failed (or
       // produced garbage), falling back to the metadata probe/stub, which is blind to the LEFT
-      // JOIN. Verified against real Postgres (inserting an "a" row with no matching "b" row):
-      // the query returns bval = NULL.
+      // JOIN. Inserting an "a" row with no matching "b" row: the query returns bval = NULL.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT NOT NULL, a${'$'}b${'$'}c TEXT);
@@ -4681,8 +4656,8 @@ class QueryAnalysisTest {
       // nested inside the USING subquery went undetected — merge_action() in RETURNING already
       // forces this body onto the stub path (it isn't valid outside MERGE's own RETURNING, so
       // conversion to a plain SELECT fails to prepare and is rejected), and the stub then
-      // fabricated NOT NULL for the joined column. Verified against real Postgres (sx has no row
-      // matching src): act = 'UPDATE', id = 1, xval = NULL. The safety net's over-approximation
+      // fabricated NOT NULL for the joined column. With sx having no row matching src: act =
+      // 'UPDATE', id = 1, xval = NULL. The safety net's over-approximation
       // also demotes "id" (the target's PK, always present for a MATCHED row) to nullable here —
       // an accepted, documented tradeoff, since the stub cannot isolate which columns are
       // actually reached through the nested join (see buildSelectStub's KDoc).
@@ -4709,15 +4684,15 @@ class QueryAnalysisTest {
     @Test
     fun `DELETE RETURNING OLD-col alongside an unrelated column no longer drags it into nullable`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
-      // FIX 1 regression guard: at e4679ff, forceAllNullable applied to the WHOLE stub once ANY
+      // Regression guard: at e4679ff, forceAllNullable applied to the whole stub once any
       // RETURNING item referenced OLD/NEW — so "id" (never touched by OLD/NEW at all) was
-      // fabricated nullable purely because it shared a RETURNING list with "oldname". Verified
-      // against real Postgres: DELETE FROM t WHERE id = 1 RETURNING OLD.name, t.id returns
-      // oldname = 'orig' and id = 1 — BOTH genuinely NOT NULL for this exact row, but "id" is the
-      // one this fix must stop fabricating nullable for; "oldname" itself is still forced
-      // nullable (over-approximating in the safe direction, unchanged) since knowing OLD is
-      // genuinely never-null for a DELETE specifically would require statement-kind-aware logic
-      // this fix does not add — see oldOrNewReturningColumns's KDoc.
+      // fabricated nullable purely because it shared a RETURNING list with "oldname". On real
+      // Postgres, DELETE FROM t WHERE id = 1 RETURNING OLD.name, t.id returns oldname = 'orig'
+      // and id = 1 — both genuinely NOT NULL for this exact row, but "id" is the one this fix
+      // must stop fabricating nullable for; "oldname" itself is still forced nullable
+      // (over-approximating in the safe direction, unchanged) since knowing OLD is genuinely
+      // never-null for a DELETE specifically would require statement-kind-aware logic this fix
+      // does not add — see oldOrNewReturningColumns's KDoc.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
         """
@@ -4735,10 +4710,10 @@ class QueryAnalysisTest {
     @Test
     fun `UPDATE RETURNING OLD-col alongside the target's own column stays NOT NULL for the target column`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
-      // Same regression as above, UPDATE form. Verified against real Postgres: UPDATE t SET name
-      // = 'x' WHERE id = 1 RETURNING OLD.name AS oldname, t.id returns oldname = 'orig', id = 1 —
-      // both genuinely NOT NULL (an UPDATE's target row always exists), but only "id" (untouched
-      // by OLD/NEW) is asserted NOT NULL here; "oldname" is still forced nullable by design.
+      // Same regression as above, UPDATE form. On real Postgres, UPDATE t SET name = 'x' WHERE
+      // id = 1 RETURNING OLD.name AS oldname, t.id returns oldname = 'orig', id = 1 — both
+      // genuinely NOT NULL (an UPDATE's target row always exists), but only "id" (untouched by
+      // OLD/NEW) is asserted NOT NULL here; "oldname" is still forced nullable by design.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
         """
@@ -4756,10 +4731,10 @@ class QueryAnalysisTest {
     @Test
     fun `INSERT ON CONFLICT RETURNING OLD-col alongside an unrelated column stays NOT NULL for it`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
-      // Same regression, INSERT ON CONFLICT form. Verified against real Postgres: INSERT INTO t
-      // (id, bval) VALUES (1, 'new') ON CONFLICT (id) DO UPDATE SET bval = 'updated' RETURNING
-      // OLD.bval, t.id returns id = 1 (NOT NULL — the conflicting row's id, always present),
-      // bval potentially NULL (a fresh insert has no OLD row) — asserting only on "id" here.
+      // Same regression, INSERT ON CONFLICT form. On real Postgres, INSERT INTO t (id, bval)
+      // VALUES (1, 'new') ON CONFLICT (id) DO UPDATE SET bval = 'updated' RETURNING OLD.bval,
+      // t.id returns id = 1 (NOT NULL — the conflicting row's id, always present), bval
+      // potentially NULL (a fresh insert has no OLD row) — asserting only on "id" here.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT PRIMARY KEY, bval TEXT)",
         """
@@ -4779,9 +4754,9 @@ class QueryAnalysisTest {
     @Test
     fun `DELETE USING RETURNING OLD-col alongside the target's own column stays NOT NULL for it`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
-      // Same regression, DELETE ... USING form. Verified against real Postgres: DELETE FROM t
-      // USING a WHERE t.id = a.id RETURNING OLD.name AS oldname, t.id returns oldname = 'orig',
-      // id = 1 — both genuinely NOT NULL — asserting only on "id" here (untouched by OLD/NEW).
+      // Same regression, DELETE ... USING form. On real Postgres, DELETE FROM t USING a WHERE
+      // t.id = a.id RETURNING OLD.name AS oldname, t.id returns oldname = 'orig', id = 1 — both
+      // genuinely NOT NULL — asserting only on "id" here (untouched by OLD/NEW).
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL);
@@ -4803,14 +4778,14 @@ class QueryAnalysisTest {
     fun `RETURNING star alongside an OLD reference reports id and name NOT NULL via prosqlbody`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // Before the prosqlbody cutover, a star item recognized alongside an OLD/NEW reference fell
-      // back to forcing EVERY column nullable — an accepted tradeoff for the old text-based
+      // back to forcing every column nullable — an accepted tradeoff for the old text-based
       // machinery, since a star's real expansion width is unknown to it without asking PostgreSQL.
       // prosqlbody reads "id"/"name" as plain Vars against a real DELETE target row (never
       // rewritten into a stub, no OLD/NEW tagging on either), so it correctly reports both NOT
       // NULL per the schema's own constraint. "oldname" stays nullable regardless — this
       // analyzer's OLD-forcing rule is deliberately blanket (see PgNodeExpression.Var.returningType's
       // KDoc), over-conservative for a plain DELETE specifically (OLD always exists there) but
-      // still safe. Verified live: DELETE FROM t WHERE id = 1 RETURNING OLD.name, t.* returns
+      // still safe. On real Postgres, DELETE FROM t WHERE id = 1 RETURNING OLD.name, t.* returns
       // oldname = 'orig', id = 1, name = 'orig' — all genuinely NOT NULL.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
@@ -4839,7 +4814,7 @@ class QueryAnalysisTest {
       // NodeTreeNullabilityAnalyzer's own KDoc) — since "name" is declared NOT NULL, it correctly
       // reports newname NOT NULL. "oldname" stays nullable regardless — this analyzer's OLD-forcing
       // rule is deliberately blanket, over-conservative for a plain UPDATE specifically (OLD always
-      // exists there) but still safe. Verified live: UPDATE t SET name = 'x' WHERE id = 1
+      // exists there) but still safe. On real Postgres, UPDATE t SET name = 'x' WHERE id = 1
       // RETURNING WITH (OLD AS o, NEW AS n) o.name AS oldname, n.name AS newname, t.id returns
       // oldname = 'orig', newname = 'x', id = 1 — all genuinely NOT NULL.
       val query = analyzeWithSchema(
@@ -4861,15 +4836,15 @@ class QueryAnalysisTest {
     @Test
     fun `MERGE fed by a sibling CTE with an internal LEFT JOIN forces the joined column nullable`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
-      // FIX 3: "pre" (a sibling CTE, not part of "m"'s own body text) contains a LEFT JOIN whose
+      // "pre" (a sibling CTE, not part of "m"'s own body text) contains a LEFT JOIN whose
       // null-extension is entirely invisible to any scan of "m"'s own text — "m" itself has no
       // join at all. merge_action() in RETURNING forces this body onto the stub path (not valid
       // outside MERGE's own RETURNING, so the structural conversion fails to prepare and is
       // rejected); before this fix, the stub's base-table attnotnull fabricated "bval" as NOT
-      // NULL despite the real LEFT JOIN living in "pre". Verified against real Postgres (an "a"
-      // row with no matching "b" row): act = 'UPDATE', bval = NULL, id = 1 (the target's own PK,
-      // always present for a MATCHED row — also demoted to nullable here, an accepted tradeoff,
-      // same as the existing nested-USING-subquery LEFT JOIN test above).
+      // NULL despite the real LEFT JOIN living in "pre". With an "a" row with no matching "b"
+      // row: act = 'UPDATE', bval = NULL, id = 1 (the target's own PK, always present for a
+      // MATCHED row — also demoted to nullable here, an accepted tradeoff, same as the existing
+      // nested-USING-subquery LEFT JOIN test above).
       val query = analyzeWithSchema(
         """
         CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
@@ -4895,12 +4870,11 @@ class QueryAnalysisTest {
     @Test
     fun `MERGE fed by a double-quoted sibling reference still forces the joined column nullable`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
-      // Issue #208, Gap 1: quoting an otherwise unremarkable lowercase sibling name ("pre")
-      // used to defeat referencesAnyName entirely, since its underlying scan skipped
-      // double-quoted identifiers as an opaque lexical token by design. referencesAnyName now
-      // scans a quoted identifier's own contents instead. Verified against real Postgres 18 (an
-      // "a" row with no matching "b" row, target "tgt" row id = 1): act = 'UPDATE', bval = NULL,
-      // id = 1.
+      // Quoting an otherwise unremarkable lowercase sibling name ("pre") used to defeat
+      // referencesAnyName entirely, since its underlying scan skipped double-quoted identifiers
+      // as an opaque lexical token by design. referencesAnyName now scans a quoted identifier's
+      // own contents instead. PostgreSQL 18, with an "a" row with no matching "b" row and target
+      // "tgt" row id = 1: act = 'UPDATE', bval = NULL, id = 1.
       val query = analyzeWithSchema(
         """
         CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
@@ -4926,16 +4900,16 @@ class QueryAnalysisTest {
     @Test
     fun `MERGE with a ROLLUP source forces the grouped column nullable`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
-      // Issue #208, Gap 2: a ROLLUP supertotal row makes the grouped column NULL by definition,
-      // matched into the target only via a COALESCE in the ON condition -- no LEFT/RIGHT/FULL
-      // JOIN keyword and no WHEN NOT MATCHED BY SOURCE clause appears anywhere in the body for
-      // the pre-existing detectors to find. hasGroupingSetConstruct now recognizes ROLLUP/CUBE/
-      // GROUPING SETS as a third null-extending construct. Verified against real Postgres 18
-      // (an "a" row with id = 1, tgt rows id = 1 and id = 2): the id = 1 row of the source
-      // matches tgt id = 1 (sid = 1, not the supertotal), and the ROLLUP supertotal row (s.id =
-      // NULL) matches tgt id = 2 via COALESCE(s.id, 2) = 2 -- two result rows, merge_action =
-      // 'UPDATE' for both, {sid = 1, id = 1} and {sid = NULL, id = 2} (MERGE's own output order
-      // across rows is unspecified; only the values were confirmed, not this ordering).
+      // A ROLLUP supertotal row makes the grouped column NULL by definition, matched into the
+      // target only via a COALESCE in the ON condition -- no LEFT/RIGHT/FULL JOIN keyword and no
+      // WHEN NOT MATCHED BY SOURCE clause appears anywhere in the body for the pre-existing
+      // detectors to find. hasGroupingSetConstruct now recognizes ROLLUP/CUBE/GROUPING SETS as a
+      // third null-extending construct. PostgreSQL 18, with an "a" row with id = 1 and tgt rows
+      // id = 1 and id = 2: the id = 1 row of the source matches tgt id = 1 (sid = 1, not the
+      // supertotal), and the ROLLUP supertotal row (s.id = NULL) matches tgt id = 2 via
+      // COALESCE(s.id, 2) = 2 -- two result rows, merge_action = 'UPDATE' for both, {sid = 1, id
+      // = 1} and {sid = NULL, id = 2} (MERGE's own output order across rows is unspecified; only
+      // the values were confirmed, not this ordering).
       val query = analyzeWithSchema(
         """
         CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
@@ -4958,13 +4932,12 @@ class QueryAnalysisTest {
     @Test
     fun `MERGE fed by a transitive sibling chain forces the joined column nullable`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
-      // Issue #208, Gap 3: "m" references "mid", which has no join of its own -- the LEFT JOIN
-      // lives in "j", which is "mid"'s sibling, not "m"'s. The pre-existing one-level-deep
-      // sibling-danger check stopped at "mid" and never saw "j". computeDangerousSiblingNames now
-      // computes the danger set as a fixpoint over the whole WITH clause, so "mid" (which
-      // references "j") joins the dangerous set first, then "m" (which references "mid") joins
-      // next. Verified against real Postgres 18 (an "a" row with no matching "b" row): act =
-      // 'UPDATE', bval = NULL, id = 1.
+      // "m" references "mid", which has no join of its own -- the LEFT JOIN lives in "j", which
+      // is "mid"'s sibling, not "m"'s. The pre-existing one-level-deep sibling-danger check
+      // stopped at "mid" and never saw "j". computeDangerousSiblingNames now computes the danger
+      // set as a fixpoint over the whole WITH clause, so "mid" (which references "j") joins the
+      // dangerous set first, then "m" (which references "mid") joins next. PostgreSQL 18, with
+      // an "a" row with no matching "b" row: act = 'UPDATE', bval = NULL, id = 1.
       val query = analyzeWithSchema(
         """
         CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
@@ -4987,10 +4960,10 @@ class QueryAnalysisTest {
     @Test
     fun `MERGE USING a non-MATERIALIZED CTE source correctly reports a passed-through key column NOT NULL`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "MERGE RETURNING requires PostgreSQL 17+")
-      // #238: end-to-end pin for the exact shape that previously lost provenance for the WHOLE
-      // query (queryColumnNullabilityViaProsqlbody's mergeAbsentVarnos ?: return null short-
-      // circuited the ENTIRE probe, so every column -- not just the CTE-sourced ones -- fell back
-      // to nullable with no provenance). "desc_source.id" is parent's own primary key, genuinely
+      // End-to-end pin for the exact shape that previously lost provenance for the whole query
+      // (queryColumnNullabilityViaProsqlbody's mergeAbsentVarnos ?: return null short-circuited
+      // the entire probe, so every column -- not just the CTE-sourced ones -- fell back to
+      // nullable with no provenance). "desc_source.id" is parent's own primary key, genuinely
       // NOT NULL; "merged_description" is UPPER(description) over a nullable column, genuinely
       // nullable regardless of this fix.
       val query = analyzeWithSchema(
@@ -5016,7 +4989,7 @@ class QueryAnalysisTest {
     @Test
     fun `MERGE fed by a CTE source correctly reports the passed-through column NOT NULL`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
-      // #238: PgCatalogLoader.mergeAbsentVarnos now attributes a MERGE's join to a CTE source too
+      // PgCatalogLoader.mergeAbsentVarnos now attributes a MERGE's join to a CTE source too
       // (previously only a plain base table), via the CTE's own literal name -- "ins" appears
       // directly as a "CTE Scan" node's "CTE Name" here, since a data-modifying CTE is never
       // inlined. With an "a" row and no matching "b" row, the INSERT inserts one row into
@@ -5050,18 +5023,18 @@ class QueryAnalysisTest {
     @Test
     fun `MERGE fed by an INSERT ON CONFLICT sibling that RETURNS OLD-col forces the passed-through column nullable`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
-      // Issue #208 P1 follow-up: the seed's "!isInsertBody" exclusion (added for the precision
-      // guard test above) is correct for an INSERT's ORDINARY target-column RETURNING, but an
+      // A follow-up finding: the seed's "!isInsertBody" exclusion (added for the precision
+      // guard test above) is correct for an INSERT's ordinary target-column RETURNING, but an
       // INSERT's RETURNING can also read OLD./NEW., whose own conditional existence attnotnull
-      // cannot see regardless of statement kind -- excluding EVERY INSERT body from the seed,
+      // cannot see regardless of statement kind -- excluding every INSERT body from the seed,
       // rather than only excluding hasNullExtendingConstruct's own-join trigger, silently dropped
       // this danger sign. computeDangerousSiblingNames now seeds separately on
       // oldOrNewReturningColumns (which also understands a RETURNING WITH (OLD AS alias, ...)
       // prologue), regardless of isInsertBody. "ins" is an INSERT ... ON CONFLICT DO UPDATE
       // RETURNING OLD.val -- OLD is NULL exactly when the row was freshly inserted (no prior
-      // conflict) -- and "m" merely passes ins.oldval through. Verified against real Postgres 18
-      // (an "a" row with no matching "b" row, no pre-existing "it2" row so the INSERT always
-      // takes the fresh-insert branch): act = 'UPDATE', ov = NULL, id = 1.
+      // conflict) -- and "m" merely passes ins.oldval through. PostgreSQL 18, with an "a" row
+      // with no matching "b" row and no pre-existing "it2" row so the INSERT always takes the
+      // fresh-insert branch: act = 'UPDATE', ov = NULL, id = 1.
       val query = analyzeWithSchema(
         """
         CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
@@ -5096,9 +5069,9 @@ class QueryAnalysisTest {
       // (unlike a bare referencesOldOrNew call) already understands this prologue, so an aliased
       // reference must trip the same seed. "ins" is an INSERT ... ON CONFLICT DO UPDATE
       // RETURNING WITH (OLD AS o) id, o.val AS oldval -- OLD is NULL exactly when the row was
-      // freshly inserted -- and "m" merely passes ins.oldval through. Verified against real
-      // Postgres 18 (an "a" row with no pre-existing "it2" row, so the INSERT always takes the
-      // fresh-insert branch): act = 'UPDATE', ov = NULL, id = 1.
+      // freshly inserted -- and "m" merely passes ins.oldval through. PostgreSQL 18, with an "a"
+      // row with no pre-existing "it2" row, so the INSERT always takes the fresh-insert branch:
+      // act = 'UPDATE', ov = NULL, id = 1.
       val query = analyzeWithSchema(
         """
         CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
@@ -5126,13 +5099,13 @@ class QueryAnalysisTest {
     @Test
     fun `forward-referencing MERGE under WITH RECURSIVE fed by a later sibling with a LEFT JOIN is nullable`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
-      // FIX 3 / genuine NEW-harm regression: "m" (declared FIRST) forward-references "pre"
-      // (declared AFTER it) under WITH RECURSIVE, which makes every sibling name visible to every
-      // other body regardless of declaration order. At e4679ff, this shape silently typed "bval"
-      // NOT NULL — the referencesAnyName sibling check (and its only trigger point) did not exist
-      // yet, so the stub path had nothing to force it nullable with, despite "pre"'s own LEFT
-      // JOIN null-extending it exactly as in the plain-WITH sibling test above. Verified against
-      // real Postgres (an "a" row with no matching "b" row): act = 'UPDATE', bval = NULL, id = 1.
+      // "m" (declared first) forward-references "pre" (declared after it) under WITH RECURSIVE,
+      // which makes every sibling name visible to every other body regardless of declaration
+      // order. At e4679ff, this shape silently typed "bval" NOT NULL — the referencesAnyName
+      // sibling check (and its only trigger point) did not exist yet, so the stub path had
+      // nothing to force it nullable with, despite "pre"'s own LEFT JOIN null-extending it
+      // exactly as in the plain-WITH sibling test above. With an "a" row with no matching "b"
+      // row: act = 'UPDATE', bval = NULL, id = 1.
       val query = analyzeWithSchema(
         """
         CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
@@ -5164,8 +5137,8 @@ class QueryAnalysisTest {
       // are not valid range variables outside RETURNING, so the converted SELECT fails to
       // prepare) nor plain metadata (which reflects base-table attnotnull, oblivious to OLD/NEW's
       // conditional existence) can see this — the safety net now forces both nullable whenever a
-      // body's RETURNING references OLD./NEW., regardless of join structure. Verified against
-      // real Postgres: OLD.name = 'orig', NEW.name = NULL.
+      // body's RETURNING references OLD./NEW., regardless of join structure. On real Postgres,
+      // OLD.name = 'orig', NEW.name = NULL.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)",
         """
@@ -5183,18 +5156,18 @@ class QueryAnalysisTest {
     @Test
     fun `INSERT ON CONFLICT RETURNING OLD-col is nullable even though INSERT skips the join-based net`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
-      // NOT independently demonstrative of Fix 4: checked directly against the driver
-      // (PreparedStatement.getMetaData()), PostgreSQL's OWN metadata already reports
+      // This alone does not demonstrate the OLD/NEW safety-net fix: checked directly against the
+      // driver (PreparedStatement.getMetaData()), PostgreSQL's own metadata already reports
       // OLD.bval as nullable for this exact shape, with no forceAllNullable involved — so this
-      // body would pass even without referencesOldOrNew. What this DOES confirm (per the
-      // coordinator's request) is that the two forceAllNullable triggers are independent: this
-      // body IS an INSERT (per isInsertBody, excluded from the join-based trigger) with no join
-      // at all, and still correctly ends up nullable — proving isInsertBody's exclusion doesn't
-      // also (incorrectly) suppress the OLD/NEW trigger. The DELETE test below, where raw
-      // PostgreSQL metadata IS wrong without the fix, is the demonstrative case for Fix 4.
-      // Ground truth for OLD.bval's real nullability: with an existing row (a genuine conflict),
-      // OLD.bval = 'orig'; with no conflict (a fresh insert), OLD.bval = NULL — so across
-      // possible executions the column is genuinely nullable, not merely over-approximated.
+      // body would pass even without referencesOldOrNew. What this does confirm is that the two
+      // forceAllNullable triggers are independent: this body is an INSERT (per isInsertBody,
+      // excluded from the join-based trigger) with no join at all, and still correctly ends up
+      // nullable — proving isInsertBody's exclusion doesn't also (incorrectly) suppress the
+      // OLD/NEW trigger. The DELETE test below, where raw PostgreSQL metadata is wrong without
+      // the fix, is the demonstrative case. Ground truth for OLD.bval's real nullability: with
+      // an existing row (a genuine conflict), OLD.bval = 'orig'; with no conflict (a fresh
+      // insert), OLD.bval = NULL — so across possible executions the column is genuinely
+      // nullable, not merely over-approximated.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT PRIMARY KEY, bval TEXT)",
         """
@@ -5397,15 +5370,15 @@ class QueryAnalysisTest {
     fun `RETURNING item with no usable name is resolved by the outer query`() {
       // A RETURNING item that is neither a plain column reference nor a simple cast (here,
       // string concatenation) has no name of its own, so PostgreSQL reports it as the literal
-      // "?column?" (verified directly against real Postgres via psql \gdesc) — not a valid bare
-      // identifier at all. Before the fix, tryPrepareStub emitted it unquoted ("AS ?column?"),
-      // a syntax error in the stub SELECT, which failed CREATE VIEW the same way #204's mixed-
-      // case alias did. Deliberately concatenates the nullable "name" column (rather than a
-      // literal like "RETURNING 1", which is always non-null and would pass either way, masking
-      // the bug the same way "id" did in the test above) so the CREATE-VIEW failure's
-      // top-level analyzeUnconvertibleDml fallback (queryColumnNullability's last resort when
+      // "?column?" (confirmed via psql \gdesc) — not a valid bare identifier at all. Before the
+      // fix, tryPrepareStub emitted it unquoted ("AS ?column?"), a syntax error in the stub
+      // SELECT, which failed CREATE VIEW the same way the mixed-case-alias test below's shape
+      // did. Deliberately concatenates the nullable "name" column (rather than a literal like
+      // "RETURNING 1", which is always non-null and would pass either way, masking the bug the
+      // same way "id" did in the test above) so the CREATE-VIEW failure's top-level
+      // analyzeUnconvertibleDml fallback (queryColumnNullability's last resort when
       // analyzeViaTemporaryView on the transformed SQL itself throws) is observable — before
-      // issue #207's fix, that fallback wrongly asserted NOT NULL here regardless of truth.
+      // this fix, that fallback wrongly asserted NOT NULL here regardless of truth.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id SERIAL NOT NULL, name TEXT)",
         """
@@ -5422,20 +5395,19 @@ class QueryAnalysisTest {
 
     @Test
     fun `quoted mixed-case RETURNING alias in a data-modifying CTE body is resolved by the outer query`() {
-      // Reproduces #204: "ins"'s body is a plain INSERT, so it never reaches
-      // convertDmlCteBodyToSelect (whose join-preserving conversion is limited to
-      // UPDATE/DELETE/MERGE) and stays on the tryPrepareStub path.
-      // ResultSetMetaData.getColumnName reports the RETURNING alias exactly as declared,
-      // "myId", but before the fix tryPrepareStub emitted it unquoted ("AS myId"), which
-      // PostgreSQL folds to lowercase "myid" when building the stub SELECT used for
+      // "ins"'s body is a plain INSERT, so it never reaches convertDmlCteBodyToSelect (whose
+      // join-preserving conversion is limited to UPDATE/DELETE/MERGE) and stays on the
+      // tryPrepareStub path. ResultSetMetaData.getColumnName reports the RETURNING alias exactly
+      // as declared, "myId", but before the fix tryPrepareStub emitted it unquoted ("AS myId"),
+      // which PostgreSQL folds to lowercase "myid" when building the stub SELECT used for
       // CREATE VIEW. The outer query's quoted reference to ins."myId" then fails to resolve
-      // against the stub ("column ins.myId does not exist" — verified directly against real
-      // Postgres via psql). Inside queryColumnNullability, that SQLException is caught and
-      // degraded to analyzeUnconvertibleDml's fallback — before issue #207's fix, that fallback
-      // asserted EVERY column NOT NULL regardless of truth — so "name" is nullable in the schema
-      // (no NOT NULL constraint), but before the fix this test wrongly reports it NOT NULL. Deliberately uses a nullable
-      // source column (not id, which is NOT NULL and would pass either way, masking the bug)
-      // so the wrong fallback is actually observable as an assertion failure.
+      // against the stub ("column ins.myId does not exist" — confirmed via psql). Inside
+      // queryColumnNullability, that SQLException is caught and degraded to
+      // analyzeUnconvertibleDml's fallback — before this fix, that fallback asserted every
+      // column NOT NULL regardless of truth — so "name" is nullable in the schema (no NOT NULL
+      // constraint), but before the fix this test wrongly reports it NOT NULL. Deliberately uses
+      // a nullable source column (not id, which is NOT NULL and would pass either way, masking
+      // the bug) so the wrong fallback is actually observable as an assertion failure.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id SERIAL NOT NULL, name TEXT)",
         """
@@ -5457,8 +5429,8 @@ class QueryAnalysisTest {
       // real column name is my"Id). tryPrepareStub must double the embedded quote when
       // re-quoting the alias for the stub SELECT ("AS \"my\"\"Id\""); emitting only a single
       // doubled quote or none at all would produce invalid SQL or fold/mismatch the name, and
-      // the outer query's reference would fail to resolve the same way as #204 — degrading to
-      // the same wrong-NOT-NULL fallback described above.
+      // the outer query's reference would fail to resolve the same way as the test above —
+      // degrading to the same wrong-NOT-NULL fallback described there.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id SERIAL NOT NULL, name TEXT)",
         """
@@ -5475,11 +5447,11 @@ class QueryAnalysisTest {
 
     @Test
     fun `a CTE body's own local WITH shadowing a sibling of the same name resolves against the local body`() {
-      // #257 follow-up: buildInnerCteNotNull resolved a DIRECT :rtable reference to a CTE against
+      // buildInnerCteNotNull resolved a direct :rtable reference to a CTE against
       // previouslyResolved (sibling CTEs) with no ctelevelsup check, so b's own local "c" (over
-      // nullable w.v) was shadowed by the OUTER sibling "c" (over NOT NULL u.v) and this reported
-      // notNull=true. Verified live against PostgreSQL 18: returns null once w has a NULL row,
-      // since b's own body reads its OWN local c, not the outer one.
+      // nullable w.v) was shadowed by the outer sibling "c" (over NOT NULL u.v) and this reported
+      // notNull=true. PostgreSQL 18: returns null once w has a NULL row, since b's own body
+      // reads its own local c, not the outer one.
       val query = analyzeWithSchema(
         "CREATE TABLE u (v TEXT NOT NULL); CREATE TABLE w (v TEXT)",
         """
@@ -5496,8 +5468,8 @@ class QueryAnalysisTest {
       // Same ctelevelsup hazard as the direct-reference test above, but reached through a SubLink
       // inside b's own body instead of a plain target-list reference — this is what
       // buildAnalyzer's `resolvedCtes = ownResolvedCtes` (not previouslyResolved) at
-      // buildCteBodyAnalyzer's call site protects. Verified live against PostgreSQL 18: returns
-      // null once w has a NULL row and t.a matches no non-null row of b's OWN local sib.
+      // buildCteBodyAnalyzer's call site protects. PostgreSQL 18: returns null once w has a NULL
+      // row and t.a matches no non-null row of b's own local sib.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT NOT NULL, a TEXT NOT NULL);
@@ -5624,9 +5596,9 @@ class QueryAnalysisTest {
 
     @Test
     fun `UPDATE FROM INNER JOIN RETURNING`() {
-      // prosqlbody reads the RAW :targetList assignment directly — "nickname" is assigned
+      // prosqlbody reads the raw :targetList assignment directly — "nickname" is assigned
       // `d.id::TEXT`, a cast over a NOT NULL column reached through a plain (non-outer) JOIN — so
-      // it correctly reports "nickname" NOT NULL. Verified live: this exact UPDATE returns
+      // it correctly reports "nickname" NOT NULL. On real Postgres, this exact UPDATE returns
       // `nickname = '1'`, never NULL.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL, nickname TEXT); CREATE TABLE d (id INT NOT NULL, t_id INT NOT NULL)",
@@ -5669,8 +5641,8 @@ class QueryAnalysisTest {
     @Test
     fun `MERGE RETURNING with a non-table source reports every column nullable`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "MERGE RETURNING requires PostgreSQL 17+")
-      // RETURNING * on a MERGE expands to BOTH relations' columns — verified live: this exact
-      // statement returns 4 columns (s.id, s.name, t.id, t.name), all genuinely NOT NULL here
+      // RETURNING * on a MERGE expands to both relations' columns — this exact statement returns
+      // 4 columns (s.id, s.name, t.id, t.name), all genuinely NOT NULL here
       // (the source is a fixed-literal derived table, never actually absent or null). But
       // PgCatalogLoader.mergeAbsentVarnos only attributes a MERGE's join to a source relation
       // that is itself a plain base table (an :rtable entry with rtekind 0) — a subquery/VALUES
@@ -5697,15 +5669,15 @@ class QueryAnalysisTest {
     @Test
     fun `top-level MERGE RETURNING merge_action() does not abort generation`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
-      // FIX 1 [P0]: convertDmlToSelect splices merge_action() into a plain SELECT verbatim, where
-      // it is not valid PostgreSQL (merge_action() only works inside MERGE's own RETURNING) — so
-      // the converted SELECT fails to prepare. At d1153f3, Phase 2 (the TOP-LEVEL, non-CTE
-      // conversion path) had no validation gate at all: the bad SELECT reached CREATE VIEW, and
-      // the resulting SQLException was thrown from INSIDE queryColumnNullability's own catch
-      // block, escaping uncaught and aborting the whole build on SQL PostgreSQL itself accepts
-      // fine. Verified against real Postgres (a matched row, no WHEN NOT MATCHED branch — every
-      // returned row genuinely has a target AND source row present): act = 'UPDATE', aval = 'a1',
-      // id = 1 — all three genuinely NOT NULL.
+      // convertDmlToSelect splices merge_action() into a plain SELECT verbatim, where it is not
+      // valid PostgreSQL (merge_action() only works inside MERGE's own RETURNING) — so the
+      // converted SELECT fails to prepare. At d1153f3, Phase 2 (the top-level, non-CTE conversion
+      // path) had no validation gate at all: the bad SELECT reached CREATE VIEW, and the
+      // resulting SQLException was thrown from inside queryColumnNullability's own catch block,
+      // escaping uncaught and aborting the whole build on SQL PostgreSQL itself accepts fine. On
+      // real Postgres, with a matched row and no WHEN NOT MATCHED branch — every returned row
+      // genuinely has a target and source row present: act = 'UPDATE', aval = 'a1', id = 1 — all
+      // three genuinely NOT NULL.
       //
       // "aval" and "id" are NOT NULL via honestly-read ResultSetMetaData (a simple column
       // reference tracing to its source column's attnotnull). "act" (a bare function call) reports
@@ -5715,7 +5687,7 @@ class QueryAnalysisTest {
       // (both because merge_action() itself is invalid there, and because "a" isn't in that
       // probe's FROM list at all) — the probe returns `null` and analyzeUnconvertibleDml falls
       // back to its own nullable default for "act": nullability analysis must be correct or
-      // silent, and this file cannot PROVE merge_action() is non-null here even though it always
+      // silent, and this file cannot prove merge_action() is non-null here even though it always
       // is in practice.
       val query = analyzeWithSchema(
         """
@@ -5766,29 +5738,30 @@ class QueryAnalysisTest {
     @Test
     fun `top-level MERGE RETURNING OLD-col does not abort generation`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
-      // Same FIX 1 crash, OLD-reference variant (also not valid outside RETURNING, same failure
-      // mode as merge_action()) — rejected conversion falls through to analyzeUnconvertibleDml.
-      // Verified against real Postgres (matched-row-only MERGE, so every returned row's OLD is the
-      // pre-existing target row, always present): OLD.tval = 'x', genuinely NOT NULL for this
-      // exact shape. Before issue #207's fix, this happened to be reported correctly (NOT NULL)
-      // only by coincidence, via the old fallback that asserted every column NOT NULL
-      // unconditionally. analyzeUnconvertibleDml now applies the SAME per-column OLD/NEW forcing
-      // the CTE-body stub path always has (see `UPDATE RETURNING OLD-col alongside the target's
-      // own column stays NOT NULL for the target column` above for the CTE-wrapped precedent),
-      // which forces every OLD/NEW-referencing column nullable BY DESIGN regardless of whether a
-      // specific MERGE shape happens to make it always present — an accepted, deliberate loss of
-      // precision in the safe direction, not a regression.
+      // Same crash as above, OLD-reference variant (also not valid outside RETURNING, same
+      // failure mode as merge_action()) — rejected conversion falls through to
+      // analyzeUnconvertibleDml. On real Postgres, with a matched-row-only MERGE, so every
+      // returned row's OLD is the pre-existing target row, always present: OLD.tval = 'x',
+      // genuinely NOT NULL for this exact shape. Before this fix, this happened to be reported
+      // correctly (NOT NULL) only by coincidence, via the old fallback that asserted every column
+      // NOT NULL unconditionally. analyzeUnconvertibleDml now applies the same per-column OLD/NEW
+      // forcing the CTE-body stub path always has (see `UPDATE RETURNING OLD-col alongside the
+      // target's own column stays NOT NULL for the target column` above for the CTE-wrapped
+      // precedent), which forces every OLD/NEW-referencing column nullable by design regardless
+      // of whether a specific MERGE shape happens to make it always present — an accepted,
+      // deliberate loss of precision in the safe direction, not a regression.
       //
-      // This assertion CANNOT be restored to main's `isTrue()`: this column's own nullability is
+      // This assertion cannot be restored to main's `isTrue()`: this column's own nullability is
       // driven entirely by the per-column OLD/NEW forcing above, never by
       // `metadata.isNullable`/`columnNullableUnknown` (there is no non-OLD/NEW column here at
       // all), so it is untouched by, and independent of, the `columnNullableUnknown` handling fix
       // (see the `merge_action()` tests above). Reverting it to NOT NULL would mean removing the
-      // OLD/NEW forcing for THIS shape specifically while keeping it for `WHEN NOT MATCHED THEN
-      // INSERT ... RETURNING OLD.tval` (the "freshly-inserted row" test below), which the text scan
-      // this predicate runs on cannot distinguish — both are `RETURNING OLD.tval` on a single-item
-      // list; only the `WHEN` branches differ, and no static scan tells them apart. Keeping the
-      // over-approximation for both is the same accepted tradeoff already documented above.
+      // OLD/NEW forcing for this shape specifically while keeping it for `WHEN NOT MATCHED THEN
+      // INSERT ... RETURNING OLD.tval` (the "freshly-inserted row" test below), which the text
+      // scan this predicate runs on cannot distinguish — both are `RETURNING OLD.tval` on a
+      // single-item list; only the `WHEN` branches differ, and no static scan tells them apart.
+      // Keeping the over-approximation for both is the same accepted tradeoff already documented
+      // above.
       val query = analyzeWithSchema(
         """
         CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
@@ -5807,11 +5780,11 @@ class QueryAnalysisTest {
     @Test
     fun `MERGE INTO with WHEN NOT MATCHED THEN INSERT RETURNING OLD-col is nullable for a freshly-inserted row`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
-      // Issue #207 shape 1: a freshly INSERTed row via MERGE has no prior row, so OLD.tval is
-      // genuinely NULL — before the fix, the top-level no-join-structure fallback
-      // (analyzeUnconvertibleDml's predecessor) asserted it NOT NULL unconditionally. Verified
-      // against real Postgres (a is INSERT INTO a VALUES (1, 'a1'), tgt starts empty, so a.id has
-      // no matching tgt row and WHEN NOT MATCHED fires): oldv = NULL.
+      // A freshly INSERTed row via MERGE has no prior row, so OLD.tval is genuinely NULL —
+      // before the fix, the top-level no-join-structure fallback
+      // (analyzeUnconvertibleDml's predecessor) asserted it NOT NULL unconditionally. On real
+      // Postgres, with a is INSERT INTO a VALUES (1, 'a1'), tgt starts empty, so a.id has no
+      // matching tgt row and WHEN NOT MATCHED fires: oldv = NULL.
       val query = analyzeWithSchema(
         """
         CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
@@ -5830,9 +5803,8 @@ class QueryAnalysisTest {
     @Test
     fun `MERGE INTO with WHEN MATCHED THEN DELETE RETURNING NEW-col is nullable for a deleted row`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING NEW requires PostgreSQL 18+")
-      // Issue #207 shape 2: a deleted row has no resulting row, so NEW.tval is genuinely NULL —
-      // same fallback, same fix. Verified against real Postgres (tgt has a matching row for a):
-      // NEW.tval = NULL.
+      // A deleted row has no resulting row, so NEW.tval is genuinely NULL — same fallback, same
+      // fix. On real Postgres, with tgt having a matching row for a: NEW.tval = NULL.
       val query = analyzeWithSchema(
         """
         CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
@@ -5851,10 +5823,10 @@ class QueryAnalysisTest {
     @Test
     fun `INSERT ON CONFLICT DO UPDATE RETURNING OLD-col is nullable for a freshly-inserted row`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
-      // Issue #207 shape 3: a fresh INSERT (no conflicting row) has no prior row, so OLD.tval is
-      // genuinely NULL — a plain top-level INSERT ... ON CONFLICT with no CTE and no MERGE at all,
-      // the simplest possible top-level DML shape this fix covers. Verified against real Postgres
-      // (tgt starts empty, so the INSERT hits no conflict): OLD.tval = NULL.
+      // A fresh INSERT (no conflicting row) has no prior row, so OLD.tval is genuinely NULL — a
+      // plain top-level INSERT ... ON CONFLICT with no CTE and no MERGE at all, the simplest
+      // possible top-level DML shape this fix covers. On real Postgres, with tgt starting empty,
+      // so the INSERT hits no conflict: OLD.tval = NULL.
       val query = analyzeWithSchema(
         "CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL)",
         """
@@ -5869,15 +5841,15 @@ class QueryAnalysisTest {
     @Test
     fun `top-level MERGE RETURNING merge_action() alongside a LEFT JOIN in USING forces every column nullable`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
-      // Issue #207 shape 4: merge_action() forces Phase 2's conversion to be rejected (not valid
-      // outside MERGE's own RETURNING), so this falls to analyzeUnconvertibleDml — which now
-      // detects the LEFT JOIN nested in the USING subquery via the same null-extending-construct
-      // trigger the CTE-body stub path already has, forcing EVERY column nullable, "act" included
-      // — the same accepted over-approximation the CTE-wrapped equivalent test above (`MERGE with
-      // a LEFT JOIN nested in its USING subquery reports the joined column nullable`) documents,
-      // now reached for a bare top-level statement instead of one wrapped in a CTE. Verified
-      // against real Postgres (b has no row matching a): act = 'UPDATE', bval = NULL (genuinely
-      // nullable — the LEFT JOIN's real effect).
+      // merge_action() forces Phase 2's conversion to be rejected (not valid outside MERGE's own
+      // RETURNING), so this falls to analyzeUnconvertibleDml — which now detects the LEFT JOIN
+      // nested in the USING subquery via the same null-extending-construct trigger the CTE-body
+      // stub path already has, forcing every column nullable, "act" included — the same accepted
+      // over-approximation the CTE-wrapped equivalent test above (`MERGE with a LEFT JOIN nested
+      // in its USING subquery reports the joined column nullable`) documents, now reached for a
+      // bare top-level statement instead of one wrapped in a CTE. On real Postgres, with b
+      // having no row matching a: act = 'UPDATE', bval = NULL (genuinely nullable — the LEFT
+      // JOIN's real effect).
       val query = analyzeWithSchema(
         """
         CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
@@ -5897,8 +5869,8 @@ class QueryAnalysisTest {
 
     @Test
     fun `top-level DELETE RETURNING reports a nullable column as nullable, not NOT NULL`() {
-      // Issue #207 shape 5: the everyday, no-OLD-NEW-MERGE case — a plain top-level DELETE with no
-      // FROM/USING clause has no join structure for convertDmlToSelect to convert, so it goes
+      // The everyday, no-OLD-NEW-MERGE case — a plain top-level DELETE with no FROM/USING clause
+      // has no join structure for convertDmlToSelect to convert, so it goes
       // straight to analyzeUnconvertibleDml, which now reads real ResultSetMetaData.isNullable
       // instead of discarding it. "note" has no NOT NULL constraint, so it is genuinely nullable;
       // "id" and "name" are declared NOT NULL and stay that way — this is not "mark everything
@@ -5929,14 +5901,14 @@ class QueryAnalysisTest {
 
     @Test
     fun `top-level UPDATE with a LEFT JOIN only inside a WHERE subquery does not force RETURNING nullable`() {
-      // The null-extending-construct arm used to scan the WHOLE statement's text for an outer
+      // The null-extending-construct arm used to scan the whole statement's text for an outer
       // join, not just the clause whose join structure can actually reach RETURNING — so a LEFT
       // JOIN sitting inside an unrelated `WHERE ... IN (subquery)` (which only narrows which rows
       // the UPDATE touches, and cannot null-extend anything in RETURNING) fabricated nullable for
-      // both columns. Verified against real Postgres 18 (a matching row exists so the WHERE
-      // filter passes; t.id is even the PRIMARY KEY): id and name are genuinely NOT NULL.
+      // both columns. PostgreSQL 18, with a matching row existing so the WHERE filter passes;
+      // t.id is even the PRIMARY KEY: id and name are genuinely NOT NULL.
       // dmlSourceClauseRegion returns null here (no top-level FROM clause on this UPDATE at all),
-      // so the join arm is forced OFF rather than scanning the WHERE subquery's own LEFT JOIN.
+      // so the join arm is forced off rather than scanning the WHERE subquery's own LEFT JOIN.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT PRIMARY KEY, name TEXT NOT NULL);
@@ -5986,15 +5958,15 @@ class QueryAnalysisTest {
       // valid range variable in the converted SELECT), landing on analyzeUnconvertibleDml — the
       // top-level counterpart of `stub path forces every column nullable when RETURNING OLD-col
       // accompanies a real LEFT JOIN` above. dmlSourceClauseRegion scopes the join scan to this
-      // UPDATE's own FROM ... WHERE region, which DOES contain the real LEFT JOIN, so bval (and,
+      // UPDATE's own FROM ... WHERE region, which does contain the real LEFT JOIN, so bval (and,
       // by the same accepted over-approximation as the CTE case, oldname and name too) are forced
       // nullable — proving the scoped region still finds a join that genuinely belongs to the
       // source clause, not merely refusing to force anything at all.
-      // prosqlbody reads the RAW :targetList assignment for "name" directly (a literal 'x',
+      // prosqlbody reads the raw :targetList assignment for "name" directly (a literal 'x',
       // untouched by either the OLD-forcing rule or the LEFT JOIN), so it correctly isolates
       // "name" as NOT NULL, "oldname" as nullable (the blanket OLD-forcing rule), and "bval" as
-      // nullable (the genuine LEFT JOIN). Verified live: this exact UPDATE returns `name = 'x'`,
-      // never NULL, for a matching row.
+      // nullable (the genuine LEFT JOIN). On real Postgres, this exact UPDATE returns `name =
+      // 'x'`, never NULL, for a matching row.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL);
@@ -6017,8 +5989,8 @@ class QueryAnalysisTest {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // DELETE USING equivalent of the UPDATE FROM case above. "t.name" is DELETE's own target
       // column — read directly, never assigned — so prosqlbody correctly reports it NOT NULL
-      // (the schema's own constraint). Verified live: this exact DELETE returns `name = 'orig'`,
-      // never NULL.
+      // (the schema's own constraint). On real Postgres, this exact DELETE returns `name =
+      // 'orig'`, never NULL.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL);
@@ -6038,16 +6010,16 @@ class QueryAnalysisTest {
 
     @Test
     fun `INSERT RETURNING a literal and a bare integer constant reports both NOT NULL`() {
-      // R2 regression: a literal or constant expression RETURNING item reports
+      // A literal or constant expression RETURNING item reports
       // ResultSetMetaData.columnNullableUnknown (PostgreSQL cannot describe a literal's
       // nullability any more precisely than that) — a literal is never NULL, so
-      // analyzeUnconvertibleDml must treat that as NOT NULL. Issue #226's probe actually confirms
-      // this exactly, rather than merely defaulting to it: it builds `SELECT id, name, 'lit'::TEXT
-      // AS lbl, 1 AS one FROM t` and reads its real per-column nullability via the same node-tree
+      // analyzeUnconvertibleDml must treat that as NOT NULL. The probe actually confirms this
+      // exactly, rather than merely defaulting to it: it builds `SELECT id, name, 'lit'::TEXT AS
+      // lbl, 1 AS one FROM t` and reads its real per-column nullability via the same node-tree
       // analyzer a plain SELECT already uses, independently reporting both literal columns NOT
       // NULL. "name" has no NOT NULL constraint and is left untouched by this rule (the probe's
       // own answer for it is irrelevant), since it traces to a real column whose base-table
-      // attnotnull IS already known (columnNoNulls), not unknown.
+      // attnotnull is already known (columnNoNulls), not unknown.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id SERIAL PRIMARY KEY, name TEXT)",
         "INSERT INTO t (name) VALUES (?) RETURNING id, name, 'lit'::TEXT AS lbl, 1 AS one",
@@ -6061,13 +6033,12 @@ class QueryAnalysisTest {
   }
 
   /**
-   * Issue #226: `PgCatalogLoader.analyzeUnconvertibleDml` treats
-   * `ResultSetMetaData.columnNullableUnknown` as NOT NULL — correct for a literal/constant
-   * (`1 AS one`), but wrong for an expression built over a genuinely nullable source column
-   * (`lower(note)`, where `note` has no NOT NULL constraint). These tests exercise
-   * `PgCatalogLoader.probeUnknownColumnNullability`, the supplementary probe that resolves such a
-   * column's real nullability instead of defaulting, and the gates that fall back to today's NOT
-   * NULL default when the probe cannot be trusted.
+   * `PgCatalogLoader.analyzeUnconvertibleDml` treats `ResultSetMetaData.columnNullableUnknown`
+   * as NOT NULL — correct for a literal/constant (`1 AS one`), but wrong for an expression built
+   * over a genuinely nullable source column (`lower(note)`, where `note` has no NOT NULL
+   * constraint). These tests exercise `PgCatalogLoader.probeUnknownColumnNullability`, the
+   * supplementary probe that resolves such a column's real nullability instead of defaulting,
+   * and the gates that fall back to today's NOT NULL default when the probe cannot be trusted.
    */
   @Nested
   inner class UnknownColumnNullabilityProbe {
@@ -6120,7 +6091,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `a star item in RETURNING is expanded so the probe still runs and reports the real answer`() {
-      // "note" has no NOT NULL constraint, so lower(note) genuinely CAN be NULL — a star item must
+      // "note" has no NOT NULL constraint, so lower(note) genuinely can be NULL — a star item must
       // not prevent the probe from proving that: probeUnknownColumnNullability expands "*" against
       // "t"'s own catalog columns (id, note) before counting items, so the 2-item RETURNING list
       // ("*", "lower(note)") correctly resolves to the real 3-column count and the probe runs.
@@ -6172,14 +6143,14 @@ class QueryAnalysisTest {
   }
 
   /**
-   * Issue #228: [PgCatalogLoader.probeUnknownColumnNullability]'s bare `SELECT <returning> FROM
-   * <target>` probe (issue #226) evaluates a `RETURNING` expression against the UNMODIFIED target
-   * table, so it cannot see a value the statement's OWN `SET` clause assigns — `UPDATE t SET note
-   * = 'x' RETURNING lower(note)` widened to nullable even though `note` can only ever be `'x'` in
-   * this result, because `note` has no `NOT NULL` constraint in the catalog. These tests exercise
+   * [PgCatalogLoader.probeUnknownColumnNullability]'s bare `SELECT <returning> FROM <target>`
+   * probe evaluates a `RETURNING` expression against the unmodified target table, so it cannot
+   * see a value the statement's own `SET` clause assigns — `UPDATE t SET note = 'x' RETURNING
+   * lower(note)` widened to nullable even though `note` can only ever be `'x'` in this result,
+   * because `note` has no `NOT NULL` constraint in the catalog. These tests exercise
    * [PgCatalogLoader.buildUpdateSetAwareFromClause], which wraps the probe's target in a derived
    * table carrying the `SET`-assigned expressions, plus every bail condition that must keep the
-   * bare (pre-#228) column instead.
+   * bare, pre-fix column instead.
    */
   @Nested
   inner class SetAssignmentAwareProbe {
@@ -6218,10 +6189,10 @@ class QueryAnalysisTest {
     @Test
     fun `a row-form assignment reports NOT NULL, since PostgreSQL attributes it to one column cleanly`() {
       // PostgreSQL's own parser decomposes `(note, other) = ('x', 'y')` into two ordinary,
-      // independent :targetList entries (resno matching each column, one CONST apiece) — verified
-      // live in the raw prosqlbody text — so prosqlbody attributes 'x' to "note" exactly as
-      // cleanly as a plain `SET note = 'x'` would. Verified live: this exact UPDATE returns
-      // `n = 'x'`, never NULL.
+      // independent :targetList entries (resno matching each column, one CONST apiece), confirmed
+      // in the raw prosqlbody text — so prosqlbody attributes 'x' to "note" exactly as cleanly as
+      // a plain `SET note = 'x'` would. On real Postgres, this exact UPDATE returns `n = 'x'`,
+      // never NULL.
       val query = analyzeWithSchema(
         schema,
         "UPDATE t SET (note, other) = ('x', 'y') WHERE id = 1 RETURNING lower(note) AS n",
@@ -6262,10 +6233,10 @@ class QueryAnalysisTest {
     fun `a system column the SET-aware derived table can't carry doesn't collapse a sibling column's real answer`() {
       // The wrapped `FROM (SELECT ... FROM t) AS t` derived table has no `ctid` — PostgreSQL fails
       // to prepare `SELECT ..., ctid FROM (SELECT ... FROM t) AS t` with "column \"ctid\" does not
-      // exist". `ctid` itself is reported NOT NULL directly by `ResultSetMetaData` on the RAW
+      // exist". `ctid` itself is reported NOT NULL directly by `ResultSetMetaData` on the raw
       // `UPDATE ... RETURNING` statement — it never goes through the probe at all, at HEAD or
-      // here — so it stays NOT NULL regardless. What the wrapped probe's failure must NOT be
-      // allowed to do is collapse the SEPARATE, otherwise-resolvable `lower(note)` column's own
+      // here — so it stays NOT NULL regardless. What the wrapped probe's failure must not be
+      // allowed to do is collapse the separate, otherwise-resolvable `lower(note)` column's own
       // answer down to the probe's NOT NULL default: without the bare-`FROM t` retry, the whole
       // combined probe (covering every `RETURNING` item at once) fails to prepare because of
       // `ctid` alone, silently breaking `lower(note)`'s nullability too even though nothing about
@@ -6308,14 +6279,14 @@ class QueryAnalysisTest {
   }
 
   /**
-   * A verifier found that [SetAssignmentAwareProbe]'s substitution splices the `SET` right-hand
-   * side into the derived table's column list VERBATIM, with no cast to the column's own declared
-   * type. An untyped literal (`'empty'`) spliced bare is typed `text` by PostgreSQL inside the
-   * derived table — a DIFFERENT type than the real column's — which can resolve a `RETURNING`
-   * function call against a completely different, sometimes safe-listed, overload than the real
-   * statement would ever use: `lower(text)` is safe-listed, `lower(anyrange)` is not, and
-   * `UPDATE t SET r = 'empty' RETURNING lower(r)` resolves the LATTER against the real column but
-   * (pre-fix) the FORMER against the bare-text derived table, silently reporting NOT NULL for a
+   * [SetAssignmentAwareProbe]'s substitution splices the `SET` right-hand side into the derived
+   * table's column list verbatim, with no cast to the column's own declared type. An untyped
+   * literal (`'empty'`) spliced bare is typed `text` by PostgreSQL inside the derived table — a
+   * different type than the real column's — which can resolve a `RETURNING` function call
+   * against a completely different, sometimes safe-listed, overload than the real statement would
+   * ever use: `lower(text)` is safe-listed, `lower(anyrange)` is not, and `UPDATE t SET r =
+   * 'empty' RETURNING lower(r)` resolves the latter against the real column but (pre-fix) the
+   * former against the bare-text derived table, silently reporting NOT NULL for a
    * value that is actually `NULL` at runtime. [PgCatalogLoader.buildUpdateSetAwareFromClause] now
    * casts every substituted expression to the column's own declared type — via
    * [PgCatalogLoader.lookupDeclaredColumnTypes]'s `format_type(atttypid, atttypmod)` — so the
@@ -6414,10 +6385,10 @@ class QueryAnalysisTest {
   }
 
   /**
-   * Issue #228 follow-up: a verifier found that [SetAssignmentAwareProbe]'s substitution ignored
-   * anything that rewrites the tuple BETWEEN the `SET` clause and `RETURNING` — `RETURNING` always
-   * sees the FINAL, post-trigger, post-rule tuple, never the raw `SET` expression, so a `BEFORE`
-   * row trigger, an `INSTEAD OF` trigger, a rewrite rule, or a foreign data wrapper's own write path
+   * [SetAssignmentAwareProbe]'s substitution ignored anything that rewrites the tuple between the
+   * `SET` clause and `RETURNING` — `RETURNING` always sees the final, post-trigger, post-rule
+   * tuple, never the raw `SET` expression, so a `BEFORE` row trigger, an `INSTEAD OF` trigger, a
+   * rewrite rule, or a foreign data wrapper's own write path
    * can each substitute something else entirely for a value
    * [PgCatalogLoader.buildUpdateSetAwareFromClause] would otherwise splice in as provably non-null.
    * These tests exercise [PgCatalogLoader.targetRelationMayRewriteTupleBeforeReturning], the
@@ -6494,7 +6465,7 @@ class QueryAnalysisTest {
 
     // postgres_fdw's loopback connection caching races under JUnit5's default concurrent
     // execution mode when multiple tests concurrently CREATE/DROP a SERVER + FOREIGN TABLE
-    // against the SAME shared container — observed as a spurious "server ... does not exist"
+    // against the same shared container — observed as a spurious "server ... does not exist"
     // surfacing from an unrelated concurrent test's DROP SERVER, not from this test's own logic.
     // @ResourceLock serializes every postgres_fdw-loopback test in this class against each other
     // (but not against unrelated tests elsewhere), matching the existing pattern in
@@ -6546,13 +6517,13 @@ class QueryAnalysisTest {
     @Test
     @ResourceLock("postgres_fdw_loopback")
     fun `a foreign partition of a partitioned target reports nullable`() {
-      // P0-1 regression: targetRelationMayRewriteTupleBeforeReturning previously checked
-      // relkind only for the ROOT relation ("p", a partitioned table — relkind 'p'), never for
+      // Regression guard: targetRelationMayRewriteTupleBeforeReturning previously checked
+      // relkind only for the root relation ("p", a partitioned table — relkind 'p'), never for
       // its descendants. A partition that is itself a FOREIGN TABLE (relkind 'f') was therefore
       // invisible, and an FDW's own write path can produce any tuple it likes, independent of
-      // this statement's SET clause. Verified against real PostgreSQL 18.4 (via a postgres_fdw
-      // loopback with a BEFORE UPDATE row trigger on the remote table nulling "note"): before the
-      // fix this reported NOT NULL; the actual RETURNING value is NULL.
+      // this statement's SET clause. PostgreSQL 18.4, via a postgres_fdw loopback with a BEFORE
+      // UPDATE row trigger on the remote table nulling "note": before the fix this reported NOT
+      // NULL; the actual RETURNING value is NULL.
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         connection.createStatement().use { statement ->
@@ -6605,12 +6576,11 @@ class QueryAnalysisTest {
     @Test
     @ResourceLock("postgres_fdw_loopback")
     fun `a foreign inheritance child of a plain (non-partitioned) target reports nullable`() {
-      // Same P0-1 regression as the foreign-partition test above, but for plain multiple-
-      // inheritance (INHERITS) rather than declarative partitioning: the root relation ("parent2")
-      // is an ordinary table (relkind 'r'), but its inheritance child ("child2") is a FOREIGN
-      // TABLE. Verified against real PostgreSQL 18.4 that "child2 (...) INHERITS (parent2) SERVER
-      // ..." is valid syntax and that the child's remote BEFORE UPDATE trigger nulls the returned
-      // value.
+      // Same regression as the foreign-partition test above, but for plain multiple-inheritance
+      // (INHERITS) rather than declarative partitioning: the root relation ("parent2") is an
+      // ordinary table (relkind 'r'), but its inheritance child ("child2") is a FOREIGN TABLE.
+      // Confirmed on PostgreSQL 18.4 that "child2 (...) INHERITS (parent2) SERVER ..." is valid
+      // syntax and that the child's remote BEFORE UPDATE trigger nulls the returned value.
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         connection.createStatement().use { statement ->
@@ -6683,22 +6653,22 @@ class QueryAnalysisTest {
    * abort guards, but exercising a data-modifying CTE body specifically, hence the `WITH` wrapper
    * the other three tests intentionally omit.
    *
-   * NOTE on coverage of PgCatalogLoader's item-count-vs-real-column-count cross-check
+   * Coverage note on PgCatalogLoader's item-count-vs-real-column-count cross-check
    * (`oldOrNewColumns.isNotEmpty() && oldOrNewAnalysis.itemCount != totalColumnCount`): this
-   * class's `an ALIASED star reaches the item-count cross-check directly` test below DOES reach
+   * class's `an ALIASED star reaches the item-count cross-check directly` test below does reach
    * this branch, reliably. `oldOrNewReturningColumns` (unlike `parseSelectItems`) never
-   * alias-strips an item before checking `isStarItem` against it — so ANY star carrying an
+   * alias-strips an item before checking `isStarItem` against it — so any star carrying an
    * alias, explicit (`tgt.* AS whatever`) or implicit (`tgt.* whatever`), is simply left
    * unrecognized there: `isStarItem`'s own comment/whitespace/parenthesis normalization has no
    * concept of an `AS` keyword or an implicit alias to look past, so the alias text survives
    * normalization and the result never ends in `.*`. That unrecognized star's real expansion still
    * shows up in the real column count, mismatching the assumed item count, which is exactly what
-   * this cross-check exists to catch — its outcome (forcing every column nullable) is the SAME
-   * safe over-approximation a RECOGNIZED star produces via the `forcedColumns = null` path, just
+   * this cross-check exists to catch — its outcome (forcing every column nullable) is the same
+   * safe over-approximation a recognized star produces via the `forcedColumns = null` path, just
    * reached through the sibling branch instead.
    *
-   * This is deliberately NOT "fixed" by alias-stripping inside `oldOrNewReturningColumns`: doing
-   * so would only change WHICH branch produces the answer, never the answer itself (both branches
+   * This is deliberately not "fixed" by alias-stripping inside `oldOrNewReturningColumns`: doing
+   * so would only change which branch produces the answer, never the answer itself (both branches
    * force every column nullable), so there is no functional reason to add alias-awareness to this
    * specific call site — and doing so would silently delete this branch's only current test
    * coverage. This note makes no claim that this branch is otherwise unreachable in general — only
@@ -6707,7 +6677,7 @@ class QueryAnalysisTest {
    *
    * What the star-shape tests in this class (aside from the aliased-star one) still prove — see
    * `an OLD reference without a star still forces only the referencing column, not the whole body`
-   * below — is that the PER-COLUMN forcing mechanism (`forcedColumns` non-`null` AND
+   * below — is that the per-column forcing mechanism (`forcedColumns` non-`null` and
    * itemCount-matching) survives when no star is involved at all, distinguishing it from the
    * whole-body `forceAllNullable` fallback every star-plus-`OLD`/`NEW` test in this class
    * exercises (via one of the two possible routes: `forcedColumns == null`, or the item-count
@@ -6719,23 +6689,23 @@ class QueryAnalysisTest {
     @Test
     fun `parenthesized star-plus-OLD in a CTE body forces every column, not just the wrong one`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
-      // FIX 2: "(tgt.*)" is a parenthesized star — isStarItem's regex previously only recognized
-      // a bare "*"/"tbl.*", so this shape's real 2-column expansion (id, tval) was miscounted as
-      // a single RETURNING item, shifting "oldv" (the genuinely OLD-dependent column) off its
-      // real index and forcing the WRONG column (tval) nullable instead of the real OLD-dependent
+      // "(tgt.*)" is a parenthesized star — isStarItem's regex previously only recognized a bare
+      // "*"/"tbl.*", so this shape's real 2-column expansion (id, tval) was miscounted as a
+      // single RETURNING item, shifting "oldv" (the genuinely OLD-dependent column) off its real
+      // index and forcing the wrong column (tval) nullable instead of the real OLD-dependent
       // column. isStarItem now recognizes the parenthesized form, so oldOrNewReturningColumns
-      // reports the mapping as KNOWN unreliable (forcedColumns = null) — the caller falls back to
-      // forcing EVERY column nullable, same accepted over-approximation as the star-plus-OLD test
-      // elsewhere in this file, not an attempt at precisely isolating "oldv" alone. Verified
-      // against real Postgres (a fresh insert via ON CONFLICT — no prior row): id = 99, tval =
-      // 'x' (both genuinely NOT NULL — the just-inserted row's own columns), oldv = NULL
-      // (genuinely nullable) — but the safety net over-approximates all three to nullable here.
+      // reports the mapping as known unreliable (forcedColumns = null) — the caller falls back to
+      // forcing every column nullable, same accepted over-approximation as the star-plus-OLD test
+      // elsewhere in this file, not an attempt at precisely isolating "oldv" alone. On real
+      // Postgres, with a fresh insert via ON CONFLICT — no prior row: id = 99, tval = 'x' (both
+      // genuinely NOT NULL — the just-inserted row's own columns), oldv = NULL (genuinely
+      // nullable) — but the safety net over-approximates all three to nullable here.
       // prosqlbody reports "id" NOT NULL directly off its PRIMARY KEY catalog constraint — true
       // regardless of which INSERT/ON-CONFLICT branch actually ran. "tval" stays nullable: this
       // analyzer does not (yet) trace a CTE-nested INSERT's own :targetList/onConflict assignment
-      // the way it does for a TOP-LEVEL one (see PgCatalogLoader.analyzeNodeTree's targetListByResno
+      // the way it does for a top-level one (see PgCatalogLoader.analyzeNodeTree's targetListByResno
       // KDoc), so it falls back to tval's own (nullable) catalog constraint — safe, though not as
-      // precise as the live-verified 'x' this comment already documents. "oldv" stays nullable via
+      // precise as the confirmed 'x' this comment already documents. "oldv" stays nullable via
       // the blanket OLD-forcing rule.
       val query = analyzeWithSchema(
         "CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT)",
@@ -6756,21 +6726,21 @@ class QueryAnalysisTest {
     @Test
     fun `an ALIASED star reaches the item-count cross-check directly`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
-      // Verified against real PostgreSQL 18.4: "RETURNING tgt.* AS whatever, OLD.id AS oldv" is
-      // valid syntax, returning 3 real columns for a 2-column "tgt" (tgt.id, tgt.tval, oldv).
-      // Unlike parseSelectItems, oldOrNewReturningColumns never alias-strips an item before
-      // checking isStarItem against it, so "tgt.* AS whatever" as a whole does not end in ".*"
-      // and is NOT recognized as a star here — hasRecognizedStarItem is false. oldOrNewColumnIndices
-      // still correctly identifies item 2 ("OLD.id AS oldv") as the OLD-referencing item, so
-      // oldOrNewReturningColumns returns forcedColumns = {2} (NON-null) with itemCount = 2. Since
-      // the REAL column count is 3 (the star's own 2-column expansion was never counted),
+      // PostgreSQL 18.4: "RETURNING tgt.* AS whatever, OLD.id AS oldv" is valid syntax, returning
+      // 3 real columns for a 2-column "tgt" (tgt.id, tgt.tval, oldv). Unlike parseSelectItems,
+      // oldOrNewReturningColumns never alias-strips an item before checking isStarItem against
+      // it, so "tgt.* AS whatever" as a whole does not end in ".*" and is not recognized as a
+      // star here — hasRecognizedStarItem is false. oldOrNewColumnIndices still correctly
+      // identifies item 2 ("OLD.id AS oldv") as the OLD-referencing item, so
+      // oldOrNewReturningColumns returns forcedColumns = {2} (non-null) with itemCount = 2. Since
+      // the real column count is 3 (the star's own 2-column expansion was never counted),
       // PgCatalogLoader's "oldOrNewColumns.isNotEmpty() && itemCount != totalColumnCount" check
-      // (2 != 3) fires and forces EVERY column nullable — the item-count cross-check itself, not
+      // (2 != 3) fires and forces every column nullable — the item-count cross-check itself, not
       // the "forcedColumns == null" branch the other star-plus-OLD tests in this class exercise.
       // The outcome is the same safe over-approximation either way, which is exactly why this
       // gap in oldOrNewReturningColumns's alias-awareness is not itself a bug: the cross-check
-      // makes the missed recognition harmless. Verified against real Postgres (a fresh insert via
-      // ON CONFLICT — no prior row): id = 99, tval = 'x' (both genuinely NOT NULL), oldv = NULL
+      // makes the missed recognition harmless. On real Postgres, with a fresh insert via ON
+      // CONFLICT — no prior row: id = 99, tval = 'x' (both genuinely NOT NULL), oldv = NULL
       // (genuinely nullable) — but the safety net over-approximates all three to nullable here.
       // Same reasoning as the parenthesized-star test above: id NOT NULL via its PRIMARY KEY
       // catalog constraint, tval nullable (CTE-nested INSERT assignment tracing not implemented —
@@ -6794,22 +6764,20 @@ class QueryAnalysisTest {
     @Test
     fun `star with whitespace around the dot is recognized by isStarItem and forces every column`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
-      // CORRECTED (was: "not recognized by isStarItem's text heuristic"): #212's fix taught
-      // isStarItem to collapse whitespace around a qualifying dot, so "tgt . *" IS now recognized
-      // — verified via SqlUtilsTest's "recognizes a star item with whitespace around the
+      // isStarItem now collapses whitespace around a qualifying dot, so "tgt . *" is recognized —
+      // confirmed via SqlUtilsTest's "recognizes a star item with whitespace around the
       // qualifying dot". That means oldOrNewReturningColumns itself now returns forcedColumns =
-      // null directly (a RECOGNIZED star coincides with an OLD/NEW reference — see its KDoc), so
+      // null directly (a recognized star coincides with an OLD/NEW reference — see its KDoc), so
       // PgCatalogLoader's forceNullableColumn short-circuits on "oldOrNewColumns == null" and
-      // NEVER reaches the itemCount-vs-real-column-count cross-check below it — this test no
+      // never reaches the itemCount-vs-real-column-count cross-check below it — this test no
       // longer exercises that cross-check at all (see the class KDoc). Kept as a regression guard
-      // for the observable end-to-end nullability outcome (which happens to be UNCHANGED here,
+      // for the observable end-to-end nullability outcome (which happens to be unchanged here,
       // because "tgt" has two columns and the pre-fix itemCount already mismatched the real
       // column count regardless of recognition — see `an OLD reference forces every column
       // nullable when a star recognition change loses per-column precision` for a case where
-      // recognizing a star DOES change the observable outcome), not as cross-check coverage.
-      // Verified against real Postgres (a fresh insert via ON CONFLICT — no prior row, so OLD
-      // does not exist): id = 99, tval = 'y' (both genuinely NOT NULL), oldv = NULL (genuinely
-      // nullable).
+      // recognizing a star does change the observable outcome), not as cross-check coverage. On
+      // real Postgres, with a fresh insert via ON CONFLICT — no prior row, so OLD does not exist:
+      // id = 99, tval = 'y' (both genuinely NOT NULL), oldv = NULL (genuinely nullable).
       // Same reasoning as the two star-plus-OLD tests above.
       val query = analyzeWithSchema(
         "CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT)",
@@ -6830,21 +6798,21 @@ class QueryAnalysisTest {
     @Test
     fun `an OLD reference forces every column nullable when a star recognition change loses per-column precision`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
-      // Pins a REAL, INTENTIONAL nullability outcome change from teaching isStarItem to
+      // Pins a real, intentional nullability outcome change from teaching isStarItem to
       // recognize "tgt . *" — not merely a different code path reaching the same answer, unlike
-      // the sibling tests above. "tgt" here has exactly ONE column, so "tgt.*"'s real expansion
+      // the sibling tests above. "tgt" here has exactly one column, so "tgt.*"'s real expansion
       // (1 column) plus "oldv" (1 column) happens to equal the assumed item count (2) — before
       // isStarItem recognized "tgt . *", oldOrNewReturningColumns computed forcedColumns = {2}
-      // (only "oldv") with NO itemCount mismatch to trigger the cross-check, so PgCatalogLoader's
-      // per-column forcing applied PRECISELY: "id" (from tgt.*'s expansion) was governed by its
+      // (only "oldv") with no itemCount mismatch to trigger the cross-check, so PgCatalogLoader's
+      // per-column forcing applied precisely: "id" (from tgt.*'s expansion) was governed by its
       // real attnotnull (a PRIMARY KEY column — genuinely NOT NULL), and only "oldv" was forced.
-      // Now that "tgt . *" IS recognized, oldOrNewReturningColumns returns forcedColumns = null
-      // directly, and PgCatalogLoader forces EVERY column nullable — "id" included, even though
-      // it is genuinely NOT NULL. The direction is SAFE (over-nullable beats a fabricated NOT
+      // Now that "tgt . *" is recognized, oldOrNewReturningColumns returns forcedColumns = null
+      // directly, and PgCatalogLoader forces every column nullable — "id" included, even though
+      // it is genuinely NOT NULL. The direction is safe (over-nullable beats a fabricated NOT
       // NULL elsewhere), which is why it is kept rather than reverted, but it is a real loss of
       // precision for this specific shape, not merely a different route to an unchanged answer.
-      // Verified against real Postgres (a fresh insert via ON CONFLICT — no prior row, so OLD
-      // does not exist): id = 99 (genuinely NOT NULL), oldv = NULL (genuinely nullable).
+      // On real Postgres, with a fresh insert via ON CONFLICT — no prior row, so OLD does not
+      // exist: id = 99 (genuinely NOT NULL), oldv = NULL (genuinely nullable).
       // prosqlbody reports "id" NOT NULL directly off its PRIMARY KEY catalog constraint (the
       // precision the pre-fix production code path happened to have here too), "oldv" nullable
       // via the blanket OLD-forcing rule.
@@ -6866,12 +6834,12 @@ class QueryAnalysisTest {
     @Test
     fun `the same precision loss extends to one of the newly-normalized star spellings`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
-      // Same outcome change as the test above, for one of the THREE spellings isStarItem was
-      // fixed to additionally normalize (a trailing comment sitting OUTSIDE a wrapping
+      // Same outcome change as the test above, for one of the three spellings isStarItem was
+      // fixed to additionally normalize (a trailing comment sitting outside a wrapping
       // parenthesis) — confirming the precision loss extends to those spellings too, exactly as
       // expected: any input that flips from "unrecognized" to "recognized" on a one-column
-      // relation loses this same per-column precision. Verified against real Postgres 18.4: "(tgt
-      // .*) -- c" is valid syntax, id = 99 (genuinely NOT NULL), oldv = NULL (genuinely nullable).
+      // relation loses this same per-column precision. PostgreSQL 18.4: "(tgt .*) -- c" is valid
+      // syntax, id = 99 (genuinely NOT NULL), oldv = NULL (genuinely nullable).
       // Same reasoning as the test above.
       val query = analyzeWithSchema(
         "CREATE TABLE tgt (id INT PRIMARY KEY)",
@@ -6890,27 +6858,26 @@ class QueryAnalysisTest {
     @Test
     fun `an untracked bracket can no longer cancel out a star's split error and defeat the cross-check`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
-      // FIX 1: splitAtTopLevel previously did not track "[...]", so "ARRAY[1, 2]"'s internal comma
-      // split it into two items — which, in THIS exact list, numerically canceled out the "tgt . *"
+      // splitAtTopLevel previously did not track "[...]", so "ARRAY[1, 2]"'s internal comma
+      // split it into two items — which, in this exact list, numerically canceled out the "tgt . *"
       // star's own split error: 4 real columns (id, tval, oldv, arr), and a broken split
-      // ["tgt . *", "OLD.tval AS oldv", "ARRAY[1", "2] AS arr"] that ALSO produced 4 items,
+      // ["tgt . *", "OLD.tval AS oldv", "ARRAY[1", "2] AS arr"] that also produced 4 items,
       // defeating oldOrNewReturningColumns's real-column-count cross-check entirely and forcing
-      // the WRONG column (the second half of "tgt.*"'s expansion, i.e. tval) instead of "oldv".
-      // CORRECTED (was: "the safety net over-approximates ... because real column count 4 vs. the
-      // CORRECTLY split item count 3"): #212's later fix taught isStarItem to recognize "tgt . *"
-      // (whitespace around the dot), so oldOrNewReturningColumns now returns forcedColumns = null
-      // directly for THIS list — a RECOGNIZED star coincides with an OLD/NEW reference — and
-      // PgCatalogLoader's forceNullableColumn short-circuits on that null before ever comparing
-      // item count (3) against real column count (4). The item-count cross-check this test
-      // originally exercised is therefore NOT reached here anymore either; see the class KDoc.
-      // The observable outcome (all four forced nullable) is UNCHANGED here regardless, because
-      // the pre-fix itemCount already mismatched the real column count on its own — see `an OLD
-      // reference forces every column nullable when a star recognition change loses per-column
-      // precision` for a case where recognizing a star DOES change the observable outcome.
-      // Verified against real Postgres (a fresh insert via ON CONFLICT — no prior row): id = 99,
-      // tval = 'x', arr = {1,2} (all genuinely NOT NULL), oldv = NULL (genuinely nullable) — the
-      // safety net still over-approximates all four to nullable, same accepted tradeoff as the
-      // other star-plus-OLD tests in this file, just reached via a different branch than before.
+      // the wrong column (the second half of "tgt.*"'s expansion, i.e. tval) instead of "oldv".
+      // isStarItem was later taught to recognize "tgt . *" (whitespace around the dot), so
+      // oldOrNewReturningColumns now returns forcedColumns = null directly for this list — a
+      // recognized star coincides with an OLD/NEW reference — and PgCatalogLoader's
+      // forceNullableColumn short-circuits on that null before ever comparing item count (3)
+      // against real column count (4). The item-count cross-check this test originally exercised
+      // is therefore not reached here anymore either; see the class KDoc. The observable outcome
+      // (all four forced nullable) is unchanged here regardless, because the pre-fix itemCount
+      // already mismatched the real column count on its own — see `an OLD reference forces every
+      // column nullable when a star recognition change loses per-column precision` for a case
+      // where recognizing a star does change the observable outcome. On real Postgres, with a
+      // fresh insert via ON CONFLICT — no prior row: id = 99, tval = 'x', arr = {1,2} (all
+      // genuinely NOT NULL), oldv = NULL (genuinely nullable) — the safety net still
+      // over-approximates all four to nullable, same accepted tradeoff as the other star-plus-OLD
+      // tests in this file, just reached via a different branch than before.
       // prosqlbody: id NOT NULL (PRIMARY KEY catalog constraint), tval nullable (CTE-nested
       // assignment tracing not implemented, safe not maximal), oldv nullable (blanket OLD-forcing),
       // arr NOT NULL — ARRAY[1, 2] is a genuine array-literal constructor, never itself NULL.
@@ -6934,22 +6901,22 @@ class QueryAnalysisTest {
     @Test
     fun `an untracked bracket alone, with no star at all, no longer corrupts the item count`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
-      // NOT independently demonstrative of FIX 1: confirmed (via the established git-stash
-      // before/after technique) that this exact shape ALREADY passed at 94b5a2d — the untracked
-      // "[...]" corrupted the split into 3 items ("ARRAY[1", "2] AS arr", "OLD.tval AS oldv")
-      // against 2 real columns, and that MISMATCH (3 != 2) was already caught by the existing
-      // real-column-count cross-check, which forced every column nullable — coincidentally
-      // correct for "oldv" (genuinely nullable) even before this fix. What this DOES confirm is
-      // that FIX 1 doesn't regress this shape: after tracking "[...]", the split is the CORRECT 2
-      // items, oldOrNewReturningColumns identifies "oldv" (not "arr") as the OLD-referencing item
-      // via precise per-column mapping rather than the coarser "force everything" fallback — a
-      // structural improvement even though it happens to produce the same observable nullability
-      // here. It does NOT prove "arr" keeps its true NOT NULL status either way: the stub path's
-      // own metadata probe reports a computed `ARRAY[]` expression's nullability as
-      // unknown/nullable regardless of forceNullableColumn, a separate, pre-existing imprecision
-      // of the metadata-probe stub itself, not of this fix. Verified against real Postgres (a
-      // fresh insert via ON CONFLICT): arr = {1,2} (genuinely NOT NULL), oldv = NULL (genuinely
-      // nullable — no prior row).
+      // This alone does not demonstrate the "[...]"-tracking fix: confirmed (via the established
+      // git-stash before/after technique) that this exact shape already passed at 94b5a2d — the
+      // untracked "[...]" corrupted the split into 3 items ("ARRAY[1", "2] AS arr", "OLD.tval AS
+      // oldv") against 2 real columns, and that mismatch (3 != 2) was already caught by the
+      // existing real-column-count cross-check, which forced every column nullable —
+      // coincidentally correct for "oldv" (genuinely nullable) even before this fix. What this
+      // does confirm is that the fix doesn't regress this shape: after tracking "[...]", the
+      // split is the correct 2 items, oldOrNewReturningColumns identifies "oldv" (not "arr") as
+      // the OLD-referencing item via precise per-column mapping rather than the coarser "force
+      // everything" fallback — a structural improvement even though it happens to produce the
+      // same observable nullability here. It does not prove "arr" keeps its true NOT NULL status
+      // either way: the stub path's own metadata probe reports a computed `ARRAY[]` expression's
+      // nullability as unknown/nullable regardless of forceNullableColumn, a separate,
+      // pre-existing imprecision of the metadata-probe stub itself, not of this fix. On real
+      // Postgres, with a fresh insert via ON CONFLICT: arr = {1,2} (genuinely NOT NULL), oldv =
+      // NULL (genuinely nullable — no prior row).
       // prosqlbody structurally recognizes ARRAY[1, 2] as a genuine array-literal constructor,
       // never itself NULL — "oldv" stays nullable via the blanket OLD-forcing rule.
       val query = analyzeWithSchema(
@@ -6970,19 +6937,19 @@ class QueryAnalysisTest {
     @Test
     fun `an OLD reference without a star still forces only the referencing column, not the whole body`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
-      // Restores coverage lost when #212 taught isStarItem to recognize "tgt . *": every OTHER
+      // Restores coverage lost when isStarItem was taught to recognize "tgt . *": every other
       // test in this class now involves a star, so every one of them resolves via
-      // oldOrNewReturningColumns's forcedColumns = null (a RECOGNIZED star coincides with an
+      // oldOrNewReturningColumns's forcedColumns = null (a recognized star coincides with an
       // OLD/NEW reference) and PgCatalogLoader's whole-body forceAllNullable fallback — leaving
-      // NOTHING in this class asserting on the DISTINCT per-column forcing mechanism
+      // nothing in this class asserting on the distinct per-column forcing mechanism
       // (forcedColumns non-null, containing only the specific OLD/NEW-referencing item's index).
       // With no star at all here, itemCount trivially matches the real column count, so
       // oldOrNewMappingUnreliable is false and PgCatalogLoader's
       // "oldOrNewColumns.orEmpty().contains(columnIndex)" line is what decides each column's
       // fate. If that per-column check were ever replaced by forcing the whole body nullable
-      // whenever ANY OLD/NEW reference is present, "id" below would flip from NOT NULL to
-      // nullable and this assertion would fail. Verified against real Postgres (a fresh insert
-      // via ON CONFLICT — no prior row, so OLD does not exist): id = 99 (genuinely NOT NULL, the
+      // whenever any OLD/NEW reference is present, "id" below would flip from NOT NULL to
+      // nullable and this assertion would fail. On real Postgres, with a fresh insert via ON
+      // CONFLICT — no prior row, so OLD does not exist: id = 99 (genuinely NOT NULL, the
       // just-inserted row's own column), oldv = NULL (genuinely nullable).
       val query = analyzeWithSchema(
         "CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT)",
@@ -7008,7 +6975,7 @@ class QueryAnalysisTest {
    * The target list VARs reference the first subquery RTE, whose varno has no entry in the base-table
    * range table, so [NodeTreeNullabilityAnalyzer] defaults to nullable.
    *
-   * CTE-wrapped set operations DO analyze branches (see [CommonTableExpressions]) because the CTE
+   * CTE-wrapped set operations do analyze branches (see [CommonTableExpressions]) because the CTE
    * analysis pipeline can safely iterate all branches. Direct (non-CTE) set operations could be
    * improved similarly but aren't yet — these tests document the current conservative behavior.
    */
@@ -7155,9 +7122,9 @@ class QueryAnalysisTest {
     @Test
     fun `JSON_VALUE with DEFAULT on empty and error is still nullable`() {
       // JSON_VALUE unwraps a path match to a JSON `null` value into a genuine SQL NULL — a
-      // successful match, not the "no match"/"error" case ON EMPTY/ON ERROR control. Verified
-      // live: `JSON_VALUE('{"name": null}'::jsonb, '$.name' RETURNING TEXT DEFAULT 'N/A' ON EMPTY
-      // DEFAULT 'ERR' ON ERROR) IS NULL` is `true`.
+      // successful match, not the "no match"/"error" case ON EMPTY/ON ERROR control. On real
+      // Postgres, `JSON_VALUE('{"name": null}'::jsonb, '$.name' RETURNING TEXT DEFAULT 'N/A' ON
+      // EMPTY DEFAULT 'ERR' ON ERROR) IS NULL` is `true`.
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_VALUE requires PostgreSQL 17+")
       val query = analyzeWithSchema(
         "CREATE TABLE t (data jsonb NOT NULL)",
@@ -7169,9 +7136,10 @@ class QueryAnalysisTest {
     @Test
     fun `JSON_QUERY with DEFAULT on empty and error is non-null for a non-null context item`() {
       // Unlike JSON_VALUE, JSON_QUERY never unwraps a matched JSON `null` into a genuine SQL NULL
-      // — it returns the JSON text `null` instead. Verified live: `JSON_QUERY('{"a": null}'::jsonb,
-      // '$.a' EMPTY ARRAY ON EMPTY EMPTY OBJECT ON ERROR) IS NULL` is `false`, so a proven non-null
-      // context item combined with safe ON EMPTY/ON ERROR behavior is a genuinely non-null column.
+      // — it returns the JSON text `null` instead. On real Postgres,
+      // `JSON_QUERY('{"a": null}'::jsonb, '$.a' EMPTY ARRAY ON EMPTY EMPTY OBJECT ON ERROR) IS
+      // NULL` is `false`, so a proven non-null context item combined with safe ON EMPTY/ON ERROR
+      // behavior is a genuinely non-null column.
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_QUERY requires PostgreSQL 17+")
       val query = analyzeWithSchema(
         "CREATE TABLE t (data jsonb NOT NULL)",
@@ -7203,8 +7171,8 @@ class QueryAnalysisTest {
     @Test
     fun `MERGE WHEN NOT MATCHED BY SOURCE RETURNING JSON_QUERY over the source column is nullable`() {
       // The source Var (jsrc.doc) is buried inside a JsonExpr argument, not read directly — this
-      // is the shape containsVarOutsideRelation must recurse into a JsonExpr to see. Verified
-      // live: for the deleted (source-absent) row, this whole expression is NULL despite doc
+      // is the shape containsVarOutsideRelation must recurse into a JsonExpr to see. On real
+      // Postgres, for the deleted (source-absent) row, this whole expression is NULL despite doc
       // being NOT NULL and both ON EMPTY/ON ERROR defaults being non-null constants — the source
       // row itself never existed, so there was nothing for JSON_QUERY to evaluate against.
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
@@ -7226,7 +7194,7 @@ class QueryAnalysisTest {
     @Test
     fun `MERGE WHEN NOT MATCHED BY SOURCE RETURNING JSON_EXISTS over the source column is nullable`() {
       // Same JsonExpr-hides-a-Var shape as the JSON_QUERY case above, for the JSON_EXISTS_OP
-      // variant of JsonExpr. Verified live: NULL, not `false`, for the source-absent row — the
+      // variant of JsonExpr. On real Postgres: NULL, not `false`, for the source-absent row — the
       // source row itself is absent, so there is nothing for JSON_EXISTS to test against.
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
       val query = analyzeWithSchema(
@@ -7246,8 +7214,9 @@ class QueryAnalysisTest {
 
     @Test
     fun `MERGE WHEN NOT MATCHED BY SOURCE RETURNING JSON_VALUE over the source column is nullable`() {
-      // Same JsonExpr-hides-a-Var shape, for the JSON_VALUE_OP variant. Verified live: NULL for
-      // the source-absent row despite both ON EMPTY/ON ERROR defaults being non-null constants.
+      // Same JsonExpr-hides-a-Var shape, for the JSON_VALUE_OP variant. On real Postgres: NULL
+      // for the source-absent row despite both ON EMPTY/ON ERROR defaults being non-null
+      // constants.
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
       val query = analyzeWithSchema(
         """
@@ -7275,7 +7244,7 @@ class QueryAnalysisTest {
       // the fixture data, is the shape that can actually resolve NOT NULL — `to_jsonb(text)` was
       // deliberately avoided here since it is not itself on any never-null-for-non-null-input
       // safe-list and would make this control fail for a reason unrelated to containsVarOutsideRelation.
-      // Verified live: `IS NULL` is `false` for the matched row.
+      // On real Postgres, `IS NULL` is `false` for the matched row.
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "MERGE RETURNING requires PostgreSQL 17+")
       val query = analyzeWithSchema(
         """
@@ -7315,7 +7284,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `JSON_SERIALIZE over a nullable jsonb column is nullable`() {
-      // The bug this fix closes: JSON_SERIALIZE(NULL::jsonb) IS NULL is true (verified live,
+      // The bug this fix closes: JSON_SERIALIZE(NULL::jsonb) IS NULL is true (confirmed on
       // PostgreSQL 18.4), so a nullable jsonb argument must produce a nullable result column —
       // previously reported unconditionally NOT NULL regardless of the argument.
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_SERIALIZE requires PostgreSQL 17+")
@@ -7338,10 +7307,10 @@ class QueryAnalysisTest {
 
     @Test
     fun `JSON() over a nullable text column is nullable`() {
-      // JSON(expr) is JSON_CONSTRUCTOR_TYPE_PARSE — its single argument is ALWAYS wrapped in a
-      // JSONVALUEEXPR (verified live), so this also pins that the parser's transparent unwrap keeps
-      // the real column's own nullability visible rather than degrading to Unknown (always
-      // nullable, masking the distinction this test exists to catch).
+      // JSON(expr) is JSON_CONSTRUCTOR_TYPE_PARSE — its single argument is always wrapped in a
+      // JSONVALUEEXPR, so this also pins that the parser's transparent unwrap keeps the real
+      // column's own nullability visible rather than degrading to Unknown (always nullable,
+      // masking the distinction this test exists to catch).
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON() requires PostgreSQL 17+")
       val query = analyzeWithSchema(
         "CREATE TABLE t (data text)",
@@ -7353,7 +7322,7 @@ class QueryAnalysisTest {
     @Test
     fun `JSON() over a NOT NULL text column is non-null`() {
       // The precision half of the JSONVALUEEXPR-unwrap pin above: without unwrapping, this argument
-      // would parse to Unknown and ALWAYS be reported nullable regardless of the source column's own
+      // would parse to Unknown and always be reported nullable regardless of the source column's own
       // NOT NULL constraint — a spurious widening this test would catch as a failure.
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON() requires PostgreSQL 17+")
       val query = analyzeWithSchema(
@@ -7385,16 +7354,16 @@ class QueryAnalysisTest {
 
     @Test
     fun `JSON_OBJECT with zero arguments is non-null`() {
-      // Verified live: JSON_OBJECT() IS NULL is false on every supported version — JSON_OBJECT/
-      // JSON_ARRAY (JsonConstructorType 1/2) are stable back to PostgreSQL 16.
+      // On real Postgres, JSON_OBJECT() IS NULL is false on every supported version —
+      // JSON_OBJECT/JSON_ARRAY (JsonConstructorType 1/2) are stable back to PostgreSQL 16.
       val query = analyzeWithSchema("CREATE TABLE t (id int NOT NULL)", "SELECT JSON_OBJECT() AS result FROM t")
       assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
     fun `JSON_OBJECT with NULL ON NULL over a nullable value column stays non-null`() {
-      // ABSENT ON NULL / NULL ON NULL only change the JSON document's CONTENT, never whether the
-      // SQL-level result itself is null — verified live: JSON_OBJECT('a': NULL NULL ON NULL) IS
+      // ABSENT ON NULL / NULL ON NULL only change the JSON document's content, never whether the
+      // SQL-level result itself is null. On real Postgres, JSON_OBJECT('a': NULL NULL ON NULL) IS
       // NULL is false, even though the value argument is a literal SQL NULL.
       val query = analyzeWithSchema(
         "CREATE TABLE t (val text)",
@@ -7411,8 +7380,8 @@ class QueryAnalysisTest {
 
     @Test
     fun `JSON_OBJECTAGG is nullable`() {
-      // Verified live: JSON_OBJECTAGG over an empty group IS NULL is true — the aggregate has no
-      // non-null initial transition value (pg_aggregate.agginitval IS NULL), the same property
+      // On real Postgres, JSON_OBJECTAGG over an empty group IS NULL is true — the aggregate has
+      // no non-null initial transition value (pg_aggregate.agginitval IS NULL), the same property
       // hasNonNullInitialValue already checks for every other Aggref. JsonConstructorType 3/4 are
       // stable back to PostgreSQL 16.
       val query = analyzeWithSchema(
@@ -7424,7 +7393,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `JSON_ARRAYAGG is nullable`() {
-      // Verified live: JSON_ARRAYAGG over an empty group IS NULL is true.
+      // On real Postgres, JSON_ARRAYAGG over an empty group IS NULL is true.
       val query = analyzeWithSchema(
         "CREATE TABLE t (v int NOT NULL)",
         "SELECT JSON_ARRAYAGG(v) AS result FROM t",
@@ -7434,7 +7403,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `JSON_OBJECTAGG OVER a window is nullable`() {
-      // The WindowFunc leg of JsonConstructorExpr.function: verified live that JSON_OBJECTAGG(...)
+      // The WindowFunc leg of JsonConstructorExpr.function: confirmed that JSON_OBJECTAGG(...)
       // OVER (...) puts a WINDOWFUNC node, not an AGGREF, under :func — this pins that
       // safetyWalkChildren/isNonNull still reach it and route through the existing WindowFunc rule
       // (which reports nullable here, same as any other non-safe-listed window function).
@@ -7557,8 +7526,8 @@ class QueryAnalysisTest {
 
     @Test
     fun `XMLFOREST over a single nullable field is nullable`() {
-      // Live on PostgreSQL 16, 17 and 18: xmlforest(NULL::text AS q) IS NULL. XMLFOREST omits a null
-      // field and yields null only once every field has been omitted.
+      // PostgreSQL 16-18: xmlforest(NULL::text AS q) IS NULL. XMLFOREST omits a null field and
+      // yields null only once every field has been omitted.
       val query = analyzeWithSchema(
         "CREATE TABLE t (name TEXT)",
         "SELECT xmlforest(name) AS result FROM t",
@@ -7568,7 +7537,8 @@ class QueryAnalysisTest {
 
     @Test
     fun `XMLFOREST with one non-null field among nullable ones is non-null`() {
-      // Live: xmlforest(NULL::text AS q, 'x' AS r) is NOT null — one surviving field is enough.
+      // On real Postgres, xmlforest(NULL::text AS q, 'x' AS r) is not null — one surviving field
+      // is enough.
       val query = analyzeWithSchema(
         "CREATE TABLE t (name TEXT, kept TEXT NOT NULL)",
         "SELECT xmlforest(name, kept) AS result FROM t",
@@ -7578,7 +7548,8 @@ class QueryAnalysisTest {
 
     @Test
     fun `XMLPI without a content expression is non-null`() {
-      // Live: xmlpi(name php) is NOT null — the processing instruction still materializes.
+      // On real Postgres, xmlpi(name php) is not null — the processing instruction still
+      // materializes.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL)",
         "SELECT xmlpi(name php) AS result FROM t",
@@ -7588,7 +7559,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `XMLPI over a nullable content expression is nullable`() {
-      // Live: xmlpi(name php, NULL::text) IS NULL.
+      // On real Postgres, xmlpi(name php, NULL::text) IS NULL.
       val query = analyzeWithSchema(
         "CREATE TABLE t (body TEXT)",
         "SELECT xmlpi(name php, body) AS result FROM t",
@@ -7598,7 +7569,8 @@ class QueryAnalysisTest {
 
     @Test
     fun `XMLELEMENT over a nullable child stays non-null`() {
-      // Live: xmlelement(name e, NULL::text) is NOT null — the element tag always materializes.
+      // On real Postgres, xmlelement(name e, NULL::text) is not null — the element tag always
+      // materializes.
       val query = analyzeWithSchema(
         "CREATE TABLE t (name TEXT)",
         "SELECT xmlelement(NAME e, name) AS result FROM t",
@@ -7678,8 +7650,8 @@ class QueryAnalysisTest {
       // that fallback was a text-based probe with no way to recognize a RowExpr's own shape, so it
       // reported nullable rather than assert a proof it did not actually perform, even though a
       // constructed ROW(...) value is, in fact, never itself NULL. The fallback is prosqlbody now:
-      // it is NOT subject to CREATE VIEW's pseudo-type rejection, and RowExpr is a node type its
-      // structural analysis already recognizes as never itself NULL. Verified live: `SELECT
+      // it is not subject to CREATE VIEW's pseudo-type rejection, and RowExpr is a node type its
+      // structural analysis already recognizes as never itself NULL. On real Postgres, `SELECT
       // ROW(a, b) AS result FROM t` returns `result = (1,2)` for a matching row, never NULL.
       val query = analyzeWithSchema(
         "CREATE TABLE t (a INT NOT NULL, b INT NOT NULL)",
@@ -7693,13 +7665,13 @@ class QueryAnalysisTest {
       // This SQL has no DML at all, but CREATE VIEW rejects a bare ROW(...)'s anonymous "record"
       // pseudo-type regardless, so it still reaches queryColumnNullability's fallback — prosqlbody
       // now, in production. Before the cutover, that fallback's text-based null-extending-construct
-      // scan found the LEFT JOIN and forced EVERY column nullable, including "t.a", which is
+      // scan found the LEFT JOIN and forced every column nullable, including "t.a", which is
       // declared NOT NULL and is never actually null-extended by this join (t is the LEFT side,
       // not u) — an accepted, safe-direction imprecision at the time (a metadata-only answer that
       // instead trusted the join structure would have been unsafe for the mirror case, `SELECT u.x
-      // FROM t LEFT JOIN u`, where `u.x` genuinely CAN be null-extended). prosqlbody reads the same
-      // :varnullingrels this whole cutover is built on, so it resolves BOTH correctly without that
-      // tradeoff: verified live, both columns are genuinely NOT NULL for a matching row.
+      // FROM t LEFT JOIN u`, where `u.x` genuinely can be null-extended). prosqlbody reads the same
+      // :varnullingrels this whole cutover is built on, so it resolves both correctly without that
+      // tradeoff: on real Postgres, both columns are genuinely NOT NULL for a matching row.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (a INT NOT NULL, b INT NOT NULL);
@@ -7731,9 +7703,9 @@ class QueryAnalysisTest {
 
     @Test
     fun `NULLIF makes a view column nullable even though the source column of the same name is NOT NULL`() {
-      // #256: the previous pg_depend name-join inherited "u.v"'s NOT NULL constraint for the view
-      // column purely because both are named "v", never consulting NULLIF itself — which can always
-      // return null. Verified live: PostgreSQL returns null for every row here.
+      // The previous pg_depend name-join inherited "u.v"'s NOT NULL constraint for the view
+      // column purely because both are named "v", never consulting NULLIF itself — which can
+      // always return null. On real Postgres, PostgreSQL returns null for every row here.
       val query = analyzeWithSchema(
         """
         CREATE TABLE u (v TEXT NOT NULL);
@@ -7834,10 +7806,10 @@ class QueryAnalysisTest {
 
     @Test
     fun `renamed pass-through view column stays NOT NULL, matching the same-named case`() {
-      // #256 corollary: the previous pg_depend name-join matched by NAME, so renaming a genuine
-      // NOT NULL pass-through column ("v" to "other_name") lost the match entirely and fell back
-      // to reporting it nullable — even though PostgreSQL never returns null for it. This is a
-      // BEHAVIOR CHANGE from the pre-fix `false` answer.
+      // The previous pg_depend name-join matched by name, so renaming a genuine NOT NULL
+      // pass-through column ("v" to "other_name") lost the match entirely and fell back to
+      // reporting it nullable — even though PostgreSQL never returns null for it. This is a
+      // behavior change from the pre-fix `false` answer.
       val query = analyzeWithSchema(
         """
         CREATE TABLE u (v TEXT NOT NULL);
@@ -7850,10 +7822,10 @@ class QueryAnalysisTest {
 
     @Test
     fun `an ORDER BY expression appended as a resjunk target entry does not shift a real column's attnum alignment`() {
-      // #256's resno-contiguity fact: "length(v)" is not in the SELECT list, so PostgreSQL appends
-      // it as a resjunk=true target-list entry AFTER the real "v" column. If the view-column
-      // resolver mis-aligned by index instead of by (junk-filtered, resno-sorted) position, this
-      // would misread "v" using the junk entry's answer instead of its own.
+      // "length(v)" is not in the SELECT list, so PostgreSQL appends it as a resjunk=true
+      // target-list entry after the real "v" column. If the view-column resolver mis-aligned by
+      // index instead of by (junk-filtered, resno-sorted) position, this would misread "v" using
+      // the junk entry's answer instead of its own.
       val query = analyzeWithSchema(
         """
         CREATE TABLE u (v TEXT NOT NULL);
@@ -7893,10 +7865,10 @@ class QueryAnalysisTest {
 
     @Test
     fun `a mutual view dependency cycle built via CREATE OR REPLACE VIEW resolves nullable, not a stack overflow`() {
-      // A genuine cyclic view CAN be constructed against a live PostgreSQL database: CREATE OR
-      // REPLACE VIEW does not require every relation the NEW definition references to have existed
-      // when the ORIGINAL view was created, only that they exist at the moment of the replace
-      // itself. Verified live, PostgreSQL 18.4: "a" and "b" below end up mutually dependent.
+      // A genuine cyclic view can be constructed against a live PostgreSQL database: CREATE OR
+      // REPLACE VIEW does not require every relation the new definition references to have existed
+      // when the original view was created, only that they exist at the moment of the replace
+      // itself. PostgreSQL 18.4: "a" and "b" below end up mutually dependent.
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         connection.createStatement().use {
@@ -7963,11 +7935,11 @@ class QueryAnalysisTest {
     fun `warming with a view at exactly the truncation boundary no longer changes the deepest view's answer`() {
       // Direct pin for the depth-before-memo ordering fix: on a chain of exactly
       // VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET + 2 views, the deepest view's own resolution
-      // truncates trying to enter view_1 — the relid sitting EXACTLY at the boundary. Before this
+      // truncates trying to enter view_1 — the relid sitting exactly at the boundary. Before this
       // fix, warming with view_1 first (a shallow view that completes correctly and stays
       // permanently memoized) let the deepest view's later resolution skip truncation entirely by
-      // reusing that cache — verified live, PostgreSQL 18.4: resolve(deepest) alone gave `[true]`,
-      // but resolve(view_1) first then resolve(deepest) gave `[false]` instead. Both now agree.
+      // reusing that cache. PostgreSQL 18.4: resolve(deepest) alone gave `[true]`, but
+      // resolve(view_1) first then resolve(deepest) gave `[false]` instead. Both now agree.
       val chainDepth = VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET + 2
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
@@ -8126,9 +8098,9 @@ class QueryAnalysisTest {
     fun `resolving one view first does not change a later, independent resolution of another`(
       fixture: ViewOrderIndependenceFixture,
     ) {
-      // Regression pin for the memo-poisoning/taint-tracking defect: a LATER, SEPARATE top-level
+      // Regression pin for the memo-poisoning/taint-tracking defect: a later, separate top-level
       // resolveViewColumnNullability call must give the identical answer regardless of what an
-      // EARLIER, already-completed (and fully unwound) top-level call happened to touch first — see
+      // earlier, already-completed (and fully unwound) top-level call happened to touch first — see
       // viewColumnNullabilityTaintedRelids' KDoc for the mechanism this pins (taint-tracking +
       // evict-at-depth-0), and viewOrderIndependenceFixtures' KDoc for why each of the three
       // fixtures is here.
@@ -8141,7 +8113,7 @@ class QueryAnalysisTest {
         }
         try {
           val relidByView = fixture.views.associateWith { view -> regclassOid(connection, view) }
-          // Ground truth: each view resolved on its OWN completely untouched analyzer — nothing else
+          // Ground truth: each view resolved on its own completely untouched analyzer — nothing else
           // has ever been resolved on it, so its answer cannot possibly have been influenced by
           // resolution order.
           val groundTruth = fixture.views.associateWith { view ->
@@ -8150,9 +8122,9 @@ class QueryAnalysisTest {
             ).resolveViewColumnNullability(relidByView.getValue(view))
           }
 
-          // Every ORDERED pair (warm, check) with warm != check: resolving `warm` first, as its OWN
+          // Every ordered pair (warm, check) with warm != check: resolving `warm` first, as its own
           // complete top-level call (which fully unwinds before `check` is ever touched), must not
-          // change `check`'s own, later, independent resolution — checked for EVERY view in the
+          // change `check`'s own, later, independent resolution — checked for every view in the
           // fixture (both as the thing warmed with, and the thing checked afterward), which is what
           // "for every view in the fixture, in both resolution orders" means here.
           for (warmView in fixture.warmTriggers) {
@@ -8181,7 +8153,7 @@ class QueryAnalysisTest {
      *    PostgreSQL itself cannot execute — so what must not happen is that ambiguity leaking into a
      *    later, standalone resolution of either view.
      * 3. `top -> {a, mid}`, `a -> mid`, `mid -> self-cycle` — the decisive shape for memo-hit taint
-     *    propagation: `top` reads `mid` before `a`, so `a`'s own reference to `mid` is a PURE memo
+     *    propagation: `top` reads `mid` before `a`, so `a`'s own reference to `mid` is a pure memo
      *    read of an already-tainted entry. Because `mid` is an unconditional self-cycle, its answer
      *    is invariant whether recomputed or served stale, so this fixture cannot observe the hole by
      *    value — see the [ColumnNullabilityAnalyzer.isRelidMemoized] test below.
@@ -8217,9 +8189,9 @@ class QueryAnalysisTest {
           name = "a chain deeper than the recursion budget",
           ddl = chainDdl,
           views = chainViews,
-          // Deliberately ONLY the deepest tip, not every view — see this fixture's own KDoc (and
-          // VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET's) for why warming with an INTERMEDIATE,
-          // shallower view is NOT safe in general, even after the depth-before-memo fix.
+          // Deliberately only the deepest tip, not every view — see this fixture's own KDoc (and
+          // VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET's) for why warming with an intermediate,
+          // shallower view is not safe in general, even after the depth-before-memo fix.
           warmTriggers = listOf(chainViews.last()),
         ),
         ViewOrderIndependenceFixture(
@@ -8239,12 +8211,12 @@ class QueryAnalysisTest {
 
     @Test
     fun `a view reached only through an already-tainted memo entry is still evicted, not left stale`() {
-      // The white-box pin for the memo-hit taint-propagation hole itself, specific to this ONE
-      // fixture shape — see ColumnNullabilityAnalyzer.isRelidMemoized's KDoc for why THIS
+      // The white-box pin for the memo-hit taint-propagation hole itself, specific to this one
+      // fixture shape — see ColumnNullabilityAnalyzer.isRelidMemoized's KDoc for why this
       // particular fixture cannot be pinned by output values alone ("mid" is an unconditional
       // self-cycle, so every value derived from it is identical whether "a" is correctly
       // evicted-and-recomputed or incorrectly left stale), unlike the black-box pin right below,
-      // which demonstrates the SAME class of bug IS normally value-observable.
+      // which demonstrates the same class of bug is normally value-observable.
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         connection.createStatement().use {
@@ -8368,7 +8340,7 @@ class QueryAnalysisTest {
           // A generous bound, not a tight wall-clock assertion (see this test's own KDoc for why):
           // linear resolution of ~(prefixDepth + diamondDepth) distinct views is expected to take
           // well under a second; the exponential (skip-memoization) shape this pins against took
-          // over 30 SECONDS at this exact diamondDepth over a comparable truncating prefix, and
+          // over 30 seconds at this exact diamondDepth over a comparable truncating prefix, and
           // roughly doubles for every additional level beyond it.
           assertThat(elapsedMillis < 10_000L).isTrue()
         } finally {
@@ -8448,7 +8420,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `a nullable source column stays nullable, even when a same-named column elsewhere is NOT NULL`() {
-      // Under the pre-#256 pg_depend name-join, "val" matched BOTH "a.val" (NOT NULL, referenced
+      // Under the previous pg_depend name-join, "val" matched both "a.val" (NOT NULL, referenced
       // only in the JOIN condition) and "b.val" (nullable, the actual SELECTed source) purely by
       // name, requiring an any-nullable-source-wins reduction to get this case right. Under full
       // node-tree evaluation there is no name matching at all: the view's target list is a plain
@@ -8504,10 +8476,10 @@ class QueryAnalysisTest {
 
     @Test
     fun `materialized view LEFT JOIN column is genuinely nullable`() {
-      // Before #256, materialized views were entirely excluded from outer-join analysis, so
+      // Before this fix, materialized views were entirely excluded from outer-join analysis, so
       // "mv.label" — genuinely nullable, on the right side of a LEFT JOIN — was wrongly reported
       // NOT NULL (inherited from "e.label"'s own constraint via the pg_depend name-join, with no
-      // outer-join subtraction ever applied to a materialized view). This INVERTS that prior
+      // outer-join subtraction ever applied to a materialized view). This inverts that prior
       // (incorrect) answer.
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
@@ -8540,13 +8512,13 @@ class QueryAnalysisTest {
     @Test
     fun `RETURNING OLD is nullable while RETURNING NEW is not, for the same NOT NULL column`() {
       // PostgreSQL 18's RETURNING WITH (OLD AS o, NEW AS n) marks both the OLD and NEW Vars
-      // byte-identical except :varreturningtype (verified live) — including an EMPTY
-      // :varnullingrels on both — so nothing but that field distinguishes them. This MERGE's WHEN
-      // NOT MATCHED THEN INSERT action has no OLD row to read at all (the target row didn't exist
-      // before this statement ran), so o.name must be nullable regardless of "name"'s own NOT NULL
-      // constraint, while n.name — a fresh value just inserted into that same NOT NULL column, not
-      // outer-join-nulled — is genuinely proven non-null. Verified against real Postgres: querying
-      // the function's own result shows o.name = NULL, n.name = 'new-name' for the inserted row.
+      // byte-identical except :varreturningtype — including an empty :varnullingrels on both, so
+      // nothing but that field distinguishes them. This MERGE's WHEN NOT MATCHED THEN INSERT
+      // action has no OLD row to read at all (the target row didn't exist before this statement
+      // ran), so o.name must be nullable regardless of "name"'s own NOT NULL constraint, while
+      // n.name — a fresh value just inserted into that same NOT NULL column, not
+      // outer-join-nulled — is genuinely proven non-null. On real Postgres, querying the
+      // function's own result shows o.name = NULL, n.name = 'new-name' for the inserted row.
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING WITH (OLD AS o, NEW AS n) requires PG 18+")
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
@@ -8573,7 +8545,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `a trailing line comment does not swallow the probe function's terminator`() {
-      // A trailing "--" comment with nothing after it is an ordinary, syntactically COMPLETE SQL
+      // A trailing "--" comment with nothing after it is an ordinary, syntactically complete SQL
       // statement on its own — the same query text a "queries.sql" file could legitimately end
       // with. The probe wraps it as "BEGIN ATOMIC <sql>; END": without a newline separating <sql>
       // from "; END", the trailing line comment extends over the appended terminator too, and the
@@ -8603,8 +8575,8 @@ class QueryAnalysisTest {
     @Test
     fun `a trailing terminated block comment never needed the newline fix`() {
       // Unlike a "--" line comment, a "/* ... */" block comment closes itself before the appended
-      // "; END" regardless of a newline — verified live. Pinned here so a future change to the
-      // terminator-safety fix cannot silently start relying on this shape needing help it doesn't.
+      // "; END" regardless of a newline. Pinned here so a future change to the terminator-safety
+      // fix cannot silently start relying on this shape needing help it doesn't.
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         connection.createStatement().use {
@@ -8723,10 +8695,10 @@ class QueryAnalysisTest {
 
     @Test
     fun `aggregateHasNonNullInitialValue-listed aggregates are non-null over empty input, unlike sum and avg`() {
-      // The mis-named predecessor of this test only asserted that BOTH the true and false subsets
-      // of aggregateHasNonNullInitialValue were non-empty — a property satisfied even by a WRONG
+      // The mis-named predecessor of this test only asserted that both the true and false subsets
+      // of aggregateHasNonNullInitialValue were non-empty — a property satisfied even by a wrong
       // classification, as long as at least one aggregate landed on each side. This version runs
-      // every aggregate this map claims is non-null-initial over a genuinely EMPTY input (`...
+      // every aggregate this map claims is non-null-initial over a genuinely empty input (`...
       // WHERE false`) and asserts the result really is non-null — the ground truth the map's name
       // claims — then spot-checks that sum/avg/max/min, which the map correctly excludes, really
       // do return null over the same empty input.
@@ -8780,14 +8752,14 @@ class QueryAnalysisTest {
 
     @Test
     fun `immutableFunctionOids includes an immutable example and excludes stable, volatile, and set-returning ones`() {
-      // Deliberately does NOT compare immutableFunctionOids against a live re-query of
+      // Deliberately does not compare immutableFunctionOids against a live re-query of
       // `provolatile = 'i' AND NOT proretset AND prokind IN ('f', 'w')` — PgCatalogLoader.loadImmutableFunctionOids
-      // runs EXACTLY that predicate (see PgCatalogLoader.kt), so an `isEqualTo` against the same
+      // runs exactly that predicate (see PgCatalogLoader.kt), so an `isEqualTo` against the same
       // predicate here could only ever detect broken plumbing (a query that fails to run at all),
-      // never a WRONG predicate: a mutation to the production SQL would move both sides of the
+      // never a wrong predicate: a mutation to the production SQL would move both sides of the
       // comparison together and the test would stay green. The named-function assertions below are
       // this test's only teeth, so they are widened past the original two (STABLE, VOLATILE) to
-      // also cover the SET-RETURNING dimension of the predicate, which nothing here previously
+      // also cover the set-returning dimension of the predicate, which nothing here previously
       // exercised with a concrete example at all: `unnest(anyarray)` is itself IMMUTABLE
       // (`provolatile = 'i'`) but set-returning (`proretset = true`), so it must be excluded by the
       // `NOT proretset` conjunct specifically, not by volatility.
@@ -8820,7 +8792,7 @@ class QueryAnalysisTest {
             }
           }
         }
-        // abs(int4) is IMMUTABLE and non-set-returning: it MUST be present.
+        // abs(int4) is IMMUTABLE and non-set-returning: it must be present.
         val absImmutableOid = requireNotNull(exampleOids["abs(int4)"])
         assertThat(immutableOids.contains(absImmutableOid)).isTrue()
         // date_trunc(text, timestamptz) is STABLE (its result depends on the session timezone).
@@ -8829,7 +8801,7 @@ class QueryAnalysisTest {
         // random() is VOLATILE.
         val randomVolatileOid = requireNotNull(exampleOids["random()"])
         assertThat(immutableOids.contains(randomVolatileOid)).isFalse()
-        // unnest(anyarray) is IMMUTABLE but SET-RETURNING — excluded by NOT proretset, not by volatility.
+        // unnest(anyarray) is IMMUTABLE but set-returning — excluded by NOT proretset, not by volatility.
         val unnestSetReturningOid = requireNotNull(exampleOids["unnest(anyarray)"])
         assertThat(immutableOids.contains(unnestSetReturningOid)).isFalse()
       }
@@ -8837,10 +8809,10 @@ class QueryAnalysisTest {
 
     @Test
     fun `neverNullForNonNullInputOids and lagLeadWithDefaultOids contain no VARIADIC pg_proc rows`() {
-      // PgCatalogLoader.neverNullForNonNullInputOids's KDoc claims NO function on that list is
-      // VARIADIC ("verified live on PostgreSQL 16, 17, and 18") — unlike alwaysNonNullFunctionOids
-      // and nonNullIffFirstArgumentNonNullFunctionOids, whose sole entries (concat/concat_ws) are
-      // DELIBERATELY, DOCUMENTED-ly VARIADIC ("any") and are excluded from this check for exactly
+      // PgCatalogLoader.neverNullForNonNullInputOids's KDoc claims no function on that list is
+      // VARIADIC, checked on PostgreSQL 16-18 — unlike alwaysNonNullFunctionOids and
+      // nonNullIffFirstArgumentNonNullFunctionOids, whose sole entries (concat/concat_ws) are
+      // deliberately, documented VARIADIC ("any") and are excluded from this check for exactly
       // that reason (see PgNodeExpression.FuncExpr.isVariadic's KDoc and the two properties' own
       // KDoc for why the VARIADIC calling form is handled separately rather than trusted here).
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
@@ -8860,7 +8832,7 @@ class QueryAnalysisTest {
     fun `pg_proc rows for concat and concat_ws match a known snapshot`() {
       // The catalog-drift analogue, for alwaysNonNullFunctionOids/nonNullIffFirstArgumentNonNullFunctionOids,
       // of `pg_operator rows for safe-listed symbols match a known snapshot`/`pg_proc rows for
-      // safe-listed function names match a known snapshot` above: enumerates EVERY pg_catalog
+      // safe-listed function names match a known snapshot` above: enumerates every pg_catalog
       // overload of concat/concat_ws (not just the strictness-filtered ones production actually
       // loads), so a future PostgreSQL version adding a new overload of either name — e.g. a
       // second, STRICT concat overload that would need excluding from alwaysNonNullFunctionOids
@@ -8897,7 +8869,7 @@ class QueryAnalysisTest {
     @Test
     fun `pg_proc rows for lag and lead match a known snapshot`() {
       // The catalog-drift analogue, for lagLeadWithDefaultOids, of the snapshot tests above:
-      // enumerates EVERY window-function overload of lag/lead (1-, 2-, and 3-argument alike), so a
+      // enumerates every window-function overload of lag/lead (1-, 2-, and 3-argument alike), so a
       // future PostgreSQL version adding a 4th overload fails loudly here, forcing a human to
       // decide whether it belongs on lagLeadWithDefaultOids before it silently would (or
       // wouldn't).
@@ -8943,7 +8915,7 @@ class QueryAnalysisTest {
     fun `pg_aggregate rows match a known snapshot`() {
       // The catalog-drift analogue, for aggregateHasNonNullInitialValue, of the pg_proc/pg_cast
       // snapshot tests above. aggregateHasNonNullInitialValue has no name restriction at all (see
-      // its loader) — it classifies EVERY pg_aggregate row in the whole catalog — so its drift
+      // its loader) — it classifies every pg_aggregate row in the whole catalog — so its drift
       // surface is the entire catalog, not a curated name list. KNOWN_AGGREGATE_SNAPSHOT below was
       // captured on PostgreSQL 16 (identical to 17); PostgreSQL 18 added exactly four new
       // castfunc-unrelated overloads (max/min of bytea and record), none of which have a non-null
@@ -9093,9 +9065,9 @@ class QueryAnalysisTest {
 
     @Test
     fun `pg_proc rows for safe-listed function names match a known snapshot`() {
-      // Enumerates EVERY pg_catalog overload for every function NAME appearing in
+      // Enumerates every pg_catalog overload for every function name appearing in
       // NEVER_NULL_FUNCTION_SIGNATURES — not just the safe-listed signatures — so a PostgreSQL
-      // version bump that adds a NEW overload of one of these names (exactly how the
+      // version bump that adds a new overload of one of these names (exactly how the
       // anyrange/anymultirange overloads of lower/upper slipped in, silently widening a
       // name-keyed safe list to an untotal overload) fails loudly here, forcing a human to look
       // at the new overload and decide whether it is total before adding it to
@@ -9105,7 +9077,7 @@ class QueryAnalysisTest {
       // PostgreSQL 18 — see the identically-shaped `pg_cast rows for safe-listed source types`
       // test's KDoc immediately below for why comparing the live server directly against a fixed
       // snapshot containing a version-18-only entry would fail on 16/17, and why splitting the
-      // expectation into a safe-listed portion (derived from what actually resolves HERE) and a
+      // expectation into a safe-listed portion (derived from what actually resolves here) and a
       // non-safe-listed portion (pinned to the fixed snapshot, since `lower`/`upper`'s
       // anyrange/anymultirange overloads and `trunc`'s macaddr/macaddr8 overloads are not
       // version-sensitive across 16/17/18) keeps this an exact equality without reintroducing that
@@ -9113,8 +9085,8 @@ class QueryAnalysisTest {
       //
       // Deriving the safe-listed portion of the expectation from `actualSignatures` itself (rather
       // than from the safe list directly) has one absorbed gap: a safe-listed signature
-      // DISAPPEARING from the live server — a real regression, not a version difference — would
-      // vanish from `actualSignatures.intersect(safeListedSignatures)` on the actual side AND from
+      // disappearing from the live server — a real regression, not a version difference — would
+      // vanish from `actualSignatures.intersect(safeListedSignatures)` on the actual side and from
       // the same computation on the expected side, so the two stay equal and the test passes
       // silently. `versionGatedSafeListedSignatures` below closes that gap for every safe-listed
       // signature except the one entry actually known to be version-gated (`reverse(bytea)`,
@@ -9123,7 +9095,7 @@ class QueryAnalysisTest {
       // one. A future safe-listed signature that becomes version-gated on some future PostgreSQL
       // release would need adding to `versionGatedSafeListedSignatures` by hand, exactly the way
       // `reverse(bytea)` already is — this does not reintroduce the original brittleness (a fixed
-      // snapshot compared directly against the live server), since every OTHER signature's
+      // snapshot compared directly against the live server), since every other signature's
       // presence is still checked live, not against a fixed count.
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         val names = NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES.map { it.name }.toSortedSet()
@@ -9218,40 +9190,40 @@ class QueryAnalysisTest {
 
     @Test
     fun `pg_cast rows for safe-listed source types match a known snapshot`() {
-      // Enumerates EVERY castfunc-backed pg_catalog cast FROM any source type appearing in
+      // Enumerates every castfunc-backed pg_catalog cast from any source type appearing in
       // NEVER_NULL_CAST_SIGNATURES — not just the safe-listed (source, target) pairs — so a
-      // PostgreSQL version bump that adds a NEW castfunc-backed target for one of these source
+      // PostgreSQL version bump that adds a new castfunc-backed target for one of these source
       // types fails loudly here, forcing a human to look at the new cast and decide whether it is
       // total before adding it to NEVER_NULL_CAST_SIGNATURES. This is the cast analogue of the
       // `lower`/`upper` overload-drift risk the function and operator snapshot tests above guard
       // against: the previous blanket rule ("every pg_catalog castfunc is safe") could never have
       // been caught by a test like this, since it had no explicit pair list to diff against.
       //
-      // KNOWN_CAST_PAIR_SNAPSHOT below was captured against PostgreSQL 18, which is a STRICT
-      // SUPERSET of 16 and 17 for these source types: PostgreSQL 18 added six castfunc-backed
+      // KNOWN_CAST_PAIR_SNAPSHOT below was captured against PostgreSQL 18, which is a strict
+      // superset of 16 and 17 for these source types: PostgreSQL 18 added six castfunc-backed
       // int2/int4/int8 <-> bytea casts (all six safe-listed) that simply do not exist in pg_cast
       // on 16/17. Asserting the live server's actual pairs equal that fixed snapshot directly (as
       // a prior version of this test did) therefore fails on 16/17 even though nothing about those
-      // six pairs is wrong there — they just do not resolve on THIS connected server, exactly the
+      // six pairs is wrong there — they just do not resolve on this connected server, exactly the
       // way PgCatalogLoader.loadNeverNullForNonNullInputOids's live catalog lookup finds no row
       // for them either.
       //
       // The fix keeps the assertion an exact equality (never weakened to a subset check) by
       // splitting expectedPairs into two halves: the portion of KNOWN_CAST_PAIR_SNAPSHOT that is
-      // NOT itself safe-listed (reg*/oid/char/xml/name — pairs this test enumerates for visibility
+      // not itself safe-listed (reg*/oid/char/xml/name — pairs this test enumerates for visibility
       // but NEVER_NULL_CAST_SIGNATURES has no opinion on) stays pinned to the fixed snapshot, since
-      // that portion is not version-sensitive across 16/17/18 (verified directly against all
-      // three). The safe-listed portion is instead derived from THIS live server — whichever of
+      // that portion is not version-sensitive across 16/17/18 (confirmed directly against all
+      // three). The safe-listed portion is instead derived from this live server — whichever of
       // NEVER_NULL_CAST_SIGNATURES's pairs actually appear in actualPairs — so it silently
       // shrinks on a server where a safe-listed pair does not yet resolve, without ever silently
-      // growing: a genuinely NEW overload for one of these source types still shows up in
+      // growing: a genuinely new overload for one of these source types still shows up in
       // actualPairs but not in expectedPairs (it's neither a known non-safe-listed extra nor a
       // safe-listed pair with a matching row in actualPairs) unless a human adds it to one of the
       // two sets, so drift is still caught exactly the way it was before this fix.
       //
       // Deriving the safe-listed portion of expectedPairs from actualPairs itself has one absorbed
       // gap, the cast analogue of the one described in `pg_proc rows for safe-listed function
-      // names match a known snapshot`'s KDoc above: a safe-listed pair DISAPPEARING from the live
+      // names match a known snapshot`'s KDoc above: a safe-listed pair disappearing from the live
       // server for a real (non-version) reason would vanish from both sides of the comparison and
       // pass silently. `versionGatedSafeListedPairs` below closes that gap for every safe-listed
       // pair except the six actually known to be version-gated (the int2/int4/int8 <-> bytea
@@ -9335,12 +9307,12 @@ class QueryAnalysisTest {
       // The real exact + behavioral check for this property now lives in SafeListSweepTest's
       // `lagLeadWithDefaultOids-listed 3-argument lag and lead fill window boundaries from a
       // non-null default` test. This one is kept, rather than deleted as redundant, for
-      // consistency with every sibling test in THIS class (each PgCatalogLoader-loaded property
+      // consistency with every sibling test in this class (each PgCatalogLoader-loaded property
       // gets its own small, cheap, exact-by-name OID check here) — but upgraded from a bare
-      // `isNotEmpty()` to genuine exact membership, resolved by NAME from pg_catalog independently
+      // `isNotEmpty()` to genuine exact membership, resolved by name from pg_catalog independently
       // of PgCatalogLoader.loadLagLeadWithDefaultOids's own `pronargs = 3` predicate, so a mutation
       // that widens or narrows that predicate (e.g. to the 2-argument overloads) is caught by the
-      // resulting set INEQUALITY here too, not just in the heavier live sweep.
+      // resulting set inequality here too, not just in the heavier live sweep.
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         val catalogLoader = PgCatalogLoader(connection)
         val expectedOids = connection.createStatement().use { stmt ->
@@ -9362,9 +9334,9 @@ class QueryAnalysisTest {
     fun `alwaysNonNull OIDs equal exactly the concat overloads, and exclude concat_ws`() {
       // concat_ws is deliberately excluded: it is non-null only when its separator (first
       // argument) is non-null, not unconditionally — see alwaysNonNullFunctionOids's KDoc and
-      // nonNullIffFirstArgumentNonNullFunctionOids below. Both halves are resolved by NAME from
+      // nonNullIffFirstArgumentNonNullFunctionOids below. Both halves are resolved by name from
       // pg_catalog, restricted to that namespace for the same reason as the concat_ws sibling test
-      // above: this class's tests run in PARALLEL against the same shared container, and
+      // above: this class's tests run in parallel against the same shared container, and
       // `user-defined concat and concat_ws in another schema do not ride onto either safe-list`
       // concurrently creates and drops schema-scoped `concat`/`concat_ws` functions that an
       // un-namespaced query could intermittently pick up.
@@ -9401,14 +9373,14 @@ class QueryAnalysisTest {
     fun `nonNullIffFirstArgumentNonNull OIDs equal exactly the concat_ws overloads`() {
       // `isNotEmpty()` alone is the exact `size >= 2` shape that let the original concat_ws bug
       // ship: it stays green under a mutation that puts `concat` (or any other function) on this
-      // list ALONGSIDE or INSTEAD OF `concat_ws`, since the set is still non-empty either way. The
+      // list alongside or instead of `concat_ws`, since the set is still non-empty either way. The
       // OIDs resolved here are independent of PgCatalogLoader.loadNonNullIffFirstArgumentNonNullFunctionOids's
-      // own SQL — matched by NAME alone, not by re-asserting its `NOT proisstrict` predicate — so a
+      // own SQL — matched by name alone, not by re-asserting its `NOT proisstrict` predicate — so a
       // mutation that widens or narrows the production predicate to a different name (or an
-      // additional one) is caught by the resulting set INEQUALITY, not absorbed by both sides
+      // additional one) is caught by the resulting set inequality, not absorbed by both sides
       // moving together. Restricted to `pg_catalog` (unlike the sibling `alwaysNonNull` test's
-      // intersect-only check, which does not need it): tests in this class run in PARALLEL, each on
-      // its own connection but against the SAME shared container, and `user-defined concat and
+      // intersect-only check, which does not need it): tests in this class run in parallel, each on
+      // its own connection but against the same shared container, and `user-defined concat and
       // concat_ws in another schema do not ride onto either safe-list` concurrently creates and
       // drops a schema-scoped `concat_ws` — an un-namespaced query here would intermittently pick up
       // that shadow OID too and fail this exact-equality assertion on a false positive.
@@ -9431,7 +9403,7 @@ class QueryAnalysisTest {
 
     @Test
     fun `user-defined concat and concat_ws in another schema do not ride onto either safe-list`() {
-      // Verified live: without a pronamespace restriction, a user-defined function sharing the
+      // On real Postgres, without a pronamespace restriction, a user-defined function sharing the
       // name `concat`/`concat_ws` (even with completely different, always-NULL behavior) gets
       // picked up by these lists' `proname`-only predicate and would be wrongly trusted as
       // non-null.
@@ -9730,14 +9702,14 @@ class QueryAnalysisTest {
     //
     // The three `!hasGroupingSets` qual-narrowing suppressions in ColumnNullabilityAnalyzer (lines
     // 293, 664, 752) that these tests were originally named for cannot be exercised by any query.
-    // Verified live: under GROUPING SETS, PostgreSQL rejects the primary-key functional-dependency
-    // shortcut that plain GROUP BY allows, so every non-aggregated column in a grouping-sets
-    // target list must be, or textually match, the grouping key — forcing it nullable via
-    // `isEffectivelyNonNull`'s `isGroupingKey` check before `isNonNull`, and therefore before qual
-    // narrowing, is ever reached. This holds identically at the top-level, CTE-body, and
-    // subquery-RTE sites, because `isSafeFromGroupingSetNullExtension` keys on `PgNodeExpression`
-    // shape, never on what a `Var`'s `varno` resolves to. Both halves of the suppression (qual
-    // narrowing and `groupRteMap = emptyMap()`) are dead for the same reason.
+    // On real Postgres, under GROUPING SETS, PostgreSQL rejects the primary-key
+    // functional-dependency shortcut that plain GROUP BY allows, so every non-aggregated column in
+    // a grouping-sets target list must be, or textually match, the grouping key — forcing it
+    // nullable via `isEffectivelyNonNull`'s `isGroupingKey` check before `isNonNull`, and therefore
+    // before qual narrowing, is ever reached. This holds identically at the top-level, CTE-body,
+    // and subquery-RTE sites, because `isSafeFromGroupingSetNullExtension` keys on
+    // `PgNodeExpression` shape, never on what a `Var`'s `varno` resolves to. Both halves of the
+    // suppression (qual narrowing and `groupRteMap = emptyMap()`) are dead for the same reason.
     //
     // The one thing that would revive the suppression: extending `Aggref`/`GroupingFunc`
     // evaluation in `isNonNull` to consult its own arguments' nullability (e.g. a future MIN/MAX
@@ -9786,10 +9758,10 @@ class QueryAnalysisTest {
       assertThat(query.columns[0].notNull).isFalse()
     }
 
-    // These four EXPRESSION-grouping-key tests pin the same thing as the four bare-Var tests
+    // These four expression-grouping-key tests pin the same thing as the four bare-Var tests
     // above (see the comment there for the full explanation). Here the grouping key is an
-    // EXPRESSION (e.g. `lower(a)`) rather than a bare column, but the target-list entry for
-    // `lower(a)` structurally IS the grouping key, so it gets the ROLLUP's own `:ressortgroupref`
+    // expression (e.g. `lower(a)`) rather than a bare column, but the target-list entry for
+    // `lower(a)` structurally is the grouping key, so it gets the ROLLUP's own `:ressortgroupref`
     // and is forced nullable by `isGroupingKey` before `isNonNull` is ever reached — exactly as
     // for the bare-Var cluster.
 
@@ -9915,10 +9887,10 @@ class QueryAnalysisTest {
 
     @Test
     fun `a strict, never-null-for-non-null-input function is not trusted for a VARIADIC call`() {
-      // Guards the exact failure mode that produced the concat/concat_ws P0s: a curated
+      // Guards the exact failure mode that produced the concat/concat_ws bugs: a curated
       // safe-list's guarantee, verified only for the ordinary calling convention, silently
       // applied to VARIADIC too. No real function on NEVER_NULL_FUNCTION_SIGNATURES resolves to
-      // a provariadic <> 0 function on PostgreSQL 16, 17, or 18 (verified live), so this stubs
+      // a provariadic <> 0 function on PostgreSQL 16, 17, or 18, so this stubs
       // isStrict/isNeverNullForNonNullInput to simulate one being added in variadic form — the
       // only way to reach this path without editing the safe-list itself. The ArrayExpr argument
       // contains a NULL element; isNonNull's own ArrayExpr branch is unconditionally true
@@ -9973,7 +9945,7 @@ class QueryAnalysisTest {
    * incidentally — escaped it, then returns its result.
    *
    * Used by `ViewNullability`'s cyclic-view and deep-recursion pins, which specifically need to
-   * prove the ABSENCE of a `StackOverflowError` as part of what they assert, not merely that a
+   * prove the absence of a `StackOverflowError` as part of what they assert, not merely that a
    * value came back — detekt's `ForbiddenImport` rule blocks `org.junit.jupiter.api.Assertions.*`
    * project-wide (this codebase uses assertk), so this wraps the same "did not throw" check in an
    * assertk-compatible form instead of JUnit's own `assertDoesNotThrow`.
@@ -9992,7 +9964,7 @@ class QueryAnalysisTest {
   }
 
   /**
-   * Resolves the `pg_class.oid` of the relation named [relationName] on the CURRENT `search_path`
+   * Resolves the `pg_class.oid` of the relation named [relationName] on the current `search_path`
    * of [connection] — used by `ViewNullability`'s deep-chain pins to get a relid to call
    * [ColumnNullabilityAnalyzer.resolveViewColumnNullability] with directly, rather than through
    * [PgCatalogLoader.loadViewColumnNullability]'s unordered schema-wide sweep (which would leave
@@ -10008,7 +9980,7 @@ class QueryAnalysisTest {
 
   /**
    * Ground truth for [PgCatalogLoader.aggregateHasNonNullInitialValue]: calls the aggregate named
-   * [aggregateName], with arguments typed [argumentTypeNames], over a genuinely EMPTY input (`...
+   * [aggregateName], with arguments typed [argumentTypeNames], over a genuinely empty input (`...
    * WHERE false`, not merely an aggregate over no matching group), and reports whether the result
    * is `null`. `count` with zero declared arguments is `count(*)` — the only ordinary-call-syntax
    * exception PostgreSQL's aggregate grammar needs here, mirroring
@@ -10016,7 +9988,7 @@ class QueryAnalysisTest {
    * the same reason: `count()` alone is a syntax error.
    *
    * A declared `any` argument type (e.g. `count`'s one-argument overload, `count(any)`) is the
-   * PSEUDO-type PostgreSQL uses to mean "accepts a value of any concrete type" — it has no literal
+   * pseudo-type PostgreSQL uses to mean "accepts a value of any concrete type" — it has no literal
    * form of its own, so `NULL::any` is a syntax error the same way `NULL::anyelement` would be.
    * Instantiated here to a concrete `int4` column instead, the same way
    * [SafeListSweepTest.concreteInstantiationsFor] instantiates `anyelement` to `int4` for the same

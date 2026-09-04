@@ -30,7 +30,7 @@ class MarkdownEscapingTest {
 
     @Test
     fun `a single embedded backtick is escaped with a double-backtick delimiter, unpadded`() {
-      // The backtick sits in the MIDDLE of the text, not touching either end, so no padding space
+      // The backtick sits in the middle of the text, not touching either end, so no padding space
       // is needed for the delimiter to stay unambiguous.
       assertThat(markdownInlineCodeSpan("s || '`'")).isEqualTo("``s || '`'``")
     }

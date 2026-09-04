@@ -15,10 +15,10 @@ import java.sql.DriverManager
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Stage 2 of the `prosqlbody` cutover: proves `EXPLAIN (FORMAT JSON)` never executes the
- * statement it plans, and that it correctly reports a `MERGE`'s per-relation match-optionality —
- * the one thing [PgCatalogLoader.mergeAbsentVarnos]'s KDoc documents as invisible to
- * `:varnullingrels` on EITHER the `CREATE VIEW`/`ev_action` or `prosqlbody` route.
+ * Stage 2 of the `prosqlbody` cutover: `EXPLAIN (FORMAT JSON)` never executes the statement it
+ * plans, and reports a `MERGE`'s per-relation match-optionality — the one thing
+ * [PgCatalogLoader.mergeAbsentVarnos]'s KDoc documents as invisible to `:varnullingrels` on the
+ * `CREATE VIEW`/`ev_action` or `prosqlbody` route.
  */
 @Testcontainers
 class ExplainAnalysisTest {
@@ -93,14 +93,13 @@ class ExplainAnalysisTest {
     @Test
     fun `WHEN NOT MATCHED BY SOURCE alone reports only source can be absent, through a CTE with an outer JOIN`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
-      // A MERGE nested in a CTE sits inside a LARGER plan the outer statement can add its own,
-      // UNRELATED joins to. The CTE's own write plan is attached to that outer join as a THIRD,
-      // "InitPlan" sibling (verified live) — not a join child — so the outer join's OWN 2-children
-      // check correctly rejects it, and the search must continue into the MERGE's own nested join
-      // to find the real one. This MERGE also flips which side is preserved relative to the
-      // "WHEN NOT MATCHED THEN INSERT" tests above: with no INSERT action, the TARGET row always
-      // exists (every result row IS an existing target row); only the SOURCE can be missing.
-      // Verified live (target id=2 has no matching source row): id=2, sval=NULL, id=1, sval='x'.
+      // A MERGE nested in a CTE sits inside a larger plan the outer statement can add unrelated
+      // joins to. The CTE's write plan attaches to that outer join as a third "InitPlan" sibling,
+      // not a join child, so the outer join's 2-children check rejects it and the search
+      // continues into the MERGE's own nested join. This MERGE also flips which side is preserved
+      // relative to the "WHEN NOT MATCHED THEN INSERT" tests above: with no INSERT action, the
+      // target row always exists; only the source can be missing.
+      // With target id=2 having no matching source row: id=2, sval=NULL, id=1, sval='x'.
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         connection.createStatement().use {
@@ -140,10 +139,10 @@ class ExplainAnalysisTest {
     fun `an unrelated join in a WHEN condition over the same relation names does not win the MERGE's own join`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
       // The WHEN MATCHED condition's own EXISTS plans as an InitPlan sibling of the MERGE's real
-      // join, built from the SAME two tables the merge itself joins (tgt/src) — verified live: a
-      // naive first-join-found search picks this Inner join (tgt outer, src inner) over the real
-      // Left join, wrongly reporting neither side can be absent. Verified live (target id=2 has no
-      // matching source row): id=2, name=NULL.
+      // join, built from the same two tables the merge itself joins (tgt/src). A naive
+      // first-join-found search picks this Inner join (tgt outer, src inner) over the real Left
+      // join, wrongly reporting neither side can be absent. With target id=2 having no matching
+      // source row: id=2, name=NULL.
       val result = withMergeSideNullabilitySchema { connection ->
         explainMergeSideNullability(
           connection,
@@ -180,10 +179,10 @@ class ExplainAnalysisTest {
     @Test
     fun `a MERGE nested in a CTE keeps its own attribution despite its own unrelated join and an outer JOIN`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
-      // Combines two distractions at once: the CTE's OWN WHEN condition has an unrelated join over
-      // tgt/src (the same hazard as the top-level test above, reached this time through the
-      // CTE-nested code path), AND the outer SELECT adds a real JOIN of its own against a THIRD
-      // table. Neither may cause this MERGE's target/source attribution to waver.
+      // Combines two distractions: the CTE's WHEN condition has an unrelated join over tgt/src
+      // (the same hazard as the top-level test above, reached here through the CTE-nested code
+      // path), and the outer SELECT adds a real join against a third table. Neither should shift
+      // this MERGE's target/source attribution.
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         connection.createStatement().use {
@@ -222,9 +221,9 @@ class ExplainAnalysisTest {
     @Test
     fun `a MERGE whose own plan contains multiple joins still attributes the real one`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
-      // TWO separate WHEN-condition EXISTS clauses each plan as their OWN InitPlan join over
-      // tgt/src, sitting alongside the merge's real join -- three join nodes total inside the
-      // ModifyTable's own subtree, only one of which is the merge's own.
+      // Two separate WHEN-condition EXISTS clauses each plan as their own InitPlan join over
+      // tgt/src, alongside the merge's real join -- three join nodes total inside the
+      // ModifyTable's subtree, only one of which is the merge's own.
       val result = withMergeSideNullabilitySchema { connection ->
         explainMergeSideNullability(
           connection,
@@ -352,8 +351,8 @@ class ExplainAnalysisTest {
             targetRelationName = "tgt",
             sourceRelationNames = setOf("src"),
           )
-          // Every case here is a real, live-executable MERGE — a null result would silently hide
-          // a mapping failure behind the caller's own safe fallback, defeating this test's point.
+          // Every case here is a real MERGE executed against PostgreSQL; a null result would hide
+          // a mapping failure behind the caller's safe fallback.
           assertThat(result != null).isTrue()
           return result
         } finally {

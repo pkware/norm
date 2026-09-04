@@ -38,8 +38,7 @@ class SqlIdentifiersTest {
     fun `32 two-byte characters -- 64 bytes -- truncate to 31 characters, 62 bytes, the mid-character crossing`() {
       // Each "é" is 2 UTF-8 bytes -- 32 of them is 64 bytes, one byte over budget. The 32nd "é"
       // cannot be split in half, so it is dropped whole, landing on 62 bytes rather than the full
-      // 63-byte budget -- verified against the live server in
-      // JdbcAnalyzerTest.TruncateIdentifierServerDifferentialTest.
+      // 63-byte budget (PostgreSQL's `NAMEDATALEN - 1` limit).
       val name = "é".repeat(32)
 
       val result = truncateIdentifier(name)

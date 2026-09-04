@@ -4,27 +4,27 @@ package norm.generator
  * A parsed item from a SQL SELECT clause.
  *
  * @property expression The full SQL expression text (e.g. `COUNT(*)`, `author.name`, `book.title`).
- * @property columnName The column's LOGICAL name for a simple column reference — `null` for a
- *   computed expression. For a QUOTED reference (`"My Col"`, `"He""llo"`), this is the identifier
+ * @property columnName The column's logical name for a simple column reference — `null` for a
+ *   computed expression. For a quoted reference (`"My Col"`, `"He""llo"`), this is the identifier
  *   PostgreSQL itself resolves to: surrounding quotes removed and any doubled `""` escape
- *   collapsed to the single literal `"` it represents (verified directly against a live
+ *   collapsed to the single literal `"` it represents (checked directly against a live
  *   PostgreSQL 18: `ResultSetMetaData.getColumnName` for `SELECT "He""llo" FROM (SELECT 1 AS
  *   "He""llo") s` reports `He"llo` — no quotes, escape already collapsed — which is exactly what
  *   this property must agree with, since [JdbcAnalyzer]'s own `originalName` falls back to
- *   `columnName` first and only reaches `getColumnName` when this is `null`). This is NEVER the
+ *   `columnName` first and only reaches `getColumnName` when this is `null`). This is never the
  *   raw, quote-decorated source text — see [isColumnNameQuoted] for how the quoted/unquoted
  *   distinction PostgreSQL folding depends on is preserved instead, alongside the logical value
  *   rather than encoded inside it.
- * @property tableName The table qualifier's LOGICAL name for a qualified reference (e.g. `author`
+ * @property tableName The table qualifier's logical name for a qualified reference (e.g. `author`
  *   in `author.name`, or `My Table` in `"My Table".name`) — same logical-value convention as
  *   [columnName], and `null` for an unqualified reference or a computed expression.
- * @property isColumnNameQuoted Whether [columnName] came from a QUOTED source identifier —
+ * @property isColumnNameQuoted Whether [columnName] came from a quoted source identifier —
  *   `false` when [columnName] is `null`. PostgreSQL folds a quoted identifier reference
- *   EXACTLY (case preserved, never lowercased) and an unquoted one to lowercase; since
+ *   exactly (case preserved, never lowercased) and an unquoted one to lowercase; since
  *   [columnName] itself no longer carries the quotes that would otherwise signal which rule
  *   applies (they were already removed to produce the logical value), this flag is what a caller
  *   doing that folding (see `foldIdentifier`'s two-argument overload) must consult instead.
- * @property isTableNameQuoted Whether [tableName] came from a QUOTED source identifier — same
+ * @property isTableNameQuoted Whether [tableName] came from a quoted source identifier — same
  *   convention as [isColumnNameQuoted], `false` when [tableName] is `null`.
  */
 internal data class SelectItem(
@@ -38,8 +38,8 @@ internal data class SelectItem(
 /**
  * Parses the output clause of a SQL statement to extract individual items.
  *
- * Paired POSITIONALLY against `java.sql.ResultSetMetaData` columns by
- * `JdbcAnalyzer.buildResultColumns`, so the search is restricted to the statement's MAIN query —
+ * Paired positionally against `java.sql.ResultSetMetaData` columns by
+ * `JdbcAnalyzer.buildResultColumns`, so the search is restricted to the statement's main query —
  * after any leading `WITH` clause's CTEs, via [parseCteClause]'s [ParsedCteClause.mainQueryStart]
  * — and `SELECT` is located with [findTopLevelKeyword] (depth-0, lexically aware, never
  * `String.indexOf`), so a nested `SELECT` or a keyword-like substring inside a literal/comment is
@@ -57,19 +57,19 @@ internal data class SelectItem(
  *
  * On the `SELECT` branch only (a `RETURNING` clause has no such quantifier), an optional leading
  * set quantifier — `ALL`, or `DISTINCT` optionally followed by `ON (...)` — is skipped via
- * [skipOptionalSetQuantifier] BEFORE the clause is split into items, so the FIRST item's
+ * [skipOptionalSetQuantifier] before the clause is split into items, so the first item's
  * `expression`/`columnName` reflect the bare column, not the quantifier glued onto it (`SELECT
  * DISTINCT x, id FROM t` → first item is `x`, not `DISTINCTx`). This must happen here, not inside
- * [isStarItem]: [isStarItem] normalizes by stripping ALL whitespace, so `ALL 2.*a` and a genuine
- * star on a table named `all2` (`SELECT all2.* a, p FROM all2` — verified valid, 3 columns) become
- * textually IDENTICAL (`ALL2.*a`/`all2.*a`) once whitespace is gone; only stripping the quantifier
- * BEFORE that normalization, using the still-whitespace-intact `window`, can tell them apart —
+ * [isStarItem]: [isStarItem] normalizes by stripping all whitespace, so `ALL 2.*a` and a genuine
+ * star on a table named `all2` (`SELECT all2.* a, p FROM all2` — valid, 3 columns) become
+ * textually identical (`ALL2.*a`/`all2.*a`) once whitespace is gone; only stripping the quantifier
+ * before that normalization, using the still-whitespace-intact `window`, can tell them apart —
  * `skipOptionalKeyword`'s own word-boundary check is what refuses to match `ALL` as a prefix of the
- * identifier `all2` (verified: `SELECT ALL 2.*a lbl, b FROM t` is arithmetic, 2 columns, distinct
+ * identifier `all2` (`SELECT ALL 2.*a lbl, b FROM t` is arithmetic, 2 columns, distinct
  * from the `all2` table case despite normalizing identically further down the pipeline).
  *
  * A star item (`*`/`table.*`, via [isStarItem] — which also recognizes an implicit alias on a
- * star, including a quoted, `U&`-escaped, or non-ASCII unquoted alias, though NOT claimed
+ * star, including a quoted, `U&`-escaped, or non-ASCII unquoted alias, though not claimed
  * exhaustive — see [isStarItem]'s own KDoc) expands to however many columns the starred relation
  * has, shifting every later item onto the wrong metadata column; an item before a star is
  * unaffected by that unknown width, so only the first star and everything after it is dropped — a
@@ -77,9 +77,9 @@ internal data class SelectItem(
  *
  * @return Items strictly before the first star, if any; the full list if there is no star or it's
  *   a single star item; or empty if the output clause can't be found (e.g. a `VALUES` list, a
- *   `TABLE` shorthand, or two SEPARATELY parenthesized set-operation branches like `(SELECT a)
+ *   `TABLE` shorthand, or two separately parenthesized set-operation branches like `(SELECT a)
  *   UNION (SELECT b)` — none have a depth-0 `SELECT`/`RETURNING`; a main query or CTE body wrapped
- *   in one redundant pair of parentheses, `(SELECT ...)`, DOES resolve — see
+ *   in one redundant pair of parentheses, `(SELECT ...)`, does resolve — see
  *   [stripRedundantOuterParentheses]). Both consumers degrade safely for a missing item, falling
  *   back to `ResultSetMetaData.getColumnName` rather than reporting a wrong original name.
  */
@@ -93,7 +93,7 @@ internal fun parseSelectItems(sql: String): List<SelectItem> = parseOutputItemsW
  *
  * A guard and the parser it guards must see the same text: without sharing this function, a set
  * operation wrapped in one parenthesis pair (`(SELECT a UNION SELECT b)`) sits at paren depth one in
- * the raw text, invisible to a guard that skips the stripping step the parser applies (#238).
+ * the raw text, invisible to a guard that skips the stripping step the parser applies.
  */
 private fun mainQueryWindow(sql: String): String {
   val mainQueryStart = parseCteClause(sql)?.mainQueryStart ?: 0
@@ -130,10 +130,10 @@ private val SET_OPERATION_KEYWORDS = listOf("UNION", "INTERSECT", "EXCEPT")
  * [alias] that was stripped off, if any.
  *
  * Kept separate from [SelectItem] because [SelectItem.columnName] already carries a meaning for
- * simple column references — reusing it for an alias would conflate "this item IS a bare column
- * reference" with "this item HAS an alias", which are different facts a computed expression can
+ * simple column references — reusing it for an alias would conflate "this item is a bare column
+ * reference" with "this item has an alias", which are different facts a computed expression can
  * have independently (`UPPER(description) AS description_upper` has an alias but is not a bare
- * column reference; `description AS description_upper` is a bare column reference AND has an
+ * column reference; `description AS description_upper` is a bare column reference and has an
  * alias).
  *
  * @property selectItem The parsed expression/columnName/tableName, alias already removed.
@@ -148,7 +148,7 @@ internal data class OutputItemWithAlias(val selectItem: SelectItem, val alias: S
  * why the alias can't be dropped there). Locates the same output clause [parseSelectItems]
  * documents finding — see its KDoc for the window/`RETURNING`-gating/star-truncation rules, all of
  * which apply identically here. The window itself is [mainQueryWindow] — see its KDoc for why
- * [hasTopLevelSetOperation] must compute that SAME window rather than its own copy.
+ * [hasTopLevelSetOperation] must compute that same window rather than its own copy.
  */
 internal fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> {
   val window = mainQueryWindow(sql)
@@ -201,19 +201,19 @@ internal fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> {
 }
 
 /**
- * Strips a REDUNDANT `(`...`)` pair wrapping [text]'s ENTIRE remaining content, repeatedly, as
+ * Strips a redundant `(`...`)` pair wrapping [text]'s entire remaining content, repeatedly, as
  * long as one remains — `(SELECT ...)`, `((SELECT ...))`, etc.
  *
  * A CTE body (or a whole top-level query) may legally wrap its `SELECT`/`RETURNING`/DML statement
  * in one or more redundant parenthesis pairs. Without stripping them first, [findTopLevelKeyword]
- * never finds an unquoted `SELECT`/`RETURNING` at paren depth ZERO: the extra, unmatched leading
- * `(` puts the whole rest of the text at depth ONE instead, so [parseOutputItemsWithAlias] returns
- * no items at all for an otherwise-ordinary body (#238).
+ * never finds an unquoted `SELECT`/`RETURNING` at paren depth zero: the extra, unmatched leading
+ * `(` puts the whole rest of the text at depth one instead, so [parseOutputItemsWithAlias] returns
+ * no items at all for an otherwise-ordinary body.
  *
- * A pair only counts as wrapping the ENTIRE remaining text when the first non-whitespace/comment
- * character is `(` AND its own matching close parenthesis is the LAST non-whitespace/comment
+ * A pair only counts as wrapping the entire remaining text when the first non-whitespace/comment
+ * character is `(` and its own matching close parenthesis is the last non-whitespace/comment
  * character in [text] — never merely "starts with ( and ends with )", which would also match two
- * SEPARATELY parenthesized set-operation branches (`(SELECT a) UNION (SELECT b)`), where the first
+ * separately parenthesized set-operation branches (`(SELECT a) UNION (SELECT b)`), where the first
  * `(`'s own match is nowhere near the end.
  */
 private fun stripRedundantOuterParentheses(text: String): String {
@@ -231,13 +231,13 @@ private fun stripRedundantOuterParentheses(text: String): String {
 /**
  * Skips an optional leading SQL set quantifier starting at or after [position] in [sql]: `ALL`,
  * or `DISTINCT` optionally followed by `ON (` ... `)`. Used by [parseSelectItems] to separate a
- * `SELECT`'s quantifier from its first real item BEFORE [isStarItem] ever sees it — see that
+ * `SELECT`'s quantifier from its first real item before [isStarItem] ever sees it — see that
  * function's KDoc for why this can't be done inside [isStarItem] itself.
  *
  * [position] is the index right after the `SELECT` keyword — still followed by whitespace, since
- * [skipOptionalKeyword] (unlike [skipWhitespaceAndComments]) requires its keyword to start EXACTLY
+ * [skipOptionalKeyword] (unlike [skipWhitespaceAndComments]) requires its keyword to start exactly
  * where it's told to look, with no leading separator of its own to skip. This function skips that
- * whitespace/comments FIRST, then tries `ALL`/`DISTINCT` at the resulting position — otherwise
+ * whitespace/comments first, then tries `ALL`/`DISTINCT` at the resulting position — otherwise
  * `regionMatches` would fail immediately on the space between `SELECT` and the quantifier, this
  * function would report no quantifier present, and `parseSelectItems` would go right back to
  * feeding [isStarItem] the fused, whitespace-bearing text this function exists to prevent.
@@ -276,8 +276,8 @@ private fun skipOptionalSetQuantifier(sql: String, position: Int): Int {
  * [skipLexicalToken], so an `AS`-like substring or an unbalanced paren inside one of those is
  * not mistaken for a real `AS` keyword or a real parenthesis.
  *
- * Tracks `(`/`)` only, deliberately NOT `[`/`]` — unlike [splitAtTopLevel], which shares one depth
- * counter across both bracket kinds because it scans RAW, not-yet-split clause text, where a
+ * Tracks `(`/`)` only, deliberately not `[`/`]` — unlike [splitAtTopLevel], which shares one depth
+ * counter across both bracket kinds because it scans raw, not-yet-split clause text, where a
  * top-level-looking `,` can sit directly inside an unsplit `ARRAY[...]` literal (see
  * [splitAtTopLevel]'s own KDoc). [extractAlias] instead only ever
  * receives an item [parseOutputItemsWithAlias] already split via [splitAtTopLevel] — so any
@@ -290,11 +290,11 @@ private fun skipOptionalSetQuantifier(sql: String, position: Int): Int {
  *
  * The word-boundary check on either side of a candidate `AS`/`as` uses [isIdentifierChar] — the
  * same predicate [findTopLevelKeyword] and every other keyword scanner in this file use — rather
- * than `Char.isWhitespace()`: PostgreSQL's `AS` keyword only needs to NOT be fused into a longer
- * identifier on either side, not to be surrounded by literal whitespace. Verified against
+ * than `Char.isWhitespace()`: PostgreSQL's `AS` keyword only needs to not be fused into a longer
+ * identifier on either side, not to be surrounded by literal whitespace. On
  * PostgreSQL 18.4: `SELECT (1)AS b` returns column `b` — `AS` directly abuts the closing `)` with
  * no whitespace, and `)` is not an identifier character, so this is the real keyword. Conversely
- * `SELECT 1 AS$b` returns column `as$b`, a SINGLE implicit alias identifier — `$` is a valid
+ * `SELECT 1 AS$b` returns column `as$b`, a single implicit alias identifier — `$` is a valid
  * identifier-continuation character (see [isIdentifierChar]), so `AS$b` is one word, not the
  * keyword `AS` followed by `$b`.
  *
@@ -304,7 +304,7 @@ private fun skipOptionalSetQuantifier(sql: String, position: Int): Int {
  * [parseColumnReference] — [parseOutputItemsWithAlias] is this function's only caller, and does
  * `val (expression, alias) = extractAlias(item)`, keeping the alias half (unlike [parseSelectItems],
  * which discards it) — so whatever the split changes `expression` to feeds directly into that
- * derivation. Verified against PostgreSQL 18.4: `SELECT a AS"b", id FROM t` is valid (columns `b`,
+ * derivation. On PostgreSQL 18.4: `SELECT a AS"b", id FROM t` is valid (columns `b`,
  * `id`; PostgreSQL reports `a` as the source column of the first result column) — `AS"b"` (no
  * space before the quote) is recognized as the keyword here, since `"` is not an identifier
  * character, so the right-hand boundary holds without requiring whitespace; the item splits into
@@ -317,7 +317,7 @@ private fun skipOptionalSetQuantifier(sql: String, position: Int): Int {
  * a computed expression (`selectItem.columnName == null && column.table == null`).
  *
  * @return A pair of (expression, alias). `alias` is `null` when there is no `AS` keyword at all,
- *   AND when there is one but [parseAliasToken] finds nothing that legitimately looks like an
+ *   and when there is one but [parseAliasToken] finds nothing that legitimately looks like an
  *   alias right after it (see that function's own KDoc — a trailing comment, an unterminated
  *   quote, or a string literal where an alias should be, none of which contribute a real alias
  *   name).
@@ -412,7 +412,7 @@ private fun parseAliasToken(item: String, start: Int): String? {
  * reference (possibly qualified with a table name, either or both parts quoted or unquoted) or a
  * computed expression.
  *
- * A quoted position whose LOGICAL value comes out empty (`SELECT "" FROM t`) is treated as NO
+ * A quoted position whose logical value comes out empty (`SELECT "" FROM t`) is treated as no
  * match at all — the same `columnName = null`/`tableName = null` fallback as an expression that
  * doesn't match [COLUMN_REFERENCE] to begin with — rather than an empty-string name: PostgreSQL
  * itself rejects a zero-length delimited identifier outright (`zero-length delimited identifier`
@@ -492,8 +492,8 @@ private fun parseOldNewAliasPrologue(dml: String, afterReturningKeyword: Int): P
  * [entry] has no top-level `AS`.
  *
  * Whitespace and comments between `AS` and the alias, and trailing the alias before the entry
- * ends, are skipped rather than captured — PostgreSQL accepts both (`OLD AS o /*c*/`, verified
- * live on PostgreSQL 18) and neither is part of the declared name. A naive
+ * ends, are skipped rather than captured — PostgreSQL accepts both (`OLD AS o /*c*/`, on
+ * PostgreSQL 18) and neither is part of the declared name. A naive
  * `substring(asIndex + 2).trim()` captured a trailing comment as part of the alias (`o /*c*/`
  * instead of `o`), which then never matched any real `RETURNING` item reference and silently
  * dropped the alias from the set of recognized `OLD`/`NEW` aliases.

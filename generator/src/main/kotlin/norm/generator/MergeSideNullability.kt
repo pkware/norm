@@ -96,8 +96,8 @@ private fun attributeJoinToSides(
   val targetIsInner = targetRelationName in innerRelationNames
   val sourceIsOuter = sourceRelationNames.any { it in outerRelationNames }
   val sourceIsInner = sourceRelationNames.any { it in innerRelationNames }
-  // Each relation must appear on EXACTLY ONE side, and target/source must be on DIFFERENT sides —
-  // otherwise this ISN'T the join being searched for (e.g. it's an unrelated join the outer
+  // Each relation must appear on exactly one side, and target/source must be on different sides —
+  // otherwise this isn't the join being searched for (e.g. it's an unrelated join the outer
   // statement introduces, or the USING clause has more than one relation of its own) and this
   // join cannot safely be attributed to either one.
   if (targetIsOuter == targetIsInner || sourceIsOuter == sourceIsInner || targetIsOuter == sourceIsOuter) {
@@ -160,9 +160,9 @@ private fun findOwnJoinNodes(mergeModifyTableNode: JsonValue.JsonObject): List<J
 }
 
 /**
- * Every `"Relation Name"` (a base table or view) OR `"CTE Name"` (a `MATERIALIZED`, or otherwise
+ * Every `"Relation Name"` (a base table or view) or `"CTE Name"` (a `MATERIALIZED`, or otherwise
  * non-inlined, CTE's own `"CTE Scan"` node) reachable from [node], including [node] itself, at any
- * depth. Both fields are collected together because a CTE source can appear as EITHER, depending
+ * depth. Both fields are collected together because a CTE source can appear as either, depending
  * on a planner decision the parsed query tree cannot predict — see [explainMergeSideNullability]'s
  * own KDoc for how its caller offers both candidate names to cover either shape.
  */

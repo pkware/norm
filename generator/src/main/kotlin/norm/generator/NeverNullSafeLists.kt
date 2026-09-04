@@ -1,13 +1,12 @@
 package norm.generator
 
 /**
- * The `pg_catalog` function, cast, and operator signatures independently confirmed, against a
- * live PostgreSQL 18 instance, to be TOTAL on non-null input -- proven for every combination of
- * non-null arguments, not merely "typical" ones, including infinite, empty, or unbounded edge
- * values. Backs [PgCatalogLoader.neverNullForNonNullInputOids] via
- * [NEVER_NULL_FUNCTION_SIGNATURES], [NEVER_NULL_CAST_SIGNATURES], and
- * [NEVER_NULL_OPERATOR_SIGNATURES] -- this DATA lives in its own file, separate from
- * [PgCatalogLoader]'s own job of loading catalog metadata.
+ * The `pg_catalog` function, cast, and operator signatures confirmed total on non-null input on
+ * PostgreSQL 18 -- proven for every combination of non-null arguments, not merely "typical" ones,
+ * including infinite, empty, or unbounded edge values. Backs
+ * [PgCatalogLoader.neverNullForNonNullInputOids] via [NEVER_NULL_FUNCTION_SIGNATURES],
+ * [NEVER_NULL_CAST_SIGNATURES], and [NEVER_NULL_OPERATOR_SIGNATURES] -- this data lives in its
+ * own file, separate from [PgCatalogLoader]'s own job of loading catalog metadata.
  *
  * [SafeListSweepTest] verifies this list against a live server: every listed signature actually
  * exists in `pg_catalog`, and a live sweep of representative edge-value arguments never observes a
@@ -19,16 +18,16 @@ internal object NeverNullSafeLists {
    * [neverNullForNonNullInputOids]. Restricted to `pronamespace = 'pg_catalog'` at query time.
    * Argument types are matched by `pg_type.typname` in declaration order — e.g. `listOf("text",
    * "text")` matches only the two-`text`-argument overload of a name, not a same-arity overload
-   * over different types. A signature is listed here ONLY when it was independently confirmed,
-   * against a live PostgreSQL 18 instance, to be total on every non-null, well-typed input —
-   * including infinite, empty, or unbounded edge values, not merely "typical" ones. Below is
+   * over different types. A signature is listed here only when confirmed total on every non-null,
+   * well-typed input on PostgreSQL 18 — including infinite, empty, or unbounded edge values, not
+   * merely "typical" ones. Below is
    * that audit, one entry per bullet. Every `pg_catalog` overload actually present for each name
    * is listed even where excluded, so an omission is visibly a decision rather than an oversight.
    *
    * - **upper/lower**: `pg_catalog` overloads are `(text)`, `(anyrange)`, `(anymultirange)`.
-   *   `(text)` is total (kept). `(anyrange)`/`(anymultirange)` are STRICT but return `null` for a
-   *   non-null, non-empty, UNBOUNDED range/multirange (`upper(int4range '[1,)')`) or an EMPTY one
-   *   (`lower(int4range 'empty')`, `lower(int4multirange '{}')`) — excluded.
+   *   `(text)` is total (kept). `(anyrange)`/`(anymultirange)` are `STRICT` but return `null` for
+   *   a non-null, non-empty, unbounded range/multirange (`upper(int4range '[1,)')`) or an empty
+   *   one (`lower(int4range 'empty')`, `lower(int4multirange '{}')`) — excluded.
    * - **initcap**: only overload is `(text)` — total (kept).
    * - **length**: overloads are `(text)`, `(bytea)`, `(bytea, name)` (length in a named
    *   encoding), `(bit)`, `(bpchar)`, `(lseg)`, `(path)`, `(tsvector)`. All total on non-null
@@ -46,7 +45,7 @@ internal object NeverNullSafeLists {
    * - **md5**: overloads are `(text)`, `(bytea)` — both total, including on empty input (kept).
    * - **abs**: overloads are `(int2)`, `(int4)`, `(int8)`, `(numeric)`, `(float4)`, `(float8)` —
    *   no `(interval)` overload exists in `pg_catalog` (interval's absolute value is the `@`
-   *   OPERATOR, a distinct catalog entry, not a same-named function). All six are total,
+   *   operator, a distinct catalog entry, not a same-named function). All six are total,
    *   including on `NaN`/`Infinity` (kept).
    * - **round**: overloads are `(float8)`, `(numeric)`, `(numeric, int4)` — all total, including
    *   on `NaN`/`Infinity` (kept).
@@ -55,24 +54,24 @@ internal object NeverNullSafeLists {
    * - **now**: only overload is `()` — total (kept).
    * - **date_trunc**: overloads are `(text, interval)`, `(text, timestamp)`, `(text,
    *   timestamptz)`, `(text, timestamptz, text)`. Unlike `extract`/`date_part` below,
-   *   `date_trunc` special-cases infinite input for EVERY truncation field, verified across
+   *   `date_trunc` special-cases infinite input for every truncation field, checked across
    *   `hour`, `microseconds`, `week`, `quarter`, `day` on `'infinity'`/`'-infinity'` values of
    *   all three temporal types, plus the 3-argument timezone-name form — all preserve infinity
    *   rather than returning `null`, and an unrecognized field name or timezone name errors rather
    *   than returning `null` (all kept).
    * - **date_part/extract**: overloads are `(text, date)`, `(text, interval)`, `(text, time)`,
-   *   `(text, timestamp)`, `(text, timestamptz)`, `(text, timetz)`. UNLIKE `date_trunc`, these
-   *   only special-case a FEW fields (`epoch`, `year`, `century`, ...) for infinite input — most
+   *   `(text, timestamp)`, `(text, timestamptz)`, `(text, timetz)`. Unlike `date_trunc`, these
+   *   only special-case a few fields (`epoch`, `year`, `century`, ...) for infinite input — most
    *   other fields silently return `null` for a non-null, well-typed infinite value:
    *   `extract(hour FROM 'infinity'::timestamp)`, `extract(month FROM 'infinity'::interval)`, and
    *   `extract(day FROM 'infinity'::date)` (`date` supports `'infinity'` too) all return `null`
-   *   with NO error. `(text, date)`, `(text, interval)`, `(text, timestamp)`, `(text,
-   *   timestamptz)` are therefore EXCLUDED. `(text, time)` and `(text, timetz)` have no infinite
-   *   representation for their base type and were verified total across every valid field
+   *   with no error. `(text, date)`, `(text, interval)`, `(text, timestamp)`, `(text,
+   *   timestamptz)` are therefore excluded. `(text, time)` and `(text, timetz)` have no infinite
+   *   representation for their base type and were checked total across every valid field
    *   (`hour`, `minute`, `second`, `microseconds`, `milliseconds`, `epoch`,
    *   `timezone`/`timezone_hour`/`timezone_minute` for `timetz`) plus an unrecognized field name
    *   (errors, does not return `null`) — kept.
-   * - **to_char**: DROPPED ENTIRELY. `to_char(timestamp, '')` (an empty, non-null, well-typed
+   * - **to_char**: dropped entirely. `to_char(timestamp, '')` (an empty, non-null, well-typed
    *   format string) returns `null` with no error — confirmed on `pg_catalog`'s
    *   `(timestamp, text)` overload; the same risk was not individually re-verified for every
    *   other `to_char` overload (`bigint`, `float8`, `int4`, `interval`, `numeric`, `float4`,
@@ -193,10 +192,10 @@ internal object NeverNullSafeLists {
    * `null`). Array-to-array casts (e.g. `text[]` → `int4[]`) likewise need no entry: they surface
    * as [PgNodeExpression.ArrayCoerceExpr], which recurses the same way.
    *
-   * Several entries are SELF-casts (`numeric` → `numeric`, `bpchar` → `bpchar`, `varchar` →
+   * Several entries are self-casts (`numeric` → `numeric`, `bpchar` → `bpchar`, `varchar` →
    * `varchar`, `timestamp` → `timestamp`, `timestamptz` → `timestamptz`, `time` → `time`,
    * `timetz` → `timetz`, `interval` → `interval`, `bit` → `bit`). These are not no-ops: they are
-   * `castfunc`-backed typmod-ENFORCEMENT casts — e.g. applying a declared length limit
+   * `castfunc`-backed typmod-enforcement casts — e.g. applying a declared length limit
    * (`VARCHAR(5)`) or precision (`NUMERIC(10,2)`, `TIMESTAMP(3)`) to an already-typed value.
    * PostgreSQL represents "assign this literal to a length/precision-constrained column" as a
    * same-type cast through this function, not as a no-op RelabelType, which is why
@@ -205,9 +204,9 @@ internal object NeverNullSafeLists {
    * silently truncate/round it (`'abcdef'::varchar(3)` truncates to `'abc'`, never `null`) by the
    * same sweep as every other entry here.
    *
-   * NOT keyed by source type alone: `jsonb` → `integer`/`numeric`/`boolean`/etc. and
+   * Not keyed by source type alone: `jsonb` → `integer`/`numeric`/`boolean`/etc. and
    * `timestamp`/`timestamptz` → `time`/`timetz` are real `castfunc`-backed `pg_catalog` casts
-   * that are NOT total (see [neverNullForNonNullInputOids]'s KDoc for the counterexamples), so a
+   * that are not total (see [neverNullForNonNullInputOids]'s KDoc for the counterexamples), so a
    * blanket "every cast function is safe" rule — which is what this list replaced — silently
    * shipped both. Every pair actually listed here was verified total by
    * [SafeListSweepTest] against a live PostgreSQL instance using an edge-value corpus (`NaN`,
@@ -292,11 +291,11 @@ internal object NeverNullSafeLists {
    * extraction — `null` on a missing key/path, even though `pg_proc.proisstrict` is `true` for
    * them) and `@@` (jsonpath match — `null` on a non-boolean result) by never listing them, and
    * excludes every `path`-typed overload of `+`/`-`/`*` (`path_add` etc. return `null`, not an
-   * error, when either operand is a CLOSED path — see [neverNullForNonNullInputOids]'s KDoc).
+   * error, when either operand is a closed path — see [neverNullForNonNullInputOids]'s KDoc).
    * There is no `jsonb`-typed entry on this list at all — [neverNullForNonNullInputOids]'s KDoc
-   * covers the `jsonb` `'null'` literal counterexample in the context of CASTS, not operators.
+   * covers the `jsonb` `'null'` literal counterexample in the context of casts, not operators.
    *
-   * NOT keyed by symbol alone: a blanket "every `pg_catalog` overload of this symbol is safe"
+   * Not keyed by symbol alone: a blanket "every `pg_catalog` overload of this symbol is safe"
    * rule — which is what this list replaced — is what let `path + path` through, since `+` is
    * also the totally-safe `int4 + int4`. Every triple actually listed here was verified total by
    * [SafeListSweepTest] against a live PostgreSQL instance using an edge-value corpus (`NaN`,
@@ -594,11 +593,11 @@ internal object NeverNullSafeLists {
     SafeOperatorSignature(">=", "timestamp", "timestamptz"),
     SafeOperatorSignature(">=", "timestamp", "timestamp"),
     SafeOperatorSignature(">=", "uuid", "uuid"),
-    // Unary (prefix) bitwise-complement overloads of "~" — a DIFFERENT operator from the
+    // Unary (prefix) bitwise-complement overloads of "~" — a different operator from the
     // binary regex-match "~" immediately below; PostgreSQL overloads the symbol. Complementing
     // any bit pattern of a fixed-width representation always fits back in that same width, so
     // there is no overflow case the way there is for negation. `macaddr`/`macaddr8`/`inet`
-    // overloads of unary "~" also exist in pg_catalog but are deliberately NOT listed — network
+    // overloads of unary "~" also exist in pg_catalog but are deliberately not listed — network
     // address types are outside the families this fix targets, so an expression using them
     // stays conservatively nullable rather than being swept and verified.
     SafeOperatorSignature("~", null, "int8"),

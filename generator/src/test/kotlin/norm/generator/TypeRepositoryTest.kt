@@ -20,7 +20,7 @@ class TypeRepositoryTest {
    * `parseSelectItems` call site: [parseSelectItems] has no independent way to confirm its own
    * item count against the real result column count (see its KDoc), so a spelling it
    * mis-recognizes -- most concretely, an unrecognized star item that expands to several real
-   * columns -- degrades SILENTLY to a shifted, wrong mapping of names/expressions onto columns
+   * columns -- degrades silently to a shifted, wrong mapping of names/expressions onto columns
    * they don't belong to, rather than the documented empty-list fail-safe, unless the caller
    * cross-checks the count itself.
    *
@@ -37,10 +37,10 @@ class TypeRepositoryTest {
       // 3 select items, all computed expressions with distinct, individually-recognizable text.
       val queryText = "SELECT LENGTH(a) AS a_len, UPPER(b) AS b_upper, LOWER(c) AS c_lower FROM t"
 
-      // Only 2 REAL result columns -- simulates the exact shape of the bug: parseSelectItems'
+      // Only 2 real result columns -- simulates the exact shape of the bug: parseSelectItems'
       // item count (3) disagrees with the real column count (2, what queryResults.size stands in
       // for here). Without the guard, the second queryResult ("c_lower", conceptually LOWER(c))
-      // would incorrectly borrow selectItems[1] -- UPPER(b), a DIFFERENT expression entirely.
+      // would incorrectly borrow selectItems[1] -- UPPER(b), a different expression entirely.
       val queryResults = listOf(
         Column(name = "a_len", notNull = true, type = Identifier(name = "int4")),
         Column(name = "c_lower", notNull = true, type = Identifier(name = "text")),
@@ -55,7 +55,7 @@ class TypeRepositoryTest {
       // is what actually distinguishes the fail-safe from the wrong, shifted mapping.
       assertThat(kdoc).doesNotContain("@property c_lower (`UPPER(b)`)")
       assertThat(kdoc).doesNotContain("@property c_lower")
-      // The fail-safe treats the WHOLE mapping as unreliable once the counts disagree -- not just
+      // The fail-safe treats the whole mapping as unreliable once the counts disagree -- not just
       // the specific item that would otherwise be shifted -- so a_len loses its (individually
       // correct) attribution too, exactly like oldOrNewReturningColumns' callers, which fall back
       // to forcing every column rather than only the ones they can specifically identify as risky.
@@ -73,12 +73,12 @@ class TypeRepositoryTest {
       // parseSelectItems("SELECT 5") wrongly resolved the literal "5" as if it were a column named
       // "5" (columnName = "5"). That made isComputedExpression (TypeRepository.kt) false, so
       // PropertySource.expression was never populated, and sourceReference() returned null for
-      // this property entirely -- the KDoc carried NO reference to the literal's origin.
+      // this property entirely -- the KDoc carried no reference to the literal's origin.
       //
       // With COLUMN_REFERENCE's leading-character restricted to a legal identifier start (no
       // digit, no "$"), "5" no longer matches as a column reference: columnName is correctly
       // null, isComputedExpression is true, and sourceReference() now renders "`5`" -- this is
-      // the desired, MORE correct behavior (see COLUMN_REFERENCE's own KDoc), but nothing
+      // the desired, more correct behavior (see COLUMN_REFERENCE's own KDoc), but nothing
       // previously exercised the downstream KDoc-generation effect of that change.
       val repository = TypeRepository("test", Catalog())
       val literalColumn = Column(name = "column1", notNull = true, type = Identifier(name = "int4"))
@@ -176,7 +176,7 @@ class TypeRepositoryTest {
       // Contrast case, pinning existing accepted behavior: PostgreSQL itself names a set operation's
       // whole result column after branch 1 alone, so echoing a bare column reference is not
       // misleading the way a computed expression is -- this must keep behaving exactly as an
-      // ordinary bare column reference already does (no source-reference line either way), NOT
+      // ordinary bare column reference already does (no source-reference line either way), not
       // regress to something new merely because a set operation is present.
       val queryText = "SELECT a FROM x UNION SELECT b FROM y"
       val plainColumn = Column(name = "a", notNull = true, type = Identifier(name = "int4"))
@@ -194,7 +194,7 @@ class TypeRepositoryTest {
 
     @Test
     fun `a CTE-wrapped expression column gets a source-reference KDoc line resolved through the CTE body`() {
-      // Regression test for issue #229: a result column that is BOTH CTE-wrapped AND
+      // Regression test: a result column that is both CTE-wrapped and
       // expression-derived previously got no @property line at all. The outer select item
       // (`description_upper`, a plain column reference into the CTE) makes isComputedExpression
       // false, so this only passes if TypeRepository also reads column.provenanceExpression —
@@ -541,7 +541,7 @@ class TypeRepositoryTest {
 
     @Test
     fun `a plain lowercase original column name is rendered bare, unquoted`() {
-      // Contrast case: a normal identifier must NOT gain spurious quotes.
+      // Contrast case: a normal identifier must not gain spurious quotes.
       val plainColumn = Column(
         name = "id",
         notNull = true,
@@ -605,7 +605,7 @@ class TypeRepositoryTest {
     @Test
     fun `an empty reserved-word set (the default) leaves an ordinary identifier bare, unquoted`() {
       // Contrast case: TypeRepository's own default (emptySet()) must not spuriously quote every
-      // all-lowercase identifier -- only the connected server's OWN reported reserved words.
+      // all-lowercase identifier -- only the connected server's own reported reserved words.
       val plainColumn = Column(
         name = "id",
         notNull = true,

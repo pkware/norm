@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test
 
 /**
  * Regression coverage for [addSqlStatementInterfaceMethod]'s `@param` KDoc lines: a stray backtick in
- * one parameter's column comment must not be free to pair with a backtick belonging to a LATER
+ * one parameter's column comment must not be free to pair with a backtick belonging to a later
  * parameter's own comment, the exact defect class [escapeMarkdownBacktick] already fixed for
  * [TypeRepository]'s `@property` lines — this emission path shares the same "single `\n`, no blank
  * line, between consecutive tags" shape, but is invisible to
@@ -37,7 +37,7 @@ class InterfaceBuilderKdocTest {
     builder.addSqlStatementInterfaceMethod(statement)
     val kdoc = builder.build().funSpecs.first().kdoc.toString()
 
-    // Without escaping, CommonMark parses "`hello\n@param bParam cruel world`" as ONE inline code
+    // Without escaping, CommonMark parses "`hello\n@param bParam cruel world`" as one inline code
     // span spanning both `@param` lines -- hiding bParam's own tag and comment text inside it.
     // Escaping the source backticks means no code span forms here at all.
     val codeSpans = mutableListOf<String>()

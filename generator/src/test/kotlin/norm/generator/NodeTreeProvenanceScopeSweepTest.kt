@@ -16,26 +16,26 @@ import java.util.UUID
 
 /**
  * Brute-force, ground-truth sweep guarding [NodeTreeProvenanceResolver]'s "correct or silent"
- * invariant across the scope-stack bug class fixed in #238 — a bug class two unit test suites (this
- * one's own sibling files) already caught only because a fresh-context verifier happened to probe
- * the exact shape that triggers it. This test exists so the next scope defect, whatever shape it
- * takes, is caught by a systematic sweep instead of by luck.
+ * invariant across the scope-stack bug class this file's sibling test suites already caught — only
+ * because a fresh-context verifier happened to probe the exact shape that triggers it. This test
+ * exists so the next scope defect, whatever shape it takes, is caught by a systematic sweep instead
+ * of by luck.
  *
- * For every generated shape, this test does NOT compare against a hand-computed expected string —
- * it runs the ACTUAL query against seeded rows to capture what PostgreSQL itself returns for the
+ * For every generated shape, this test does not compare against a hand-computed expected string —
+ * it runs the actual query against seeded rows to capture what PostgreSQL itself returns for the
  * result column ([groundTruthValue]), then — if [NodeTreeProvenanceResolver] emitted anything at
- * all — evaluates the EMITTED expression text directly against the same seeded row and requires
- * the two to agree. Emitting nothing is a PASS (the "or silent" half of the invariant); emitting
+ * all — evaluates the emitted expression text directly against the same seeded row and requires
+ * the two to agree. Emitting nothing is a pass (the "or silent" half of the invariant); emitting
  * something that does not reproduce what the query itself returns is the one and only failure
  * mode, matching this whole subsystem's design (see [NodeTreeProvenanceResolver]'s own KDoc).
  *
  * [generateSweepCases] crosses four axes:
  * - **chain depth** (`1..6`): total CTEs in a straight reference chain `c1 <- c2 <- ... <- cN`.
- * - **sibling count** (`0..2`): extra, UNREFERENCED CTEs declared in the same top-level `WITH`
- *   clause, computing a DIFFERENT value than the real chain — proving their mere presence never
+ * - **sibling count** (`0..2`): extra, unreferenced CTEs declared in the same top-level `WITH`
+ *   clause, computing a different value than the real chain — proving their mere presence never
  *   changes what the real chain resolves to.
  * - **nesting depth** (`0..2`): the whole chain wrapped in that many extra layers of a genuinely
- *   LEXICALLY nested `WITH` (`ctelevelsup 0` at every such layer, never a sibling hop) — proving
+ *   lexically nested `WITH` (`ctelevelsup 0` at every such layer, never a sibling hop) — proving
  *   real nesting neither breaks a correct resolution nor "accidentally" fixes a wrong one.
  * - **shadowing**: for `chainDepth >= 2`, the outermost CTE additionally declares its own nested
  *   `WITH c1 AS (...)`, re-declaring the first CTE's name with a differently-computed, easily
@@ -47,13 +47,11 @@ import java.util.UUID
  *   test declares, and correctly bails to `null` instead) — still asserted here, since "correct or
  *   silent" makes `null` a pass, not a gap in coverage.
  *
- * MUTATION TESTED: reverting [NodeTreeProvenanceResolver.resolveVar]'s `currentScopeStack =
- * listOf(ownScope) + currentScopeStack.drop(reference.ctelevelsup)` back to the old, unconditional
- * `listOf(ownScope) + currentScopeStack` was run by hand against this test and confirmed to turn
- * `every generated CTE chain shape emits either nothing or the value it actually produced` red,
- * failing on the `chainDepth=3, shadowed=true` cases with the emitted expression evaluating to the
- * shadow's `LOWER(description)` value instead of the real chain's `UPPER(name)` value — before
- * being reverted back to the fix.
+ * Reverting [NodeTreeProvenanceResolver.resolveVar]'s `currentScopeStack = listOf(ownScope) +
+ * currentScopeStack.drop(reference.ctelevelsup)` to the old, unconditional `listOf(ownScope) +
+ * currentScopeStack` fails this test on the `chainDepth=3, shadowed=true` cases: the emitted
+ * expression evaluates to the shadow's `LOWER(description)` value instead of the real chain's
+ * `UPPER(name)` value.
  */
 @Testcontainers
 class NodeTreeProvenanceScopeSweepTest {
@@ -61,7 +59,7 @@ class NodeTreeProvenanceScopeSweepTest {
   @Test
   fun `every generated CTE chain shape emits either nothing or the value it actually produced`() {
     val cases = generateSweepCases()
-    // The REAL corpus size, not a lower bound: shrinking any axis below changes this literal,
+    // The real corpus size, not a lower bound: shrinking any axis below changes this literal,
     // forcing a conscious update rather than a silently smaller sweep going unnoticed.
     assertThat(cases.size).isEqualTo(99)
 
@@ -84,11 +82,11 @@ class NodeTreeProvenanceScopeSweepTest {
     // c1's own computed expression through nothing but bare-column pass-throughs -- no axis
     // (chainDepth, shadowed, siblingCount, nestingDepth) combination here has a legitimate reason to
     // bail to null. `isGreaterThan(0)` previously let a regression that bails for every chainDepth >=
-    // 2 case slip through GREEN: the 9 chainDepth == 1 cases (siblingCount 0..2 x nestingDepth 0..2,
-    // no shadow variant since chainDepth 1 has none) still emit, satisfying "more than zero" while 90
-    // genuine resolutions silently vanished. Asserting the full expected count instead -- confirmed
-    // by hand: reverting NodeTreeProvenanceResolver.resolveVar to bail after the first CTE hop turns
-    // this exact assertion red at 9, not 99 -- closes that gap.
+    // 2 case slip through: the 9 chainDepth == 1 cases (siblingCount 0..2 x nestingDepth 0..2, no
+    // shadow variant since chainDepth 1 has none) still emit, satisfying "more than zero" while 90
+    // genuine resolutions silently vanished. Asserting the full expected count closes that gap:
+    // reverting NodeTreeProvenanceResolver.resolveVar to bail after the first CTE hop turns this
+    // exact assertion red at 9, not 99.
     assertThat(evaluatedNonNullCount).isEqualTo(cases.size)
     assertThat(failures).isEmpty()
   }
@@ -116,9 +114,9 @@ class NodeTreeProvenanceScopeSweepTest {
 
     /**
      * `c1` computes the real value (`UPPER(name)`); every `c2..cN` is an ordinary pass-through of
-     * its predecessor, EXCEPT the outermost (`cN`) when [shadowed] — which additionally declares
-     * its own nested `WITH c1 AS (...)`, a DIFFERENT body ([shadowed]'s KDoc explains why this
-     * specific placement is the one that reproduces the #238 scope-stack bug at `chainDepth == 3`)
+     * its predecessor, except the outermost (`cN`) when [shadowed] — which additionally declares
+     * its own nested `WITH c1 AS (...)`, a different body (this file's own KDoc explains why this
+     * specific placement is the one that reproduces the scope-stack bug at `chainDepth == 3`)
      * that `cN`'s own `SELECT` never itself references.
      */
     private fun buildChainDefinitions(): List<String> {
@@ -135,8 +133,8 @@ class NodeTreeProvenanceScopeSweepTest {
     }
 
     /**
-     * Wraps [core] in [nestingDepth] extra layers of a genuinely LEXICALLY nested `WITH` — each
-     * layer's own `wrap_N` CTE has [core] (or the PREVIOUS layer) as its ENTIRE body, so the
+     * Wraps [core] in [nestingDepth] extra layers of a genuinely lexically nested `WITH` — each
+     * layer's own `wrap_N` CTE has [core] (or the previous layer) as its entire body, so the
      * reference from one layer into the next is always `ctelevelsup 0` (a real nesting level),
      * never a sibling hop `ctelevelsup 1` — the one relationship
      * [NodeTreeProvenanceResolver.resolveVar]'s scope-stack fix changes the handling of at all (see
@@ -154,7 +152,7 @@ class NodeTreeProvenanceScopeSweepTest {
   private fun generateSweepCases(): List<SweepCase> {
     val cases = mutableListOf<SweepCase>()
     for (chainDepth in 1..6) {
-      // A shadow re-declares "c1" from INSIDE the outermost CTE's own nested WITH -- meaningless
+      // A shadow re-declares "c1" from inside the outermost CTE's own nested WITH -- meaningless
       // (and, since chainDepth 1 has no "c{chainDepth - 1}" to pass through from at all, not even
       // constructible) for a chain shorter than 2 CTEs.
       val shadowOptions = if (chainDepth >= 2) listOf(false, true) else listOf(false)
@@ -186,7 +184,7 @@ class NodeTreeProvenanceScopeSweepTest {
   }
 
   /**
-   * Builds the SAME `prosqlbody` node tree [ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody]
+   * Builds the same `prosqlbody` node tree [ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody]
    * does: a temporary, zero-argument `BEGIN ATOMIC ... END` SQL-standard function. See
    * [NodeTreeProvenanceResolverTest]'s identical helper — no parameter substitution is needed here,
    * since no case in this sweep has a `?` placeholder.

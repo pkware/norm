@@ -3,10 +3,10 @@ package norm.generator
 /**
  * A parsed CTE definition from a `WITH` clause.
  *
- * @property name The CTE name, with surrounding double quotes stripped (if any). Safe for DISPLAY,
- *   and for a quote-INSENSITIVE comparison where losing the quoted/unquoted distinction is
- *   genuinely harmless. NOT safe for constructing SQL to send to PostgreSQL, and NOT safe for any
- *   comparison that resolves what the name actually ADDRESSES — quoting changes case-folding
+ * @property name The CTE name, with surrounding double quotes stripped (if any). Safe for display,
+ *   and for a quote-insensitive comparison where losing the quoted/unquoted distinction is
+ *   genuinely harmless. Not safe for constructing SQL to send to PostgreSQL, and not safe for any
+ *   comparison that resolves what the name actually addresses — quoting changes case-folding
  *   (`"MyCte"` is distinct from `MyCte`, which folds to `mycte`), so both building a `FROM <name>`
  *   reference from this stripped form, and comparing it against another identifier to decide
  *   whether they denote the same relation, can silently pick the wrong (or a nonexistent) one —
@@ -19,7 +19,7 @@ package norm.generator
  * @property hasColumnList Whether the CTE was declared with an explicit column list
  *   (`name(col1, col2) AS (...)`). The list renames/repositions the body's own output names — but
  *   [resolveNodeTreeProvenanceExpression] never consults this flag: it cross-validates against the
- *   CTE BODY's own `:resname`s (read from the node tree, via [PgNodeTreeParser.parseTargetList]),
+ *   CTE body's own `:resname`s (read from the node tree, via [PgNodeTreeParser.parseTargetList]),
  *   which an explicit column list never changes, so a renamed CTE still resolves correctly. Kept
  *   for callers that need to know a column list was present, not because expression resolution
  *   depends on it.
@@ -108,11 +108,11 @@ private fun parseSingleCteDefinition(sql: String, startPosition: Int): Pair<CteD
   var position = skipWhitespaceAndComments(sql, startPosition)
 
   // Read CTE name: an unquoted identifier (isIdentifierStartChar, then a run of isIdentifierChar
-  // characters), or a double-quoted one. The FIRST character is gated by isIdentifierStartChar,
+  // characters), or a double-quoted one. The first character is gated by isIdentifierStartChar,
   // not isIdentifierChar — a leading digit or "$" is not a legal identifier start (see
-  // isIdentifierStartChar's KDoc). The quoted branch uses QUOTED_IDENTIFIER_PATTERN, the SAME
-  // ""-escape-aware matcher parseAliasToken uses, rather than stopping at the FIRST '"' — a naive
-  // scan truncates a name like `"He""llo"` to `"He"` at the escaped quote's first half (#238).
+  // isIdentifierStartChar's KDoc). The quoted branch uses QUOTED_IDENTIFIER_PATTERN, the same
+  // ""-escape-aware matcher parseAliasToken uses, rather than stopping at the first '"' — a naive
+  // scan truncates a name like `"He""llo"` to `"He"` at the escaped quote's first half.
   val nameStart = position
   if (position < sql.length && sql[position] == '"') {
     val match = QUOTED_IDENTIFIER_PATTERN.matchAt(sql, position)
@@ -123,7 +123,7 @@ private fun parseSingleCteDefinition(sql: String, startPosition: Int): Pair<CteD
   }
   if (position == nameStart) return null
   val rawName = sql.substring(nameStart, position)
-  // rawName deliberately keeps its quotes, so only the unescaped form is truncated.
+  // rawName keeps its quotes, so only the unescaped form is truncated.
   val name = truncateIdentifier(if (isQuotedIdentifier(rawName)) unescapeQuotedIdentifier(rawName) else rawName)
 
   position = skipWhitespaceAndComments(sql, position)

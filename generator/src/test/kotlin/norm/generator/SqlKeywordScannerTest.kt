@@ -82,21 +82,20 @@ class SqlKeywordScannerTest {
 
     @Test
     fun `splits correctly around a column name containing two dollar signs`() {
-      // Behavior CHANGE from wiring splitAtTopLevel through skipLexicalToken: before the dollar-
-      // quote identifier fix, the "$" between "b" and "c" was misread as opening a "$b$"-tagged
-      // dollar-quote, swallowing everything after it (including the real commas) as unterminated
-      // string content — yielding ONE item instead of three. This is the corrected, intended
-      // behavior, not a regression: "a$b$c" is an ordinary PostgreSQL identifier.
+      // Before the dollar-quote fix, the "$" between "b" and "c" was misread as opening a
+      // "$b$"-tagged dollar-quote, swallowing everything after it (including the real commas) as
+      // unterminated string content — yielding one item instead of three. "a$b$c" is an ordinary
+      // PostgreSQL identifier.
       val result = splitAtTopLevel("a\$b\$c, id, name", ',')
       assertThat(result).containsExactly("a\$b\$c", " id", " name")
     }
 
     @Test
     fun `preserves content inside square brackets`() {
-      // Regression guard: square brackets were not tracked as a nesting level at all, so
-      // ARRAY[1, 2]'s internal comma split the item in two — verified against real PostgreSQL to
-      // corrupt oldOrNewReturningColumns's item count, and (worse) able to numerically CANCEL OUT
-      // an unrelated star-caused split error, defeating its real-column-count cross-check entirely.
+      // Square brackets were not tracked as a nesting level, so ARRAY[1, 2]'s internal comma
+      // split the item in two — corrupting oldOrNewReturningColumns's item count, and even
+      // capable of numerically canceling out an unrelated star-caused split error, defeating its
+      // real-column-count cross-check entirely.
       val result = splitAtTopLevel("ARRAY[1, 2] AS arr, name", ',')
       assertThat(result).containsExactly("ARRAY[1, 2] AS arr", " name")
     }
@@ -194,7 +193,7 @@ class SqlKeywordScannerTest {
         keyword = "FROM",
         expected = { it.indexOf("FROM a") },
       ),
-      // "data_set" as a TABLE name ends in "_set" — the character before "set" is "_", which
+      // "data_set" as a table name ends in "_set" — the character before "set" is "_", which
       // must count as an identifier character so the real "SET" keyword afterward is what's found.
       KeywordScanCase(
         description = "does not match SET inside the identifier data_set",
@@ -228,8 +227,8 @@ class SqlKeywordScannerTest {
         keyword = "FROM",
         expected = { it.indexOf("FROM a") },
       ),
-      // Issue #219: PostgreSQL's lexer admits any byte >= 0x80 inside an unquoted identifier, so
-      // "from€" is a single identifier, not the keyword FROM followed by a stray "€".
+      // PostgreSQL's lexer admits any byte >= 0x80 inside an unquoted identifier, so "from€" is
+      // a single identifier, not the keyword FROM followed by a stray "€".
       KeywordScanCase(
         description = "does not match FROM when immediately followed by a non-ASCII identifier-continuation character",
         sql = "SELECT * FROM€ t",
@@ -249,7 +248,7 @@ class SqlKeywordScannerTest {
     @Test
     fun `bails to not-found once an unmatched closing parenthesis drives depth negative`() {
       // A bare ")" with no matching "(" before it means the input is not the well-formed,
-      // balanced text this scan assumes. Without a floor, depth stays negative until a LATER
+      // balanced text this scan assumes. Without a floor, depth stays negative until a later
       // unmatched "(" happens to bring it back to exactly 0 — at which point a keyword genuinely
       // inside that malformed region would wrongly be treated as top-level. Bailing to -1 at the
       // first negative dip is the safe direction: an honest "not found" over a confidently wrong
@@ -264,9 +263,9 @@ class SqlKeywordScannerTest {
 
     @Test
     fun `a trailing non-ASCII character on a returning-shaped identifier is not mistaken for the bare keyword`() {
-      // The exact shape from #219: "returning€" is a legal PostgreSQL column name (PostgreSQL's
-      // lexer admits any byte >= 0x80 inside an unquoted identifier), so this must not be split
-      // into the bare word "returning" plus a stray "€".
+      // "returning€" is a legal PostgreSQL column name (PostgreSQL's lexer admits any byte
+      // >= 0x80 inside an unquoted identifier), so this must not be split into the bare word
+      // "returning" plus a stray "€".
       val sql = "INSERT INTO users (email, age, preferences) " +
         "SELECT returning€, age, preferences FROM src RETURNING id, email"
       val result = findTopLevelReturningKeyword(sql)
@@ -297,10 +296,9 @@ class SqlKeywordScannerTest {
 
     @Test
     fun `still finds the real keyword when it is not preceded by AS`() {
-      // NOT demonstrative of any fix in this file — the AS-preceded-alias exclusion predates this
-      // branch's >= 0x80 boundary work (it's the #212-era fix). Kept as a regression guard that
-      // the ordinary, already-working case (a real RETURNING clause with no AS before it) still
-      // matches.
+      // Not new behavior — the AS-preceded-alias exclusion predates this branch's >= 0x80
+      // boundary work. Kept as a regression guard that a real RETURNING clause with no AS before
+      // it still matches.
       val sql = "DELETE FROM t WHERE id = 1 RETURNING id"
       val result = findTopLevelReturningKeyword(sql)
       assertThat(result).isEqualTo(sql.indexOf("RETURNING id"))
@@ -308,9 +306,9 @@ class SqlKeywordScannerTest {
 
     @Test
     fun `does not match an AS-preceded column alias`() {
-      // NOT demonstrative of any fix in this file — same reasoning as above: the AS-preceded
-      // exclusion is pre-existing behavior, not part of this branch's >= 0x80 boundary work. Kept
-      // as a regression guard against that exclusion becoming overly broad or narrow.
+      // Not new behavior — same as above, the AS-preceded exclusion predates this branch's
+      // >= 0x80 boundary work. Kept as a regression guard against that exclusion becoming overly
+      // broad or narrow.
       val sql = "SELECT email AS returning, x FROM t"
       val result = findTopLevelReturningKeyword(sql)
       assertThat(result).isEqualTo(-1)
@@ -322,8 +320,8 @@ class SqlKeywordScannerTest {
 
     @Test
     fun `a FROM that is really part of IS DISTINCT FROM is not mistaken for the clause boundary`() {
-      // #238: a plain findTopLevelKeyword search returns the FIRST depth-0 "FROM", which here is
-      // the one glued to "IS DISTINCT" -- truncating the select list to "a IS DISTINCT" and leaving
+      // A plain findTopLevelKeyword search returns the first depth-0 "FROM", which here is the
+      // one glued to "IS DISTINCT" -- truncating the select list to "a IS DISTINCT" and leaving
       // "b FROM t" (the expression's own right-hand operand) looking like the real clause.
       val sql = "SELECT a IS DISTINCT FROM b FROM t"
       val result = findTopLevelFromClauseKeyword(sql, 0)
@@ -377,18 +375,17 @@ class SqlKeywordScannerTest {
 
     @Test
     fun `does not consume OUTER when immediately followed by a non-ASCII identifier-continuation character`() {
-      // Issue #219: "OUTER€" is a single identifier, not the keyword OUTER followed by a stray
-      // "€" -- the position must be left unchanged, exactly as for any other non-matching text.
+      // "OUTER€" is a single identifier, not the keyword OUTER followed by a stray "€" -- the
+      // position must be left unchanged, exactly as for any other non-matching text.
       val sql = "OUTER€ JOIN b"
       assertThat(skipOptionalKeyword(sql, 0, "OUTER")).isEqualTo(0)
     }
 
     @Test
     fun `still consumes a real keyword followed by ordinary whitespace`() {
-      // NOT demonstrative of any fix in this file — a positive control confirming the ordinary,
-      // already-working case (a real keyword followed by plain whitespace) still advances past
-      // it. Kept as a regression guard against the non-ASCII boundary check above becoming overly
-      // broad and rejecting this too.
+      // Not new behavior — a positive control confirming a real keyword followed by plain
+      // whitespace still advances past it. Kept as a regression guard against the non-ASCII
+      // boundary check above becoming overly broad and rejecting this too.
       val sql = "OUTER JOIN b"
       assertThat(skipOptionalKeyword(sql, 0, "OUTER")).isEqualTo(sql.indexOf("JOIN"))
     }

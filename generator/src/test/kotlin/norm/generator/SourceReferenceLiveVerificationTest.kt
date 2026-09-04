@@ -41,18 +41,18 @@ import kotlin.io.path.readText
  * against a live server makes this a permanent part of the suite: a future change that makes any
  * golden span unparseable now fails the build here.
  *
- * A golden `.kt` file IS the generated file, checked into the repository — [GenerateCodeTest]
+ * A golden `.kt` file is the generated file, checked into the repository — [GenerateCodeTest]
  * already proves, for every one of these same scenarios, that a freshly generated file matches its
- * golden BYTE FOR BYTE, so reading the committed golden text is equivalent to driving the generator
+ * golden byte for byte, so reading the committed golden text is equivalent to driving the generator
  * again and is far cheaper across this many files.
  *
  * Verification strategy: a source-reference span is either a `` `table."Column"` `` reference or a
  * computed expression (see [PropertySource.sourceReference]'s own KDoc); either way, the span is
- * proven by finding SOME syntactically valid context — a real table from the scenario's own schema,
+ * proven by finding some syntactically valid context — a real table from the scenario's own schema,
  * or a CTE body's own `FROM` clause taken from the golden's embedded `sql` fence — in which
  * `EXPLAIN SELECT (span) <context>` parses and analyzes without error. `EXPLAIN` (never executed)
- * is used deliberately: several golden queries are `DELETE`/`UPDATE` CTE bodies, and this test must
- * never mutate the schema it is verifying against.
+ * is used because several golden queries are `DELETE`/`UPDATE` CTE bodies, and this test must never
+ * mutate the schema it is verifying against.
  */
 @Testcontainers
 @Execution(ExecutionMode.SAME_THREAD)
@@ -74,11 +74,11 @@ class SourceReferenceLiveVerificationTest {
     if (markerCount == 0) return
 
     val spans = extractSourceReferenceSpans(markdown)
-    // A raw "(`" in the KDoc's own Markdown SOURCE (before CommonMark parses it) is the exact,
+    // A raw "(`" in the KDoc's own Markdown source (before CommonMark parses it) is the exact,
     // and only, text addClassKdoc emits via `append("($source)")` where $source is itself
-    // backtick-wrapped -- so every occurrence means a span WAS emitted here, and each must parse
-    // back out on its own. Comparing the FULL count -- not just checking spans is non-empty --
-    // catches a PARTIAL loss too: losing one span while others survive still leaves the list
+    // backtick-wrapped -- so every occurrence means a span was emitted here, and each must parse
+    // back out on its own. Comparing the full count -- not just checking spans is non-empty --
+    // catches a partial loss too: losing one span while others survive still leaves the list
     // non-empty, which a plain emptiness check would silently accept. A mismatch means span
     // delimitation broke somewhere in this file's KDoc paragraph: a stray, unpaired backtick or
     // backslash elsewhere in the same paragraph closed, reopened, or swallowed a code span in the
@@ -108,10 +108,10 @@ class SourceReferenceLiveVerificationTest {
   fun `a swallowed span among surviving ones is a count mismatch, not silently accepted`() {
     // Reproduces the exact shape a plain "spans.isEmpty()" check cannot see -- property b's own
     // unescaped backtick ("Say `hello", the defect class fixed elsewhere by escapeMarkdownBacktick)
-    // pairs with property c's marker backtick instead of a's, swallowing
-    // c's ENTIRE span into a bigger code span that is not preceded by "(" at all. Property a's own
-    // span, earlier in the same paragraph and fully self-contained, still parses correctly -- so
-    // the result is non-empty (a's span alone), which the old guard would have accepted outright.
+    // pairs with property c's marker backtick instead of a's, swallowing c's entire span into a
+    // bigger code span that is not preceded by "(" at all. Property a's own span, earlier in the
+    // same paragraph and fully self-contained, still parses correctly -- so the result is non-empty
+    // (a's span alone), which the old guard would have accepted outright.
     val markdown = "@property a (`t.\"x\"`)\n@property b Say `hello\n@property c (`SOME_EXPR`)"
 
     val spans = extractSourceReferenceSpans(markdown)
@@ -119,7 +119,7 @@ class SourceReferenceLiveVerificationTest {
 
     assertThat(spans).containsExactly("t.\"x\"")
     assertThat(markerCount).isEqualTo(2)
-    // The guard's own comparison: a non-empty, but INCOMPLETE, span list must still be caught.
+    // The guard's own comparison: a non-empty, but incomplete, span list must still be caught.
     assertThat(spans.size).isEqualTo(1)
   }
 
@@ -156,7 +156,7 @@ class SourceReferenceLiveVerificationTest {
    * For every CTE declared anywhere in [sql] (including a CTE body's own nested `WITH` clause,
    * walked recursively), the CTE's own `WITH` prefix text paired with its body's `FROM`-onward
    * text — a syntactically valid context for a computed expression drawn from that body, since a
-   * sibling CTE the body's `FROM` clause references by name is declared in that SAME `WITH` prefix.
+   * sibling CTE the body's `FROM` clause references by name is declared in that same `WITH` prefix.
    *
    * A CTE body with no top-level `FROM` at all (a bare `VALUES`/`TABLE` body, or one whose only
    * source is another CTE addressed without needing a table) contributes nothing here; such an
@@ -206,7 +206,7 @@ class SourceReferenceLiveVerificationTest {
   /**
    * Extracts every source-reference span from [markdown]: a [Code] node whose immediately preceding
    * text ends with `(` — the exact, and only, shape [TypeSpec.Builder.addClassKdoc] produces via
-   * `append("($source)")`. A `@property` tag's own NAME token can also be a [Code] node (when the
+   * `append("($source)")`. A `@property` tag's own name token can also be a [Code] node (when the
    * property name itself needs backtick-quoting), but that one is always preceded by `@property `
    * or comment prose, never a bare `(`, so this marker never confuses the two.
    */
@@ -232,7 +232,7 @@ class SourceReferenceLiveVerificationTest {
   }
 
   /**
-   * Counts every raw `` (` `` marker in [markdown]'s own Markdown SOURCE, before CommonMark parses
+   * Counts every raw `` (` `` marker in [markdown]'s own Markdown source, before CommonMark parses
    * it — the exact, and only, text [TypeSpec.Builder.addClassKdoc] emits via `append("($source)")`
    * where `$source` is itself backtick-wrapped. Compared against [extractSourceReferenceSpans]'s
    * parsed count, this is what catches a partial span loss: [extractSourceReferenceSpans] alone
@@ -261,21 +261,20 @@ class SourceReferenceLiveVerificationTest {
   }
 
   /**
-   * Unwraps the FIRST `/** ... */` KDoc block out of [fileText] back to its own Markdown source —
+   * Unwraps the first `/** ... */` KDoc block out of [fileText] back to its own Markdown source —
    * indentation-agnostic, unlike [KdocProvenanceRoundTripTest]'s identical-in-spirit helper, which
-   * only ever reads a single, TOP-LEVEL (zero-indent) class KDoc rendered in isolation. A generated
-   * FILE (as opposed to one [com.squareup.kotlinpoet.TypeSpec] rendered alone) can contain many
+   * only ever reads a single, top-level (zero-indent) class KDoc rendered in isolation. A generated
+   * file (as opposed to one [com.squareup.kotlinpoet.TypeSpec] rendered alone) can contain many
    * KDoc blocks nested at different indentation depths (one per interface method, for instance), so
-   * the opening/closing markers are matched by their TRIMMED content (`/**`/`*/`) rather than a
+   * the opening/closing markers are matched by their trimmed content (`/**`/`*/`) rather than a
    * fixed literal indent.
    *
    * Only the first block is ever examined: a data-class projection file — the only kind that ever
    * carries an `@property` source-reference span, via `addClassKdoc` — has exactly one [TypeSpec]
-   * and therefore at most one KDoc block, so there is nothing later in such a file to miss. A file
-   * with no source-reference-bearing KDoc at all (an interface/implementation file, or a table
-   * projection with no documentation) either has no KDoc block (`null`, below) or a first block that
-   * [extractSourceReferenceSpans] simply finds no matching span in — the caller already handles
-   * both by skipping.
+   * and therefore at most one KDoc block. A file with no source-reference-bearing KDoc at all (an
+   * interface/implementation file, or a table projection with no documentation) either has no KDoc
+   * block (`null`, below) or a first block that [extractSourceReferenceSpans] finds no matching span
+   * in — the caller already handles both by skipping.
    *
    * @return `null` if [fileText] has no KDoc block at all.
    */
