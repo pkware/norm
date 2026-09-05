@@ -157,7 +157,6 @@ class CrudQuerySynthesizerTest {
       ),
     )
     val catalog = Catalog(
-      defaultSchema = "analytics",
       schemas = listOf(Schema(name = "analytics", tables = listOf(table))),
     )
 
@@ -276,7 +275,6 @@ class CrudQuerySynthesizerTest {
       ),
     )
     val catalog = Catalog(
-      defaultSchema = "select",
       schemas = listOf(Schema(name = "select", tables = listOf(table))),
     )
     val quoter = quoteOnly("select", "order")
@@ -449,7 +447,6 @@ class CrudQuerySynthesizerTest {
   )
 
   private fun catalog(vararg tables: Table) = Catalog(
-    defaultSchema = "public",
     schemas = listOf(Schema(name = "public", tables = tables.toList())),
   )
 }

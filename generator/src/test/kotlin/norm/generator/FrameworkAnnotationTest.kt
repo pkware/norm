@@ -42,7 +42,6 @@ class FrameworkAnnotationTest {
      * Creates a catalog with the given tables in the public schema.
      */
     private fun createCatalog(vararg tables: Table): Catalog = Catalog(
-      defaultSchema = "public",
       schemas = listOf(
         Schema(
           name = "public",

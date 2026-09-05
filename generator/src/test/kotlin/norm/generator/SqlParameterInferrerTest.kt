@@ -262,7 +262,6 @@ class SqlParameterInferrerTest {
   inner class ResolveNullability {
 
     private val catalog = Catalog(
-      defaultSchema = "public",
       schemas = listOf(
         Schema(
           name = "public",

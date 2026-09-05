@@ -260,7 +260,7 @@ internal sealed interface PgNodeExpression {
  * A CTE (Common Table Expression) definition parsed from a `{COMMONTABLEEXPR ...}` block
  * in the `:cteList` of a query's node tree.
  *
- * Named with a `NodeTree` prefix to distinguish from [CteDefinition] in `SqlUtils.kt`, which
+ * Named with a `NodeTree` prefix to distinguish from [CteDefinition] in `SqlCteClause.kt`, which
  * represents SQL-text-level CTE positions for DML transformation.
  *
  * @property name The CTE name (from `:ctename`).

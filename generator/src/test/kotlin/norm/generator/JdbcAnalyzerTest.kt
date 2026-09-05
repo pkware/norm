@@ -39,7 +39,6 @@ class JdbcAnalyzerTest {
   fun `buildCatalog discovers tables`() {
     val catalog = analyzer.buildCatalog()
 
-    assertThat(catalog.defaultSchema).isEqualTo("public")
     assertThat(catalog.schemas).hasSize(1)
 
     val tables = catalog.schemas.first().tables

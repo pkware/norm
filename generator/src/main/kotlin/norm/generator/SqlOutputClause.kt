@@ -172,7 +172,7 @@ internal fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> {
     // on the real first item, not on `WITH (OLD AS o, NEW AS n) o.x` (which parseColumnReference
     // cannot make sense of, so it would otherwise be embedded verbatim in generated KDoc as that
     // column's expression).
-    itemsStart = parseOldNewAliasPrologue(window, afterKeyword).second
+    itemsStart = parseOldNewAliasPrologue(window, afterKeyword)
     // RETURNING clauses are terminal — no FROM keyword follows
     hasFromClause = false
   } else if (selectIndex >= 0) {
@@ -462,52 +462,22 @@ internal fun parseColumnReference(expression: String): SelectItem {
 }
 
 /**
- * Parses PostgreSQL 18's optional `RETURNING WITH (OLD AS alias, NEW AS alias) ...` prologue,
+ * Skips PostgreSQL 18's optional `RETURNING WITH (OLD AS alias, NEW AS alias) ...` prologue,
  * which declares a custom name for referring to the `OLD`/`NEW` pseudo-relations in the
  * `RETURNING` list that follows (e.g. `RETURNING WITH (OLD AS o, NEW AS n) o.name, n.name`).
  *
  * @param dml The data-modifying statement.
  * @param afterReturningKeyword The index in [dml] immediately after the `RETURNING` keyword.
- * @return The declared alias names (empty if there is no prologue) paired with the index where
- *   the actual `RETURNING` item list begins — after the prologue's closing `)`, or unchanged if
- *   there is none.
+ * @return The index where the actual `RETURNING` item list begins — after the prologue's closing
+ *   `)`, or unchanged if there is none.
  */
-private fun parseOldNewAliasPrologue(dml: String, afterReturningKeyword: Int): Pair<Set<String>, Int> {
+private fun parseOldNewAliasPrologue(dml: String, afterReturningKeyword: Int): Int {
   val beforeWith = skipWhitespaceAndComments(dml, afterReturningKeyword)
   val afterWith = skipOptionalKeyword(dml, beforeWith, "WITH")
   if (afterWith == beforeWith || afterWith >= dml.length || dml[afterWith] != '(') {
-    return emptySet<String>() to afterReturningKeyword
+    return afterReturningKeyword
   }
   val closeParenthesis = findMatchingCloseParenthesis(dml, afterWith)
-  if (closeParenthesis < 0) return emptySet<String>() to afterReturningKeyword
-  val aliasNames = splitAtTopLevel(dml.substring(afterWith + 1, closeParenthesis), ',')
-    .mapNotNull { entry -> parseOldNewAliasName(entry) }
-    .toSet()
-  return aliasNames to (closeParenthesis + 1)
-}
-
-/**
- * Extracts the alias name declared after `AS` in one comma-separated entry of a
- * `RETURNING WITH (OLD AS o, NEW AS n)` prologue (e.g. the `o` in `OLD AS o`), or `null` if
- * [entry] has no top-level `AS`.
- *
- * Whitespace and comments between `AS` and the alias, and trailing the alias before the entry
- * ends, are skipped rather than captured — PostgreSQL accepts both (`OLD AS o /*c*/`, on
- * PostgreSQL 18) and neither is part of the declared name. A naive
- * `substring(asIndex + 2).trim()` captured a trailing comment as part of the alias (`o /*c*/`
- * instead of `o`), which then never matched any real `RETURNING` item reference and silently
- * dropped the alias from the set of recognized `OLD`/`NEW` aliases.
- */
-private fun parseOldNewAliasName(entry: String): String? {
-  val asIndex = findTopLevelKeyword(entry, "AS")
-  if (asIndex < 0) return null
-  val afterAs = skipWhitespaceAndComments(entry, asIndex + "AS".length)
-  if (afterAs >= entry.length) return null
-  if (entry[afterAs] == '"') {
-    val afterQuote = skipDoubleQuotedIdentifier(entry, afterAs)
-    return entry.substring(afterAs + 1, (afterQuote - 1).coerceAtLeast(afterAs + 1))
-  }
-  var end = afterAs
-  while (end < entry.length && isIdentifierChar(entry[end])) end++
-  return entry.substring(afterAs, end)
+  if (closeParenthesis < 0) return afterReturningKeyword
+  return closeParenthesis + 1
 }

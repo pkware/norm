@@ -37,7 +37,6 @@ norm/
 ├── e2e-tests/                 # End-to-end tests (standalone, no framework)
 ├── e2e-tests-micronaut/       # Micronaut integration tests
 ├── e2e-tests-spring/          # Spring integration tests
-├── proto/                     # Protocol buffer definitions (internal Wire types)
 ├── test-scenarios/            # Test scenarios with golden files
 ├── test-scenarios-frameworks/ # Framework-specific test scenarios
 └── buildSrc/                  # Shared Gradle build logic
@@ -52,7 +51,6 @@ norm/
 
 - **Kotlin** - Primary language
 - **KotlinPoet** - Code generation library (in `generator`)
-- **Wire** - Protocol buffer types used as internal model (from `proto/codegen.proto`)
 - **Testcontainers** - Starts PostgreSQL for JDBC-based schema/query analysis
 - **Gradle** - Build system with convention plugins in `buildSrc`
 
@@ -84,7 +82,7 @@ Example Gradle tasks:
 
 1. **gradle-plugin** starts a PostgreSQL Testcontainer and applies schema SQL files
 2. **JdbcAnalyzer** uses JDBC metadata APIs to build a `Catalog` (tables, columns, enums, domains) and analyze queries (parameter types, result column types)
-3. **generator** takes the `Catalog` + analyzed `Query` objects (Wire proto types from `proto/codegen.proto`) and produces Kotlin via KotlinPoet
+3. **generator** takes the `Catalog` + analyzed `Query` objects (model data classes in `generator/src/main/kotlin/norm/generator/Model.kt`) and produces Kotlin via KotlinPoet
 4. **gradle-plugin** writes the generated `.kt` files
 
 ### Runtime Library
@@ -136,7 +134,7 @@ Commands: `:one` (single result), `:many` (multiple results), `:execrows` (retur
 - `gradle-plugin/src/main/kotlin/norm/gradle/NormGenerateTask.kt` - Gradle task orchestrating the pipeline
 - `runtime/src/main/kotlin/norm/NormDriver.kt` - Core runtime driver
 - `runtime/src/main/kotlin/norm/Query.kt` - Dynamic query API
-- `proto/codegen.proto` - Wire proto definitions for internal model types
+- `generator/src/main/kotlin/norm/generator/Model.kt` - Model data classes for internal model types
 
 ## Testing
 
