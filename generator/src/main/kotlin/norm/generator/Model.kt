@@ -3,17 +3,9 @@ package norm.generator
 /**
  * A database catalog containing one or more schemas.
  *
- * @property comment Catalog-level comment. Empty when absent.
- * @property defaultSchema Name of the default schema (typically `"public"`).
- * @property name Catalog name. Empty when not applicable.
  * @property schemas Schemas within this catalog.
  */
-public data class Catalog(
-  val comment: String = "",
-  val defaultSchema: String = "",
-  val name: String = "",
-  val schemas: List<Schema> = emptyList(),
-) {
+public data class Catalog(val schemas: List<Schema> = emptyList()) {
 
   /**
    * Finds a [Table] matching the given [Identifier] in the [Catalog].
@@ -57,29 +49,17 @@ public data class Catalog(
 /**
  * A database schema containing tables, enums, composite types, and domains.
  *
- * @property comment Schema-level comment. Empty when absent.
  * @property name Schema name (e.g. `"public"`).
  * @property tables Tables and views in this schema.
  * @property enums User-defined enum types in this schema.
- * @property compositeTypes User-defined composite types in this schema.
  * @property domains User-defined domain types in this schema.
  */
 public data class Schema(
-  val comment: String = "",
   val name: String = "",
   val tables: List<Table> = emptyList(),
   val enums: List<Enum> = emptyList(),
-  val compositeTypes: List<CompositeType> = emptyList(),
   val domains: List<Domain> = emptyList(),
 )
-
-/**
- * A user-defined composite type.
- *
- * @property name Type name.
- * @property comment Type-level comment. Empty when absent.
- */
-public data class CompositeType(val name: String = "", val comment: String = "")
 
 /**
  * A user-defined domain type (`CREATE DOMAIN name AS base_type CHECK (...)`).
@@ -117,13 +97,12 @@ public data class Table(
 )
 
 /**
- * A three-part SQL identifier (catalog, schema, name).
+ * A two-part SQL identifier (schema, name).
  *
- * @property catalog Catalog component. Empty when not applicable.
  * @property schema Schema component. Empty when unqualified.
  * @property name Object name.
  */
-public data class Identifier(val catalog: String = "", val schema: String = "", val name: String = "")
+public data class Identifier(val schema: String = "", val name: String = "")
 
 /**
  * A column in a table or query result set.
@@ -132,17 +111,10 @@ public data class Identifier(val catalog: String = "", val schema: String = "", 
  * @property notNull `true` when the column has a `NOT NULL` constraint.
  * @property isArray `true` when the column is an array type.
  * @property comment Column-level comment. Empty when absent.
- * @property length Column length (e.g. `VARCHAR(n)`). `0` when unspecified.
- * @property isNamedParam `true` when this column represents a named parameter.
- * @property isFuncCall `true` when this column originates from a function call.
- * @property scope Scope qualifier for dotted references (e.g. `foo` in `foo.id`).
  * @property table Identifier of the table this column belongs to. `null` for computed columns.
- * @property tableAlias Alias used for the table in the query. Empty when not aliased.
  * @property type Identifier of the column's data type.
- * @property isSqlcSlice Sqlc-specific: `true` for slice parameters.
  * @property embedTable Sqlc-specific: table to embed. `null` when not embedding.
  * @property originalName Original column name before any aliasing.
- * @property unsigned `true` for unsigned integer types.
  * @property arrayDims Number of array dimensions. `0` for non-array types.
  * @property isPrimaryKey `true` when this column is part of the primary key.
  * @property isAutoIncrement `true` when JDBC reports `IS_AUTOINCREMENT = "YES"`.
@@ -165,17 +137,10 @@ public data class Column(
   val notNull: Boolean = false,
   val isArray: Boolean = false,
   val comment: String = "",
-  val length: Int = 0,
-  val isNamedParam: Boolean = false,
-  val isFuncCall: Boolean = false,
-  val scope: String = "",
   val table: Identifier? = null,
-  val tableAlias: String = "",
   val type: Identifier,
-  val isSqlcSlice: Boolean = false,
   val embedTable: Identifier? = null,
   val originalName: String = "",
-  val unsigned: Boolean = false,
   val arrayDims: Int = 0,
   val isPrimaryKey: Boolean = false,
   val isAutoIncrement: Boolean = false,
@@ -201,7 +166,6 @@ public data class Column(
  * @property params Positional parameters for this query.
  * @property comments Comments associated with this query.
  * @property filename Source file containing this query.
- * @property insertIntoTable Target table for INSERT queries. `null` for non-INSERT queries.
  * @property isSynthesizedInsert `true` when this query was synthesized by [CrudQuerySynthesizer].
  * @property namedParameters Maps each 1-based JDBC parameter position to the named parameter that
  *   produced it. Empty for queries using positional `?` parameters or synthesized CRUD queries.
@@ -214,7 +178,6 @@ public data class Query(
   val params: List<Parameter> = emptyList(),
   val comments: List<String> = emptyList(),
   val filename: String = "",
-  val insertIntoTable: Identifier? = null,
   val isSynthesizedInsert: Boolean = false,
   val namedParameters: Map<Int, String> = emptyMap(),
 )

@@ -7,8 +7,9 @@ import java.sql.ResultSetMetaData
 /**
  * Analyzes PostgreSQL schemas and queries using JDBC metadata APIs.
  *
- * Produces the same Wire protobuf types ([Catalog], [Query]) that the generator consumes,
- * replacing the previous sqlc-based pipeline with direct database introspection.
+ * Produces the [Catalog] and [Query] model data classes (see
+ * `generator/src/main/kotlin/norm/generator/Model.kt`) that the generator consumes,
+ * using direct database introspection.
  *
  * Uses [DatabaseMetaData] for schema introspection and
  * [java.sql.PreparedStatement.getMetaData] / [java.sql.PreparedStatement.getParameterMetaData]
@@ -45,7 +46,6 @@ public class JdbcAnalyzer(private val connection: Connection) {
     }
 
     return Catalog(
-      defaultSchema = schemas.first(),
       schemas = schemaObjects,
     )
   }
@@ -58,7 +58,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
    *
    * @param parsedQuery The query parsed from a SQL file.
    * @param catalog The schema catalog, used to attach table references to result columns.
-   * @return A [Query] proto object with full type information.
+   * @return A [Query] with full type information.
    */
   public fun analyzeQuery(parsedQuery: ParsedQuery, catalog: Catalog): Query {
     val jdbcSql = parsedQuery.sql

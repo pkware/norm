@@ -4,10 +4,8 @@ import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.hasSize
 import assertk.assertions.isEqualTo
-import assertk.assertions.isFalse
 import assertk.assertions.isNotNull
 import assertk.assertions.isNull
-import assertk.assertions.isTrue
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
@@ -15,26 +13,6 @@ class SqlCteClauseTest {
 
   @Nested
   inner class ParseCteClauseTest {
-
-    @Test
-    fun `WITH RECURSIVE is flagged as recursive`() {
-      val result = parseCteClause("WITH RECURSIVE counter(n) AS (SELECT 1) SELECT n FROM counter")
-      assertThat(result!!.isRecursive).isTrue()
-    }
-
-    @Test
-    fun `plain WITH is not flagged as recursive`() {
-      val result = parseCteClause("WITH c AS (SELECT 1) SELECT * FROM c")
-      assertThat(result!!.isRecursive).isFalse()
-    }
-
-    @Test
-    fun `CTE named recursive_cte is not misread as the RECURSIVE keyword`() {
-      // "RECURSIVE" must be matched at a word boundary — a CTE literally named "recursive_cte"
-      // must not cause isRecursive to be incorrectly set.
-      val result = parseCteClause("WITH recursive_cte AS (SELECT 1) SELECT * FROM recursive_cte")
-      assertThat(result!!.isRecursive).isFalse()
-    }
 
     @Test
     fun `plain unquoted name has an identical name and rawName`() {

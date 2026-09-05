@@ -16,20 +16,12 @@ package norm.generator
  *   double quotes if the user quoted it. Safe to splice verbatim into a `FROM <rawName>` probe.
  * @property bodyOpenParenthesis Index of `(` that opens the CTE body in the original SQL.
  * @property bodyCloseParenthesis Index of `)` that closes the CTE body.
- * @property hasColumnList Whether the CTE was declared with an explicit column list
- *   (`name(col1, col2) AS (...)`). The list renames/repositions the body's own output names — but
- *   [resolveNodeTreeProvenanceExpression] never consults this flag: it cross-validates against the
- *   CTE body's own `:resname`s (read from the node tree, via [PgNodeTreeParser.parseTargetList]),
- *   which an explicit column list never changes, so a renamed CTE still resolves correctly. Kept
- *   for callers that need to know a column list was present, not because expression resolution
- *   depends on it.
  */
 internal data class CteDefinition(
   val name: String,
   val rawName: String,
   val bodyOpenParenthesis: Int,
   val bodyCloseParenthesis: Int,
-  val hasColumnList: Boolean = false,
 )
 
 /**
@@ -37,17 +29,8 @@ internal data class CteDefinition(
  *
  * @property definitions The CTEs in declaration order.
  * @property mainQueryStart Index in the original SQL where the main query (after all CTEs) begins.
- * @property isRecursive Whether the clause is `WITH RECURSIVE`. This determines name visibility:
- *   under `WITH RECURSIVE`, every CTE's body can see every other CTE in the clause (including
- *   ones declared later); under a plain `WITH`, a CTE's body can only see CTEs declared before
- *   it (and, per SQL semantics, an outer name with the same name as a later CTE — a later CTE
- *   never shadows for an earlier body).
  */
-internal data class ParsedCteClause(
-  val definitions: List<CteDefinition>,
-  val mainQueryStart: Int,
-  val isRecursive: Boolean,
-)
+internal data class ParsedCteClause(val definitions: List<CteDefinition>, val mainQueryStart: Int)
 
 /**
  * Parses CTE definitions from a SQL `WITH` clause.
@@ -75,9 +58,7 @@ internal fun parseCteClause(sql: String): ParsedCteClause? {
   position = skipWhitespaceAndComments(sql, position)
 
   // Skip optional RECURSIVE keyword (word-boundary check avoids matching CTE names like "recursive_cte")
-  val positionAfterRecursive = skipOptionalKeyword(sql, position, "RECURSIVE")
-  val isRecursive = positionAfterRecursive != position
-  position = positionAfterRecursive
+  position = skipOptionalKeyword(sql, position, "RECURSIVE")
 
   val definitions = mutableListOf<CteDefinition>()
 
@@ -92,7 +73,7 @@ internal fun parseCteClause(sql: String): ParsedCteClause? {
   return if (definitions.isEmpty()) {
     null
   } else {
-    ParsedCteClause(definitions, position, isRecursive)
+    ParsedCteClause(definitions, position)
   }
 }
 
@@ -129,9 +110,7 @@ private fun parseSingleCteDefinition(sql: String, startPosition: Int): Pair<CteD
   position = skipWhitespaceAndComments(sql, position)
 
   // Skip optional column list: name(col1, col2)
-  var hasColumnList = false
   if (position < sql.length && sql[position] == '(') {
-    hasColumnList = true
     val closeParenthesis = findMatchingCloseParenthesis(sql, position)
     if (closeParenthesis < 0) return null
     position = closeParenthesis + 1
@@ -153,5 +132,5 @@ private fun parseSingleCteDefinition(sql: String, startPosition: Int): Pair<CteD
   val bodyClose = findMatchingCloseParenthesis(sql, position)
   if (bodyClose < 0) return null
 
-  return CteDefinition(name, rawName, bodyOpen, bodyClose, hasColumnList) to (bodyClose + 1)
+  return CteDefinition(name, rawName, bodyOpen, bodyClose) to (bodyClose + 1)
 }
