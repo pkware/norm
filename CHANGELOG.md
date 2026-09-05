@@ -1,5 +1,65 @@
 # Changelog
 
+## [0.5.0](https://github.com/pkware/norm/compare/v0.4.2...v0.5.0) (2026-09-05)
+
+
+### Features
+
+* add EXPLAIN (FORMAT JSON)-based MERGE side-nullability detection (Stage 2) ([a34d2e3](https://github.com/pkware/norm/commit/a34d2e3a4cf63b207780e25112a84f8c002c5110))
+* add prosqlbody-based nullability probe alongside CREATE VIEW, prove parity (Stage 1) ([bdd11e4](https://github.com/pkware/norm/commit/bdd11e402a4bcb3169f0e504cc2504b24ae76e43))
+* resolve [@property](https://github.com/property) provenance from the PostgreSQL node tree ([462b039](https://github.com/pkware/norm/commit/462b03958f54aa0cd1af211189e3321d19b8035d))
+* route DML/CTE/MERGE nullability through prosqlbody in production ([59a9b45](https://github.com/pkware/norm/commit/59a9b45b3b60b1c8fd3931fea2adc5ccdcb46104))
+* route plain SELECT through prosqlbody and sweep dead DML-conversion code ([5de7a61](https://github.com/pkware/norm/commit/5de7a61b045d8eb3cf217d72cff51a23de1a23bd))
+
+
+### Bug Fixes
+
+* analyze nullability for MERGE fed by a CTE source ([f32a8d6](https://github.com/pkware/norm/commit/f32a8d6fe5848d6ab78aaa3b2ca9f9383050fe18))
+* analyze view expressions instead of trusting source column names ([fcb25bf](https://github.com/pkware/norm/commit/fcb25bf621160730d01b26aec9a5a8087d5e89a7)), closes [#256](https://github.com/pkware/norm/issues/256)
+* apply any-nullable-source-wins reduction to view nullability by name ([bef131e](https://github.com/pkware/norm/commit/bef131e39698f1cc86644666e42e07ccd4079e91))
+* ask KotlinPoet whether a [@property](https://github.com/property) name needs backticks ([bd42334](https://github.com/pkware/norm/commit/bd42334014b0ed2ae3b0bc0e72fa2a3b8cd3f3fc))
+* attribute a MERGE's join by locating its own ModifyTable node, not the first join found ([18c09f0](https://github.com/pkware/norm/commit/18c09f00307c055fdae801f7148133ce5e7f88d6))
+* bail conservatively on a Unicode-escape identifier in referencesAnyName ([51fce48](https://github.com/pkware/norm/commit/51fce4851de840cdb7d12b81c4386b7bf03dbd4b))
+* bail instead of clamping when a lexical scan's bracket depth goes negative ([845720f](https://github.com/pkware/norm/commit/845720f553cdd67845cdfb206c5c495591d08b7c))
+* bound-check truncated \u escapes in JsonValue parser ([1aad12f](https://github.com/pkware/norm/commit/1aad12f88fba4041af3805f5dac4509facf0f68a))
+* correct SUBLINK_TYPE_ALL's enum value and prove ALL_SUBLINK non-null ([3c62130](https://github.com/pkware/norm/commit/3c62130d6e9fa59d6345d598ae84a02c6cbc8291))
+* correctly decode quoted identifiers in referencesAnyName's sibling-name scan ([c3b92df](https://github.com/pkware/norm/commit/c3b92dffdf4bcd3bfe78cbde67e4f74eb113ec91))
+* **deps:** update dependency com.diffplug.spotless:spotless-plugin-gradle to v8.10.1 ([69e44fb](https://github.com/pkware/norm/commit/69e44fb044ee5b08f6ca25c812ba2320a2867d36))
+* **deps:** update dependency io.micronaut.data:micronaut-data-processor to v5.1.3 ([8fdc2a7](https://github.com/pkware/norm/commit/8fdc2a7fe64c46a77a7e9aac2595f27c47b66bb9))
+* **deps:** update dependency io.micronaut.sql:micronaut-jdbc-hikari to v7.1.2 ([187e75d](https://github.com/pkware/norm/commit/187e75ddda6e9348989855ea66b20c493e97cd5d))
+* **deps:** update dependency org.commonmark:commonmark to v0.30.0 ([1bdb28b](https://github.com/pkware/norm/commit/1bdb28bad400139766ed93c78cc6277d7ee78ee5))
+* **deps:** update micronaut to v5.1.13 ([d43c6e9](https://github.com/pkware/norm/commit/d43c6e98c080a70013eae24d60b4fc78ba2e8117))
+* derive JSON constructor nullability from its arguments ([c83f2f5](https://github.com/pkware/norm/commit/c83f2f5cd94f929420ed058b94059c006260b2ed))
+* drop the per-assignment parameter-trust gate for the whole-statement one ([513af56](https://github.com/pkware/norm/commit/513af567e520f0c649c1b4808979870108236f0c))
+* fail safe on an unanalyzable branch or a non-converged pass limit in the recursive-CTE fixpoint ([c00e20c](https://github.com/pkware/norm/commit/c00e20c3150bb4d98e45b3e9b08fc906beb71fcd))
+* flip PgNodeTreeParser's CONST/FUNCEXPR field defaults to the safe direction ([7158f96](https://github.com/pkware/norm/commit/7158f96be30aeb170a9eec7aea72d7de7ee4195b))
+* generate compilable CRUD SQL for quoted column names ([57b01b7](https://github.com/pkware/norm/commit/57b01b70a4223869b45bb90ac1287b96baedd4ff))
+* guard parseSelectItems against a shifted item-to-column mapping ([8e435bd](https://github.com/pkware/norm/commit/8e435bdf90f13141fc9158bc9b4a4c930f6c438d))
+* handle comments and whitespace after the alias in a RETURNING WITH (OLD AS ...) prologue ([b250c33](https://github.com/pkware/norm/commit/b250c3304ea3a7b399bebf7c08f8e42bedc89ddb))
+* iterate recursive CTE nullability to a fixpoint instead of one pass ([69f66f7](https://github.com/pkware/norm/commit/69f66f7e3703e0e9f5ad3fa7ada1a2fbba3b7873))
+* make extractFieldExpression depth-one-aware, closing a wrong-subquery hazard in nested CASE/JSONEXPR parsing ([6ce3856](https://github.com/pkware/norm/commit/6ce3856400e6544724d294d08566aac7a400f05d))
+* make prosqlbody's parameter-trust gate per-assignment, not per-statement ([1e91900](https://github.com/pkware/norm/commit/1e91900dd0d24f3957de270f1cb336bc7180960a))
+* order Flyway migrations globally across schemas entries, not per-directory ([e30ad16](https://github.com/pkware/norm/commit/e30ad163905d2fcf5b0c5a364a7e5a82d67c0642))
+* prove ANY_SUBLINK non-null only under three-valued-logic-safe conditions ([e679d19](https://github.com/pkware/norm/commit/e679d199da0667ff15435315eab76ef35846f531)), closes [#239](https://github.com/pkware/norm/issues/239)
+* read a domain's UUID base type through the class-hinted getObject overload ([138aeb6](https://github.com/pkware/norm/commit/138aeb6aaefb083fb87983f8f1bbaf0a47e0e355))
+* recover column comments lost to folding and IS DISTINCT FROM ([935c22c](https://github.com/pkware/norm/commit/935c22c2622a1053d5b144461623d0cd63d343a5))
+* recover GROUPING SETS columns PostgreSQL never nulls ([6fa1f7c](https://github.com/pkware/norm/commit/6fa1f7c2d2ade81b674472656fb7b5fdc62f9729)), closes [#240](https://github.com/pkware/norm/issues/240)
+* recurse into JsonExpr's children in containsVarOutsideRelation ([444f26b](https://github.com/pkware/norm/commit/444f26bcf09fc5b76e8e56552acf9e1fd3966cfb))
+* render KDoc that survives Markdown and KotlinPoet escaping ([3e1e96c](https://github.com/pkware/norm/commit/3e1e96c9d728fff960267136cc192966265dac0c))
+* replace evaluateJsonExpr's JsonBehaviorType deny-list with a verified allow-list ([8f69da7](https://github.com/pkware/norm/commit/8f69da7b0cbb2119d35564812a9799a33cf94e5a))
+* report nullable, not NOT NULL, when the unconvertible-DML probe can't prove a column ([de988db](https://github.com/pkware/norm/commit/de988db1d959bc8cd764a9b8c73d3960007fef56))
+* resolve JDBC types for every domain base type resolveBaseType accepts ([e4fc6d3](https://github.com/pkware/norm/commit/e4fc6d3b4fea28fe98c949e948c32e0d561acde0))
+* resolve PostgreSQL 18 GROUP RTE vars to their group expressions ([8dbc7da](https://github.com/pkware/norm/commit/8dbc7da48519ef8a7092008a1b188b3fbc593281))
+* resolve sublink subselects against derived tables and enclosing CTEs ([9d5fe1b](https://github.com/pkware/norm/commit/9d5fe1bfded2ccf1307418a2cdfafbd17c38e344)), closes [#257](https://github.com/pkware/norm/issues/257)
+* restore original comments in the four frozen embed scenarios ([4a0cdff](https://github.com/pkware/norm/commit/4a0cdffd268b0c2e9ac139ac0d72b0c293d60849))
+* separate the nullability probe's function body from its terminator with a newline ([8d4fd24](https://github.com/pkware/norm/commit/8d4fd2460aeae88b7d8176156924cf4a5bc3124d))
+* source resolveCteOutputExpression's reserved-word set from the live server, not a hardcoded snapshot ([c0983fc](https://github.com/pkware/norm/commit/c0983fc54488ed42f683d77ad8d9e6c2c993f730))
+* spell out abbreviated JDBC/expression identifiers introduced by this branch ([c60a441](https://github.com/pkware/norm/commit/c60a4418e42eab236e0cb89f263927b50f4c0202))
+* stop aliasing a mutable task list for IDE-sync dependency wiring ([2b6b61d](https://github.com/pkware/norm/commit/2b6b61df76a6ab15eb48220fcb31eaf9649a91f5))
+* stop inferring JSON_VALUE/JSON_QUERY non-null from ON EMPTY/ON ERROR codes alone ([c86b06d](https://github.com/pkware/norm/commit/c86b06d29eae9401e7e4f3e56530b3e08f671bf0))
+* strip the PG18 RETURNING WITH (OLD/NEW alias) prologue before parsing output items ([110bfdc](https://github.com/pkware/norm/commit/110bfdc7bda0bbc8fea42b73e171861a4ab33493))
+* truncate identifiers to PostgreSQL's 63-byte limit ([cc0e1f7](https://github.com/pkware/norm/commit/cc0e1f7f4bc1a223d1614584f3f5860613021a17)), closes [#245](https://github.com/pkware/norm/issues/245)
+
 ## [0.4.2](https://github.com/pkware/norm/compare/v0.4.1...v0.4.2) (2026-08-22)
 
 
