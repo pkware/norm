@@ -507,54 +507,17 @@ internal class NodeTreeNullabilityAnalyzer(
   }
 
   /**
-   * Returns the immediate parsed child expressions of [expression] for
-   * [isSafeFromGroupingSetNullExtension] and [containsDominatingConstruct].
-   *
-   * [PgNodeExpression.Var], [PgNodeExpression.Const], [PgNodeExpression.Aggref],
-   * [PgNodeExpression.GroupingFunc], [PgNodeExpression.SqlValueFunction],
-   * [PgNodeExpression.NextValExpr], [PgNodeExpression.JsonExpr], and [PgNodeExpression.Unknown] are
-   * resolved directly by their callers without consulting this method (each is either a genuine
-   * leaf or hardcoded by the lossy-parsing rule), so they return an empty list here defensively
-   * rather than being omitted from the `when`.
+   * Returns the child expressions of [expression] relevant to [isSafeFromGroupingSetNullExtension]
+   * and [containsDominatingConstruct], deliberately narrower than the full structural
+   * [PgNodeExpression.children]:
+   * - [PgNodeExpression.Aggref] and [PgNodeExpression.GroupingFunc] are terminal for the domination
+   *   check — finding one already answers the question, so their own arguments are never walked.
+   * - [PgNodeExpression.JsonExpr] is lossy-parsed and hardcoded unsafe by its callers, so its
+   *   children are never consulted here either.
    */
   private fun safetyWalkChildren(expression: PgNodeExpression): List<PgNodeExpression> = when (expression) {
-    is PgNodeExpression.FuncExpr -> expression.arguments
-    is PgNodeExpression.OpExpr -> expression.arguments
-    is PgNodeExpression.ScalarArrayOpExpr -> expression.arguments
-    is PgNodeExpression.CoalesceExpr -> expression.arguments
-    is PgNodeExpression.NullIfExpr -> expression.arguments
-    is PgNodeExpression.MinMaxExpr -> expression.arguments
-    is PgNodeExpression.WindowFunc -> expression.arguments
-    is PgNodeExpression.SubLink -> listOfNotNull(expression.outerOperand)
-    is PgNodeExpression.CaseExpr ->
-      expression.resultExpressions +
-        listOfNotNull(expression.defaultResult, expression.testExpression) +
-        expression.whenConditions
-
-    is PgNodeExpression.BoolExpr -> expression.arguments
-    is PgNodeExpression.RelabelType -> listOf(expression.argument)
-    is PgNodeExpression.CoerceViaIo -> listOf(expression.argument)
-    is PgNodeExpression.ArrayCoerceExpr -> listOf(expression.argument)
-    is PgNodeExpression.CollateExpr -> listOf(expression.argument)
-    is PgNodeExpression.CoerceToDomain -> listOf(expression.argument)
-    is PgNodeExpression.NullTest -> listOf(expression.argument)
-    is PgNodeExpression.BooleanTest -> listOf(expression.argument)
-    is PgNodeExpression.DistinctExpr -> expression.arguments
-    is PgNodeExpression.ArrayExpr -> expression.elements
-    is PgNodeExpression.RowExpr -> expression.arguments
-    is PgNodeExpression.FieldSelect -> listOf(expression.argument)
-    is PgNodeExpression.JsonIsPredicate -> listOf(expression.argument)
-    is PgNodeExpression.JsonConstructorExpr -> expression.arguments + listOfNotNull(expression.function)
-    is PgNodeExpression.XmlExpr -> expression.arguments
-    is PgNodeExpression.Var,
-    is PgNodeExpression.Const,
-    is PgNodeExpression.Aggref,
-    is PgNodeExpression.GroupingFunc,
-    is PgNodeExpression.SqlValueFunction,
-    is PgNodeExpression.NextValExpr,
-    is PgNodeExpression.JsonExpr,
-    is PgNodeExpression.Unknown,
-    -> emptyList()
+    is PgNodeExpression.Aggref, is PgNodeExpression.GroupingFunc, is PgNodeExpression.JsonExpr -> emptyList()
+    else -> expression.children
   }
 
   /**
@@ -947,16 +910,10 @@ internal class NodeTreeNullabilityAnalyzer(
      * attribute a `MERGE`'s join (e.g. a non-table `USING` source, such as a `VALUES` list) even
      * when the `RETURNING` list never actually depended on knowing which side that join favors.
      *
-     * Exhausts every [PgNodeExpression] variant explicitly, so the compiler's own exhaustiveness
-     * check over the sealed [PgNodeExpression] hierarchy guarantees every node type is listed here.
-     * That guarantee is necessary but not sufficient: exhaustiveness only proves no variant was
-     * left out of the `when`, not that a listed variant's own child expressions are walked. A
-     * variant that genuinely carries no [PgNodeExpression] child (e.g. [PgNodeExpression.Const])
-     * belongs in the childless branch; one that does (e.g. [PgNodeExpression.JsonExpr]'s
-     * `argument`) must recurse into every such child, or a `Var` buried inside it silently
-     * disappears from this check — this exact mistake, for [PgNodeExpression.JsonExpr], is what
-     * let a `MERGE`'s `RETURNING JSON_QUERY(source.column, ...)` skip `EXPLAIN` resolution and
-     * report a genuinely nullable expression as not null.
+     * Every non-`Var` branch delegates to [PgNodeExpression.children], so no variant can silently
+     * keep a child unwalked — the same bug class that once let a `MERGE`'s
+     * `RETURNING JSON_QUERY(source.column, ...)` skip `EXPLAIN` resolution and report a genuinely
+     * nullable expression as not null.
      *
      * @param depth remaining recursion budget; exhausting it answers `true` (needs resolving)
      *   rather than `false`, the same fail-toward-conservative default every depth guard in this
@@ -971,55 +928,9 @@ internal class NodeTreeNullabilityAnalyzer(
       val recurse = { childExpression: PgNodeExpression ->
         containsVarOutsideRelation(childExpression, relationVarno, depth - 1)
       }
-      return when (expression) {
-        is PgNodeExpression.Var ->
-          expression.returningType == PgNodeExpression.VAR_RETURNING_TYPE_NORMAL &&
-            expression.varno != relationVarno
-
-        is PgNodeExpression.Const,
-        is PgNodeExpression.SqlValueFunction,
-        is PgNodeExpression.NextValExpr,
-        is PgNodeExpression.Unknown,
-        -> false
-
-        is PgNodeExpression.FuncExpr -> expression.arguments.any(recurse)
-        is PgNodeExpression.OpExpr -> expression.arguments.any(recurse)
-        is PgNodeExpression.ScalarArrayOpExpr -> expression.arguments.any(recurse)
-        is PgNodeExpression.CoalesceExpr -> expression.arguments.any(recurse)
-        is PgNodeExpression.NullIfExpr -> expression.arguments.any(recurse)
-        is PgNodeExpression.MinMaxExpr -> expression.arguments.any(recurse)
-        is PgNodeExpression.WindowFunc -> expression.arguments.any(recurse)
-        is PgNodeExpression.Aggref -> expression.arguments.any(recurse)
-        is PgNodeExpression.GroupingFunc -> expression.arguments.any(recurse)
-        is PgNodeExpression.JsonExpr ->
-          recurse(expression.argument) ||
-            expression.onEmptyDefault?.let(recurse) == true ||
-            expression.onErrorDefault?.let(recurse) == true
-
-        is PgNodeExpression.SubLink -> expression.outerOperand?.let(recurse) == true
-        is PgNodeExpression.CaseExpr ->
-          expression.resultExpressions.any(recurse) ||
-            listOfNotNull(expression.defaultResult, expression.testExpression).any(recurse) ||
-            expression.whenConditions.any(recurse)
-
-        is PgNodeExpression.BoolExpr -> expression.arguments.any(recurse)
-        is PgNodeExpression.RelabelType -> recurse(expression.argument)
-        is PgNodeExpression.CoerceViaIo -> recurse(expression.argument)
-        is PgNodeExpression.ArrayCoerceExpr -> recurse(expression.argument)
-        is PgNodeExpression.CollateExpr -> recurse(expression.argument)
-        is PgNodeExpression.CoerceToDomain -> recurse(expression.argument)
-        is PgNodeExpression.NullTest -> recurse(expression.argument)
-        is PgNodeExpression.BooleanTest -> recurse(expression.argument)
-        is PgNodeExpression.DistinctExpr -> expression.arguments.any(recurse)
-        is PgNodeExpression.ArrayExpr -> expression.elements.any(recurse)
-        is PgNodeExpression.RowExpr -> expression.arguments.any(recurse)
-        is PgNodeExpression.FieldSelect -> recurse(expression.argument)
-        is PgNodeExpression.JsonIsPredicate -> recurse(expression.argument)
-        is PgNodeExpression.JsonConstructorExpr ->
-          expression.arguments.any(recurse) || expression.function?.let(recurse) == true
-
-        is PgNodeExpression.XmlExpr -> expression.arguments.any(recurse)
-      }
+      if (expression !is PgNodeExpression.Var) return expression.children.any(recurse)
+      return expression.returningType == PgNodeExpression.VAR_RETURNING_TYPE_NORMAL &&
+        expression.varno != relationVarno
     }
 
     /**

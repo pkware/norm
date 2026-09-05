@@ -122,4 +122,24 @@ class GroupRteSubstitutionTest {
     assertThat(result).isSameInstanceAs(const)
     assertThat((result as PgNodeExpression.Const).isNull).isFalse()
   }
+
+  @Test
+  fun `a Var buried inside a JsonConstructorExpr's function is substituted`() {
+    // JSON_OBJECTAGG/JSON_ARRAYAGG put the underlying aggregate in `function`, not `arguments` (see
+    // JsonConstructorExpr.function's KDoc) — this is the one child mapChildren now reaches that the
+    // hand-written `when` this function used to have never touched.
+    val groupRteVar = PgNodeExpression.Var(varno = 2, varattno = 1, nullingRelations = emptySet())
+    val resolvedVar = PgNodeExpression.Var(varno = 1, varattno = 2, nullingRelations = emptySet())
+    val windowFunc = PgNodeExpression.WindowFunc(windowFunctionOid = 3125, arguments = listOf(groupRteVar))
+    val jsonArrayagg = PgNodeExpression.JsonConstructorExpr(
+      type = PgNodeExpression.JSON_CONSTRUCTOR_TYPE_ARRAYAGG,
+      arguments = emptyList(),
+      function = windowFunc,
+    )
+    val groupExpressionsByVarno = mapOf(2 to listOf(resolvedVar))
+
+    val result = substituteGroupRteVars(jsonArrayagg, groupExpressionsByVarno) as PgNodeExpression.JsonConstructorExpr
+
+    assertThat((result.function as PgNodeExpression.WindowFunc).arguments.single()).isEqualTo(resolvedVar)
+  }
 }

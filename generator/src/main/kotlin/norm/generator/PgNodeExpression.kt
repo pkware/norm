@@ -257,6 +257,108 @@ internal sealed interface PgNodeExpression {
 }
 
 /**
+ * Every direct sub-expression of this [PgNodeExpression], in constructor-parameter order. Leaf
+ * nodes ([PgNodeExpression.Var], [PgNodeExpression.Const], [PgNodeExpression.SqlValueFunction],
+ * [PgNodeExpression.NextValExpr], [PgNodeExpression.Unknown]) return an empty list.
+ */
+internal val PgNodeExpression.children: List<PgNodeExpression>
+  get() = when (this) {
+    is PgNodeExpression.Var,
+    is PgNodeExpression.Const,
+    is PgNodeExpression.SqlValueFunction,
+    is PgNodeExpression.NextValExpr,
+    is PgNodeExpression.Unknown,
+    -> emptyList()
+
+    is PgNodeExpression.FuncExpr -> arguments
+    is PgNodeExpression.OpExpr -> arguments
+    is PgNodeExpression.ScalarArrayOpExpr -> arguments
+    is PgNodeExpression.CoalesceExpr -> arguments
+    is PgNodeExpression.NullIfExpr -> arguments
+    is PgNodeExpression.MinMaxExpr -> arguments
+    is PgNodeExpression.Aggref -> arguments
+    is PgNodeExpression.WindowFunc -> arguments
+    is PgNodeExpression.SubLink -> listOfNotNull(outerOperand)
+    is PgNodeExpression.CaseExpr ->
+      resultExpressions + listOfNotNull(defaultResult, testExpression) + whenConditions
+
+    is PgNodeExpression.BoolExpr -> arguments
+    is PgNodeExpression.RelabelType -> listOf(argument)
+    is PgNodeExpression.CoerceViaIo -> listOf(argument)
+    is PgNodeExpression.ArrayCoerceExpr -> listOf(argument)
+    is PgNodeExpression.CollateExpr -> listOf(argument)
+    is PgNodeExpression.CoerceToDomain -> listOf(argument)
+    is PgNodeExpression.NullTest -> listOf(argument)
+    is PgNodeExpression.BooleanTest -> listOf(argument)
+    is PgNodeExpression.DistinctExpr -> arguments
+    is PgNodeExpression.ArrayExpr -> elements
+    is PgNodeExpression.RowExpr -> arguments
+    is PgNodeExpression.GroupingFunc -> arguments
+    is PgNodeExpression.FieldSelect -> listOf(argument)
+    is PgNodeExpression.JsonIsPredicate -> listOf(argument)
+    is PgNodeExpression.JsonConstructorExpr -> arguments + listOfNotNull(function)
+    is PgNodeExpression.JsonExpr -> listOf(argument) + listOfNotNull(onEmptyDefault, onErrorDefault)
+    is PgNodeExpression.XmlExpr -> arguments
+  }
+
+/**
+ * Returns a copy of this [PgNodeExpression] with [transform] applied to each of its [children],
+ * preserving every non-[PgNodeExpression] field as-is. Leaf nodes return themselves unchanged.
+ */
+internal fun PgNodeExpression.mapChildren(transform: (PgNodeExpression) -> PgNodeExpression): PgNodeExpression =
+  when (this) {
+    is PgNodeExpression.Var,
+    is PgNodeExpression.Const,
+    is PgNodeExpression.SqlValueFunction,
+    is PgNodeExpression.NextValExpr,
+    is PgNodeExpression.Unknown,
+    -> this
+
+    is PgNodeExpression.FuncExpr -> copy(arguments = arguments.map(transform))
+    is PgNodeExpression.OpExpr -> copy(arguments = arguments.map(transform))
+    is PgNodeExpression.ScalarArrayOpExpr -> copy(arguments = arguments.map(transform))
+    is PgNodeExpression.CoalesceExpr -> copy(arguments = arguments.map(transform))
+    is PgNodeExpression.NullIfExpr -> copy(arguments = arguments.map(transform))
+    is PgNodeExpression.MinMaxExpr -> copy(arguments = arguments.map(transform))
+    is PgNodeExpression.Aggref -> copy(arguments = arguments.map(transform))
+    is PgNodeExpression.WindowFunc -> copy(arguments = arguments.map(transform))
+    is PgNodeExpression.SubLink -> copy(outerOperand = outerOperand?.let(transform))
+    is PgNodeExpression.CaseExpr -> copy(
+      resultExpressions = resultExpressions.map(transform),
+      defaultResult = defaultResult?.let(transform),
+      testExpression = testExpression?.let(transform),
+      whenConditions = whenConditions.map(transform),
+    )
+
+    is PgNodeExpression.BoolExpr -> copy(arguments = arguments.map(transform))
+    is PgNodeExpression.RelabelType -> copy(argument = transform(argument))
+    is PgNodeExpression.CoerceViaIo -> copy(argument = transform(argument))
+    is PgNodeExpression.ArrayCoerceExpr -> copy(argument = transform(argument))
+    is PgNodeExpression.CollateExpr -> copy(argument = transform(argument))
+    is PgNodeExpression.CoerceToDomain -> copy(argument = transform(argument))
+    is PgNodeExpression.NullTest -> copy(argument = transform(argument))
+    is PgNodeExpression.BooleanTest -> copy(argument = transform(argument))
+    is PgNodeExpression.DistinctExpr -> copy(arguments = arguments.map(transform))
+    is PgNodeExpression.ArrayExpr -> copy(elements = elements.map(transform))
+    is PgNodeExpression.RowExpr -> copy(arguments = arguments.map(transform))
+    is PgNodeExpression.GroupingFunc -> copy(arguments = arguments.map(transform))
+    is PgNodeExpression.FieldSelect -> copy(argument = transform(argument))
+    is PgNodeExpression.JsonIsPredicate -> copy(argument = transform(argument))
+    is PgNodeExpression.JsonConstructorExpr -> copy(
+      arguments = arguments.map(transform),
+      function = function?.let(transform),
+    )
+
+    is PgNodeExpression.JsonExpr -> copy(
+      argument = transform(argument),
+      onEmptyDefault = onEmptyDefault?.let(transform),
+      onErrorDefault = onErrorDefault?.let(transform),
+    )
+
+    is PgNodeExpression.XmlExpr -> copy(arguments = arguments.map(transform))
+  }
+
+/**
  * A CTE (Common Table Expression) definition parsed from a `{COMMONTABLEEXPR ...}` block
  * in the `:cteList` of a query's node tree.
  *
