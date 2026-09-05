@@ -1671,6 +1671,23 @@ class QueryAnalysisTest {
       assertThat(query.columns[0].notNull).isFalse()
     }
 
+    @Test
+    fun `plain GROUP BY key read through a derived table resolves to its base column`() {
+      // A plain GROUP BY (no CUBE/ROLLUP/GROUPING SETS) never null-extends its own grouping key,
+      // so category should resolve exactly as it would un-grouped. Two independent paths can carry
+      // that: substituteGroupRteVars rewrites the *GROUP* RTE Var to the grouping key's own Var
+      // before the fallback chain runs, and the chain's GROUP RTE remap resolves what survives
+      // substitution. Only the second differed between query-block resolution sites, so this pins
+      // that a derived table stays correct whichever one carries it. PostgreSQL 18: returns
+      // category NOT NULL.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (category TEXT NOT NULL)",
+        "SELECT s.category FROM (SELECT category FROM t GROUP BY category) s",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
+    }
+
     // A CaseExpr's :arg (test expression) and each WHEN's :expr (condition) are ordinary
     // expressions that can carry the only Var in the whole CASE — but neither is evaluated by
     // isNonNull, since a CASE's own nullability never depends on them. Without also walking them
@@ -2786,6 +2803,21 @@ class QueryAnalysisTest {
       )
       assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `ANY sublink whose own subselect is narrowed by its own WHERE IS NOT NULL qual is non-null`() {
+      // Same shape as the test above, but u's own subselect narrows itself with `WHERE v IS NOT
+      // NULL` — proving analyzeQueryBlockNullability's own qual gate (not merely the base
+      // column's own catalog constraint) still applies to a SubLink's own subselect. PostgreSQL
+      // 18: `a = ANY (...)` is either `true` or `false`, never `null`, since every row this
+      // subselect can return has a non-null v.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT PRIMARY KEY, a TEXT NOT NULL); CREATE TABLE u (v TEXT)",
+        "SELECT a = ANY (SELECT v FROM u WHERE v IS NOT NULL) AS result FROM t",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
     }
 
     @Test
@@ -5484,6 +5516,20 @@ class QueryAnalysisTest {
       )
       assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].notNull).isFalse()
+    }
+
+    @Test
+    fun `a CTE referenced only from inside a FROM subquery resolves via its ctelevelsup 1 reference`() {
+      // c is never referenced in the outer query's own :rtable at all — only inside the derived
+      // table s's own :rtable, where the reference carries :ctelevelsup 1 pointing back up to the
+      // outer WITH clause, a shape no earlier test in this class covers. PostgreSQL 18: returns
+      // id NOT NULL, since t.id is NOT NULL and c and s are both plain passthroughs of it.
+      val query = analyzeWithSchema(
+        "CREATE TABLE t (id INT NOT NULL)",
+        "WITH c AS (SELECT id FROM t) SELECT s.id FROM (SELECT id FROM c) s",
+      )
+      assertThat(query.columns).hasSize(1)
+      assertThat(query.columns[0].notNull).isTrue()
     }
   }
 
