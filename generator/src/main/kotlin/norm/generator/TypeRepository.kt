@@ -952,43 +952,6 @@ private fun String.formatAsKdocPropertyReference(): String? = when {
 }
 
 /**
- * A PostgreSQL identifier that never needs double-quoting when written back into SQL: starts with
- * a lowercase letter or underscore, followed by any number of lowercase letters, digits,
- * underscores, or dollar signs (Postgres's own `SAFE_IDENTIFIER` rule, matching what an
- * already-live-connected caller does in [JdbcAnalyzer.buildIdentifierQuoter] — this copy exists
- * because [TypeRepository] has no connection of its own to query, per this file's own doc comment
- * on why `TypeRepository` re-lexes rather than re-querying). Matching this pattern is necessary but
- * not sufficient — [quoteSqlIdentifierIfNeeded] additionally rejects a reserved word, which this
- * pattern alone cannot rule out (`order` and `user` both match it).
- */
-private val SQL_UNQUOTED_IDENTIFIER = Regex("[a-z_][a-z0-9_\$]*")
-
-/**
- * Double-quotes [identifier] exactly as PostgreSQL itself requires it to be written back into SQL
- * — doubling any embedded `"` per PostgreSQL's own quoted-identifier escape rule — unless both
- * [SQL_UNQUOTED_IDENTIFIER] accepts it bare AND it is not one of [reservedWords].
- *
- * Without the [SQL_UNQUOTED_IDENTIFIER] half, a mixed-case or space-containing column name (`"Foo"`,
- * `"My Col"`) would render bare as `table.Foo`/`table.My Col` — text that reads back as PostgreSQL
- * folding `Foo` to `foo`, or as two unrelated tokens instead of one qualified reference
- * (`SELECT tq.Foo FROM tq` fails with `column tq.foo does not exist`).
- *
- * Without the [reservedWords] half, a relation or column named after a reserved word (`order`,
- * `user`) — which [SQL_UNQUOTED_IDENTIFIER] alone cannot distinguish from any other all-lowercase
- * identifier — would render bare too: `` `order.id` `` reads back as `SELECT order.id FROM "order"`,
- * which PostgreSQL rejects with `syntax error at or near "."`, since an unquoted `order` is parsed as
- * the reserved keyword, not a table reference. [reservedWords] is always the connected server's own
- * live keyword set ([JdbcAnalyzer.fetchReservedWords]), since PostgreSQL's reserved-word list drifts
- * across versions.
- */
-private fun quoteSqlIdentifierIfNeeded(identifier: String, reservedWords: Set<String>): String =
-  if (SQL_UNQUOTED_IDENTIFIER.matches(identifier) && identifier !in reservedWords) {
-    identifier
-  } else {
-    "\"${identifier.replace("\"", "\"\"")}\""
-  }
-
-/**
  * Returns a source reference string for display in KDoc, or `null` if none is available (either
  * there is nothing to reference, or [markdownInlineCodeSpan] could not render it faithfully — see
  * that function's own KDoc for when that happens).

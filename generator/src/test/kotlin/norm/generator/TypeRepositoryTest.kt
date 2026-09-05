@@ -563,11 +563,11 @@ class TypeRepositoryTest {
 
     @Test
     fun `a reserved-word relation name is double-quoted in its table_column source reference`() {
-      // SQL_UNQUOTED_IDENTIFIER alone accepts "order" -- it's already all-lowercase with no special
-      // characters -- so without consulting the live server's own reserved-word set, the relation
-      // name would be rendered bare: "order.id" reads back as PostgreSQL parsing "order" as the
-      // reserved keyword, not a table reference (`SELECT order.id FROM "order"` fails with `syntax
-      // error at or near "."`).
+      // quoteSqlIdentifierIfNeeded's bare-identifier pattern alone accepts "order" -- it's already
+      // all-lowercase with no special characters -- so without consulting the live server's own
+      // reserved-word set, the relation name would be rendered bare: "order.id" reads back as
+      // PostgreSQL parsing "order" as the reserved keyword, not a table reference (`SELECT order.id
+      // FROM "order"` fails with `syntax error at or near "."`).
       val orderColumn = Column(
         name = "id",
         notNull = true,

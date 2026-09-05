@@ -364,14 +364,10 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
      * the server already truncated.
      */
     private fun unquoteIdentifier(identifier: String): String = truncateIdentifier(
-      if (identifier.startsWith('"') && identifier.endsWith('"')) {
-        // PostgreSQL reads an embedded "" inside a quoted identifier as one literal " character, not
-        // two -- un-doubling it here recovers the real column name (e.g. a"b), rather than leaving
-        // the SQL-escaped spelling (a""b) as the inferred parameter name.
-        identifier.substring(1, identifier.length - 1).replace("\"\"", "\"")
-      } else {
-        identifier
-      },
+      // PostgreSQL reads an embedded "" inside a quoted identifier as one literal " character, not
+      // two -- unescapeQuotedIdentifier un-doubles it, recovering the real column name (e.g. a"b)
+      // rather than leaving the SQL-escaped spelling (a""b) as the inferred parameter name.
+      if (isQuotedIdentifier(identifier)) unescapeQuotedIdentifier(identifier) else identifier,
     )
 
     /**

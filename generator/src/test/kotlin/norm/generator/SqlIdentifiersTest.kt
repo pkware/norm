@@ -67,4 +67,33 @@ class SqlIdentifiersTest {
       assertThat(truncateIdentifier("")).isEqualTo("")
     }
   }
+
+  @Nested
+  inner class QuoteSqlIdentifierIfNeededSweep {
+
+    @Test
+    fun `a plain lowercase identifier is returned bare`() {
+      assertThat(quoteSqlIdentifierIfNeeded("author", reservedWords = emptySet())).isEqualTo("author")
+    }
+
+    @Test
+    fun `a reserved word is quoted even though it matches the bare pattern`() {
+      assertThat(quoteSqlIdentifierIfNeeded("order", reservedWords = setOf("order"))).isEqualTo("\"order\"")
+    }
+
+    @Test
+    fun `an identifier with an uppercase letter is quoted`() {
+      assertThat(quoteSqlIdentifierIfNeeded("Foo", reservedWords = emptySet())).isEqualTo("\"Foo\"")
+    }
+
+    @Test
+    fun `an embedded double quote is doubled per PostgreSQL's own quoted-identifier escape rule`() {
+      assertThat(quoteSqlIdentifierIfNeeded("a\"b", reservedWords = emptySet())).isEqualTo("\"a\"\"b\"")
+    }
+
+    @Test
+    fun `a dollar sign after the first character is a legal bare identifier character`() {
+      assertThat(quoteSqlIdentifierIfNeeded("my\$col", reservedWords = emptySet())).isEqualTo("my\$col")
+    }
+  }
 }

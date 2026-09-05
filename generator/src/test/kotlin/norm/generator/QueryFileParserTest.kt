@@ -389,4 +389,98 @@ class QueryFileParserTest {
     assertThat(result[0].sql).isEqualTo("SELECT * FROM users WHERE name LIKE ':notaparam' AND id = ?")
     assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "id"))
   }
+
+  @Test
+  fun `named parameter inside a block comment is not converted`() {
+    val content = """
+      -- name: findByPattern :many
+      SELECT * FROM users /* :notaparam */ WHERE id = :id;
+    """.trimIndent()
+
+    val result = QueryFileParser.parse(content)
+
+    assertThat(result[0].sql).isEqualTo("SELECT * FROM users /* :notaparam */ WHERE id = ?")
+    assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "id"))
+  }
+
+  @Test
+  fun `named parameter inside a quoted identifier is not converted`() {
+    val content = """
+      -- name: findByPattern :many
+      SELECT "a:b" FROM users WHERE id = :id;
+    """.trimIndent()
+
+    val result = QueryFileParser.parse(content)
+
+    assertThat(result[0].sql).isEqualTo("""SELECT "a:b" FROM users WHERE id = ?""")
+    assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "id"))
+  }
+
+  @Test
+  fun `named parameter inside a dollar-quoted string is not converted`() {
+    val content = """
+      -- name: findByPattern :many
+      SELECT ${'$'}${'$'}:notaparam${'$'}${'$'} FROM users WHERE id = :id;
+    """.trimIndent()
+
+    val result = QueryFileParser.parse(content)
+
+    assertThat(result[0].sql).isEqualTo("SELECT \$\$:notaparam\$\$ FROM users WHERE id = ?")
+    assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "id"))
+  }
+
+  @Test
+  fun `question mark inside a string literal does not trip the mixed-style guard`() {
+    val content = """
+      -- name: findByPattern :many
+      SELECT * FROM users WHERE note = 'really?' AND id = :id;
+    """.trimIndent()
+
+    val result = QueryFileParser.parse(content)
+
+    assertThat(result[0].sql).isEqualTo("SELECT * FROM users WHERE note = 'really?' AND id = ?")
+    assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "id"))
+  }
+
+  @Test
+  fun `genuinely mixed named and positional parameters still throw`() {
+    val content = """
+      -- name: findByPattern :many
+      SELECT * FROM users WHERE note = ? AND id = :id;
+    """.trimIndent()
+
+    assertFailure { QueryFileParser.parse(content) }
+      .messageContains("mix")
+  }
+
+  @Test
+  fun `named parameter after the inner close of a nested block comment is not converted`() {
+    val content = """
+      -- name: findByPattern :many
+      SELECT * FROM users /* a /* b */ :notaparam */ WHERE id = :id;
+    """.trimIndent()
+
+    val result = QueryFileParser.parse(content)
+
+    assertThat(result[0].sql).isEqualTo("SELECT * FROM users /* a /* b */ :notaparam */ WHERE id = ?")
+    assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "id"))
+  }
+
+  @Test
+  fun `named-parameter-shaped text after a backslash-escaped quote in an E-string is not converted`() {
+    // The old findClosingQuote ended the literal at the backslash-escaped quote (it had no E-string
+    // awareness), so it would have read '\'' as the terminator and converted the ":x" that follows
+    // as a real named parameter. skipLexicalToken understands E'...' backslash escapes, so the
+    // whole literal -- ":x" included -- is skipped as one token. Accepted behavior change, matching
+    // PostgreSQL's own E'' semantics.
+    val content = """
+      -- name: findByPattern :many
+      SELECT * FROM users WHERE note = E'it\'s :x' AND id = :id;
+    """.trimIndent()
+
+    val result = QueryFileParser.parse(content)
+
+    assertThat(result[0].sql).isEqualTo("""SELECT * FROM users WHERE note = E'it\'s :x' AND id = ?""")
+    assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "id"))
+  }
 }

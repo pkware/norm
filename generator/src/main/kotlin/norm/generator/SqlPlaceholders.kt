@@ -1,148 +1,36 @@
 package norm.generator
 
 /**
- * Replaces `?` parameter placeholders with `NULL` for use in view definitions.
+ * Replaces each `?` parameter placeholder in [sql] with [replacement] applied to its 0-based
+ * parameter index.
  *
  * PostgreSQL views cannot contain parameter placeholders. This function replaces each `?` that
- * represents a parameter with `NULL`, which allows the query to be used as a view body for
- * node tree analysis. The replacement value does not affect nullability analysis — outer join
- * nullability is determined by join structure, not parameter values.
+ * represents a parameter, which allows the query to be used as a view body for node tree analysis.
+ * Callers use it both to substitute a literal `"NULL"` (outer join nullability is determined by
+ * join structure, not parameter values) and to substitute typed non-null sentinel literals, for a
+ * strict function whose result nullability depends on every argument being non-null.
  *
- * Correctly skips `?` inside:
- * - Single-quoted string literals (`'really?'`), including `''` escape sequences
- * - Line comments (`-- why?`)
- * - Block comments (`/* what? */`)
- *
- * Note: Dollar-quoted string literals (`$$...$$`) are not handled. A `?` inside a dollar-quoted
- * string would be replaced with `NULL`. This is an acceptable limitation since dollar quoting is
- * only used in function bodies, not in WHERE clauses or other contexts where Norm analyzes queries.
- */
-internal fun replaceParameterPlaceholders(sql: String): String {
-  if ('?' !in sql) return sql
-  // +20: NULL is 3 chars longer than ?, so +20 accommodates ~6 replacements before a reallocation.
-  val result = StringBuilder(sql.length + 20)
-  var i = 0
-  while (i < sql.length) {
-    when {
-      sql[i] == '\'' -> {
-        result.append('\'')
-        i++
-        while (i < sql.length) {
-          if (sql[i] == '\'') {
-            result.append('\'')
-            i++
-            if (i < sql.length && sql[i] == '\'') {
-              result.append('\'')
-              i++
-            } else {
-              break
-            }
-          } else {
-            result.append(sql[i])
-            i++
-          }
-        }
-      }
-      sql[i] == '-' && i + 1 < sql.length && sql[i + 1] == '-' -> {
-        val eol = sql.indexOf('\n', i)
-        if (eol < 0) {
-          result.append(sql, i, sql.length)
-          i = sql.length
-        } else {
-          result.append(sql, i, eol + 1)
-          i = eol + 1
-        }
-      }
-      sql[i] == '/' && i + 1 < sql.length && sql[i + 1] == '*' -> {
-        val close = sql.indexOf("*/", i + 2)
-        if (close < 0) {
-          result.append(sql, i, sql.length)
-          i = sql.length
-        } else {
-          result.append(sql, i, close + 2)
-          i = close + 2
-        }
-      }
-      sql[i] == '?' -> {
-        result.append("NULL")
-        i++
-      }
-      else -> {
-        result.append(sql[i])
-        i++
-      }
-    }
-  }
-  return result.toString()
-}
-
-/**
- * Replaces `?` parameter placeholders with typed non-null sentinel values.
- *
- * Each `?` is replaced with the corresponding sentinel from [sentinels] (consumed in order).
- * If there are more `?` placeholders than sentinels, excess `?` are replaced with `NULL`
- * (safe fallback). Question marks inside string literals and comments are left untouched.
+ * A `?` inside a string literal, `E''` escape string, quoted identifier, dollar-quoted string, line
+ * comment, or block comment is left alone.
  *
  * @param sql The SQL text with `?` parameter placeholders.
- * @param sentinels Non-null sentinel expressions in parameter order (e.g., `"0::int4"`, `"''::text"`).
- * @return The SQL with `?` replaced by sentinels.
+ * @param replacement Given a placeholder's 0-based parameter index, returns the SQL text to substitute for it.
+ * @return The SQL with each `?` replaced by [replacement]'s result for it.
  */
-internal fun replaceParameterPlaceholdersWithSentinels(sql: String, sentinels: List<String>): String {
+internal fun replaceParameterPlaceholders(sql: String, replacement: (parameterIndex: Int) -> String): String {
   if ('?' !in sql) return sql
-  val result = StringBuilder(sql.length + sentinels.sumOf { it.length })
-  var characterIndex = 0
-  var sentinelIndex = 0
-  while (characterIndex < sql.length) {
-    when {
-      sql[characterIndex] == '\'' -> {
-        result.append('\'')
-        characterIndex++
-        while (characterIndex < sql.length) {
-          if (sql[characterIndex] == '\'') {
-            result.append('\'')
-            characterIndex++
-            if (characterIndex < sql.length && sql[characterIndex] == '\'') {
-              result.append('\'')
-              characterIndex++
-            } else {
-              break
-            }
-          } else {
-            result.append(sql[characterIndex])
-            characterIndex++
-          }
-        }
-      }
-      sql[characterIndex] == '-' && characterIndex + 1 < sql.length && sql[characterIndex + 1] == '-' -> {
-        val endOfLine = sql.indexOf('\n', characterIndex)
-        if (endOfLine < 0) {
-          result.append(sql, characterIndex, sql.length)
-          characterIndex = sql.length
-        } else {
-          result.append(sql, characterIndex, endOfLine + 1)
-          characterIndex = endOfLine + 1
-        }
-      }
-      sql[characterIndex] == '/' && characterIndex + 1 < sql.length && sql[characterIndex + 1] == '*' -> {
-        val close = sql.indexOf("*/", characterIndex + 2)
-        if (close < 0) {
-          result.append(sql, characterIndex, sql.length)
-          characterIndex = sql.length
-        } else {
-          result.append(sql, characterIndex, close + 2)
-          characterIndex = close + 2
-        }
-      }
-      sql[characterIndex] == '?' -> {
-        result.append(sentinels.getOrElse(sentinelIndex) { "NULL" })
-        sentinelIndex++
-        characterIndex++
-      }
-      else -> {
-        result.append(sql[characterIndex])
-        characterIndex++
-      }
+  val result = StringBuilder(sql.length + 16)
+  var index = 0
+  var parameterIndex = 0
+  while (index < sql.length) {
+    val afterToken = skipLexicalToken(sql, index)
+    if (afterToken != index) {
+      result.append(sql, index, afterToken)
+      index = afterToken
+      continue
     }
+    if (sql[index] == '?') result.append(replacement(parameterIndex++)) else result.append(sql[index])
+    index++
   }
   return result.toString()
 }

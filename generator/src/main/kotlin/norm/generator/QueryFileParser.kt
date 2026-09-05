@@ -52,7 +52,8 @@ public data class ParsedQuery(
  * a named parameter produces its own `?` — the same name used multiple times creates multiple
  * bind slots. Mixing `:name` and `?` styles in a single query is not allowed.
  *
- * Named parameters inside single-quoted string literals are left untouched.
+ * A `:name` that appears inside a string literal, quoted identifier, dollar-quoted string, or
+ * comment is left untouched.
  */
 public object QueryFileParser {
 
@@ -160,13 +161,20 @@ public object QueryFileParser {
   /**
    * Converts `:paramName` named parameters to `?` positional placeholders.
    *
-   * Scans the SQL character by character to correctly handle:
-   * - `::` cast operators (e.g., `value::integer`) — skipped
-   * - Single-quoted string literals (e.g., `':notaparam'`) — skipped, including `''` escapes
-   * - SQL comments (e.g., `-- comment`) — skipped
+   * Scans the SQL one lexical token at a time via [skipLexicalToken], so a `:name`-shaped run
+   * inside a string literal, quoted identifier, dollar-quoted string, or comment is copied through
+   * verbatim rather than converted. Outside those tokens:
+   * - `::` cast operators (e.g., `value::integer`) are passed through unconverted.
+   * - A `:` immediately followed by an ASCII `[A-Za-z_]` character (see [isNamedParameterStartCharacter])
+   *   is a named parameter and becomes `?`; the name itself continues through
+   *   [isNamedParameterCharacter].
    *
    * Each occurrence of a named parameter produces its own `?` placeholder with its own 1-based
    * position number. The same name appearing multiple times creates multiple bind slots.
+   *
+   * Every `?` encountered outside a lexical token — meaning it was written directly into the SQL,
+   * not produced by this conversion — is counted so the mixed-style guard below can tell a
+   * genuine positional `?` apart from one merely sitting inside a string literal like `'really?'`.
    *
    * @return A pair of (converted SQL, position-to-name map). If the SQL has no named parameters,
    *   returns the original SQL with an empty map.
@@ -175,46 +183,38 @@ public object QueryFileParser {
   private fun convertNamedParameters(sql: String): Pair<String, Map<Int, String>> {
     val numberToName = mutableMapOf<Int, String>()
     var nextNumber = 1
+    var positionalParameterCount = 0
     val result = StringBuilder()
-    var i = 0
+    var index = 0
 
-    while (i < sql.length) {
-      val c = sql[i]
-
-      if (c == '\'') {
-        // Skip single-quoted string literals
-        val closeIndex = findClosingQuote(sql, i)
-        result.append(sql, i, closeIndex + 1)
-        i = closeIndex + 1
-      } else if (c == '-' && i + 1 < sql.length && sql[i + 1] == '-') {
-        // Skip -- line comments
-        val eol = sql.indexOf('\n', i)
-        if (eol < 0) {
-          result.append(sql, i, sql.length)
-          i = sql.length
-        } else {
-          result.append(sql, i, eol)
-          i = eol
-        }
-      } else if (c == ':' && i + 1 < sql.length && sql[i + 1] == ':') {
+    while (index < sql.length) {
+      val afterToken = skipLexicalToken(sql, index)
+      if (afterToken != index) {
+        result.append(sql, index, afterToken)
+        index = afterToken
+        continue
+      }
+      val character = sql[index]
+      if (character == ':' && index + 1 < sql.length && sql[index + 1] == ':') {
         // Double colon (cast) — pass through both characters
         result.append("::")
-        i += 2
-      } else if (c == ':' && i + 1 < sql.length && isIdentifierStart(sql[i + 1])) {
+        index += 2
+      } else if (character == ':' && index + 1 < sql.length && isNamedParameterStartCharacter(sql[index + 1])) {
         // Named parameter — each occurrence gets its own ? placeholder
-        val nameStart = i + 1
+        val nameStart = index + 1
         var nameEnd = nameStart
-        while (nameEnd < sql.length && isIdentifierPart(sql[nameEnd])) {
+        while (nameEnd < sql.length && isNamedParameterCharacter(sql[nameEnd])) {
           nameEnd++
         }
         val paramName = sql.substring(nameStart, nameEnd)
         val position = nextNumber++
         numberToName[position] = paramName
         result.append('?')
-        i = nameEnd
+        index = nameEnd
       } else {
-        result.append(c)
-        i++
+        if (character == '?') positionalParameterCount++
+        result.append(character)
+        index++
       }
     }
 
@@ -222,38 +222,21 @@ public object QueryFileParser {
       return sql to emptyMap()
     }
 
-    // Check for mixed styles: named params found, but ? positional params also present in the original SQL
-    require('?' !in sql) {
+    // Check for mixed styles: named params found, but a genuine positional ? also appears outside
+    // any lexical token — a ? inside a string literal like 'really?' does not count (see
+    // positionalParameterCount's accumulation above).
+    require(positionalParameterCount == 0) {
       "Cannot mix named (:param) and positional (?) parameters in the same query"
     }
 
     return result.toString() to numberToName
   }
 
-  /**
-   * Finds the closing single quote for a string literal starting at [start].
-   * Handles `''` escape sequences (two consecutive single quotes inside a literal).
-   */
-  private fun findClosingQuote(sql: String, start: Int): Int {
-    var i = start + 1
-    while (i < sql.length) {
-      if (sql[i] == '\'') {
-        // Check for '' escape
-        if (i + 1 < sql.length && sql[i + 1] == '\'') {
-          i += 2
-          continue
-        }
-        return i
-      }
-      i++
-    }
-    // Unterminated string — return end of string
-    return sql.length - 1
-  }
+  private fun isNamedParameterStartCharacter(character: Char): Boolean =
+    character in 'a'..'z' || character in 'A'..'Z' || character == '_'
 
-  private fun isIdentifierStart(c: Char): Boolean = c in 'a'..'z' || c in 'A'..'Z' || c == '_'
-
-  private fun isIdentifierPart(c: Char): Boolean = isIdentifierStart(c) || c in '0'..'9'
+  private fun isNamedParameterCharacter(character: Char): Boolean =
+    isNamedParameterStartCharacter(character) || character in '0'..'9'
 
   private fun extractCommentText(commentLine: String): String = commentLine.removePrefix("--").trim()
 }

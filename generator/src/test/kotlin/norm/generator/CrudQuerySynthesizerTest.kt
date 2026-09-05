@@ -374,9 +374,9 @@ class CrudQuerySynthesizerTest {
       column("My Col", "text"),
     )
     val catalog = catalog(table)
-    // Mirrors JdbcAnalyzer.buildIdentifierQuoter's real policy (needsQuoting: any character
-    // outside "[a-z_][a-z0-9_$]*", which "Foo"'s uppercase "F" and "My Col"'s space both are)
-    // without needing a live connection just to fetch the (here, irrelevant) reserved-word set.
+    // Mirrors quoteSqlIdentifierIfNeeded's real policy (quotes any character outside
+    // "[a-z_][a-z0-9_$]*", which "Foo"'s uppercase "F" and "My Col"'s space both are) without
+    // needing a live connection just to fetch the (here, irrelevant) reserved-word set.
     val quoter = { identifier: String ->
       if (identifier.matches(Regex("[a-z_][a-z0-9_\$]*"))) identifier else "\"$identifier\""
     }

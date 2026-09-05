@@ -393,19 +393,10 @@ public class JdbcAnalyzer(private val connection: Connection) {
    */
   public fun buildIdentifierQuoter(): (String) -> String {
     val reservedWords = fetchReservedWords()
-    return { identifier ->
-      // PostgreSQL doubles every embedded double quote in a quoted identifier, the same way a quoted
-      // string literal doubles an embedded single quote -- without it, a column literally named a"b
-      // wraps unmodified into "a"b", read as "a" followed by an unterminated b" token.
-      if (needsQuoting(identifier, reservedWords)) "\"${identifier.replace("\"", "\"\"")}\"" else identifier
-    }
+    return { identifier -> quoteSqlIdentifierIfNeeded(identifier, reservedWords) }
   }
 
   private companion object {
     private val CALL_PROCEDURE_NAME = Regex("""CALL\s+(\w+)\s*\(""", RegexOption.IGNORE_CASE)
-    private val SAFE_IDENTIFIER = Regex("[a-z_][a-z0-9_\$]*")
-
-    private fun needsQuoting(identifier: String, reservedWords: Set<String>): Boolean =
-      identifier.lowercase() in reservedWords || !identifier.matches(SAFE_IDENTIFIER)
   }
 }
