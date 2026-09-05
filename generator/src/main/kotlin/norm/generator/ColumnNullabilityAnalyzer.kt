@@ -71,6 +71,98 @@ internal data class ColumnAnalysis(
 )
 
 /**
+ * Returns `true` when `(varno, varattno)` is proven non-null by the query's `WHERE` clause,
+ * either directly or through the GROUP RTE remap (target-list `Var`s point at the GROUP RTE
+ * when `hasGroupRTE`, while `WHERE`-clause `Var`s use base relation varnos).
+ */
+private fun isProvenByQuals(
+  qualNotNullVars: Set<Pair<Int, Int>>,
+  groupRteMap: Map<Pair<Int, Int>, Pair<Int, Int>>,
+  varno: Int,
+  varattno: Int,
+): Boolean = qualNotNullVars.contains(varno to varattno) ||
+  groupRteMap[varno to varattno]?.let { qualNotNullVars.contains(it) } == true
+
+/**
+ * Everything needed to answer `isSourceColumnNotNull` — how a `Var` reference inside one query
+ * block resolves to a source column's not-null answer — for a single query block, whether that
+ * block is [ColumnNullabilityAnalyzer]'s own outermost statement, a CTE body, a `FROM`-clause
+ * subquery, or a `SubLink`'s subselect. Built by [ColumnNullabilityAnalyzer.buildQueryBlockScope]
+ * so all four call shapes share exactly one fallback chain instead of four hand-copied ones.
+ *
+ * Two suppressions this chain's own callers apply before ever reaching [isSourceColumnNotNull],
+ * folded into how [qualProvenVars] and [groupRteMap] are populated rather than re-checked here:
+ * GROUPING SETS/CUBE/ROLLUP null-extends a grouping key AFTER `WHERE` has already filtered rows,
+ * so a qual can never prove a grouped result column non-null — [groupRteMap] is left empty and
+ * [qualProvenVars] is computed empty whenever the query block has grouping sets, so the remap and
+ * qual-narrowing branches below simply never fire for one. And a data-modifying query block's own
+ * `WHERE` clause can test a column value its `SET` clause (or, for `MERGE`, an update/insert
+ * action) is about to overwrite, so [qualProvenVars] is likewise computed empty whenever the block
+ * itself is an `INSERT`/`UPDATE`/`DELETE`/`MERGE`.
+ *
+ * @property rangeTable varno to relid, base tables only (see [PgNodeTreeParser.parseRangeTable]).
+ * @property hasGroupingSets `true` when the query block uses `GROUPING SETS`, `CUBE`, or `ROLLUP` —
+ *   see [PgNodeTreeParser.hasGroupingSets].
+ * @property groupRteMap `(groupVarno, attrPos)` to `(baseVarno, baseVarattno)`, empty whenever
+ *   [hasGroupingSets] — see [PgNodeTreeParser.parseGroupRteMap].
+ * @property qualProvenVars `(varno, varattno)` pairs the query block's own `WHERE` clause proves
+ *   non-null, empty whenever qual narrowing does not apply (see this class's own KDoc above).
+ * @property ownCtes CTE bodies declared directly in the query block's own `:cteList`, keyed by
+ *   name.
+ * @property enclosingCtes CTE bodies visible via `:ctelevelsup` greater than `0` — declared in
+ *   whichever scope encloses the query block, never its own nested `WITH` clause. Empty for the
+ *   outermost statement, which has no enclosing scope to point past.
+ * @property cteReferences varno to CTE reference, for a `Var` whose range-table entry is a CTE
+ *   rather than a base table or subquery — see [PgNodeTreeParser.parseCteRangeTableEntries].
+ * @property subqueryColumnNotNull `(varno, varattno)` to `true` for a `FROM`-clause subquery RTE
+ *   column already proven non-null by recursively analyzing that subquery's own target list.
+ * @property mergeAbsentVarnos varno to whether that relation can be entirely absent for some
+ *   result row, only when the query block is itself a `MERGE` — empty for every other shape.
+ * @property forceNewNullable `true` when a `RETURNING WITH (OLD AS o, NEW AS n)` reference to
+ *   `NEW` must be forced nullable — see [NodeTreeNullabilityAnalyzer]'s constructor parameter of
+ *   the same name.
+ * @property resultRelationVarno the query block's own `:resultRelation` varno, `0` for a plain
+ *   `SELECT` — exposed here, rather than recomputed by [ColumnNullabilityAnalyzer.analyzeNodeTree],
+ *   since [ColumnNullabilityAnalyzer.buildQueryBlockScope] already parses it to decide whether to
+ *   suppress qual narrowing.
+ */
+private class QueryBlockScope(
+  val rangeTable: Map<Int, Int>,
+  val hasGroupingSets: Boolean,
+  val groupRteMap: Map<Pair<Int, Int>, Pair<Int, Int>>,
+  val qualProvenVars: Set<Pair<Int, Int>>,
+  val ownCtes: Map<String, List<Boolean>>,
+  val enclosingCtes: Map<String, List<Boolean>>,
+  val cteReferences: Map<Int, NodeTreeCteReference>,
+  val subqueryColumnNotNull: Map<Pair<Int, Int>, Boolean>,
+  val mergeAbsentVarnos: Map<Int, Boolean>,
+  val forceNewNullable: Boolean,
+  val resultRelationVarno: Int,
+) {
+  /**
+   * The single source-column-resolution chain every query block shape resolves a `Var` through:
+   * a `MERGE` relation `EXPLAIN` proved can be entirely absent for some result row → a `WHERE`-
+   * clause qual (directly or through the GROUP RTE remap) → a base-table relation's own catalog
+   * constraint (via [isColumnNotNull]) → a GROUP RTE remapped back to its base column → a
+   * `FROM`-clause subquery's already-resolved column → a CTE reference resolved against whichever
+   * of [ownCtes]/[enclosingCtes] its own `:ctelevelsup` selects.
+   */
+  fun isSourceColumnNotNull(varno: Int, varattno: Int, isColumnNotNull: (Pair<Int, Int>) -> Boolean): Boolean {
+    if (mergeAbsentVarnos[varno] == true) return false
+    if (isProvenByQuals(qualProvenVars, groupRteMap, varno, varattno)) return true
+    rangeTable[varno]?.let { relid -> return isColumnNotNull(relid to varattno) }
+    groupRteMap[varno to varattno]?.let { (baseVarno, baseAttno) ->
+      val baseRelid = rangeTable[baseVarno] ?: return false
+      return isColumnNotNull(baseRelid to baseAttno)
+    }
+    if (subqueryColumnNotNull[varno to varattno] == true) return true
+    val reference = cteReferences[varno] ?: return false
+    val ctesInScope = if (reference.ctelevelsup == 0) ownCtes else enclosingCtes
+    return ctesInScope[reference.name]?.getOrNull(varattno - 1) == false
+  }
+}
+
+/**
  * Drives per-column nullability analysis for a SQL query on behalf of [loader]: fetching the
  * query's own parsed node tree (via `prosqlbody` or a probe function, see
  * [queryColumnNullabilityViaProsqlbody]'s own KDoc), then recursively resolving CTE bodies,
@@ -444,34 +536,8 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     trustAssignedExpressions: Boolean = true,
     mergeAbsentVarnos: Map<Int, Boolean> = emptyMap(),
   ): List<Boolean> {
-    val rangeTable = nodeTreeParser.parseRangeTable(nodeTree) // varno → relid (base tables only)
-    // GROUP BY queries use an *GROUP* RTE (rtekind 9) whose target list VARs reference the group
-    // entry varno instead of the base table varno directly. Resolve these back to their base table
-    // column so isSourceColumnNotNull can check pg_attribute.attnotnull correctly.
-    //
-    // EXCEPTION: When GROUPING SETS, CUBE, or ROLLUP is used, GROUP BY columns can receive NULL
-    // for rows where the column is not part of the current grouping set. PostgreSQL 18 enforces
-    // this via a *GROUP* RTE (rtekind 9): target list VARs reference the GROUP RTE instead of the
-    // base table, so parseRangeTable() can't find them and they fall back to nullable on their
-    // own. PostgreSQL 16/17 have no GROUP RTE, so this exception skips GROUP RTE resolution
-    // entirely; the actual nullability override for grouping keys (including EXPRESSION keys
-    // such as `ROLLUP(lower(a))`, which never produce a bare {VAR } target-list entry to remap
-    // here) is applied by NodeTreeNullabilityAnalyzer.extractColumnNullability via the
-    // hasGroupingSets flag passed to buildAnalyzer below.
-    val hasGroupingSets = nodeTreeParser.hasGroupingSets(nodeTree)
-    val groupRteMap = if (hasGroupingSets) {
-      emptyMap()
-    } else {
-      nodeTreeParser.parseGroupRteMap(nodeTree) // (groupVarno, attrPos) → (baseVarno, baseVarattno)
-    }
-    // Computed once so the same resolution feeds both buildCteColumnNotNull's varno-keyed projection
-    // and buildAnalyzer's resolvedCtes, which needs the raw, name-keyed map.
-    val resolvedCtes = resolveCteBodies(nodeTree, applyQualNarrowing, sql)
-    // For subquery RTEs (rtekind 1), the outer VAR's varno is not in rangeTable.
-    // Resolve their nullability by recursively analyzing each subquery's target list.
-    // The map is keyed by (varno, varattno) for direct lookup in isSourceColumnNotNull.
-    val subqueryColumnNotNull = buildSubqueryColumnNotNull(nodeTree, resolvedCtes, applyQualNarrowing, sql)
-    val cteColumnNotNull = buildCteColumnNotNull(nodeTree, resolvedCtes)
+    val scope =
+      buildQueryBlockScope(nodeTree, emptyMap(), applyQualNarrowing, sql, mergeAbsentVarnos = mergeAbsentVarnos)
     // A non-zero :resultRelation means this is an INSERT/UPDATE/DELETE/MERGE, not a SELECT — see
     // parseResultRelation's KDoc. Its :targetList holds the value expressions being written to
     // each explicitly-assigned column of the target relation (keyed by :resno = the column's
@@ -479,8 +545,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     // (resultRelationVarno, attno) pair actually reads back — not the column's general catalog
     // constraint, which says nothing about what this statement is about to write. See
     // targetListByResno's use below.
-    val resultRelationVarno = nodeTreeParser.parseResultRelation(nodeTree)
-    val targetListByResno = if (resultRelationVarno == 0 || !trustAssignedExpressions) {
+    val targetListByResno = if (scope.resultRelationVarno == 0 || !trustAssignedExpressions) {
       // !trustAssignedExpressions means the original sql (before sentinel substitution) contained
       // a `?` parameter placeholder somewhere — see queryColumnNullabilityViaProsqlbody's call
       // site KDoc. A sentinel-substituted CONST is byte-identical, in the parsed tree, to a
@@ -496,65 +561,17 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
       // 0) — never null for a real INSERT/UPDATE/DELETE/MERGE, since PostgreSQL requires a real
       // relation to write to, but defensively treated as "substitution unsafe" (empty map) rather
       // than trusting an assignment against a target this class cannot even identify.
-      val targetRelid = rangeTable[resultRelationVarno]
+      val targetRelid = scope.rangeTable[scope.resultRelationVarno]
       if (targetRelid != null && isSubstitutionSafeForRelation(targetRelid)) {
         nodeTreeParser.parseTargetList(nodeTree).associate { it.resultNumber to it.expression }
       } else {
         emptyMap()
       }
     }
-    // GROUPING SETS/CUBE/ROLLUP null-extend grouping keys AFTER the WHERE clause has already
-    // filtered rows, so a qual can never prove a grouped result column non-null. This matters
-    // even for a NOT NULL base column, because null-extension overrides the base column's own
-    // constraint. Suppress qual narrowing for the entire block rather than trying to map a
-    // (possibly expression) grouping key back to its null-extended leaf Vars — that is more
-    // machinery than this warrants, and a subtle mistake there would reintroduce an unsound
-    // narrowing. This is conservative by construction: every non-key output column of a
-    // grouping-sets query is an aggregate, so suppressing narrowing here costs nothing real.
-    //
-    // A non-zero resultRelationVarno (an UPDATE/DELETE/MERGE) suppresses narrowing for a similar
-    // reason: a qual that looks like it proves a RETURNING column non-null may in fact be testing
-    // the value the statement's own SET clause (or, for MERGE, an update/insert action) is about
-    // to overwrite.
-    val qualNotNullVars = if (applyQualNarrowing && !hasGroupingSets && resultRelationVarno == 0) {
-      NodeTreeNullabilityAnalyzer.qualProvenNonNullVars(nodeTree, isStrictFunction)
-    } else {
-      emptySet()
-    }
     val plainIsSourceColumnNotNull = { varno: Int, varattno: Int ->
-      if (mergeAbsentVarnos[varno] == true) {
-        // A MERGE relation EXPLAIN determined can be entirely absent for some result row (see
-        // mergeAbsentVarnos' KDoc) can never be proven non-null here, regardless of what a qual or
-        // this column's own catalog constraint would otherwise say — those both describe the
-        // relation's rows when present, which says nothing about whether this specific result row
-        // has one at all.
-        false
-      } else if (isProvenByQuals(qualNotNullVars, groupRteMap, varno, varattno)) {
-        true
-      } else {
-        val relid = rangeTable[varno]
-        if (relid != null) {
-          isColumnNotNull(relid to varattno)
-        } else {
-          val baseVar = groupRteMap[varno to varattno]
-          if (baseVar != null) {
-            val baseRelid = rangeTable[baseVar.first]
-            baseRelid != null && isColumnNotNull(baseRelid to baseVar.second)
-          } else {
-            subqueryColumnNotNull[varno to varattno] == true ||
-              cteColumnNotNull[varno to varattno] == true
-          }
-        }
-      }
+      scope.isSourceColumnNotNull(varno, varattno, ::isColumnNotNull)
     }
-    val forceNewNullable = forcesNewNullable(nodeTree)
-    val analyzer = buildAnalyzer(
-      hasGroupingSets = hasGroupingSets,
-      forceNewNullable = forceNewNullable,
-      applyQualNarrowing = applyQualNarrowing,
-      resolvedCtes = resolvedCtes,
-      isSourceColumnNotNull = plainIsSourceColumnNotNull,
-    )
+    val analyzer = buildAnalyzer(scope, depth = SUBLINK_ANALYSIS_DEPTH_BUDGET)
     // :returningList must be checked first, not as a fallback for an empty :targetList: an INSERT
     // or UPDATE's own :targetList holds the value expressions being written to each assigned
     // column — a completely different, and typically shorter or differently-shaped, list than its
@@ -577,11 +594,11 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
       val returningAnalyzer =
         buildAnalyzer(
           hasGroupingSets = false,
-          forceNewNullable = forceNewNullable,
+          forceNewNullable = scope.forceNewNullable,
           applyQualNarrowing = applyQualNarrowing,
-          resolvedCtes = resolvedCtes,
+          resolvedCtes = scope.ownCtes,
         ) { varno, varattno ->
-          val assignedExpression = if (varno == resultRelationVarno) targetListByResno[varattno] else null
+          val assignedExpression = if (varno == scope.resultRelationVarno) targetListByResno[varattno] else null
           if (assignedExpression != null) {
             analyzer.isNonNull(assignedExpression)
           } else {
@@ -825,6 +842,24 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
   )
 
   /**
+   * [buildAnalyzer] overload for the common case: an already-resolved [QueryBlockScope] supplies
+   * every argument the other overload otherwise needs spelled out at each call site —
+   * [QueryBlockScope.isSourceColumnNotNull], partially applied with [isColumnNotNull], for
+   * `isSourceColumnNotNull`; [QueryBlockScope.hasGroupingSets] and [QueryBlockScope.forceNewNullable]
+   * unchanged; and [QueryBlockScope.ownCtes] as `resolvedCtes`, since a `SubLink` reached from
+   * [scope]'s own query block can only ever resolve a CTE declared directly in it. `applyQualNarrowing`
+   * is left at its default (`true`); see [analyzeNodeTree]'s KDoc for why every current caller needs
+   * exactly that value.
+   */
+  private fun buildAnalyzer(scope: QueryBlockScope, depth: Int): NodeTreeNullabilityAnalyzer = buildAnalyzer(
+    hasGroupingSets = scope.hasGroupingSets,
+    forceNewNullable = scope.forceNewNullable,
+    depth = depth,
+    resolvedCtes = scope.ownCtes,
+    isSourceColumnNotNull = { varno, varattno -> scope.isSourceColumnNotNull(varno, varattno, ::isColumnNotNull) },
+  )
+
+  /**
    * Backs [NodeTreeNullabilityAnalyzer]'s `isSubLinkSubqueryColumnNotNull` callback: `true` when
    * [subselectBlock] — the raw `{QUERY ...}` text of an `ANY_SUBLINK`'s or `ALL_SUBLINK`'s
    * `:subselect` — produces exactly one non-junk output column and that column is provably non-null.
@@ -869,55 +904,14 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
   }
 
   /**
-   * Returns `true` when `(varno, varattno)` is proven non-null by the query's `WHERE` clause,
-   * either directly or through the GROUP RTE remap (target-list `Var`s point at the GROUP RTE
-   * when `hasGroupRTE`, while `WHERE`-clause `Var`s use base relation varnos).
-   */
-  private fun isProvenByQuals(
-    qualNotNullVars: Set<Pair<Int, Int>>,
-    groupRteMap: Map<Pair<Int, Int>, Pair<Int, Int>>,
-    varno: Int,
-    varattno: Int,
-  ): Boolean = qualNotNullVars.contains(varno to varattno) ||
-    groupRteMap[varno to varattno]?.let { qualNotNullVars.contains(it) } == true
-
-  /**
-   * Builds a map from `(varno, varattno)` to `true` for CTE result columns that are guaranteed
-   * non-null.
-   *
-   * @param resolvedCtes [nodeTree]'s own directly-declared CTE bodies (from [resolveCteBodies]),
-   *   keyed by name — passed in rather than computed here so the same resolution also feeds
-   *   [buildAnalyzer] for a `SubLink` nested in [nodeTree]'s target list. Every CTE reference in
-   *   [nodeTree]'s `:rtable` is `:ctelevelsup 0` by construction: [nodeTree] is always the outermost
-   *   statement text this class analyzes, so it has no enclosing scope to point past.
-   */
-  private fun buildCteColumnNotNull(
-    nodeTree: String,
-    resolvedCtes: Map<String, List<Boolean>>,
-  ): Map<Pair<Int, Int>, Boolean> {
-    val cteRteMap = nodeTreeParser.parseCteRangeTableEntries(nodeTree)
-    if (cteRteMap.isEmpty()) return emptyMap()
-    if (resolvedCtes.isEmpty()) return emptyMap()
-
-    return buildMap {
-      for ((varno, reference) in cteRteMap) {
-        val nullabilities = resolvedCtes[reference.name] ?: continue
-        nullabilities.forEachIndexed { columnIndex, nullable ->
-          put(varno to (columnIndex + 1), !nullable)
-        }
-      }
-    }
-  }
-
-  /**
    * Analyzes every CTE declared in [nodeTree]'s own `:cteList` and returns each one's per-column
    * nullability, keyed by CTE name.
    *
-   * Shared by [buildCteColumnNotNull] (resolving a CTE reference in [nodeTree]'s own `:rtable`)
-   * and [buildSubqueryColumnNotNull] (resolving a CTE reference — `:ctelevelsup 1` — one level
-   * down, inside a nested subquery's own `:rtable`): a CTE's declaration scope is [nodeTree]'s
-   * level regardless of which nesting level actually references it, so both callers resolve
-   * against the same set of CTE bodies.
+   * Shared by [buildQueryBlockScope] (resolving a CTE reference in [nodeTree]'s own `:rtable`) and
+   * [buildSubqueryColumnNotNull] (resolving a CTE reference — `:ctelevelsup 1` — one level down,
+   * inside a nested subquery's own `:rtable`): a CTE's declaration scope is [nodeTree]'s level
+   * regardless of which nesting level actually references it, so both callers resolve against the
+   * same set of CTE bodies.
    */
   private fun resolveCteBodies(
     nodeTree: String,
@@ -1058,32 +1052,79 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
   }
 
   /**
-   * Builds a map from `(varno, varattno)` to `true` for CTE RTE columns that are non-null.
+   * Resolves everything [QueryBlockScope.isSourceColumnNotNull] needs to answer a `Var` reference
+   * inside [queryBlock] — the single source-column-resolution chain [analyzeNodeTree],
+   * [buildCteBodyAnalyzer], and [analyzeQueryBlockNullability] all build against, in place of the
+   * three near-identical fallback chains this replaced.
    *
-   * `:ctelevelsup 0` means [queryBlock] declares that CTE itself, possibly shadowing a sibling of the
-   * same name one level up, so it resolves from [ownResolvedCtes]; anything greater resolves from
-   * [previouslyResolved]. Without this split a local shadowing `WITH` resolved against the wrong
-   * sibling body — an unsound answer, not merely a widened one.
+   * `:ctelevelsup 0` means [queryBlock] declares that CTE reference's own CTE, possibly shadowing a
+   * sibling of the same name one level up, so it resolves from [enclosingCtes]'s own-scope
+   * counterpart — the freshly-resolved [QueryBlockScope.ownCtes] — rather than [enclosingCtes]
+   * itself; anything greater resolves from [enclosingCtes]. Without this split a local shadowing
+   * `WITH` would resolve against the wrong sibling body — an unsound answer, not merely a widened
+   * one.
    *
-   * @param ownResolvedCtes CTE bodies declared directly in [queryBlock]'s own `:cteList`.
-   * @param previouslyResolved CTE bodies declared in the same outer `:cteList` [queryBlock]'s own CTE
-   *   is declared in (siblings declared earlier in that `WITH` clause).
+   * @param enclosingCtes CTE bodies visible via `:ctelevelsup` greater than `0` relative to
+   *   [queryBlock] — declared in whichever scope encloses it, never [queryBlock]'s own nested `WITH`
+   *   clause. Empty for [queryBlock]'s outermost statement, which has no enclosing scope to point
+   *   past.
+   * @param applyQualNarrowing See [analyzeNodeTree]'s parameter of the same name. Also gates
+   *   [QueryBlockScope.qualProvenVars]: suppressed whenever [queryBlock] has GROUPING SETS/CUBE/
+   *   ROLLUP — those null-extend a grouping key AFTER `WHERE` has already filtered rows, so a qual
+   *   can never prove a grouped result column non-null even when the underlying base-table column
+   *   is itself `NOT NULL` — or is itself a data-modifying statement (a non-zero
+   *   `:resultRelation`): a data-modifying query block's own `WHERE` clause can test a column value
+   *   its `SET` clause (or, for `MERGE`, an update/insert action) is about to overwrite, e.g. `WITH
+   *   c AS (UPDATE t SET a = NULL FROM u WHERE u.id = t.id AND t.a IS NOT NULL RETURNING t.a) SELECT
+   *   a FROM c` returns `a = NULL`, not the value the `WHERE` clause proved before the `SET` ran.
+   * @param sql See [mergeAbsentVarnos]'s `sql` parameter — passed through only so a data-modifying
+   *   CTE nested inside [queryBlock]'s own `WITH` clause can resolve its own `MERGE` via the same
+   *   `EXPLAIN` call. Defaults to an empty string for the (`SELECT`-only, never `MERGE`-shaped)
+   *   set-operation branch callers in [analyzeSetOperationBranches], where an empty `EXPLAIN`
+   *   target simply fails harmlessly (caught, treated as "cannot resolve").
+   * @param depth See [buildAnalyzer]'s `depth` parameter — the [subLinkSubqueryColumnNotNull]
+   *   recursion budget threaded, not refilled, through a recursive hop into a nested query block.
+   * @param mergeAbsentVarnos [queryBlock]'s own varno-to-canBeAbsent map when [queryBlock] itself is
+   *   a `MERGE` — empty for every query block that cannot itself be one (a `SELECT`'s `FROM`
+   *   subquery, a `SubLink`'s subselect, or a set-operation branch).
    */
-  private fun buildInnerCteNotNull(
+  private fun buildQueryBlockScope(
     queryBlock: String,
-    ownResolvedCtes: Map<String, List<Boolean>>,
-    previouslyResolved: Map<String, List<Boolean>>,
-  ): Map<Pair<Int, Int>, Boolean> {
-    val innerCteRtes = nodeTreeParser.parseCteRangeTableEntries(queryBlock)
-    return buildMap {
-      for ((varno, reference) in innerCteRtes) {
-        val ctesInScope = if (reference.ctelevelsup == 0) ownResolvedCtes else previouslyResolved
-        val nullabilities = ctesInScope[reference.name] ?: continue
-        nullabilities.forEachIndexed { columnIndex, nullable ->
-          put(varno to (columnIndex + 1), !nullable)
-        }
-      }
+    enclosingCtes: Map<String, List<Boolean>>,
+    applyQualNarrowing: Boolean,
+    @Language("PostgreSQL") sql: String,
+    depth: Int = SUBLINK_ANALYSIS_DEPTH_BUDGET,
+    mergeAbsentVarnos: Map<Int, Boolean> = emptyMap(),
+  ): QueryBlockScope {
+    val rangeTable = nodeTreeParser.parseRangeTable(queryBlock)
+    val hasGroupingSets = nodeTreeParser.hasGroupingSets(queryBlock)
+    val groupRteMap = if (hasGroupingSets) {
+      emptyMap()
+    } else {
+      nodeTreeParser.parseGroupRteMap(queryBlock)
     }
+    val ownCtes = resolveCteBodies(queryBlock, applyQualNarrowing, sql)
+    val subqueryColumnNotNull = buildSubqueryColumnNotNull(queryBlock, ownCtes, applyQualNarrowing, sql, depth)
+    val cteReferences = nodeTreeParser.parseCteRangeTableEntries(queryBlock)
+    val resultRelationVarno = nodeTreeParser.parseResultRelation(queryBlock)
+    val qualProvenVars = if (applyQualNarrowing && !hasGroupingSets && resultRelationVarno == 0) {
+      NodeTreeNullabilityAnalyzer.qualProvenNonNullVars(queryBlock, isStrictFunction)
+    } else {
+      emptySet()
+    }
+    return QueryBlockScope(
+      rangeTable = rangeTable,
+      hasGroupingSets = hasGroupingSets,
+      groupRteMap = groupRteMap,
+      qualProvenVars = qualProvenVars,
+      ownCtes = ownCtes,
+      enclosingCtes = enclosingCtes,
+      cteReferences = cteReferences,
+      subqueryColumnNotNull = subqueryColumnNotNull,
+      mergeAbsentVarnos = mergeAbsentVarnos,
+      forceNewNullable = forcesNewNullable(queryBlock),
+      resultRelationVarno = resultRelationVarno,
+    )
   }
 
   /**
@@ -1105,70 +1146,16 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     applyQualNarrowing: Boolean = true,
     mergeAbsentVarnos: Map<Int, Boolean> = emptyMap(),
     @Language("PostgreSQL") sql: String = "",
-  ): NodeTreeNullabilityAnalyzer {
-    val cteRangeTable = nodeTreeParser.parseRangeTable(queryBlock)
-    // See analyzeNodeTree's identical guard: GROUPING SETS/CUBE/ROLLUP can null-extend a
-    // grouping key even when the underlying base table column is NOT NULL, and even when the
-    // WHERE clause proved it non-null before aggregation. The actual override (including
-    // EXPRESSION grouping keys) is applied by extractColumnNullability via hasGroupingSets below.
-    val hasGroupingSets = nodeTreeParser.hasGroupingSets(queryBlock)
-    val groupRteMap = if (hasGroupingSets) {
-      emptyMap()
-    } else {
-      nodeTreeParser.parseGroupRteMap(queryBlock)
-    }
-    // queryBlock's own nested WITH clause, distinct from previouslyResolved (sibling CTEs one level
-    // further up). Resolving any of the three uses below against previouslyResolved instead would
-    // resolve a shadowing local WITH against the wrong body.
-    val ownResolvedCtes = resolveCteBodies(queryBlock, applyQualNarrowing, sql)
-    val innerCteNotNull = buildInnerCteNotNull(queryBlock, ownResolvedCtes, previouslyResolved)
-    val subqueryColumnNotNull = buildSubqueryColumnNotNull(queryBlock, ownResolvedCtes, applyQualNarrowing, sql)
-    // See analyzeNodeTree's identical guard for why qual narrowing is suppressed whenever
-    // hasGroupingSets: a grouping key is exactly the thing a GROUPING SETS/CUBE/ROLLUP query
-    // null-extends after WHERE has already run. A non-zero :resultRelation suppresses narrowing
-    // for the identical reason analyzeNodeTree's own guard does: a data-modifying CTE body's WHERE
-    // clause can prove something about a column its own SET clause is about to overwrite — see
-    // e.g. `WITH c AS (UPDATE t SET a = NULL FROM u WHERE u.id = t.id AND t.a IS NOT NULL
-    // RETURNING t.a) SELECT a FROM c` returns `a = NULL`, not the
-    // value the WHERE clause proved before the SET ran.
-    val isDml = nodeTreeParser.parseResultRelation(queryBlock) != 0
-    val qualNotNullVars = if (applyQualNarrowing && !hasGroupingSets && !isDml) {
-      NodeTreeNullabilityAnalyzer.qualProvenNonNullVars(queryBlock, isStrictFunction)
-    } else {
-      emptySet()
-    }
-    return buildAnalyzer(
-      hasGroupingSets = hasGroupingSets,
-      forceNewNullable = forcesNewNullable(queryBlock),
-      applyQualNarrowing = applyQualNarrowing,
-      resolvedCtes = ownResolvedCtes,
-    ) {
-        varno,
-        varattno,
-      ->
-      if (mergeAbsentVarnos[varno] == true) {
-        // See analyzeNodeTree's identical guard: a MERGE relation EXPLAIN determined can be
-        // entirely absent for some result row can never be proven non-null here.
-        false
-      } else if (isProvenByQuals(qualNotNullVars, groupRteMap, varno, varattno)) {
-        true
-      } else {
-        val relid = cteRangeTable[varno]
-        if (relid != null) {
-          isColumnNotNull(relid to varattno)
-        } else {
-          val baseVar = groupRteMap[varno to varattno]
-          if (baseVar != null) {
-            val baseRelid = cteRangeTable[baseVar.first]
-            baseRelid != null && isColumnNotNull(baseRelid to baseVar.second)
-          } else {
-            subqueryColumnNotNull[varno to varattno] == true ||
-              innerCteNotNull[varno to varattno] == true
-          }
-        }
-      }
-    }
-  }
+  ): NodeTreeNullabilityAnalyzer = buildAnalyzer(
+    buildQueryBlockScope(
+      queryBlock,
+      previouslyResolved,
+      applyQualNarrowing,
+      sql,
+      mergeAbsentVarnos = mergeAbsentVarnos,
+    ),
+    depth = SUBLINK_ANALYSIS_DEPTH_BUDGET,
+  )
 
   /**
    * Builds a map from `(varno, varattno)` to `true` for columns of subquery RTEs that are
@@ -1231,15 +1218,17 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
   /**
    * Computes per-column nullability for a single query block ([queryBlock]) — the shared core of
    * [buildSubqueryColumnNotNull] (a `FROM`-clause subquery RTE) and [subLinkSubqueryColumnNotNull]
-   * (an `ANY_SUBLINK`'s or `ALL_SUBLINK`'s `:subselect`): given a raw `{QUERY ...}` block, build a resolver over the
-   * block's own `parseRangeTable`/`parseCteRangeTableEntries`/`parseGroupRteMap`/subquery-RTE/qual
-   * narrowing, then run [NodeTreeNullabilityAnalyzer.extractColumnNullability] against it.
+   * (an `ANY_SUBLINK`'s or `ALL_SUBLINK`'s `:subselect`): build a [QueryBlockScope] for [queryBlock]
+   * and run [NodeTreeNullabilityAnalyzer.extractColumnNullability] against it.
    *
    * [queryBlock]'s own `:rtable` can hold three things resolved differently: a base table (via
    * [isColumnNotNull]), a nested subquery RTE (a derived table, resolved by recursing into
-   * [buildSubqueryColumnNotNull] on [queryBlock] itself), and a CTE RTE. Before this fix only the
-   * base-table case was handled, so a `SubLink`'s subselect reading either of the others degraded to
-   * nullable.
+   * [buildSubqueryColumnNotNull] on [queryBlock] itself), and a CTE RTE. Before the first fix here
+   * only the base-table case was handled, so a `SubLink`'s subselect reading either of the others
+   * degraded to nullable; sharing [buildQueryBlockScope] with the other two call sites additionally
+   * applies the GROUP RTE remap here for the first time, so a plain `GROUP BY` result column read
+   * from a derived table or a `SubLink`'s subselect now resolves against its base table's own
+   * `NOT NULL` constraint instead of degrading to nullable.
    *
    * @param resolvedCtes CTE bodies visible via `:ctelevelsup` greater than `0` relative to
    *   [queryBlock] — declared in whichever scope encloses it, never [queryBlock]'s own nested `WITH`
@@ -1260,60 +1249,9 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     resolvedCtes: Map<String, List<Boolean>>,
     depth: Int = SUBLINK_ANALYSIS_DEPTH_BUDGET,
     @Language("PostgreSQL") sql: String = "",
-  ): List<Boolean> {
-    // Parse the block's own base-table range table for isSourceColumnNotNull.
-    val subRangeTable = nodeTreeParser.parseRangeTable(queryBlock)
-    val subCteRteMap = nodeTreeParser.parseCteRangeTableEntries(queryBlock)
-    // See analyzeNodeTree's identical guard: GROUPING SETS/CUBE/ROLLUP can
-    // null-extend a grouping key even when the base table column is NOT NULL. The actual
-    // override (including EXPRESSION grouping keys) is applied by extractColumnNullability
-    // via hasGroupingSets below.
-    val hasGroupingSets = nodeTreeParser.hasGroupingSets(queryBlock)
-    val groupRteMap = if (hasGroupingSets) {
-      emptyMap()
-    } else {
-      nodeTreeParser.parseGroupRteMap(queryBlock)
-    }
-    // See analyzeNodeTree's identical guard: suppress qual narrowing whenever
-    // hasGroupingSets, because those are exactly what GROUPING SETS/CUBE/ROLLUP null-extends
-    // after WHERE has already filtered rows.
-    val subQualNotNullVars = if (applyQualNarrowing && !hasGroupingSets) {
-      NodeTreeNullabilityAnalyzer.qualProvenNonNullVars(queryBlock, isStrictFunction)
-    } else {
-      emptySet()
-    }
-    // A ctelevelsup-0 reference must resolve against queryBlock's own CTEs, never the resolvedCtes
-    // parameter, which belongs to an enclosing scope.
-    val ownResolvedCtes = resolveCteBodies(queryBlock, applyQualNarrowing, sql)
-    // depth is threaded, not defaulted: this is the recursive hop that must not refill the budget.
-    val subqueryColumnNotNull = buildSubqueryColumnNotNull(queryBlock, ownResolvedCtes, applyQualNarrowing, sql, depth)
-    val subAnalyzer = buildAnalyzer(
-      hasGroupingSets = hasGroupingSets,
-      applyQualNarrowing = applyQualNarrowing,
-      depth = depth,
-      resolvedCtes = ownResolvedCtes,
-    ) { subVarno, subVarattno ->
-      if (isProvenByQuals(subQualNotNullVars, groupRteMap, subVarno, subVarattno)) {
-        true
-      } else {
-        val relid = subRangeTable[subVarno]
-        if (relid != null) {
-          isColumnNotNull(relid to subVarattno)
-        } else if (subqueryColumnNotNull[subVarno to subVarattno] == true) {
-          true
-        } else {
-          val cteReference = subCteRteMap[subVarno]
-          if (cteReference == null) {
-            false
-          } else {
-            val ctesInScope = if (cteReference.ctelevelsup == 0) ownResolvedCtes else resolvedCtes
-            ctesInScope[cteReference.name]?.getOrNull(subVarattno - 1) == false
-          }
-        }
-      }
-    }
-    return subAnalyzer.extractColumnNullability(queryBlock)
-  }
+  ): List<Boolean> =
+    buildAnalyzer(buildQueryBlockScope(queryBlock, resolvedCtes, applyQualNarrowing, sql, depth), depth)
+      .extractColumnNullability(queryBlock)
 
   /**
    * Answers, for [analyzeNodeTree]'s own `:targetList`-to-`:returningList` substitution, whether a
