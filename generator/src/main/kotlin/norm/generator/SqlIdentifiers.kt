@@ -187,6 +187,41 @@ internal fun unescapeQuotedIdentifier(rawQuotedToken: String): String =
 internal const val MAX_IDENTIFIER_LENGTH_BYTES = 63
 
 /**
+ * A PostgreSQL identifier that never needs double-quoting when written back into SQL: starts with
+ * a lowercase letter or underscore, followed by any number of lowercase letters, digits,
+ * underscores, or dollar signs. Matching this pattern is necessary but not sufficient —
+ * [quoteSqlIdentifierIfNeeded] additionally rejects a reserved word, which this pattern alone
+ * cannot rule out (`order` and `user` both match it).
+ */
+private val SAFE_UNQUOTED_IDENTIFIER = Regex("[a-z_][a-z0-9_\$]*")
+
+/**
+ * Double-quotes [identifier] exactly as PostgreSQL itself requires it to be written back into SQL
+ * — doubling any embedded `"` per PostgreSQL's own quoted-identifier escape rule — unless
+ * [identifier]'s lowercased form is not one of [reservedWords] AND it already matches
+ * [SAFE_UNQUOTED_IDENTIFIER] bare.
+ *
+ * Without the [SAFE_UNQUOTED_IDENTIFIER] check, a mixed-case or space-containing column name
+ * (`"Foo"`, `"My Col"`) would render bare as `table.Foo`/`table.My Col` — text that reads back as
+ * PostgreSQL folding `Foo` to `foo`, or as two unrelated tokens instead of one qualified reference
+ * (`SELECT tq.Foo FROM tq` fails with `column tq.foo does not exist`).
+ *
+ * Without the [reservedWords] check, a relation or column named after a reserved word (`order`,
+ * `user`) — which [SAFE_UNQUOTED_IDENTIFIER] alone cannot distinguish from any other all-lowercase
+ * identifier — would render bare too: `` `order.id` `` reads back as `SELECT order.id FROM "order"`,
+ * which PostgreSQL rejects with `syntax error at or near "."`, since an unquoted `order` is parsed
+ * as the reserved keyword, not a table reference. [reservedWords] should be the connected server's
+ * own live keyword set ([JdbcAnalyzer.fetchReservedWords]), since PostgreSQL's reserved-word list
+ * drifts across versions.
+ */
+internal fun quoteSqlIdentifierIfNeeded(identifier: String, reservedWords: Set<String>): String =
+  if (identifier.lowercase() in reservedWords || !identifier.matches(SAFE_UNQUOTED_IDENTIFIER)) {
+    "\"${identifier.replace("\"", "\"\"")}\""
+  } else {
+    identifier
+  }
+
+/**
  * Truncates [identifier] the way PostgreSQL does when it reaches the server
  * (`downcase_truncate_identifier` in `scan.l`): to the longest prefix of at most
  * [MAX_IDENTIFIER_LENGTH_BYTES] UTF-8 bytes, dropping whole characters rather than splitting one.

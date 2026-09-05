@@ -261,7 +261,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
           nonNullSentinel(parameterMetaData.getParameterTypeName(index))
         }
       }
-      replaceParameterPlaceholdersWithSentinels(sql, sentinels)
+      replaceParameterPlaceholders(sql) { sentinels.getOrElse(it) { "NULL" } }
     } catch (_: SQLException) {
       null
     }
@@ -417,7 +417,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    *   must treat `null` as "this path has no answer", never as "zero columns."
    */
   internal fun queryColumnNullabilityViaProsqlbody(@Language("PostgreSQL") sql: String): List<ColumnAnalysis>? {
-    val substitutedSql = buildViewSqlWithSentinels(sql) ?: replaceParameterPlaceholders(sql)
+    val substitutedSql = buildViewSqlWithSentinels(sql) ?: replaceParameterPlaceholders(sql) { "NULL" }
     val functionName = "norm_nullability_${UUID.randomUUID().toString().replace("-", "")}"
     return try {
       connection.createStatement().use { statement ->
