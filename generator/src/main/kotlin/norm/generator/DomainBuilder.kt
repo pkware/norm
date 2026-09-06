@@ -128,10 +128,10 @@ internal fun domainAdapterPropertyName(domain: Domain): String = "${domain.name.
  * (`setObject(..., Types.OTHER)` rather than `setString`) is carried by the [JdbcTypeInfo] that
  * [TypeRepository] hands to [AdaptedTypeSqlMappable], not by the wrapped Kotlin type.
  *
- * [resolveJdbcTypeInfo] has an entry for every type [TypeRepository]'s `BASE_TYPE_RESOLVERS`
- * accepts as a plain column type (enforced by [ColumnTypeMappingTest]'s domain-base-type-parity
- * sweep), so [error] here is unreachable for a domain built on any of those — `CREATE DOMAIN d AS
- * timestamptz`/`uuid`/`date`/etc. all resolve. It stays reachable for a Postgres type Norm has
+ * [resolveJdbcTypeInfo] reads [POSTGRES_BASE_TYPES], the same map [TypeRepository.resolveBaseType]
+ * reads for a plain column's type, so [error] here is unreachable for a domain built on any type
+ * that map supports — `CREATE DOMAIN d AS timestamptz`/`uuid`/`date`/etc. all resolve, by
+ * construction. It stays reachable for a Postgres type Norm has
  * never mapped to Kotlin at all, as a plain column or otherwise (`xml`, `interval`, `money`, ...).
  * Postgres allows a domain over any of these, so hitting this is expected, not a bug — failing
  * fast with the unsupported type's name beats silently guessing a mapping Norm has no tested

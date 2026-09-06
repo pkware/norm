@@ -503,10 +503,10 @@ internal class TypeRepository(
    * For scalar columns, returns [AdaptedTypeSqlMappable]. For array columns (e.g., `email[]`),
    * returns [AdaptedArrayTypeSqlMappable] which generates per-element adapter decode/encode calls.
    *
-   * [resolveJdbcTypeInfo] covers every key in [BASE_TYPE_RESOLVERS] (enforced by
-   * [ColumnTypeMappingTest]'s domain-base-type-parity sweep), so `error` below is unreachable for a
-   * domain over a common base type like `timestamptz` or `uuid` — see [domainKotlinBaseType]'s
-   * KDoc for the (intentional) case where it remains reachable.
+   * [resolveJdbcTypeInfo] and [resolveBaseType] both read [POSTGRES_BASE_TYPES], so `error` below
+   * is unreachable, by construction, for a domain over any base type that map supports (e.g.
+   * `timestamptz` or `uuid`) — see [domainKotlinBaseType]'s KDoc for the (intentional) case where
+   * it remains reachable.
    */
   private fun tryResolveDomainType(typeName: String, notNull: Boolean, isArray: Boolean): SqlMappable? {
     val domain = domainsByName[typeName] ?: return null
@@ -532,10 +532,10 @@ internal class TypeRepository(
    * Maps a Postgres type name to its base [SqlMappable], or `null` if not recognized.
    *
    * [typeName] may carry a `pg_catalog.` qualification (e.g. `pg_catalog.int4`); it is stripped
-   * once here rather than duplicated per literal in [BASE_TYPE_RESOLVERS], so every entry in that
+   * once here rather than duplicated per literal in [POSTGRES_BASE_TYPES], so every entry in that
    * map accepts both the qualified and unqualified spelling without needing its own branch for
    * each.
    */
   private fun resolveBaseType(typeName: String, notNull: Boolean): SqlMappable? =
-    BASE_TYPE_RESOLVERS[typeName.removePrefix("pg_catalog.")]?.invoke(notNull)
+    POSTGRES_BASE_TYPES[typeName.removePrefix("pg_catalog.")]?.mappable?.invoke(notNull)
 }

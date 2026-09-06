@@ -1,3 +1,8 @@
+// PropertySource is the only top-level class in this file, but the file also holds every free
+// function that renders it into KDoc (addClassKdoc and its helpers) — deliberately, per this
+// file's role as the single home for KDoc-rendering logic, not a naming slip.
+@file:Suppress("MatchingDeclarationName")
+
 package norm.generator
 
 import com.squareup.kotlinpoet.ANY
