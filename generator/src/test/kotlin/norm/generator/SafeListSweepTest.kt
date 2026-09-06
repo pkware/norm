@@ -169,7 +169,7 @@ class SafeListSweepTest {
 
   /**
    * pgcrypto's `digest`/`hmac` are keyed through `pg_depend` rather than appearing on any of the
-   * three static safe lists (see [PgCatalogLoader.loadNeverNullForNonNullInputOids]'s pgcrypto
+   * three static safe lists (see [NullabilityCatalog.loadNeverNullForNonNullInputOids]'s pgcrypto
    * carve-out), so none of the three tests above exercises them. This test runs the same
    * brute-force sweep over all four documented-total overloads (`digest(text, text)`,
    * `digest(bytea, text)`, `hmac(text, text, text)`, `hmac(bytea, bytea, text)`).
@@ -444,7 +444,7 @@ class SafeListSweepTest {
   }
 
   /**
-   * Brute-force verification that every entry in [PgCatalogLoader.alwaysNonNullFunctionOids]
+   * Brute-force verification that every entry in [NullabilityCatalog.alwaysNonNullFunctionOids]
    * really is non-null for any combination of argument values, including when every argument is
    * `NULL` — the exact claim [concat_ws] shipping on this list would have violated (`concat_ws`
    * returns `null` when its separator is `NULL`, even though every other argument is non-null).
@@ -453,7 +453,7 @@ class SafeListSweepTest {
    * time (with every other position drawn from [EDGE_VALUE_CORPUS]), plus the all-`NULL`
    * combination.
    *
-   * OIDs are read from [PgCatalogLoader.alwaysNonNullFunctionOids] itself — computed live, the same
+   * OIDs are read from [NullabilityCatalog.alwaysNonNullFunctionOids] itself — computed live, the same
    * way production does — rather than a hardcoded OID, and resolved back to a `pg_proc.proname` via
    * [resolveProcName] so this test automatically covers whatever the production list actually
    * contains today. [NULL_ARGUMENT_SWEEP_SIGNATURES_BY_NAME] supplies the concrete arity/types to
@@ -463,8 +463,8 @@ class SafeListSweepTest {
    */
   @Test
   fun `every alwaysNonNullFunctionOids-listed function is non-null for every NULL-argument combination`() {
-    val catalogLoader = PgCatalogLoader(connection)
-    val oids = catalogLoader.alwaysNonNullFunctionOids
+    val catalog = NullabilityCatalog(connection)
+    val oids = catalog.alwaysNonNullFunctionOids
     assertThat(oids.isNotEmpty()).isTrue()
     val failures = mutableListOf<String>()
     var caseCount = 0
@@ -494,7 +494,7 @@ class SafeListSweepTest {
 
   /**
    * Brute-force verification of both directions of
-   * [PgCatalogLoader.nonNullIffFirstArgumentNonNullFunctionOids]'s claim: (i) a non-null first
+   * [NullabilityCatalog.nonNullIffFirstArgumentNonNullFunctionOids]'s claim: (i) a non-null first
    * argument with `NULL`(s) anywhere else never produces a `null` result, and (ii) a `NULL` first
    * argument always produces a `null` result, regardless of the other arguments. Property (ii) is
    * what distinguishes this list from [alwaysNonNullFunctionOids] — an entry here is non-null only
@@ -506,8 +506,8 @@ class SafeListSweepTest {
    */
   @Test
   fun `every nonNullIffFirstArgumentNonNullFunctionOids-listed function depends only on its first argument`() {
-    val catalogLoader = PgCatalogLoader(connection)
-    val oids = catalogLoader.nonNullIffFirstArgumentNonNullFunctionOids
+    val catalog = NullabilityCatalog(connection)
+    val oids = catalog.nonNullIffFirstArgumentNonNullFunctionOids
     assertThat(oids.isNotEmpty()).isTrue()
     val failures = mutableListOf<String>()
     var caseCount = 0
@@ -557,7 +557,7 @@ class SafeListSweepTest {
   }
 
   /**
-   * Verification of [PgCatalogLoader.lagLeadWithDefaultOids]'s claim: the 3-argument `lag`/`lead`
+   * Verification of [NullabilityCatalog.lagLeadWithDefaultOids]'s claim: the 3-argument `lag`/`lead`
    * overloads are non-null when their value and default expressions are non-null, even at a window
    * boundary where the 1- and 2-argument forms would return `null` (no such row exists to fetch).
    * Runs both `lag` and `lead` over a small non-null, ordered dataset with a non-null literal
@@ -569,8 +569,8 @@ class SafeListSweepTest {
    */
   @Test
   fun `lagLeadWithDefaultOids-listed 3-argument lag and lead fill window boundaries from a non-null default`() {
-    val catalogLoader = PgCatalogLoader(connection)
-    val threeArgumentOids = catalogLoader.lagLeadWithDefaultOids
+    val catalog = NullabilityCatalog(connection)
+    val threeArgumentOids = catalog.lagLeadWithDefaultOids
     assertThat(threeArgumentOids.isNotEmpty()).isTrue()
 
     val actualThreeArgumentOids = connection.createStatement().use { stmt ->
@@ -723,7 +723,7 @@ class SafeListSweepTest {
      * pgcrypto's `digest`/`hmac` overloads, brute-force-swept for total-ness the same way as the
      * three static [PgCatalogLoader] safe lists, but not sourced from any of them: they are an
      * extension carve-out keyed through `pg_depend`, not a name/argument-type entry on a list (see
-     * [PgCatalogLoader.loadNeverNullForNonNullInputOids]). Defined here, in the test, rather than
+     * [NullabilityCatalog.loadNeverNullForNonNullInputOids]). Defined here, in the test, rather than
      * in production code, since nothing else needs a [SafeFunctionSignature] for them.
      */
     private val PGCRYPTO_FUNCTION_SIGNATURES = listOf(
@@ -798,11 +798,11 @@ class SafeListSweepTest {
     private val SELF_CAST_SOURCE_TYPMOD_SUFFIX: Map<String, String> = mapOf("bit" to "(3)")
 
     /**
-     * Concrete arities/types to sweep for [PgCatalogLoader.alwaysNonNullFunctionOids]'s and
-     * [PgCatalogLoader.nonNullIffFirstArgumentNonNullFunctionOids]'s NULL-argument properties,
+     * Concrete arities/types to sweep for [NullabilityCatalog.alwaysNonNullFunctionOids]'s and
+     * [NullabilityCatalog.nonNullIffFirstArgumentNonNullFunctionOids]'s NULL-argument properties,
      * keyed by `pg_proc.proname`. Both properties are keyed by name alone in production (see
-     * [PgCatalogLoader.loadAlwaysNonNullFunctions]/
-     * [PgCatalogLoader.loadNonNullIffFirstArgumentNonNullFunctionOids]'s `proname = '...'`
+     * [NullabilityCatalog.loadAlwaysNonNullFunctions]/
+     * [NullabilityCatalog.loadNonNullIffFirstArgumentNonNullFunctionOids]'s `proname = '...'`
      * predicates), because `concat`/`concat_ws`'s single `pg_catalog` row for each is declared
      * `VARIADIC "any"`/`VARIADIC "any"` — the declared argument type is the pseudo-type `any`
      * itself, with no literal form of its own, unlike `anyarray`/`anyrange`/`anyelement`, which
@@ -810,7 +810,7 @@ class SafeListSweepTest {
      * arity/types actually exercised at the call site instead.
      *
      * `concat_ws` is registered here even though production correctly never lists it under
-     * [PgCatalogLoader.alwaysNonNullFunctionOids] today — if that regressed (this is exactly the
+     * [NullabilityCatalog.alwaysNonNullFunctionOids] today — if that regressed (this is exactly the
      * shipped bug this whole file's KDoc describes), the always-non-null sweep must actually
      * exercise `concat_ws`'s real NULL-argument behavior and fail on the genuine semantic violation
      * (`concat_ws(NULL, 'x', 'y')` returns `null`), not merely fail on a missing corpus
@@ -955,7 +955,7 @@ class SafeListSweepTest {
 
     /**
      * `true` when [signature] resolves to a real `pg_proc` row on this connected server, checked
-     * by the same lookup [PgCatalogLoader.loadNeverNullForNonNullInputOids] performs in
+     * by the same lookup [NullabilityCatalog.loadNeverNullForNonNullInputOids] performs in
      * production (name plus the exact ordered list of declared argument `pg_type.typname`
      * values, restricted to `pronamespace = 'pg_catalog'`) — just run per-signature here instead
      * of batched. This is the independent check [neverResolvedOnThisServer]'s KDoc says every
@@ -995,7 +995,7 @@ class SafeListSweepTest {
      * `true` when [signature] resolves to a real, `castfunc`-backed `pg_cast` row on this
      * connected server — the cast analogue of [functionResolvesOnThisServer], mirroring the same
      * `pg_cast`/`pg_type`/`pg_proc`/`pg_namespace` lookup
-     * [PgCatalogLoader.loadNeverNullForNonNullInputOids] performs in production.
+     * [NullabilityCatalog.loadNeverNullForNonNullInputOids] performs in production.
      */
     private fun castResolvesOnThisServer(signature: SafeCastSignature): Boolean {
       val sql = """
@@ -1026,7 +1026,7 @@ class SafeListSweepTest {
      * `true` when [signature] resolves to a real, `oprcode`-backed `pg_operator` row on this
      * connected server — the operator analogue of [functionResolvesOnThisServer], mirroring the
      * same `pg_operator`/`pg_type`/`pg_namespace` lookup
-     * [PgCatalogLoader.loadNeverNullForNonNullInputOids] performs in production. A `null`
+     * [NullabilityCatalog.loadNeverNullForNonNullInputOids] performs in production. A `null`
      * [SafeOperatorSignature.leftTypeName]/[SafeOperatorSignature.rightTypeName] means the
      * operator has no operand on that side (a prefix/postfix operator), matched with `IS NOT
      * DISTINCT FROM` the same way production's bulk query does.
@@ -1142,7 +1142,7 @@ private class CoverageTracker(private val minimumPositiveCases: Int = 1) {
    * cross-checks the resulting skip set against an INDEPENDENT catalog-only resolution check
    * (`functionResolvesOnThisServer`/`castResolvesOnThisServer`/`operatorResolvesOnThisServer`,
    * the same `pg_proc`/`pg_cast`/`pg_operator` lookup
-   * [PgCatalogLoader.loadNeverNullForNonNullInputOids] performs in production, just run
+   * [NullabilityCatalog.loadNeverNullForNonNullInputOids] performs in production, just run
    * per-signature) and asserts the two sets are equal. A signature this method calls a skip that
    * the catalog says DOES resolve is then a loud assertion failure — exactly the case a future
    * un-special-cased grammar-only entry would produce, closing the gap a bare `println` of the
