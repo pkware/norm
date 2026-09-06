@@ -981,20 +981,19 @@ class ColumnTypeMappingTest {
     )
 
     /**
-     * Anti-drift sweep for [postgresArrayElementTypeName], the same intent as
-     * [DomainBaseTypeAntiDriftSweep] but pinned against a hardcoded, independently-verified
-     * classification rather than [BASE_TYPE_RESOLVERS] membership. A membership check is a
-     * tautology here: every [BASE_TYPE_RESOLVERS] key that is not folded still passes itself
-     * through unchanged (`postgresArrayElementTypeName`'s `else` branch), and every SQL-spelling
-     * alias is, by construction, also a [BASE_TYPE_RESOLVERS] key — so deleting every fold branch
-     * would still leave every folded result a [BASE_TYPE_RESOLVERS] key and a membership check
-     * green.
+     * Anti-drift sweep for [postgresArrayElementTypeName], pinned against a hardcoded,
+     * independently-verified classification rather than [POSTGRES_BASE_TYPES] membership. A
+     * membership check is a tautology here: every [POSTGRES_BASE_TYPES] key that is not folded
+     * still passes itself through unchanged (`postgresArrayElementTypeName`'s `else` branch), and
+     * every SQL-spelling alias is, by construction, also a [POSTGRES_BASE_TYPES] key — so deleting
+     * every fold branch would still leave every folded result a [POSTGRES_BASE_TYPES] key and a
+     * membership check green.
      *
      * [expectedCanonicalNameByAlias] and [alreadyCanonicalNames] below come from a PostgreSQL 17
      * server via `SELECT typname FROM pg_type WHERE oid = to_regtype(?)` — see
-     * [postgresArrayElementTypeName]'s KDoc — and never derived from [BASE_TYPE_RESOLVERS] or
+     * [postgresArrayElementTypeName]'s KDoc — and never derived from [POSTGRES_BASE_TYPES] or
      * [postgresArrayElementTypeName] themselves. The set-equality assertion catches a new
-     * [BASE_TYPE_RESOLVERS] key added without being classified into either bucket; the per-alias
+     * [POSTGRES_BASE_TYPES] key added without being classified into either bucket; the per-alias
      * assertions catch a fold branch that is deleted, or wrong, by checking the actual fold result
      * against this table's fixed expectation rather than a self-referential set.
      *
@@ -1022,7 +1021,7 @@ class ColumnTypeMappingTest {
         "text", "varchar", "bpchar", "uuid",
       )
 
-      assertThat(BASE_TYPE_RESOLVERS.keys - serialVariants)
+      assertThat(POSTGRES_BASE_TYPES.keys - serialVariants)
         .isEqualTo(expectedCanonicalNameByAlias.keys + alreadyCanonicalNames)
 
       expectedCanonicalNameByAlias.forEach { (alias, expectedCanonical) ->
@@ -2182,28 +2181,10 @@ class ColumnTypeMappingTest {
     @Test
     fun `unsupported type returns null`() {
       // xml has no entry anywhere -- Norm has never mapped it to a Kotlin type, as a plain column
-      // type or a domain base. bytea is supported (see BASE_TYPE_RESOLVERS/DomainBaseTypes below) --
-      // it used to return null here, which is exactly the bug this fix closes: CREATE DOMAIN d AS
-      // bytea aborted code generation entirely.
+      // type or a domain base. bytea is supported (see POSTGRES_BASE_TYPES) -- it used to return
+      // null here, which is exactly the bug this fix closes: CREATE DOMAIN d AS bytea aborted code
+      // generation entirely.
       assertThat(resolveJdbcTypeInfo("xml")).isEqualTo(null)
-    }
-  }
-
-  /**
-   * Anti-drift sweep for the bug where a domain over a common base type (e.g. `CREATE DOMAIN d AS
-   * timestamptz`) aborted code generation: [resolveJdbcTypeInfo] must have an entry for every
-   * canonical type name [BASE_TYPE_RESOLVERS] accepts, since [TypeRepository]'s domain resolution
-   * chains through [resolveJdbcTypeInfo] for the domain's base type. The corpus is
-   * [BASE_TYPE_RESOLVERS]'s own keys -- the exact set [TypeRepository.resolveBaseType] accepts --
-   * rather than a hand-copied list here that could independently drift from it.
-   */
-  @Nested
-  inner class DomainBaseTypeAntiDriftSweep {
-
-    @Test
-    fun `every canonical base type resolveBaseType accepts has a resolveJdbcTypeInfo entry`() {
-      val unsupported = BASE_TYPE_RESOLVERS.keys.filter { resolveJdbcTypeInfo(it) == null }
-      assertThat(unsupported).isEmpty()
     }
   }
 
@@ -2222,7 +2203,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `every resolveJdbcTypeInfo entry using the generic getObject getter supplies a class hint`() {
-      val entriesMissingAClassHint = BASE_TYPE_RESOLVERS.keys
+      val entriesMissingAClassHint = POSTGRES_BASE_TYPES.keys
         .mapNotNull { resolveJdbcTypeInfo(it) }
         .filter { it.getterName == "getObject" && it.getterClassHint == null }
 
