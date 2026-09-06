@@ -92,107 +92,6 @@ internal class PgNodeTreeParser {
   }
 
   /**
-   * Parses the range table from a full `pg_node_tree` text into a map from 1-based `varno` to `relid` OID.
-   *
-   * Extracts the `:rtable` section from [nodeTreeText] at the outermost QUERY level, splits it
-   * into `{RANGETBLENTRY ...}` blocks, and returns a map from 1-based position index (varno) to
-   * the `:relid` OID for each entry with `rtekind 0` (regular base table).
-   *
-   * Entries with `rtekind != 0` (subqueries with `rtekind 1`, joins with `rtekind 2`,
-   * functions with `rtekind 3`, CTEs with `rtekind 6`, etc.) are skipped and contribute `null`
-   * for their position — their varnos do not appear as keys in the returned map.
-   *
-   * @param nodeTreeText the raw `pg_rewrite.ev_action` text
-   * @return a map from 1-based varno to `relid` OID for base table range table entries only,
-   *   or an empty map if [nodeTreeText] is malformed or contains no `:rtable`
-   */
-  fun parseRangeTable(nodeTreeText: String): Map<Int, Int> {
-    val rtableContent = extractOuterSectionContent(nodeTreeText, ":rtable (") ?: return emptyMap()
-    return buildMap {
-      splitBraceBlocks(rtableContent).forEachIndexed { index, rangeTableEntry ->
-        val rtekind = extractIntField(rangeTableEntry, ":rtekind") ?: return@forEachIndexed
-        if (rtekind != 0) return@forEachIndexed
-        val relid = extractIntField(rangeTableEntry, ":relid") ?: return@forEachIndexed
-        put(index + 1, relid) // varno is 1-based
-      }
-    }
-  }
-
-  /**
-   * Parses GROUP BY RTE entries (rtekind 9) from a full `pg_node_tree` text.
-   *
-   * PostgreSQL creates an `*GROUP*` range table entry (rtekind 9) for aggregate queries with
-   * GROUP BY. Target list VARs for grouped columns reference this GROUP RTE (using its varno)
-   * rather than the base table directly. Each GROUP RTE holds a `:groupexprs` list of VARs
-   * pointing back to the original base table columns.
-   *
-   * Example: `SELECT author.name, COUNT(*) FROM author JOIN book ... GROUP BY author.name`
-   * produces a target list with `Var(varno=4, varattno=1)` where varno=4 is the GROUP RTE and
-   * varattno=1 selects the first entry in `:groupexprs` — `Var(varno=1, varattno=2)` (author.name).
-   *
-   * @return a map from `(groupVarno, 1-based attribute position)` to `(baseVarno, baseVarattno)`,
-   *   enabling resolution of GROUP BY column references back to their source base table columns;
-   *   or an empty map if the node tree contains no GROUP BY RTEs or is malformed
-   */
-  fun parseGroupRteMap(nodeTreeText: String): Map<Pair<Int, Int>, Pair<Int, Int>> {
-    val rtableContent = extractOuterSectionContent(nodeTreeText, ":rtable (") ?: return emptyMap()
-    return buildMap {
-      splitBraceBlocks(rtableContent).forEachIndexed { index, rangeTableEntry ->
-        val rtekind = extractIntField(rangeTableEntry, ":rtekind") ?: return@forEachIndexed
-        if (rtekind != 9) return@forEachIndexed
-        val groupVarno = index + 1
-        // extractOuterSectionContent works on any {NODE ...} block at its "outer" level (depth 1).
-        val groupExprsContent = extractOuterSectionContent(rangeTableEntry, ":groupexprs (")
-          ?: return@forEachIndexed
-        splitBraceBlocks(groupExprsContent).forEachIndexed { attrIndex, varBlock ->
-          val baseVarno = extractIntField(varBlock, ":varno") ?: return@forEachIndexed
-          val baseVarattno = extractIntField(varBlock, ":varattno") ?: return@forEachIndexed
-          put(groupVarno to (attrIndex + 1), baseVarno to baseVarattno)
-        }
-      }
-    }
-  }
-
-  /**
-   * Parses GROUP RTE (`rtekind 9`) group expressions — the fully-parsed counterpart to
-   * [parseGroupRteMap] — from a full `pg_node_tree` text.
-   *
-   * PostgreSQL 18 introduced an `RTE_GROUP` range-table entry (`:rtekind 9`, alias `*GROUP*`) that
-   * carries a `:groupexprs` list of the query's grouping-key expressions, and rewrites every
-   * target-list occurrence of a grouping-key expression (not just the one PostgreSQL assigns
-   * `:ressortgroupref` to) into a bare `Var` referencing this RTE. PostgreSQL 16 and 17 have no
-   * such RTE — no `:rtable` entry there ever has `:rtekind 9` — so on those versions this method
-   * always returns an empty map, and the original expression is left in place in the target list
-   * for [parseTargetList] to see directly.
-   *
-   * Unlike [parseGroupRteMap], which only resolves a GROUP RTE entry that is itself a bare `VAR`
-   * (mapping it back to a `(baseVarno, baseVarattno)` pair), this method parses the `:groupexprs`
-   * entry into a full [PgNodeExpression] — a grouping key can be an arbitrary expression (e.g.
-   * `lower(a)`, a literal, or a `Var` carrying outer-join `:varnullingrels`), not only a bare
-   * column reference. See [substituteGroupRteVars] for how a target-list `Var` referencing this
-   * RTE is substituted back to the expression this method returns.
-   *
-   * @return a map from the GROUP RTE's 1-based `varno` (its position in `:rtable`) to its parsed
-   *   `:groupexprs` list, in declaration order — a target-list `Var` whose `:varno` is a key here
-   *   resolves to `list[varattno - 1]` (1-based `:varattno` indexing into the 0-based list). Empty
-   *   when [nodeTreeText] is malformed, absent, or contains no GROUP RTE (including every
-   *   PostgreSQL 16/17 tree, and any PostgreSQL 18+ tree for a query with no `GROUP BY`).
-   */
-  fun parseGroupRteExpressions(nodeTreeText: String): Map<Int, List<PgNodeExpression>> {
-    val rtableContent = extractOuterSectionContent(nodeTreeText, ":rtable (") ?: return emptyMap()
-    return buildMap {
-      splitBraceBlocks(rtableContent).forEachIndexed { index, rangeTableEntry ->
-        val rtekind = extractIntField(rangeTableEntry, ":rtekind") ?: return@forEachIndexed
-        if (rtekind != 9) return@forEachIndexed
-        val groupVarno = index + 1
-        val groupExprsContent = extractOuterSectionContent(rangeTableEntry, ":groupexprs (")
-          ?: return@forEachIndexed
-        put(groupVarno, splitBraceBlocks(groupExprsContent).map(::parseExpression))
-      }
-    }
-  }
-
-  /**
    * Returns `true` if the outermost QUERY node in [nodeTreeText] has a `:setOperations` field.
    *
    * PostgreSQL represents `UNION ALL`, `INTERSECT`, and `EXCEPT` queries by adding a `:setOperations`
@@ -375,31 +274,6 @@ internal class PgNodeTreeParser {
   }
 
   /**
-   * Parses subquery range table entries from a full `pg_node_tree` text.
-   *
-   * Extracts the `:rtable` section from [nodeTreeText] at the outermost QUERY level, and for each
-   * entry with `rtekind 1` (subquery), extracts the embedded `:subquery {QUERY ...}` block.
-   *
-   * @param nodeTreeText the raw `pg_rewrite.ev_action` text (or a bare `{QUERY ...}` block)
-   * @return a map from 1-based varno to the subquery's `{QUERY ...}` block text, or empty if none
-   */
-  fun parseSubqueryRangeTable(nodeTreeText: String): Map<Int, String> {
-    val rtableContent = extractOuterSectionContent(nodeTreeText, ":rtable (") ?: return emptyMap()
-    return buildMap {
-      splitBraceBlocks(rtableContent).forEachIndexed { index, rangeTableEntry ->
-        val rtekind = extractIntField(rangeTableEntry, ":rtekind") ?: return@forEachIndexed
-        if (rtekind != 1) return@forEachIndexed
-        val subqueryMarker = ":subquery {"
-        val subqueryIndex = rangeTableEntry.indexOf(subqueryMarker)
-        if (subqueryIndex == -1) return@forEachIndexed
-        val braceStart = subqueryIndex + subqueryMarker.length - 1
-        val subqueryBlock = extractBalancedBraces(rangeTableEntry, braceStart) ?: return@forEachIndexed
-        put(index + 1, subqueryBlock) // varno is 1-based
-      }
-    }
-  }
-
-  /**
    * Parses the CTE definitions from a full `pg_node_tree` text.
    *
    * Extracts the `:cteList` section from [nodeTreeText] at the outermost QUERY level, splits it
@@ -434,39 +308,10 @@ internal class PgNodeTreeParser {
   }
 
   /**
-   * Parses CTE range table entries (`rtekind 6`) from a full `pg_node_tree` text.
-   *
-   * Extracts the `:rtable` section and returns a map from 1-based `varno` to a
-   * [NodeTreeCteReference] (the CTE's `:ctename` and `:ctelevelsup`) for each range table entry
-   * with `rtekind 6`. `:ctelevelsup` defaults to `0` when absent, matching PostgreSQL's own default
-   * for a same-level reference; on PostgreSQL 18 the field is always present on a real CTE RTE, so
-   * this default is defensive only.
-   *
-   * This is the CTE counterpart to [parseRangeTable] (which handles `rtekind 0` base tables)
-   * and [parseSubqueryRangeTable] (which handles `rtekind 1` subqueries).
-   *
-   * @param nodeTreeText the raw `pg_rewrite.ev_action` text (or a bare `{QUERY ...}` block)
-   * @return a map from 1-based varno to [NodeTreeCteReference], or an empty map if no CTE RTEs are
-   *   found
-   */
-  fun parseCteRangeTableEntries(nodeTreeText: String): Map<Int, NodeTreeCteReference> {
-    val rtableContent = extractOuterSectionContent(nodeTreeText, ":rtable (") ?: return emptyMap()
-    return buildMap {
-      splitBraceBlocks(rtableContent).forEachIndexed { index, rangeTableEntry ->
-        val rtekind = extractIntField(rangeTableEntry, ":rtekind") ?: return@forEachIndexed
-        if (rtekind != 6) return@forEachIndexed
-        val cteName = extractStringField(rangeTableEntry, ":ctename") ?: return@forEachIndexed
-        val ctelevelsup = extractIntField(rangeTableEntry, ":ctelevelsup") ?: 0
-        put(index + 1, NodeTreeCteReference(name = cteName, ctelevelsup = ctelevelsup))
-      }
-    }
-  }
-
-  /**
    * Parses every range-table entry from [nodeTreeText]'s own `:rtable`, regardless of `rtekind`,
    * into a [RangeTableEntry] — see that type's KDoc for why a resolver needs visibility into every
-   * kind, not just the ones [parseRangeTable], [parseSubqueryRangeTable], and
-   * [parseCteRangeTableEntries] each recognize individually.
+   * kind, not just the ones [baseRelations], [subqueryBlocks], and [cteReferences] each derive
+   * individually.
    *
    * None of the fields read here need [findMarkerAtDepthOne]'s depth-one-awareness: a `JOINEXPR`
    * range-table entry's own fields (`:jointype`, `:joinaliasvars`, etc.) contain no nested `QUERY`
@@ -502,6 +347,15 @@ internal class PgNodeTreeParser {
             val ctelevelsup = extractIntField(rangeTableEntry, ":ctelevelsup") ?: 0
             val selfReference = extractBoolField(rangeTableEntry, ":self_reference") ?: false
             RangeTableEntry.Cte(NodeTreeCteReference(cteName, ctelevelsup, selfReference))
+          }
+          9 -> {
+            // extractOuterSectionContent works on any {NODE ...} block at its "outer" level (depth 1).
+            val groupExprsContent = extractOuterSectionContent(rangeTableEntry, ":groupexprs (")
+            if (groupExprsContent != null) {
+              RangeTableEntry.Group(splitBraceBlocks(groupExprsContent))
+            } else {
+              RangeTableEntry.Other(rtekind)
+            }
           }
           else -> RangeTableEntry.Other(rtekind)
         }
@@ -702,11 +556,11 @@ internal class PgNodeTreeParser {
     }
     val testExpressionOperatorOid = (testExprBlock?.let(::parseExpression) as? PgNodeExpression.OpExpr)
       ?.operatorFunctionOid
-    // :subselect holds the sublink's subquery body ({QUERY ...}), mirroring parseSubqueryRangeTable
-    // and parseCteList's extraction of the same node shape. Depth-one-awareness (via
-    // extractFieldExpression) is required: :testexpr precedes :subselect in SUBLINK's field order,
-    // and :testexpr's own value can contain a nested sublink with its own :subselect — see
-    // extractFieldExpression's KDoc for the repro this guards against.
+    // :subselect holds the sublink's subquery body ({QUERY ...}), mirroring parseRangeTableEntries's
+    // own :subquery extraction and parseCteList's extraction of the same node shape.
+    // Depth-one-awareness (via extractFieldExpression) is required: :testexpr precedes :subselect in
+    // SUBLINK's field order, and :testexpr's own value can contain a nested sublink with its own
+    // :subselect — see extractFieldExpression's KDoc for the repro this guards against.
     val subselectBlock = extractFieldExpression(text, ":subselect")
     return PgNodeExpression.SubLink(
       subLinkType = subLinkType,
@@ -1011,6 +865,19 @@ internal class PgNodeTreeParser {
   private fun extractIntField(text: String, fieldName: String): Int? =
     intFieldPatterns.getOrPut(fieldName) { Regex("""$fieldName (-?\d+)""") }
       .find(text)?.groupValues?.get(1)?.toIntOrNull()
+
+  /**
+   * The first textual `:varno` and `:varattno` in [block], via [extractIntField] — not
+   * [parseExpression] — so a `:groupexprs` entry that is not itself a bare `VAR` (e.g. a
+   * `FUNCEXPR` wrapping one) still yields the `VAR` nested inside it. Used by `groupRteMap`.
+   *
+   * @return `null` if either field is absent.
+   */
+  internal fun firstVarnoAndVarattno(block: String): Pair<Int, Int>? {
+    val varno = extractIntField(block, ":varno") ?: return null
+    val varattno = extractIntField(block, ":varattno") ?: return null
+    return varno to varattno
+  }
 
   /**
    * Extracts a boolean field value from a node block.

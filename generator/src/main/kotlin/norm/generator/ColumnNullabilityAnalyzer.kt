@@ -100,11 +100,11 @@ private fun isProvenByQuals(
  * action) is about to overwrite, so [qualProvenVars] is likewise computed empty whenever the block
  * itself is an `INSERT`/`UPDATE`/`DELETE`/`MERGE`.
  *
- * @property rangeTable varno to relid, base tables only (see [PgNodeTreeParser.parseRangeTable]).
+ * @property rangeTable varno to relid, base tables only (see [baseRelations]).
  * @property hasGroupingSets `true` when the query block uses `GROUPING SETS`, `CUBE`, or `ROLLUP` —
  *   see [PgNodeTreeParser.hasGroupingSets].
  * @property groupRteMap `(groupVarno, attrPos)` to `(baseVarno, baseVarattno)`, empty whenever
- *   [hasGroupingSets] — see [PgNodeTreeParser.parseGroupRteMap].
+ *   [hasGroupingSets] — see [groupRteMap].
  * @property qualProvenVars `(varno, varattno)` pairs the query block's own `WHERE` clause proves
  *   non-null, empty whenever qual narrowing does not apply (see this class's own KDoc above).
  * @property ownCtes CTE bodies declared directly in the query block's own `:cteList`, keyed by
@@ -113,7 +113,7 @@ private fun isProvenByQuals(
  *   whichever scope encloses the query block, never its own nested `WITH` clause. Empty for the
  *   outermost statement, which has no enclosing scope to point past.
  * @property cteReferences varno to CTE reference, for a `Var` whose range-table entry is a CTE
- *   rather than a base table or subquery — see [PgNodeTreeParser.parseCteRangeTableEntries].
+ *   rather than a base table or subquery — see [cteReferences].
  * @property subqueryColumnNotNull `(varno, varattno)` to `true` for a `FROM`-clause subquery RTE
  *   column already proven non-null by recursively analyzing that subquery's own target list.
  * @property mergeAbsentVarnos varno to whether that relation can be entirely absent for some
@@ -445,7 +445,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
             resultSet.getString(1)
           }
         }
-        val rangeTable = nodeTreeParser.parseRangeTable(nodeTree)
+        val rangeTable = nodeTreeParser.parseRangeTableEntries(nodeTree).baseRelations()
         val mergeAbsent = mergeAbsentVarnos(nodeTree, rangeTable, substitutedSql) ?: return null
         // '?' in sql, not substitutedSql: a sentinel-substituted CONST is byte-identical to a
         // hand-written literal once embedded in the SQL text — the parsed tree retains no memory
@@ -942,7 +942,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     if (nodeTreeParser.hasSetOperations(cte.queryBlock)) {
       return analyzeSetOperationBranches(cte.queryBlock, previouslyResolved, cte.name, applyQualNarrowing)
     }
-    val cteRangeTable = nodeTreeParser.parseRangeTable(cte.queryBlock)
+    val cteRangeTable = nodeTreeParser.parseRangeTableEntries(cte.queryBlock).baseRelations()
     val mergeAbsent = mergeAbsentVarnos(cte.queryBlock, cteRangeTable, sql) ?: return null
     val analyzer = buildCteBodyAnalyzer(cte.queryBlock, previouslyResolved, applyQualNarrowing, mergeAbsent, sql)
     // :returningList must be checked first, not as a fallback for an empty :targetList — see
@@ -999,7 +999,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     cteName: String,
     applyQualNarrowing: Boolean = true,
   ): List<Boolean>? {
-    val subqueryBranches = nodeTreeParser.parseSubqueryRangeTable(queryBlock).values.toList()
+    val subqueryBranches = nodeTreeParser.parseRangeTableEntries(queryBlock).subqueryBlocks().values.toList()
     if (subqueryBranches.isEmpty()) return null
 
     // The seed (first) branch of a recursive CTE structurally cannot reference the CTE itself —
@@ -1096,16 +1096,17 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     depth: Int = SUBLINK_ANALYSIS_DEPTH_BUDGET,
     mergeAbsentVarnos: Map<Int, Boolean> = emptyMap(),
   ): QueryBlockScope {
-    val rangeTable = nodeTreeParser.parseRangeTable(queryBlock)
+    val rangeTableEntries = nodeTreeParser.parseRangeTableEntries(queryBlock)
+    val rangeTable = rangeTableEntries.baseRelations()
     val hasGroupingSets = nodeTreeParser.hasGroupingSets(queryBlock)
     val groupRteMap = if (hasGroupingSets) {
       emptyMap()
     } else {
-      nodeTreeParser.parseGroupRteMap(queryBlock)
+      rangeTableEntries.groupRteMap(nodeTreeParser)
     }
     val ownCtes = resolveCteBodies(queryBlock, applyQualNarrowing, sql)
     val subqueryColumnNotNull = buildSubqueryColumnNotNull(queryBlock, ownCtes, applyQualNarrowing, sql, depth)
-    val cteReferences = nodeTreeParser.parseCteRangeTableEntries(queryBlock)
+    val cteReferences = rangeTableEntries.cteReferences()
     val resultRelationVarno = nodeTreeParser.parseResultRelation(queryBlock)
     val qualProvenVars = if (applyQualNarrowing && !hasGroupingSets && resultRelationVarno == 0) {
       NodeTreeNullabilityAnalyzer.qualProvenNonNullVars(queryBlock, isStrictFunction)
@@ -1201,7 +1202,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     // treats set-operation output columns as nullable (the correct safe default). This also covers
     // analyzeQueryBlockNullability's recursive call into this method.
     if (nodeTreeParser.hasSetOperations(nodeTree)) return emptyMap()
-    val subqueryRangeTable = nodeTreeParser.parseSubqueryRangeTable(nodeTree)
+    val subqueryRangeTable = nodeTreeParser.parseRangeTableEntries(nodeTree).subqueryBlocks()
     if (subqueryRangeTable.isEmpty()) return emptyMap()
     return buildMap {
       for ((outerVarno, subqueryBlock) in subqueryRangeTable) {

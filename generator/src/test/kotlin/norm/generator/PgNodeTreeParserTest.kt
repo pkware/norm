@@ -181,7 +181,7 @@ class PgNodeTreeParserTest {
           )}
         )}
       """.trimIndent()
-      val result = parser.parseGroupRteExpressions(text)
+      val result = parser.parseRangeTableEntries(text).groupExpressions(parser)
       assertThat(result).hasSize(1)
       val groupExpressions = result.getValue(2)
       assertThat(groupExpressions).hasSize(1)
@@ -201,7 +201,7 @@ class PgNodeTreeParserTest {
           {RANGETBLENTRY :rtekind 1 :relid 0}
         )}
       """.trimIndent()
-      assertThat(parser.parseGroupRteExpressions(text)).hasSize(0)
+      assertThat(parser.parseRangeTableEntries(text).groupExpressions(parser)).hasSize(0)
     }
 
     @Test
@@ -214,7 +214,7 @@ class PgNodeTreeParserTest {
           {RANGETBLENTRY :eref {ALIAS :aliasname *GROUP* :colnames ("k")} :rtekind 9 :groupexprs (
             {FUNCEXPR :funcid 481 :args (
       """.trimIndent()
-      assertThat(parser.parseGroupRteExpressions(text)).hasSize(0)
+      assertThat(parser.parseRangeTableEntries(text).groupExpressions(parser)).hasSize(0)
     }
 
     @Test
@@ -233,7 +233,7 @@ class PgNodeTreeParserTest {
           )}
         )}
       """.trimIndent()
-      val result = parser.parseGroupRteExpressions(text)
+      val result = parser.parseRangeTableEntries(text).groupExpressions(parser)
       val groupExpressions = result.getValue(2)
       assertThat(groupExpressions).hasSize(2)
       val first = groupExpressions[0] as PgNodeExpression.Var
@@ -241,6 +241,31 @@ class PgNodeTreeParserTest {
       assertThat(first.varattno).isEqualTo(2)
       val second = groupExpressions[1] as PgNodeExpression.Const
       assertThat(second.isNull).isFalse()
+    }
+
+    @Test
+    fun `groupRteMap and groupExpressions intentionally disagree on a non-Var grouping expression`() {
+      // The grouping key is `0::bigint`'s FUNCEXPR cast, wrapping a VAR rather than being one.
+      // groupRteMap's textual scan reaches past the FUNCEXPR to the first :varno/:varattno it finds
+      // — the nested VAR's — while groupExpressions keeps the full FuncExpr node.
+      val text = """
+        {QUERY :rtable (
+          {RANGETBLENTRY :rtekind 0 :relid 24819 :relkind r}
+          {RANGETBLENTRY :eref {ALIAS :aliasname *GROUP* :colnames ("k")} :rtekind 9 :groupexprs (
+            {FUNCEXPR :funcid 481 :funcresulttype 20 :funcretset false :funcvariadic false
+             :funcformat 0 :funccollid 0 :inputcollid 0 :args (
+               {VAR :varno 1 :varattno 2 :vartype 25 :vartypmod -1 :varcollid 100 :varnullingrels (b)
+                :varlevelsup 0 :varnosyn 1 :varattnosyn 2 :location -1}
+             ) :location -1}
+          )}
+        )}
+      """.trimIndent()
+      val rangeTableEntries = parser.parseRangeTableEntries(text)
+      val groupRteMap = rangeTableEntries.groupRteMap(parser)
+      assertThat(groupRteMap[2 to 1]).isEqualTo(1 to 2)
+      val groupExpressions = rangeTableEntries.groupExpressions(parser)
+      val functionCall = groupExpressions.getValue(2)[0] as PgNodeExpression.FuncExpr
+      assertThat(functionCall.functionOid).isEqualTo(481)
     }
   }
 
@@ -444,7 +469,7 @@ class PgNodeTreeParserTest {
            :ctelevelsup 1 :self_reference false}
         )}
       """.trimIndent()
-      val result = parser.parseCteRangeTableEntries(text)
+      val result = parser.parseRangeTableEntries(text).cteReferences()
       assertThat(result).hasSize(1)
       val reference = result.getValue(1)
       assertThat(reference.name).isEqualTo("c")
@@ -461,7 +486,7 @@ class PgNodeTreeParserTest {
            :self_reference false}
         )}
       """.trimIndent()
-      val result = parser.parseCteRangeTableEntries(text)
+      val result = parser.parseRangeTableEntries(text).cteReferences()
       assertThat(result).hasSize(1)
       val reference = result.getValue(1)
       assertThat(reference.name).isEqualTo("c")

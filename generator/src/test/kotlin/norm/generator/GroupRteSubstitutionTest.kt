@@ -59,9 +59,9 @@ class GroupRteSubstitutionTest {
   @Test
   fun `a Var whose resolved group expression is Unknown is left unchanged`() {
     // An Unknown resolution means the groupexprs entry is either a parse failure or an unmodelled
-    // node type. Substituting it in would replace a Var that PgNodeTreeParser.parseGroupRteMap's
-    // coarser, Var-only fallback might still be able to resolve — so this Var must be left exactly
-    // as parsed, not swapped for Unknown.
+    // node type. Substituting it in would replace a Var that groupRteMap's coarser, Var-only
+    // fallback might still be able to resolve — so this Var must be left exactly as parsed, not
+    // swapped for Unknown.
     val groupRteVar = PgNodeExpression.Var(varno = 2, varattno = 1, nullingRelations = emptySet())
     val groupExpressionsByVarno = mapOf(2 to listOf<PgNodeExpression>(PgNodeExpression.Unknown("XMLTABLE")))
 

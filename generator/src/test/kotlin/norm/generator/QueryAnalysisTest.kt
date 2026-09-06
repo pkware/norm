@@ -2504,7 +2504,7 @@ class QueryAnalysisTest {
     @Test
     fun `a plain GROUP BY on a constant-folding key is non-null — no ROLLUP, still a GROUP RTE on PostgreSQL 18`() {
       // A GROUP RTE is created for a plain GROUP BY too, not only GROUPING SETS/CUBE/ROLLUP.
-      // hasGroupingSets is false here — parseGroupRteMap alone cannot resolve this key, because
+      // hasGroupingSets is false here — groupRteMap alone cannot resolve this key, because
       // its groupexprs entry is a FUNCEXPR/CONST, not a bare VAR (see that method's KDoc) — so
       // this exercises the substitution fix on the code path GROUPING SETS tests never touch.
       val query = analyzeWithSchema(
@@ -2521,7 +2521,7 @@ class QueryAnalysisTest {
       // Before the GroupRteSubstitution fix, this was a confidently wrong NOT NULL on PostgreSQL
       // 18, not merely an over-widening: the target-list Var wrapping the GROUP RTE reference
       // carries an empty :varnullingrels (PostgreSQL does not propagate the outer join's nulling
-      // relations onto it), while parseGroupRteMap's coarser VAR-only resolution maps it back to
+      // relations onto it), while groupRteMap's coarser VAR-only resolution maps it back to
       // the base column by (varno, varattno) alone and discards the GROUP RTE's own :groupexprs
       // entry — the one that actually carries the correct, non-empty nulling relations from the
       // LEFT JOIN. x is NOT NULL by schema, but the join can still leave it absent for an unmatched
@@ -7315,7 +7315,7 @@ class QueryAnalysisTest {
       // A JSON_TABLE column resolves to a plain VAR against an RTE_TABLEFUNC entry (rtekind 4),
       // never to a JsonExpr the expression walk would hand to evaluateJsonExpr — the JSON_TABLE_OP
       // nodes PostgreSQL does emit live inside that RTE's :tablefunc, which this parser never
-      // descends into. parseRangeTable maps only rtekind 0, so the Var finds no entry, so nullable.
+      // descends into. baseRelations maps only rtekind 0, so the Var finds no entry, so nullable.
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "JSON_TABLE requires PostgreSQL 17+")
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT NOT NULL, doc JSONB NOT NULL)",
@@ -9888,16 +9888,16 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `parseRangeTable returns empty for malformed input`() {
+    fun `baseRelations returns empty for malformed input`() {
       val parser = PgNodeTreeParser()
-      val result = parser.parseRangeTable("malformed")
+      val result = parser.parseRangeTableEntries("malformed").baseRelations()
       assertThat(result).hasSize(0)
     }
 
     @Test
-    fun `parseGroupRteMap returns empty for malformed input`() {
+    fun `groupRteMap returns empty for malformed input`() {
       val parser = PgNodeTreeParser()
-      val result = parser.parseGroupRteMap("malformed")
+      val result = parser.parseRangeTableEntries("malformed").groupRteMap(parser)
       assertThat(result).hasSize(0)
     }
 

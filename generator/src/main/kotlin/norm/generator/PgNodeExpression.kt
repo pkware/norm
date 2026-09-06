@@ -387,15 +387,14 @@ internal data class NodeTreeCteDefinition(val name: String, val queryBlock: Stri
  *   referring back to itself (from `:self_reference`). `false` for every ordinary CTE reference —
  *   this is only ever `true` inside a `WITH RECURSIVE` CTE's own recursive query term. Defaults to
  *   `false` since only [RangeTableEntry.Cte] (built by [PgNodeTreeParser.parseRangeTableEntries])
- *   currently reads it; [PgNodeTreeParser.parseCteRangeTableEntries]'s existing callers never did.
+ *   currently reads it; [cteReferences]'s callers never did.
  */
 internal data class NodeTreeCteReference(val name: String, val ctelevelsup: Int, val selfReference: Boolean = false)
 
 /**
  * A single range-table entry, keyed by 1-based `varno`, covering every `rtekind` — unlike
- * [PgNodeTreeParser.parseRangeTable] ([Relation] only), [PgNodeTreeParser.parseSubqueryRangeTable]
- * ([Subquery] only), and [PgNodeTreeParser.parseCteRangeTableEntries] ([Cte] only), which each
- * recognize exactly one kind and silently skip every entry of any other kind.
+ * [baseRelations] ([Relation] only), [subqueryBlocks] ([Subquery] only), and [cteReferences] ([Cte]
+ * only), which each derive exactly one kind and silently skip every entry of any other kind.
  * [NodeTreeProvenanceResolver] walks an arbitrary `Var`'s `varno` and must be able to see an
  * unrecognized or not-yet-modeled kind ([Other]) so it can bail rather than misinterpret that varno
  * as one of the recognized kinds.
@@ -429,14 +428,63 @@ internal sealed interface RangeTableEntry {
   data class Join(val joinAliasVars: List<PgNodeExpression>) : RangeTableEntry
 
   /**
+   * `rtekind 9`: a PostgreSQL 18+ `*GROUP*` RTE whose `:groupexprs` was present and parsed — see
+   * [groupExpressions] and [groupRteMap], the two derived views built from this entry.
+   *
+   * @property groupExpressionBlocks The raw `{...}` blocks of `:groupexprs`, in declaration order —
+   *   a target-list `Var` referencing this RTE's `varno` resolves to
+   *   `groupExpressionBlocks[varattno - 1]` (1-based `varattno` indexing into the 0-based list).
+   */
+  data class Group(val groupExpressionBlocks: List<String>) : RangeTableEntry
+
+  /**
    * Any `rtekind` this parser does not model individually: `3` (function), `4` (tablefunc, e.g.
-   * `JSON_TABLE`), `5` (`VALUES`), `7` (named tuplestore), `8` (result, a FROM-less `SELECT`), or
-   * `9` (a PostgreSQL 18+ `*GROUP*` RTE — see [PgNodeTreeParser.parseGroupRteMap]). Named
-   * `rtekind`, not e.g. `kind`, to match the field name so a reader cross-referencing raw
-   * `pg_node_tree` text does not need to translate.
+   * `JSON_TABLE`), `5` (`VALUES`), `7` (named tuplestore), `8` (result, a FROM-less `SELECT`), or a
+   * `9` (`*GROUP*` RTE) whose `:groupexprs` could not be parsed — see [Group] for the ordinary
+   * rtekind 9 case. Named `rtekind`, not e.g. `kind`, to match the field name so a reader
+   * cross-referencing raw `pg_node_tree` text does not need to translate.
    */
   data class Other(val rtekind: Int) : RangeTableEntry
 }
+
+/** Varno to `relid`, for every `rtekind 0` (base table) entry. */
+internal fun Map<Int, RangeTableEntry>.baseRelations(): Map<Int, Int> =
+  mapNotNull { (varno, entry) -> (entry as? RangeTableEntry.Relation)?.let { varno to it.relid } }.toMap()
+
+/** Varno to `:subquery` block text, for every `rtekind 1` (derived table) entry. */
+internal fun Map<Int, RangeTableEntry>.subqueryBlocks(): Map<Int, String> =
+  mapNotNull { (varno, entry) -> (entry as? RangeTableEntry.Subquery)?.let { varno to it.queryBlock } }.toMap()
+
+/** Varno to CTE reference, for every `rtekind 6` entry. */
+internal fun Map<Int, RangeTableEntry>.cteReferences(): Map<Int, NodeTreeCteReference> =
+  mapNotNull { (varno, entry) -> (entry as? RangeTableEntry.Cte)?.let { varno to it.reference } }.toMap()
+
+/**
+ * The GROUP RTE's `varno` to its `:groupexprs` list, fully parsed — see [RangeTableEntry.Group].
+ * Unlike [groupRteMap], a grouping key that is not a bare `Var` (e.g. `lower(a)`, a literal, or a
+ * `Var` carrying outer-join `:varnullingrels`) is preserved here rather than reduced to nothing.
+ */
+internal fun Map<Int, RangeTableEntry>.groupExpressions(parser: PgNodeTreeParser): Map<Int, List<PgNodeExpression>> =
+  mapNotNull { (varno, entry) ->
+    (entry as? RangeTableEntry.Group)?.let { varno to it.groupExpressionBlocks.map(parser::parseExpression) }
+  }.toMap()
+
+/**
+ * `(groupVarno, 1-based attribute position)` to `(baseVarno, baseVarattno)`, read textually via
+ * [PgNodeTreeParser.firstVarnoAndVarattno] — the first `:varno` and `:varattno` in each
+ * `:groupexprs` block, never [PgNodeTreeParser.parseExpression]. A block missing either field is
+ * skipped without shifting the 1-based attribute position of the blocks after it.
+ */
+internal fun Map<Int, RangeTableEntry>.groupRteMap(parser: PgNodeTreeParser): Map<Pair<Int, Int>, Pair<Int, Int>> =
+  buildMap {
+    for ((groupVarno, entry) in this@groupRteMap) {
+      if (entry !is RangeTableEntry.Group) continue
+      entry.groupExpressionBlocks.forEachIndexed { attrIndex, block ->
+        val (baseVarno, baseVarattno) = parser.firstVarnoAndVarattno(block) ?: return@forEachIndexed
+        put(groupVarno to (attrIndex + 1), baseVarno to baseVarattno)
+      }
+    }
+  }
 
 /**
  * A single result column from a query's `targetList`.
