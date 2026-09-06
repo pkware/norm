@@ -67,11 +67,11 @@ public class TransactionalConnectionProvider(private val dataSource: DataSource)
    */
   @Throws(SQLException::class, IllegalStateException::class)
   public fun transaction(readOnly: Boolean = true, body: TransactionScope.() -> Unit) {
-    val parent = activeTransaction.get()
-    if (parent != null) {
-      executeNestedVoid(parent, readOnly, body)
-    } else {
-      executeOutermostVoid(readOnly, body)
+    try {
+      transactionWithResult(readOnly, body)
+    } catch (_: RollbackException) {
+      // Explicit rollback already happened inside transactionWithResult; a void transaction has
+      // nothing to return, so the signal ends here.
     }
   }
 
@@ -86,33 +86,13 @@ public class TransactionalConnectionProvider(private val dataSource: DataSource)
   public fun <R> transactionWithResult(readOnly: Boolean = true, body: TransactionScope.() -> R): R {
     val parent = activeTransaction.get()
     return if (parent != null) {
-      executeNestedWithResult(parent, readOnly, body)
+      executeNested(parent, readOnly, body)
     } else {
-      executeOutermostWithResult(readOnly, body)
+      executeOutermost(readOnly, body)
     }
   }
 
-  private fun executeOutermostVoid(readOnly: Boolean, body: TransactionScope.() -> Unit) {
-    val connection = dataSource.connection
-    try {
-      val tx = beginOutermost(connection, readOnly)
-      val scope = TransactionScopeImpl()
-      try {
-        scope.body()
-      } catch (_: RollbackException) {
-        connection.rollback()
-        return
-      } catch (expected: Throwable) {
-        connection.rollback()
-        throw expected
-      }
-      commitOrRollback(tx, connection)
-    } finally {
-      cleanupOutermost(connection)
-    }
-  }
-
-  private fun <R> executeOutermostWithResult(readOnly: Boolean, body: TransactionScope.() -> R): R {
+  private fun <R> executeOutermost(readOnly: Boolean, body: TransactionScope.() -> R): R {
     val connection = dataSource.connection
     try {
       val tx = beginOutermost(connection, readOnly)
@@ -161,27 +141,7 @@ public class TransactionalConnectionProvider(private val dataSource: DataSource)
     connection.close()
   }
 
-  private fun executeNestedVoid(parent: Transaction, readOnly: Boolean, body: TransactionScope.() -> Unit) {
-    val (connection, savepoint) = beginNested(parent, readOnly)
-    try {
-      val scope = TransactionScopeImpl()
-      try {
-        scope.body()
-      } catch (_: RollbackException) {
-        connection.rollback(savepoint)
-        return
-      } catch (expected: Throwable) {
-        connection.rollback(savepoint)
-        parent.poisoned = true
-        throw expected
-      }
-      connection.releaseSavepoint(savepoint)
-    } finally {
-      activeTransaction.set(parent)
-    }
-  }
-
-  private fun <R> executeNestedWithResult(parent: Transaction, readOnly: Boolean, body: TransactionScope.() -> R): R {
+  private fun <R> executeNested(parent: Transaction, readOnly: Boolean, body: TransactionScope.() -> R): R {
     val (connection, savepoint) = beginNested(parent, readOnly)
     try {
       val scope = TransactionScopeImpl()
