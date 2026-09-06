@@ -25,6 +25,14 @@ import java.sql.Statement
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
+ * PostgreSQL's `FirstNormalObjectId`: the first OID handed out after `initdb` finishes. Every
+ * `pg_proc` row below this was created with the cluster and cannot be dropped by a test, so a
+ * comparison restricted to this range is immune to a sibling test creating or dropping a function
+ * concurrently against the shared container.
+ */
+private const val FIRST_NORMAL_OBJECT_ID = 16384
+
+/**
  * One window function's expected result-column nullability, against the fixed one-row-per-group
  * shape `SELECT id, <window function> OVER(...) AS alias FROM t` -- [schema] defaults to a single
  * `NOT NULL` `id` column, overridden only by the two `LAG`/`LEAD` cases that need a nullable
@@ -4693,10 +4701,13 @@ class QueryAnalysisTest {
     @Test
     fun `MERGE with a LEFT JOIN nested in its USING subquery reports the joined column nullable`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
-      // The LEFT JOIN sits nested inside the MERGE's own USING subquery; the whole statement,
-      // subquery included, is one node tree, so `s.xval`'s own `Var` carries `:varnullingrels`
-      // marking it null-extended regardless of how deeply the join is nested. With sx having no
-      // row matching src: act = 'UPDATE', id = 1, xval = NULL.
+      // The MERGE's USING source is a subquery, not a base table or CTE, so
+      // `ColumnNullabilityAnalyzer.mergeSourceRelationNameCandidates` cannot name it and returns
+      // `null`; `mergeAbsentVarnos` propagates that, and the CTE body's own analysis returns
+      // `null` in turn. `resolveCteBodies` skips a body it could not resolve, so the outer query's
+      // lookup for "m" misses and all three columns fall back to nullable — "xval" among them.
+      // The reported answer is therefore the safe direction rather than a proof about this join.
+      // With sx having no row matching src: act = 'UPDATE', id = 1, xval = NULL.
       val query = analyzeWithSchema(
         """
         CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
@@ -4937,9 +4948,10 @@ class QueryAnalysisTest {
       // A ROLLUP supertotal row makes the grouped column NULL by definition, matched into the
       // target only via a COALESCE in the ON condition -- no LEFT/RIGHT/FULL JOIN keyword and no
       // WHEN NOT MATCHED BY SOURCE clause appears anywhere in the body.
-      // `PgNodeTreeParser.hasGroupingSets` recognizes ROLLUP/CUBE/GROUPING SETS directly from the
-      // node tree's own grouping-sets field, so "sid"'s grouped-column nullability is reported
-      // correctly with no join or match-optionality keyword involved. PostgreSQL 18, with an "a"
+      // The USING source is a subquery, so `ColumnNullabilityAnalyzer.mergeSourceRelationNameCandidates`
+      // cannot name it and returns `null`; the CTE body's analysis returns `null` in turn and
+      // `resolveCteBodies` skips it, leaving every column nullable. "sid" is reported nullable by
+      // that fallback, not by any ROLLUP-specific reasoning. PostgreSQL 18, with an "a"
       // row with id = 1 and tgt rows
       // id = 1 and id = 2: the id = 1 row of the source matches tgt id = 1 (sid = 1, not the
       // supertotal), and the ROLLUP supertotal row (s.id = NULL) matches tgt id = 2 via
@@ -5710,12 +5722,12 @@ class QueryAnalysisTest {
     @Test
     fun `top-level MERGE RETURNING merge_action() does not abort generation`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
-      // "aval" and "id" are plain column references, correctly reported NOT NULL from their own
-      // catalog constraints. "act" (a bare `merge_action()` call) is an ordinary `FuncExpr`: it is
-      // neither in `catalog.alwaysNonNullFunctionOids` nor provably strict over a non-null
-      // argument (it takes none), so `NodeTreeNullabilityAnalyzer.isNonNull`'s ordinary function
-      // handling reports it nullable — not because anything about this specific shape fails, but
-      // because nothing marks `merge_action()` itself as always non-null. On real Postgres, with a
+      // The USING source is the base table "a", so the MERGE is analyzed rather than bailed on,
+      // and "aval" and "id" are plain column references reported NOT NULL from their own catalog
+      // constraints. "act" is a bare `merge_action()` call, which PostgreSQL emits as a
+      // `MERGESUPPORTFUNC` node; `PgNodeTreeParser.parseExpression` has no case for that node kind,
+      // so it becomes a `PgNodeExpression.Unknown` and is reported nullable. The node carries no
+      // `:funcid`, so the safe-list and strictness legs are never consulted at all. On real Postgres, with a
       // matched row and no WHEN NOT MATCHED branch — every returned row genuinely has a target and
       // source row present: act = 'UPDATE', aval = 'a1', id = 1 — all three genuinely NOT NULL,
       // but this test only pins that "act" (the one column whose true non-null-ness this analysis
@@ -5743,9 +5755,10 @@ class QueryAnalysisTest {
       // The four plain column references (both "id"s, "aval", "tval") are correctly reported NOT
       // NULL from their own catalog constraints, and PostgreSQL's own star expansion
       // (`PgNodeTreeParser.parseReturningList`) supplies all four regardless of how many relations
-      // the MERGE reads from. "merge_action()" is, as in the test above, an ordinary `FuncExpr`
-      // with no always-non-null marking, so it is reported nullable — the same answer, for the
-      // same reason, as the single-column case above.
+      // the MERGE reads from. "merge_action()" is, as in the test above, a `MERGESUPPORTFUNC`
+      // node that `PgNodeTreeParser.parseExpression` does not recognize, so it becomes a
+      // `PgNodeExpression.Unknown` and is reported nullable — the same answer, for the same
+      // reason, as the single-column case above.
       val query = analyzeWithSchema(
         """
         CREATE TABLE tgt (id INT PRIMARY KEY, tval TEXT NOT NULL);
@@ -5858,10 +5871,11 @@ class QueryAnalysisTest {
     fun `top-level MERGE RETURNING merge_action() alongside a LEFT JOIN in USING forces every column nullable`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
       // Bare top-level counterpart of the CTE-wrapped `MERGE with a LEFT JOIN nested in its USING
-      // subquery reports the joined column nullable` test above: the same node-tree analysis
-      // applies whether or not the MERGE sits inside a CTE, so "bval" is reported nullable by its
-      // own `:varnullingrels`, and "act" (`merge_action()`) is reported nullable as an ordinary,
-      // not-always-non-null `FuncExpr`, same as the tests above. On real Postgres, with b having no
+      // subquery reports the joined column nullable` test above, and it bails for the same reason:
+      // the USING source is a subquery, so `mergeSourceRelationNameCandidates` returns `null` and
+      // `queryColumnNullabilityViaProsqlbody` gives up, leaving `queryColumnNullability` to report
+      // every column nullable. Both "bval" and "act" are nullable by that fallback, not by any
+      // per-column reasoning about the join or the function. On real Postgres, with b having no
       // row matching a: act = 'UPDATE', bval = NULL (genuinely nullable — the LEFT JOIN's real
       // effect).
       val query = analyzeWithSchema(
@@ -9378,11 +9392,20 @@ class QueryAnalysisTest {
     fun `two NullabilityCatalog instances on the same connection agree on functionStrictnessByOid`() {
       // Pins that functionStrictnessByOid is a pure catalog read with no hidden instance state
       // involved: two independently constructed catalogs against the identical connection must load
-      // the identical map, since both are reading the same unchanging pg_proc rows.
+      // the identical map.
+      //
+      // Compared over built-in rows only. Tests share one container and run in parallel, so a
+      // sibling test can CREATE and DROP a function between the two loads, and that row's OID then
+      // appears in one map and not the other -- an observed failure, not a hypothetical
+      // (oid 20259). Every OID below FIRST_NORMAL_OBJECT_ID was allocated when the cluster was
+      // initialised and no test can add or drop one, so restricting to that range removes the race
+      // without weakening what the assertion proves: a map built twice from the same rows must
+      // agree, and any per-instance state would show up here just as plainly.
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         val first = NullabilityCatalog(connection)
         val second = NullabilityCatalog(connection)
-        assertThat(first.functionStrictnessByOid).isEqualTo(second.functionStrictnessByOid)
+        assertThat(first.functionStrictnessByOid.filterKeys { it < FIRST_NORMAL_OBJECT_ID })
+          .isEqualTo(second.functionStrictnessByOid.filterKeys { it < FIRST_NORMAL_OBJECT_ID })
       }
     }
   }
