@@ -3923,16 +3923,14 @@ class QueryAnalysisTest {
         """.trimIndent(),
       )
       assertThat(query.columns).hasSize(1)
-      // PostgreSQL's target-list origin tracking traces "id" all the way through "SELECT * FROM
-      // \"MyIns\"" back to t.id, so isNullable reports NOT NULL precisely here (tableName came
-      // back as "t", not unknown) — a bare column RETURNING with no intervening expression
-      // preserves lineage. "MyIns" is a plain INSERT (no FROM/USING/MERGE join in the outer
-      // statement, only inside its own SELECT source),
-      // so it never reaches convertDmlCteBodyToSelect's join-preserving conversion and stays on
-      // the probe/stub path — which is fine specifically because INSERT's RETURNING sees only
-      // the just-inserted row: there is no outer join here for the probe to be blind to. The
-      // probe/stub path's fundamental blind spot to outer-join null extension (documented on
-      // PgCatalogLoader.buildSelectStub) does not apply to this test.
+      // The outer "SELECT id FROM MyIns" reads a CTE column, so isSourceColumnNotNull falls
+      // through to its CTE branch (ColumnNullabilityAnalyzer.kt:160-162) and takes the answer the
+      // recursively-analyzed CTE body already produced for "id"; within that body the RETURNING
+      // Var resolves through the range table to t.id's catalog attnotnull (:154). Without the
+      // body's own analysis "id" would run off the end of that chain and report nullable.
+      // "MyIns" is a plain INSERT with no outer join at all (no FROM/USING/MERGE join in the
+      // outer statement, only inside its own SELECT source) — RETURNING sees only the
+      // just-inserted row, so there is no outer-join null extension for this test to be blind to.
       assertThat(query.columns[0].notNull).isTrue()
     }
 
@@ -6079,12 +6077,14 @@ class QueryAnalysisTest {
   }
 
   /**
-   * `PgCatalogLoader.analyzeUnconvertibleDml` treats `ResultSetMetaData.columnNullableUnknown`
-   * as NOT NULL — correct for a literal/constant (`1 AS one`), but wrong for an expression built
-   * over a genuinely nullable source column (`lower(note)`, where `note` has no NOT NULL
-   * constraint). These tests exercise `PgCatalogLoader.probeUnknownColumnNullability`, the
-   * supplementary probe that resolves such a column's real nullability instead of defaulting,
-   * and the gates that fall back to today's NOT NULL default when the probe cannot be trusted.
+   * A `RETURNING` expression is analyzed by tracing its own node tree back to its source column,
+   * not by treating an unresolvable `ResultSetMetaData` type as NOT NULL — so `lower(note)`
+   * reports nullable precisely because `note` itself has no `NOT NULL` constraint in the catalog,
+   * without this the expression would report NOT NULL wrongly. These tests exercise
+   * [ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody] and
+   * [ColumnNullabilityAnalyzer.analyzeNodeTree], which resolve that answer directly from the
+   * parsed statement, plus the cases (a star item, a trailing line comment) that must not disturb
+   * that resolution.
    */
   @Nested
   inner class UnknownColumnNullabilityProbe {
@@ -6115,8 +6115,8 @@ class QueryAnalysisTest {
 
     @Test
     fun `DELETE RETURNING an expression over a NOT NULL column reports NOT NULL, proving exactness`() {
-      // The probe must not blanket-flip every columnNullableUnknown column to nullable — only a
-      // genuinely nullable source column should surface as nullable through it.
+      // Node-tree tracing must not blanket-report every RETURNING expression as nullable — only an
+      // expression built over a genuinely nullable source column should surface as nullable.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT PRIMARY KEY, name TEXT NOT NULL)",
         "DELETE FROM t WHERE id = ? RETURNING lower(name)",
@@ -6138,9 +6138,9 @@ class QueryAnalysisTest {
     @Test
     fun `a star item in RETURNING is expanded so the probe still runs and reports the real answer`() {
       // "note" has no NOT NULL constraint, so lower(note) genuinely can be NULL — a star item must
-      // not prevent the probe from proving that: probeUnknownColumnNullability expands "*" against
-      // "t"'s own catalog columns (id, note) before counting items, so the 2-item RETURNING list
-      // ("*", "lower(note)") correctly resolves to the real 3-column count and the probe runs.
+      // not prevent the node tree from proving that: PostgreSQL itself expands "*" into individual
+      // :targetList/:returningList entries ("id", "note", "lower(note)") during its own parse, so
+      // the 3-entry list is traced exactly as any explicit list would be.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT PRIMARY KEY, note TEXT)",
         "DELETE FROM t WHERE id = ? RETURNING *, lower(note)",
@@ -6161,10 +6161,11 @@ class QueryAnalysisTest {
 
     @Test
     fun `a trailing line comment on the RETURNING list does not swallow the probe's FROM clause`() {
-      // Regression: probeUnknownColumnNullability used to compose "SELECT $returningText FROM
-      // $target" on a single line. A trailing "--" comment with nothing after it on that same
-      // line (no line break of its own to stop at) swallowed " FROM t" into the comment, making
-      // the probe fail to prepare and silently degrade to today's NOT NULL default instead of the
+      // Regression: the prosqlbody wrapper composes "BEGIN ATOMIC $substitutedSql\n; END" (see
+      // ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody, line 422). A trailing "--"
+      // comment with nothing after it on that same line (no line break of its own to stop at)
+      // would swallow "; END" into the comment if the newline before it were missing, making the
+      // probe function fail to create and silently degrade to the NOT NULL default instead of the
       // real (nullable) answer.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT PRIMARY KEY, note TEXT)",
@@ -6189,14 +6190,15 @@ class QueryAnalysisTest {
   }
 
   /**
-   * [PgCatalogLoader.probeUnknownColumnNullability]'s bare `SELECT <returning> FROM <target>`
-   * probe evaluates a `RETURNING` expression against the unmodified target table, so it cannot
-   * see a value the statement's own `SET` clause assigns — `UPDATE t SET note = 'x' RETURNING
-   * lower(note)` widened to nullable even though `note` can only ever be `'x'` in this result,
-   * because `note` has no `NOT NULL` constraint in the catalog. These tests exercise
-   * [PgCatalogLoader.buildUpdateSetAwareFromClause], which wraps the probe's target in a derived
-   * table carrying the `SET`-assigned expressions, plus every bail condition that must keep the
-   * bare, pre-fix column instead.
+   * A `RETURNING` expression read against a target column's general catalog constraint alone
+   * would report `UPDATE t SET note = 'x' RETURNING lower(note)` nullable, even though `note` can
+   * only ever be `'x'` in this result, because `note` itself has no `NOT NULL` constraint. These
+   * tests exercise [ColumnNullabilityAnalyzer.analyzeNodeTree]'s `:targetList`-to-`:returningList`
+   * substitution (lines 539-557): a `:returningList` `Var` on `(resultRelationVarno, attno)` is
+   * evaluated as the matching `:targetList` assigned expression instead, gated by
+   * `trustAssignedExpressions = '?' !in sql` (line 451) and
+   * [ColumnNullabilityAnalyzer.isSubstitutionSafeForRelation] (line 1260) — plus every bail
+   * condition that must keep the untrusted, general-constraint answer instead.
    */
   @Nested
   inner class SetAssignmentAwareProbe {
@@ -6277,16 +6279,14 @@ class QueryAnalysisTest {
 
     @Test
     fun `a system column the SET-aware derived table can't carry doesn't collapse a sibling column's real answer`() {
-      // The wrapped `FROM (SELECT ... FROM t) AS t` derived table has no `ctid` — PostgreSQL fails
+      // History: no SQL is re-composed today, so no prepare can fail here at all. `ctid`, a system
+      // column (negative attnum), is unconditionally treated NOT NULL by
+      // ColumnNullabilityAnalyzer.isColumnNotNull (line 621) and stays NOT NULL regardless.
+      // Historically, a derived table wrapping `FROM t` had no `ctid` column, so PostgreSQL failed
       // to prepare `SELECT ..., ctid FROM (SELECT ... FROM t) AS t` with "column \"ctid\" does not
-      // exist". `ctid` itself is reported NOT NULL directly by `ResultSetMetaData` on the raw
-      // `UPDATE ... RETURNING` statement — it never goes through the probe at all, at HEAD or
-      // here — so it stays NOT NULL regardless. What the wrapped probe's failure must not be
-      // allowed to do is collapse the separate, otherwise-resolvable `lower(note)` column's own
-      // answer down to the probe's NOT NULL default: without the bare-`FROM t` retry, the whole
-      // combined probe (covering every `RETURNING` item at once) fails to prepare because of
-      // `ctid` alone, silently breaking `lower(note)`'s nullability too even though nothing about
-      // `ctid` bears on it.
+      // exist" — and that failure was capable of collapsing the separate, otherwise-resolvable
+      // `lower(note)` column's own answer down to a NOT NULL default too, even though nothing
+      // about `ctid` bore on it. This test pins that the two columns' answers stay independent.
       val query = analyzeWithSchema(schema, "UPDATE t SET note = note || 'x' RETURNING lower(note) AS n, ctid")
       assertThat(query.columns).hasSize(2)
       assertThat(query.columns[0].notNull).isFalse()
@@ -6295,9 +6295,13 @@ class QueryAnalysisTest {
 
     @Test
     fun `an untyped literal assigned to a jsonb column reports nullable rather than failing the whole probe`() {
-      // Splicing the untyped literal `'{"a":1}'` into the derived table's column list degrades it
-      // to `text` there, so `data -> 'zzz'` (the `->` jsonb operator) fails to prepare against the
-      // wrapped probe. The bare-target retry sees the real `jsonb` column instead and succeeds.
+      // History: splicing an untyped literal into a re-composed derived table's column list used
+      // to degrade its type to `text`, so `data -> 'zzz'` (the `->` jsonb operator) could fail to
+      // prepare against the wrong-typed target and mask this column's real answer behind a NOT
+      // NULL default. No SQL is re-composed today — the real UPDATE statement's own node tree
+      // already types `data` as `jsonb` (see ColumnNullabilityAnalyzer.analyzeNodeTree, lines
+      // 539-557), so `data -> 'zzz'` resolves the real jsonb `->` operator and reports nullable
+      // because the key may be absent, not because of any fallback.
       val query = analyzeWithSchema(schema, "UPDATE t SET data = '{\"a\":1}' RETURNING data -> 'zzz' AS v")
       assertThat(query.columns).hasSize(1)
       assertThat(query.columns[0].notNull).isFalse()
@@ -6325,18 +6329,19 @@ class QueryAnalysisTest {
   }
 
   /**
-   * [SetAssignmentAwareProbe]'s substitution splices the `SET` right-hand side into the derived
-   * table's column list verbatim, with no cast to the column's own declared type. An untyped
-   * literal (`'empty'`) spliced bare is typed `text` by PostgreSQL inside the derived table — a
-   * different type than the real column's — which can resolve a `RETURNING` function call
-   * against a completely different, sometimes safe-listed, overload than the real statement would
-   * ever use: `lower(text)` is safe-listed, `lower(anyrange)` is not, and `UPDATE t SET r =
-   * 'empty' RETURNING lower(r)` resolves the latter against the real column but (pre-fix) the
-   * former against the bare-text derived table, silently reporting NOT NULL for a
-   * value that is actually `NULL` at runtime. [PgCatalogLoader.buildUpdateSetAwareFromClause] now
-   * casts every substituted expression to the column's own declared type — via
-   * [PgCatalogLoader.lookupDeclaredColumnTypes]'s `format_type(atttypid, atttypmod)` — so the
-   * derived table's column type is identical to the real one and resolves the identical overload.
+   * History: a derived-table substitution used to splice the `SET` right-hand side into a
+   * re-composed statement with no cast to the column's own declared type. An untyped literal
+   * (`'empty'`) spliced bare was typed `text` there — a different type than the real column's —
+   * which resolved `RETURNING`'s function call against a different overload than the real
+   * statement used: `lower(text)` is safe-listed, `lower(anyrange)` is not, and `UPDATE t SET r =
+   * 'empty' RETURNING lower(r)` resolved the latter against the real column but the former against
+   * the re-typed derived table, silently reporting NOT NULL for a value that is actually `NULL` at
+   * runtime.
+   *
+   * This hazard is now structurally impossible: no statement is ever re-typed. `lower(r)`'s
+   * `funcid` was already resolved by PostgreSQL against the real, correctly-typed column when it
+   * parsed the actual statement, and Norm only reads that already-resolved `funcid` from the node
+   * tree — there is no second type-resolution pass left for an untyped literal to derail.
    */
   @Nested
   inner class SetAssignmentAwareProbeDeclaredTypeCast {
@@ -6373,10 +6378,10 @@ class QueryAnalysisTest {
 
     @Test
     fun `control - a non-null text literal assigned to a nullable TEXT column still reports NOT NULL`() {
-      // The declared type of a plain TEXT column is "text" with no typmod, exactly what the
-      // untyped literal already defaulted to before this fix — so adding the cast must not change
-      // this answer. Same case as SetAssignmentAwareProbe's own first test, re-asserted here next
-      // to the cast-introducing fix as an explicit before/after control.
+      // History: pins the ordinary case unaffected by the derived-table/cast mechanism that used
+      // to exist for overload safety on non-text columns — same case as SetAssignmentAwareProbe's
+      // own first test, re-asserted here next to that mechanism's other regression tests as an
+      // explicit control.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT PRIMARY KEY, note TEXT)",
         "UPDATE t SET note = 'x' WHERE id = 1 RETURNING lower(note) AS n",
@@ -6397,12 +6402,11 @@ class QueryAnalysisTest {
 
     @Test
     fun `a literal assigned to a VARCHAR(5) column still substitutes and reports NOT NULL`() {
-      // Proves format_type carried the column's typmod (length 5) rather than the substitution
-      // silently failing to build (which would fall back to the bare, unsubstituted `note` column
-      // — nullable in the schema — and report NULLABLE here instead). If the cast's type text were
-      // invalid SQL, or if the typmod were dropped in a way PostgreSQL rejected, the derived
-      // table's `PREPARE` would fail and the whole combined probe would fall back to the bare
-      // target, changing this answer.
+      // History: this used to prove format_type carried the column's typmod (length 5) into the
+      // derived table's cast, rather than the substitution silently failing to build and falling
+      // back to a bare, unsubstituted column. No derived table or cast exists today: "code"'s
+      // VARCHAR(5) type is the type PostgreSQL itself resolved when it parsed the real UPDATE
+      // statement, so there is nothing left that could fail to build or fall back.
       val query = analyzeWithSchema(
         "CREATE TABLE t (id INT PRIMARY KEY, code VARCHAR(5))",
         "UPDATE t SET code = 'ab' WHERE id = 1 RETURNING upper(code) AS n",
@@ -6413,14 +6417,14 @@ class QueryAnalysisTest {
 
     @Test
     fun `an untyped range literal assigned to a DOMAIN over INT4RANGE reports nullable`() {
-      // A domain routes through CoerceToDomain, not a cast function, when the substituted
-      // expression is cast to the domain's own declared type (format_type reports the domain's
-      // own name, e.g. "r_domain", not its base type "int4range"). CoerceToDomain recurses
-      // unconditionally into its argument (see NodeTreeNullabilityAnalyzer.isNonNull), and
-      // PostgreSQL strips a domain down to its base type for function-overload resolution, so
-      // `lower()` here resolves the same anyrange overload it would against the real
-      // domain-typed column — reproducing the same wrong-overload bug this fix closes, but through
-      // CoerceToDomain instead of a cast function.
+      // History: a derived-table substitution used to re-resolve `lower()`'s overload against a
+      // separately-cast copy of "r", risking a different overload than the real statement's own
+      // parse chose. No re-resolution exists today: ColumnNullabilityAnalyzer.analyzeNodeTree's
+      // substitution (lines 539-557) reads the :targetList expression PostgreSQL itself built for
+      // the real statement — here a CoerceToDomain wrapping the assigned value — and
+      // NodeTreeNullabilityAnalyzer.isNonNull recurses through CoerceToDomain unconditionally, so
+      // this domain case cannot diverge from whatever overload the real RETURNING clause actually
+      // uses.
       val query = analyzeWithSchema(
         "CREATE DOMAIN r_domain AS INT4RANGE; CREATE TABLE t (id INT PRIMARY KEY, r r_domain)",
         "UPDATE t SET r = 'empty' WHERE id = 1 RETURNING lower(r) AS n",
@@ -6431,15 +6435,17 @@ class QueryAnalysisTest {
   }
 
   /**
-   * [SetAssignmentAwareProbe]'s substitution ignored anything that rewrites the tuple between the
-   * `SET` clause and `RETURNING` — `RETURNING` always sees the final, post-trigger, post-rule
-   * tuple, never the raw `SET` expression, so a `BEFORE` row trigger, an `INSTEAD OF` trigger, a
-   * rewrite rule, or a foreign data wrapper's own write path
-   * can each substitute something else entirely for a value
-   * [PgCatalogLoader.buildUpdateSetAwareFromClause] would otherwise splice in as provably non-null.
-   * These tests exercise [PgCatalogLoader.targetRelationMayRewriteTupleBeforeReturning], the
-   * catalog-based bail that closes each of those gaps, plus the negative case (a statement-level or
-   * `AFTER` trigger) that proves the bail is targeted rather than a blanket "any trigger" check.
+   * [SetAssignmentAwareProbe]'s `:targetList`-to-`:returningList` substitution assumes `RETURNING`
+   * sees exactly the assigned value — but `RETURNING` always sees the final, post-trigger,
+   * post-rule tuple, never the raw `SET` expression, so a row-level `BEFORE` trigger, an
+   * `INSTEAD OF` trigger, a non-view rewrite rule, or a foreign data wrapper's own write path can
+   * each substitute something else entirely for a value that assumption would otherwise treat as
+   * provably non-null. These tests exercise
+   * [ColumnNullabilityAnalyzer.isSubstitutionSafeForRelation] (line 1260), which returns `false` —
+   * unsafe to trust — for exactly those cases on the target or any inheritance descendant, so
+   * [ColumnNullabilityAnalyzer.analyzeNodeTree] (line 556) leaves `:targetList` untrusted; plus
+   * the negative case (a statement-level or `AFTER` trigger) that proves the bail is targeted
+   * rather than a blanket "any trigger" check.
    */
   @Nested
   inner class SetAssignmentAwareProbeCatalogBail {
@@ -6563,13 +6569,15 @@ class QueryAnalysisTest {
     @Test
     @ResourceLock("postgres_fdw_loopback")
     fun `a foreign partition of a partitioned target reports nullable`() {
-      // Regression guard: targetRelationMayRewriteTupleBeforeReturning previously checked
-      // relkind only for the root relation ("p", a partitioned table — relkind 'p'), never for
-      // its descendants. A partition that is itself a FOREIGN TABLE (relkind 'f') was therefore
-      // invisible, and an FDW's own write path can produce any tuple it likes, independent of
-      // this statement's SET clause. PostgreSQL 18.4, via a postgres_fdw loopback with a BEFORE
-      // UPDATE row trigger on the remote table nulling "note": before the fix this reported NOT
-      // NULL; the actual RETURNING value is NULL.
+      // Regression guard: the predecessor to isSubstitutionSafeForRelation previously checked
+      // relkind only for the root relation ("p", a partitioned table — relkind 'p'), never for its
+      // descendants. A partition that is itself a FOREIGN TABLE (relkind 'f') was therefore
+      // invisible, and an FDW's own write path can produce any tuple it likes, independent of this
+      // statement's SET clause. PostgreSQL 18.4, via a postgres_fdw loopback with a BEFORE UPDATE
+      // row trigger on the remote table nulling "note": before the fix this reported NOT NULL; the
+      // actual RETURNING value is NULL. Today, isSubstitutionSafeForRelation's recursive
+      // pg_inherits CTE (lines 1263-1269) walks every descendant first, and its relkind check
+      // (line 1275) applies to each one, so a foreign partition can no longer be invisible.
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         connection.createStatement().use { statement ->
@@ -9515,11 +9523,11 @@ class QueryAnalysisTest {
 
     private val schema = "CREATE TABLE t (id BIGINT PRIMARY KEY, a TEXT, b TEXT, flag BOOLEAN)"
 
-    // A DML-to-SELECT conversion (see PgCatalogLoader.transformForViewCreation /
-    // SqlUtils.convertDmlToSelect) drops the SET clause but keeps the original WHERE predicate.
     // A qual that looks like it proves a RETURNING column non-null may really be testing a value
-    // the statement is about to overwrite, so qual narrowing must be suppressed entirely whenever
-    // the analyzed SQL passed through that conversion.
+    // the statement's own SET clause (or, for MERGE, an update/insert action) is about to
+    // overwrite, so qual narrowing must be suppressed entirely for a data-modifying query block.
+    // ColumnNullabilityAnalyzer.buildQueryBlockScope (line 1102) computes qualProvenVars empty
+    // whenever resultRelationVarno != 0 — see QueryBlockScope's own KDoc (lines 99-102).
     private val dmlSchema = """
       CREATE TABLE t (id INT NOT NULL, a TEXT);
       CREATE TABLE u (id INT NOT NULL, val TEXT)
