@@ -115,28 +115,12 @@ private fun TypeSpec.Builder.addManyImplementation(statement: SqlStatement) {
   val mapperReturnType = resultRowShape.mapperReturnType
   val returnTypeVariable = TypeVariableName("Return")
   // 1. Private helper function
-  val helperFunction = FunSpec.builder(statement.name)
+  val helperFunction = mapperFunction(statement)
     .addModifiers(KModifier.PRIVATE)
-    .addTypeVariable(mapperReturnType)
     .addTypeVariable(returnTypeVariable)
-    .apply {
-      for ((index, parameter) in statement.parameters.withIndex()) {
-        addParameter(ParameterSpec(statement.getParameterName(index), statement.resolveColumnType(parameter.column!!)))
-      }
-    }
-    .addParameter(
-      ParameterSpec(
-        MAPPER_PARAMETER_NAME,
-        LambdaTypeName.get(
-          parameters = resultRowShape.creationParameters.toTypedArray<ParameterSpec>(),
-          returnType = mapperReturnType,
-        ),
-      ),
-    )
     .addParameter(
       "processor",
-      ClassName("norm", "ManyProcessor")
-        .parameterizedBy(mapperReturnType, returnTypeVariable),
+      MANY_PROCESSOR.parameterizedBy(mapperReturnType, returnTypeVariable),
     )
     .returns(returnTypeVariable)
     .addStatement("val sql = %S", statement.sql)
@@ -160,24 +144,8 @@ private fun TypeSpec.Builder.addManyImplementation(statement: SqlStatement) {
     .build()
   addFunction(helperFunction)
   // 2. Public Many variant: override fun <T : Any> queryName(mapper: ...) -> Many<T>
-  val manyFunction = FunSpec.builder(statement.name)
+  val manyFunction = mapperFunction(statement)
     .addModifiers(KModifier.OVERRIDE)
-    .addTypeVariable(mapperReturnType)
-    .apply {
-      for ((index, parameter) in statement.parameters.withIndex()) {
-        addParameter(ParameterSpec(statement.getParameterName(index), statement.resolveColumnType(parameter.column!!)))
-      }
-    }
-    .addParameter(
-      ParameterSpec(
-        MAPPER_PARAMETER_NAME,
-        LambdaTypeName.get(
-          parameters = resultRowShape.creationParameters.toTypedArray<ParameterSpec>(),
-          returnType = mapperReturnType,
-        ),
-      ),
-    )
-    .returns(statement.command.applyTo(mapperReturnType))
     .apply {
       val args = (
         statement.parameters.indices.map { CodeBlock.of("%N", statement.getParameterName(it)) } + listOf(
@@ -191,19 +159,9 @@ private fun TypeSpec.Builder.addManyImplementation(statement: SqlStatement) {
   addFunction(manyFunction)
   // 3. If eligible, public Query variant: override fun <T : Any> queryNameDynamically(mapper: ...) -> Query<T>
   if (statement.canBeDynamic) {
-    val dynamicName = "${statement.name}Dynamically"
-    val dynamicFunction = FunSpec.builder(dynamicName)
+    val dynamicFunction = mapperFunction(statement).build()
+      .toBuilder("${statement.name}Dynamically")
       .addModifiers(KModifier.OVERRIDE)
-      .addTypeVariable(mapperReturnType)
-      .addParameter(
-        ParameterSpec(
-          MAPPER_PARAMETER_NAME,
-          LambdaTypeName.get(
-            parameters = resultRowShape.creationParameters.toTypedArray<ParameterSpec>(),
-            returnType = mapperReturnType,
-          ),
-        ),
-      )
       .returns(Command.NORM_QUERY.parameterizedBy(mapperReturnType))
       .addStatement(
         "return %N(%N) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }",
@@ -483,6 +441,8 @@ private fun buildBatchWithReturn(statement: SqlStatement): FunSpec = batchWithRe
 
   endControlFlow()
 }.build()
+
+private val MANY_PROCESSOR = ClassName(RUNTIME_PACKAGE, "ManyProcessor")
 
 private val PROCESS_EXEC_RESULTS = MemberName(RUNTIME_PACKAGE, "combineExecBatchResults")
 
