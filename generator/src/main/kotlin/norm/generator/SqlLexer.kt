@@ -377,3 +377,48 @@ private fun skipDollarQuotedString(sql: String, position: Int, adjacency: Origin
   val closeIndex = sql.indexOf(closingTag, openingTagEnd)
   return if (closeIndex < 0) sql.length else closeIndex + closingTag.length
 }
+
+/**
+ * Collapses the cosmetic whitespace [stripComments]' own single-space substitution can leave behind
+ * in an expression about to be embedded verbatim in generated KDoc — a comment directly after an
+ * opening parenthesis or before a closing one (`UPPER(/* x */a)` strips to `UPPER( a)`) reads oddly
+ * there, even though that space is exactly right for [stripComments]' own purpose of never fusing two
+ * tokens a comment used to separate. Applied only where [resolveNodeTreeProvenanceExpression] returns
+ * an expression for KDoc, never inside [stripComments] itself.
+ *
+ * Collapses whitespace outside a single-quoted literal, a dollar-quoted string, a quoted identifier,
+ * or a comment to a single space, then removes a single such space immediately after `(` or before
+ * `)` — never semantically significant in SQL, so this can never change what the expression means.
+ *
+ * Walks every span verbatim via [skipLexicalToken], the same primitive [stripComments] uses, rather
+ * than a second, independently-written scanner: a plain whitespace-collapse regex can't tell a
+ * cosmetic space from one inside the developer's own SQL, and would rewrite a quoted identifier's
+ * internal spacing (`"My  Col"` to `"My Col"`, a column name PostgreSQL then rejects) or a string
+ * literal's contents (`'( x )'` to `'(x)'`) instead of merely the padding around it.
+ */
+internal fun collapseCosmeticWhitespace(text: String): String {
+  val trimmed = text.trim()
+  val builder = StringBuilder(trimmed.length)
+  var i = 0
+  while (i < trimmed.length) {
+    val afterToken = skipLexicalToken(trimmed, i)
+    if (afterToken != i) {
+      builder.append(trimmed, i, afterToken)
+      i = afterToken
+      continue
+    }
+    val character = trimmed[i]
+    if (!character.isWhitespace()) {
+      builder.append(character)
+      i++
+      continue
+    }
+    var afterWhitespace = i
+    while (afterWhitespace < trimmed.length && trimmed[afterWhitespace].isWhitespace()) afterWhitespace++
+    val precededByOpenParenthesis = builder.isNotEmpty() && builder.last() == '('
+    val followedByCloseParenthesis = afterWhitespace < trimmed.length && trimmed[afterWhitespace] == ')'
+    if (!precededByOpenParenthesis && !followedByCloseParenthesis) builder.append(' ')
+    i = afterWhitespace
+  }
+  return builder.toString()
+}
