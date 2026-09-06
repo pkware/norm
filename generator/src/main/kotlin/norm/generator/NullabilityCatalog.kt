@@ -1,0 +1,469 @@
+package norm.generator
+
+import java.sql.Connection
+
+/**
+ * Loads the function-strictness, function-safe-list, and column-nullability facts from
+ * PostgreSQL's system catalogs that [ColumnNullabilityAnalyzer] needs to answer "is this specific
+ * query's result column nullable" — every fact is a lazy, cached read keyed by OID or
+ * `(relid, attnum)`, computed once per instance and reused for its lifetime.
+ *
+ * @param connection An open JDBC connection to a PostgreSQL database with the schema applied.
+ */
+internal class NullabilityCatalog(private val connection: Connection) {
+
+  /**
+   * Maps function OIDs to their strictness flag from `pg_proc.proisstrict`.
+   *
+   * A strict function returns `null` when any argument is `null` — useful for determining
+   * expression nullability from the node tree. Keyed by OID for direct lookup from
+   * FUNCEXPR/OPEXPR/WINDOWFUNC nodes. Includes regular functions (`prokind = 'f'`) and
+   * window functions (`prokind = 'w'`). Excludes aggregates (`prokind = 'a'`) — those
+   * use [aggregateHasNonNullInitialValue] instead.
+   */
+  val functionStrictnessByOid: Map<Int, Boolean> by lazy(::loadFunctionStrictness)
+
+  /**
+   * OIDs of IMMUTABLE, non-set-returning functions (`pg_proc.provolatile = 'i' AND NOT proretset`).
+   *
+   * Also covers operators, with no separate `pg_operator` lookup needed: [PgNodeExpression.OpExpr]
+   * and [PgNodeExpression.ScalarArrayOpExpr] are keyed by `opfuncid`/`oprcode` — the operator's
+   * *implementing function* OID — which is itself a `pg_proc` row already captured by this single
+   * query, unlike [neverNullForNonNullInputOids], which needs its own `pg_operator` query because it
+   * safe-lists specific (symbol, operand types) triples rather than a volatility flag every
+   * `pg_proc` row already carries.
+   *
+   * Used by [NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension]'s `foldsToConst` leg —
+   * see that method's KDoc for why IMMUTABLE specifically (not STRICT, and not restricted to
+   * `pg_catalog`) is the correct test: this mirrors PostgreSQL's own planner rule for constant
+   * folding directly, rather than an empirically-swept safe-list, so a user-defined `IMMUTABLE`
+   * function is exactly as fold-safe as a built-in one and no namespace restriction is needed.
+   */
+  val immutableFunctionOids: Set<Int> by lazy(::loadImmutableFunctionOids)
+
+  /**
+   * Maps aggregate function OIDs to whether they have a non-null initial transition value.
+   *
+   * Aggregates with non-null `agginitval` (like COUNT with `agginitval = '0'`) return a
+   * non-null value for empty groups. Aggregates with `null` `agginitval` (SUM, AVG, MIN, MAX)
+   * return `null` for empty groups.
+   *
+   * Returns `null` for absent keys — this can occur if the OID belongs to a non-aggregate function.
+   */
+  val aggregateHasNonNullInitialValue: Map<Int, Boolean> by lazy(::loadAggregateInitialValues)
+
+  /**
+   * OIDs of non-strict functions that are guaranteed to never return `null` for any combination of
+   * argument values passed in the ordinary (non-`VARIADIC`) calling form, including when every
+   * argument is `null`. Currently `concat` only: `concat(NULL::text, NULL::text)` returns `''`
+   * (empty string), never `null`.
+   *
+   * The `VARIADIC` calling form (`concat(VARIADIC arr)`) is a different case this list's claim does
+   * not cover: it passes the array argument itself as one value rather than exploding it into
+   * elements, and `concat(VARIADIC arr)` is `null` when `arr` itself is `null` (PostgreSQL 16-18).
+   * [PgNodeExpression.FuncExpr.isVariadic] exists specifically so [NodeTreeNullabilityAnalyzer.isNonNull]
+   * and [NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension] can detect this form and
+   * require every argument non-null instead of trusting this list unconditionally — see both
+   * methods' KDoc.
+   *
+   * `concat_ws` is not on this list at all, even for the ordinary calling form, despite also being
+   * non-strict: it is non-null only when its first argument (the separator) is non-null —
+   * `concat_ws(NULL, 'x', 'y')` returns `null` (PostgreSQL 16-18), because a `null` separator
+   * poisons the whole result even though the later arguments are individually null-tolerant. That
+   * argument-position-dependent condition does not fit "unconditionally non-null", so it is modeled
+   * separately — see [nonNullIffFirstArgumentNonNullFunctionOids] and
+   * [NodeTreeNullabilityAnalyzer]'s `concat_ws` handling in `isNonNull`'s `FuncExpr` branch.
+   *
+   * [NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension] treats membership on this list
+   * (for a non-`VARIADIC` call) as an unconditional safety proof for the grouping-sets
+   * null-extension gate specifically because "non-null regardless of input" also means "non-null
+   * regardless of which argument grouping-set null-extension replaces with `null`". A function that
+   * is only non-null for a particular argument (like `concat_ws`'s separator) does not have that
+   * property — null-extension could target exactly that argument — so it must never be added here.
+   *
+   * Restricted to `pronamespace = 'pg_catalog'` at query time — a user-defined function sharing the
+   * name `concat` must not ride along onto this list; see the loader.
+   */
+  val alwaysNonNullFunctionOids: Set<Int> by lazy(::loadAlwaysNonNullFunctions)
+
+  /**
+   * OIDs of functions that are non-null if and only if their first argument is non-null, regardless
+   * of any other argument's nullability, in the ordinary (non-`VARIADIC`) calling form. Currently
+   * `concat_ws` only: `concat_ws(',', NULL, NULL)` returns `','`-joined empty string (`''`,
+   * non-null) but `concat_ws(NULL, 'x', 'y')` returns `null` — the separator (first argument) alone
+   * determines whether the whole call can be `null`.
+   *
+   * The `VARIADIC` calling form (`concat_ws(',', VARIADIC arr)`) does not get this treatment: it
+   * passes the array argument itself as one value, and `concat_ws(',', VARIADIC arr)` is `null`
+   * when `arr` itself is `null` even though the literal separator is non-null (PostgreSQL 16-18) —
+   * see [PgNodeExpression.FuncExpr.isVariadic]'s KDoc.
+   *
+   * Used by [NodeTreeNullabilityAnalyzer.isNonNull]'s [PgNodeExpression.FuncExpr] branch (for the
+   * non-`VARIADIC` form only). Not used by the grouping-sets safety gate
+   * ([NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension]) at all, `VARIADIC` or not:
+   * unlike [alwaysNonNullFunctionOids], this property depends on which argument is non-null, so a
+   * `Var` in the first-argument position is exactly as unsafe under grouping-set null-extension as
+   * any other `Var` — the generic aggregate/window-domination rule already handles it correctly
+   * without a dedicated leg.
+   *
+   * Restricted to `pronamespace = 'pg_catalog'` at query time — a user-defined function sharing the
+   * name `concat_ws` must not ride along onto this list; see the loader.
+   */
+  val nonNullIffFirstArgumentNonNullFunctionOids: Set<Int> by lazy(::loadNonNullIffFirstArgumentNonNullFunctionOids)
+
+  /**
+   * OIDs of functions, cast functions, and operators (materialized to their implementing function
+   * OID via `pg_operator.oprcode`) that are proven total on non-null input — every combination of
+   * non-null arguments produces a non-null result. An error is fine; only a silent `null` return
+   * disqualifies a candidate.
+   *
+   * This is verified only for the ordinary, element-wise calling convention (see `SafeListSweepTest`).
+   * [NodeTreeNullabilityAnalyzer.isNonNull]'s [PgNodeExpression.FuncExpr] branch never consults
+   * this set for a `VARIADIC` call: a non-null array argument says nothing about whether an
+   * element inside it is non-null, and no function on this list is variadic today (`provariadic <>
+   * 0` intersected with every safe-listed name here is empty on PostgreSQL 16-18) — but this must
+   * not silently start trusting the list for that shape the moment one is added. See
+   * [NodeTreeNullabilityAnalyzer]'s `isNeverNullForNonNullInput` KDoc.
+   *
+   * `pg_proc.proisstrict` is not sufficient for this on its own. Strict only guarantees
+   * NULL-in => NULL-out; it says nothing about the converse. `substring(text, '(z)')` (regex, no
+   * match), `regexp_match(text, pattern)` (no match), and `array_length(ARRAY[]::text[], 1)`
+   * (empty array) are all strict and all return `null` on fully non-null, well-typed input. Any
+   * inference rule built from strictness alone is therefore unsound. This set exists to be an
+   * additional conjunct alongside strictness in [NodeTreeNullabilityAnalyzer], never a
+   * replacement for it — so an unforeseen non-strict overload of a listed name can never slip
+   * through.
+   *
+   * Functions are safe-listed by `pg_proc.proname` plus argument type signature — see
+   * [NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES] — restricted to `pronamespace = 'pg_catalog'`. Keying by
+   * name alone is not safe: `lower(anyrange)`/`upper(anyrange)`/`lower(anymultirange)`/
+   * `upper(anymultirange)` share `proname` with the totally-safe `lower(text)`/`upper(text)` but
+   * return `null` on a non-null, well-typed, non-empty-but-unbounded range or an empty range —
+   * `SELECT upper(int4range '[1,)')` and `SELECT lower(int4range 'empty')` both return `null`.
+   * `substring` is the reason a signature-only match still is not always enough on its own:
+   * `substring(text, int, int)` is total but `substring(text FROM pattern)` is not, and both
+   * would share the same two-argument-count shape if only argument count were checked — this is
+   * why the match is on the full ordered list of argument type names (via `pg_type.typname`), not
+   * just arity. `substring` itself is simply left off the list entirely rather than enumerated,
+   * since its regex overloads are non-total.
+   *
+   * Casts are safe-listed by (source type, target type) pair — see
+   * [NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES] — rather than a class-wide blanket over every
+   * `pg_cast.castfunc` in `pg_catalog`. A blanket was
+   * tried first and is false: `('null'::jsonb)::int4` (and every other `jsonb` → numeric/`boolean`
+   * cast) returns `null` on well-typed, non-null input with no error, because the cast function
+   * special-cases the JSON literal `null` rather than raising "cannot convert". A sweep of every
+   * `jsonb`-targeting numeric/`boolean` cast confirmed this for all seven overloads (`int2`, `int4`,
+   * `int8`, `numeric`, `float4`, `float8`, `bool`); none of the seven appear in
+   * [NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES]. The same sweep also found `timestamp`/`timestamptz` →
+   * `time`/`timetz` silently returns `null` for the infinite (`'infinity'`/`'-infinity'`) input,
+   * rather than erroring the way `'infinity'::interval::time` does — so those three pairs are
+   * excluded too. Every other pair the sweep checked (see [SafeListSweepTest] for the corpus and the
+   * full case count) proved total, including on `NaN`, `Infinity`, `-Infinity`, min/max integer
+   * values, and empty strings.
+   *
+   * pgcrypto's `digest` and `hmac` are the one extension carve-out, keyed through `pg_depend`
+   * (`deptype = 'e'`) to the `pgcrypto` extension itself, so a user-defined `digest` in `public`
+   * cannot ride this carve-out. `encode`/`decode` are ordinary `pg_catalog` functions and are
+   * safe-listed on the main function list above, not here. All four `digest`/`hmac` overloads
+   * (`digest(text, text)`, `digest(bytea, text)`, `hmac(text, text, text)`, `hmac(bytea, bytea,
+   * text)`) are total on empty non-null input; an unrecognized hash algorithm name errors rather
+   * than returning `null`.
+   *
+   * Operators are safe-listed by (symbol, left operand type, right operand type) triple — see
+   * [NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES] — restricted to `oprnamespace = 'pg_catalog'`, and
+   * materialized to the OID of the implementing function via `oprcode`, the same OID space
+   * [PgNodeExpression.OpExpr] and [PgNodeExpression.ScalarArrayOpExpr] (e.g. `= ANY(...)`) are
+   * keyed by, so no separate operator-specific lookup is needed. Symbol alone is not safe: `path +
+   * path` (`path_add`) shares the `+` symbol with the totally-safe `int4 + int4`, but returns
+   * `null`, not an error, when either operand is a closed path (`SELECT ((0,0),(1,1),(2,0)) +
+   * ((0,0),(1,1),(2,0))` on two well-typed, non-null closed paths). A sweep of every
+   * symbol-restricted-but-unrestricted-by-type combination found exactly this one bad shape; `path`
+   * is entirely absent from [NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES] as a
+   * result — every triple that remains was independently swept and found total (see
+   * [SafeListSweepTest]). A left or right type of `null` in a signature means the operator is
+   * unary on that side (no left operand for a prefix operator, no right operand for a postfix
+   * operator), mirroring `pg_operator.oprleft`/`oprright` themselves being `0` (no operand) for a
+   * unary operator — e.g. unary (prefix) `-` (negation), `+`, and `~` (bitwise complement) are all
+   * prefix-only overloads of symbols that are also binary elsewhere in this same list (binary `-`
+   * is subtraction, binary `~` is regex match); they needed adding here alongside the binary
+   * overloads because the earlier symbol-only blanket rule this list replaced made every overload —
+   * unary and binary alike — safe together, and losing the unary overloads would have been an
+   * unintended narrowing.
+   *
+   * Omitting a signature from this set only widens the result to nullable — it never narrows a
+   * truly nullable expression to non-null — so when in doubt about whether a specific signature is
+   * total on every non-null, well-typed input (including infinite/empty/unbounded edge values, not
+   * just "typical" ones — see [NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES] for the `extract`/`date_part`
+   * counterexample this note exists to flag), the correct default is to leave it off.
+   */
+  val neverNullForNonNullInputOids: Set<Int> by lazy(::loadNeverNullForNonNullInputOids)
+
+  /**
+   * OIDs of the 3-argument overloads of `lag` and `lead` window functions. These overloads accept
+   * `(value, offset, default)` and return a non-null result when both the value expression and the
+   * default expression are non-null — the default fills in for rows at window boundaries where
+   * 1-arg `lag`/`lead` would return `null`.
+   */
+  val lagLeadWithDefaultOids: Set<Int> by lazy(::loadLagLeadWithDefaultOids)
+
+  /**
+   * Maps `(relid, attnum)` pairs to `pg_attribute.attnotnull`.
+   *
+   * Used by [NodeTreeNullabilityAnalyzer] to determine whether a source column (referenced
+   * by a VAR node) is declared NOT NULL in the schema. Only includes user-visible columns
+   * (`attnum > 0` and `NOT attisdropped`).
+   *
+   * Returns `null` for absent keys — this occurs for columns not present in `pg_attribute`
+   * (e.g., virtual columns, system columns with attnum <= 0).
+   */
+  val columnNotNullByRelidAndAttnum: Map<Pair<Int, Int>, Boolean> by lazy(::loadColumnNotNull)
+
+  /**
+   * Maps `(relid, attnum)` pairs to `pg_attribute.attname` — every user-visible column of every
+   * relation kind (base table, view, materialized view; `attnum > 0` and `NOT attisdropped`), not
+   * just base tables.
+   *
+   * Used by [ColumnNullabilityAnalyzer] to resolve a `TargetEntry`'s `:resorigtbl`/`:resorigcol`
+   * back to the real source column name, for a result column whose own select-list item is merely a
+   * reference to an alias assigned somewhere upstream (a CTE's own `RETURNING`/`SELECT` list
+   * renaming a column, e.g.) — PostgreSQL's `markTargetListOrigins` walks through such a reference to
+   * find the ultimate source column, so this is a plain OID/attnum lookup, not a name-based one.
+   *
+   * Returns `null` for absent keys — expected for any entry `:resorigtbl 0`/`:resorigcol 0`
+   * represents (a computed expression, an aggregate, a set-operation branch, or a `USING`/`NATURAL`
+   * merged join column has no single source column at all).
+   */
+  val columnNameByRelidAndAttnum: Map<Pair<Int, Int>, String> by lazy(::loadColumnNameByRelidAndAttnum)
+
+  /**
+   * Shared strictness lookup used by [ColumnNullabilityAnalyzer.buildAnalyzer]'s `isStrict`
+   * parameter and by [NodeTreeNullabilityAnalyzer.qualProvenNonNullVars].
+   */
+  internal val isStrictFunction: (Int) -> Boolean = { oid -> functionStrictnessByOid[oid] == true }
+
+  private fun loadColumnNotNull(): Map<Pair<Int, Int>, Boolean> = buildMap {
+    connection.createStatement().use { stmt ->
+      // No schema filter — relids come from the query's rtable and may reference tables
+      // from any schema. Filtering by schema here would miss tables in non-default schemas.
+      stmt.executeQuery(
+        """
+        SELECT attrelid::integer, attnum, attnotnull
+        FROM pg_catalog.pg_attribute
+        WHERE attnum > 0 AND NOT attisdropped
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) {
+          put(rs.getInt("attrelid") to rs.getInt("attnum"), rs.getBoolean("attnotnull"))
+        }
+      }
+    }
+  }
+
+  private fun loadColumnNameByRelidAndAttnum(): Map<Pair<Int, Int>, String> = buildMap {
+    connection.createStatement().use { stmt ->
+      // No schema filter, same reasoning as loadColumnNotNull above — a resorigtbl OID can name a
+      // relation in any schema.
+      stmt.executeQuery(
+        """
+        SELECT attrelid::integer, attnum, attname
+        FROM pg_catalog.pg_attribute
+        WHERE attnum > 0 AND NOT attisdropped
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) {
+          put(rs.getInt("attrelid") to rs.getInt("attnum"), rs.getString("attname"))
+        }
+      }
+    }
+  }
+
+  private fun loadFunctionStrictness(): Map<Int, Boolean> = buildMap {
+    connection.createStatement().use { stmt ->
+      // Include regular functions ('f') and window functions ('w') — both appear in node tree expressions.
+      // Excludes procedures ('p') and aggregates ('a') — aggregates use agginitval, not strictness.
+      stmt.executeQuery(
+        "SELECT oid::integer, proisstrict FROM pg_catalog.pg_proc WHERE prokind IN ('f', 'w')",
+      ).use { rs ->
+        while (rs.next()) {
+          put(rs.getInt("oid"), rs.getBoolean("proisstrict"))
+        }
+      }
+    }
+  }
+
+  private fun loadImmutableFunctionOids(): Set<Int> = buildSet {
+    connection.createStatement().use { stmt ->
+      // Regular functions and window functions, matching loadFunctionStrictness's scope; excludes
+      // procedures ('p') and aggregates ('a'), which are never foldable subexpressions here.
+      //
+      // No separate pg_operator/oprcode query is needed: an operator's implementing function
+      // (oprcode) is itself a row in pg_proc, so this single query already covers operators too —
+      // PgNodeExpression.OpExpr/ScalarArrayOpExpr are keyed by that same function OID, not by any
+      // pg_operator-specific ID. No operator oprcode OID satisfying the volatility/proretset filter
+      // falls outside this query's result.
+      stmt.executeQuery(
+        "SELECT oid::integer FROM pg_catalog.pg_proc WHERE provolatile = 'i' AND NOT proretset AND prokind IN ('f', 'w')",
+      ).use { rs ->
+        while (rs.next()) add(rs.getInt("oid"))
+      }
+    }
+  }
+
+  private fun loadAggregateInitialValues(): Map<Int, Boolean> = buildMap {
+    connection.createStatement().use { stmt ->
+      // An aggregate is non-null for empty groups only when it has a non-null initial transition value
+      // AND no final function. Aggregates with a finalfunc (AVG, STDDEV, etc.) can return null even
+      // with a non-null agginitval because the finalfunc may produce null (e.g., AVG divides by zero
+      // count).
+      stmt.executeQuery(
+        "SELECT aggfnoid::integer, (agginitval IS NOT NULL AND aggfinalfn = 0) AS has_initial_value FROM pg_catalog.pg_aggregate",
+      ).use { rs ->
+        while (rs.next()) {
+          put(rs.getInt("aggfnoid"), rs.getBoolean("has_initial_value"))
+        }
+      }
+    }
+  }
+
+  private fun loadAlwaysNonNullFunctions(): Set<Int> = buildSet {
+    connection.createStatement().use { stmt ->
+      // pronamespace restricted to pg_catalog: without this, a user-defined function named
+      // `concat` with different null behavior would ride onto this list by sharing the name.
+      stmt.executeQuery(
+        """
+        SELECT p.oid::integer AS oid
+        FROM pg_catalog.pg_proc p
+        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        WHERE p.proname = 'concat' AND NOT p.proisstrict AND n.nspname = 'pg_catalog'
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) add(rs.getInt("oid"))
+      }
+    }
+  }
+
+  private fun loadNonNullIffFirstArgumentNonNullFunctionOids(): Set<Int> = buildSet {
+    connection.createStatement().use { stmt ->
+      // pronamespace restricted to pg_catalog — see loadAlwaysNonNullFunctions's identical guard.
+      stmt.executeQuery(
+        """
+        SELECT p.oid::integer AS oid
+        FROM pg_catalog.pg_proc p
+        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        WHERE p.proname = 'concat_ws' AND NOT p.proisstrict AND n.nspname = 'pg_catalog'
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) add(rs.getInt("oid"))
+      }
+    }
+  }
+
+  private fun loadNeverNullForNonNullInputOids(): Set<Int> = buildSet {
+    connection.createStatement().use { stmt ->
+      val safeSignatureValues = NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES.joinToString(", ") { signature ->
+        val nameLiteral = "'${signature.name}'"
+        val argumentTypesLiteral = if (signature.argumentTypeNames.isEmpty()) {
+          "ARRAY[]::text[]"
+        } else {
+          "ARRAY[${signature.argumentTypeNames.joinToString(", ") { typeName -> "'$typeName'" }}]"
+        }
+        "($nameLiteral, $argumentTypesLiteral)"
+      }
+      stmt.executeQuery(
+        """
+        WITH safe_signature(proname, argument_types) AS (
+          VALUES $safeSignatureValues
+        )
+        SELECT p.oid::integer AS oid
+        FROM pg_catalog.pg_proc p
+        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        JOIN safe_signature s ON s.proname = p.proname
+        WHERE n.nspname = 'pg_catalog'
+          AND s.argument_types = COALESCE(
+            (
+              SELECT array_agg(t.typname::text ORDER BY u.ordinality)
+              FROM unnest(p.proargtypes) WITH ORDINALITY AS u(type_oid, ordinality)
+              JOIN pg_catalog.pg_type t ON t.oid = u.type_oid
+            ),
+            ARRAY[]::text[]
+          )
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) add(rs.getInt("oid"))
+      }
+    }
+    connection.createStatement().use { stmt ->
+      val safeCastValues = NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES.joinToString(", ") { signature ->
+        "('${signature.sourceTypeName}', '${signature.targetTypeName}')"
+      }
+      stmt.executeQuery(
+        """
+        WITH safe_cast(source_type, target_type) AS (
+          VALUES $safeCastValues
+        )
+        SELECT c.castfunc::integer AS oid
+        FROM pg_catalog.pg_cast c
+        JOIN pg_catalog.pg_type st ON st.oid = c.castsource
+        JOIN pg_catalog.pg_type tt ON tt.oid = c.casttarget
+        JOIN pg_catalog.pg_proc p ON p.oid = c.castfunc
+        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        JOIN safe_cast s ON s.source_type = st.typname AND s.target_type = tt.typname
+        WHERE c.castfunc != 0 AND n.nspname = 'pg_catalog'
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) add(rs.getInt("oid"))
+      }
+    }
+    connection.createStatement().use { stmt ->
+      val safeOperatorValues = NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES.joinToString(", ") { signature ->
+        val leftLiteral = signature.leftTypeName?.let { "'$it'" } ?: "NULL::text"
+        val rightLiteral = signature.rightTypeName?.let { "'$it'" } ?: "NULL::text"
+        "('${signature.symbol}', $leftLiteral, $rightLiteral)"
+      }
+      stmt.executeQuery(
+        """
+        WITH safe_operator(symbol, left_type, right_type) AS (
+          VALUES $safeOperatorValues
+        )
+        SELECT o.oprcode::integer AS oid
+        FROM pg_catalog.pg_operator o
+        JOIN pg_catalog.pg_namespace n ON n.oid = o.oprnamespace
+        LEFT JOIN pg_catalog.pg_type lt ON lt.oid = o.oprleft
+        LEFT JOIN pg_catalog.pg_type rt ON rt.oid = o.oprright
+        JOIN safe_operator s ON s.symbol = o.oprname
+          AND s.left_type IS NOT DISTINCT FROM lt.typname
+          AND s.right_type IS NOT DISTINCT FROM rt.typname
+        WHERE n.nspname = 'pg_catalog' AND o.oprcode != 0
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) add(rs.getInt("oid"))
+      }
+    }
+    connection.createStatement().use { stmt ->
+      // pgcrypto extension carve-out, keyed through pg_depend so a user-defined `digest` or
+      // `hmac` outside the extension cannot ride along.
+      stmt.executeQuery(
+        """
+        SELECT p.oid::integer AS oid FROM pg_catalog.pg_proc p
+        JOIN pg_catalog.pg_depend d
+          ON d.objid = p.oid AND d.classid = 'pg_catalog.pg_proc'::regclass AND d.deptype = 'e'
+        JOIN pg_catalog.pg_extension e ON e.oid = d.refobjid
+        WHERE e.extname = 'pgcrypto' AND p.proname IN ('digest', 'hmac')
+        """.trimIndent(),
+      ).use { rs ->
+        while (rs.next()) add(rs.getInt("oid"))
+      }
+    }
+  }
+
+  private fun loadLagLeadWithDefaultOids(): Set<Int> = buildSet {
+    connection.createStatement().use { stmt ->
+      stmt.executeQuery(
+        "SELECT oid::integer FROM pg_catalog.pg_proc WHERE proname IN ('lag', 'lead') AND pronargs = 3 AND prokind = 'w'",
+      ).use { rs ->
+        while (rs.next()) add(rs.getInt("oid"))
+      }
+    }
+  }
+}

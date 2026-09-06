@@ -4,7 +4,7 @@ package norm.generator
  * The `pg_catalog` function, cast, and operator signatures confirmed total on non-null input on
  * PostgreSQL 18 -- proven for every combination of non-null arguments, not merely "typical" ones,
  * including infinite, empty, or unbounded edge values. Backs
- * [PgCatalogLoader.neverNullForNonNullInputOids] via [NEVER_NULL_FUNCTION_SIGNATURES],
+ * [NullabilityCatalog.neverNullForNonNullInputOids] via [NEVER_NULL_FUNCTION_SIGNATURES],
  * [NEVER_NULL_CAST_SIGNATURES], and [NEVER_NULL_OPERATOR_SIGNATURES] -- this data lives in its
  * own file, separate from [PgCatalogLoader]'s own job of loading catalog metadata.
  *

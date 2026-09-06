@@ -760,7 +760,7 @@ class QueryAnalysisTest {
      * `substring(text FROM pattern)` is STRICT, yet returns `null` on a non-matching pattern even
      * though every input is non-null. `substring` shares its `proname` with the total
      * `substring(text, int, int)` overload, so the safe-list excludes the name wholesale (see
-     * [PgCatalogLoader.neverNullForNonNullInputOids]) rather than trying to key it by argument
+     * [NullabilityCatalog.neverNullForNonNullInputOids]) rather than trying to key it by argument
      * signature.
      */
     @Test
@@ -801,7 +801,7 @@ class QueryAnalysisTest {
     /**
      * Closes a class of unsoundness for user code: a STRICT function is no longer inferred
      * non-null just because it is strict. Only functions on the
-     * [PgCatalogLoader.neverNullForNonNullInputOids] safe-list — which is restricted to
+     * [NullabilityCatalog.neverNullForNonNullInputOids] safe-list — which is restricted to
      * `pg_catalog` — get that inference; a user-defined STRICT function in `public` does not,
      * because Norm cannot prove it is total on non-null input.
      */
@@ -1475,7 +1475,7 @@ class QueryAnalysisTest {
      * (`COUNT(r.id)::int AS review_count` over a `LEFT JOIN`), which that scenario's own golden
      * comparison test skips (it is in `NormPluginTest.EMBED_SCENARIOS`). `COUNT` is already
      * non-null via its non-null initial value; the `::int` cast wraps that in a FuncExpr calling
-     * `pg_catalog.int4(int8)`, which must be on [PgCatalogLoader.neverNullForNonNullInputOids] via
+     * `pg_catalog.int4(int8)`, which must be on [NullabilityCatalog.neverNullForNonNullInputOids] via
      * the `pg_cast` cast-function rule, or this column would regress to nullable.
      */
     @Test
@@ -7962,8 +7962,7 @@ class QueryAnalysisTest {
           it.execute(chainDdl)
         }
         try {
-          val catalogLoader = PgCatalogLoader(connection)
-          val analyzer = ColumnNullabilityAnalyzer(catalogLoader)
+          val analyzer = ColumnNullabilityAnalyzer(connection, NullabilityCatalog(connection))
           // Resolved directly from the DEEPEST view down, rather than through
           // loadViewColumnNullability's unordered schema-wide sweep, so this test is not at the
           // mercy of a resolution order that might happen to walk the chain shallow-first (and
@@ -8006,11 +8005,12 @@ class QueryAnalysisTest {
           val boundaryRelid = regclassOid(connection, "boundary_1")
 
           val freshResult = ColumnNullabilityAnalyzer(
-            PgCatalogLoader(connection),
+            connection,
+            NullabilityCatalog(connection),
           ).resolveViewColumnNullability(deepestRelid)
           assertThat(freshResult).isEqualTo(listOf(true))
 
-          val warmedAnalyzer = ColumnNullabilityAnalyzer(PgCatalogLoader(connection))
+          val warmedAnalyzer = ColumnNullabilityAnalyzer(connection, NullabilityCatalog(connection))
           warmedAnalyzer.resolveViewColumnNullability(boundaryRelid)
           val warmedResult = warmedAnalyzer.resolveViewColumnNullability(deepestRelid)
           assertThat(warmedResult).isEqualTo(freshResult)
@@ -8110,8 +8110,7 @@ class QueryAnalysisTest {
           it.execute(chainDdl)
         }
         try {
-          val catalogLoader = PgCatalogLoader(connection)
-          val analyzer = ColumnNullabilityAnalyzer(catalogLoader)
+          val analyzer = ColumnNullabilityAnalyzer(connection, NullabilityCatalog(connection))
           val deepestRelid = regclassOid(connection, "view_${depth - 1}")
 
           var result: List<Boolean>? = null
@@ -8164,7 +8163,8 @@ class QueryAnalysisTest {
           // resolution order.
           val groundTruth = fixture.views.associateWith { view ->
             ColumnNullabilityAnalyzer(
-              PgCatalogLoader(connection),
+              connection,
+              NullabilityCatalog(connection),
             ).resolveViewColumnNullability(relidByView.getValue(view))
           }
 
@@ -8176,7 +8176,7 @@ class QueryAnalysisTest {
           for (warmView in fixture.warmTriggers) {
             for (checkView in fixture.views) {
               if (warmView == checkView) continue
-              val analyzer = ColumnNullabilityAnalyzer(PgCatalogLoader(connection))
+              val analyzer = ColumnNullabilityAnalyzer(connection, NullabilityCatalog(connection))
               analyzer.resolveViewColumnNullability(relidByView.getValue(warmView))
               val afterWarming = analyzer.resolveViewColumnNullability(relidByView.getValue(checkView))
               assertThat(afterWarming)
@@ -8279,8 +8279,7 @@ class QueryAnalysisTest {
           )
         }
         try {
-          val catalogLoader = PgCatalogLoader(connection)
-          val analyzer = ColumnNullabilityAnalyzer(catalogLoader)
+          val analyzer = ColumnNullabilityAnalyzer(connection, NullabilityCatalog(connection))
           val topRelid = regclassOid(connection, "top")
           val aRelid = regclassOid(connection, "a")
           val midRelid = regclassOid(connection, "mid")
@@ -8326,10 +8325,11 @@ class QueryAnalysisTest {
           val yRelid = regclassOid(connection, "y")
           val topvRelid = regclassOid(connection, "topv")
 
-          val groundTruthY = ColumnNullabilityAnalyzer(PgCatalogLoader(connection)).resolveViewColumnNullability(yRelid)
+          val groundTruthY = ColumnNullabilityAnalyzer(connection, NullabilityCatalog(connection))
+            .resolveViewColumnNullability(yRelid)
           assertThat(groundTruthY).isEqualTo(listOf(false))
 
-          val analyzer = ColumnNullabilityAnalyzer(PgCatalogLoader(connection))
+          val analyzer = ColumnNullabilityAnalyzer(connection, NullabilityCatalog(connection))
           val topvResult = analyzer.resolveViewColumnNullability(topvRelid)
           assertThat(topvResult).isEqualTo(listOf(true, true))
 
@@ -8374,8 +8374,7 @@ class QueryAnalysisTest {
           it.execute(ddl)
         }
         try {
-          val catalogLoader = PgCatalogLoader(connection)
-          val analyzer = ColumnNullabilityAnalyzer(catalogLoader)
+          val analyzer = ColumnNullabilityAnalyzer(connection, NullabilityCatalog(connection))
           val topRelid = regclassOid(connection, "g_$diamondDepth")
 
           val elapsedMillis = System.nanoTime().let { startNanos ->
@@ -8401,7 +8400,7 @@ class QueryAnalysisTest {
       // for the live sweep this backs), so this exercises the pure fallback logic directly with a
       // synthetic mismatch, rather than attempting to construct one via a real view.
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
-        val analyzer = ColumnNullabilityAnalyzer(PgCatalogLoader(connection))
+        val analyzer = ColumnNullabilityAnalyzer(connection, NullabilityCatalog(connection))
 
         assertThat(analyzer.alignViewColumnNullability(listOf(false, true), expectedColumnCount = 3))
           .isEqualTo(listOf(true, true, true))
@@ -8574,8 +8573,8 @@ class QueryAnalysisTest {
           it.execute("CREATE TABLE t (id INT PRIMARY KEY, name TEXT NOT NULL)")
         }
         try {
-          val catalogLoader = PgCatalogLoader(connection)
-          val result = ColumnNullabilityAnalyzer(catalogLoader).queryColumnNullabilityViaProsqlbody(
+          val analyzer = ColumnNullabilityAnalyzer(connection, NullabilityCatalog(connection))
+          val result = analyzer.queryColumnNullabilityViaProsqlbody(
             """
             MERGE INTO t USING (VALUES (1, 'new-name')) AS s(id, name) ON t.id = s.id
             WHEN NOT MATCHED THEN INSERT (id, name) VALUES (s.id, s.name)
@@ -8604,8 +8603,8 @@ class QueryAnalysisTest {
           it.execute("CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)")
         }
         try {
-          val catalogLoader = PgCatalogLoader(connection)
-          val result = ColumnNullabilityAnalyzer(catalogLoader).queryColumnNullabilityViaProsqlbody(
+          val analyzer = ColumnNullabilityAnalyzer(connection, NullabilityCatalog(connection))
+          val result = analyzer.queryColumnNullabilityViaProsqlbody(
             """
             SELECT id, name FROM t
             -- only active rows
@@ -8631,8 +8630,8 @@ class QueryAnalysisTest {
           it.execute("CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)")
         }
         try {
-          val catalogLoader = PgCatalogLoader(connection)
-          val result = ColumnNullabilityAnalyzer(catalogLoader).queryColumnNullabilityViaProsqlbody(
+          val analyzer = ColumnNullabilityAnalyzer(connection, NullabilityCatalog(connection))
+          val result = analyzer.queryColumnNullabilityViaProsqlbody(
             "SELECT id, name FROM t /* only active rows */",
           )
           assertThat(result?.map { it.nullable }).isEqualTo(listOf(false, false))
@@ -8657,8 +8656,8 @@ class QueryAnalysisTest {
           it.execute("CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)")
         }
         try {
-          val catalogLoader = PgCatalogLoader(connection)
-          val result = ColumnNullabilityAnalyzer(catalogLoader).queryColumnNullabilityViaProsqlbody(
+          val analyzer = ColumnNullabilityAnalyzer(connection, NullabilityCatalog(connection))
+          val result = analyzer.queryColumnNullabilityViaProsqlbody(
             """
             SELECT id, name FROM t
             /* unterminated
@@ -8683,8 +8682,8 @@ class QueryAnalysisTest {
           it.execute("CREATE TABLE t (id INT NOT NULL, name TEXT NOT NULL)")
         }
         try {
-          val catalogLoader = PgCatalogLoader(connection)
-          val result = ColumnNullabilityAnalyzer(catalogLoader).queryColumnNullabilityViaProsqlbody(
+          val analyzer = ColumnNullabilityAnalyzer(connection, NullabilityCatalog(connection))
+          val result = analyzer.queryColumnNullabilityViaProsqlbody(
             "SELECT id, name FROM t WHERE name = \$\$unterminated",
           )
           assertThat(result).isNull()
@@ -8706,8 +8705,8 @@ class QueryAnalysisTest {
       // happen to be true and the always-non-null set happens to be non-empty — the bare
       // `isNotEmpty()` this replaces would stay green even if strictness were loaded backwards.
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
-        val catalogLoader = PgCatalogLoader(connection)
-        val strictness = catalogLoader.functionStrictnessByOid
+        val catalog = NullabilityCatalog(connection)
+        val strictness = catalog.functionStrictnessByOid
         val oidsByPronameAndArgtypes = connection.createStatement().use { stmt ->
           stmt.executeQuery(
             """
@@ -8749,8 +8748,8 @@ class QueryAnalysisTest {
       // claims — then spot-checks that sum/avg/max/min, which the map correctly excludes, really
       // do return null over the same empty input.
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
-        val catalogLoader = PgCatalogLoader(connection)
-        val nonNullInitialOids = catalogLoader.aggregateHasNonNullInitialValue.filterValues { it }.keys
+        val catalog = NullabilityCatalog(connection)
+        val nonNullInitialOids = catalog.aggregateHasNonNullInitialValue.filterValues { it }.keys
         assertThat(nonNullInitialOids.isNotEmpty()).isTrue()
 
         val signaturesByOid = connection.createStatement().use { stmt ->
@@ -8799,7 +8798,7 @@ class QueryAnalysisTest {
     @Test
     fun `immutableFunctionOids includes an immutable example and excludes stable, volatile, and set-returning ones`() {
       // Deliberately does not compare immutableFunctionOids against a live re-query of
-      // `provolatile = 'i' AND NOT proretset AND prokind IN ('f', 'w')` — PgCatalogLoader.loadImmutableFunctionOids
+      // `provolatile = 'i' AND NOT proretset AND prokind IN ('f', 'w')` — NullabilityCatalog.loadImmutableFunctionOids
       // runs exactly that predicate (see PgCatalogLoader.kt), so an `isEqualTo` against the same
       // predicate here could only ever detect broken plumbing (a query that fails to run at all),
       // never a wrong predicate: a mutation to the production SQL would move both sides of the
@@ -8810,8 +8809,8 @@ class QueryAnalysisTest {
       // (`provolatile = 'i'`) but set-returning (`proretset = true`), so it must be excluded by the
       // `NOT proretset` conjunct specifically, not by volatility.
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
-        val catalogLoader = PgCatalogLoader(connection)
-        val immutableOids = catalogLoader.immutableFunctionOids
+        val catalog = NullabilityCatalog(connection)
+        val immutableOids = catalog.immutableFunctionOids
         assertThat(immutableOids.isNotEmpty()).isTrue()
 
         val exampleOids = connection.createStatement().use { stmt ->
@@ -8855,15 +8854,15 @@ class QueryAnalysisTest {
 
     @Test
     fun `neverNullForNonNullInputOids and lagLeadWithDefaultOids contain no VARIADIC pg_proc rows`() {
-      // PgCatalogLoader.neverNullForNonNullInputOids's KDoc claims no function on that list is
+      // NullabilityCatalog.neverNullForNonNullInputOids's KDoc claims no function on that list is
       // VARIADIC, checked on PostgreSQL 16-18 — unlike alwaysNonNullFunctionOids and
       // nonNullIffFirstArgumentNonNullFunctionOids, whose sole entries (concat/concat_ws) are
       // deliberately, documented VARIADIC ("any") and are excluded from this check for exactly
       // that reason (see PgNodeExpression.FuncExpr.isVariadic's KDoc and the two properties' own
       // KDoc for why the VARIADIC calling form is handled separately rather than trusted here).
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
-        val catalogLoader = PgCatalogLoader(connection)
-        val oidsToCheck = catalogLoader.neverNullForNonNullInputOids + catalogLoader.lagLeadWithDefaultOids
+        val catalog = NullabilityCatalog(connection)
+        val oidsToCheck = catalog.neverNullForNonNullInputOids + catalog.lagLeadWithDefaultOids
         assertThat(oidsToCheck.isNotEmpty()).isTrue()
         val variadicOids = connection.createStatement().use { stmt ->
           stmt.executeQuery("SELECT oid::integer FROM pg_catalog.pg_proc WHERE provariadic != 0").use { rs ->
@@ -9050,8 +9049,8 @@ class QueryAnalysisTest {
     @Test
     fun `neverNullForNonNullInput OIDs are loaded and exclude JSON path operators`() {
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
-        val catalogLoader = PgCatalogLoader(connection)
-        val safeListed = catalogLoader.neverNullForNonNullInputOids
+        val catalog = NullabilityCatalog(connection)
+        val safeListed = catalog.neverNullForNonNullInputOids
         assertThat(safeListed.isNotEmpty()).isTrue()
 
         // "->" and "->>" (JSON path extraction) are STRICT but not TOTAL — they return null on a
@@ -9251,7 +9250,7 @@ class QueryAnalysisTest {
       // on 16/17. Asserting the live server's actual pairs equal that fixed snapshot directly (as
       // a prior version of this test did) therefore fails on 16/17 even though nothing about those
       // six pairs is wrong there — they just do not resolve on this connected server, exactly the
-      // way PgCatalogLoader.loadNeverNullForNonNullInputOids's live catalog lookup finds no row
+      // way NullabilityCatalog.loadNeverNullForNonNullInputOids's live catalog lookup finds no row
       // for them either.
       //
       // The fix keeps the assertion an exact equality (never weakened to a subset check) by
@@ -9356,11 +9355,11 @@ class QueryAnalysisTest {
       // consistency with every sibling test in this class (each PgCatalogLoader-loaded property
       // gets its own small, cheap, exact-by-name OID check here) — but upgraded from a bare
       // `isNotEmpty()` to genuine exact membership, resolved by name from pg_catalog independently
-      // of PgCatalogLoader.loadLagLeadWithDefaultOids's own `pronargs = 3` predicate, so a mutation
+      // of NullabilityCatalog.loadLagLeadWithDefaultOids's own `pronargs = 3` predicate, so a mutation
       // that widens or narrows that predicate (e.g. to the 2-argument overloads) is caught by the
       // resulting set inequality here too, not just in the heavier live sweep.
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
-        val catalogLoader = PgCatalogLoader(connection)
+        val catalog = NullabilityCatalog(connection)
         val expectedOids = connection.createStatement().use { stmt ->
           stmt.executeQuery(
             """
@@ -9372,7 +9371,7 @@ class QueryAnalysisTest {
           ).use { rs -> buildSet { while (rs.next()) add(rs.getInt("oid")) } }
         }
         assertThat(expectedOids.isNotEmpty()).isTrue()
-        assertThat(catalogLoader.lagLeadWithDefaultOids).isEqualTo(expectedOids)
+        assertThat(catalog.lagLeadWithDefaultOids).isEqualTo(expectedOids)
       }
     }
 
@@ -9387,7 +9386,7 @@ class QueryAnalysisTest {
       // concurrently creates and drops schema-scoped `concat`/`concat_ws` functions that an
       // un-namespaced query could intermittently pick up.
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
-        val catalogLoader = PgCatalogLoader(connection)
+        val catalog = NullabilityCatalog(connection)
         val concatOids = connection.createStatement().use { stmt ->
           stmt.executeQuery(
             """
@@ -9399,7 +9398,7 @@ class QueryAnalysisTest {
           ).use { rs -> buildSet { while (rs.next()) add(rs.getInt("oid")) } }
         }
         assertThat(concatOids.isNotEmpty()).isTrue()
-        assertThat(catalogLoader.alwaysNonNullFunctionOids).isEqualTo(concatOids)
+        assertThat(catalog.alwaysNonNullFunctionOids).isEqualTo(concatOids)
 
         val concatWsOids = connection.createStatement().use { stmt ->
           stmt.executeQuery(
@@ -9411,7 +9410,7 @@ class QueryAnalysisTest {
             """.trimIndent(),
           ).use { rs -> buildSet { while (rs.next()) add(rs.getInt("oid")) } }
         }
-        assertThat(catalogLoader.alwaysNonNullFunctionOids.intersect(concatWsOids)).isEqualTo(emptySet())
+        assertThat(catalog.alwaysNonNullFunctionOids.intersect(concatWsOids)).isEqualTo(emptySet())
       }
     }
 
@@ -9420,7 +9419,7 @@ class QueryAnalysisTest {
       // `isNotEmpty()` alone is the exact `size >= 2` shape that let the original concat_ws bug
       // ship: it stays green under a mutation that puts `concat` (or any other function) on this
       // list alongside or instead of `concat_ws`, since the set is still non-empty either way. The
-      // OIDs resolved here are independent of PgCatalogLoader.loadNonNullIffFirstArgumentNonNullFunctionOids's
+      // OIDs resolved here are independent of NullabilityCatalog.loadNonNullIffFirstArgumentNonNullFunctionOids's
       // own SQL — matched by name alone, not by re-asserting its `NOT proisstrict` predicate — so a
       // mutation that widens or narrows the production predicate to a different name (or an
       // additional one) is caught by the resulting set inequality, not absorbed by both sides
@@ -9431,7 +9430,7 @@ class QueryAnalysisTest {
       // drops a schema-scoped `concat_ws` — an un-namespaced query here would intermittently pick up
       // that shadow OID too and fail this exact-equality assertion on a false positive.
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
-        val catalogLoader = PgCatalogLoader(connection)
+        val catalog = NullabilityCatalog(connection)
         val concatWsOids = connection.createStatement().use { stmt ->
           stmt.executeQuery(
             """
@@ -9443,7 +9442,7 @@ class QueryAnalysisTest {
           ).use { rs -> buildSet { while (rs.next()) add(rs.getInt("oid")) } }
         }
         assertThat(concatWsOids.isNotEmpty()).isTrue()
-        assertThat(catalogLoader.nonNullIffFirstArgumentNonNullFunctionOids).isEqualTo(concatWsOids)
+        assertThat(catalog.nonNullIffFirstArgumentNonNullFunctionOids).isEqualTo(concatWsOids)
       }
     }
 
@@ -9481,9 +9480,9 @@ class QueryAnalysisTest {
               rs.getInt("oid")
             }
           }
-          val catalogLoader = PgCatalogLoader(connection)
-          assertThat(catalogLoader.alwaysNonNullFunctionOids.contains(shadowConcatOid)).isFalse()
-          assertThat(catalogLoader.nonNullIffFirstArgumentNonNullFunctionOids.contains(shadowConcatWsOid)).isFalse()
+          val catalog = NullabilityCatalog(connection)
+          assertThat(catalog.alwaysNonNullFunctionOids.contains(shadowConcatOid)).isFalse()
+          assertThat(catalog.nonNullIffFirstArgumentNonNullFunctionOids.contains(shadowConcatWsOid)).isFalse()
         } finally {
           connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
         }
@@ -9495,6 +9494,18 @@ class QueryAnalysisTest {
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         val catalogLoader = PgCatalogLoader(connection)
         catalogLoader.checkPostgresVersion()
+      }
+    }
+
+    @Test
+    fun `two NullabilityCatalog instances on the same connection agree on functionStrictnessByOid`() {
+      // Pins that functionStrictnessByOid is a pure catalog read with no hidden instance state
+      // involved: two independently constructed catalogs against the identical connection must load
+      // the identical map, since both are reading the same unchanging pg_proc rows.
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
+        val first = NullabilityCatalog(connection)
+        val second = NullabilityCatalog(connection)
+        assertThat(first.functionStrictnessByOid).isEqualTo(second.functionStrictnessByOid)
       }
     }
   }
@@ -10025,7 +10036,7 @@ class QueryAnalysisTest {
     }
 
   /**
-   * Ground truth for [PgCatalogLoader.aggregateHasNonNullInitialValue]: calls the aggregate named
+   * Ground truth for [NullabilityCatalog.aggregateHasNonNullInitialValue]: calls the aggregate named
    * [aggregateName], with arguments typed [argumentTypeNames], over a genuinely empty input (`...
    * WHERE false`, not merely an aggregate over no matching group), and reports whether the result
    * is `null`. `count` with zero declared arguments is `count(*)` — the only ordinary-call-syntax

@@ -27,7 +27,7 @@ import norm.generator.NodeTreeNullabilityAnalyzer.Companion.MAX_EXPRESSION_DEPTH
  *   `isNonNull`'s [PgNodeExpression.FuncExpr] branch checks
  *   [PgNodeExpression.FuncExpr.isVariadic] before trusting this callback at all, and this
  *   parameter's own guarantee never covers that form. See
- *   [PgCatalogLoader.alwaysNonNullFunctionOids]'s KDoc for why the non-`VARIADIC` guarantee must
+ *   [NullabilityCatalog.alwaysNonNullFunctionOids]'s KDoc for why the non-`VARIADIC` guarantee must
  *   be unconditional in every argument position — `concat_ws` is deliberately not eligible here
  *   despite also being non-strict, because it depends on which argument is `null` (only a `null`
  *   separator, its first argument, makes the result `null`); see
@@ -37,7 +37,7 @@ import norm.generator.NodeTreeNullabilityAnalyzer.Companion.MAX_EXPRESSION_DEPTH
  *   error is fine; only a silent `null` return disqualifies a candidate). `pg_proc.proisstrict`
  *   alone cannot answer this: strict only guarantees NULL-in => NULL-out, never the converse, so
  *   this is required as an additional conjunct alongside [isStrict] below, never a substitute for
- *   it. See [PgCatalogLoader.neverNullForNonNullInputOids] for the safe-list this is normally
+ *   it. See [NullabilityCatalog.neverNullForNonNullInputOids] for the safe-list this is normally
  *   backed by, and why omission from that list is always the safe default. That safe-list's
  *   verification (see `SafeListSweepTest`) covers only the ordinary, element-wise calling
  *   convention — `isNonNull`'s [PgNodeExpression.FuncExpr] branch never consults this
@@ -59,7 +59,7 @@ import norm.generator.NodeTreeNullabilityAnalyzer.Companion.MAX_EXPRESSION_DEPTH
  *   16-18). `concat_ws(',', VARIADIC arr)` is a different case this
  *   parameter's guarantee does not cover: it is `null` when `arr` itself is `null` even though the
  *   literal separator is non-null (also true on PostgreSQL 16-18). See
- *   [PgCatalogLoader.nonNullIffFirstArgumentNonNullFunctionOids] for the safe-list this is normally
+ *   [NullabilityCatalog.nonNullIffFirstArgumentNonNullFunctionOids] for the safe-list this is normally
  *   backed by, and why it is intentionally separate from [isAlwaysNonNull]. Also consulted by
  *   [isSafeFromGroupingSetNullExtension] for the identical non-`VARIADIC` `FuncExpr` shape.
  * @param hasGroupingSets `true` when the query block this analyzer evaluates uses GROUPING SETS,
@@ -298,7 +298,7 @@ internal class NodeTreeNullabilityAnalyzer(
    *
    * A fourth, independent leg alongside [foldsToConst]: a non-`VARIADIC` [PgNodeExpression.FuncExpr]
    * whose function is [isAlwaysNonNull] (e.g. `concat` — see
-   * [PgCatalogLoader.alwaysNonNullFunctionOids]) is safe from having its own result forced `null`
+   * [NullabilityCatalog.alwaysNonNullFunctionOids]) is safe from having its own result forced `null`
    * by a deeper subexpression being null-extended — by that list's own definition, `concat` renders
    * a `null` argument as an empty string, so null-extending one of its arguments (e.g. `a` inside
    * `concat(a, '-')` when `a` alone, not the whole `concat` call, is the grouping key — PostgreSQL
@@ -318,7 +318,7 @@ internal class NodeTreeNullabilityAnalyzer(
    * only when its first argument (the separator) is non-null, so it gets no dedicated leg here and
    * falls through to the generic aggregate/window domination rule below like any other `FuncExpr`,
    * where a `Var` in any of its argument positions — including the separator — correctly makes it
-   * unsafe; see [PgCatalogLoader.alwaysNonNullFunctionOids]'s KDoc for why this distinction matters.
+   * unsafe; see [NullabilityCatalog.alwaysNonNullFunctionOids]'s KDoc for why this distinction matters.
    * The `VARIADIC` exclusion matters for the same reason [isNonNull] excludes it:
    * `concat(VARIADIC arr)` is `null` when `arr` itself is `null` (PostgreSQL 16-18)
    * — a `VARIADIC` call gets no short-circuit here at all and falls through to the
@@ -576,7 +576,7 @@ internal class NodeTreeNullabilityAnalyzer(
           } else {
             // Deliberately does not fall through to the isStrict/isNeverNullForNonNullInput leg
             // below. That safe-list's "total on non-null input" guarantee (see
-            // PgCatalogLoader.neverNullForNonNullInputOids's KDoc and SafeListSweepTest) was
+            // NullabilityCatalog.neverNullForNonNullInputOids's KDoc and SafeListSweepTest) was
             // verified for the ordinary, element-wise calling convention. For a VARIADIC call,
             // "every argument non-null" only means the array Datum itself is non-null —
             // recurse() on the array (an ArrayExpr) is unconditionally true regardless of NULL

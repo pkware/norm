@@ -1,6 +1,7 @@
 package norm.generator
 
 import org.intellij.lang.annotations.Language
+import java.sql.Connection
 import java.sql.SQLException
 import java.util.UUID
 
@@ -55,7 +56,7 @@ internal const val VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET = 50
  * [resolveNodeTreeProvenanceExpression] could not prove the expression correct.
  *
  * Also carries [originalColumnName] — the real source column name, resolved from the outer target
- * entry's own `:resorigtbl`/`:resorigcol` (see [PgCatalogLoader.columnNameByRelidAndAttnum]) rather
+ * entry's own `:resorigtbl`/`:resorigcol` (see [NullabilityCatalog.columnNameByRelidAndAttnum]) rather
  * than whatever alias the select item's text happens to spell. `null` when those fields are `0` (no
  * single source column) or the OID/attnum pair isn't in the catalog map — the caller must fall back
  * to its ordinary column-name resolution, never guess.
@@ -163,29 +164,19 @@ private class QueryBlockScope(
 }
 
 /**
- * Drives per-column nullability analysis for a SQL query on behalf of [loader]: fetching the
- * query's own parsed node tree (via `prosqlbody` or a probe function, see
- * [queryColumnNullabilityViaProsqlbody]'s own KDoc), then recursively resolving CTE bodies,
- * subqueries, and `MERGE` actions to feed [NodeTreeNullabilityAnalyzer] the source-column
- * not-null information it needs to evaluate each result column's expression.
+ * Drives per-column nullability analysis for a SQL query: fetching the query's own parsed node
+ * tree (via `prosqlbody` or a probe function, see [queryColumnNullabilityViaProsqlbody]'s own
+ * KDoc), then recursively resolving CTE bodies, subqueries, and `MERGE` actions to feed
+ * [NodeTreeNullabilityAnalyzer] the source-column not-null information it needs to evaluate each
+ * result column's expression.
  *
- * Split out from [loader]'s own catalog-loading responsibilities (schema introspection, function
- * metadata, safe-list lookups) because this is a distinct concern: [loader] answers "what does the
- * catalog say", while this class answers "is this specific query's result column nullable" by
- * combining catalog answers with the query's own parsed structure.
+ * A distinct concern from [catalog]'s own catalog-loading responsibilities (function strictness,
+ * safe-list membership, column not-null facts): [catalog] answers "what does the catalog say",
+ * while this class answers "is this specific query's result column nullable" by combining catalog
+ * answers with the query's own parsed structure.
  */
-internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
-  private val connection get() = loader.connection
-  private val nodeTreeParser get() = loader.nodeTreeParser
-  private val columnNotNullByRelidAndAttnum get() = loader.columnNotNullByRelidAndAttnum
-  private val columnNameByRelidAndAttnum get() = loader.columnNameByRelidAndAttnum
-  private val aggregateHasNonNullInitialValue get() = loader.aggregateHasNonNullInitialValue
-  private val alwaysNonNullFunctionOids get() = loader.alwaysNonNullFunctionOids
-  private val neverNullForNonNullInputOids get() = loader.neverNullForNonNullInputOids
-  private val lagLeadWithDefaultOids get() = loader.lagLeadWithDefaultOids
-  private val immutableFunctionOids get() = loader.immutableFunctionOids
-  private val nonNullIffFirstArgumentNonNullFunctionOids get() = loader.nonNullIffFirstArgumentNonNullFunctionOids
-  private val isStrictFunction get() = loader.isStrictFunction
+internal class ColumnNullabilityAnalyzer(private val connection: Connection, private val catalog: NullabilityCatalog) {
+  private val nodeTreeParser = PgNodeTreeParser()
 
   /**
    * Memoized per-relid view-column nullability, populated by [resolveViewColumnNullability]. Index
@@ -493,7 +484,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
    * @return one entry per result column: the resolved column name, or `null` when
    *   [TargetEntry.originalTableOid]/[TargetEntry.originalColumnNumber] is `0` (no single source
    *   column — a computed expression, an aggregate, a set-operation branch, or a `USING`/`NATURAL`
-   *   merged join column) or the OID/attnum pair is absent from [columnNameByRelidAndAttnum] for any
+   *   merged join column) or the OID/attnum pair is absent from [NullabilityCatalog.columnNameByRelidAndAttnum] for any
    *   other reason. The caller must treat `null` as "fall back to the ordinary resolution", never
    *   guess a value.
    */
@@ -504,7 +495,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
       if (entry.originalTableOid == 0 || entry.originalColumnNumber == 0) {
         null
       } else {
-        columnNameByRelidAndAttnum[entry.originalTableOid to entry.originalColumnNumber]
+        catalog.columnNameByRelidAndAttnum[entry.originalTableOid to entry.originalColumnNumber]
       }
     }
   }
@@ -615,7 +606,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
 
   /**
    * `true` when `(relid, attnum)` — [key] — is guaranteed NOT NULL, whether it identifies a base-table
-   * column (checked against [columnNotNullByRelidAndAttnum]) or a view column (resolved via
+   * column (checked against [NullabilityCatalog.columnNotNullByRelidAndAttnum]) or a view column (resolved via
    * [resolveViewColumnNullability], since `pg_attribute.attnotnull` is always `false` for a view
    * column regardless of the view's definition).
    *
@@ -628,7 +619,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     // otherwise fall through to "not found" (nullable) even though every system column is
     // unconditionally non-null for any real, returned row.
     if (key.second < 0) return true
-    if (columnNotNullByRelidAndAttnum[key] == true) return true
+    if (catalog.columnNotNullByRelidAndAttnum[key] == true) return true
     val viewNullability = resolveViewColumnNullability(key.first) ?: return false
     return viewNullability.getOrNull(key.second - 1) == false
   }
@@ -723,7 +714,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
   }
 
   /** The number of user-visible columns (`attnum > 0 AND NOT attisdropped`) [relid] has. */
-  private fun columnCountFor(relid: Int): Int = columnNotNullByRelidAndAttnum.keys.count { it.first == relid }
+  private fun columnCountFor(relid: Int): Int = catalog.columnNotNullByRelidAndAttnum.keys.count { it.first == relid }
 
   /**
    * Aligns [nullability] — one flag per non-junk target-list entry, in resno order — onto exactly
@@ -787,7 +778,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
   }
 
   /**
-   * Creates a [NodeTreeNullabilityAnalyzer] pre-configured with this loader's catalog lookups.
+   * Creates a [NodeTreeNullabilityAnalyzer] pre-configured with [catalog]'s lookups.
    *
    * All constructor arguments except [isSourceColumnNotNull] are identical across every call site
    * in this class. This method captures the common configuration so callers only need to supply
@@ -825,15 +816,15 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     resolvedCtes: Map<String, List<Boolean>> = emptyMap(),
     isSourceColumnNotNull: (varno: Int, varattno: Int) -> Boolean,
   ): NodeTreeNullabilityAnalyzer = NodeTreeNullabilityAnalyzer(
-    isStrict = isStrictFunction,
-    hasNonNullInitialValue = { oid -> aggregateHasNonNullInitialValue[oid] == true },
+    isStrict = catalog.isStrictFunction,
+    hasNonNullInitialValue = { oid -> catalog.aggregateHasNonNullInitialValue[oid] == true },
     isSourceColumnNotNull = isSourceColumnNotNull,
     isOuterJoinNullable = { nullingRelations -> nullingRelations.isNotEmpty() },
-    isAlwaysNonNull = { oid -> oid in alwaysNonNullFunctionOids },
-    isNeverNullForNonNullInput = { oid -> oid in neverNullForNonNullInputOids },
-    isLagLeadWithDefault = { oid -> oid in lagLeadWithDefaultOids },
-    isFoldableToConst = { oid -> oid in immutableFunctionOids },
-    isNonNullIffFirstArgumentNonNull = { oid -> oid in nonNullIffFirstArgumentNonNullFunctionOids },
+    isAlwaysNonNull = { oid -> oid in catalog.alwaysNonNullFunctionOids },
+    isNeverNullForNonNullInput = { oid -> oid in catalog.neverNullForNonNullInputOids },
+    isLagLeadWithDefault = { oid -> oid in catalog.lagLeadWithDefaultOids },
+    isFoldableToConst = { oid -> oid in catalog.immutableFunctionOids },
+    isNonNullIffFirstArgumentNonNull = { oid -> oid in catalog.nonNullIffFirstArgumentNonNullFunctionOids },
     isSubLinkSubqueryColumnNotNull = { subselectBlock ->
       subLinkSubqueryColumnNotNull(subselectBlock, applyQualNarrowing, depth, resolvedCtes)
     },
@@ -1109,7 +1100,7 @@ internal class ColumnNullabilityAnalyzer(private val loader: PgCatalogLoader) {
     val cteReferences = rangeTableEntries.cteReferences()
     val resultRelationVarno = nodeTreeParser.parseResultRelation(queryBlock)
     val qualProvenVars = if (applyQualNarrowing && !hasGroupingSets && resultRelationVarno == 0) {
-      NodeTreeNullabilityAnalyzer.qualProvenNonNullVars(queryBlock, isStrictFunction)
+      NodeTreeNullabilityAnalyzer.qualProvenNonNullVars(queryBlock, catalog.isStrictFunction)
     } else {
       emptySet()
     }

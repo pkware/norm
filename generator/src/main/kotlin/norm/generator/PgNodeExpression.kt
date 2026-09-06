@@ -40,8 +40,8 @@ internal sealed interface PgNodeExpression {
    *   from `:funcvariadic`. In this form the last entry of [arguments] is the array expression
    *   itself, passed through as one value, not exploded into its elements. This matters for
    *   nullability: `concat(VARIADIC arr)` is `null` when `arr` itself is `null` on PostgreSQL
-   *   16, 17, and 18, which neither [PgCatalogLoader.alwaysNonNullFunctionOids] nor
-   *   [PgCatalogLoader.nonNullIffFirstArgumentNonNullFunctionOids] account for on their own — both
+   *   16, 17, and 18, which neither [NullabilityCatalog.alwaysNonNullFunctionOids] nor
+   *   [NullabilityCatalog.nonNullIffFirstArgumentNonNullFunctionOids] account for on their own — both
    *   assume the ordinary (non-`VARIADIC`) calling form where every argument is an individual
    *   scalar value, and [NodeTreeNullabilityAnalyzer.isNonNull] must check this flag before
    *   trusting either list unconditionally.
