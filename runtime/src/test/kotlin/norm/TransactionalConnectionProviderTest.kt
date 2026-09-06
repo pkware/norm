@@ -4,6 +4,7 @@ import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.isEqualTo
 import assertk.assertions.isNotNull
+import assertk.assertions.isTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
@@ -14,6 +15,7 @@ import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.containers.wait.strategy.Wait
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
+import java.sql.Connection
 import java.sql.DriverManager
 import java.util.concurrent.ConcurrentHashMap
 import javax.sql.DataSource
@@ -101,6 +103,28 @@ class TransactionalConnectionProviderTest {
 
       val count = countRows()
       assertThat(count).isEqualTo(0)
+    }
+
+    @Test
+    fun `outermost explicit rollback — connection rolled back once, autoCommit restored, and closed`() {
+      val recordingDataSource = RecordingDataSource(postgres.jdbcUrl, postgres.username, postgres.password)
+      val recordingProvider = TransactionalConnectionProvider(recordingDataSource)
+
+      recordingProvider.transaction(readOnly = false) {
+        recordingProvider.withConnection { conn ->
+          conn.prepareStatement("INSERT INTO test_data (value) VALUES (?)").use { stmt ->
+            stmt.setString(1, "should-not-persist")
+            stmt.executeUpdate()
+          }
+        }
+        rollback()
+      }
+
+      assertThat(recordingDataSource.connections.size).isEqualTo(1)
+      val connection = recordingDataSource.connections.single()
+      assertThat(connection.rollbackCount).isEqualTo(1)
+      assertThat(connection.lastAutoCommit).isEqualTo(true)
+      assertThat(connection.closed).isTrue()
     }
   }
 
@@ -324,6 +348,71 @@ class TransactionalConnectionProviderTest {
     override fun getConnection() = DriverManager.getConnection(url, username, password)
     override fun getConnection(username: String?, password: String?) =
       DriverManager.getConnection(url, username ?: this.username, password ?: this.password)
+    override fun <T> unwrap(iface: Class<T>?): T = throw UnsupportedOperationException()
+    override fun isWrapperFor(iface: Class<*>?): Boolean = false
+    override fun getLogWriter() = throw UnsupportedOperationException()
+    override fun setLogWriter(out: java.io.PrintWriter?) = throw UnsupportedOperationException()
+    override fun setLoginTimeout(seconds: Int) = throw UnsupportedOperationException()
+    override fun getLoginTimeout(): Int = throw UnsupportedOperationException()
+    override fun getParentLogger() = throw UnsupportedOperationException()
+  }
+
+  /**
+   * A real JDBC connection that records [rollback], [setAutoCommit], and [close] calls so tests can
+   * assert on connection lifecycle without mocking. All other operations delegate unchanged to the
+   * underlying connection.
+   */
+  private class RecordingConnection(private val delegate: Connection) : Connection by delegate {
+    var rollbackCount: Int = 0
+      private set
+    var lastAutoCommit: Boolean? = null
+      private set
+    var closed: Boolean = false
+      private set
+
+    override fun rollback() {
+      rollbackCount++
+      delegate.rollback()
+    }
+
+    override fun setAutoCommit(autoCommit: Boolean) {
+      lastAutoCommit = autoCommit
+      delegate.setAutoCommit(autoCommit)
+    }
+
+    override fun close() {
+      closed = true
+      delegate.close()
+    }
+
+    override fun isClosed(): Boolean = closed
+  }
+
+  /**
+   * A [DataSource] that hands out real [DriverManager] connections wrapped in [RecordingConnection],
+   * keeping every connection it created so tests can assert on their recorded lifecycle.
+   */
+  private class RecordingDataSource(
+    private val url: String,
+    private val username: String,
+    private val password: String,
+  ) : DataSource {
+    val connections: MutableList<RecordingConnection> = mutableListOf()
+
+    override fun getConnection(): Connection {
+      val connection = RecordingConnection(DriverManager.getConnection(url, username, password))
+      connections.add(connection)
+      return connection
+    }
+
+    override fun getConnection(username: String?, password: String?): Connection {
+      val connection = RecordingConnection(
+        DriverManager.getConnection(url, username ?: this.username, password ?: this.password),
+      )
+      connections.add(connection)
+      return connection
+    }
+
     override fun <T> unwrap(iface: Class<T>?): T = throw UnsupportedOperationException()
     override fun isWrapperFor(iface: Class<*>?): Boolean = false
     override fun getLogWriter() = throw UnsupportedOperationException()
