@@ -835,7 +835,8 @@ class ColumnTypeMappingTest {
     @Test
     fun `non-null timestamptz array element read is null-safe`() {
       // A NOT NULL timestamptz[] column can still contain NULL elements, so the element read must
-      // use the nullable InstantSqlMappable form. The non-null form would NPE on a NULL element.
+      // use the nullable InstantViaOffsetDateTimeCodec form. The non-null form would NPE on a NULL
+      // element.
       val col = column("moments", type = "timestamptz", isArray = true, notNull = true)
       val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
       assertThat(accessor.toString())
@@ -1499,7 +1500,7 @@ class ColumnTypeMappingTest {
   /**
    * Tests for domain base types beyond TEXT and INTEGER.
    *
-   * Each base type exercises both [resolveJdbcTypeInfo] (JDBC method metadata) and
+   * Each base type exercises both [resolveWireCodec] (JDBC method metadata) and
    * [domainKotlinBaseType] (Kotlin type mapping). These two functions must stay in sync —
    * a type supported in one but not the other is a bug.
    */
@@ -1744,10 +1745,10 @@ class ColumnTypeMappingTest {
   /**
    * Regression coverage for the build-breaking bug: `CREATE DOMAIN d AS timestamptz` (or `uuid`,
    * `date`, `time`, `timetz`, `bytea`, `oid`) aborted code generation entirely, because
-   * [resolveJdbcTypeInfo] had no entry for any of these types even though
+   * [resolveWireCodec] had no entry for any of these types even though
    * [TypeRepository.resolveBaseType] supports every one of them as a plain column type. Each read
    * assertion below is verified against pgjdbc 42.7.13's actual `PgResultSet`/`PgPreparedStatement`
-   * source (see [resolveJdbcTypeInfo]'s KDoc for the specific methods checked), not assumed.
+   * source (see [resolveWireCodec]'s KDoc for the specific methods checked), not assumed.
    */
   @Nested
   inner class DomainOverJavaTimeAndOtherNonPrimitiveBaseTypes {
@@ -2049,133 +2050,139 @@ class ColumnTypeMappingTest {
   }
 
   /**
-   * Direct tests for [resolveJdbcTypeInfo], verifying the JDBC method metadata
-   * for each supported Postgres base type.
+   * Direct tests for [resolveWireCodec], verifying the rendered JDBC read/write shape for each
+   * supported Postgres base type.
    *
-   * These tests ensure that the getter/setter names, primitivity flags, and SQL type constants
-   * are correct for each base type. A mistake here would generate code that compiles but uses
-   * the wrong JDBC method at runtime.
+   * These tests ensure that the getter/setter calls and `Types` constants are correct for each
+   * base type. A mistake here would generate code that compiles but uses the wrong JDBC method at
+   * runtime.
    */
   @Nested
   inner class DomainBaseTypeResolution {
 
     @Test
     fun `text resolves to getString and setString`() {
-      val info = resolveJdbcTypeInfo("text")!!
-      assertThat(info.getterName).isEqualTo("getString")
-      assertThat(info.setterName).isEqualTo("setString")
-      assertThat(info.isPrimitive).isFalse()
-      assertThat(info.sqlTypeConstant).isEqualTo("VARCHAR")
+      val codec = resolveWireCodec("text")!!
+      assertThat(codec.read(1, false).toString()).isEqualTo("getString(1)")
+      assertThat(codec.read(1, true).toString()).isEqualTo("getString(1)")
+      assertThat(codec.write(1, CodeBlock.of("value")).toString()).isEqualTo("setString(1, value)")
+      assertThat(codec.writeNullable(1, CodeBlock.of("value")).toString()).isEqualTo("setString(1, value)")
+      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.VARCHAR)")
     }
 
     @Test
     fun `varchar resolves same as text`() {
-      val info = resolveJdbcTypeInfo("varchar")!!
-      assertThat(info.getterName).isEqualTo("getString")
-      assertThat(info.setterName).isEqualTo("setString")
-      assertThat(info.isPrimitive).isFalse()
-      assertThat(info.sqlTypeConstant).isEqualTo("VARCHAR")
+      val codec = resolveWireCodec("varchar")!!
+      assertThat(codec.write(1, CodeBlock.of("value")).toString()).isEqualTo("setString(1, value)")
+      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.VARCHAR)")
     }
 
     @Test
     fun `bpchar resolves same as text`() {
-      val info = resolveJdbcTypeInfo("bpchar")!!
-      assertThat(info.getterName).isEqualTo("getString")
-      assertThat(info.sqlTypeConstant).isEqualTo("VARCHAR")
+      val codec = resolveWireCodec("bpchar")!!
+      assertThat(codec.read(1, false).toString()).isEqualTo("getString(1)")
+      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.VARCHAR)")
     }
 
     @Test
     fun `int2 resolves to getShort and setShort`() {
-      val info = resolveJdbcTypeInfo("int2")!!
-      assertThat(info.getterName).isEqualTo("getShort")
-      assertThat(info.setterName).isEqualTo("setShort")
-      assertThat(info.isPrimitive).isTrue()
-      assertThat(info.sqlTypeConstant).isEqualTo("SMALLINT")
+      val codec = resolveWireCodec("int2")!!
+      assertThat(codec.read(1, false).toString()).isEqualTo("getShort(1)")
+      assertThat(codec.read(1, true).toString()).isEqualTo("getShort(1).takeUnless { wasNull() }")
+      assertThat(codec.write(1, CodeBlock.of("value")).toString()).isEqualTo("setShort(1, value)")
+      assertThat(codec.writeNullable(1, CodeBlock.of("value")).toString()).isEqualTo("norm.setShort(1, value)")
+      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.SMALLINT)")
     }
 
     @Test
     fun `int4 resolves to getInt and setInt`() {
-      val info = resolveJdbcTypeInfo("int4")!!
-      assertThat(info.getterName).isEqualTo("getInt")
-      assertThat(info.setterName).isEqualTo("setInt")
-      assertThat(info.isPrimitive).isTrue()
-      assertThat(info.sqlTypeConstant).isEqualTo("INTEGER")
+      val codec = resolveWireCodec("int4")!!
+      assertThat(codec.read(1, false).toString()).isEqualTo("getInt(1)")
+      assertThat(codec.read(1, true).toString()).isEqualTo("getInt(1).takeUnless { wasNull() }")
+      assertThat(codec.write(1, CodeBlock.of("value")).toString()).isEqualTo("setInt(1, value)")
+      assertThat(codec.writeNullable(1, CodeBlock.of("value")).toString()).isEqualTo("norm.setInt(1, value)")
+      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.INTEGER)")
     }
 
     @Test
     fun `int8 resolves to getLong and setLong`() {
-      val info = resolveJdbcTypeInfo("int8")!!
-      assertThat(info.getterName).isEqualTo("getLong")
-      assertThat(info.setterName).isEqualTo("setLong")
-      assertThat(info.isPrimitive).isTrue()
-      assertThat(info.sqlTypeConstant).isEqualTo("BIGINT")
+      val codec = resolveWireCodec("int8")!!
+      assertThat(codec.read(1, false).toString()).isEqualTo("getLong(1)")
+      assertThat(codec.read(1, true).toString()).isEqualTo("getLong(1).takeUnless { wasNull() }")
+      assertThat(codec.write(1, CodeBlock.of("value")).toString()).isEqualTo("setLong(1, value)")
+      assertThat(codec.writeNullable(1, CodeBlock.of("value")).toString()).isEqualTo("norm.setLong(1, value)")
+      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.BIGINT)")
     }
 
     @Test
     fun `float4 resolves to getFloat and setFloat`() {
-      val info = resolveJdbcTypeInfo("float4")!!
-      assertThat(info.getterName).isEqualTo("getFloat")
-      assertThat(info.setterName).isEqualTo("setFloat")
-      assertThat(info.isPrimitive).isTrue()
-      assertThat(info.sqlTypeConstant).isEqualTo("REAL")
+      val codec = resolveWireCodec("float4")!!
+      assertThat(codec.read(1, false).toString()).isEqualTo("getFloat(1)")
+      assertThat(codec.read(1, true).toString()).isEqualTo("getFloat(1).takeUnless { wasNull() }")
+      assertThat(codec.write(1, CodeBlock.of("value")).toString()).isEqualTo("setFloat(1, value)")
+      assertThat(codec.writeNullable(1, CodeBlock.of("value")).toString()).isEqualTo("norm.setFloat(1, value)")
+      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.REAL)")
     }
 
     @Test
     fun `float8 resolves to getDouble and setDouble`() {
-      val info = resolveJdbcTypeInfo("float8")!!
-      assertThat(info.getterName).isEqualTo("getDouble")
-      assertThat(info.setterName).isEqualTo("setDouble")
-      assertThat(info.isPrimitive).isTrue()
-      assertThat(info.sqlTypeConstant).isEqualTo("DOUBLE")
+      val codec = resolveWireCodec("float8")!!
+      assertThat(codec.read(1, false).toString()).isEqualTo("getDouble(1)")
+      assertThat(codec.read(1, true).toString()).isEqualTo("getDouble(1).takeUnless { wasNull() }")
+      assertThat(codec.write(1, CodeBlock.of("value")).toString()).isEqualTo("setDouble(1, value)")
+      assertThat(codec.writeNullable(1, CodeBlock.of("value")).toString()).isEqualTo("norm.setDouble(1, value)")
+      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.DOUBLE)")
     }
 
     @Test
     fun `bool resolves to getBoolean and setBoolean`() {
-      val info = resolveJdbcTypeInfo("bool")!!
-      assertThat(info.getterName).isEqualTo("getBoolean")
-      assertThat(info.setterName).isEqualTo("setBoolean")
-      assertThat(info.isPrimitive).isTrue()
-      assertThat(info.sqlTypeConstant).isEqualTo("BOOLEAN")
+      val codec = resolveWireCodec("bool")!!
+      assertThat(codec.read(1, false).toString()).isEqualTo("getBoolean(1)")
+      assertThat(codec.read(1, true).toString()).isEqualTo("getBoolean(1).takeUnless { wasNull() }")
+      assertThat(codec.write(1, CodeBlock.of("value")).toString()).isEqualTo("setBoolean(1, value)")
+      assertThat(codec.writeNullable(1, CodeBlock.of("value")).toString()).isEqualTo("norm.setBoolean(1, value)")
+      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.BOOLEAN)")
     }
 
     @Test
     fun `numeric resolves to getBigDecimal and setBigDecimal`() {
-      val info = resolveJdbcTypeInfo("numeric")!!
-      assertThat(info.getterName).isEqualTo("getBigDecimal")
-      assertThat(info.setterName).isEqualTo("setBigDecimal")
-      assertThat(info.isPrimitive).isFalse()
-      assertThat(info.sqlTypeConstant).isEqualTo("NUMERIC")
+      val codec = resolveWireCodec("numeric")!!
+      assertThat(codec.read(1, false).toString()).isEqualTo("getBigDecimal(1)")
+      assertThat(codec.read(1, true).toString()).isEqualTo("getBigDecimal(1)")
+      assertThat(codec.write(1, CodeBlock.of("value")).toString()).isEqualTo("setBigDecimal(1, value)")
+      assertThat(codec.writeNullable(1, CodeBlock.of("value")).toString()).isEqualTo("setBigDecimal(1, value)")
+      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.NUMERIC)")
     }
 
     @Test
     fun `jsonb resolves to getString and setObject with Types OTHER`() {
-      val info = resolveJdbcTypeInfo("jsonb")!!
-      assertThat(info.getterName).isEqualTo("getString")
+      val codec = resolveWireCodec("jsonb")!!
+      assertThat(codec.read(1, false).toString()).isEqualTo("getString(1)")
       // setObject(..., Types.OTHER) is required — Postgres JDBC rejects setString() for jsonb columns
-      assertThat(info.setterName).isEqualTo("setObject")
-      assertThat(info.isPrimitive).isFalse()
-      assertThat(info.sqlTypeConstant).isEqualTo("OTHER")
-      assertThat(info.useSqlTypeHint).isTrue()
+      assertThat(codec.write(1, CodeBlock.of("value")).toString())
+        .isEqualTo("setObject(1, value, java.sql.Types.OTHER)")
+      assertThat(codec.writeNullable(1, CodeBlock.of("value")).toString())
+        .isEqualTo("setObject(1, value, java.sql.Types.OTHER)")
+      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.OTHER)")
     }
 
     @Test
     fun `json resolves to getString and setObject with Types OTHER`() {
-      val info = resolveJdbcTypeInfo("json")!!
-      assertThat(info.getterName).isEqualTo("getString")
-      assertThat(info.setterName).isEqualTo("setObject")
-      assertThat(info.isPrimitive).isFalse()
-      assertThat(info.sqlTypeConstant).isEqualTo("OTHER")
-      assertThat(info.useSqlTypeHint).isTrue()
+      val codec = resolveWireCodec("json")!!
+      assertThat(codec.read(1, false).toString()).isEqualTo("getString(1)")
+      assertThat(codec.write(1, CodeBlock.of("value")).toString())
+        .isEqualTo("setObject(1, value, java.sql.Types.OTHER)")
+      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.OTHER)")
     }
 
     @Test
     fun `uuid resolves to getObject and setObject with a UUID class hint`() {
-      val info = resolveJdbcTypeInfo("uuid")!!
-      assertThat(info.getterName).isEqualTo("getObject")
-      assertThat(info.setterName).isEqualTo("setObject")
-      assertThat(info.isPrimitive).isFalse()
-      assertThat(info.sqlTypeConstant).isEqualTo("OTHER")
-      assertThat(info.getterClassHint).isEqualTo(ClassName("java.util", "UUID"))
+      val codec = resolveWireCodec("uuid")!!
+      assertThat(codec.read(1, false).toString()).isEqualTo("getObject(1, java.util.UUID::class.java)")
+      assertThat(codec.read(1, true).toString()).isEqualTo("getObject(1, java.util.UUID::class.java)")
+      assertThat(codec.write(1, CodeBlock.of("value")).toString()).isEqualTo("setObject(1, value)")
+      assertThat(codec.writeNullable(1, CodeBlock.of("value")).toString()).isEqualTo("setObject(1, value)")
+      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.OTHER)")
     }
 
     @Test
@@ -2184,30 +2191,82 @@ class ColumnTypeMappingTest {
       // type or a domain base. bytea is supported (see POSTGRES_BASE_TYPES) -- it used to return
       // null here, which is exactly the bug this fix closes: CREATE DOMAIN d AS bytea aborted code
       // generation entirely.
-      assertThat(resolveJdbcTypeInfo("xml")).isEqualTo(null)
+      assertThat(resolveWireCodec("xml")).isEqualTo(null)
     }
   }
 
   /**
-   * Regression coverage for the build-breaking bug: the `uuid` entry in [resolveJdbcTypeInfo] used
-   * the generic `"getObject"` getter with no [JdbcTypeInfo.getterClassHint], which generates a bare
-   * `getObject(index)` read. `java.sql.ResultSet.getObject(int)` is declared to return `Object`, so
-   * that read is statically `Any` in Kotlin no matter what concrete type pgjdbc's `PgResultSet`
-   * returns at runtime — it does not compile as an argument to `ColumnAdapter<Application,
-   * Wire>.decode`. This sweeps every entry [resolveJdbcTypeInfo] can produce so a future type added
-   * with the same mistake fails immediately, rather than surfacing only when a generated scenario
-   * happens to be compiled.
+   * Regression coverage for the build-breaking bug: the `uuid` entry in [resolveWireCodec] used
+   * the generic `"getObject"` getter with no class hint, which generates a bare `getObject(index)`
+   * read. `java.sql.ResultSet.getObject(int)` is declared to return `Object`, so that read is
+   * statically `Any` in Kotlin no matter what concrete type pgjdbc's `PgResultSet` returns at
+   * runtime — it does not compile as an argument to `ColumnAdapter<Application, Wire>.decode`.
+   * This sweeps every entry [resolveWireCodec] can produce, for both a `NOT NULL` and a nullable
+   * read, so a future type added with the same mistake fails immediately, rather than surfacing
+   * only when a generated scenario happens to be compiled.
    */
   @Nested
   inner class GetObjectReadsRequireAClassHint {
 
     @Test
-    fun `every resolveJdbcTypeInfo entry using the generic getObject getter supplies a class hint`() {
-      val entriesMissingAClassHint = POSTGRES_BASE_TYPES.keys
-        .mapNotNull { resolveJdbcTypeInfo(it) }
-        .filter { it.getterName == "getObject" && it.getterClassHint == null }
+    fun `every resolveWireCodec entry's read avoids a bare getObject`() {
+      val bareGetObjectReads = POSTGRES_BASE_TYPES.keys
+        .flatMap { key ->
+          val codec = resolveWireCodec(key)!!
+          listOf(codec.read(1, false).toString(), codec.read(1, true).toString())
+        }
+        .filter { Regex("""\bgetObject\(1\)""").containsMatchIn(it) }
 
-      assertThat(entriesMissingAClassHint).isEmpty()
+      assertThat(bareGetObjectReads).isEmpty()
+    }
+  }
+
+  /**
+   * Pins Correction 1 directly: [ScalarSqlMappable.statementAction] for a nullable plain column
+   * must keep rendering the exact shape each of the five [WireCodec] kinds rendered before the
+   * [WireCodec] refactor. Golden-file invariance alone would not catch a regression here — a
+   * scenario compiling successfully says nothing about which exact `wasNull()`/`setNull` fallback
+   * ran, only that some shape did.
+   */
+  @Nested
+  inner class NullablePlainColumnWriteShapes {
+
+    @Test
+    fun `PrimitiveCodec nullable write uses the norm set extension`() {
+      val codec = resolveWireCodec("int4")!!
+      val action = ScalarSqlMappable(codec, notNull = false).statementAction(1, CodeBlock.of("value"))
+      assertThat(action.toString()).isEqualTo("norm.setInt(1, value)")
+    }
+
+    @Test
+    fun `ObjectGetterCodec nullable write uses the plain setter`() {
+      val codec = resolveWireCodec("text")!!
+      val action = ScalarSqlMappable(codec, notNull = false).statementAction(1, CodeBlock.of("value"))
+      assertThat(action.toString()).isEqualTo("setString(1, value)")
+    }
+
+    @Test
+    fun `ClassHintedObjectCodec nullable write uses the plain setObject`() {
+      val codec = resolveWireCodec("uuid")!!
+      val action = ScalarSqlMappable(codec, notNull = false).statementAction(1, CodeBlock.of("value"))
+      assertThat(action.toString()).isEqualTo("setObject(1, value)")
+    }
+
+    @Test
+    fun `TypesOtherCodec nullable write uses setObject with Types OTHER`() {
+      val codec = resolveWireCodec("jsonb")!!
+      val action = ScalarSqlMappable(codec, notNull = false).statementAction(1, CodeBlock.of("value"))
+      assertThat(action.toString()).isEqualTo("setObject(1, value, java.sql.Types.OTHER)")
+    }
+
+    @Test
+    fun `InstantViaOffsetDateTimeCodec nullable write uses the safe-call setNull fallback`() {
+      val codec = resolveWireCodec("timestamptz")!!
+      val action = ScalarSqlMappable(codec, notNull = false).statementAction(1, CodeBlock.of("value"))
+      assertThat(action.toString()).isEqualTo(
+        "value?.let { setObject(1, java.time.OffsetDateTime.ofInstant(it, java.time.ZoneOffset.UTC)) } " +
+          "?: setNull(1, java.sql.Types.TIMESTAMP_WITH_TIMEZONE)",
+      )
     }
   }
 

@@ -10,17 +10,17 @@ import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
-import com.squareup.kotlinpoet.asTypeName
 
 /**
- * [JdbcTypeInfo] for Postgres enum types.
+ * [WireCodec] for Postgres enum types.
  *
  * Enum types require `setObject(index, value, Types.OTHER)` rather than `setString(index, value)`.
  * The Postgres JDBC driver rejects `VARCHAR` bindings for enum columns in prepared statements;
- * `Types.OTHER` bypasses driver-side type enforcement and lets Postgres coerce the string.
+ * `Types.OTHER` bypasses driver-side type enforcement and lets Postgres coerce the string. This is
+ * the same codec instance the `json`/`jsonb` rows of [POSTGRES_BASE_TYPES] use, so the binding for
+ * a plain `json`/`jsonb` column and an enum column can never drift apart.
  */
-private val ENUM_JDBC_TYPE_INFO =
-  JdbcTypeInfo("getString", "setObject", false, "OTHER", useSqlTypeHint = true, kotlinType = String::class.asTypeName())
+private val ENUM_CODEC: WireCodec = POSTGRES_BASE_TYPES.getValue("json").codec
 
 /**
  * Repository for types generated as part of query generation.
@@ -350,8 +350,8 @@ internal class TypeRepository(
    * Postgres domains (e.g., `CREATE DOMAIN email AS text`) are resolved to their base types
    * by analyzing query parameters. This method handles both standard types and domains.
    *
-   * Uses [SqlMappable.typeName] rather than [SqlMappable.klass] so that generated types
-   * (like enum classes) can provide their [TypeName] without requiring a [KClass] at generator time.
+   * Uses [SqlMappable.typeName], which generated types (like enum classes) can provide directly
+   * without needing a [kotlin.reflect.KClass] at generator time.
    *
    * Array wrapping is handled by [tryResolveStandardType] which returns an [ArrayTypeDecorator]
    * whose [SqlMappable.typeName] is already the correct parameterized array type.
@@ -411,7 +411,7 @@ internal class TypeRepository(
   ): SqlMappable {
     val applicationTypeName = parseTypeName(mapping.kotlinType)
     val adapterPropertyName = userAdapterPropertyName(mapping)
-    val jdbcTypeInfo = resolveJdbcTypeInfoForType(postgresType)
+    val codec = resolveWireCodecForType(postgresType)
       ?: error(
         "Postgres type '$postgresType' cannot be used with a custom adapter — " +
           "no JDBC type mapping is available.",
@@ -425,21 +425,21 @@ internal class TypeRepository(
         postgresTypeName = postgresType,
       )
     }
-    return AdaptedTypeSqlMappable(applicationTypeName, adapterPropertyName, notNull, jdbcTypeInfo)
+    return AdaptedTypeSqlMappable(applicationTypeName, adapterPropertyName, notNull, codec)
   }
 
   /**
-   * Resolves [JdbcTypeInfo] for any Postgres type, chaining through enums and domains as needed.
+   * Resolves a [WireCodec] for any Postgres type, chaining through enums and domains as needed.
    *
    * - Enum types → String (VARCHAR)
    * - Domain types → chains to the domain's base type
-   * - Standard types → uses [resolveJdbcTypeInfo]
+   * - Standard types → uses [resolveWireCodec]
    */
-  private fun resolveJdbcTypeInfoForType(postgresType: String): JdbcTypeInfo? {
-    if (postgresType in enumsByName) return ENUM_JDBC_TYPE_INFO
+  private fun resolveWireCodecForType(postgresType: String): WireCodec? {
+    if (postgresType in enumsByName) return ENUM_CODEC
     val domain = domainsByName[postgresType]
-    if (domain != null) return resolveJdbcTypeInfoForType(domain.baseType)
-    return resolveJdbcTypeInfo(postgresType)
+    if (domain != null) return resolveWireCodecForType(domain.baseType)
+    return resolveWireCodec(postgresType)
   }
 
   /**
@@ -463,7 +463,7 @@ internal class TypeRepository(
         postgresTypeName = typeName,
       )
     }
-    return AdaptedTypeSqlMappable(enumClassName, propertyName, notNull, ENUM_JDBC_TYPE_INFO)
+    return AdaptedTypeSqlMappable(enumClassName, propertyName, notNull, ENUM_CODEC)
   }
 
   /** Returns the [SqlMappable] for a standard Postgres type, or `null` if not recognized. */
@@ -481,7 +481,7 @@ internal class TypeRepository(
     // 4294967295 is rejected by Postgres with "value out of range". Callers must keep bound values
     // within `0..4294967295` themselves; this mapping does not validate that range.
     if (typeName == "oid" || typeName == "pg_catalog.oid") {
-      val elementType = JdbcTypes.LONG.decorateForNullable(notNull = false)
+      val elementType = ScalarSqlMappable(POSTGRES_BASE_TYPES.getValue("int8").codec, notNull = false)
       val arrayTypeName = ARRAY.parameterizedBy(elementType.typeName.copy(nullable = true))
         .copy(nullable = !notNull)
       return ArrayTypeDecorator(elementType, arrayTypeName, postgresArrayElementTypeName(typeName))
@@ -489,7 +489,7 @@ internal class TypeRepository(
 
     // Postgres array elements are always nullable regardless of the column's NOT NULL constraint,
     // so the element read must be the nullable form: getInt would turn a NULL element into 0, and
-    // InstantSqlMappable's non-null read would throw NullPointerException on one.
+    // InstantViaOffsetDateTimeCodec's non-null read would throw NullPointerException on one.
     val elementType = resolveBaseType(typeName, notNull = false) ?: return null
 
     val arrayTypeName = ARRAY.parameterizedBy(elementType.typeName.copy(nullable = true))
@@ -503,7 +503,7 @@ internal class TypeRepository(
    * For scalar columns, returns [AdaptedTypeSqlMappable]. For array columns (e.g., `email[]`),
    * returns [AdaptedArrayTypeSqlMappable] which generates per-element adapter decode/encode calls.
    *
-   * [resolveJdbcTypeInfo] and [resolveBaseType] both read [POSTGRES_BASE_TYPES], so `error` below
+   * [resolveWireCodec] and [resolveBaseType] both read [POSTGRES_BASE_TYPES], so `error` below
    * is unreachable, by construction, for a domain over any base type that map supports (e.g.
    * `timestamptz` or `uuid`) — see [domainKotlinBaseType]'s KDoc for the (intentional) case where
    * it remains reachable.
@@ -514,7 +514,7 @@ internal class TypeRepository(
 
     val domainClassName = ClassName(packageName, domain.name.snakeToCamelCase().titleCase())
     val propertyName = domainAdapterPropertyName(domain)
-    val jdbcTypeInfo = resolveJdbcTypeInfo(domain.baseType)
+    val codec = resolveWireCodec(domain.baseType)
       ?: error("Domain ${domain.name} has unsupported base type: ${domain.baseType}")
 
     if (isArray) {
@@ -525,7 +525,7 @@ internal class TypeRepository(
         postgresTypeName = typeName,
       )
     }
-    return AdaptedTypeSqlMappable(domainClassName, propertyName, notNull, jdbcTypeInfo)
+    return AdaptedTypeSqlMappable(domainClassName, propertyName, notNull, codec)
   }
 
   /**
@@ -537,5 +537,5 @@ internal class TypeRepository(
    * each.
    */
   private fun resolveBaseType(typeName: String, notNull: Boolean): SqlMappable? =
-    POSTGRES_BASE_TYPES[typeName.removePrefix("pg_catalog.")]?.mappable?.invoke(notNull)
+    POSTGRES_BASE_TYPES[typeName.removePrefix("pg_catalog.")]?.let { ScalarSqlMappable(it.codec, notNull) }
 }

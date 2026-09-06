@@ -7,19 +7,10 @@ import com.squareup.kotlinpoet.MemberName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.asTypeName
-import java.math.BigDecimal
-import java.sql.Blob
-import java.sql.ResultSet
-import java.sql.Statement
 import java.sql.Types
 import java.time.Instant
-import java.time.LocalDate
-import java.time.LocalDateTime
-import java.time.LocalTime
 import java.time.OffsetDateTime
-import java.time.OffsetTime
 import java.time.ZoneOffset
-import kotlin.reflect.KClass
 
 /**
  * Column index of the `VALUE` column in the element `ResultSet` returned by
@@ -33,68 +24,245 @@ private const val ELEMENT_VALUE_COLUMN_INDEX = 2
 internal interface SqlMappable {
 
   /**
-   * Kotlin [KClass] for the data.
-   */
-  val klass: KClass<*>
-
-  /**
    * KotlinPoet [TypeName] for the data.
    */
   val typeName: TypeName
-    get() = klass.asTypeName()
 
   /**
-   * Receiver action to call on a [Statement] when mapping the data from Java to SQL.
+   * Receiver action to call on a [Statement][java.sql.Statement] when mapping the data from Java
+   * to SQL.
    */
   val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
 
   /**
-   * Receiver action to call on a [ResultSet] when mapping the data from SQL to Java.
+   * Receiver action to call on a [ResultSet][java.sql.ResultSet] when mapping the data from SQL
+   * to Java.
    */
   val resultSetAction: (index: Int) -> CodeBlock
 }
 
 /**
- * Types with first-class support in JDBC.
+ * Wire-level JDBC access for a Postgres base type: which `ResultSet`/`PreparedStatement` methods
+ * read and write it, and the Kotlin type JDBC delivers it as. Used both for a plain (adapterless)
+ * column ([ScalarSqlMappable]) and for the same type behind a `norm.ColumnAdapter`
+ * ([AdaptedTypeSqlMappable]) — a domain, an enum, or a user-configured type mapping.
  */
-internal enum class JdbcTypes(override val klass: KClass<*>) : SqlMappable {
-  BOOLEAN(Boolean::class),
-  SHORT(Short::class),
-  INT(Int::class),
-  LONG(Long::class),
-  FLOAT(Float::class),
-  DOUBLE(Double::class),
-  BIG_DECIMAL(BigDecimal::class),
-  STRING(String::class),
-  BLOB(Blob::class),
-  ;
-
-  override val statementAction: (Int, CodeBlock) -> CodeBlock =
-    { index, parameterName -> CodeBlock.of("%N(%L, %L)", "set${klass.simpleName}", index, parameterName) }
-  override val resultSetAction: (Int) -> CodeBlock =
-    { index -> CodeBlock.of("%N(%L)", "get${klass.simpleName}", index) }
+internal interface WireCodec {
 
   /**
-   * See [NullablePrimitiveDecorator].
+   * The non-null Kotlin type JDBC delivers this value as (e.g. `String` for text/varchar, `Int`
+   * for int4).
    */
-  fun decorateForNullable(notNull: Boolean): SqlMappable = if (notNull) this else NullablePrimitiveDecorator(this)
+  val kotlinType: TypeName
+
+  /**
+   * Reads the value at [index]. When [nullable], the rendered expression itself handles a SQL
+   * `NULL` (returning Kotlin `null`); when not, it assumes the column is `NOT NULL`.
+   */
+  fun read(index: Int, nullable: Boolean): CodeBlock
+
+  /**
+   * Writes a non-null [value] at [index].
+   */
+  fun write(index: Int, value: CodeBlock): CodeBlock
+
+  /**
+   * Writes SQL `NULL` at [index].
+   */
+  fun writeNull(index: Int): CodeBlock
+
+  /**
+   * Writes a value at [index] that may be `null` at runtime.
+   *
+   * Defaults to [write]: most codecs' JDBC setter already accepts and forwards a `null` argument
+   * correctly (`setObject`, or a plain named setter whose Postgres-side coercion handles `NULL`),
+   * so no extra branching is needed. [PrimitiveCodec] overrides this — a JVM primitive setter
+   * cannot accept `null` at all — and is the only override; changing any other codec's default
+   * here would regenerate goldens for `text`, `numeric`, `oid`, `bytea`, `date`, `time`, `timetz`,
+   * `timestamp`, `uuid`, `json`, and `jsonb` plain nullable columns.
+   */
+  fun writeNullable(index: Int, value: CodeBlock): CodeBlock = write(index, value)
 }
 
 /**
- * Decorates a [SqlMappable] for a primitive value with nullability information.
+ * [WireCodec] for a JVM primitive delivered through a named getter/setter pair (`getInt`/`setInt`,
+ * etc.). JDBC getters for primitives return `0`/`false` rather than `null` for a SQL `NULL`, so a
+ * nullable read needs a `wasNull()` check; a JVM primitive setter cannot accept `null` at all, so a
+ * nullable write goes through a `norm.set<X>` runtime extension (which accepts a nullable argument
+ * and calls `setNull` itself when it is `null`) instead of the plain setter.
+ *
+ * @param methodName The JDBC method name suffix shared by the getter/setter pair (e.g. `"Int"` for
+ *   `getInt`/`setInt`).
+ * @param sqlTypeConstant The field name on [java.sql.Types] for `setNull()` calls (e.g.
+ *   `"INTEGER"`).
  */
-internal class NullablePrimitiveDecorator(private val delegate: JdbcTypes) : SqlMappable {
-  override val klass: KClass<*>
-    get() = delegate.klass
+internal class PrimitiveCodec(
+  override val kotlinType: TypeName,
+  private val methodName: String,
+  private val sqlTypeConstant: String,
+) : WireCodec {
+
+  override fun read(index: Int, nullable: Boolean): CodeBlock {
+    val get = CodeBlock.of("%N(%L)", "get$methodName", index)
+    return if (nullable) CodeBlock.of("%L.takeUnless { wasNull() }", get) else get
+  }
+
+  override fun write(index: Int, value: CodeBlock): CodeBlock =
+    CodeBlock.of("%N(%L, %L)", "set$methodName", index, value)
+
+  override fun writeNull(index: Int): CodeBlock =
+    CodeBlock.of("setNull(%L, %T.%N)", index, Types::class, sqlTypeConstant)
+
+  override fun writeNullable(index: Int, value: CodeBlock): CodeBlock {
+    val member = MemberName("norm", "set$methodName", isExtension = true)
+    return CodeBlock.of("%M(%L, %L)", member, index, value)
+  }
+}
+
+/**
+ * [WireCodec] for a non-primitive type delivered through a named getter/setter pair
+ * (`getString`/`setString`, `getBigDecimal`/`setBigDecimal`, `getBlob`/`setBlob`,
+ * `getBytes`/`setBytes`) whose declared return/parameter type is already the wire type, and whose
+ * setter already accepts and forwards `null` correctly. Neither read nor write branches on
+ * nullability: the getter returns Kotlin `null` for a SQL `NULL` without a `wasNull()` check, and
+ * the setter accepts a nullable argument directly.
+ *
+ * @param sqlTypeConstant The field name on [java.sql.Types] for `setNull()` calls (e.g.
+ *   `"VARCHAR"`).
+ */
+internal class ObjectGetterCodec(
+  override val kotlinType: TypeName,
+  private val getterName: String,
+  private val setterName: String,
+  private val sqlTypeConstant: String,
+) : WireCodec {
+
+  override fun read(index: Int, nullable: Boolean): CodeBlock = CodeBlock.of("%N(%L)", getterName, index)
+
+  override fun write(index: Int, value: CodeBlock): CodeBlock = CodeBlock.of("%N(%L, %L)", setterName, index, value)
+
+  override fun writeNull(index: Int): CodeBlock =
+    CodeBlock.of("setNull(%L, %T.%N)", index, Types::class, sqlTypeConstant)
+}
+
+/**
+ * [WireCodec] for a type bound with `setObject(index, value, Types.OTHER)` rather than a named
+ * setter — required for Postgres custom/coercion-sensitive types (`json`, `jsonb`, enums) where
+ * the JDBC driver refuses to coerce a `VARCHAR` binding; `Types.OTHER` bypasses the driver's type
+ * enforcement and lets Postgres perform the coercion itself. `setObject(index, null, targetSqlType)`
+ * already delegates to `setNull(index, targetSqlType)`, so, like [ObjectGetterCodec], neither read
+ * nor write branches on nullability.
+ *
+ * @param getterName The `ResultSet` getter method name (always `"getString"` for this codec's
+ *   current uses).
+ * @param sqlTypeConstant The field name on [java.sql.Types] used both for the `setObject` hint and
+ *   for `setNull()` calls (always `"OTHER"` for this codec's current uses).
+ */
+internal class TypesOtherCodec(
+  override val kotlinType: TypeName,
+  private val getterName: String,
+  private val sqlTypeConstant: String,
+) : WireCodec {
+
+  override fun read(index: Int, nullable: Boolean): CodeBlock = CodeBlock.of("%N(%L)", getterName, index)
+
+  override fun write(index: Int, value: CodeBlock): CodeBlock =
+    CodeBlock.of("setObject(%L, %L, %T.%N)", index, value, Types::class, sqlTypeConstant)
+
+  override fun writeNull(index: Int): CodeBlock =
+    CodeBlock.of("setNull(%L, %T.%N)", index, Types::class, sqlTypeConstant)
+}
+
+/**
+ * [WireCodec] for a type whose read needs the class-qualified `getObject(index, X::class.java)`
+ * overload rather than a named getter — required whenever the wire type has no dedicated JDBC
+ * getter: `java.sql.ResultSet.getObject(int)` is declared to return `Object`, so a bare
+ * `getObject(index)` call is statically `Any` in Kotlin no matter what concrete type the driver
+ * returns at runtime. Covers the `java.time` types (`LocalDate`, `LocalTime`, `OffsetTime`,
+ * `LocalDateTime`), where pgjdbc's plain `getObject(int)` returns the legacy
+ * `java.sql.Date`/`Time`/`Timestamp` even at runtime, and `uuid`, where pgjdbc's plain
+ * `getObject(int)` does return a `java.util.UUID` at runtime (`PgResultSet.internalGetObject`
+ * special-cases the Postgres `uuid` type by name) but the static type is still `Any` — the class
+ * hint is required in both cases, for different reasons (pgjdbc 42.7.13's
+ * `PgResultSet.getObject(int, Class)` special-cases each of these classes explicitly).
+ *
+ * The write side needs no such qualification: `PgPreparedStatement.setObject(int, Object)` already
+ * dispatches on the runtime type of a `LocalDate`/`LocalTime`/`OffsetTime`/`LocalDateTime`/`UUID`
+ * argument directly (pgjdbc 42.7.13's source), so `write` is a plain `setObject(index, value)`.
+ * Like [ObjectGetterCodec], neither read nor write branches on nullability.
+ *
+ * @param getterClassHint The class passed to `getObject(index, X::class.java)`; also this codec's
+ *   [kotlinType], since the wire and Kotlin representations are the same type for every use of
+ *   this codec.
+ * @param sqlTypeConstant The field name on [java.sql.Types] for `setNull()` calls (e.g. `"DATE"`,
+ *   `"OTHER"` for `uuid`).
+ */
+internal class ClassHintedObjectCodec(private val getterClassHint: ClassName, private val sqlTypeConstant: String) :
+  WireCodec {
+
+  override val kotlinType: TypeName = getterClassHint
+
+  override fun read(index: Int, nullable: Boolean): CodeBlock =
+    CodeBlock.of("getObject(%L, %T::class.java)", index, getterClassHint)
+
+  override fun write(index: Int, value: CodeBlock): CodeBlock = CodeBlock.of("setObject(%L, %L)", index, value)
+
+  override fun writeNull(index: Int): CodeBlock =
+    CodeBlock.of("setNull(%L, %T.%N)", index, Types::class, sqlTypeConstant)
+}
+
+/**
+ * [WireCodec] for `timestamptz`, whose Kotlin representation ([Instant]) differs from every
+ * `ResultSet`/`PreparedStatement` call's own wire representation ([OffsetDateTime]) — every other
+ * codec's wire and Kotlin representations are the same type.
+ *
+ * pgjdbc does not support `getObject(i, Instant::class.java)`, so reads go through
+ * [OffsetDateTime] and convert via `.toInstant()`. Writes convert via
+ * `OffsetDateTime.ofInstant(value, ZoneOffset.UTC)` before binding.
+ *
+ * Unlike [ClassHintedObjectCodec], this requires nullable awareness on both sides: the `.toInstant()`
+ * chain on a `null` [OffsetDateTime] read would NPE unless guarded by a safe call, and the JVM
+ * `OffsetDateTime.ofInstant(value, ...)` call would NPE on a `null` [Instant] write unless it takes
+ * the `writeNullable` `?.let` branch instead.
+ */
+internal object InstantViaOffsetDateTimeCodec : WireCodec {
+
+  override val kotlinType: TypeName = Instant::class.asTypeName()
+
+  override fun read(index: Int, nullable: Boolean): CodeBlock {
+    val raw = CodeBlock.of("getObject(%L, %T::class.java)", index, OffsetDateTime::class)
+    return if (nullable) CodeBlock.of("%L?.toInstant()", raw) else CodeBlock.of("%L.toInstant()", raw)
+  }
+
+  override fun write(index: Int, value: CodeBlock): CodeBlock =
+    CodeBlock.of("setObject(%L, %T.ofInstant(%L, %T.UTC))", index, OffsetDateTime::class, value, ZoneOffset::class)
+
+  override fun writeNull(index: Int): CodeBlock =
+    CodeBlock.of("setNull(%L, %T.TIMESTAMP_WITH_TIMEZONE)", index, Types::class)
+
+  override fun writeNullable(index: Int, value: CodeBlock): CodeBlock =
+    CodeBlock.of("%L?.let { %L } ?: %L", value, write(index, CodeBlock.of("it")), writeNull(index))
+}
+
+/**
+ * [SqlMappable] for a plain (adapterless) column of a Postgres base type, built from its
+ * [WireCodec].
+ *
+ * @param notNull Whether the column is `NOT NULL`. Controls [typeName] nullability and which of
+ *   [WireCodec.write]/[WireCodec.writeNullable] the write side uses.
+ */
+internal class ScalarSqlMappable(private val codec: WireCodec, private val notNull: Boolean) : SqlMappable {
+
   override val typeName: TypeName
-    get() = delegate.typeName.copy(true)
+    get() = codec.kotlinType.copy(nullable = !notNull)
+
   override val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
     get() = { index, parameterName ->
-      val member = MemberName("norm", "set${klass.simpleName}", isExtension = true)
-      CodeBlock.of("%M(%L, %L)", member, index, parameterName)
+      if (notNull) codec.write(index, parameterName) else codec.writeNullable(index, parameterName)
     }
+
   override val resultSetAction: (index: Int) -> CodeBlock
-    get() = { CodeBlock.of("%L.takeUnless { wasNull() }", delegate.resultSetAction(it)) }
+    get() = { index -> codec.read(index, !notNull) }
 }
 
 /**
@@ -121,9 +289,6 @@ internal class ArrayTypeDecorator(
 
   private val toSqlArrayMember = MemberName("norm", "toSqlArray", isExtension = true)
   private val mapElementsMember = MemberName("norm", "mapElements", isExtension = true)
-
-  override val klass: KClass<*>
-    get() = delegate.klass
 
   override val typeName: TypeName
     get() = arrayTypeName
@@ -176,203 +341,13 @@ internal class ArrayTypeDecorator(
 }
 
 /**
- * Types with support in the Postgres JDBC driver.
- */
-internal enum class PostgresSupportedTypes(
-  override val klass: KClass<*>,
-  override val statementAction: (Int, CodeBlock) -> CodeBlock,
-  override val resultSetAction: (index: Int) -> CodeBlock,
-) : SqlMappable {
-  UUID(
-    java.util.UUID::class,
-    { index, parameterName -> CodeBlock.of("setObject(%L, %L)", index, parameterName) },
-    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, java.util.UUID::class) },
-  ),
-  LOCAL_DATE(
-    LocalDate::class,
-    { index, parameterName -> CodeBlock.of("setObject(%L, %L)", index, parameterName) },
-    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, LocalDate::class) },
-  ),
-  LOCAL_TIME(
-    LocalTime::class,
-    { index, parameterName -> CodeBlock.of("setObject(%L, %L)", index, parameterName) },
-    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, LocalTime::class) },
-  ),
-  OFFSET_TIME(
-    OffsetTime::class,
-    { index, parameterName -> CodeBlock.of("setObject(%L, %L)", index, parameterName) },
-    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, OffsetTime::class) },
-  ),
-  LOCAL_DATE_TIME(
-    LocalDateTime::class,
-    { index, parameterName -> CodeBlock.of("setObject(%L, %L)", index, parameterName) },
-    { index -> CodeBlock.of("getObject(%L, %T::class.java)", index, LocalDateTime::class) },
-  ),
-  BYTE_ARRAY(
-    ByteArray::class,
-    { index, parameterName -> CodeBlock.of("setBytes(%L, %L)", index, parameterName) },
-    { index -> CodeBlock.of("getBytes(%L)", index) },
-  ),
-}
-
-/**
- * [SqlMappable] for `timestamptz` columns mapped to [Instant].
- *
- * pgjdbc does not support `getObject(i, Instant::class.java)`, so reads go through
- * [OffsetDateTime] and convert via `toInstant()`. Writes convert via
- * `OffsetDateTime.ofInstant(value, ZoneOffset.UTC)`.
- *
- * Unlike [PostgresSupportedTypes] entries, this requires nullable awareness because the
- * `.toInstant()` chain on a null [OffsetDateTime] would NPE. Other [PostgresSupportedTypes]
- * entries return Java platform types directly, so null propagates naturally.
- */
-internal class InstantSqlMappable(private val notNull: Boolean) : SqlMappable {
-
-  override val klass: KClass<*> = Instant::class
-
-  override val typeName: TypeName
-    get() = klass.asTypeName().copy(nullable = !notNull)
-
-  override val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
-    get() = if (notNull) {
-      { index, parameterName ->
-        CodeBlock.of(
-          "setObject(%L, %T.ofInstant(%L, %T.UTC))",
-          index,
-          OffsetDateTime::class,
-          parameterName,
-          ZoneOffset::class,
-        )
-      }
-    } else {
-      { index, parameterName ->
-        CodeBlock.of(
-          "%L?.let { setObject(%L, %T.ofInstant(it, %T.UTC)) } ?: setNull(%L, %T.TIMESTAMP_WITH_TIMEZONE)",
-          parameterName,
-          index,
-          OffsetDateTime::class,
-          ZoneOffset::class,
-          index,
-          Types::class,
-        )
-      }
-    }
-
-  override val resultSetAction: (index: Int) -> CodeBlock
-    get() = if (notNull) {
-      { index ->
-        CodeBlock.of(
-          "getObject(%L, %T::class.java).toInstant()",
-          index,
-          OffsetDateTime::class,
-        )
-      }
-    } else {
-      { index ->
-        CodeBlock.of(
-          "getObject(%L, %T::class.java)?.toInstant()",
-          index,
-          OffsetDateTime::class,
-        )
-      }
-    }
-}
-
-/**
- * [SqlMappable] for plain (adapterless) `json` and `jsonb` columns.
- *
- * The Postgres JDBC driver rejects `setString()` for both types in prepared statements
- * (`column "..." is of type jsonb but expression is of type character varying`), exactly as it does
- * for enum columns. Binding with `setObject(index, value, Types.OTHER)` sends the value with an
- * unspecified OID and lets Postgres perform the coercion. `json` and `jsonb` differ only in storage
- * and in what Postgres preserves on the way in, not in how a parameter is bound or read, so both
- * share this mapping.
- *
- * Unlike [InstantSqlMappable], the write path does not branch on nullability: pgjdbc's
- * `setObject(index, null, targetSqlType)` delegates to `setNull(index, targetSqlType)`, so one
- * code path covers both cases.
- *
- * Reads use `getString`, which works for both types and returns `null` for SQL `NULL`.
- *
- * Keep in sync with the `"json"` and `"jsonb"` entries in [resolveJdbcTypeInfo], which define the
- * same binding for the adapter path (user-configured `json`/`jsonb` type mappings and domains built
- * on them).
- *
- * @param notNull Whether the column is `NOT NULL`. Affects [typeName] nullability only.
- */
-internal class JsonSqlMappable(private val notNull: Boolean) : SqlMappable {
-
-  override val klass: KClass<*> = String::class
-
-  override val typeName: TypeName
-    get() = klass.asTypeName().copy(nullable = !notNull)
-
-  override val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
-    get() = { index, parameterName ->
-      CodeBlock.of("setObject(%L, %L, %T.OTHER)", index, parameterName, Types::class)
-    }
-
-  override val resultSetAction: (index: Int) -> CodeBlock
-    get() = { index -> CodeBlock.of("getString(%L)", index) }
-}
-
-/**
- * JDBC method metadata for a type's wire representation, used to generate the correct
- * `ResultSet` and `PreparedStatement` calls for reading and writing values through an adapter.
- *
- * @property getterName The `ResultSet` getter method name (e.g., `"getString"`, `"getInt"`).
- * @property setterName The `PreparedStatement` setter method name (e.g., `"setString"`, `"setInt"`).
- * @property isPrimitive Whether the JDBC getter returns a JVM primitive (`true` for `Int`, `Short`,
- *   `Long`, `Float`, `Double`, `Boolean`). Primitives require a `wasNull()` check for nullable columns
- *   because JDBC returns `0`/`false` instead of `null`.
- * @property sqlTypeConstant The field name on [java.sql.Types] for `setNull()` calls (e.g., `"VARCHAR"`, `"INTEGER"`).
- * @property useSqlTypeHint When `true`, the setter is generated as `setObject(index, value, Types.sqlTypeConstant)`
- *   instead of `setterName(index, value)`. Required for Postgres custom types (enums) where the JDBC driver
- *   refuses to coerce a `VARCHAR` binding — passing `Types.OTHER` bypasses the driver's type enforcement
- *   and lets Postgres perform the coercion itself.
- * @property kotlinType The KotlinPoet [TypeName] for the Kotlin type that JDBC delivers this value as
- *   (e.g., `String` for text/varchar, `Int` for int4). This is the wire type used for adapter type parameters
- *   and domain value class properties.
- * @property getterClassHint When non-`null`, the read is generated as `getObject(index, X::class.java)`
- *   (where `X` is [getterClassHint]) instead of `getterName(index)`. Required whenever [getterName] is
- *   the generic `"getObject"`: `java.sql.ResultSet.getObject(int)` is declared to return `Object`, so a
- *   bare `getObject(index)` call is statically `Any` in Kotlin no matter what concrete type the driver
- *   returns at runtime, and that `Any` cannot be passed to a `ColumnAdapter<Application, Wire>.decode`
- *   expecting [kotlinType]. This covers both the `java.time` types (`LocalDate`, `LocalTime`,
- *   `OffsetTime`, `LocalDateTime`, `OffsetDateTime`), where pgjdbc's plain `getObject(int)` returns the
- *   legacy `java.sql.Date`/`Time`/`Timestamp` even at runtime, and `uuid`, where pgjdbc's plain
- *   `getObject(int)` does return a `java.util.UUID` at runtime (`PgResultSet.internalGetObject`
- *   special-cases the Postgres `uuid` type by name) but the static type is still `Any` — the class hint
- *   is required in both cases, for different reasons (pgjdbc 42.7.13's
- *   `PgResultSet.getObject(int, Class)` special-cases each of these classes explicitly).
- *   `null` only for types read via a named, non-generic getter (e.g. `getString`, `getBlob`, `getBytes`),
- *   whose declared return type already is [kotlinType].
- * @property convertOffsetDateTimeToInstant When `true`, the wire value read via [getterClassHint]
- *   (always [OffsetDateTime] in this case) is converted with `.toInstant()` after reading, and a
- *   [kotlinType] ([Instant]) value is converted back with `OffsetDateTime.ofInstant(value,
- *   ZoneOffset.UTC)` before writing. Set only for `timestamptz`, whose wire representation
- *   ([OffsetDateTime]) differs from the Kotlin representation the non-domain scalar path uses
- *   ([Instant], see [InstantSqlMappable]) — every other type's wire and Kotlin representations are
- *   the same type, so this is `false` for them.
- */
-internal data class JdbcTypeInfo(
-  val getterName: String,
-  val setterName: String,
-  val isPrimitive: Boolean,
-  val sqlTypeConstant: String,
-  val useSqlTypeHint: Boolean = false,
-  val kotlinType: TypeName,
-  val getterClassHint: ClassName? = null,
-  val convertOffsetDateTimeToInstant: Boolean = false,
-)
-
-/**
  * [SqlMappable] for a column that uses a `norm.ColumnAdapter` for encode/decode.
  *
  * Covers auto-generated adapters (enums, domains) and user-configured adapters. The adapter's
- * wire type is described by [jdbcTypeInfo], which determines the JDBC getter/setter methods.
+ * wire type is described by [codec], which determines the JDBC getter/setter methods.
  *
- * Generated types don't exist at generator time, so [klass] is not available — use [typeName] instead.
+ * Generated types don't exist at generator time, so there is no [kotlin.reflect.KClass] to expose
+ * — [typeName] is the only way to describe the type.
  *
  * The generated read/write code references an adapter property (e.g., `emailAdapter`) on the enclosing
  * `PostgresQueries` class, which is visible inside the `ResultSet`/`PreparedStatement` receiver lambdas
@@ -382,141 +357,47 @@ internal data class JdbcTypeInfo(
  *   or a parameterized type like `kotlin.collections.Map<kotlin.String, kotlin.Any?>`).
  * @param adapterPropertyName The property name on `PostgresQueries` for the adapter (e.g., `"emailAdapter"`).
  * @param notNull Whether the column is `NOT NULL`.
- * @param jdbcTypeInfo JDBC method info for the adapter's wire type.
+ * @param codec Wire-level access for the adapter's wire type.
  */
 internal class AdaptedTypeSqlMappable(
   private val applicationTypeName: TypeName,
   private val adapterPropertyName: String,
   private val notNull: Boolean,
-  private val jdbcTypeInfo: JdbcTypeInfo,
+  private val codec: WireCodec,
 ) : SqlMappable {
-
-  override val klass: KClass<*>
-    get() = throw UnsupportedOperationException(
-      "Generated type $applicationTypeName has no KClass at generator time. Use typeName instead.",
-    )
 
   override val typeName: TypeName
     get() = applicationTypeName
 
   override val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
     get() = if (notNull) {
-      if (jdbcTypeInfo.useSqlTypeHint) {
-        { index, parameterName ->
-          CodeBlock.of(
-            "setObject(%L, %N.encode(%L), %T.%N)",
-            index,
-            adapterPropertyName,
-            parameterName,
-            Types::class,
-            jdbcTypeInfo.sqlTypeConstant,
-          )
-        }
-      } else {
-        { index, parameterName ->
-          CodeBlock.of(
-            "%N(%L, %L)",
-            jdbcTypeInfo.setterName,
-            index,
-            encodedValueExpression(parameterName),
-          )
-        }
-      }
+      { index, parameterName -> codec.write(index, encode(parameterName)) }
     } else {
-      if (jdbcTypeInfo.useSqlTypeHint) {
-        { index, parameterName ->
-          CodeBlock.of(
-            "%L?.let { setObject(%L, %N.encode(it), %T.%N) } ?: setNull(%L, %T.%N)",
-            parameterName,
-            index,
-            adapterPropertyName,
-            Types::class,
-            jdbcTypeInfo.sqlTypeConstant,
-            index,
-            Types::class,
-            jdbcTypeInfo.sqlTypeConstant,
-          )
-        }
-      } else {
-        { index, parameterName ->
-          CodeBlock.of(
-            "%L?.let { %N(%L, %L) } ?: setNull(%L, %T.%N)",
-            parameterName,
-            jdbcTypeInfo.setterName,
-            index,
-            encodedValueExpression(CodeBlock.of("it")),
-            index,
-            Types::class,
-            jdbcTypeInfo.sqlTypeConstant,
-          )
-        }
+      { index, parameterName ->
+        CodeBlock.of(
+          "%L?.let { %L } ?: %L",
+          parameterName,
+          codec.write(index, encode(CodeBlock.of("it"))),
+          codec.writeNull(index),
+        )
       }
     }
 
   override val resultSetAction: (index: Int) -> CodeBlock
     get() = if (notNull) {
-      { index -> CodeBlock.of("%N.decode(%L)", adapterPropertyName, readExpression(index, nullable = false)) }
-    } else if (jdbcTypeInfo.isPrimitive) {
-      { index ->
-        CodeBlock.of(
-          "%L.takeUnless { wasNull() }?.let { %N.decode(it) }",
-          rawReadExpression(index),
-          adapterPropertyName,
-        )
-      }
+      { index -> CodeBlock.of("%N.decode(%L)", adapterPropertyName, codec.read(index, false)) }
     } else {
       { index ->
-        CodeBlock.of(
-          "%L?.let { %N.decode(it) }",
-          readExpression(index, nullable = true),
-          adapterPropertyName,
-        )
+        CodeBlock.of("%L?.let { %N.decode(it) }", codec.read(index, true), adapterPropertyName)
       }
     }
 
   /**
    * The encoded, wire-ready form of [valueExpression] (an already-non-null Kotlin value of
-   * [applicationTypeName]'s underlying domain/adapter base type): `adapter.encode(value)`, or — only
-   * when [JdbcTypeInfo.convertOffsetDateTimeToInstant] is set — that same encode call converted from
-   * [Instant] to [OffsetDateTime], since `timestamptz`'s wire representation is [OffsetDateTime] but
-   * its Kotlin representation ([kotlinType][JdbcTypeInfo.kotlinType]) is [Instant]. See
-   * [JdbcTypeInfo.convertOffsetDateTimeToInstant]'s KDoc.
+   * [applicationTypeName]'s underlying domain/adapter base type): `adapter.encode(value)`.
    */
-  private fun encodedValueExpression(valueExpression: CodeBlock): CodeBlock {
-    val encoded = CodeBlock.of("%N.encode(%L)", adapterPropertyName, valueExpression)
-    return if (jdbcTypeInfo.convertOffsetDateTimeToInstant) {
-      CodeBlock.of("%T.ofInstant(%L, %T.UTC)", OffsetDateTime::class, encoded, ZoneOffset::class)
-    } else {
-      encoded
-    }
-  }
-
-  /**
-   * The raw JDBC read at [index]: `getterName(index)`, or — when [JdbcTypeInfo.getterClassHint] is
-   * set — `getObject(index, X::class.java)`. See [JdbcTypeInfo.getterClassHint]'s KDoc for why some
-   * types need the class-qualified form.
-   */
-  private fun rawReadExpression(index: Int): CodeBlock = if (jdbcTypeInfo.getterClassHint != null) {
-    CodeBlock.of("%N(%L, %T::class.java)", jdbcTypeInfo.getterName, index, jdbcTypeInfo.getterClassHint)
-  } else {
-    CodeBlock.of("%N(%L)", jdbcTypeInfo.getterName, index)
-  }
-
-  /**
-   * [rawReadExpression] converted to [JdbcTypeInfo.kotlinType] — only [JdbcTypeInfo.convertOffsetDateTimeToInstant]
-   * types need a conversion, applied as a safe call (`?.toInstant()`) when [nullable] so a `NULL`
-   * column value stays `null` rather than throwing on the safe-call receiver.
-   */
-  private fun readExpression(index: Int, nullable: Boolean): CodeBlock {
-    val raw = rawReadExpression(index)
-    return if (!jdbcTypeInfo.convertOffsetDateTimeToInstant) {
-      raw
-    } else if (nullable) {
-      CodeBlock.of("%L?.toInstant()", raw)
-    } else {
-      CodeBlock.of("%L.toInstant()", raw)
-    }
-  }
+  private fun encode(valueExpression: CodeBlock): CodeBlock =
+    CodeBlock.of("%N.encode(%L)", adapterPropertyName, valueExpression)
 }
 
 /**
@@ -550,11 +431,6 @@ internal class AdaptedArrayTypeSqlMappable(
 
   private val decodeArrayMember = MemberName("norm", "decodeArray", isExtension = true)
   private val encodeToSqlArrayMember = MemberName("norm", "encodeToSqlArray", isExtension = true)
-
-  override val klass: KClass<*>
-    get() = throw UnsupportedOperationException(
-      "Generated array type Array<$applicationTypeName?> has no KClass at generator time. Use typeName instead.",
-    )
 
   override val typeName: TypeName
     get() = ARRAY.parameterizedBy(applicationTypeName.copy(nullable = true))

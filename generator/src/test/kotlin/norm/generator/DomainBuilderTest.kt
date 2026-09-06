@@ -122,7 +122,7 @@ class DomainBuilderTest {
     @Test
     fun `json domain generates a String value class`() {
       // Postgres accepts CREATE DOMAIN d AS json, so json must be usable as a domain base. The
-      // Types.OTHER binding lives in the JdbcTypeInfo, not in the wrapped Kotlin type.
+      // Types.OTHER binding lives in the WireCodec, not in the wrapped Kotlin type.
       val domain = Domain(name = "json_doc", baseType = "json", comment = "")
       val output = generateValueClassCode(domain, "example")
       assertThat(output).contains("import kotlin.String")
@@ -139,7 +139,7 @@ class DomainBuilderTest {
     @Test
     fun `TIMESTAMPTZ domain generates an Instant value class`() {
       // Regression coverage for the build-breaking bug: CREATE DOMAIN d AS timestamptz used to
-      // abort code generation entirely -- resolveJdbcTypeInfo had no entry for timestamptz even
+      // abort code generation entirely -- resolveWireCodec had no entry for timestamptz even
       // though it is one of the most common domain base types.
       val domain = Domain(name = "occurred_at", baseType = "timestamptz", comment = "")
       val output = generateValueClassCode(domain, "example")
