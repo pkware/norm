@@ -248,6 +248,61 @@ class GenerateCodeTest {
     assertThat(implementationFile.contents).contains("CustomJson")
   }
 
+  /**
+   * `adapterParameters` must run after `generateQueryInterface`, since a query parameter's column
+   * type is only resolved while building interface methods, not while constructing `SqlStatement`.
+   * An `UPDATE` with no result columns whose only reference to the enum is a `WHERE` parameter is the
+   * only shape that can catch a regression that computes `adapterParameters` too early.
+   */
+  @Test
+  fun `enum referenced only as an exec query parameter still gets a constructor adapter with its default`() {
+    connection.createStatement().use {
+      it.execute(
+        """
+        DEALLOCATE ALL;
+        DROP SCHEMA public CASCADE;
+        CREATE SCHEMA public;
+        GRANT ALL ON SCHEMA public TO public;
+        """.trimIndent(),
+      )
+    }
+
+    connection.createStatement().use {
+      it.execute(
+        """
+        CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy');
+        CREATE TABLE person (
+          id integer PRIMARY KEY,
+          name text NOT NULL,
+          current_mood mood NOT NULL
+        );
+        """.trimIndent(),
+      )
+    }
+
+    val analyzer = JdbcAnalyzer(connection)
+    val catalog = analyzer.buildCatalog()
+
+    val parsedQueries = QueryFileParser.parse(
+      """
+      -- name: updateName :exec
+      UPDATE person SET name = ? WHERE current_mood = ?;
+      """.trimIndent(),
+    )
+    val analyzedQueries = parsedQueries.map { analyzer.analyzeQuery(it, catalog) }
+
+    val result = generateCode(
+      catalog,
+      analyzedQueries,
+      "example",
+      emptySet(),
+      analyzer.fetchReservedWords(),
+    )
+
+    val implementationFile = result.first { it.name.endsWith("PostgresQueries.kt") }
+    assertThat(implementationFile.contents).contains("moodAdapter: ColumnAdapter<Mood, String> = MoodAdapter()")
+  }
+
   companion object {
     // Embed scenarios use sqlc.embed() which is not yet supported by the JDBC analyzer
     private val EMBED_SCENARIOS =

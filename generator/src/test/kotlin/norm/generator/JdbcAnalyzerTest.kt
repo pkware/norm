@@ -252,6 +252,27 @@ class JdbcAnalyzerTest {
     assertThat(query.params[1].column!!.type.name).isEqualTo("text")
   }
 
+  /**
+   * Schema qualification (`public.`) defeats `CALL_PROCEDURE_NAME`'s bare-identifier regex, so
+   * `analyzeCallParameters` falls back to `prepareStatement(...).parameterMetaData` instead of the
+   * `pg_proc` lookup exercised by `analyzeQuery handles CALL with parameters`.
+   */
+  @Test
+  fun `analyzeQuery handles schema-qualified CALL with parameters via the prepareStatement fallback`() {
+    val catalog = analyzer.buildCatalog()
+    val parsed = ParsedQuery(
+      "updateStringType",
+      ":exec",
+      "CALL public.update_string_type(?, ?)",
+      emptyList(),
+    )
+
+    val query = analyzer.analyzeQuery(parsed, catalog)
+
+    assertThat(query.columns).isEmpty()
+    assertThat(query.params).hasSize(2)
+  }
+
   @Test
   fun `analyzeQuery preserves comments`() {
     val catalog = analyzer.buildCatalog()

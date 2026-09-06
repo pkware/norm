@@ -43,9 +43,9 @@ public fun generateCode(
   reservedWords: Set<String>,
   typeMappings: List<TypeMapping> = emptyList(),
 ): List<GeneratedFile> {
-  val generator = TypeRepository(packageName, catalog, typeMappings, reservedWords)
+  val typeRepository = TypeRepository(packageName, catalog, typeMappings, reservedWords)
 
-  val resolvedQueries = queries.map { SqlStatement(catalog, it, generator) }
+  val resolvedQueries = queries.map { SqlStatement(catalog, it, typeRepository) }
   val queriesInterface = ClassName(packageName, "Queries")
   val interfaceCode = generateQueryInterface(resolvedQueries, "Queries", frameworks)
 
@@ -53,8 +53,7 @@ public fun generateCode(
   val typeOverridePostgresTypes = typeMappings.filter { it.isTypeLevel }.map { it.postgresType }.toSet()
 
   // Build enum + adapter TypeSpecs for all enums discovered during query resolution.
-  // discoveredEnums is populated as a side effect of resolving column types above.
-  val enumTypeSpecs = generator.discoveredEnums
+  val enumTypeSpecs = typeRepository.discoveredEnums
     .filter { it.name !in typeOverridePostgresTypes }
     .sortedBy { it.name }
     .flatMap { enumDefinition ->
@@ -65,7 +64,7 @@ public fun generateCode(
     }
 
   // Build value class + adapter TypeSpecs for all domains discovered during query resolution.
-  val domainTypeSpecs = generator.discoveredDomains
+  val domainTypeSpecs = typeRepository.discoveredDomains
     .filter { it.name !in typeOverridePostgresTypes }
     .sortedBy { it.name }
     .flatMap { domain ->
@@ -75,25 +74,19 @@ public fun generateCode(
       )
     }
 
-  val classCode =
-    generateQueryImplementation(
-      resolvedQueries,
-      queriesInterface,
-      frameworks,
-      generator.discoveredEnums,
-      generator.discoveredDomains,
-      packageName,
-      typeMappings,
-      typeOverridePostgresTypes,
-      catalog,
-    )
+  // Computed only now, after generateQueryInterface has resolved every query parameter's column
+  // type — see adapterParameters' KDoc for why this ordering matters.
+  val adapterParameters =
+    adapterParameters(typeRepository, typeMappings, catalog, packageName, typeOverridePostgresTypes)
+
+  val classCode = generateQueryImplementation(resolvedQueries, queriesInterface, frameworks, adapterParameters)
   val connectionProviders = generateConnectionProviders(packageName, frameworks)
 
   val typeSpecFiles = (
     sequenceOf(
       interfaceCode,
       classCode,
-    ) + generator.requiredTypes + enumTypeSpecs + domainTypeSpecs
+    ) + typeRepository.requiredTypes + enumTypeSpecs + domainTypeSpecs
     ).map {
     val fileSpec = FileSpec.builder(packageName, "${it.name}.kt")
       .addType(it)
@@ -105,16 +98,88 @@ public fun generateCode(
   return typeSpecFiles + connectionProviders
 }
 
+/**
+ * A single adapter constructor parameter for the generated `PostgresQueries` implementation.
+ *
+ * @param propertyName The constructor parameter (and private property) name.
+ * @param adapterType The `ColumnAdapter<Application, Database>` type of the parameter.
+ * @param defaultClass The adapter class to instantiate as the parameter's default value
+ *   (`= DefaultClass()`), or `null` for user-configured adapters, which have no default and must be
+ *   supplied explicitly.
+ */
+private data class AdapterParameter(val propertyName: String, val adapterType: TypeName, val defaultClass: ClassName?)
+
+/**
+ * Computes the adapter constructor parameters for the generated `PostgresQueries` implementation.
+ *
+ * Adapter parameters come in two groups:
+ * 1. User-configured adapters (no default) — must come first in the constructor.
+ * 2. Auto-generated adapters, for enums and domains discovered while resolving column types (with a
+ *    default) — come after.
+ *
+ * Must be called only after every query has been resolved into a Kotlin interface (i.e., after
+ * [generateQueryInterface]). [TypeRepository.discoveredEnums] and [TypeRepository.discoveredDomains]
+ * are populated as a side effect of resolving column types, and a query *parameter*'s column type is
+ * first resolved while building the interface method for that query, not while constructing
+ * [SqlStatement]. Calling this before every query is resolved silently drops any enum or domain
+ * referenced only as a query parameter.
+ *
+ * @param typeOverridePostgresTypes Postgres type names with a user-configured type-level override,
+ *   already computed by the caller so it's derived from [typeMappings] exactly once.
+ */
+private fun adapterParameters(
+  typeRepository: TypeRepository,
+  typeMappings: List<TypeMapping>,
+  catalog: Catalog,
+  packageName: String,
+  typeOverridePostgresTypes: Set<String>,
+): List<AdapterParameter> {
+  // User-configured adapter params (no default value → must come first)
+  val userAdapterParams = typeMappings.map { mapping ->
+    val applicationTypeName = parseTypeName(mapping.kotlinType)
+    val databaseTypeName = resolveWireTypeName(mapping, catalog)
+    AdapterParameter(
+      userAdapterPropertyName(mapping),
+      COLUMN_ADAPTER.parameterizedBy(applicationTypeName, databaseTypeName),
+      null,
+    )
+  }.distinctBy { it.propertyName }.sortedBy { it.propertyName }
+
+  // Auto-generated adapter params (with default → come after)
+  val autoAdapterParams = buildList {
+    for (enumDefinition in typeRepository.discoveredEnums) {
+      if (enumDefinition.name in typeOverridePostgresTypes) continue
+      val enumClassName = ClassName(packageName, enumDefinition.name.snakeToCamelCase().titleCase())
+      add(
+        AdapterParameter(
+          adapterPropertyName(enumDefinition),
+          COLUMN_ADAPTER.parameterizedBy(enumClassName, String::class.asTypeName()),
+          adapterClassName(enumDefinition, packageName),
+        ),
+      )
+    }
+    for (domain in typeRepository.discoveredDomains) {
+      if (domain.name in typeOverridePostgresTypes) continue
+      val valueClassName = domainValueClassName(domain, packageName)
+      val baseKotlinType = domainKotlinBaseType(domain.baseType)
+      add(
+        AdapterParameter(
+          domainAdapterPropertyName(domain),
+          COLUMN_ADAPTER.parameterizedBy(valueClassName, baseKotlinType),
+          domainAdapterClassName(domain, packageName),
+        ),
+      )
+    }
+  }.sortedBy { it.propertyName }
+
+  return userAdapterParams + autoAdapterParams
+}
+
 private fun generateQueryImplementation(
   queries: List<SqlStatement>,
   interfaceType: ClassName,
   frameworks: Set<Framework>,
-  discoveredEnums: Set<Enum>,
-  discoveredDomains: Set<Domain>,
-  packageName: String,
-  typeMappings: List<TypeMapping>,
-  typeOverridePostgresTypes: Set<String>,
-  catalog: Catalog,
+  adapterParameters: List<AdapterParameter>,
 ): TypeSpec {
   val constructorBuilder = FunSpec.constructorBuilder()
     .addParameter("connectionProvider", CONNECTION_PROVIDER)
@@ -129,50 +194,7 @@ private fun generateQueryImplementation(
     classBuilder.addSuperclassConstructorParameter("connectionProvider")
   }
 
-  // Adapter parameters come in two groups:
-  // 1. User-configured adapters (no default) — must come first in the constructor
-  // 2. Auto-generated adapters (with default) — come after
-  data class AdapterParam(val propertyName: String, val adapterType: TypeName, val defaultClass: ClassName?)
-
-  // User-configured adapter params (no default value → must come first)
-  val userAdapterParams = typeMappings.map { mapping ->
-    val applicationTypeName = parseTypeName(mapping.kotlinType)
-    val databaseTypeName = resolveWireTypeName(mapping, catalog)
-    AdapterParam(
-      userAdapterPropertyName(mapping),
-      COLUMN_ADAPTER.parameterizedBy(applicationTypeName, databaseTypeName),
-      null,
-    )
-  }.distinctBy { it.propertyName }.sortedBy { it.propertyName }
-
-  // Auto-generated adapter params (with default → come after)
-  val autoAdapterParams = buildList {
-    for (enumDefinition in discoveredEnums) {
-      if (enumDefinition.name in typeOverridePostgresTypes) continue
-      val enumClassName = ClassName(packageName, enumDefinition.name.snakeToCamelCase().titleCase())
-      add(
-        AdapterParam(
-          adapterPropertyName(enumDefinition),
-          COLUMN_ADAPTER.parameterizedBy(enumClassName, String::class.asTypeName()),
-          adapterClassName(enumDefinition, packageName),
-        ),
-      )
-    }
-    for (domain in discoveredDomains) {
-      if (domain.name in typeOverridePostgresTypes) continue
-      val valueClassName = domainValueClassName(domain, packageName)
-      val baseKotlinType = domainKotlinBaseType(domain.baseType)
-      add(
-        AdapterParam(
-          domainAdapterPropertyName(domain),
-          COLUMN_ADAPTER.parameterizedBy(valueClassName, baseKotlinType),
-          domainAdapterClassName(domain, packageName),
-        ),
-      )
-    }
-  }.sortedBy { it.propertyName }
-
-  for (param in userAdapterParams + autoAdapterParams) {
+  for (param in adapterParameters) {
     val paramBuilder = ParameterSpec.builder(param.propertyName, param.adapterType)
     if (param.defaultClass != null) {
       paramBuilder.defaultValue("%T()", param.defaultClass)
