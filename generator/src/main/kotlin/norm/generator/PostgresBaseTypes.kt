@@ -1,5 +1,5 @@
 // PostgresBaseType is the only top-level class in this file, but the file also holds
-// POSTGRES_BASE_TYPES and the functions that read it (resolveJdbcTypeInfo,
+// POSTGRES_BASE_TYPES and the functions that read it (resolveWireCodec,
 // postgresArrayElementTypeName) — deliberately, per this file's role as the single home for
 // Postgres base-type mapping, not a naming slip.
 @file:Suppress("MatchingDeclarationName")
@@ -10,11 +10,9 @@ import com.squareup.kotlinpoet.asClassName
 import com.squareup.kotlinpoet.asTypeName
 import java.math.BigDecimal
 import java.sql.Blob
-import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
-import java.time.OffsetDateTime
 import java.time.OffsetTime
 import java.util.UUID
 
@@ -22,11 +20,11 @@ import java.util.UUID
  * One Postgres base type Norm maps to Kotlin, keyed in [POSTGRES_BASE_TYPES] by its canonical or
  * SQL-standard spelling.
  *
- * @property mappable Builds the [SqlMappable] for a plain (adapterless) column of this type.
- * @property jdbcTypeInfo The wire-level getter/setter description used when the same type sits
- *   behind a `ColumnAdapter` instead (an enum, a domain, or a user type mapping).
+ * @property codec Wire-level JDBC access for this type, shared by a plain (adapterless) column's
+ *   [ScalarSqlMappable] and by the same type behind a `ColumnAdapter` (an enum, a domain, or a
+ *   user type mapping).
  */
-internal class PostgresBaseType(val mappable: (notNull: Boolean) -> SqlMappable, val jdbcTypeInfo: JdbcTypeInfo)
+internal class PostgresBaseType(val codec: WireCodec)
 
 /**
  * Every canonical Postgres base type name [TypeRepository.resolveBaseType] accepts, keyed by name
@@ -35,93 +33,87 @@ internal class PostgresBaseType(val mappable: (notNull: Boolean) -> SqlMappable,
  * Includes the `serial`/`smallserial`/`bigserial` pseudo-types even though Postgres rejects
  * `CREATE DOMAIN ... AS serial` outright (`type "serial" does not exist` on a live server; a
  * domain's base is always a real, registered `pg_type`, so `domain.baseType` can never actually be
- * one of these), and even though [resolveJdbcTypeInfo]'s only other callers
+ * one of these), and even though [resolveWireCodec]'s only other callers
  * ([TypeRepository.buildUserConfiguredMappable]'s user-configured type mappings) also only ever see
  * the real, JDBC-reported type name, never a serial alias: a plain column still needs
- * [PostgresBaseType.mappable] for one, so the row belongs here regardless.
+ * [PostgresBaseType.codec] for one, so the row belongs here regardless.
  *
  * [register]'s `check` guards against a name repeated across two calls silently overwriting the
  * earlier row — `vararg` alone would let that pass unnoticed.
  */
 internal val POSTGRES_BASE_TYPES: Map<String, PostgresBaseType> = buildMap {
-  fun register(jdbcTypeInfo: JdbcTypeInfo, vararg names: String, mappable: (Boolean) -> SqlMappable) {
+  fun register(codec: WireCodec, vararg names: String) {
     for (name in names) {
-      check(put(name, PostgresBaseType(mappable, jdbcTypeInfo)) == null) { "duplicate base type name: $name" }
+      check(put(name, PostgresBaseType(codec)) == null) { "duplicate base type name: $name" }
     }
   }
 
   register(
-    JdbcTypeInfo("getShort", "setShort", true, "SMALLINT", kotlinType = Short::class.asTypeName()),
+    PrimitiveCodec(Short::class.asTypeName(), "Short", "SMALLINT"),
     "smallserial",
     "serial2",
     "smallint",
     "int2",
-  ) { notNull -> JdbcTypes.SHORT.decorateForNullable(notNull) }
+  )
 
   register(
-    JdbcTypeInfo("getInt", "setInt", true, "INTEGER", kotlinType = Int::class.asTypeName()),
+    PrimitiveCodec(Int::class.asTypeName(), "Int", "INTEGER"),
     "serial",
     "serial4",
     "integer",
     "int",
     "int4",
-  ) { notNull -> JdbcTypes.INT.decorateForNullable(notNull) }
+  )
 
   register(
-    JdbcTypeInfo("getLong", "setLong", true, "BIGINT", kotlinType = Long::class.asTypeName()),
+    PrimitiveCodec(Long::class.asTypeName(), "Long", "BIGINT"),
     "bigserial",
     "serial8",
     "bigint",
     "int8",
-  ) { notNull -> JdbcTypes.LONG.decorateForNullable(notNull) }
+  )
 
   register(
-    JdbcTypeInfo("getFloat", "setFloat", true, "REAL", kotlinType = Float::class.asTypeName()),
+    PrimitiveCodec(Float::class.asTypeName(), "Float", "REAL"),
     "real",
     "float4",
-  ) { notNull -> JdbcTypes.FLOAT.decorateForNullable(notNull) }
+  )
 
   register(
-    JdbcTypeInfo("getDouble", "setDouble", true, "DOUBLE", kotlinType = Double::class.asTypeName()),
+    PrimitiveCodec(Double::class.asTypeName(), "Double", "DOUBLE"),
     "float",
     "double precision",
     "float8",
-  ) { notNull -> JdbcTypes.DOUBLE.decorateForNullable(notNull) }
+  )
 
   register(
-    JdbcTypeInfo("getBoolean", "setBoolean", true, "BOOLEAN", kotlinType = Boolean::class.asTypeName()),
+    PrimitiveCodec(Boolean::class.asTypeName(), "Boolean", "BOOLEAN"),
     "bool",
     "boolean",
-  ) { notNull -> JdbcTypes.BOOLEAN.decorateForNullable(notNull) }
+  )
 
   register(
-    JdbcTypeInfo("getBigDecimal", "setBigDecimal", false, "NUMERIC", kotlinType = BigDecimal::class.asTypeName()),
+    ObjectGetterCodec(BigDecimal::class.asTypeName(), "getBigDecimal", "setBigDecimal", "NUMERIC"),
     "numeric",
-  ) { JdbcTypes.BIG_DECIMAL }
+  )
 
   // json and jsonb require setObject(..., Types.OTHER): Postgres JDBC rejects setString() for both
-  // in prepared statements, just as it does for enum columns. JsonSqlMappable defines the same
-  // binding for a plain (adapterless) json/jsonb column.
+  // in prepared statements, just as it does for enum columns. TypeRepository's ENUM_CODEC reuses
+  // this exact codec, so the binding for a plain json/jsonb column and for an enum column can never
+  // drift apart.
   register(
-    JdbcTypeInfo(
-      "getString",
-      "setObject",
-      false,
-      "OTHER",
-      useSqlTypeHint = true,
-      kotlinType = String::class.asTypeName(),
-    ),
+    TypesOtherCodec(String::class.asTypeName(), "getString", "OTHER"),
     "json",
     "jsonb",
-  ) { notNull -> JsonSqlMappable(notNull) }
+  )
 
   register(
-    JdbcTypeInfo("getString", "setString", false, "VARCHAR", kotlinType = String::class.asTypeName()),
+    ObjectGetterCodec(String::class.asTypeName(), "getString", "setString", "VARCHAR"),
     "text",
     "varchar",
     "bpchar",
     "string",
-  ) { JdbcTypes.STRING }
+  )
 
   // Scalar oid maps to Blob: pgjdbc's setBlob() creates a Postgres large object and stores its oid,
   // the standard large-object convention, via the plain named getBlob()/setBlob() methods (no
@@ -129,108 +121,65 @@ internal val POSTGRES_BASE_TYPES: Map<String, PostgresBaseType> = buildMap {
   // TypeRepository.tryResolveStandardType) because an array of large-object handles has no coherent
   // JDBC semantics, and real-world oid[] columns hold plain catalog identifiers, not large objects.
   register(
-    JdbcTypeInfo("getBlob", "setBlob", false, "BLOB", kotlinType = Blob::class.asTypeName()),
+    ObjectGetterCodec(Blob::class.asTypeName(), "getBlob", "setBlob", "BLOB"),
     "oid",
-  ) { JdbcTypes.BLOB }
+  )
 
   // java.sql.ResultSet.getBytes/PreparedStatement.setBytes are plain named methods for bytea,
   // needing no class-hint.
   register(
-    JdbcTypeInfo("getBytes", "setBytes", false, "BINARY", kotlinType = ByteArray::class.asTypeName()),
+    ObjectGetterCodec(ByteArray::class.asTypeName(), "getBytes", "setBytes", "BINARY"),
     "bytea",
-  ) { PostgresSupportedTypes.BYTE_ARRAY }
+  )
 
   // pgjdbc's plain getObject(int) returns java.sql.Date/Time/Timestamp for date/time/timetz/
   // timestamp columns, not the java.time type, so the read needs the class-qualified
-  // getObject(int, Class) overload (getterClassHint). The write side needs no such qualification:
-  // PgPreparedStatement.setObject(int, Object) already dispatches on the runtime type of a
-  // LocalDate/LocalTime/OffsetTime/LocalDateTime/OffsetDateTime argument directly (pgjdbc 42.7.13's
-  // source).
+  // getObject(int, Class) overload (ClassHintedObjectCodec). The write side needs no such
+  // qualification: PgPreparedStatement.setObject(int, Object) already dispatches on the runtime
+  // type of a LocalDate/LocalTime/OffsetTime/LocalDateTime/OffsetDateTime argument directly
+  // (pgjdbc 42.7.13's source).
   register(
-    JdbcTypeInfo(
-      "getObject",
-      "setObject",
-      false,
-      "DATE",
-      kotlinType = LocalDate::class.asTypeName(),
-      getterClassHint = LocalDate::class.asClassName(),
-    ),
+    ClassHintedObjectCodec(LocalDate::class.asClassName(), "DATE"),
     "date",
-  ) { PostgresSupportedTypes.LOCAL_DATE }
+  )
 
   register(
-    JdbcTypeInfo(
-      "getObject",
-      "setObject",
-      false,
-      "TIME",
-      kotlinType = LocalTime::class.asTypeName(),
-      getterClassHint = LocalTime::class.asClassName(),
-    ),
+    ClassHintedObjectCodec(LocalTime::class.asClassName(), "TIME"),
     "time",
-  ) { PostgresSupportedTypes.LOCAL_TIME }
+  )
 
   register(
-    JdbcTypeInfo(
-      "getObject",
-      "setObject",
-      false,
-      "TIME_WITH_TIMEZONE",
-      kotlinType = OffsetTime::class.asTypeName(),
-      getterClassHint = OffsetTime::class.asClassName(),
-    ),
+    ClassHintedObjectCodec(OffsetTime::class.asClassName(), "TIME_WITH_TIMEZONE"),
     "timetz",
-  ) { PostgresSupportedTypes.OFFSET_TIME }
+  )
 
   register(
-    JdbcTypeInfo(
-      "getObject",
-      "setObject",
-      false,
-      "TIMESTAMP",
-      kotlinType = LocalDateTime::class.asTypeName(),
-      getterClassHint = LocalDateTime::class.asClassName(),
-    ),
+    ClassHintedObjectCodec(LocalDateTime::class.asClassName(), "TIMESTAMP"),
     "timestamp",
-  ) { PostgresSupportedTypes.LOCAL_DATE_TIME }
+  )
 
-  // InstantSqlMappable's wire representation is OffsetDateTime (read via the class-qualified
-  // getObject, written via plain setObject — both checked against pgjdbc's source the same way as
-  // the other java.time entries above), but the Kotlin representation is Instant, via a
-  // `.toInstant()`/`OffsetDateTime.ofInstant(...)` conversion — see
-  // JdbcTypeInfo.convertOffsetDateTimeToInstant's KDoc.
+  // InstantViaOffsetDateTimeCodec's wire representation is OffsetDateTime (read via the
+  // class-qualified getObject, written via plain setObject — both checked against pgjdbc's source
+  // the same way as the other java.time entries above), but the Kotlin representation is Instant,
+  // via a `.toInstant()`/`OffsetDateTime.ofInstant(...)` conversion — see
+  // InstantViaOffsetDateTimeCodec's KDoc.
   register(
-    JdbcTypeInfo(
-      "getObject",
-      "setObject",
-      false,
-      "TIMESTAMP_WITH_TIMEZONE",
-      kotlinType = Instant::class.asTypeName(),
-      getterClassHint = OffsetDateTime::class.asClassName(),
-      convertOffsetDateTimeToInstant = true,
-    ),
+    InstantViaOffsetDateTimeCodec,
     "timestamptz",
-  ) { notNull -> InstantSqlMappable(notNull) }
+  )
 
   // java.sql.ResultSet.getObject(int) is declared to return Object, so a bare getObject(index) call
   // is statically Any in Kotlin regardless of what pgjdbc returns at runtime — PgResultSet's
   // internalGetObject does special-case the Postgres "uuid" type by name and hands back a
   // java.util.UUID instance (per pgjdbc 42.7.13's source), but that's a runtime fact, not a static
   // type, and a `ColumnAdapter<Application, UUID>.decode` call requires a statically-typed UUID
-  // argument. The class-qualified getObject(int, Class) overload (getterClassHint) fixes the static
-  // type; pgjdbc's PgResultSet#getObject(int, Class<T>) explicitly special-cases `type == UUID.class`
-  // by delegating to the same runtime read and casting, so this is safe.
+  // argument. The class-qualified getObject(int, Class) overload (ClassHintedObjectCodec) fixes the
+  // static type; pgjdbc's PgResultSet#getObject(int, Class<T>) explicitly special-cases
+  // `type == UUID.class` by delegating to the same runtime read and casting, so this is safe.
   register(
-    JdbcTypeInfo(
-      "getObject",
-      "setObject",
-      false,
-      "OTHER",
-      kotlinType = UUID::class.asTypeName(),
-      getterClassHint = UUID::class.asClassName(),
-    ),
+    ClassHintedObjectCodec(UUID::class.asClassName(), "OTHER"),
     "uuid",
-  ) { PostgresSupportedTypes.UUID }
+  )
 }
 
 /**
@@ -270,10 +219,10 @@ internal fun postgresArrayElementTypeName(typeName: String): String =
   }
 
 /**
- * Maps a Postgres base type name to its [JdbcTypeInfo], or returns `null` if unsupported.
+ * Maps a Postgres base type name to its [WireCodec], or returns `null` if unsupported.
  *
  * Delegates to [POSTGRES_BASE_TYPES], the single source of truth for both a plain column's
- * [SqlMappable] and its wire-level [JdbcTypeInfo] — a domain over any base type
+ * [SqlMappable] and its wire-level [WireCodec] — a domain over any base type
  * [TypeRepository.resolveBaseType] itself supports (e.g. `CREATE DOMAIN d AS timestamptz`) always
  * resolves here too, since both come from the same row. [TypeRepository]'s domain resolution
  * chains through this function (see [TypeRepository.tryResolveDomainType] and
@@ -284,4 +233,4 @@ internal fun postgresArrayElementTypeName(typeName: String): String =
  * one). That failure is intentional: a clear, immediate `error()` naming the unsupported type is
  * preferable to silently guessing a mapping for a type Norm has no tested behavior for.
  */
-internal fun resolveJdbcTypeInfo(baseTypeName: String): JdbcTypeInfo? = POSTGRES_BASE_TYPES[baseTypeName]?.jdbcTypeInfo
+internal fun resolveWireCodec(baseTypeName: String): WireCodec? = POSTGRES_BASE_TYPES[baseTypeName]?.codec
