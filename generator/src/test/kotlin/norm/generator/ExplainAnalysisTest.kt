@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * Stage 2 of the `prosqlbody` cutover: `EXPLAIN (FORMAT JSON)` never executes the statement it
  * plans, and reports a `MERGE`'s per-relation match-optionality — the one thing
- * [PgCatalogLoader.mergeAbsentVarnos]'s KDoc documents as invisible to `:varnullingrels` on the
+ * [ColumnNullabilityAnalyzer.mergeAbsentVarnos]'s KDoc documents as invisible to `:varnullingrels` on the
  * `CREATE VIEW`/`ev_action` or `prosqlbody` route.
  */
 @Testcontainers

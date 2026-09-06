@@ -5021,7 +5021,7 @@ class QueryAnalysisTest {
     @Test
     fun `MERGE fed by a CTE source correctly reports the passed-through column NOT NULL`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
-      // PgCatalogLoader.mergeAbsentVarnos now attributes a MERGE's join to a CTE source too
+      // ColumnNullabilityAnalyzer.mergeAbsentVarnos now attributes a MERGE's join to a CTE source too
       // (previously only a plain base table), via the CTE's own literal name -- "ins" appears
       // directly as a "CTE Scan" node's "CTE Name" here, since a data-modifying CTE is never
       // inlined. With an "a" row and no matching "b" row, the INSERT inserts one row into
@@ -5690,7 +5690,7 @@ class QueryAnalysisTest {
       // RETURNING * on a MERGE expands to both relations' columns — this exact statement returns
       // 4 columns (s.id, s.name, t.id, t.name), all genuinely NOT NULL here
       // (the source is a fixed-literal derived table, never actually absent or null). But
-      // PgCatalogLoader.mergeAbsentVarnos only attributes a MERGE's join to a source relation
+      // ColumnNullabilityAnalyzer.mergeAbsentVarnos only attributes a MERGE's join to a source relation
       // that is itself a plain base table (an :rtable entry with rtekind 0) — a subquery/VALUES
       // source has no real relation OID or name EXPLAIN's plan can be correlated against, so this
       // shape falls back to reporting every column nullable rather than guessing. This is the
@@ -6749,7 +6749,7 @@ class QueryAnalysisTest {
       // prosqlbody reports "id" NOT NULL directly off its PRIMARY KEY catalog constraint — true
       // regardless of which INSERT/ON-CONFLICT branch actually ran. "tval" stays nullable: this
       // analyzer does not (yet) trace a CTE-nested INSERT's own :targetList/onConflict assignment
-      // the way it does for a top-level one (see PgCatalogLoader.analyzeNodeTree's targetListByResno
+      // the way it does for a top-level one (see ColumnNullabilityAnalyzer.analyzeNodeTree's targetListByResno
       // KDoc), so it falls back to tval's own (nullable) catalog constraint — safe, though not as
       // precise as the confirmed 'x' this comment already documents. "oldv" stays nullable via
       // the blanket OLD-forcing rule.
@@ -7016,7 +7016,7 @@ class QueryAnalysisTest {
   /**
    * Set operations (UNION ALL, INTERSECT, EXCEPT) are conservatively treated as nullable even when
    * every branch selects NOT NULL columns. PostgreSQL represents set operations using subquery RTEs
-   * in the range table, and [PgCatalogLoader.buildSubqueryColumnNotNull] skips set-operation queries
+   * in the range table, and [ColumnNullabilityAnalyzer.buildSubqueryColumnNotNull] skips set-operation queries
    * to avoid incorrectly reporting the first branch's nullability as the whole result's nullability.
    * The target list VARs reference the first subquery RTE, whose varno has no entry in the base-table
    * range table, so [NodeTreeNullabilityAnalyzer] defaults to nullable.
