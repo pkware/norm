@@ -440,7 +440,7 @@ internal class PgNodeTreeParser {
    * A `MERGE` with no `DELETE` action anywhere — only `UPDATE`/`INSERT` actions — always leaves a
    * written or freshly-inserted row behind for `RETURNING` to see, so its `NEW` reference is exactly
    * as trustworthy as an ordinary column; only the presence of a `DELETE` action makes `NEW`
-   * unconditionally forced nullable (see [PgCatalogLoader.forcesNewNullable]'s caller).
+   * unconditionally forced nullable (see [ColumnNullabilityAnalyzer.forcesNewNullable]'s caller).
    *
    * @return `false` for a non-`MERGE` statement (`:mergeActionList` is absent), or for a `MERGE`
    *   with no `DELETE` action

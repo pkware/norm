@@ -86,7 +86,7 @@ import norm.generator.NodeTreeNullabilityAnalyzer.Companion.MAX_EXPRESSION_DEPTH
  *   is `NULL` for every row a `DELETE` returns) or a `MERGE` (an individual result row's `NEW` may
  *   or may not exist depending on which `WHEN` clause matched — e.g. `WHEN MATCHED THEN DELETE`
  *   leaves no `NEW` row — a fact this analyzer cannot isolate per-row any more than it can for an
- *   ordinary, non-`OLD`/`NEW` `MERGE` column; see [PgCatalogLoader.mergeAbsentVarnos]'s
+ *   ordinary, non-`OLD`/`NEW` `MERGE` column; see [ColumnNullabilityAnalyzer.mergeAbsentVarnos]'s
  *   KDoc for that companion safety net). Left `false` (the default) for a plain `UPDATE`/`INSERT`,
  *   where the row a `RETURNING` clause reports on always has both an `OLD` and a `NEW` state, so
  *   `NEW` is exactly as trustworthy as an ordinary column reference.
@@ -901,11 +901,11 @@ internal class NodeTreeNullabilityAnalyzer(
      * [PgNodeExpression.Var.returningType]'s KDoc) whose `varno` is anything other than
      * [relationVarno].
      *
-     * Used by [PgCatalogLoader.mergeAbsentVarnos]'s caller to decide whether a `MERGE`'s
+     * Used by [ColumnNullabilityAnalyzer.mergeAbsentVarnos]'s caller to decide whether a `MERGE`'s
      * `RETURNING` list needs per-relation match-optionality resolved AT ALL: a `RETURNING` that
      * only reads the target relation's own columns (always present, whichever `WHEN` clause
      * matched) or `OLD`/`NEW` references (already forced nullable/handled independently by
-     * [PgNodeExpression.Var.returningType]) never needs [PgCatalogLoader.mergeAbsentVarnos]'s
+     * [PgNodeExpression.Var.returningType]) never needs [ColumnNullabilityAnalyzer.mergeAbsentVarnos]'s
      * `EXPLAIN` resolution at all — which matters because that resolution can itself fail to
      * attribute a `MERGE`'s join (e.g. a non-table `USING` source, such as a `VALUES` list) even
      * when the `RETURNING` list never actually depended on knowing which side that join favors.

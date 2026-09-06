@@ -17,7 +17,7 @@ internal data class MergeSideNullability(val targetCanBeAbsent: Boolean, val sou
  * `:mergeActionList`/text inspection.
  *
  * A `MERGE`'s match-optionality is invisible to `:varnullingrels` (see
- * [PgCatalogLoader.mergeAbsentVarnos]): `WHEN NOT MATCHED BY SOURCE` and `WHEN NOT MATCHED [BY
+ * [ColumnNullabilityAnalyzer.mergeAbsentVarnos]): `WHEN NOT MATCHED BY SOURCE` and `WHEN NOT MATCHED [BY
  * TARGET] THEN INSERT` each mean one side of the underlying target/source comparison may have no
  * matching row, but PostgreSQL's `Var` nodes for either relation carry an empty nulling-relations set
  * regardless. The planner, however, executes that comparison as an ordinary join whose type encodes
@@ -38,7 +38,7 @@ internal data class MergeSideNullability(val targetCanBeAbsent: Boolean, val sou
  *   the plan — normally a single real table name, but a CTE source offers two candidates (its own
  *   literal name, for a `MATERIALIZED` or otherwise non-inlined plan; and, when resolvable, the
  *   single base table its body inlines to), since nothing in the parsed query tree says which shape
- *   the planner will choose (see [PgCatalogLoader.mergeAbsentVarnos]). At most one candidate can
+ *   the planner will choose (see [ColumnNullabilityAnalyzer.mergeAbsentVarnos]). At most one candidate can
  *   ever actually appear in a given plan, so offering more than one never risks attributing the
  *   wrong side.
  * @return `null` when `EXPLAIN` fails, its JSON cannot be parsed, no plan node is uniquely
