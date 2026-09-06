@@ -15,7 +15,7 @@ import java.sql.ResultSet
 internal class SqlStatement(
   private val catalog: Catalog,
   private val query: Query,
-  private val generator: TypeRepository,
+  private val typeRepository: TypeRepository,
 ) {
 
   /**
@@ -222,12 +222,12 @@ internal class SqlStatement(
   /**
    * Resolves the mappable type for a column with domain type support.
    */
-  fun resolveMappableType(column: Column): SqlMappable = generator.resolveMappableType(column)
+  fun resolveMappableType(column: Column): SqlMappable = typeRepository.resolveMappableType(column)
 
   /**
    * Resolves the Kotlin [TypeName] for a column with domain type support.
    */
-  fun resolveColumnType(column: Column): TypeName = generator.resolveColumnType(column)
+  fun resolveColumnType(column: Column): TypeName = typeRepository.resolveColumnType(column)
 
   private fun computeReturnType(): ReturnType {
     val queryResults = query.columns
@@ -237,17 +237,17 @@ internal class SqlStatement(
     } else if (queryResults.size == 1 && queryResults.first().embedTable == null) {
       // The query returns a single column, so no wrapper is needed
       val column = queryResults.first()
-      val columnType = generator.resolveColumnType(column)
+      val columnType = typeRepository.resolveColumnType(column)
       ReturnType(
         columnType,
-        listOf(generator.resolveMappableType(column).resultSetAction(1)),
+        listOf(typeRepository.resolveMappableType(column).resultSetAction(1)),
         listOf(ParameterSpec(column.name, columnType)),
       )
     } else if (isSingleTableStarProjection) {
       // The query is a star projection (eg SELECT * ...). Return a model of the table.
-      generator.getTypeProjectionForTable(starProjectionTable!!)
+      typeRepository.getTypeProjectionForTable(starProjectionTable!!)
     } else {
-      generator.buildTypeProjectionForQuery(query.name, queryResults, query.text)
+      typeRepository.buildTypeProjectionForQuery(query.name, queryResults, query.text)
     }
   }
 

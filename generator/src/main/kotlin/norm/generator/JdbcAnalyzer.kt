@@ -75,7 +75,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
     if (isCallStatement) {
       // CALL statements don't return result sets and may not support getMetaData()
       resultColumns = emptyList()
-      parameters = analyzeCallParameters(parsedQuery.sql, jdbcSql)
+      parameters = analyzeCallParameters(parsedQuery.sql, jdbcSql, catalog)
     } else {
       connection.prepareStatement(jdbcSql).use { ps ->
         resultColumns = buildResultColumns(ps.metaData, catalog, parsedQuery.sql)
@@ -266,10 +266,10 @@ public class JdbcAnalyzer(private val connection: Connection) {
    */
   private fun buildParameters(
     pmd: java.sql.ParameterMetaData,
-    inferredNames: Map<Int, String> = emptyMap(),
-    notNullByParameter: Map<Int, Boolean> = emptyMap(),
-    inferredParameters: Map<Int, InferredParameter> = emptyMap(),
-    catalog: Catalog? = null,
+    inferredNames: Map<Int, String>,
+    notNullByParameter: Map<Int, Boolean>,
+    inferredParameters: Map<Int, InferredParameter>,
+    catalog: Catalog,
   ): List<Parameter> {
     val parameters = mutableListOf<Parameter>()
     for (i in 1..pmd.parameterCount) {
@@ -280,7 +280,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
       val columnName = inferred?.columnName ?: inferred?.name
 
       // Look up the catalog column once for type name and comment resolution.
-      val catalogColumn = if (catalog != null && tableName != null && columnName != null) {
+      val catalogColumn = if (tableName != null && columnName != null) {
         catalog.findColumn(tableName, columnName)
       } else {
         null
@@ -311,7 +311,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
             arrayDims = if (isArray) 1 else 0,
             comment = comment,
             type = Identifier(name = typeName),
-            table = if (catalog != null && tableName != null) resolveTableIdentifier(tableName, catalog) else null,
+            table = tableName?.let { resolveTableIdentifier(it, catalog) },
             originalName = columnName.orEmpty(),
           ),
         ),
@@ -326,7 +326,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
    * Prefers `pg_proc` lookup for argument names since JDBC `ParameterMetaData` only provides types.
    * Falls back to preparing the statement directly if the procedure isn't found in `pg_proc`.
    */
-  private fun analyzeCallParameters(originalSql: String, jdbcSql: String): List<Parameter> {
+  private fun analyzeCallParameters(originalSql: String, jdbcSql: String, catalog: Catalog): List<Parameter> {
     val procName = CALL_PROCEDURE_NAME.find(originalSql)?.groupValues?.get(1)
     if (procName != null) {
       val params = catalogLoader.lookupProcedureParameters(procName)
@@ -335,7 +335,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
 
     return try {
       connection.prepareStatement(jdbcSql).use { ps ->
-        buildParameters(ps.parameterMetaData)
+        buildParameters(ps.parameterMetaData, emptyMap(), emptyMap(), emptyMap(), catalog)
       }
     } catch (_: Exception) {
       emptyList()
