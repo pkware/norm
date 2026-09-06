@@ -116,7 +116,7 @@ internal class NodeTreeNullabilityAnalyzer(
    * `isNonNull` returns `false`.
    *
    * Before any of that, every target-list entry's expression is run through
-   * [substituteGroupRteVars] against [PgNodeTreeParser.parseGroupRteExpressions]'s result. On
+   * [substituteGroupRteVars] against [groupExpressions]'s result. On
    * PostgreSQL 16 and 17 that map is always empty (no GROUP RTE exists), so this is a no-op and
    * every entry's expression is exactly what [PgNodeTreeParser.parseTargetList] parsed. On
    * PostgreSQL 18+, this restores the same tree shape 16/17 already have — the real grouping-key
@@ -138,7 +138,7 @@ internal class NodeTreeNullabilityAnalyzer(
   fun extractColumnNullability(nodeTreeText: String): List<Boolean> {
     val parsedEntries = parser.parseTargetList(nodeTreeText)
     if (parsedEntries.isEmpty()) return emptyList()
-    val groupRteExpressions = parser.parseGroupRteExpressions(nodeTreeText)
+    val groupRteExpressions = parser.parseRangeTableEntries(nodeTreeText).groupExpressions(parser)
     val entries = if (groupRteExpressions.isEmpty()) {
       parsedEntries
     } else {

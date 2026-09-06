@@ -4,7 +4,7 @@ import norm.generator.NodeTreeNullabilityAnalyzer.Companion.MAX_EXPRESSION_DEPTH
 
 /**
  * Substitutes every [PgNodeExpression.Var] in [expression] that references a PostgreSQL 18+ GROUP
- * RTE (see [PgNodeTreeParser.parseGroupRteExpressions]) with the resolved `:groupexprs` expression
+ * RTE (see [groupExpressions]) with the resolved `:groupexprs` expression
  * it stands in for, restoring the same tree shape PostgreSQL 16 and 17 produce directly (where the
  * original grouping-key expression is left in the target list, never masked behind a `Var`). This
  * lets [NodeTreeNullabilityAnalyzer] apply one set of nullability rules to every supported
@@ -20,7 +20,7 @@ import norm.generator.NodeTreeNullabilityAnalyzer.Companion.MAX_EXPRESSION_DEPTH
  *   shape this parser does not (yet) model correctly, and substituting against a nonexistent entry
  *   would silently invent an expression PostgreSQL never produced.
  * - The resolved expression is not [PgNodeExpression.Unknown] — an unmodelled node type or a parse
- *   failure must not replace a `Var` that [PgNodeTreeParser.parseGroupRteMap]'s coarser, `Var`-only
+ *   failure must not replace a `Var` that [groupRteMap]'s coarser, `Var`-only
  *   resolution could still succeed at (see that method's continued use as a fallback wherever this
  *   substitution declines to apply).
  *
