@@ -5,8 +5,7 @@ package norm.generator
  *
  * Not required to prevent a true infinite loop — PostgreSQL's grammar already forbids a CTE
  * referencing a later-declared one, so no reference cycle exists among the CTEs this resolver
- * enters. This is a defensive bound on stack/work for a pathologically long chain of CTEs, the same
- * role [ColumnNullabilityAnalyzer]'s `VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET` plays for view chains.
+ * enters. This is a defensive bound on stack/work for a pathologically long chain of CTEs.
  */
 private const val MAX_PROVENANCE_CHAIN_DEPTH = 50
 
@@ -68,9 +67,8 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
    * Resolves every non-junk output column of [nodeTreeText], in `SELECT`/`RETURNING` order, to
    * either its [NodeTreeColumnProvenance] or `null` (no CTE provenance for that column).
    *
-   * Reads `:returningList` first, falling back to `:targetList` — the same order
-   * [ColumnNullabilityAnalyzer.analyzeNodeTree] uses, since a topmost `RETURNING` populates both and
-   * `:targetList` there holds the values being written, not the columns being returned.
+   * Reads `:returningList` first, falling back to `:targetList`: a topmost `RETURNING` populates
+   * both, and `:targetList` there holds the values being written, not the columns being returned.
    *
    * @return one entry per non-junk output column, in position order; every entry is `null` when
    *   [nodeTreeText]'s outermost statement has a top-level set operation.
@@ -80,7 +78,7 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
     if (entries.isEmpty()) return emptyList()
     if (parser.hasSetOperations(nodeTreeText)) return entries.map { null }
     // A single-element stack: nodeTreeText's own :cteList is the only scope until the walk
-    // descends into a CTE body — see resolveVar for why the stack grows from there.
+    // descends into a CTE body.
     val outermostScope = listOf(parser.parseCteList(nodeTreeText).associateBy { it.name })
     return entries.map { entry -> resolveVar(entry.expression, nodeTreeText, outermostScope) }
   }
@@ -107,13 +105,11 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
    *
    * [scopeStack] tracks lexical `WITH`-clause nesting: index `0` is [queryBlock]'s own `:cteList`,
    * index `1` the block one level up that declared it, and so on. Scope belongs to a CTE's
-   * declaration site, not to the hop path taken to reach it — hopping into a sibling CTE declared in
-   * the same `:cteList` is not a nesting level, matching PostgreSQL's own `:ctelevelsup` for that
-   * reference. So resolving a reference against `scopeStack[reference.ctelevelsup]` and then
-   * entering that CTE's body rebuilds the stack as `scopeStack.drop(reference.ctelevelsup)` with the
-   * body's own `:cteList` pushed on front, rather than prepending onto the full accumulated
-   * [scopeStack]; otherwise stale frames attribute a chained reference to the wrong same-named CTE,
-   * and a chain of three or more sibling CTEs resolves to nothing.
+   * declaration site, not to the hop path taken to reach it, so entering a CTE's body rebuilds the
+   * stack as `scopeStack.drop(reference.ctelevelsup)` with the body's own `:cteList` pushed on
+   * front, rather than prepending onto the full accumulated [scopeStack]; prepending onto the full
+   * stack instead would attribute a chained reference to the wrong same-named CTE for a chain of
+   * three or more sibling CTEs.
    *
    * A `:ctelevelsup` deeper than [scopeStack] bails rather than reading past what has been tracked —
    * a real reference's levelsup can never exceed the number of `WITH` clauses actually enclosing it.
@@ -157,8 +153,6 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
           }
           currentQueryBlock = definition.queryBlock
           val ownScope = parser.parseCteList(definition.queryBlock).associateBy { it.name }
-          // drop, not prepend-onto-the-full-stack: see this method's KDoc on why scope belongs to
-          // the declaration site (reference.ctelevelsup levels up from here), never the hop path.
           currentScopeStack = listOf(ownScope) + currentScopeStack.drop(reference.ctelevelsup)
           currentVar = bodyVar
         }

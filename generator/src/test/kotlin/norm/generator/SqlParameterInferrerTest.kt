@@ -207,7 +207,7 @@ class SqlParameterInferrerTest {
       // '\(' as a real parenthesis, so extractFunctionCalls's own paren search never found a
       // balanced close for this call — the call was skipped entirely, and the parameter fell
       // through to a caller-level generic default (p1) instead of a real name. Fixed by
-      // SqlUtils.kt's lexical-aware findMatchingCloseParenthesis.
+      // SqlKeywordScanner.kt's lexical-aware findMatchingCloseParenthesis.
       // "string" is the correct name per Norm's own rule (see "infers formal argument names from
       // pg_proc" above): a pg_proc formal argument name always wins over a generic fallback, and
       // regexp_replace(string, pattern, replacement) is regexp_replace's real 3-argument
