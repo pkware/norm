@@ -7,23 +7,18 @@ package norm.generator
  * @property columnName The column's logical name for a simple column reference — `null` for a
  *   computed expression. For a quoted reference (`"My Col"`, `"He""llo"`), this is the identifier
  *   PostgreSQL itself resolves to: surrounding quotes removed and any doubled `""` escape
- *   collapsed to the single literal `"` it represents (checked directly against a live
- *   PostgreSQL 18: `ResultSetMetaData.getColumnName` for `SELECT "He""llo" FROM (SELECT 1 AS
- *   "He""llo") s` reports `He"llo` — no quotes, escape already collapsed — which is exactly what
- *   this property must agree with, since [JdbcAnalyzer]'s own `originalName` falls back to
- *   `columnName` first and only reaches `getColumnName` when this is `null`). This is never the
- *   raw, quote-decorated source text — see [isColumnNameQuoted] for how the quoted/unquoted
- *   distinction PostgreSQL folding depends on is preserved instead, alongside the logical value
- *   rather than encoded inside it.
+ *   collapsed to the single literal `"` it represents. On PostgreSQL 18,
+ *   `ResultSetMetaData.getColumnName` for `SELECT "He""llo" FROM (SELECT 1 AS "He""llo") s`
+ *   reports `He"llo` — no quotes, escape already collapsed — which this property must agree with.
+ *   Never the raw, quote-decorated source text; see [isColumnNameQuoted] for how the
+ *   quoted/unquoted distinction is preserved instead.
  * @property tableName The table qualifier's logical name for a qualified reference (e.g. `author`
  *   in `author.name`, or `My Table` in `"My Table".name`) — same logical-value convention as
  *   [columnName], and `null` for an unqualified reference or a computed expression.
- * @property isColumnNameQuoted Whether [columnName] came from a quoted source identifier —
- *   `false` when [columnName] is `null`. PostgreSQL folds a quoted identifier reference
- *   exactly (case preserved, never lowercased) and an unquoted one to lowercase; since
- *   [columnName] itself no longer carries the quotes that would otherwise signal which rule
- *   applies (they were already removed to produce the logical value), this flag is what a caller
- *   doing that folding (see `foldIdentifier`'s two-argument overload) must consult instead.
+ * @property isColumnNameQuoted Whether [columnName] came from a quoted source identifier — `false`
+ *   when [columnName] is `null`. [columnName] no longer carries the quotes that would otherwise
+ *   signal whether PostgreSQL folds it (quoted: case preserved) or not (unquoted: folded to
+ *   lowercase), so this flag is what a caller doing that folding must consult instead.
  * @property isTableNameQuoted Whether [tableName] came from a quoted source identifier — same
  *   convention as [isColumnNameQuoted], `false` when [tableName] is `null`.
  */
@@ -38,15 +33,13 @@ internal data class SelectItem(
 /**
  * Parses the output clause of a SQL statement to extract individual items.
  *
- * Paired positionally against `java.sql.ResultSetMetaData` columns by
- * `JdbcAnalyzer.buildResultColumns`, so the search is restricted to the statement's main query —
- * after any leading `WITH` clause's CTEs, via [parseCteClause]'s [ParsedCteClause.mainQueryStart]
- * — and `SELECT` is located with [findTopLevelKeyword] (depth-0, lexically aware, never
- * `String.indexOf`), so a nested `SELECT` or a keyword-like substring inside a literal/comment is
- * never mistaken for the real clause. `RETURNING` is located with [findTopLevelReturningKeyword]
- * instead — see its KDoc for why a plain [findTopLevelKeyword] search is not enough — and is only
- * searched for when the window's own leading keyword is DML (`INSERT`/`UPDATE`/`DELETE`/`MERGE`),
- * since `RETURNING` is not reserved and is otherwise legal as a plain `SELECT`'s column alias.
+ * Paired positionally against `java.sql.ResultSetMetaData` columns, so the search is restricted to
+ * the statement's main query — after any leading `WITH` clause's CTEs — and `SELECT` is located
+ * with [findTopLevelKeyword] (depth-0, lexically aware), so a nested `SELECT` or a keyword-like
+ * substring inside a literal/comment is never mistaken for the real clause. `RETURNING` is located
+ * with [findTopLevelReturningKeyword] instead, and is only searched for when the window's own
+ * leading keyword is DML (`INSERT`/`UPDATE`/`DELETE`/`MERGE`), since `RETURNING` is not reserved
+ * and is otherwise legal as a plain `SELECT`'s column alias.
  *
  * Handles:
  * - Simple columns: `title` → expression=`title`, columnName=`title`
@@ -60,28 +53,23 @@ internal data class SelectItem(
  * [skipOptionalSetQuantifier] before the clause is split into items, so the first item's
  * `expression`/`columnName` reflect the bare column, not the quantifier glued onto it (`SELECT
  * DISTINCT x, id FROM t` → first item is `x`, not `DISTINCTx`). This must happen here, not inside
- * [isStarItem]: [isStarItem] normalizes by stripping all whitespace, so `ALL 2.*a` and a genuine
- * star on a table named `all2` (`SELECT all2.* a, p FROM all2` — valid, 3 columns) become
- * textually identical (`ALL2.*a`/`all2.*a`) once whitespace is gone; only stripping the quantifier
- * before that normalization, using the still-whitespace-intact `window`, can tell them apart —
- * `skipOptionalKeyword`'s own word-boundary check is what refuses to match `ALL` as a prefix of the
- * identifier `all2` (`SELECT ALL 2.*a lbl, b FROM t` is arithmetic, 2 columns, distinct
- * from the `all2` table case despite normalizing identically further down the pipeline).
+ * [isStarItem]: [isStarItem]'s own whitespace-stripping turns `ALL 2.*a` into `ALL2.*a` and a
+ * genuine star on a table named `all2` into `all2.*a`, which differ only in the case of letters
+ * an unquoted identifier reference folds anyway; only stripping the quantifier first, while
+ * whitespace is still intact, tells them apart. `SELECT ALL 2.*a lbl, b FROM t` is valid
+ * arithmetic (2 columns), distinct from `SELECT all2.* a, p FROM all2` (3 columns, a real star on
+ * table `all2`).
  *
- * A star item (`*`/`table.*`, via [isStarItem] — which also recognizes an implicit alias on a
- * star, including a quoted, `U&`-escaped, or non-ASCII unquoted alias, though not claimed
- * exhaustive — see [isStarItem]'s own KDoc) expands to however many columns the starred relation
- * has, shifting every later item onto the wrong metadata column; an item before a star is
+ * A star item (`*`/`table.*`, via [isStarItem]) expands to however many columns the starred
+ * relation has, shifting every later item onto the wrong metadata column; an item before a star is
  * unaffected by that unknown width, so only the first star and everything after it is dropped — a
  * lone star is left alone, and items at/after a star fall back to metadata unresolved.
  *
  * @return Items strictly before the first star, if any; the full list if there is no star or it's
  *   a single star item; or empty if the output clause can't be found (e.g. a `VALUES` list, a
  *   `TABLE` shorthand, or two separately parenthesized set-operation branches like `(SELECT a)
- *   UNION (SELECT b)` — none have a depth-0 `SELECT`/`RETURNING`; a main query or CTE body wrapped
- *   in one redundant pair of parentheses, `(SELECT ...)`, does resolve — see
- *   [stripRedundantOuterParentheses]). Both consumers degrade safely for a missing item, falling
- *   back to `ResultSetMetaData.getColumnName` rather than reporting a wrong original name.
+ *   UNION (SELECT b)`). Both consumers degrade safely for a missing item, falling back to
+ *   `ResultSetMetaData.getColumnName` rather than reporting a wrong original name.
  */
 internal fun parseSelectItems(sql: String): List<SelectItem> = parseOutputItemsWithAlias(sql).map { it.selectItem }
 
@@ -103,19 +91,13 @@ private fun mainQueryWindow(sql: String): String {
 /**
  * Whether [sql]'s main query ([mainQueryWindow]) contains a top-level `UNION`/`INTERSECT`/`EXCEPT`
  * keyword: this statement's own visible `SELECT`/`RETURNING` list is only one branch of a set
- * operation, so [parseSelectItems] parsed only that branch's items, never the other branch(es)' own
- * (possibly differently-computed) expressions for the same result column.
- *
- * [TypeRepository.buildTypeProjectionForQuery] uses this to suppress a computed expression's own
- * `@property` source-reference line under a set operation — reporting `UPPER(x)` alone for `SELECT
- * UPPER(x) AS u FROM t UNION SELECT LOWER(x) FROM t` would present one branch as the whole answer. A
- * bare column reference is unaffected: PostgreSQL itself names a set operation's whole result column
- * after branch 1 alone, so echoing that name back is not misleading.
+ * operation, so [parseSelectItems] parsed only that branch's items, never the other branch(es)'
+ * own (possibly differently-computed) expressions for the same result column. A bare column
+ * reference is unaffected: PostgreSQL itself names a set operation's whole result column after
+ * branch 1 alone.
  *
  * All three keywords are PostgreSQL reserved words, so an unquoted occurrence can never be a
- * column/table identifier or alias — only [findTopLevelKeyword]'s lexical- and depth-awareness is
- * needed, not the additional alias-position gating [findTopLevelReturningKeyword] needs for the
- * non-reserved `RETURNING`.
+ * column/table identifier or alias.
  */
 internal fun hasTopLevelSetOperation(sql: String): Boolean {
   val window = mainQueryWindow(sql)
@@ -142,18 +124,15 @@ private val SET_OPERATION_KEYWORDS = listOf("UNION", "INTERSECT", "EXCEPT")
 internal data class OutputItemWithAlias(val selectItem: SelectItem, val alias: String?)
 
 /**
- * The shared parsing core behind both [parseSelectItems] (which discards [OutputItemWithAlias.alias])
- * and [resolveNodeTreeProvenanceExpression] (which needs the alias to cross-validate a CTE body
- * item's own name against the node tree's authoritative `:resname` — see that function's KDoc for
- * why the alias can't be dropped there). Locates the same output clause [parseSelectItems]
- * documents finding — see its KDoc for the window/`RETURNING`-gating/star-truncation rules, all of
- * which apply identically here. The window itself is [mainQueryWindow] — see its KDoc for why
- * [hasTopLevelSetOperation] must compute that same window rather than its own copy.
+ * The shared parsing core behind both [parseSelectItems] and [resolveNodeTreeProvenanceExpression]
+ * (which needs [OutputItemWithAlias.alias] to cross-validate a CTE body item's own name against
+ * the node tree's authoritative `:resname`). Locates the same output clause [parseSelectItems]
+ * documents finding — the window/`RETURNING`-gating/star-truncation rules there apply identically
+ * here.
  */
 internal fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> {
   val window = mainQueryWindow(sql)
 
-  // See parseSelectItems' KDoc for why RETURNING is gated on the main query's own leading keyword.
   val leadingKeywordStart = skipWhitespaceAndComments(window, 0)
   val isDmlMainQuery = listOf("INSERT", "UPDATE", "DELETE", "MERGE").any { keyword ->
     skipOptionalKeyword(window, leadingKeywordStart, keyword) != leadingKeywordStart
@@ -168,10 +147,7 @@ internal fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> {
   if (returningIndex >= 0) {
     afterKeyword = returningIndex + "RETURNING".length
     // PostgreSQL 18's `RETURNING WITH (OLD AS o, NEW AS n) o.x, n.x` prologue is not part of the
-    // first item's own expression — skip past it via parseOldNewAliasPrologue so itemsStart lands
-    // on the real first item, not on `WITH (OLD AS o, NEW AS n) o.x` (which parseColumnReference
-    // cannot make sense of, so it would otherwise be embedded verbatim in generated KDoc as that
-    // column's expression).
+    // first item's own expression; skip past it so itemsStart lands on the real first item.
     itemsStart = parseOldNewAliasPrologue(window, afterKeyword)
     // RETURNING clauses are terminal — no FROM keyword follows
     hasFromClause = false
@@ -229,21 +205,14 @@ private fun stripRedundantOuterParentheses(text: String): String {
 }
 
 /**
- * Skips an optional leading SQL set quantifier starting at or after [position] in [sql]: `ALL`,
- * or `DISTINCT` optionally followed by `ON (` ... `)`. Used by [parseSelectItems] to separate a
- * `SELECT`'s quantifier from its first real item before [isStarItem] ever sees it — see that
- * function's KDoc for why this can't be done inside [isStarItem] itself.
+ * Skips an optional leading SQL set quantifier starting at or after [position] in [sql]: `ALL`, or
+ * `DISTINCT` optionally followed by `ON (` ... `)`.
  *
- * [position] is the index right after the `SELECT` keyword — still followed by whitespace, since
- * [skipOptionalKeyword] (unlike [skipWhitespaceAndComments]) requires its keyword to start exactly
- * where it's told to look, with no leading separator of its own to skip. This function skips that
- * whitespace/comments first, then tries `ALL`/`DISTINCT` at the resulting position — otherwise
- * `regionMatches` would fail immediately on the space between `SELECT` and the quantifier, this
- * function would report no quantifier present, and `parseSelectItems` would go right back to
- * feeding [isStarItem] the fused, whitespace-bearing text this function exists to prevent.
- *
- * [skipOptionalKeyword]'s own word-boundary check is what keeps `ALL`/`DISTINCT` from matching a
- * longer identifier that merely starts with those letters (`all2`, `distinctive_column`).
+ * [position] is the index right after the `SELECT` keyword, still followed by whitespace: this
+ * function skips that whitespace/comments first, then tries `ALL`/`DISTINCT` at the resulting
+ * position. [skipOptionalKeyword]'s own word-boundary check is what keeps `ALL`/`DISTINCT` from
+ * matching a longer identifier that merely starts with those letters (`all2`,
+ * `distinctive_column`).
  *
  * @return The index immediately after the quantifier (and any trailing whitespace/comments), or
  *   [position] unchanged if there is no quantifier there.
@@ -270,57 +239,29 @@ private fun skipOptionalSetQuantifier(sql: String, position: Int): Int {
  * Splits a select item into its expression and alias parts.
  *
  * Handles `expression AS alias` patterns, respecting parentheses so that
- * `CAST(x AS text) AS my_col` correctly identifies `my_col` as the alias.
+ * `CAST(x AS text) AS my_col` correctly identifies `my_col` as the alias. Skips string literals,
+ * quoted identifiers, dollar-quoted strings, and comments via [skipLexicalToken], so an `AS`-like
+ * substring or an unbalanced paren inside one of those is not mistaken for a real `AS` keyword or
+ * a real parenthesis.
  *
- * Skips string literals, quoted identifiers, dollar-quoted strings, and comments via
- * [skipLexicalToken], so an `AS`-like substring or an unbalanced paren inside one of those is
- * not mistaken for a real `AS` keyword or a real parenthesis.
+ * Tracks `(`/`)` only, not `[`/`]`: [extractAlias] only ever receives an item already split at the
+ * top level ([splitAtTopLevel]), so any `[`/`]` pair it contains is already self-balanced and
+ * cannot itself hold an unmatched `(`/`)`.
  *
- * Tracks `(`/`)` only, deliberately not `[`/`]` — unlike [splitAtTopLevel], which shares one depth
- * counter across both bracket kinds because it scans raw, not-yet-split clause text, where a
- * top-level-looking `,` can sit directly inside an unsplit `ARRAY[...]` literal (see
- * [splitAtTopLevel]'s own KDoc). [extractAlias] instead only ever
- * receives an item [parseOutputItemsWithAlias] already split via [splitAtTopLevel] — so any
- * `[`/`]` pair the item contains is, by construction of that prior split, already self-balanced
- * and cannot itself hold an unmatched `(`/`)` inside it either. Tracking `[`/`]` here would
- * therefore never change which `AS` this scan finds: PostgreSQL syntax also never lets a bare `AS`
- * appear directly inside `[...]` (an array literal holds element expressions, not aliases) without
- * that `AS` also sitting inside some `(...)` this scan already tracks (`ARRAY[CAST(x AS int)]`, for
- * instance, has its `AS` inside `CAST(...)`'s own parentheses).
- *
- * The word-boundary check on either side of a candidate `AS`/`as` uses [isIdentifierChar] — the
- * same predicate [findTopLevelKeyword] and every other keyword scanner in this file use — rather
+ * The word-boundary check on either side of a candidate `AS`/`as` uses [isIdentifierChar] rather
  * than `Char.isWhitespace()`: PostgreSQL's `AS` keyword only needs to not be fused into a longer
- * identifier on either side, not to be surrounded by literal whitespace. On
- * PostgreSQL 18.4: `SELECT (1)AS b` returns column `b` — `AS` directly abuts the closing `)` with
- * no whitespace, and `)` is not an identifier character, so this is the real keyword. Conversely
- * `SELECT 1 AS$b` returns column `as$b`, a single implicit alias identifier — `$` is a valid
- * identifier-continuation character (see [isIdentifierChar]), so `AS$b` is one word, not the
- * keyword `AS` followed by `$b`.
- *
- * This affects `columnName` whenever a glued alias would otherwise prevent the pre-`AS` text from
- * matching [COLUMN_REFERENCE] on its own, but the split-off expression matches it once separated.
- * `columnName` is derived by [parseOutputItemsWithAlias] from the split `expression` via
- * [parseColumnReference] — [parseOutputItemsWithAlias] is this function's only caller, and does
- * `val (expression, alias) = extractAlias(item)`, keeping the alias half (unlike [parseSelectItems],
- * which discards it) — so whatever the split changes `expression` to feeds directly into that
- * derivation. On PostgreSQL 18.4: `SELECT a AS"b", id FROM t` is valid (columns `b`,
- * `id`; PostgreSQL reports `a` as the source column of the first result column) — `AS"b"` (no
- * space before the quote) is recognized as the keyword here, since `"` is not an identifier
- * character, so the right-hand boundary holds without requiring whitespace; the item splits into
- * `expression="a"`, which matches [COLUMN_REFERENCE], giving `columnName="a"`, the name PostgreSQL
- * itself reports. Not every glued case benefits this way: a glued expression like `(age)AS b`
- * still fails to match [COLUMN_REFERENCE] once split, because the split-off `expression` (`(age)`)
- * contains parentheses regardless of the split, so `columnName` stays `null` for that shape either
- * way. The effect on `expression` itself is unconditional, independent of `columnName`:
- * `TypeRepository.buildTypeProjectionForQuery` embeds `expression` verbatim in generated KDoc for
- * a computed expression (`selectItem.columnName == null && column.table == null`).
+ * identifier on either side, not to be surrounded by literal whitespace. On PostgreSQL 18.4,
+ * `SELECT (1)AS b` returns column `b` — `AS` directly abuts the closing `)` with no whitespace,
+ * and `)` is not an identifier character, so this is the real keyword. Likewise `SELECT a AS"b",
+ * id FROM t` (columns `b`, `id`, with `a` as the first column's source) recognizes `AS"b"` as the
+ * keyword since `"` is not an identifier character either. Conversely `SELECT 1 AS$b` returns
+ * column `as$b`, a single implicit alias identifier — `$` is an identifier-continuation character,
+ * so `AS$b` is one word, not the keyword `AS` followed by `$b`.
  *
  * @return A pair of (expression, alias). `alias` is `null` when there is no `AS` keyword at all,
  *   and when there is one but [parseAliasToken] finds nothing that legitimately looks like an
- *   alias right after it (see that function's own KDoc — a trailing comment, an unterminated
- *   quote, or a string literal where an alias should be, none of which contribute a real alias
- *   name).
+ *   alias right after it: a trailing comment, an unterminated quote, or a string literal where an
+ *   alias should be, none of which contribute a real alias name.
  */
 private fun extractAlias(item: String): Pair<String, String?> {
   // Find the last top-level AS keyword
@@ -337,12 +278,10 @@ private fun extractAlias(item: String): Pair<String, String?> {
       '(' -> depth++
       ')' -> {
         depth--
-        // A bare ')' with no matching '(' means [item] is not the well-formed, already-top-level
-        // expression this scan assumes — see findTopLevelKeyword's own KDoc on why bailing (rather
-        // than clamping depth at 0 and continuing) is the safe direction: an unbalanced scan's
-        // assumptions are already void, so a loud "no alias found" is safer than a depth count that
-        // silently recovers and may misplace a later real AS keyword. [item] is returned unsplit,
-        // the same fallback [extractAlias] already uses when no top-level AS exists at all.
+        // A bare ')' with no matching '(' means [item] isn't the well-formed, already-top-level
+        // expression this scan assumes. Bail rather than clamp depth at 0 and continue: returning
+        // [item] unsplit is safer than a depth count that silently recovers and may misplace a
+        // later real AS keyword.
         if (depth < 0) return item to null
       }
       'A', 'a' -> if (depth == 0 && i + 1 < item.length && (item[i + 1] == 'S' || item[i + 1] == 's')) {
@@ -364,23 +303,22 @@ private fun extractAlias(item: String): Pair<String, String?> {
 }
 
 /**
- * Extracts exactly the alias token starting at or after [start] in [item] (the position right after
- * the `AS` keyword [extractAlias] already found) — a bare identifier or a double-quoted one,
+ * Extracts exactly the alias token starting at or after [start] in [item] (the position right
+ * after the `AS` keyword [extractAlias] already found) — a bare identifier or a double-quoted one,
  * discarding any leading/trailing whitespace or comments around it (`AS /* c */ ux -- note`).
  *
- * The quoted branch is escape-aware, via the same [QUOTED_IDENTIFIER_PATTERN] [COLUMN_REFERENCE]
- * uses, so a doubled `""` inside the alias (`AS "zz""q"`) is treated as an escaped literal `"`, not
- * the token's end — an escape-unaware scan would stop at the first `"`, returning the truncated
- * fragment `"zz`, which still looks quoted and folds to the shorter name `zz`, wrongly colliding
+ * The quoted branch is escape-aware: a doubled `""` inside the alias (`AS "zz""q"`) is treated as
+ * an escaped literal `"`, not the token's end. An escape-unaware scan would stop at the first `"`,
+ * returning the truncated fragment `"zz`, which folds to the shorter name `zz`, wrongly colliding
  * with an unrelated `zz` elsewhere in the same body.
  *
- * @return The alias token — with its surrounding quotes and any internal `""` escape still attached
- *   when quoted, exactly as [foldIdentifier] expects — or `null` when there is no legitimate alias
- *   token: nothing but whitespace/comments to the end of [item], an unterminated quoted identifier, a
- *   character that can neither start a bare identifier nor open a quoted one (e.g. `AS 'x'`, not
- *   legal PostgreSQL), or anything other than trailing whitespace/comments following the token
- *   (`AS ux zz` is not legal PostgreSQL either, so this returns `null` rather than silently
- *   discarding `zz`).
+ * @return The alias token — with its surrounding quotes and any internal `""` escape still
+ *   attached when quoted — or `null` when there is no legitimate alias token: nothing but
+ *   whitespace/comments to the end of [item], an unterminated quoted identifier, a character that
+ *   can neither start a bare identifier nor open a quoted one (e.g. `AS 'x'`, not legal
+ *   PostgreSQL), or anything other than trailing whitespace/comments following the token (`AS ux
+ *   zz` is not legal PostgreSQL either, so this returns `null` rather than silently discarding
+ *   `zz`).
  */
 private fun parseAliasToken(item: String, start: Int): String? {
   val tokenStart = skipWhitespaceAndComments(item, start)
@@ -413,25 +351,16 @@ private fun parseAliasToken(item: String, start: Int): String? {
  * computed expression.
  *
  * A quoted position whose logical value comes out empty (`SELECT "" FROM t`) is treated as no
- * match at all — the same `columnName = null`/`tableName = null` fallback as an expression that
- * doesn't match [COLUMN_REFERENCE] to begin with — rather than an empty-string name: PostgreSQL
- * itself rejects a zero-length delimited identifier outright (`zero-length delimited identifier`
- * is a real syntax error), so this shape can never actually reach here from a query PostgreSQL
- * accepted, but an empty non-null name is a worse `null` than `null` itself — it would make
- * `JdbcAnalyzer.buildResultColumns`' `originalName` fall to `""` instead of correctly falling back
- * to `ResultSetMetaData.getColumnName`, exactly the wrong-value-over-no-value mistake this whole
- * file exists to avoid.
+ * match at all (`columnName = null`/`tableName = null`), never an empty-string name: PostgreSQL
+ * itself rejects a zero-length delimited identifier outright (`SELECT "" FROM t` is a syntax
+ * error), so this shape can never actually reach here from an accepted query, but an empty
+ * non-null name would still be a worse `null` than `null` itself.
  *
- * An unquoted column/table name is folded via [foldAsciiCase] — PostgreSQL's own `downcase_identifier`
- * behavior, ASCII `A`-`Z` only, not Kotlin's `String.lowercase()` — so [SelectItem.columnName]/
+ * An unquoted column/table name is folded via [foldAsciiCase] — PostgreSQL's own
+ * `downcase_identifier` behavior, ASCII `A`-`Z` only — so [SelectItem.columnName]/
  * [SelectItem.tableName] agree with what `ResultSetMetaData.getColumnName` reports for the same
- * reference (an unfolded `ID` would miss `JdbcAnalyzer.buildResultColumns`'s `catalog.findColumn`
- * lookup and drop the column's Postgres comment). A quoted name is never folded — quoting is how
- * PostgreSQL preserves a name's original case against this default folding.
- *
- * Also called directly by [resolveNodeTreeProvenanceExpression] to re-classify an already
- * alias-stripped CTE body item, since the bare-column check needs a fresh classification of the
- * stripped text rather than the item's own pre-strip [SelectItem.columnName].
+ * reference. A quoted name is never folded — quoting is how PostgreSQL preserves a name's
+ * original case against this default folding.
  */
 internal fun parseColumnReference(expression: String): SelectItem {
   val trimmed = expression.trim()
