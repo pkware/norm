@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/pkware/norm/compare/v0.5.0...v0.5.1) (2026-09-11)
+
+
+### Bug Fixes
+
+* **deps:** update micronaut ([ffe20f6](https://github.com/pkware/norm/commit/ffe20f69c788d590dc74bba25b99dcf1a1e96e81))
+
 ## [0.5.0](https://github.com/pkware/norm/compare/v0.4.2...v0.5.0) (2026-09-08)
 
 
