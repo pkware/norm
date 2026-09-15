@@ -16,6 +16,11 @@ package norm.generator
  *   for synthesized CRUD queries).
  * @param isSynthesizedInsert `true` if this is a CRUD-generated INSERT query (from [CrudQuerySynthesizer.synthesizeInsert]),
  *   `false` for all other queries including hand-written and other synthesized CRUD queries.
+ * @param overridableDefaultParameterPositions The 1-based positions (within [sql]'s `?` placeholders)
+ *   that [CrudQuerySynthesizer.synthesizeInsert] marked as bound to a column with a server-side
+ *   `DEFAULT` the caller may override. Empty for every query except a CRUD-synthesized INSERT that
+ *   has at least one such column — in particular, always empty for hand-written queries, since only
+ *   [CrudQuerySynthesizer] populates this.
  */
 public data class ParsedQuery(
   val name: String,
@@ -26,6 +31,7 @@ public data class ParsedQuery(
   val sourceLine: Int = 0,
   val sourceFile: String = "",
   val isSynthesizedInsert: Boolean = false,
+  val overridableDefaultParameterPositions: Set<Int> = emptySet(),
 )
 
 /**

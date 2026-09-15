@@ -19,6 +19,7 @@ import java.sql.Statement
 internal fun TypeSpec.Builder.addSqlStatementInterfaceMethod(query: SqlStatement) {
   val simpleFunction = sqlFunction(query)
   simpleFunction.addStandardKdoc(query)
+  simpleFunction.applyOptionalColumnValueDefaults(query, parameterOffset = 0)
 
   when (query.command) {
     Command.ONE, Command.MANY -> {
@@ -26,6 +27,7 @@ internal fun TypeSpec.Builder.addSqlStatementInterfaceMethod(query: SqlStatement
       val mapperFunction = mapperFunction(query)
         .addModifiers(ABSTRACT)
       mapperFunction.addStandardKdoc(query)
+      mapperFunction.applyOptionalColumnValueDefaults(query, parameterOffset = 0)
       addFunction(mapperFunction.build())
 
       // The simple function delegates to the mapper function with a constructor reference.
@@ -66,7 +68,7 @@ private fun buildMapperDelegationBody(query: SqlStatement): CodeBlock {
   if (query.resultRowShape.isComposedOfMultipleColumns) {
     body.add("%L)", (query.resultRowShape.kotlinType!! as ClassName).constructorReference())
   } else {
-    body.add("%L)", COLUMN_VALUE)
+    body.add("%L)", INPUT_VALUE_REFERENCE)
   }
   return body.build()
 }
@@ -111,7 +113,9 @@ private fun TypeSpec.Builder.addBatchOverloads(query: SqlStatement) {
  * batch size and a constructor reference (or [COLUMN_VALUE] for single-column results).
  */
 private fun TypeSpec.Builder.addBatchWithReturnOverloads(query: SqlStatement) {
-  val batchFunction = batchWithReturnFunction(query).build()
+  val batchFunction = batchWithReturnFunction(query)
+    .apply { applyOptionalExtractorDefaults(query, parameterOffset = 1) }
+    .build()
 
   // Full overload: abstract, with all parameters (stream, extractors, mapper, batchSize) → List<T>
   addFunction(
@@ -136,7 +140,7 @@ private fun TypeSpec.Builder.addBatchWithReturnOverloads(query: SqlStatement) {
     val mapperRef = if (resultRowShape.isComposedOfMultipleColumns) {
       (concreteReturnType as ClassName).constructorReference()
     } else {
-      COLUMN_VALUE
+      INPUT_VALUE_REFERENCE
     }
     addCode(
       CodeBlock.builder()
@@ -205,7 +209,7 @@ private fun TypeSpec.Builder.addDynamicInterfaceMethods(query: SqlStatement) {
   if (resultRowShape.isComposedOfMultipleColumns) {
     simpleFunctionBody.add("%L)", (resultRowShape.kotlinType as ClassName).constructorReference())
   } else {
-    simpleFunctionBody.add("%L)", COLUMN_VALUE)
+    simpleFunctionBody.add("%L)", INPUT_VALUE_REFERENCE)
   }
   dynamicSimpleFunction.addCode(simpleFunctionBody.build())
   addFunction(dynamicSimpleFunction.build())
@@ -279,8 +283,11 @@ private fun FunSpec.Builder.addBatchKdoc(query: SqlStatement, extraFormat: Strin
  * Reference to a runtime method that returns the input value.
  *
  * Using this is more readable than using an inline lamda at each call site, and lets the JIT inline sooner.
+ *
+ * Not to be confused with [norm.ColumnValue] ([COLUMN_VALUE_CLASS_NAME]) — that's the public runtime
+ * type wrapping an overridable-default column's parameter; this is an internal mapper-reference helper.
  */
-private val COLUMN_VALUE = MemberName(RUNTIME_PACKAGE, "inputValue").reference()
+private val INPUT_VALUE_REFERENCE = MemberName(RUNTIME_PACKAGE, "inputValue").reference()
 
 /**
  * Default batch size to use.
@@ -288,3 +295,42 @@ private val COLUMN_VALUE = MemberName(RUNTIME_PACKAGE, "inputValue").reference()
  * The value was chosen somewhat arbitrarily, and does not currently have any requirements.
  */
 private const val BATCH_SIZE = 100
+
+/**
+ * Adds `= ColumnValue.Default` as the default value for each of [statement]'s overridable-default
+ * parameters ([SqlStatement.optionalParameterIndices]) in [this] builder's parameter list, so a
+ * caller of the resulting (non-`override`) function can omit them.
+ *
+ * Must only be called on a [FunSpec.Builder] that will be emitted for an interface-facing
+ * declaration — never on [norm.generator.ImplementationBuilder]'s own, separately built copy of the
+ * same signature: Kotlin forbids specifying a default value on an overriding function's parameter.
+ *
+ * @param parameterOffset Index in [FunSpec.Builder.parameters] of the entry corresponding to
+ *   [SqlStatement.parameters] index `0`. `0` for the simple and mapper functions, whose parameters
+ *   mirror [SqlStatement.parameters] directly.
+ */
+private fun FunSpec.Builder.applyOptionalColumnValueDefaults(statement: SqlStatement, parameterOffset: Int) {
+  val defaultValue = CodeBlock.of("%T", COLUMN_VALUE_DEFAULT_CLASS_NAME)
+  for (index in statement.optionalParameterIndices) {
+    val position = parameterOffset + index
+    parameters[position] = parameters[position].toBuilder().defaultValue(defaultValue).build()
+  }
+}
+
+/**
+ * Adds `= null` as the default value for each of [statement]'s overridable-default parameters
+ * ([SqlStatement.optionalParameterIndices]) in [this] builder's parameter list — the per-row
+ * extractor lambda for a batch function. See [applyOptionalColumnValueDefaults]'s KDoc for why this
+ * must only be called on an interface-facing declaration.
+ *
+ * @param parameterOffset Index in [FunSpec.Builder.parameters] of the entry corresponding to
+ *   [SqlStatement.parameters] index `0`. `1` for the batch functions, which have a leading `stream`
+ *   parameter before the per-column extractor lambdas.
+ */
+private fun FunSpec.Builder.applyOptionalExtractorDefaults(statement: SqlStatement, parameterOffset: Int) {
+  val defaultValue = CodeBlock.of("null")
+  for (index in statement.optionalParameterIndices) {
+    val position = parameterOffset + index
+    parameters[position] = parameters[position].toBuilder().defaultValue(defaultValue).build()
+  }
+}

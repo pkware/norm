@@ -14,6 +14,7 @@ import kotlin.String
 import kotlin.collections.Iterable
 import kotlin.collections.List
 import kotlin.jvm.Throws
+import norm.ColumnValue
 import norm.Many
 import norm.Query
 import norm.Transactable
@@ -69,15 +70,19 @@ public interface Queries : Transactable {
 
   /**
    * ```sql
-   * INSERT INTO audit_log (message) VALUES (?) RETURNING logged_at
+   * INSERT INTO audit_log (message, logged_at) VALUES (?, ?) RETURNING logged_at
    * ```
    */
   @Throws(SQLException::class)
-  public fun <T : Any> insertAuditLog(message: String, mapper: (logged_at: Instant) -> T): T
+  public fun <T : Any> insertAuditLog(
+    message: String,
+    logged_at: ColumnValue<Instant> = ColumnValue.Default,
+    mapper: (logged_at: Instant) -> T,
+  ): T
 
   /**
    * ```sql
-   * INSERT INTO audit_log (message) VALUES (?) RETURNING logged_at
+   * INSERT INTO audit_log (message, logged_at) VALUES (?, ?) RETURNING logged_at
    * ```
    *
    * @return A list containing the generated values for each inserted row, in insertion order.
@@ -86,13 +91,14 @@ public interface Queries : Transactable {
   public fun <Input : Any, T : Any> insertAuditLog(
     stream: Iterable<Input>,
     message: (Input) -> String,
+    logged_at: ((Input) -> Instant)? = null,
     mapper: (logged_at: Instant) -> T,
     batchSize: Int,
   ): List<T>
 
   /**
    * ```sql
-   * INSERT INTO audit_log (message) VALUES (?) RETURNING logged_at
+   * INSERT INTO audit_log (message, logged_at) VALUES (?, ?) RETURNING logged_at
    * ```
    *
    * Uses a batch size of 100.
@@ -100,15 +106,19 @@ public interface Queries : Transactable {
    * @return A list containing the generated values for each inserted row, in insertion order.
    */
   @Throws(SQLException::class)
-  public fun <Input : Any> insertAuditLog(stream: Iterable<Input>, message: (Input) -> String): List<Instant> = insertAuditLog(stream, message, ::inputValue, 100)
+  public fun <Input : Any> insertAuditLog(
+    stream: Iterable<Input>,
+    message: (Input) -> String,
+    logged_at: ((Input) -> Instant)? = null,
+  ): List<Instant> = insertAuditLog(stream, message, logged_at, ::inputValue, 100)
 
   /**
    * ```sql
-   * INSERT INTO audit_log (message) VALUES (?) RETURNING logged_at
+   * INSERT INTO audit_log (message, logged_at) VALUES (?, ?) RETURNING logged_at
    * ```
    */
   @Throws(SQLException::class)
-  public fun insertAuditLog(message: String): Instant = insertAuditLog(message, ::inputValue)
+  public fun insertAuditLog(message: String, logged_at: ColumnValue<Instant> = ColumnValue.Default): Instant = insertAuditLog(message, logged_at, ::inputValue)
 
   /**
    * ```sql
@@ -156,19 +166,20 @@ public interface Queries : Transactable {
 
   /**
    * ```sql
-   * INSERT INTO author (name, bio) VALUES (?, ?) RETURNING id, created_at
+   * INSERT INTO author (name, bio, created_at) VALUES (?, ?, ?) RETURNING id, created_at
    * ```
    */
   @Throws(SQLException::class)
   public fun <T : Any> insertAuthor(
     name: String,
     bio: String?,
+    created_at: ColumnValue<Instant> = ColumnValue.Default,
     mapper: (id: Int, created_at: Instant) -> T,
   ): T
 
   /**
    * ```sql
-   * INSERT INTO author (name, bio) VALUES (?, ?) RETURNING id, created_at
+   * INSERT INTO author (name, bio, created_at) VALUES (?, ?, ?) RETURNING id, created_at
    * ```
    *
    * @return A list containing the generated values for each inserted row, in insertion order.
@@ -178,13 +189,14 @@ public interface Queries : Transactable {
     stream: Iterable<Input>,
     name: (Input) -> String,
     bio: (Input) -> String?,
+    created_at: ((Input) -> Instant)? = null,
     mapper: (id: Int, created_at: Instant) -> T,
     batchSize: Int,
   ): List<T>
 
   /**
    * ```sql
-   * INSERT INTO author (name, bio) VALUES (?, ?) RETURNING id, created_at
+   * INSERT INTO author (name, bio, created_at) VALUES (?, ?, ?) RETURNING id, created_at
    * ```
    *
    * Uses a batch size of 100.
@@ -196,15 +208,20 @@ public interface Queries : Transactable {
     stream: Iterable<Input>,
     name: (Input) -> String,
     bio: (Input) -> String?,
-  ): List<InsertAuthor> = insertAuthor(stream, name, bio, ::InsertAuthor, 100)
+    created_at: ((Input) -> Instant)? = null,
+  ): List<InsertAuthor> = insertAuthor(stream, name, bio, created_at, ::InsertAuthor, 100)
 
   /**
    * ```sql
-   * INSERT INTO author (name, bio) VALUES (?, ?) RETURNING id, created_at
+   * INSERT INTO author (name, bio, created_at) VALUES (?, ?, ?) RETURNING id, created_at
    * ```
    */
   @Throws(SQLException::class)
-  public fun insertAuthor(name: String, bio: String?): InsertAuthor = insertAuthor(name, bio, ::InsertAuthor)
+  public fun insertAuthor(
+    name: String,
+    bio: String?,
+    created_at: ColumnValue<Instant> = ColumnValue.Default,
+  ): InsertAuthor = insertAuthor(name, bio, created_at, ::InsertAuthor)
 
   /**
    * ```sql
@@ -726,6 +743,204 @@ public interface Queries : Transactable {
    */
   @Throws(SQLException::class)
   public fun deleteAllOrderItem(): Int
+
+  /**
+   * ```sql
+   * INSERT INTO preference (theme, note) VALUES (?, ?) RETURNING id, theme, note
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> insertPreference(
+    theme: ColumnValue<String> = ColumnValue.Default,
+    note: ColumnValue<String?> = ColumnValue.Default,
+    mapper: (
+      id: Int,
+      theme: String,
+      note: String?,
+    ) -> T,
+  ): T
+
+  /**
+   * ```sql
+   * INSERT INTO preference (theme, note) VALUES (?, ?) RETURNING id, theme, note
+   * ```
+   *
+   * @return A list containing the generated values for each inserted row, in insertion order.
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any, T : Any> insertPreference(
+    stream: Iterable<Input>,
+    theme: ((Input) -> String)? = null,
+    note: ((Input) -> String?)? = null,
+    mapper: (
+      id: Int,
+      theme: String,
+      note: String?,
+    ) -> T,
+    batchSize: Int,
+  ): List<T>
+
+  /**
+   * ```sql
+   * INSERT INTO preference (theme, note) VALUES (?, ?) RETURNING id, theme, note
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return A list containing the generated values for each inserted row, in insertion order.
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> insertPreference(
+    stream: Iterable<Input>,
+    theme: ((Input) -> String)? = null,
+    note: ((Input) -> String?)? = null,
+  ): List<Preference> = insertPreference(stream, theme, note, ::Preference, 100)
+
+  /**
+   * ```sql
+   * INSERT INTO preference (theme, note) VALUES (?, ?) RETURNING id, theme, note
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun insertPreference(theme: ColumnValue<String> = ColumnValue.Default, note: ColumnValue<String?> = ColumnValue.Default): Preference = insertPreference(theme, note, ::Preference)
+
+  /**
+   * ```sql
+   * SELECT * FROM preference WHERE id = ?
+   * ```
+   */
+  public fun <T : Any> findPreferenceById(id: Int, mapper: (
+    id: Int,
+    theme: String,
+    note: String?,
+  ) -> T): Many<T>
+
+  /**
+   * ```sql
+   * SELECT * FROM preference WHERE id = ?
+   * ```
+   */
+  public fun findPreferenceById(id: Int): Many<Preference> = findPreferenceById(id, ::Preference)
+
+  /**
+   * ```sql
+   * SELECT EXISTS(SELECT 1 FROM preference WHERE id = ?)
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> existsPreferenceById(id: Int, mapper: (exists: Boolean) -> T): T
+
+  /**
+   * ```sql
+   * SELECT EXISTS(SELECT 1 FROM preference WHERE id = ?)
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun existsPreferenceById(id: Int): Boolean = existsPreferenceById(id, ::inputValue)
+
+  /**
+   * ```sql
+   * DELETE FROM preference WHERE id = ?
+   * ```
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> deletePreferenceById(
+    stream: Iterable<Input>,
+    id: (Input) -> Int,
+    batchSize: Int,
+  ): IntArray
+
+  /**
+   * ```sql
+   * DELETE FROM preference WHERE id = ?
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> deletePreferenceById(stream: Iterable<Input>, id: (Input) -> Int): IntArray = deletePreferenceById(stream, id, 100)
+
+  /**
+   * ```sql
+   * DELETE FROM preference WHERE id = ?
+   * ```
+   *
+   * @return The number of rows updated.
+   */
+  @Throws(SQLException::class)
+  public fun deletePreferenceById(id: Int): Int
+
+  /**
+   * ```sql
+   * SELECT * FROM preference
+   * ```
+   */
+  public fun <T : Any> findAllPreference(mapper: (
+    id: Int,
+    theme: String,
+    note: String?,
+  ) -> T): Many<T>
+
+  /**
+   * ```sql
+   * SELECT * FROM preference
+   * ```
+   */
+  public fun findAllPreference(): Many<Preference> = findAllPreference(::Preference)
+
+  public fun <T : Any> findAllPreferenceDynamically(mapper: (
+    id: Int,
+    theme: String,
+    note: String?,
+  ) -> T): Query<T>
+
+  public fun findAllPreferenceDynamically(): Query<Preference> = findAllPreferenceDynamically(::Preference)
+
+  /**
+   * ```sql
+   * SELECT COUNT(*) FROM preference
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> countPreference(mapper: (count: Long) -> T): T
+
+  /**
+   * ```sql
+   * SELECT COUNT(*) FROM preference
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun countPreference(): Long = countPreference(::inputValue)
+
+  /**
+   * ```sql
+   * DELETE FROM preference
+   * ```
+   *
+   * @return The number of rows updated.
+   */
+  @Throws(SQLException::class)
+  public fun deleteAllPreference(): Int
 
   /**
    * ```sql

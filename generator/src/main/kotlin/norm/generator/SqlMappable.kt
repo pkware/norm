@@ -31,8 +31,15 @@ internal interface SqlMappable {
   /**
    * Receiver action to call on a [Statement][java.sql.Statement] when mapping the data from Java
    * to SQL.
+   *
+   * `index` is a [CodeBlock] rather than a plain `Int` so a CRUD-synthesized INSERT's
+   * overridable-default column ([norm.generator.CrudQuerySynthesizer]) can pass a runtime-computed
+   * bind position (an immutable local, per [SqlStatement.optionalParameterIndices]'s KDoc) instead
+   * of a fixed one. The nullable-array and adapted-type implementations below render `index` twice,
+   * so callers must pass a side-effect-free expression -- a literal or a `val` reference, never a
+   * mutating expression like `i++`.
    */
-  val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
+  val statementAction: (index: CodeBlock, parameterName: CodeBlock) -> CodeBlock
 
   /**
    * Receiver action to call on a [ResultSet][java.sql.ResultSet] when mapping the data from SQL
@@ -63,13 +70,19 @@ internal interface WireCodec {
 
   /**
    * Writes a non-null [value] at [index].
+   *
+   * `index` is a [CodeBlock] (a literal or a side-effect-free `val` reference) rather than a plain
+   * `Int` — see [SqlMappable.statementAction]'s KDoc for why.
    */
-  fun write(index: Int, value: CodeBlock): CodeBlock
+  fun write(index: CodeBlock, value: CodeBlock): CodeBlock
 
   /**
    * Writes SQL `NULL` at [index].
+   *
+   * `index` is a [CodeBlock] (a literal or a side-effect-free `val` reference) rather than a plain
+   * `Int` — see [SqlMappable.statementAction]'s KDoc for why.
    */
-  fun writeNull(index: Int): CodeBlock
+  fun writeNull(index: CodeBlock): CodeBlock
 
   /**
    * Writes a value at [index] that may be `null` at runtime.
@@ -81,7 +94,7 @@ internal interface WireCodec {
    * here would regenerate goldens for `text`, `numeric`, `oid`, `bytea`, `date`, `time`, `timetz`,
    * `timestamp`, `uuid`, `json`, and `jsonb` plain nullable columns.
    */
-  fun writeNullable(index: Int, value: CodeBlock): CodeBlock = write(index, value)
+  fun writeNullable(index: CodeBlock, value: CodeBlock): CodeBlock = write(index, value)
 }
 
 /**
@@ -107,13 +120,13 @@ internal class PrimitiveCodec(
     return if (nullable) CodeBlock.of("%L.takeUnless { wasNull() }", get) else get
   }
 
-  override fun write(index: Int, value: CodeBlock): CodeBlock =
+  override fun write(index: CodeBlock, value: CodeBlock): CodeBlock =
     CodeBlock.of("%N(%L, %L)", "set$methodName", index, value)
 
-  override fun writeNull(index: Int): CodeBlock =
+  override fun writeNull(index: CodeBlock): CodeBlock =
     CodeBlock.of("setNull(%L, %T.%N)", index, Types::class, sqlTypeConstant)
 
-  override fun writeNullable(index: Int, value: CodeBlock): CodeBlock {
+  override fun writeNullable(index: CodeBlock, value: CodeBlock): CodeBlock {
     val member = MemberName("norm", "set$methodName", isExtension = true)
     return CodeBlock.of("%M(%L, %L)", member, index, value)
   }
@@ -139,9 +152,10 @@ internal class ObjectGetterCodec(
 
   override fun read(index: Int, nullable: Boolean): CodeBlock = CodeBlock.of("%N(%L)", getterName, index)
 
-  override fun write(index: Int, value: CodeBlock): CodeBlock = CodeBlock.of("%N(%L, %L)", setterName, index, value)
+  override fun write(index: CodeBlock, value: CodeBlock): CodeBlock =
+    CodeBlock.of("%N(%L, %L)", setterName, index, value)
 
-  override fun writeNull(index: Int): CodeBlock =
+  override fun writeNull(index: CodeBlock): CodeBlock =
     CodeBlock.of("setNull(%L, %T.%N)", index, Types::class, sqlTypeConstant)
 }
 
@@ -166,10 +180,10 @@ internal class TypesOtherCodec(
 
   override fun read(index: Int, nullable: Boolean): CodeBlock = CodeBlock.of("%N(%L)", getterName, index)
 
-  override fun write(index: Int, value: CodeBlock): CodeBlock =
+  override fun write(index: CodeBlock, value: CodeBlock): CodeBlock =
     CodeBlock.of("setObject(%L, %L, %T.%N)", index, value, Types::class, sqlTypeConstant)
 
-  override fun writeNull(index: Int): CodeBlock =
+  override fun writeNull(index: CodeBlock): CodeBlock =
     CodeBlock.of("setNull(%L, %T.%N)", index, Types::class, sqlTypeConstant)
 }
 
@@ -205,9 +219,9 @@ internal class ClassHintedObjectCodec(private val getterClassHint: ClassName, pr
   override fun read(index: Int, nullable: Boolean): CodeBlock =
     CodeBlock.of("getObject(%L, %T::class.java)", index, getterClassHint)
 
-  override fun write(index: Int, value: CodeBlock): CodeBlock = CodeBlock.of("setObject(%L, %L)", index, value)
+  override fun write(index: CodeBlock, value: CodeBlock): CodeBlock = CodeBlock.of("setObject(%L, %L)", index, value)
 
-  override fun writeNull(index: Int): CodeBlock =
+  override fun writeNull(index: CodeBlock): CodeBlock =
     CodeBlock.of("setNull(%L, %T.%N)", index, Types::class, sqlTypeConstant)
 }
 
@@ -234,13 +248,13 @@ internal object InstantViaOffsetDateTimeCodec : WireCodec {
     return if (nullable) CodeBlock.of("%L?.toInstant()", raw) else CodeBlock.of("%L.toInstant()", raw)
   }
 
-  override fun write(index: Int, value: CodeBlock): CodeBlock =
+  override fun write(index: CodeBlock, value: CodeBlock): CodeBlock =
     CodeBlock.of("setObject(%L, %T.ofInstant(%L, %T.UTC))", index, OffsetDateTime::class, value, ZoneOffset::class)
 
-  override fun writeNull(index: Int): CodeBlock =
+  override fun writeNull(index: CodeBlock): CodeBlock =
     CodeBlock.of("setNull(%L, %T.TIMESTAMP_WITH_TIMEZONE)", index, Types::class)
 
-  override fun writeNullable(index: Int, value: CodeBlock): CodeBlock =
+  override fun writeNullable(index: CodeBlock, value: CodeBlock): CodeBlock =
     CodeBlock.of("%L?.let { %L } ?: %L", value, write(index, CodeBlock.of("it")), writeNull(index))
 }
 
@@ -256,7 +270,7 @@ internal class ScalarSqlMappable(private val codec: WireCodec, private val notNu
   override val typeName: TypeName
     get() = codec.kotlinType.copy(nullable = !notNull)
 
-  override val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
+  override val statementAction: (index: CodeBlock, parameterName: CodeBlock) -> CodeBlock
     get() = { index, parameterName ->
       if (notNull) codec.write(index, parameterName) else codec.writeNullable(index, parameterName)
     }
@@ -293,7 +307,7 @@ internal class ArrayTypeDecorator(
   override val typeName: TypeName
     get() = arrayTypeName
 
-  override val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
+  override val statementAction: (index: CodeBlock, parameterName: CodeBlock) -> CodeBlock
     get() = if (arrayTypeName.isNullable) {
       { index, parameterName ->
         CodeBlock.of(
@@ -369,7 +383,7 @@ internal class AdaptedTypeSqlMappable(
   override val typeName: TypeName
     get() = applicationTypeName
 
-  override val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
+  override val statementAction: (index: CodeBlock, parameterName: CodeBlock) -> CodeBlock
     get() = if (notNull) {
       { index, parameterName -> codec.write(index, encode(parameterName)) }
     } else {
@@ -435,7 +449,7 @@ internal class AdaptedArrayTypeSqlMappable(
   override val typeName: TypeName
     get() = ARRAY.parameterizedBy(applicationTypeName.copy(nullable = true))
 
-  override val statementAction: (index: Int, parameterName: CodeBlock) -> CodeBlock
+  override val statementAction: (index: CodeBlock, parameterName: CodeBlock) -> CodeBlock
     get() = if (columnNotNull) {
       { index, parameterName ->
         CodeBlock.of(

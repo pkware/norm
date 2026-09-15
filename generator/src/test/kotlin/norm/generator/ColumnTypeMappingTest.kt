@@ -874,7 +874,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `non-null jsonb array writes via setArray and toSqlArray`() {
       val col = column("tags", type = "jsonb", isArray = true, notNull = true)
-      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("tags"))
+      val setter = typeRepository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("tags"))
       val setterString = setter.toString()
 
       assertThat(setterString).contains("setArray(1, ")
@@ -884,7 +884,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `nullable jsonb array writes via setArray with setNull fallback`() {
       val col = column("tags", type = "jsonb", isArray = true, notNull = false)
-      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("tags"))
+      val setter = typeRepository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("tags"))
       val setterString = setter.toString()
 
       assertThat(setterString).contains("tags?.let { setArray(1, it.")
@@ -896,49 +896,49 @@ class ColumnTypeMappingTest {
     fun `json array writes with the json element type name`() {
       // A bare setObject would send character varying[], which Postgres rejects for json[].
       val col = column("payloads", type = "json", isArray = true, notNull = true)
-      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("payloads"))
+      val setter = typeRepository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("payloads"))
       assertThat(setter.toString()).contains("""norm.toSqlArray(connection, "json")""")
     }
 
     @Test
     fun `date array writes with the date element type name`() {
       val col = column("holidays", type = "date", isArray = true, notNull = true)
-      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("holidays"))
+      val setter = typeRepository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("holidays"))
       assertThat(setter.toString()).contains("""norm.toSqlArray(connection, "date")""")
     }
 
     @Test
     fun `timestamptz array writes with the timestamptz element type name`() {
       val col = column("moments", type = "timestamptz", isArray = true, notNull = true)
-      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("moments"))
+      val setter = typeRepository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("moments"))
       assertThat(setter.toString()).contains("""norm.toSqlArray(connection, "timestamptz")""")
     }
 
     @Test
     fun `int array writes with the canonical int4 element type name`() {
       val col = column("counts", type = "integer", isArray = true, notNull = true)
-      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("counts"))
+      val setter = typeRepository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("counts"))
       assertThat(setter.toString()).contains("""norm.toSqlArray(connection, "int4")""")
     }
 
     @Test
     fun `pg_catalog prefixed element type is canonicalized`() {
       val col = column("counts", type = "pg_catalog.int4", isArray = true, notNull = true)
-      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("counts"))
+      val setter = typeRepository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("counts"))
       assertThat(setter.toString()).contains("""norm.toSqlArray(connection, "int4")""")
     }
 
     @Test
     fun `bytea array writes with the bytea element type name`() {
       val col = column("blobs", type = "bytea", isArray = true, notNull = true)
-      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("blobs"))
+      val setter = typeRepository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("blobs"))
       assertThat(setter.toString()).contains("""norm.toSqlArray(connection, "bytea")""")
     }
 
     @Test
     fun `oid array writes with the oid element type name`() {
       val col = column("owner_ids", type = "oid", isArray = true, notNull = true)
-      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("owner_ids"))
+      val setter = typeRepository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("owner_ids"))
       assertThat(setter.toString()).contains("""norm.toSqlArray(connection, "oid")""")
     }
   }
@@ -1056,7 +1056,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `non-null timestamptz writes via OffsetDateTime ofInstant`() {
       val col = column("updated_at", type = "timestamptz")
-      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("updated_at"))
+      val setter = typeRepository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("updated_at"))
       assertThat(setter.toString())
         .isEqualTo("setObject(1, java.time.OffsetDateTime.ofInstant(updated_at, java.time.ZoneOffset.UTC))")
     }
@@ -1064,7 +1064,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `nullable timestamptz writes via OffsetDateTime with setNull fallback`() {
       val col = column("updated_at", type = "timestamptz", notNull = false)
-      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("updated_at"))
+      val setter = typeRepository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("updated_at"))
       val setterString = setter.toString()
       assertThat(setterString).contains("OffsetDateTime.ofInstant(it, java.time.ZoneOffset.UTC)")
       assertThat(setterString).contains("setNull(1,")
@@ -1077,7 +1077,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `non-null jsonb writes via setObject with Types OTHER`() {
       val col = column("metadata", type = "jsonb")
-      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("metadata"))
+      val setter = typeRepository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("metadata"))
       assertThat(setter.toString()).isEqualTo("setObject(1, metadata, java.sql.Types.OTHER)")
     }
 
@@ -1086,7 +1086,7 @@ class ColumnTypeMappingTest {
       // pgjdbc's setObject(index, null, targetSqlType) delegates to setNull(index, targetSqlType),
       // so the nullable case needs no separate branch.
       val col = column("metadata", type = "jsonb", notNull = false)
-      val setter = typeRepository.resolveMappableType(col).statementAction(2, CodeBlock.of("metadata"))
+      val setter = typeRepository.resolveMappableType(col).statementAction(index(2), CodeBlock.of("metadata"))
       assertThat(setter.toString()).isEqualTo("setObject(2, metadata, java.sql.Types.OTHER)")
     }
 
@@ -1136,14 +1136,14 @@ class ColumnTypeMappingTest {
       // Postgres rejects setString() for json exactly as it does for jsonb: the parameter arrives as
       // character varying and there is no implicit cast to json.
       val col = column("payload", type = "json")
-      val setter = typeRepository.resolveMappableType(col).statementAction(1, CodeBlock.of("payload"))
+      val setter = typeRepository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("payload"))
       assertThat(setter.toString()).isEqualTo("setObject(1, payload, java.sql.Types.OTHER)")
     }
 
     @Test
     fun `nullable json writes via setObject with Types OTHER`() {
       val col = column("payload", type = "json", notNull = false)
-      val setter = typeRepository.resolveMappableType(col).statementAction(2, CodeBlock.of("payload"))
+      val setter = typeRepository.resolveMappableType(col).statementAction(index(2), CodeBlock.of("payload"))
       assertThat(setter.toString()).isEqualTo("setObject(2, payload, java.sql.Types.OTHER)")
     }
 
@@ -1252,7 +1252,7 @@ class ColumnTypeMappingTest {
     fun `enum array statementAction delegates to encodeToSqlArray runtime helper`() {
       val repository = TypeRepository("test", enumCatalog)
       val col = column("moods", type = "mood", isArray = true)
-      val setter = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("moods"))
+      val setter = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("moods"))
       assertThat(setter.toString()).contains("norm.encodeToSqlArray(connection, \"mood\", moodAdapter)")
     }
 
@@ -1276,7 +1276,7 @@ class ColumnTypeMappingTest {
     fun `non-null enum statementAction uses setObject with Types OTHER for Postgres enum coercion`() {
       val repository = TypeRepository("test", enumCatalog)
       val col = column("current_mood", type = "mood")
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("current_mood"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("current_mood"))
       // setObject(..., Types.OTHER) is required for Postgres enum columns — setString() is rejected
       // because the JDBC driver cannot implicitly coerce VARCHAR to a custom enum type.
       assertThat(action.toString()).isEqualTo("setObject(1, moodAdapter.encode(current_mood), java.sql.Types.OTHER)")
@@ -1286,7 +1286,7 @@ class ColumnTypeMappingTest {
     fun `nullable enum statementAction uses setNull with Types OTHER fallback`() {
       val repository = TypeRepository("test", enumCatalog)
       val col = column("previous_mood", type = "mood", notNull = false)
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("previous_mood"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("previous_mood"))
       assertThat(action.toString()).contains("moodAdapter.encode(")
       assertThat(action.toString()).contains("setNull(1, java.sql.Types.OTHER)")
     }
@@ -1466,7 +1466,7 @@ class ColumnTypeMappingTest {
     fun `non-null TEXT domain statementAction uses adapter encode with setString`() {
       val repository = TypeRepository("test", domainCatalog)
       val col = column("email", type = "email")
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("email"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("email"))
       assertThat(action.toString()).isEqualTo("setString(1, emailAdapter.encode(email))")
     }
 
@@ -1474,7 +1474,7 @@ class ColumnTypeMappingTest {
     fun `nullable TEXT domain statementAction uses setNull fallback`() {
       val repository = TypeRepository("test", domainCatalog)
       val col = column("email", type = "email", notNull = false)
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("email"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("email"))
       assertThat(action.toString()).contains("emailAdapter.encode(")
       assertThat(action.toString()).contains("setNull(1,")
     }
@@ -1483,7 +1483,7 @@ class ColumnTypeMappingTest {
     fun `non-null INTEGER domain statementAction uses adapter encode with setInt`() {
       val repository = TypeRepository("test", domainCatalog)
       val col = column("age", type = "positive_integer")
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("age"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("age"))
       assertThat(action.toString()).isEqualTo("setInt(1, positiveIntegerAdapter.encode(age))")
     }
 
@@ -1491,7 +1491,7 @@ class ColumnTypeMappingTest {
     fun `nullable INTEGER domain statementAction uses setNull fallback`() {
       val repository = TypeRepository("test", domainCatalog)
       val col = column("age", type = "positive_integer", notNull = false)
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("age"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("age"))
       assertThat(action.toString()).contains("positiveIntegerAdapter.encode(")
       assertThat(action.toString()).contains("setNull(1,")
     }
@@ -1534,7 +1534,7 @@ class ColumnTypeMappingTest {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("count", type = "small_count")
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("count"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("count"))
       assertThat(action.toString()).isEqualTo("setShort(1, smallCountAdapter.encode(count))")
     }
 
@@ -1546,7 +1546,7 @@ class ColumnTypeMappingTest {
       val col = column("payload", type = "json_doc")
 
       assertThat(repository.resolveColumnType(col)).isEqualTo(ClassName("test", "JsonDoc"))
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("payload"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("payload"))
       assertThat(action.toString())
         .isEqualTo("setObject(1, jsonDocAdapter.encode(payload), java.sql.Types.OTHER)")
     }
@@ -1588,7 +1588,7 @@ class ColumnTypeMappingTest {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("count", type = "big_count")
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("count"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("count"))
       assertThat(action.toString()).isEqualTo("setLong(1, bigCountAdapter.encode(count))")
     }
 
@@ -1619,7 +1619,7 @@ class ColumnTypeMappingTest {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("lat", type = "latitude", notNull = false)
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("lat"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("lat"))
       assertThat(action.toString()).contains("setFloat(")
       assertThat(action.toString()).contains("Types.REAL")
     }
@@ -1651,7 +1651,7 @@ class ColumnTypeMappingTest {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("lng", type = "longitude", notNull = false)
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("lng"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("lng"))
       assertThat(action.toString()).contains("setDouble(")
       assertThat(action.toString()).contains("Types.DOUBLE")
     }
@@ -1683,7 +1683,7 @@ class ColumnTypeMappingTest {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("active", type = "active_flag", notNull = false)
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("active"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("active"))
       assertThat(action.toString()).contains("setBoolean(")
       assertThat(action.toString()).contains("Types.BOOLEAN")
     }
@@ -1716,7 +1716,7 @@ class ColumnTypeMappingTest {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("amount", type = "currency_amount", notNull = false)
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("amount"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("amount"))
       assertThat(action.toString()).contains("setBigDecimal(")
       assertThat(action.toString()).contains("Types.NUMERIC")
     }
@@ -1791,7 +1791,7 @@ class ColumnTypeMappingTest {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("day", type = "preferred_date")
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("day"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("day"))
       assertThat(action.toString()).isEqualTo("setObject(1, preferredDateAdapter.encode(day))")
     }
 
@@ -1801,7 +1801,7 @@ class ColumnTypeMappingTest {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("day", type = "preferred_date", notNull = false)
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("day"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("day"))
       assertThat(action.toString()).contains("setObject(1, preferredDateAdapter.encode(it))")
       assertThat(action.toString()).contains("setNull(1, java.sql.Types.DATE)")
     }
@@ -1834,7 +1834,7 @@ class ColumnTypeMappingTest {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("start", type = "meeting_time_tz", notNull = false)
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("start"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("start"))
       assertThat(action.toString()).contains("setNull(1, java.sql.Types.TIME_WITH_TIMEZONE)")
     }
 
@@ -1888,7 +1888,7 @@ class ColumnTypeMappingTest {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("moment", type = "occurred_at")
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("moment"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("moment"))
       assertThat(action.toString()).isEqualTo(
         "setObject(1, java.time.OffsetDateTime.ofInstant(occurredAtAdapter.encode(moment), java.time.ZoneOffset.UTC))",
       )
@@ -1900,7 +1900,7 @@ class ColumnTypeMappingTest {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("moment", type = "occurred_at", notNull = false)
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("moment"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("moment"))
       assertThat(action.toString())
         .contains("java.time.OffsetDateTime.ofInstant(occurredAtAdapter.encode(it), java.time.ZoneOffset.UTC)")
       assertThat(action.toString()).contains("setNull(1, java.sql.Types.TIMESTAMP_WITH_TIMEZONE)")
@@ -1951,7 +1951,7 @@ class ColumnTypeMappingTest {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("id", type = "external_id")
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("id"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("id"))
       assertThat(action.toString()).isEqualTo("setObject(1, externalIdAdapter.encode(id))")
     }
 
@@ -1961,7 +1961,7 @@ class ColumnTypeMappingTest {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("id", type = "external_id", notNull = false)
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("id"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("id"))
       assertThat(action.toString()).contains("setObject(1, externalIdAdapter.encode(it))")
       assertThat(action.toString()).contains("setNull(1, java.sql.Types.OTHER)")
     }
@@ -1992,7 +1992,7 @@ class ColumnTypeMappingTest {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("data", type = "thumbnail")
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("data"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("data"))
       assertThat(action.toString()).isEqualTo("setBytes(1, thumbnailAdapter.encode(data))")
     }
 
@@ -2002,7 +2002,7 @@ class ColumnTypeMappingTest {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("data", type = "thumbnail", notNull = false)
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("data"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("data"))
       assertThat(action.toString()).contains("setBytes(1, thumbnailAdapter.encode(it))")
       assertThat(action.toString()).contains("setNull(1, java.sql.Types.BINARY)")
     }
@@ -2033,7 +2033,7 @@ class ColumnTypeMappingTest {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("ref", type = "large_object_ref")
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("ref"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("ref"))
       assertThat(action.toString()).isEqualTo("setBlob(1, largeObjectRefAdapter.encode(ref))")
     }
 
@@ -2043,7 +2043,7 @@ class ColumnTypeMappingTest {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(domain))))
       val repository = TypeRepository("test", catalog)
       val col = column("ref", type = "large_object_ref", notNull = false)
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("ref"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("ref"))
       assertThat(action.toString()).contains("setBlob(1, largeObjectRefAdapter.encode(it))")
       assertThat(action.toString()).contains("setNull(1, java.sql.Types.BLOB)")
     }
@@ -2065,23 +2065,23 @@ class ColumnTypeMappingTest {
       val codec = resolveWireCodec("text")!!
       assertThat(codec.read(1, false).toString()).isEqualTo("getString(1)")
       assertThat(codec.read(1, true).toString()).isEqualTo("getString(1)")
-      assertThat(codec.write(1, CodeBlock.of("value")).toString()).isEqualTo("setString(1, value)")
-      assertThat(codec.writeNullable(1, CodeBlock.of("value")).toString()).isEqualTo("setString(1, value)")
-      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.VARCHAR)")
+      assertThat(codec.write(index(1), CodeBlock.of("value")).toString()).isEqualTo("setString(1, value)")
+      assertThat(codec.writeNullable(index(1), CodeBlock.of("value")).toString()).isEqualTo("setString(1, value)")
+      assertThat(codec.writeNull(index(1)).toString()).isEqualTo("setNull(1, java.sql.Types.VARCHAR)")
     }
 
     @Test
     fun `varchar resolves same as text`() {
       val codec = resolveWireCodec("varchar")!!
-      assertThat(codec.write(1, CodeBlock.of("value")).toString()).isEqualTo("setString(1, value)")
-      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.VARCHAR)")
+      assertThat(codec.write(index(1), CodeBlock.of("value")).toString()).isEqualTo("setString(1, value)")
+      assertThat(codec.writeNull(index(1)).toString()).isEqualTo("setNull(1, java.sql.Types.VARCHAR)")
     }
 
     @Test
     fun `bpchar resolves same as text`() {
       val codec = resolveWireCodec("bpchar")!!
       assertThat(codec.read(1, false).toString()).isEqualTo("getString(1)")
-      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.VARCHAR)")
+      assertThat(codec.writeNull(index(1)).toString()).isEqualTo("setNull(1, java.sql.Types.VARCHAR)")
     }
 
     @Test
@@ -2089,9 +2089,9 @@ class ColumnTypeMappingTest {
       val codec = resolveWireCodec("int2")!!
       assertThat(codec.read(1, false).toString()).isEqualTo("getShort(1)")
       assertThat(codec.read(1, true).toString()).isEqualTo("getShort(1).takeUnless { wasNull() }")
-      assertThat(codec.write(1, CodeBlock.of("value")).toString()).isEqualTo("setShort(1, value)")
-      assertThat(codec.writeNullable(1, CodeBlock.of("value")).toString()).isEqualTo("norm.setShort(1, value)")
-      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.SMALLINT)")
+      assertThat(codec.write(index(1), CodeBlock.of("value")).toString()).isEqualTo("setShort(1, value)")
+      assertThat(codec.writeNullable(index(1), CodeBlock.of("value")).toString()).isEqualTo("norm.setShort(1, value)")
+      assertThat(codec.writeNull(index(1)).toString()).isEqualTo("setNull(1, java.sql.Types.SMALLINT)")
     }
 
     @Test
@@ -2099,9 +2099,9 @@ class ColumnTypeMappingTest {
       val codec = resolveWireCodec("int4")!!
       assertThat(codec.read(1, false).toString()).isEqualTo("getInt(1)")
       assertThat(codec.read(1, true).toString()).isEqualTo("getInt(1).takeUnless { wasNull() }")
-      assertThat(codec.write(1, CodeBlock.of("value")).toString()).isEqualTo("setInt(1, value)")
-      assertThat(codec.writeNullable(1, CodeBlock.of("value")).toString()).isEqualTo("norm.setInt(1, value)")
-      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.INTEGER)")
+      assertThat(codec.write(index(1), CodeBlock.of("value")).toString()).isEqualTo("setInt(1, value)")
+      assertThat(codec.writeNullable(index(1), CodeBlock.of("value")).toString()).isEqualTo("norm.setInt(1, value)")
+      assertThat(codec.writeNull(index(1)).toString()).isEqualTo("setNull(1, java.sql.Types.INTEGER)")
     }
 
     @Test
@@ -2109,9 +2109,9 @@ class ColumnTypeMappingTest {
       val codec = resolveWireCodec("int8")!!
       assertThat(codec.read(1, false).toString()).isEqualTo("getLong(1)")
       assertThat(codec.read(1, true).toString()).isEqualTo("getLong(1).takeUnless { wasNull() }")
-      assertThat(codec.write(1, CodeBlock.of("value")).toString()).isEqualTo("setLong(1, value)")
-      assertThat(codec.writeNullable(1, CodeBlock.of("value")).toString()).isEqualTo("norm.setLong(1, value)")
-      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.BIGINT)")
+      assertThat(codec.write(index(1), CodeBlock.of("value")).toString()).isEqualTo("setLong(1, value)")
+      assertThat(codec.writeNullable(index(1), CodeBlock.of("value")).toString()).isEqualTo("norm.setLong(1, value)")
+      assertThat(codec.writeNull(index(1)).toString()).isEqualTo("setNull(1, java.sql.Types.BIGINT)")
     }
 
     @Test
@@ -2119,9 +2119,9 @@ class ColumnTypeMappingTest {
       val codec = resolveWireCodec("float4")!!
       assertThat(codec.read(1, false).toString()).isEqualTo("getFloat(1)")
       assertThat(codec.read(1, true).toString()).isEqualTo("getFloat(1).takeUnless { wasNull() }")
-      assertThat(codec.write(1, CodeBlock.of("value")).toString()).isEqualTo("setFloat(1, value)")
-      assertThat(codec.writeNullable(1, CodeBlock.of("value")).toString()).isEqualTo("norm.setFloat(1, value)")
-      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.REAL)")
+      assertThat(codec.write(index(1), CodeBlock.of("value")).toString()).isEqualTo("setFloat(1, value)")
+      assertThat(codec.writeNullable(index(1), CodeBlock.of("value")).toString()).isEqualTo("norm.setFloat(1, value)")
+      assertThat(codec.writeNull(index(1)).toString()).isEqualTo("setNull(1, java.sql.Types.REAL)")
     }
 
     @Test
@@ -2129,9 +2129,9 @@ class ColumnTypeMappingTest {
       val codec = resolveWireCodec("float8")!!
       assertThat(codec.read(1, false).toString()).isEqualTo("getDouble(1)")
       assertThat(codec.read(1, true).toString()).isEqualTo("getDouble(1).takeUnless { wasNull() }")
-      assertThat(codec.write(1, CodeBlock.of("value")).toString()).isEqualTo("setDouble(1, value)")
-      assertThat(codec.writeNullable(1, CodeBlock.of("value")).toString()).isEqualTo("norm.setDouble(1, value)")
-      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.DOUBLE)")
+      assertThat(codec.write(index(1), CodeBlock.of("value")).toString()).isEqualTo("setDouble(1, value)")
+      assertThat(codec.writeNullable(index(1), CodeBlock.of("value")).toString()).isEqualTo("norm.setDouble(1, value)")
+      assertThat(codec.writeNull(index(1)).toString()).isEqualTo("setNull(1, java.sql.Types.DOUBLE)")
     }
 
     @Test
@@ -2139,9 +2139,9 @@ class ColumnTypeMappingTest {
       val codec = resolveWireCodec("bool")!!
       assertThat(codec.read(1, false).toString()).isEqualTo("getBoolean(1)")
       assertThat(codec.read(1, true).toString()).isEqualTo("getBoolean(1).takeUnless { wasNull() }")
-      assertThat(codec.write(1, CodeBlock.of("value")).toString()).isEqualTo("setBoolean(1, value)")
-      assertThat(codec.writeNullable(1, CodeBlock.of("value")).toString()).isEqualTo("norm.setBoolean(1, value)")
-      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.BOOLEAN)")
+      assertThat(codec.write(index(1), CodeBlock.of("value")).toString()).isEqualTo("setBoolean(1, value)")
+      assertThat(codec.writeNullable(index(1), CodeBlock.of("value")).toString()).isEqualTo("norm.setBoolean(1, value)")
+      assertThat(codec.writeNull(index(1)).toString()).isEqualTo("setNull(1, java.sql.Types.BOOLEAN)")
     }
 
     @Test
@@ -2149,9 +2149,9 @@ class ColumnTypeMappingTest {
       val codec = resolveWireCodec("numeric")!!
       assertThat(codec.read(1, false).toString()).isEqualTo("getBigDecimal(1)")
       assertThat(codec.read(1, true).toString()).isEqualTo("getBigDecimal(1)")
-      assertThat(codec.write(1, CodeBlock.of("value")).toString()).isEqualTo("setBigDecimal(1, value)")
-      assertThat(codec.writeNullable(1, CodeBlock.of("value")).toString()).isEqualTo("setBigDecimal(1, value)")
-      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.NUMERIC)")
+      assertThat(codec.write(index(1), CodeBlock.of("value")).toString()).isEqualTo("setBigDecimal(1, value)")
+      assertThat(codec.writeNullable(index(1), CodeBlock.of("value")).toString()).isEqualTo("setBigDecimal(1, value)")
+      assertThat(codec.writeNull(index(1)).toString()).isEqualTo("setNull(1, java.sql.Types.NUMERIC)")
     }
 
     @Test
@@ -2159,20 +2159,20 @@ class ColumnTypeMappingTest {
       val codec = resolveWireCodec("jsonb")!!
       assertThat(codec.read(1, false).toString()).isEqualTo("getString(1)")
       // setObject(..., Types.OTHER) is required — Postgres JDBC rejects setString() for jsonb columns
-      assertThat(codec.write(1, CodeBlock.of("value")).toString())
+      assertThat(codec.write(index(1), CodeBlock.of("value")).toString())
         .isEqualTo("setObject(1, value, java.sql.Types.OTHER)")
-      assertThat(codec.writeNullable(1, CodeBlock.of("value")).toString())
+      assertThat(codec.writeNullable(index(1), CodeBlock.of("value")).toString())
         .isEqualTo("setObject(1, value, java.sql.Types.OTHER)")
-      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.OTHER)")
+      assertThat(codec.writeNull(index(1)).toString()).isEqualTo("setNull(1, java.sql.Types.OTHER)")
     }
 
     @Test
     fun `json resolves to getString and setObject with Types OTHER`() {
       val codec = resolveWireCodec("json")!!
       assertThat(codec.read(1, false).toString()).isEqualTo("getString(1)")
-      assertThat(codec.write(1, CodeBlock.of("value")).toString())
+      assertThat(codec.write(index(1), CodeBlock.of("value")).toString())
         .isEqualTo("setObject(1, value, java.sql.Types.OTHER)")
-      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.OTHER)")
+      assertThat(codec.writeNull(index(1)).toString()).isEqualTo("setNull(1, java.sql.Types.OTHER)")
     }
 
     @Test
@@ -2180,9 +2180,9 @@ class ColumnTypeMappingTest {
       val codec = resolveWireCodec("uuid")!!
       assertThat(codec.read(1, false).toString()).isEqualTo("getObject(1, java.util.UUID::class.java)")
       assertThat(codec.read(1, true).toString()).isEqualTo("getObject(1, java.util.UUID::class.java)")
-      assertThat(codec.write(1, CodeBlock.of("value")).toString()).isEqualTo("setObject(1, value)")
-      assertThat(codec.writeNullable(1, CodeBlock.of("value")).toString()).isEqualTo("setObject(1, value)")
-      assertThat(codec.writeNull(1).toString()).isEqualTo("setNull(1, java.sql.Types.OTHER)")
+      assertThat(codec.write(index(1), CodeBlock.of("value")).toString()).isEqualTo("setObject(1, value)")
+      assertThat(codec.writeNullable(index(1), CodeBlock.of("value")).toString()).isEqualTo("setObject(1, value)")
+      assertThat(codec.writeNull(index(1)).toString()).isEqualTo("setNull(1, java.sql.Types.OTHER)")
     }
 
     @Test
@@ -2234,35 +2234,35 @@ class ColumnTypeMappingTest {
     @Test
     fun `PrimitiveCodec nullable write uses the norm set extension`() {
       val codec = resolveWireCodec("int4")!!
-      val action = ScalarSqlMappable(codec, notNull = false).statementAction(1, CodeBlock.of("value"))
+      val action = ScalarSqlMappable(codec, notNull = false).statementAction(index(1), CodeBlock.of("value"))
       assertThat(action.toString()).isEqualTo("norm.setInt(1, value)")
     }
 
     @Test
     fun `ObjectGetterCodec nullable write uses the plain setter`() {
       val codec = resolveWireCodec("text")!!
-      val action = ScalarSqlMappable(codec, notNull = false).statementAction(1, CodeBlock.of("value"))
+      val action = ScalarSqlMappable(codec, notNull = false).statementAction(index(1), CodeBlock.of("value"))
       assertThat(action.toString()).isEqualTo("setString(1, value)")
     }
 
     @Test
     fun `ClassHintedObjectCodec nullable write uses the plain setObject`() {
       val codec = resolveWireCodec("uuid")!!
-      val action = ScalarSqlMappable(codec, notNull = false).statementAction(1, CodeBlock.of("value"))
+      val action = ScalarSqlMappable(codec, notNull = false).statementAction(index(1), CodeBlock.of("value"))
       assertThat(action.toString()).isEqualTo("setObject(1, value)")
     }
 
     @Test
     fun `TypesOtherCodec nullable write uses setObject with Types OTHER`() {
       val codec = resolveWireCodec("jsonb")!!
-      val action = ScalarSqlMappable(codec, notNull = false).statementAction(1, CodeBlock.of("value"))
+      val action = ScalarSqlMappable(codec, notNull = false).statementAction(index(1), CodeBlock.of("value"))
       assertThat(action.toString()).isEqualTo("setObject(1, value, java.sql.Types.OTHER)")
     }
 
     @Test
     fun `InstantViaOffsetDateTimeCodec nullable write uses the safe-call setNull fallback`() {
       val codec = resolveWireCodec("timestamptz")!!
-      val action = ScalarSqlMappable(codec, notNull = false).statementAction(1, CodeBlock.of("value"))
+      val action = ScalarSqlMappable(codec, notNull = false).statementAction(index(1), CodeBlock.of("value"))
       assertThat(action.toString()).isEqualTo(
         "value?.let { setObject(1, java.time.OffsetDateTime.ofInstant(it, java.time.ZoneOffset.UTC)) } " +
           "?: setNull(1, java.sql.Types.TIMESTAMP_WITH_TIMEZONE)",
@@ -2485,7 +2485,7 @@ class ColumnTypeMappingTest {
       )
       val repository = TypeRepository("test", Catalog(), mappings)
       val col = column("metadata", type = "jsonb")
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("metadata"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("metadata"))
       assertThat(action.toString()).isEqualTo("setObject(1, jsonbAdapter.encode(metadata), java.sql.Types.OTHER)")
     }
 
@@ -2496,7 +2496,7 @@ class ColumnTypeMappingTest {
       )
       val repository = TypeRepository("test", Catalog(), mappings)
       val col = column("metadata", type = "jsonb", notNull = false)
-      val action = repository.resolveMappableType(col).statementAction(1, CodeBlock.of("metadata"))
+      val action = repository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("metadata"))
       assertThat(action.toString()).contains("jsonbAdapter.encode(")
       assertThat(action.toString()).contains("setNull(1,")
     }
@@ -2632,4 +2632,7 @@ class ColumnTypeMappingTest {
       assertThat(repository.resolveColumnType(shortNamedColumn)).isEqualTo(ClassName("com.example", "CustomType"))
     }
   }
+
+  /** A fixed JDBC bind position rendered as a [CodeBlock], for [SqlMappable.statementAction] and [WireCodec.write]. */
+  private fun index(position: Int): CodeBlock = CodeBlock.of("%L", position)
 }
