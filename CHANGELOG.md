@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0](https://github.com/pkware/norm/compare/v0.5.0...v0.6.0) (2026-09-15)
+
+
+### Features
+
+* let callers override DEFAULT columns in synthesized inserts ([9d64920](https://github.com/pkware/norm/commit/9d64920a12210c3f4dabf478429093c71528b9fb)), closes [#299](https://github.com/pkware/norm/issues/299)
+
+
+### Bug Fixes
+
+* **deps:** update micronaut ([ffe20f6](https://github.com/pkware/norm/commit/ffe20f69c788d590dc74bba25b99dcf1a1e96e81))
+* **deps:** update micronaut to v5.2.2 ([82715dc](https://github.com/pkware/norm/commit/82715dc0753db92e2f5b513b0031aa1ca9d3d0ff))
+* **deps:** update micronautdata to v5.1.4 ([3eb90cc](https://github.com/pkware/norm/commit/3eb90cc7d61e1338ac66f89e6d5b48e3c6f9b3af))
+
 ## [0.5.0](https://github.com/pkware/norm/compare/v0.4.2...v0.5.0) (2026-09-08)
 
 
