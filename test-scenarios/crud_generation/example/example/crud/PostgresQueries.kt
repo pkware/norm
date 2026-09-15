@@ -7,6 +7,7 @@ import java.sql.SQLException
 import java.sql.Types
 import java.time.Instant
 import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import kotlin.Any
 import kotlin.Boolean
 import kotlin.Int
@@ -17,6 +18,7 @@ import kotlin.Unit
 import kotlin.collections.Iterable
 import kotlin.collections.List
 import kotlin.jvm.Throws
+import norm.ColumnValue
 import norm.ConnectionProvider
 import norm.Many
 import norm.ManyProcessor
@@ -69,8 +71,13 @@ public class PostgresQueries(
   }
 
   @Throws(SQLException::class)
-  override fun <T : Any> insertAuditLog(message: String, mapper: (logged_at: Instant) -> T): T {
-    val sql = "INSERT INTO audit_log (message) VALUES (?) RETURNING logged_at"
+  override fun <T : Any> insertAuditLog(
+    message: String,
+    logged_at: ColumnValue<Instant>,
+    mapper: (logged_at: Instant) -> T,
+  ): T {
+    val logged_atPlaceholder = if (logged_at is ColumnValue.Set) "?" else "DEFAULT"
+    val sql = "INSERT INTO audit_log (message, logged_at) VALUES (?, " + logged_atPlaceholder + ") RETURNING logged_at"
     val rowReader: ResultSet.() -> T = {
       mapper(
         getObject(1, OffsetDateTime::class.java).toInstant(),
@@ -78,6 +85,12 @@ public class PostgresQueries(
     }
     return driver.queryOne(sql, rowReader) {
       setString(1, message)
+      var nextParameterIndex = 1
+      if (logged_at is ColumnValue.Set) {
+        nextParameterIndex += 1
+        val logged_atIndex = nextParameterIndex
+        setObject(logged_atIndex, OffsetDateTime.ofInstant(logged_at.value, ZoneOffset.UTC))
+      }
     }
   }
 
@@ -85,11 +98,15 @@ public class PostgresQueries(
   override fun <Input : Any, T : Any> insertAuditLog(
     stream: Iterable<Input>,
     message: (Input) -> String,
+    logged_at: ((Input) -> Instant)?,
     mapper: (logged_at: Instant) -> T,
     batchSize: Int,
   ): List<T> {
-    val sql = "INSERT INTO audit_log (message) VALUES (?)"
+    val logged_atPlaceholder = if (logged_at != null) "?" else "DEFAULT"
+    val sql = "INSERT INTO audit_log (message, logged_at) VALUES (?, " + logged_atPlaceholder + ")"
     val columnNames = arrayOf("logged_at")
+    var nextParameterIndex = 1
+    val logged_atIndex: Int? = if (logged_at != null) { nextParameterIndex += 1; nextParameterIndex } else null
     return driver.executeBatchWithGeneratedKeys(sql, columnNames) {
       val rowReader: ResultSet.() -> T = {
         mapper(
@@ -100,6 +117,9 @@ public class PostgresQueries(
       var batchCount = 0
       for (entry in stream) {
         setString(1, message(entry))
+        if (logged_atIndex != null) {
+          setObject(logged_atIndex, OffsetDateTime.ofInstant(logged_at!!(entry), ZoneOffset.UTC))
+        }
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
@@ -152,9 +172,11 @@ public class PostgresQueries(
   override fun <T : Any> insertAuthor(
     name: String,
     bio: String?,
+    created_at: ColumnValue<Instant>,
     mapper: (id: Int, created_at: Instant) -> T,
   ): T {
-    val sql = "INSERT INTO author (name, bio) VALUES (?, ?) RETURNING id, created_at"
+    val created_atPlaceholder = if (created_at is ColumnValue.Set) "?" else "DEFAULT"
+    val sql = "INSERT INTO author (name, bio, created_at) VALUES (?, ?, " + created_atPlaceholder + ") RETURNING id, created_at"
     val rowReader: ResultSet.() -> T = {
       mapper(
         getInt(1),
@@ -164,6 +186,12 @@ public class PostgresQueries(
     return driver.queryOne(sql, rowReader) {
       setString(1, name)
       setString(2, bio)
+      var nextParameterIndex = 2
+      if (created_at is ColumnValue.Set) {
+        nextParameterIndex += 1
+        val created_atIndex = nextParameterIndex
+        setObject(created_atIndex, OffsetDateTime.ofInstant(created_at.value, ZoneOffset.UTC))
+      }
     }
   }
 
@@ -172,11 +200,15 @@ public class PostgresQueries(
     stream: Iterable<Input>,
     name: (Input) -> String,
     bio: (Input) -> String?,
+    created_at: ((Input) -> Instant)?,
     mapper: (id: Int, created_at: Instant) -> T,
     batchSize: Int,
   ): List<T> {
-    val sql = "INSERT INTO author (name, bio) VALUES (?, ?)"
+    val created_atPlaceholder = if (created_at != null) "?" else "DEFAULT"
+    val sql = "INSERT INTO author (name, bio, created_at) VALUES (?, ?, " + created_atPlaceholder + ")"
     val columnNames = arrayOf("id", "created_at")
+    var nextParameterIndex = 2
+    val created_atIndex: Int? = if (created_at != null) { nextParameterIndex += 1; nextParameterIndex } else null
     return driver.executeBatchWithGeneratedKeys(sql, columnNames) {
       val rowReader: ResultSet.() -> T = {
         mapper(
@@ -189,6 +221,9 @@ public class PostgresQueries(
       for (entry in stream) {
         setString(1, name(entry))
         setString(2, bio(entry))
+        if (created_atIndex != null) {
+          setObject(created_atIndex, OffsetDateTime.ofInstant(created_at!!(entry), ZoneOffset.UTC))
+        }
         addBatch()
         batchCount++
         if (batchCount == batchSize) {
@@ -681,6 +716,218 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun deleteAllOrderItem(): Int {
     val sql = "DELETE FROM order_item"
+    return driver.executeRows(sql)
+  }
+
+  @Throws(SQLException::class)
+  override fun <T : Any> insertPreference(
+    theme: ColumnValue<String>,
+    note: ColumnValue<String?>,
+    mapper: (
+      id: Int,
+      theme: String,
+      note: String?,
+    ) -> T,
+  ): T {
+    val themePlaceholder = if (theme is ColumnValue.Set) "?" else "DEFAULT"
+    val notePlaceholder = if (note is ColumnValue.Set) "?" else "DEFAULT"
+    val sql = "INSERT INTO preference (theme, note) VALUES (" + themePlaceholder + ", " + notePlaceholder + ") RETURNING id, theme, note"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        getString(2),
+        getString(3),
+      )
+    }
+    return driver.queryOne(sql, rowReader) {
+      var nextParameterIndex = 0
+      if (theme is ColumnValue.Set) {
+        nextParameterIndex += 1
+        val themeIndex = nextParameterIndex
+        setString(themeIndex, theme.value)
+      }
+      if (note is ColumnValue.Set) {
+        nextParameterIndex += 1
+        val noteIndex = nextParameterIndex
+        setString(noteIndex, note.value)
+      }
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any, T : Any> insertPreference(
+    stream: Iterable<Input>,
+    theme: ((Input) -> String)?,
+    note: ((Input) -> String?)?,
+    mapper: (
+      id: Int,
+      theme: String,
+      note: String?,
+    ) -> T,
+    batchSize: Int,
+  ): List<T> {
+    val themePlaceholder = if (theme != null) "?" else "DEFAULT"
+    val notePlaceholder = if (note != null) "?" else "DEFAULT"
+    val sql = "INSERT INTO preference (theme, note) VALUES (" + themePlaceholder + ", " + notePlaceholder + ")"
+    val columnNames = arrayOf("id", "theme", "note")
+    var nextParameterIndex = 0
+    val themeIndex: Int? = if (theme != null) { nextParameterIndex += 1; nextParameterIndex } else null
+    val noteIndex: Int? = if (note != null) { nextParameterIndex += 1; nextParameterIndex } else null
+    return driver.executeBatchWithGeneratedKeys(sql, columnNames) {
+      val rowReader: ResultSet.() -> T = {
+        mapper(
+          getInt(1),
+          getString(2),
+          getString(3),
+        )
+      }
+      val results = mutableListOf<T>()
+      var batchCount = 0
+      for (entry in stream) {
+        if (themeIndex != null) {
+          setString(themeIndex, theme!!(entry))
+        }
+        if (noteIndex != null) {
+          setString(noteIndex, note!!(entry))
+        }
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          executeBatch()
+          generatedKeys.use { readGeneratedKeys(it, rowReader, results) }
+          batchCount = 0
+        }
+      }
+      if (batchCount > 0) {
+        executeBatch()
+        generatedKeys.use { readGeneratedKeys(it, rowReader, results) }
+      }
+      results
+    }
+  }
+
+  private fun <T : Any, Return> findPreferenceById(
+    id: Int,
+    mapper: (
+      id: Int,
+      theme: String,
+      note: String?,
+    ) -> T,
+    processor: ManyProcessor<T, Return>,
+  ): Return {
+    val sql = "SELECT * FROM preference WHERE id = ?"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        getString(2),
+        getString(3),
+      )
+    }
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setInt(1, id)
+    }
+    return processor.invoke(sql, rowReader, queryBinder)
+  }
+
+  override fun <T : Any> findPreferenceById(id: Int, mapper: (
+    id: Int,
+    theme: String,
+    note: String?,
+  ) -> T): Many<T> = findPreferenceById(id, mapper, driver::queryMany)
+
+  @Throws(SQLException::class)
+  override fun <T : Any> existsPreferenceById(id: Int, mapper: (exists: Boolean) -> T): T {
+    val sql = "SELECT EXISTS(SELECT 1 FROM preference WHERE id = ?)"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getBoolean(1),
+      )
+    }
+    return driver.queryOne(sql, rowReader) {
+      setInt(1, id)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun deletePreferenceById(id: Int): Int {
+    val sql = "DELETE FROM preference WHERE id = ?"
+    return driver.executeRows(sql) {
+      setInt(1, id)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any> deletePreferenceById(
+    stream: Iterable<Input>,
+    id: (Input) -> Int,
+    batchSize: Int,
+  ): IntArray {
+    val sql = "DELETE FROM preference WHERE id = ?"
+    return driver.execute(sql) {
+      var totalCount = 0
+      var batchCount = 0
+      val results = mutableListOf<IntArray>()
+      for (entry in stream) {
+        setInt(1, id(entry))
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          results.add(executeBatch())
+          batchCount = 0
+          // Performance optimization to reduce register updates per loop iteration
+          totalCount += batchSize
+        }
+      }
+      if (batchCount > 0) {
+        results.add(executeBatch())
+        totalCount += batchCount
+      }
+      combineExecBatchResults(results, totalCount, batchSize)
+    }
+  }
+
+  private fun <T : Any, Return> findAllPreference(mapper: (
+    id: Int,
+    theme: String,
+    note: String?,
+  ) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = "SELECT * FROM preference"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        getString(2),
+        getString(3),
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> findAllPreference(mapper: (
+    id: Int,
+    theme: String,
+    note: String?,
+  ) -> T): Many<T> = findAllPreference(mapper, driver::queryMany)
+
+  override fun <T : Any> findAllPreferenceDynamically(mapper: (
+    id: Int,
+    theme: String,
+    note: String?,
+  ) -> T): Query<T> = findAllPreference(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  @Throws(SQLException::class)
+  override fun <T : Any> countPreference(mapper: (count: Long) -> T): T {
+    val sql = "SELECT COUNT(*) FROM preference"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getLong(1),
+      )
+    }
+    return driver.queryOne(sql, rowReader)
+  }
+
+  @Throws(SQLException::class)
+  override fun deleteAllPreference(): Int {
+    val sql = "DELETE FROM preference"
     return driver.executeRows(sql)
   }
 

@@ -161,6 +161,20 @@ internal class SqlStatement(
    */
   val parameterBindings: List<ParameterBinding>
 
+  /**
+   * 0-based indices into [parameters] for CRUD-synthesized INSERT columns that have a database
+   * `DEFAULT` the caller may override (see [norm.generator.CrudQuerySynthesizer]).
+   *
+   * Always trailing: every index before the first one here is a required column, in table order,
+   * followed by these in table order — see [ParsedQuery.overridableDefaultParameterPositions] and
+   * [norm.generator.InterfaceBuilder]'s parameter ordering, which both rely on this.
+   *
+   * Empty for every statement except such an INSERT with at least one such column. This can't be
+   * recovered from [parameters] itself: [JdbcAnalyzer.buildParameters] constructs each parameter's
+   * [Column] fresh, always leaving `hasDefault` at its `false` default.
+   */
+  val optionalParameterIndices: List<Int>
+
   init {
     resultRowShape = computeReturnType()
     sql = query.text
@@ -193,6 +207,10 @@ internal class SqlStatement(
       }
       parameters = unique
       parameterBindings = bindings
+    }
+
+    optionalParameterIndices = parameters.indices.filter { index ->
+      parameters[index].number in query.overridableDefaultParameterPositions
     }
   }
 

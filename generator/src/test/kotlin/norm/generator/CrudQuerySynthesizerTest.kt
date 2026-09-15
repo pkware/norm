@@ -36,7 +36,7 @@ class CrudQuerySynthesizerTest {
   }
 
   @Test
-  fun `insert excludes auto-increment, default, and generated columns`() {
+  fun `insert excludes auto-increment and generated columns`() {
     val table = table(
       "product",
       column("id", "int4", notNull = true, isPrimaryKey = true, isAutoIncrement = true),
@@ -50,6 +50,43 @@ class CrudQuerySynthesizerTest {
 
     assertThat(insert.sql).isEqualTo("INSERT INTO product (name, price) VALUES (?, ?) RETURNING id, total")
     assertThat(insert.command).isEqualTo(":one")
+    assertThat(insert.overridableDefaultParameterPositions).isEmpty()
+  }
+
+  @Test
+  fun `insert includes overridable-default columns in VALUES after required columns and records their positions`() {
+    val table = table(
+      "author",
+      column("id", "int4", notNull = true, isPrimaryKey = true, isAutoIncrement = true),
+      column("name", "text", notNull = true),
+      column("bio", "text"),
+      column("created_at", "timestamptz", notNull = true, hasDefault = true),
+    )
+    val catalog = catalog(table)
+
+    val insert = CrudQuerySynthesizer.synthesize(catalog).first { it.name == "insertAuthor" }
+
+    assertThat(insert.sql)
+      .isEqualTo("INSERT INTO author (name, bio, created_at) VALUES (?, ?, ?) RETURNING id, created_at")
+    assertThat(insert.command).isEqualTo(":one")
+    assertThat(insert.overridableDefaultParameterPositions).isEqualTo(setOf(3))
+  }
+
+  @Test
+  fun `insert marks a nullable column with a default as overridable`() {
+    val table = table(
+      "session",
+      column("id", "int4", notNull = true, isPrimaryKey = true, isAutoIncrement = true),
+      column("token", "text", notNull = true),
+      column("expires_at", "timestamptz", hasDefault = true),
+    )
+    val catalog = catalog(table)
+
+    val insert = CrudQuerySynthesizer.synthesize(catalog).first { it.name == "insertSession" }
+
+    assertThat(insert.sql)
+      .isEqualTo("INSERT INTO session (token, expires_at) VALUES (?, ?) RETURNING id, expires_at")
+    assertThat(insert.overridableDefaultParameterPositions).isEqualTo(setOf(2))
   }
 
   @Test
@@ -69,17 +106,35 @@ class CrudQuerySynthesizerTest {
   }
 
   @Test
-  fun `skips insert when all columns are excluded`() {
+  fun `skips insert when every column is auto-increment or generated`() {
     val table = table(
       "auto_table",
       column("id", "int4", notNull = true, isPrimaryKey = true, isAutoIncrement = true),
-      column("created_at", "timestamptz", notNull = true, hasDefault = true),
+      column("total", "numeric", isGenerated = true),
     )
     val catalog = catalog(table)
 
     val queries = CrudQuerySynthesizer.synthesize(catalog)
 
     assertThat(queries.map { it.name }).none { it.isEqualTo("insertAutoTable") }
+  }
+
+  @Test
+  fun `generates insert with all-optional parameters when every non-auto-increment column has a default`() {
+    val table = table(
+      "all_default",
+      column("id", "int4", notNull = true, isPrimaryKey = true, isAutoIncrement = true),
+      column("created_at", "timestamptz", notNull = true, hasDefault = true),
+      column("status", "text", notNull = true, hasDefault = true),
+    )
+    val catalog = catalog(table)
+
+    val insert = CrudQuerySynthesizer.synthesize(catalog).first { it.name == "insertAllDefault" }
+
+    assertThat(insert.sql)
+      .isEqualTo("INSERT INTO all_default (created_at, status) VALUES (?, ?) RETURNING id, created_at, status")
+    assertThat(insert.command).isEqualTo(":one")
+    assertThat(insert.overridableDefaultParameterPositions).isEqualTo(setOf(1, 2))
   }
 
   @Test
@@ -262,7 +317,7 @@ class CrudQuerySynthesizerTest {
     val insert = CrudQuerySynthesizer.synthesize(catalog, quoter).first { it.name == "insertTask" }
 
     assertThat(insert.sql)
-      .isEqualTo("""INSERT INTO task ("desc") VALUES (?) RETURNING id, "default"""")
+      .isEqualTo("""INSERT INTO task ("desc", "default") VALUES (?, ?) RETURNING id, "default"""")
   }
 
   @Test

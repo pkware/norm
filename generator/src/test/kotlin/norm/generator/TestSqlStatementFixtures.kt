@@ -11,6 +11,7 @@ internal fun createStatement(
   comments: List<String> = emptyList(),
   isSynthesizedInsert: Boolean = false,
   namedParameters: Map<Int, String> = emptyMap(),
+  overridableDefaultParameterPositions: Set<Int> = emptySet(),
 ): SqlStatement {
   val repository = TypeRepository("test", catalog)
   return SqlStatement(
@@ -24,6 +25,7 @@ internal fun createStatement(
       comments = comments,
       isSynthesizedInsert = isSynthesizedInsert,
       namedParameters = namedParameters,
+      overridableDefaultParameterPositions = overridableDefaultParameterPositions,
     ),
     repository,
   )

@@ -6,7 +6,7 @@ import kotlin.jvm.JvmRecord
 
 /**
  * ```sql
- * INSERT INTO author (name, bio) VALUES (?, ?) RETURNING id, created_at
+ * INSERT INTO author (name, bio, created_at) VALUES (?, ?, ?) RETURNING id, created_at
  * ```
  *
  * @property id (`author.id`)

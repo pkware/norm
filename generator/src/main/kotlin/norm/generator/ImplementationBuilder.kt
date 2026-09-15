@@ -32,9 +32,15 @@ internal fun sqlFunction(statement: SqlStatement): FunSpec.Builder {
     function.throws(SQLException::class)
   }
 
+  val optionalIndices = statement.optionalParameterIndices.toSet()
   for ((index, parameter) in statement.parameters.withIndex()) {
     val parameterName = statement.getParameterName(index)
-    val parameterType = statement.resolveColumnType(parameter.column!!)
+    val columnType = statement.resolveColumnType(parameter.column!!)
+    val parameterType = if (index in optionalIndices) {
+      COLUMN_VALUE_CLASS_NAME.parameterizedBy(columnType)
+    } else {
+      columnType
+    }
     function.addParameter(parameterName, parameterType)
   }
 
@@ -94,7 +100,13 @@ internal fun TypeSpec.Builder.addSqlStatementImplementationMethod(statement: Sql
 private fun TypeSpec.Builder.addOneImplementation(statement: SqlStatement) {
   val function = mapperFunction(statement).apply {
     addModifiers(KModifier.OVERRIDE)
-    addStatement("val sql = %S", statement.sql)
+    if (statement.optionalParameterIndices.isEmpty()) {
+      addStatement("val sql = %S", statement.sql)
+    } else {
+      addDynamicInsertSqlDeclaration(statement, statement.sql) { parameterIndex ->
+        CodeBlock.of("%N is %T", statement.getParameterName(parameterIndex), COLUMN_VALUE_SET_CLASS_NAME)
+      }
+    }
     buildOne(statement)
   }
   addFunction(function.build())
@@ -227,7 +239,26 @@ private fun FunSpec.Builder.buildOne(statement: SqlStatement) {
   // Close the rowReader
   endControlFlow()
 
-  if (statement.parameterBindings.isNotEmpty()) {
+  if (statement.optionalParameterIndices.isNotEmpty()) {
+    beginControlFlow("return driver.queryOne(sql, rowReader) {")
+    for (block in requiredBindStatements(statement)) addCode("%L\n", block)
+    addStatement("var nextParameterIndex = %L", statement.parameters.size - statement.optionalParameterIndices.size)
+    for (parameterIndex in statement.optionalParameterIndices) {
+      val parameterName = statement.getParameterName(parameterIndex)
+      val indexReference = "${parameterName}Index"
+      val binding = statement.parameterBindings.first { it.parameterIndex == parameterIndex }
+      val typeInfo = statement.resolveMappableType(binding.column)
+      beginControlFlow("if (%N is %T)", parameterName, COLUMN_VALUE_SET_CLASS_NAME)
+      addStatement("nextParameterIndex += 1")
+      addStatement("val %N = nextParameterIndex", indexReference)
+      addStatement(
+        "%L",
+        typeInfo.statementAction(CodeBlock.of("%N", indexReference), CodeBlock.of("%N.value", parameterName)),
+      )
+      endControlFlow()
+    }
+    endControlFlow()
+  } else if (statement.parameterBindings.isNotEmpty()) {
     beginControlFlow("return driver.queryOne(sql, rowReader) {")
     for (block in bindStatements(statement)) addCode("%L\n", block)
     endControlFlow()
@@ -270,12 +301,14 @@ internal fun batchFunction(statement: SqlStatement): FunSpec.Builder = sqlFuncti
   returns(INT_ARRAY)
   addParameter("stream", ITERABLE.parameterizedBy(t))
 
+  val optionalIndices = statement.optionalParameterIndices.toSet()
   for ((index, parameter) in statement.parameters.withIndex()) {
     val lambda = LambdaTypeName.get(
       parameters = arrayOf(ParameterSpec.unnamed(t)),
       returnType = statement.resolveColumnType(parameter.column!!),
     )
-    addParameter(statement.getParameterName(index), lambda)
+    val parameterType = if (index in optionalIndices) lambda.copy(nullable = true) else lambda
+    addParameter(statement.getParameterName(index), parameterType)
   }
 
   addParameter("batchSize", INT)
@@ -302,12 +335,14 @@ internal fun batchWithReturnFunction(statement: SqlStatement): FunSpec.Builder {
     addTypeVariable(mapperReturnType)
     addParameter("stream", ITERABLE.parameterizedBy(inputType))
 
+    val optionalIndices = statement.optionalParameterIndices.toSet()
     for ((index, parameter) in statement.parameters.withIndex()) {
       val lambda = LambdaTypeName.get(
         parameters = arrayOf(ParameterSpec.unnamed(inputType)),
         returnType = statement.resolveColumnType(parameter.column!!),
       )
-      addParameter(statement.getParameterName(index), lambda)
+      val parameterType = if (index in optionalIndices) lambda.copy(nullable = true) else lambda
+      addParameter(statement.getParameterName(index), parameterType)
     }
 
     addParameter(
@@ -388,11 +423,36 @@ private fun buildBatch(statement: SqlStatement): FunSpec = batchFunction(stateme
  */
 private fun buildBatchWithReturn(statement: SqlStatement): FunSpec = batchWithReturnFunction(statement).apply {
   addModifiers(KModifier.OVERRIDE)
-  addStatement("val sql = %S", statement.batchSql)
+
+  if (statement.optionalParameterIndices.isEmpty()) {
+    addStatement("val sql = %S", statement.batchSql)
+  } else {
+    addDynamicInsertSqlDeclaration(statement, statement.batchSql) { parameterIndex ->
+      CodeBlock.of("%N != null", statement.getParameterName(parameterIndex))
+    }
+  }
   addStatement(
     "val columnNames = arrayOf(%L)",
     statement.returningColumnNames.joinToString(", ") { "\"$it\"" },
   )
+
+  // Which optional columns are present, and their bind positions, are decided once per batch call
+  // (per extractor argument), not per row -- unlike the single-row path, which re-checks per call.
+  val optionalIndexNames = mutableMapOf<Int, String>()
+  if (statement.optionalParameterIndices.isNotEmpty()) {
+    addStatement("var nextParameterIndex = %L", statement.parameters.size - statement.optionalParameterIndices.size)
+    for (parameterIndex in statement.optionalParameterIndices) {
+      val parameterName = statement.getParameterName(parameterIndex)
+      val indexName = "${parameterName}Index"
+      optionalIndexNames[parameterIndex] = indexName
+      addStatement(
+        "val %N: %T = if (%N != null) { nextParameterIndex += 1; nextParameterIndex } else null",
+        indexName,
+        INT.copy(nullable = true),
+        parameterName,
+      )
+    }
+  }
 
   beginControlFlow("return driver.executeBatchWithGeneratedKeys(sql, columnNames) {")
 
@@ -411,7 +471,19 @@ private fun buildBatchWithReturn(statement: SqlStatement): FunSpec = batchWithRe
   )
 
   beginControlFlow("for (entry in stream) {")
-  for (block in bindStatements(statement) { CodeBlock.of("%L(entry)", it) }) addStatement("%L", block)
+  for (block in requiredBindStatements(statement) { CodeBlock.of("%L(entry)", it) }) addStatement("%L", block)
+  for (parameterIndex in statement.optionalParameterIndices) {
+    val parameterName = statement.getParameterName(parameterIndex)
+    val indexName = optionalIndexNames.getValue(parameterIndex)
+    val binding = statement.parameterBindings.first { it.parameterIndex == parameterIndex }
+    val typeInfo = statement.resolveMappableType(binding.column)
+    beginControlFlow("if (%N != null)", indexName)
+    addStatement(
+      "%L",
+      typeInfo.statementAction(CodeBlock.of("%N", indexName), CodeBlock.of("%N!!(entry)", parameterName)),
+    )
+    endControlFlow()
+  }
   addCode(
     """
       |addBatch()
@@ -449,6 +521,18 @@ private val PROCESS_EXEC_RESULTS = MemberName(RUNTIME_PACKAGE, "combineExecBatch
 private val READ_GENERATED_KEYS = MemberName(RUNTIME_PACKAGE, "readGeneratedKeys")
 
 /**
+ * Reference to [norm.ColumnValue], the runtime type wrapping an overridable-default INSERT column's
+ * parameter (see [SqlStatement.optionalParameterIndices]).
+ */
+internal val COLUMN_VALUE_CLASS_NAME = ClassName(RUNTIME_PACKAGE, "ColumnValue")
+
+/** Reference to [norm.ColumnValue.Default], the singleton meaning "use the column's own `DEFAULT`". */
+internal val COLUMN_VALUE_DEFAULT_CLASS_NAME = COLUMN_VALUE_CLASS_NAME.nestedClass("Default")
+
+/** Reference to [norm.ColumnValue.Set], the case carrying an explicit value to bind. */
+internal val COLUMN_VALUE_SET_CLASS_NAME = COLUMN_VALUE_CLASS_NAME.nestedClass("Set")
+
+/**
  * Name of the parameter representing a query mapper.
  *
  * The query mapper is a function that maps a result row to the Java type returned by the method.
@@ -471,7 +555,94 @@ private fun bindStatements(
   val typeInfo = statement.resolveMappableType(binding.column)
   val parameterNameReference = CodeBlock.of("%N", statement.getParameterName(binding.parameterIndex))
   val paramName = nameTransform(parameterNameReference)
-  typeInfo.statementAction(binding.jdbcPosition, paramName)
+  typeInfo.statementAction(CodeBlock.of("%L", binding.jdbcPosition), paramName)
+}
+
+/**
+ * Like [bindStatements], but only for the columns NOT in [SqlStatement.optionalParameterIndices].
+ *
+ * Used for a CRUD-synthesized INSERT with at least one overridable-default column, whose optional
+ * columns need their own dynamic-index bind code (built separately by each caller of this function)
+ * rather than [bindStatements]' fixed-position one.
+ */
+private fun requiredBindStatements(
+  statement: SqlStatement,
+  nameTransform: (CodeBlock) -> CodeBlock = { it },
+): List<CodeBlock> {
+  val optionalIndices = statement.optionalParameterIndices.toSet()
+  return statement.parameterBindings
+    .filter { it.parameterIndex !in optionalIndices }
+    .map { binding ->
+      val typeInfo = statement.resolveMappableType(binding.column)
+      val parameterNameReference = CodeBlock.of("%N", statement.getParameterName(binding.parameterIndex))
+      val paramName = nameTransform(parameterNameReference)
+      typeInfo.statementAction(CodeBlock.of("%L", binding.jdbcPosition), paramName)
+    }
+}
+
+/**
+ * Adds the `val sql = ...` declaration for a CRUD-synthesized INSERT with at least one
+ * overridable-default column ([SqlStatement.optionalParameterIndices] non-empty).
+ *
+ * For each such column, first adds a `val xPlaceholder = if (<presenceCheck>) "?" else "DEFAULT"`
+ * declaration, then splices those locals into the SQL text in place of that column's `?` --
+ * producing a static column list whose VALUES entries alternate between a bound placeholder and the
+ * literal `DEFAULT`, per [norm.generator.CrudQuerySynthesizer.synthesizeInsert]'s KDoc.
+ *
+ * @param templateSql [SqlStatement.sql] for the single-row path, [SqlStatement.batchSql] for the
+ *   batch-with-return path -- flat text with exactly one `?` per entry in [SqlStatement.parameters],
+ *   left to right, which is always true of [norm.generator.CrudQuerySynthesizer]'s own INSERT shape.
+ * @param presenceCheck For an optional column's index into [SqlStatement.parameters], the runtime
+ *   boolean expression that is `true` when the caller supplied a value for it: `%N is ColumnValue.Set`
+ *   for the single-row path, `%N != null` (on the extractor parameter) for the batch path.
+ */
+private fun FunSpec.Builder.addDynamicInsertSqlDeclaration(
+  statement: SqlStatement,
+  templateSql: String,
+  presenceCheck: (parameterIndex: Int) -> CodeBlock,
+) {
+  val placeholderExpressionsByIndex = mutableMapOf<Int, CodeBlock>()
+  for (parameterIndex in statement.optionalParameterIndices) {
+    val placeholderName = "${statement.getParameterName(parameterIndex)}Placeholder"
+    addStatement("val %N = if (%L) %S else %S", placeholderName, presenceCheck(parameterIndex), "?", "DEFAULT")
+    placeholderExpressionsByIndex[parameterIndex] = CodeBlock.of("%N", placeholderName)
+  }
+  addCode(buildDynamicSqlExpression(statement, templateSql, placeholderExpressionsByIndex))
+  addCode("\n")
+}
+
+/**
+ * Builds `val sql = <segment> + <placeholder> + <segment> + ...` by splitting [templateSql] on its
+ * literal `?` occurrences (one per [SqlStatement.parameters] entry, left to right — see
+ * [addDynamicInsertSqlDeclaration]'s KDoc) and substituting each optional column's entry in
+ * [placeholderExpressionsByIndex] for its `?`, while every other (required-column) `?` is copied
+ * through as static text.
+ */
+private fun buildDynamicSqlExpression(
+  statement: SqlStatement,
+  templateSql: String,
+  placeholderExpressionsByIndex: Map<Int, CodeBlock>,
+): CodeBlock {
+  val segments = templateSql.split("?")
+  check(segments.size == statement.parameters.size + 1) {
+    "Expected ${statement.parameters.size} '?' placeholders in synthesized INSERT SQL: $templateSql"
+  }
+  val parts = mutableListOf<CodeBlock>()
+  var buffer = StringBuilder(segments[0])
+  for (index in statement.parameters.indices) {
+    val dynamicEntry = placeholderExpressionsByIndex[index]
+    if (dynamicEntry == null) {
+      buffer.append("?")
+    } else {
+      parts.add(CodeBlock.of("%S", buffer.toString()))
+      parts.add(dynamicEntry)
+      buffer = StringBuilder()
+    }
+    buffer.append(segments[index + 1])
+  }
+  parts.add(CodeBlock.of("%S", buffer.toString()))
+  val expression = parts.reduce { acc, part -> CodeBlock.of("%L + %L", acc, part) }
+  return CodeBlock.of("val sql = %L", expression)
 }
 
 /**

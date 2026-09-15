@@ -80,9 +80,13 @@ class BatchInsertReturningE2ETest : PostgresTestBase() {
     fun `flushes across multiple batchSize boundaries`() {
       val inputs = (1..250).map { AuthorInput("Author$it", null) }
 
-      val results = queries.insertAuthor(inputs, AuthorInput::name, AuthorInput::bio, { id, createdAt ->
-        example.crud.InsertAuthor(id, createdAt)
-      }, 100)
+      val results = queries.insertAuthor(
+        inputs,
+        AuthorInput::name,
+        AuthorInput::bio,
+        mapper = { id, createdAt -> example.crud.InsertAuthor(id, createdAt) },
+        batchSize = 100,
+      )
 
       assertThat(results).hasSize(250)
 
@@ -121,8 +125,8 @@ class BatchInsertReturningE2ETest : PostgresTestBase() {
         inputs,
         AuthorInput::name,
         AuthorInput::bio,
-        { id, _ -> "author-$id" },
-        100,
+        mapper = { id, _ -> "author-$id" },
+        batchSize = 100,
       )
 
       assertThat(ids).hasSize(2)
@@ -159,7 +163,7 @@ class BatchInsertReturningE2ETest : PostgresTestBase() {
     fun `single returning column returns List of timestamps directly`() {
       val inputs = listOf("event1", "event2", "event3")
 
-      val results = queries.insertAuditLog(inputs) { it }
+      val results = queries.insertAuditLog(inputs, message = { it })
 
       assertThat(results).hasSize(3)
       for (result in results) {

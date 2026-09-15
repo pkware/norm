@@ -169,6 +169,12 @@ public data class Column(
  * @property isSynthesizedInsert `true` when this query was synthesized by [CrudQuerySynthesizer].
  * @property namedParameters Maps each 1-based JDBC parameter position to the named parameter that
  *   produced it. Empty for queries using positional `?` parameters or synthesized CRUD queries.
+ * @property overridableDefaultParameterPositions The 1-based positions (within [params]) that
+ *   [CrudQuerySynthesizer.synthesizeInsert] marked as bound to a column with a server-side
+ *   `DEFAULT` the caller may override. Copied verbatim from [ParsedQuery.overridableDefaultParameterPositions]
+ *   — see its KDoc. Empty for every query except a CRUD-synthesized INSERT with at least one such
+ *   column; [JdbcAnalyzer.buildParameters] cannot re-derive this from the analyzed parameters alone,
+ *   since it constructs each parameter's [Column] fresh with `hasDefault` left at its `false` default.
  */
 public data class Query(
   val text: String = "",
@@ -180,6 +186,7 @@ public data class Query(
   val filename: String = "",
   val isSynthesizedInsert: Boolean = false,
   val namedParameters: Map<Int, String> = emptyMap(),
+  val overridableDefaultParameterPositions: Set<Int> = emptySet(),
 )
 
 /**

@@ -55,7 +55,7 @@ public object CrudQuerySynthesizer {
     val sourceFile = "<synthesized CRUD for table '$qualifiedTable'>"
 
     val queries = buildList {
-      // INSERT — null when all columns are auto-increment, default, or generated
+      // INSERT — null when all columns are auto-increment and/or generated-always
       synthesizeInsert(qualifiedTable, methodSuffix, allColumns, quoteIdentifier)?.let(::add)
 
       // PK-dependent methods
@@ -75,11 +75,28 @@ public object CrudQuerySynthesizer {
   }
 
   /**
-   * Generates an INSERT query. Columns that are auto-increment, have server defaults, or are
-   * generated-always are excluded from the VALUES clause and included in a RETURNING clause.
+   * Generates an INSERT query. Auto-increment and generated-always columns are always excluded from
+   * the VALUES clause and included in a RETURNING clause.
    *
-   * - If ALL columns are excluded (no insertable columns), `null` is returned (skip the method).
-   * - If NO columns are excluded (nothing for RETURNING), the command is `:exec` instead of `:one`.
+   * Columns with a server-side `DEFAULT` are *overridable-default* columns (see
+   * [ParsedQuery.overridableDefaultParameterPositions]): rather than being excluded like an
+   * auto-increment or generated-always column, each becomes its own optional parameter on the
+   * synthesized `insert*` function ([norm.generator.InterfaceBuilder]), placed in the VALUES clause
+   * alongside the required columns so JDBC can type it ([JdbcAnalyzer.buildParameters]). They are
+   * also kept in RETURNING — unconditionally, whether the caller overrides the column or not — so
+   * the result row type stays stable across both cases.
+   *
+   * The VALUES clause here holds a `?` for every required AND every overridable-default column;
+   * this SQL is only used for [JdbcAnalyzer] parameter-type analysis. At runtime,
+   * [norm.generator.ImplementationBuilder] builds a different SQL string per call, substituting the
+   * literal `DEFAULT` for any overridable-default column's `?` that the caller didn't supply a value
+   * for.
+   *
+   * Parameter (and VALUES-clause column) order is required columns in table order, followed by
+   * overridable-default columns in table order — see [ParsedQuery.overridableDefaultParameterPositions].
+   *
+   * `null` is returned only when the table has neither an insertable (required) column nor an
+   * overridable-default column — i.e., every column is auto-increment and/or generated-always.
    */
   private fun synthesizeInsert(
     qualifiedTable: String,
@@ -87,13 +104,15 @@ public object CrudQuerySynthesizer {
     allColumns: List<Column>,
     quoteIdentifier: (String) -> String,
   ): ParsedQuery? {
-    val insertableColumns = allColumns.filter { !it.isAutoIncrement && !it.hasDefault && !it.isGenerated }
-    if (insertableColumns.isEmpty()) return null
+    val requiredColumns = allColumns.filter { !it.isAutoIncrement && !it.hasDefault && !it.isGenerated }
+    val overridableDefaultColumns = allColumns.filter { it.hasDefault && !it.isAutoIncrement && !it.isGenerated }
+    if (requiredColumns.isEmpty() && overridableDefaultColumns.isEmpty()) return null
 
+    val insertColumns = requiredColumns + overridableDefaultColumns
     val returningColumns = allColumns.filter { it.isAutoIncrement || it.hasDefault || it.isGenerated }
 
-    val columnNames = insertableColumns.joinToString(", ") { quoteIdentifier(it.name) }
-    val placeholders = insertableColumns.joinToString(", ") { "?" }
+    val columnNames = insertColumns.joinToString(", ") { quoteIdentifier(it.name) }
+    val placeholders = insertColumns.joinToString(", ") { "?" }
 
     val sql: String
     val command: String
@@ -106,12 +125,18 @@ public object CrudQuerySynthesizer {
       command = ":exec"
     }
 
+    // 1-based positions of the overridable-default columns' `?` placeholders -- they always come
+    // after the required columns' placeholders, per the VALUES-clause ordering above. Empty when
+    // overridableDefaultColumns is empty, since a start > end IntRange is empty.
+    val overridableDefaultPositions = (requiredColumns.size + 1..insertColumns.size).toSet()
+
     return ParsedQuery(
       name = "insert$methodSuffix",
       command = command,
       sql = sql,
       comments = emptyList(),
       isSynthesizedInsert = true,
+      overridableDefaultParameterPositions = overridableDefaultPositions,
     )
   }
 

@@ -481,6 +481,60 @@ class SqlStatementTest {
   }
 
   @Nested
+  inner class OptionalParameterIndices {
+
+    @Test
+    fun `empty for a query with no overridable-default columns`() {
+      val statement = createStatement(
+        "INSERT INTO author (name, bio) VALUES (?, ?)",
+        cmd = ":exec",
+        params = listOf(param(1, "name"), param(2, "bio")),
+        isSynthesizedInsert = true,
+      )
+      assertThat(statement.optionalParameterIndices).isEmpty()
+    }
+
+    @Test
+    fun `empty for a hand-written query, even if overridableDefaultParameterPositions were somehow set`() {
+      // isSynthesizedInsert = false here -- only CrudQuerySynthesizer ever populates
+      // overridableDefaultParameterPositions, but SqlStatement itself only translates what Query
+      // carries, so this pins that translation rather than the synthesizer's own behavior.
+      val statement = createStatement(
+        "SELECT * FROM author WHERE id = ?",
+        params = listOf(param(1, "id")),
+        overridableDefaultParameterPositions = setOf(1),
+      )
+      assertThat(statement.optionalParameterIndices).containsExactly(0)
+    }
+
+    @Test
+    fun `maps 1-based overridable-default positions to 0-based parameter indices, trailing required columns`() {
+      val statement = createStatement(
+        "INSERT INTO author (name, bio, created_at) VALUES (?, ?, ?) RETURNING id, created_at",
+        cmd = ":one",
+        params = listOf(param(1, "name"), param(2, "bio"), param(3, "created_at")),
+        columns = listOf(column("id", type = "int4"), column("created_at", type = "timestamptz")),
+        isSynthesizedInsert = true,
+        overridableDefaultParameterPositions = setOf(3),
+      )
+      assertThat(statement.optionalParameterIndices).containsExactly(2)
+    }
+
+    @Test
+    fun `supports multiple overridable-default columns`() {
+      val statement = createStatement(
+        "INSERT INTO t (a, b, c) VALUES (?, ?, ?) RETURNING b, c",
+        cmd = ":one",
+        params = listOf(param(1, "a"), param(2, "b"), param(3, "c")),
+        columns = listOf(column("b", type = "int4"), column("c", type = "int4")),
+        isSynthesizedInsert = true,
+        overridableDefaultParameterPositions = setOf(2, 3),
+      )
+      assertThat(statement.optionalParameterIndices).containsExactly(1, 2)
+    }
+  }
+
+  @Nested
   inner class SqlText {
 
     @Test
@@ -670,6 +724,20 @@ class SqlStatementTest {
         isSynthesizedInsert = true,
       )
       assertThat(statement.batchSql).isEqualTo("INSERT INTO t (name) VALUES (?)")
+    }
+
+    @Test
+    fun `batchSql keeps every placeholder, including an overridable-default column's, when stripping RETURNING`() {
+      val statement = createStatement(
+        "INSERT INTO t (name, created_at) VALUES (?, ?) RETURNING id, created_at",
+        cmd = ":one",
+        params = listOf(param(1, "name"), param(2, "created_at")),
+        columns = listOf(column("id", type = "int4"), column("created_at", type = "timestamptz")),
+        isSynthesizedInsert = true,
+        overridableDefaultParameterPositions = setOf(2),
+      )
+      assertThat(statement.batchSql).isEqualTo("INSERT INTO t (name, created_at) VALUES (?, ?)")
+      assertThat(statement.optionalParameterIndices).containsExactly(1)
     }
 
     @Test

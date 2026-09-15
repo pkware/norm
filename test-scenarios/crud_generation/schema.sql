@@ -41,6 +41,15 @@ CREATE TABLE document (
   metadata JSONB
 );
 
+-- Table where every non-auto-increment column has a DEFAULT, and one of them is nullable: pins the
+-- synthesized INSERT whose parameters are all optional, and a nullable default column's
+-- ColumnValue<T?> shape, together (#299).
+CREATE TABLE preference (
+  id SERIAL PRIMARY KEY,
+  theme TEXT NOT NULL DEFAULT 'light',
+  note TEXT DEFAULT 'n/a'
+);
+
 -- Table with quoted, mixed-case, space-containing, and mixed-case-reserved-word column names: pins
 -- CrudQuerySynthesizer's own identifier quoting in the SQL it BUILDS (INSERT), a different surface
 -- from reading such columns back, which test-scenarios/comments/schema.sql's "tq" table already
