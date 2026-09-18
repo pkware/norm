@@ -11,6 +11,7 @@ import kotlin.jvm.JvmRecord
 public data class Users(
   public val id: Int,
   public val email: Email,
+  public val work_email: WorkEmail?,
   public val age: PositiveInteger?,
   public val zip_code: UsPostalCode?,
   public val current_mood: Mood,

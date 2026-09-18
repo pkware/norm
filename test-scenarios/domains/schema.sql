@@ -2,6 +2,10 @@
 CREATE DOMAIN email AS TEXT
 CHECK (VALUE ~ '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
 
+-- A domain stacked on top of another domain (rather than a base type): PostgreSQL resolves
+-- work_email's terminal base type through email, all the way down to text.
+CREATE DOMAIN work_email AS email;
+
 CREATE DOMAIN positive_integer AS INTEGER
 CHECK (VALUE > 0);
 
@@ -35,6 +39,7 @@ COMMENT ON TYPE mood IS 'Represents the emotional state of a person. Used in the
 CREATE TABLE users (
   id SERIAL PRIMARY KEY,
   email email NOT NULL,
+  work_email work_email,
   age positive_integer,
   zip_code us_postal_code,
   current_mood mood NOT NULL,

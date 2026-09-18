@@ -1,6 +1,9 @@
 -- name: getUserByEmail :one
 SELECT * FROM users WHERE email = ?;
 
+-- name: getUserByWorkEmail :one
+SELECT * FROM users WHERE work_email = ?;
+
 -- name: listUsersByAge :many
 SELECT * FROM users WHERE age > ?;
 
