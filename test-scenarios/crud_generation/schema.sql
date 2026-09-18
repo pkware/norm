@@ -64,3 +64,15 @@ CREATE TABLE quoted_columns (
   "My Col" TEXT,
   "Select" TEXT
 );
+
+-- Domain over an array type (#305 follow-up): pins full read/write support for a domain whose base
+-- type is itself an array, not just the domain-over-scalar case the other domains above cover.
+CREATE DOMAIN int_set AS INTEGER[];
+
+-- Table with a NOT NULL and a nullable int_set column: pins both the synthesized CRUD insert's
+-- binding and the generated row type's nullability for a domain-over-array column.
+CREATE TABLE tag_group (
+  id SERIAL PRIMARY KEY,
+  required_tags int_set NOT NULL,
+  optional_tags int_set
+);

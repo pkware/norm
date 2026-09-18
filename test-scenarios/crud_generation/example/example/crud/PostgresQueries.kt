@@ -9,6 +9,7 @@ import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import kotlin.Any
+import kotlin.Array
 import kotlin.Boolean
 import kotlin.Int
 import kotlin.IntArray
@@ -18,6 +19,7 @@ import kotlin.Unit
 import kotlin.collections.Iterable
 import kotlin.collections.List
 import kotlin.jvm.Throws
+import norm.ColumnAdapter
 import norm.ColumnValue
 import norm.ConnectionProvider
 import norm.Many
@@ -26,10 +28,13 @@ import norm.NormDriver
 import norm.Query
 import norm.RealTransactable
 import norm.combineExecBatchResults
+import norm.mapElements
 import norm.readGeneratedKeys
+import norm.toSqlArray
 
 public class PostgresQueries(
   connectionProvider: ConnectionProvider,
+  private val intSetAdapter: ColumnAdapter<IntSet, Array<Int?>> = IntSetAdapter(),
 ) : RealTransactable(connectionProvider),
     Queries {
   private val driver: NormDriver = NormDriver(connectionProvider)
@@ -1319,6 +1324,186 @@ public class PostgresQueries(
   @Throws(SQLException::class)
   override fun deleteAllQuotedColumns(): Int {
     val sql = "DELETE FROM quoted_columns"
+    return driver.executeRows(sql)
+  }
+
+  @Throws(SQLException::class)
+  override fun <T : Any> insertTagGroup(
+    required_tags: IntSet,
+    optional_tags: IntSet?,
+    mapper: (id: Int) -> T,
+  ): T {
+    val sql = "INSERT INTO tag_group (required_tags, optional_tags) VALUES (?, ?) RETURNING id"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+      )
+    }
+    return driver.queryOne(sql, rowReader) {
+      setArray(1, intSetAdapter.encode(required_tags).toSqlArray(connection, "int4"))
+      optional_tags?.let { setArray(2, intSetAdapter.encode(it).toSqlArray(connection, "int4")) } ?: setNull(2, Types.ARRAY)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any, T : Any> insertTagGroup(
+    stream: Iterable<Input>,
+    required_tags: (Input) -> IntSet,
+    optional_tags: (Input) -> IntSet?,
+    mapper: (id: Int) -> T,
+    batchSize: Int,
+  ): List<T> {
+    val sql = "INSERT INTO tag_group (required_tags, optional_tags) VALUES (?, ?)"
+    val columnNames = arrayOf("id")
+    return driver.executeBatchWithGeneratedKeys(sql, columnNames) {
+      val rowReader: ResultSet.() -> T = {
+        mapper(
+          getInt(1),
+        )
+      }
+      val results = mutableListOf<T>()
+      var batchCount = 0
+      for (entry in stream) {
+        setArray(1, intSetAdapter.encode(required_tags(entry)).toSqlArray(connection, "int4"))
+        optional_tags(entry)?.let { setArray(2, intSetAdapter.encode(it).toSqlArray(connection, "int4")) } ?: setNull(2, Types.ARRAY)
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          executeBatch()
+          generatedKeys.use { readGeneratedKeys(it, rowReader, results) }
+          batchCount = 0
+        }
+      }
+      if (batchCount > 0) {
+        executeBatch()
+        generatedKeys.use { readGeneratedKeys(it, rowReader, results) }
+      }
+      results
+    }
+  }
+
+  private fun <T : Any, Return> findTagGroupById(
+    id: Int,
+    mapper: (
+      id: Int,
+      required_tags: IntSet,
+      optional_tags: IntSet?,
+    ) -> T,
+    processor: ManyProcessor<T, Return>,
+  ): Return {
+    val sql = "SELECT * FROM tag_group WHERE id = ?"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        intSetAdapter.decode(getArray(2).mapElements { getInt(2).takeUnless { wasNull() } }),
+        getArray(3)?.mapElements { getInt(2).takeUnless { wasNull() } }?.let { intSetAdapter.decode(it) },
+      )
+    }
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setInt(1, id)
+    }
+    return processor.invoke(sql, rowReader, queryBinder)
+  }
+
+  override fun <T : Any> findTagGroupById(id: Int, mapper: (
+    id: Int,
+    required_tags: IntSet,
+    optional_tags: IntSet?,
+  ) -> T): Many<T> = findTagGroupById(id, mapper, driver::queryMany)
+
+  @Throws(SQLException::class)
+  override fun <T : Any> existsTagGroupById(id: Int, mapper: (exists: Boolean) -> T): T {
+    val sql = "SELECT EXISTS(SELECT 1 FROM tag_group WHERE id = ?)"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getBoolean(1),
+      )
+    }
+    return driver.queryOne(sql, rowReader) {
+      setInt(1, id)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun deleteTagGroupById(id: Int): Int {
+    val sql = "DELETE FROM tag_group WHERE id = ?"
+    return driver.executeRows(sql) {
+      setInt(1, id)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any> deleteTagGroupById(
+    stream: Iterable<Input>,
+    id: (Input) -> Int,
+    batchSize: Int,
+  ): IntArray {
+    val sql = "DELETE FROM tag_group WHERE id = ?"
+    return driver.execute(sql) {
+      var totalCount = 0
+      var batchCount = 0
+      val results = mutableListOf<IntArray>()
+      for (entry in stream) {
+        setInt(1, id(entry))
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          results.add(executeBatch())
+          batchCount = 0
+          // Performance optimization to reduce register updates per loop iteration
+          totalCount += batchSize
+        }
+      }
+      if (batchCount > 0) {
+        results.add(executeBatch())
+        totalCount += batchCount
+      }
+      combineExecBatchResults(results, totalCount, batchSize)
+    }
+  }
+
+  private fun <T : Any, Return> findAllTagGroup(mapper: (
+    id: Int,
+    required_tags: IntSet,
+    optional_tags: IntSet?,
+  ) -> T, processor: ManyProcessor<T, Return>): Return {
+    val sql = "SELECT * FROM tag_group"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        intSetAdapter.decode(getArray(2).mapElements { getInt(2).takeUnless { wasNull() } }),
+        getArray(3)?.mapElements { getInt(2).takeUnless { wasNull() } }?.let { intSetAdapter.decode(it) },
+      )
+    }
+    return processor.invoke(sql, rowReader, null)
+  }
+
+  override fun <T : Any> findAllTagGroup(mapper: (
+    id: Int,
+    required_tags: IntSet,
+    optional_tags: IntSet?,
+  ) -> T): Many<T> = findAllTagGroup(mapper, driver::queryMany)
+
+  override fun <T : Any> findAllTagGroupDynamically(mapper: (
+    id: Int,
+    required_tags: IntSet,
+    optional_tags: IntSet?,
+  ) -> T): Query<T> = findAllTagGroup(mapper) { sql, rowReader, _ -> driver.dynamic(sql, rowReader) }
+
+  @Throws(SQLException::class)
+  override fun <T : Any> countTagGroup(mapper: (count: Long) -> T): T {
+    val sql = "SELECT COUNT(*) FROM tag_group"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getLong(1),
+      )
+    }
+    return driver.queryOne(sql, rowReader)
+  }
+
+  @Throws(SQLException::class)
+  override fun deleteAllTagGroup(): Int {
+    val sql = "DELETE FROM tag_group"
     return driver.executeRows(sql)
   }
 }

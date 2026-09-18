@@ -2,6 +2,7 @@ package norm.generator
 
 import assertk.assertThat
 import assertk.assertions.contains
+import assertk.assertions.doesNotContain
 import assertk.assertions.isEqualTo
 import com.squareup.kotlinpoet.FileSpec
 import org.junit.jupiter.api.Nested
@@ -173,10 +174,20 @@ class DomainBuilderTest {
     @Test
     fun `unsupported base type throws error`() {
       val exception = assertThrows<IllegalStateException> {
-        domainKotlinBaseType("xml")
+        domainKotlinWireType("xml")
       }
       assertThat(exception.message!!).contains("Unsupported domain base type")
       assertThat(exception.message!!).contains("xml")
+    }
+
+    @Test
+    fun `array-based domain value class wraps List of nullable Int, not Array`() {
+      val domain = Domain(name = "int_set", baseType = "_int4", comment = "")
+      val output = generateValueClassCode(domain, "example")
+      assertThat(output).contains("import kotlin.collections.List")
+      assertThat(output).contains("public value class IntSet")
+      assertThat(output).contains("public val `value`: List<Int?>")
+      assertThat(output).doesNotContain("Array")
     }
 
     @Test
@@ -286,6 +297,31 @@ class DomainBuilderTest {
         |  override fun decode(databaseValue: Int): PositiveInteger = PositiveInteger(databaseValue)
         |
         |  override fun encode(`value`: PositiveInteger): Int = value.value
+        |}
+        |
+        """
+          .trimMargin()
+
+      assertThat(output).isEqualTo(expected)
+    }
+
+    @Test
+    fun `array-based domain adapter converts between Array wire type and List value class`() {
+      val domain = Domain(name = "int_set", baseType = "_int4", comment = "")
+      val output = generateAdapterCode(domain, "example", emptySet())
+
+      val expected =
+        """
+        |package example
+        |
+        |import kotlin.Array
+        |import kotlin.Int
+        |import norm.ColumnAdapter
+        |
+        |public class IntSetAdapter : ColumnAdapter<IntSet, Array<Int?>> {
+        |  override fun decode(databaseValue: Array<Int?>): IntSet = IntSet(databaseValue.asList())
+        |
+        |  override fun encode(`value`: IntSet): Array<Int?> = value.value.toTypedArray()
         |}
         |
         """

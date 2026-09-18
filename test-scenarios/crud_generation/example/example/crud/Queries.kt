@@ -1344,4 +1344,194 @@ public interface Queries : Transactable {
    */
   @Throws(SQLException::class)
   public fun deleteAllQuotedColumns(): Int
+
+  /**
+   * ```sql
+   * INSERT INTO tag_group (required_tags, optional_tags) VALUES (?, ?) RETURNING id
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> insertTagGroup(
+    required_tags: IntSet,
+    optional_tags: IntSet?,
+    mapper: (id: Int) -> T,
+  ): T
+
+  /**
+   * ```sql
+   * INSERT INTO tag_group (required_tags, optional_tags) VALUES (?, ?) RETURNING id
+   * ```
+   *
+   * @return A list containing the generated values for each inserted row, in insertion order.
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any, T : Any> insertTagGroup(
+    stream: Iterable<Input>,
+    required_tags: (Input) -> IntSet,
+    optional_tags: (Input) -> IntSet?,
+    mapper: (id: Int) -> T,
+    batchSize: Int,
+  ): List<T>
+
+  /**
+   * ```sql
+   * INSERT INTO tag_group (required_tags, optional_tags) VALUES (?, ?) RETURNING id
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return A list containing the generated values for each inserted row, in insertion order.
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> insertTagGroup(
+    stream: Iterable<Input>,
+    required_tags: (Input) -> IntSet,
+    optional_tags: (Input) -> IntSet?,
+  ): List<Int> = insertTagGroup(stream, required_tags, optional_tags, ::inputValue, 100)
+
+  /**
+   * ```sql
+   * INSERT INTO tag_group (required_tags, optional_tags) VALUES (?, ?) RETURNING id
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun insertTagGroup(required_tags: IntSet, optional_tags: IntSet?): Int = insertTagGroup(required_tags, optional_tags, ::inputValue)
+
+  /**
+   * ```sql
+   * SELECT * FROM tag_group WHERE id = ?
+   * ```
+   */
+  public fun <T : Any> findTagGroupById(id: Int, mapper: (
+    id: Int,
+    required_tags: IntSet,
+    optional_tags: IntSet?,
+  ) -> T): Many<T>
+
+  /**
+   * ```sql
+   * SELECT * FROM tag_group WHERE id = ?
+   * ```
+   */
+  public fun findTagGroupById(id: Int): Many<TagGroup> = findTagGroupById(id, ::TagGroup)
+
+  /**
+   * ```sql
+   * SELECT EXISTS(SELECT 1 FROM tag_group WHERE id = ?)
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> existsTagGroupById(id: Int, mapper: (exists: Boolean) -> T): T
+
+  /**
+   * ```sql
+   * SELECT EXISTS(SELECT 1 FROM tag_group WHERE id = ?)
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun existsTagGroupById(id: Int): Boolean = existsTagGroupById(id, ::inputValue)
+
+  /**
+   * ```sql
+   * DELETE FROM tag_group WHERE id = ?
+   * ```
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> deleteTagGroupById(
+    stream: Iterable<Input>,
+    id: (Input) -> Int,
+    batchSize: Int,
+  ): IntArray
+
+  /**
+   * ```sql
+   * DELETE FROM tag_group WHERE id = ?
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> deleteTagGroupById(stream: Iterable<Input>, id: (Input) -> Int): IntArray = deleteTagGroupById(stream, id, 100)
+
+  /**
+   * ```sql
+   * DELETE FROM tag_group WHERE id = ?
+   * ```
+   *
+   * @return The number of rows updated.
+   */
+  @Throws(SQLException::class)
+  public fun deleteTagGroupById(id: Int): Int
+
+  /**
+   * ```sql
+   * SELECT * FROM tag_group
+   * ```
+   */
+  public fun <T : Any> findAllTagGroup(mapper: (
+    id: Int,
+    required_tags: IntSet,
+    optional_tags: IntSet?,
+  ) -> T): Many<T>
+
+  /**
+   * ```sql
+   * SELECT * FROM tag_group
+   * ```
+   */
+  public fun findAllTagGroup(): Many<TagGroup> = findAllTagGroup(::TagGroup)
+
+  public fun <T : Any> findAllTagGroupDynamically(mapper: (
+    id: Int,
+    required_tags: IntSet,
+    optional_tags: IntSet?,
+  ) -> T): Query<T>
+
+  public fun findAllTagGroupDynamically(): Query<TagGroup> = findAllTagGroupDynamically(::TagGroup)
+
+  /**
+   * ```sql
+   * SELECT COUNT(*) FROM tag_group
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> countTagGroup(mapper: (count: Long) -> T): T
+
+  /**
+   * ```sql
+   * SELECT COUNT(*) FROM tag_group
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun countTagGroup(): Long = countTagGroup(::inputValue)
+
+  /**
+   * ```sql
+   * DELETE FROM tag_group
+   * ```
+   *
+   * @return The number of rows updated.
+   */
+  @Throws(SQLException::class)
+  public fun deleteAllTagGroup(): Int
 }
