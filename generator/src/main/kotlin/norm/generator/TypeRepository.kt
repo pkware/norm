@@ -503,14 +503,26 @@ internal class TypeRepository(
    * For scalar columns, returns [AdaptedTypeSqlMappable]. For array columns (e.g., `email[]`),
    * returns [AdaptedArrayTypeSqlMappable] which generates per-element adapter decode/encode calls.
    *
-   * [resolveWireCodec] and [resolveBaseType] both read [POSTGRES_BASE_TYPES], so `error` below
-   * is unreachable, by construction, for a domain over any base type that map supports (e.g.
-   * `timestamptz` or `uuid`) — see [domainKotlinBaseType]'s KDoc for the (intentional) case where
-   * it remains reachable.
+   * [Domain.baseType] is always terminal (see its KDoc), but Postgres also allows a domain over an
+   * array type (`CREATE DOMAIN int_set AS int[]`), which arrives here as a `baseType` like
+   * `"_int4"`. Norm has no value class for a domain wrapping an array — that would need a new
+   * mappable kind with identity-equality semantics, which this fix does not add — so that case
+   * fails fast below with a diagnostic naming the domain, rather than silently mapping it to the
+   * element codec and emitting a `getInt(...)` read against an `int[]` column.
+   *
+   * [resolveWireCodec] and [resolveBaseType] both read [POSTGRES_BASE_TYPES], so the second `error`
+   * below is unreachable, by construction, for a domain over any scalar base type that map
+   * supports (e.g. `timestamptz` or `uuid`) — see [domainKotlinBaseType]'s KDoc for the
+   * (intentional) case where it remains reachable.
    */
   private fun tryResolveDomainType(typeName: String, notNull: Boolean, isArray: Boolean): SqlMappable? {
     val domain = domainsByName[typeName] ?: return null
     referencedDomains.add(domain)
+
+    check(!domain.baseType.startsWith("_")) {
+      "Domain ${domain.name} is over an array type (${domain.baseType}) — " +
+        "a domain over an array type is unsupported."
+    }
 
     val domainClassName = ClassName(packageName, domain.name.snakeToCamelCase().titleCase())
     val propertyName = domainAdapterPropertyName(domain)
