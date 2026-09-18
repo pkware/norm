@@ -505,29 +505,34 @@ internal class TypeRepository(
    *
    * [Domain.baseType] is always terminal (see its KDoc), but Postgres also allows a domain over an
    * array type (`CREATE DOMAIN int_set AS int[]`), which arrives here as a `baseType` like
-   * `"_int4"`. Norm has no value class for a domain wrapping an array — that would need a new
-   * mappable kind with identity-equality semantics, which this fix does not add — so that case
-   * fails fast below with a diagnostic naming the domain, rather than silently mapping it to the
-   * element codec and emitting a `getInt(...)` read against an `int[]` column.
-   *
-   * [resolveWireCodec] and [resolveBaseType] both read [POSTGRES_BASE_TYPES], so the second `error`
-   * below is unreachable, by construction, for a domain over any scalar base type that map
-   * supports (e.g. `timestamptz` or `uuid`) — see [domainKotlinBaseType]'s KDoc for the
-   * (intentional) case where it remains reachable.
+   * `"_int4"`. That is supported for a scalar column of such a domain (`int_set`) — [codec]
+   * resolves to an [ArrayWireCodec] and [AdaptedTypeSqlMappable] handles it exactly like any other
+   * adapted type, with the value class wrapping `List<Int?>` rather than `Array<Int?>` (see
+   * [domainKotlinPropertyType]'s KDoc for why). Two shapes still fail fast, each with a diagnostic
+   * naming the domain, its base type, and the reason:
+   * - an *array column* of an array-based domain (`int_set[]`, `isArray == true` here): decoding a
+   *   `getArray` of `int[]` values as though each were a scalar element has no defined behavior,
+   *   and is rejected before [codec] is even resolved.
+   * - a *scalar* domain whose array base type [resolveWireCodec] itself cannot resolve: `_oid`
+   *   (excluded explicitly — see [resolveWireCodec]'s KDoc), an array of an enum (`_mood`), or an
+   *   array of a domain (`_email`) — each unsupported for the reason [unsupportedDomainBaseTypeMessage]
+   *   names.
    */
   private fun tryResolveDomainType(typeName: String, notNull: Boolean, isArray: Boolean): SqlMappable? {
     val domain = domainsByName[typeName] ?: return null
     referencedDomains.add(domain)
 
-    check(!domain.baseType.startsWith("_")) {
-      "Domain ${domain.name} is over an array type (${domain.baseType}) — " +
-        "a domain over an array type is unsupported."
+    if (isArray && domain.baseType.startsWith("_")) {
+      error(
+        "Column type '$typeName[]' uses domain ${domain.name} (over array type ${domain.baseType}) " +
+          "as an array element — Norm does not support an array column whose element type is an " +
+          "array-based domain.",
+      )
     }
 
     val domainClassName = ClassName(packageName, domain.name.snakeToCamelCase().titleCase())
     val propertyName = domainAdapterPropertyName(domain)
-    val codec = resolveWireCodec(domain.baseType)
-      ?: error("Domain ${domain.name} has unsupported base type: ${domain.baseType}")
+    val codec = resolveWireCodec(domain.baseType) ?: error(unsupportedDomainBaseTypeMessage(domain))
 
     if (isArray) {
       return AdaptedArrayTypeSqlMappable(
@@ -538,6 +543,34 @@ internal class TypeRepository(
       )
     }
     return AdaptedTypeSqlMappable(domainClassName, propertyName, notNull, codec)
+  }
+
+  /**
+   * Builds the diagnostic message for [tryResolveDomainType] when [resolveWireCodec] cannot
+   * resolve [Domain.baseType], naming the domain, the base type, and the specific reason —
+   * distinguishing `_oid`, an array of an enum, and an array of a domain, rather than a single
+   * generic "unsupported base type" message that would not explain any of them.
+   */
+  private fun unsupportedDomainBaseTypeMessage(domain: Domain): String {
+    if (!domain.baseType.startsWith("_")) {
+      return "Domain ${domain.name} has unsupported base type: ${domain.baseType}"
+    }
+
+    val elementTypeName = domain.baseType.removePrefix("_")
+    val reason = when {
+      domain.baseType == "_oid" ->
+        "oid[] is unsupported as a domain base type: scalar oid maps to Blob, which would silently " +
+          "contradict a plain oid[] column's own Long mapping"
+      elementTypeName in enumsByName ->
+        "its element type ($elementTypeName) is an enum, and Norm does not support a domain over an " +
+          "array of an enum"
+      elementTypeName in domainsByName ->
+        "its element type ($elementTypeName) is itself a domain, and Norm does not support a domain " +
+          "over an array of a domain"
+      else ->
+        "its element type ($elementTypeName) is not a Postgres base type Norm maps to Kotlin"
+    }
+    return "Domain ${domain.name} is over an array type (${domain.baseType}), which is unsupported: $reason."
   }
 
   /**

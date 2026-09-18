@@ -226,11 +226,30 @@ internal fun postgresArrayElementTypeName(typeName: String): String =
  * [TypeRepository.resolveBaseType] itself supports (e.g. `CREATE DOMAIN d AS timestamptz`) always
  * resolves here too, since both come from the same row. [TypeRepository]'s domain resolution
  * chains through this function (see [TypeRepository.tryResolveDomainType] and
- * [domainKotlinBaseType][norm.generator.domainKotlinBaseType]); its `error()` calls are reachable
+ * [domainKotlinWireType][norm.generator.domainKotlinWireType]); its `error()` calls are reachable
  * only for a base type [TypeRepository.resolveBaseType] itself does not support either (e.g. `xml`,
  * `interval`, `money` — Postgres allows a domain over any of these, but Norm has never mapped them
  * to a Kotlin type as a plain column type, so the same limitation applies to a domain built on
  * one). That failure is intentional: a clear, immediate `error()` naming the unsupported type is
  * preferable to silently guessing a mapping for a type Norm has no tested behavior for.
+ *
+ * [baseTypeName] may also be a Postgres array type name (a leading `_`, e.g. `"_int4"`) — reached
+ * for a domain over an array (`CREATE DOMAIN int_set AS int[]`). That resolves to an
+ * [ArrayWireCodec] over the stripped element name's own [PostgresBaseType.codec], with one
+ * exclusion: `"_oid"` always returns `null` here, even though `"oid"` itself is a registered key.
+ * Scalar `oid` maps to [java.sql.Blob] (a large-object handle — see [POSTGRES_BASE_TYPES]'s `oid`
+ * row), but a plain `oid[]` column maps to `Array<Long?>` ([TypeRepository.tryResolveStandardType]):
+ * an array of large-object handles has no coherent JDBC semantics, and real-world `oid[]` columns
+ * hold plain catalog identifiers. Resolving `"_oid"` to `Array<Blob?>` here would silently
+ * contradict that, so it is excluded explicitly rather than falling out of the lookup. An array of
+ * an enum or of a domain (`_mood`, `_email`) needs no such exclusion: the stripped element name
+ * (`"mood"`, `"email"`) is never a [POSTGRES_BASE_TYPES] key, so the lookup below already returns
+ * `null` for those.
  */
-internal fun resolveWireCodec(baseTypeName: String): WireCodec? = POSTGRES_BASE_TYPES[baseTypeName]?.codec
+internal fun resolveWireCodec(baseTypeName: String): WireCodec? {
+  POSTGRES_BASE_TYPES[baseTypeName]?.let { return it.codec }
+  if (!baseTypeName.startsWith("_") || baseTypeName == "_oid") return null
+  val elementTypeName = baseTypeName.removePrefix("_")
+  val elementCodec = POSTGRES_BASE_TYPES[elementTypeName]?.codec ?: return null
+  return ArrayWireCodec(elementCodec, elementTypeName)
+}

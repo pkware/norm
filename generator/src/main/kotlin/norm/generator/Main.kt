@@ -161,11 +161,11 @@ private fun adapterParameters(
     for (domain in typeRepository.discoveredDomains) {
       if (domain.name in typeOverridePostgresTypes) continue
       val valueClassName = domainValueClassName(domain, packageName)
-      val baseKotlinType = domainKotlinBaseType(domain.baseType)
+      val wireKotlinType = domainKotlinWireType(domain.baseType)
       add(
         AdapterParameter(
           domainAdapterPropertyName(domain),
-          COLUMN_ADAPTER.parameterizedBy(valueClassName, baseKotlinType),
+          COLUMN_ADAPTER.parameterizedBy(valueClassName, wireKotlinType),
           domainAdapterClassName(domain, packageName),
         ),
       )
@@ -398,7 +398,7 @@ private fun resolveWireKotlinType(postgresType: String, catalog: Catalog): TypeN
  * Maps a Postgres base type name to the Kotlin type that JDBC delivers it as.
  *
  * Delegates to [resolveWireCodec] as the single source of truth for type mappings, so the set of
- * usable adapter wire types is the same as the set of usable domain bases ([domainKotlinBaseType]).
+ * usable adapter wire types is the same as the set of usable domain bases ([domainKotlinWireType]).
  * The two differ only in the error message they raise for a type with no entry.
  */
 private fun wireKotlinType(postgresType: String): TypeName = resolveWireCodec(postgresType)?.kotlinType
