@@ -73,7 +73,9 @@ public data class Schema(
  * @property name Unqualified domain name as it appears in `pg_type.typname` (e.g. `"email"`).
  * @property baseType Terminal Postgres base type name (e.g. `"text"`, `"int4"`), resolved through
  *   any intermediate domains. May be an array type name (e.g. `"_int4"` for a domain over `int[]`);
- *   Norm does not support a domain over an array type and fails fast when one is encountered.
+ *   Norm supports that for a base element type ([norm.generator.POSTGRES_BASE_TYPES], excluding
+ *   `oid`) and fails fast, naming the reason, for an array of `oid`, of an enum, or of another
+ *   domain — see [norm.generator.TypeRepository.tryResolveDomainType]'s KDoc.
  * @property comment Comment set via `COMMENT ON DOMAIN`. Empty when absent.
  */
 public data class Domain(val name: String = "", val baseType: String = "", val comment: String = "")

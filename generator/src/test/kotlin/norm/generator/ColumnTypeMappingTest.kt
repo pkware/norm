@@ -1430,16 +1430,101 @@ class ColumnTypeMappingTest {
     }
 
     @Test
-    fun `domain over an array type throws error naming the domain and the array base type`() {
+    fun `non-null domain over int array resolves to value class and array read-write expressions`() {
+      val intSetDomain = Domain(name = "int_set", baseType = "_int4")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(intSetDomain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("tag_ids", type = "int_set")
+      val mappable = repository.resolveMappableType(col)
+
+      assertThat(repository.resolveColumnType(col).isNullable).isFalse()
+      assertThat(repository.resolveColumnType(col)).isEqualTo(ClassName("test", "IntSet"))
+      assertThat(mappable.resultSetAction(1).toString())
+        .isEqualTo("intSetAdapter.decode(getArray(1).norm.mapElements { getInt(2).takeUnless { wasNull() } })")
+      assertThat(mappable.statementAction(index(1), CodeBlock.of("tag_ids")).toString())
+        .isEqualTo("setArray(1, intSetAdapter.encode(tag_ids).norm.toSqlArray(connection, \"int4\"))")
+    }
+
+    @Test
+    fun `nullable domain over int array resolves to nullable value class and safe-call read-write expressions`() {
+      val intSetDomain = Domain(name = "int_set", baseType = "_int4")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(intSetDomain))))
+      val repository = TypeRepository("test", catalog)
+      val col = column("tag_ids", type = "int_set", notNull = false)
+      val mappable = repository.resolveMappableType(col)
+
+      assertThat(repository.resolveColumnType(col).isNullable).isTrue()
+      assertThat(repository.resolveColumnType(col)).isEqualTo(ClassName("test", "IntSet").copy(nullable = true))
+      assertThat(mappable.resultSetAction(1).toString()).isEqualTo(
+        "getArray(1)?.norm.mapElements { getInt(2).takeUnless { wasNull() } }?.let { intSetAdapter.decode(it) }",
+      )
+      assertThat(mappable.statementAction(index(1), CodeBlock.of("tag_ids")).toString()).isEqualTo(
+        "tag_ids?.let { setArray(1, intSetAdapter.encode(it).norm.toSqlArray(connection, \"int4\")) } " +
+          "?: setNull(1, java.sql.Types.ARRAY)",
+      )
+    }
+
+    @Test
+    fun `domain over oid array throws error naming the domain, base type, and reason`() {
+      val idSetDomain = Domain(name = "id_set", baseType = "_oid")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(idSetDomain))))
+      val repository = TypeRepository("test", catalog)
+
+      val exception = assertThrows<IllegalStateException> {
+        repository.resolveMappableType(column("ids", type = "id_set"))
+      }
+      assertThat(exception.message!!).contains("id_set")
+      assertThat(exception.message!!).contains("_oid")
+      assertThat(exception.message!!).contains("Blob")
+      assertThat(exception.message!!).contains("Long")
+    }
+
+    @Test
+    fun `domain over an array of an enum throws error naming the domain, base type, and reason`() {
+      val moodEnum = Enum(name = "mood", vals = listOf("happy", "sad", "angry"))
+      val moodsDomain = Domain(name = "moods", baseType = "_mood")
+      val catalog = Catalog(
+        schemas = listOf(Schema(name = "public", enums = listOf(moodEnum), domains = listOf(moodsDomain))),
+      )
+      val repository = TypeRepository("test", catalog)
+
+      val exception = assertThrows<IllegalStateException> {
+        repository.resolveMappableType(column("possible_moods", type = "moods"))
+      }
+      assertThat(exception.message!!).contains("moods")
+      assertThat(exception.message!!).contains("_mood")
+      assertThat(exception.message!!).contains("enum")
+    }
+
+    @Test
+    fun `domain over an array of a domain throws error naming the domain, base type, and reason`() {
+      val emailDomainForArray = Domain(name = "email", baseType = "text")
+      val emailsDomain = Domain(name = "emails", baseType = "_email")
+      val catalog = Catalog(
+        schemas = listOf(Schema(name = "public", domains = listOf(emailDomainForArray, emailsDomain))),
+      )
+      val repository = TypeRepository("test", catalog)
+
+      val exception = assertThrows<IllegalStateException> {
+        repository.resolveMappableType(column("contact_emails", type = "emails"))
+      }
+      assertThat(exception.message!!).contains("emails")
+      assertThat(exception.message!!).contains("_email")
+      assertThat(exception.message!!).contains("domain")
+    }
+
+    @Test
+    fun `array column of an array-based domain throws error naming the domain, base type, and reason`() {
       val intSetDomain = Domain(name = "int_set", baseType = "_int4")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(intSetDomain))))
       val repository = TypeRepository("test", catalog)
 
       val exception = assertThrows<IllegalStateException> {
-        repository.resolveMappableType(column("tag_ids", type = "int_set"))
+        repository.resolveMappableType(column("tag_id_sets", type = "int_set", isArray = true))
       }
       assertThat(exception.message!!).contains("int_set")
-      assertThat(exception.message!!).contains("domain over an array type is unsupported")
+      assertThat(exception.message!!).contains("_int4")
+      assertThat(exception.message!!).contains("array")
     }
 
     @Test
@@ -1514,7 +1599,7 @@ class ColumnTypeMappingTest {
    * Tests for domain base types beyond TEXT and INTEGER.
    *
    * Each base type exercises both [resolveWireCodec] (JDBC method metadata) and
-   * [domainKotlinBaseType] (Kotlin type mapping). These two functions must stay in sync —
+   * [domainKotlinWireType] (Kotlin type mapping). These two functions must stay in sync —
    * a type supported in one but not the other is a bug.
    */
   @Nested

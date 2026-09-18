@@ -259,6 +259,51 @@ internal object InstantViaOffsetDateTimeCodec : WireCodec {
 }
 
 /**
+ * [WireCodec] for a Postgres array type used as a domain's base type (`CREATE DOMAIN int_set AS
+ * int[]`), composing an element [WireCodec] the same way [ArrayTypeDecorator] does for a plain
+ * array column.
+ *
+ * This is a [WireCodec], not a new [SqlMappable]: [kotlinType] is the array itself
+ * (`Array<Int?>`), so [TypeRepository.tryResolveDomainType]'s existing [AdaptedTypeSqlMappable]
+ * line handles the domain unchanged — the adapter's `decode`/`encode` convert between the value
+ * class (wrapping `List<Int?>`, per [domainKotlinPropertyType]) and this codec's `Array<Int?>`
+ * wire type.
+ *
+ * Array elements are always nullable regardless of the domain column's `NOT NULL` constraint,
+ * because Postgres arrays may contain `NULL` — so [read] always reads the element via
+ * [elementCodec] with `nullable = true`, and [nullable] here controls only whether the array
+ * itself (not its elements) may be SQL `NULL`.
+ *
+ * @param elementCodec [WireCodec] for the array's element type (e.g. the `int4` codec for
+ *   `int[]`).
+ * @param postgresElementTypeName The canonical Postgres element type name passed to
+ *   [norm.toSqlArray] (e.g. `"int4"`).
+ */
+internal class ArrayWireCodec(private val elementCodec: WireCodec, private val postgresElementTypeName: String) :
+  WireCodec {
+
+  private val toSqlArrayMember = MemberName("norm", "toSqlArray", isExtension = true)
+  private val mapElementsMember = MemberName("norm", "mapElements", isExtension = true)
+
+  override val kotlinType: TypeName
+    get() = ARRAY.parameterizedBy(elementCodec.kotlinType.copy(nullable = true))
+
+  override fun read(index: Int, nullable: Boolean): CodeBlock {
+    val elementRead = elementCodec.read(ELEMENT_VALUE_COLUMN_INDEX, true)
+    return if (nullable) {
+      CodeBlock.of("getArray(%L)?.%M { %L }", index, mapElementsMember, elementRead)
+    } else {
+      CodeBlock.of("getArray(%L).%M { %L }", index, mapElementsMember, elementRead)
+    }
+  }
+
+  override fun write(index: CodeBlock, value: CodeBlock): CodeBlock =
+    CodeBlock.of("setArray(%L, %L.%M(connection, %S))", index, value, toSqlArrayMember, postgresElementTypeName)
+
+  override fun writeNull(index: CodeBlock): CodeBlock = CodeBlock.of("setNull(%L, %T.ARRAY)", index, Types::class)
+}
+
+/**
  * [SqlMappable] for a plain (adapterless) column of a Postgres base type, built from its
  * [WireCodec].
  *
