@@ -1430,6 +1430,19 @@ class ColumnTypeMappingTest {
     }
 
     @Test
+    fun `domain over an array type throws error naming the domain and the array base type`() {
+      val intSetDomain = Domain(name = "int_set", baseType = "_int4")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(intSetDomain))))
+      val repository = TypeRepository("test", catalog)
+
+      val exception = assertThrows<IllegalStateException> {
+        repository.resolveMappableType(column("tag_ids", type = "int_set"))
+      }
+      assertThat(exception.message!!).contains("int_set")
+      assertThat(exception.message!!).contains("domain over an array type is unsupported")
+    }
+
+    @Test
     fun `non-null TEXT domain resultSetAction uses adapter decode with getString`() {
       val repository = TypeRepository("test", domainCatalog)
       val col = column("email", type = "email")

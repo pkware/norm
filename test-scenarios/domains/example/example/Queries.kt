@@ -22,6 +22,7 @@ public interface Queries : Transactable {
   public fun <T : Any> getUserByEmail(email: Email, mapper: (
     id: Int,
     email: Email,
+    work_email: WorkEmail?,
     age: PositiveInteger?,
     zip_code: UsPostalCode?,
     current_mood: Mood,
@@ -48,12 +49,47 @@ public interface Queries : Transactable {
 
   /**
    * ```sql
+   * SELECT * FROM users WHERE work_email = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> getUserByWorkEmail(work_email: WorkEmail, mapper: (
+    id: Int,
+    email: Email,
+    work_email: WorkEmail?,
+    age: PositiveInteger?,
+    zip_code: UsPostalCode?,
+    current_mood: Mood,
+    previous_mood: Mood?,
+    past_moods: Array<Mood?>?,
+    scores: Array<PositiveInteger?>?,
+    placed_at: OrderPlacedAt,
+    external_ref: ExternalReference?,
+    preferred_date: PreferredDate?,
+    opening_time: OpeningTime?,
+    meeting_time_tz: MeetingTimeTz?,
+    created_at_local: CreatedAtLocal?,
+    large_object_ref: LargeObjectRef?,
+    thumbnail: Thumbnail?,
+  ) -> T): T
+
+  /**
+   * ```sql
+   * SELECT * FROM users WHERE work_email = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun getUserByWorkEmail(work_email: WorkEmail): Users = getUserByWorkEmail(work_email, ::Users)
+
+  /**
+   * ```sql
    * SELECT * FROM users WHERE age > ?
    * ```
    */
   public fun <T : Any> listUsersByAge(age: PositiveInteger, mapper: (
     id: Int,
     email: Email,
+    work_email: WorkEmail?,
     age: PositiveInteger?,
     zip_code: UsPostalCode?,
     current_mood: Mood,
@@ -85,6 +121,7 @@ public interface Queries : Transactable {
   public fun <T : Any> getUsersByZipCode(zip_code: UsPostalCode, mapper: (
     id: Int,
     email: Email,
+    work_email: WorkEmail?,
     age: PositiveInteger?,
     zip_code: UsPostalCode?,
     current_mood: Mood,
@@ -116,6 +153,7 @@ public interface Queries : Transactable {
   public fun <T : Any> getUsersByMood(current_mood: Mood, mapper: (
     id: Int,
     email: Email,
+    work_email: WorkEmail?,
     age: PositiveInteger?,
     zip_code: UsPostalCode?,
     current_mood: Mood,
@@ -147,6 +185,7 @@ public interface Queries : Transactable {
   public fun <T : Any> getUsersPlacedAfter(placed_at: OrderPlacedAt, mapper: (
     id: Int,
     email: Email,
+    work_email: WorkEmail?,
     age: PositiveInteger?,
     zip_code: UsPostalCode?,
     current_mood: Mood,
@@ -179,6 +218,7 @@ public interface Queries : Transactable {
   public fun <T : Any> getUserByExternalReference(external_ref: ExternalReference, mapper: (
     id: Int,
     email: Email,
+    work_email: WorkEmail?,
     age: PositiveInteger?,
     zip_code: UsPostalCode?,
     current_mood: Mood,
@@ -211,6 +251,7 @@ public interface Queries : Transactable {
   public fun <T : Any> getUsersByPreferredDate(preferred_date: PreferredDate, mapper: (
     id: Int,
     email: Email,
+    work_email: WorkEmail?,
     age: PositiveInteger?,
     zip_code: UsPostalCode?,
     current_mood: Mood,
@@ -242,6 +283,7 @@ public interface Queries : Transactable {
   public fun <T : Any> getUsersByOpeningTime(opening_time: OpeningTime, mapper: (
     id: Int,
     email: Email,
+    work_email: WorkEmail?,
     age: PositiveInteger?,
     zip_code: UsPostalCode?,
     current_mood: Mood,
@@ -273,6 +315,7 @@ public interface Queries : Transactable {
   public fun <T : Any> getUsersByMeetingTimeTz(meeting_time_tz: MeetingTimeTz, mapper: (
     id: Int,
     email: Email,
+    work_email: WorkEmail?,
     age: PositiveInteger?,
     zip_code: UsPostalCode?,
     current_mood: Mood,
@@ -304,6 +347,7 @@ public interface Queries : Transactable {
   public fun <T : Any> getUsersByCreatedAtLocal(created_at_local: CreatedAtLocal, mapper: (
     id: Int,
     email: Email,
+    work_email: WorkEmail?,
     age: PositiveInteger?,
     zip_code: UsPostalCode?,
     current_mood: Mood,
@@ -335,6 +379,7 @@ public interface Queries : Transactable {
   public fun <T : Any> getUsersByLargeObjectRef(large_object_ref: LargeObjectRef, mapper: (
     id: Int,
     email: Email,
+    work_email: WorkEmail?,
     age: PositiveInteger?,
     zip_code: UsPostalCode?,
     current_mood: Mood,
@@ -366,6 +411,7 @@ public interface Queries : Transactable {
   public fun <T : Any> getUsersByThumbnail(thumbnail: Thumbnail, mapper: (
     id: Int,
     email: Email,
+    work_email: WorkEmail?,
     age: PositiveInteger?,
     zip_code: UsPostalCode?,
     current_mood: Mood,

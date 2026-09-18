@@ -1401,6 +1401,70 @@ class JdbcAnalyzerTest {
   }
 
   @Nested
+  inner class StackedDomainResolution {
+
+    @Test
+    fun `buildCatalog resolves a domain over a domain to the terminal base type`() {
+      connection.createStatement().use {
+        it.execute("CREATE DOMAIN email_for_stacked_domain_test AS TEXT")
+        it.execute("CREATE DOMAIN work_email_for_stacked_domain_test AS email_for_stacked_domain_test")
+      }
+
+      try {
+        val catalog = analyzer.buildCatalog()
+        val domainsByName = catalog.schemas.first().domains.associateBy { it.name }
+
+        assertThat(domainsByName.getValue("work_email_for_stacked_domain_test").baseType).isEqualTo("text")
+      } finally {
+        connection.createStatement().use {
+          it.execute("DROP DOMAIN IF EXISTS work_email_for_stacked_domain_test")
+          it.execute("DROP DOMAIN IF EXISTS email_for_stacked_domain_test")
+        }
+      }
+    }
+
+    @Test
+    fun `buildCatalog resolves a three-level domain chain to the terminal base type`() {
+      connection.createStatement().use {
+        it.execute("CREATE DOMAIN level1_domain_for_stacked_domain_test AS TEXT")
+        it.execute("CREATE DOMAIN level2_domain_for_stacked_domain_test AS level1_domain_for_stacked_domain_test")
+        it.execute("CREATE DOMAIN level3_domain_for_stacked_domain_test AS level2_domain_for_stacked_domain_test")
+      }
+
+      try {
+        val catalog = analyzer.buildCatalog()
+        val domainsByName = catalog.schemas.first().domains.associateBy { it.name }
+
+        assertThat(domainsByName.getValue("level3_domain_for_stacked_domain_test").baseType).isEqualTo("text")
+      } finally {
+        connection.createStatement().use {
+          it.execute("DROP DOMAIN IF EXISTS level3_domain_for_stacked_domain_test")
+          it.execute("DROP DOMAIN IF EXISTS level2_domain_for_stacked_domain_test")
+          it.execute("DROP DOMAIN IF EXISTS level1_domain_for_stacked_domain_test")
+        }
+      }
+    }
+
+    @Test
+    fun `buildCatalog resolves a domain over an array type to the Postgres array type name`() {
+      connection.createStatement().use {
+        it.execute("CREATE DOMAIN int_set_for_stacked_domain_test AS int[]")
+      }
+
+      try {
+        val catalog = analyzer.buildCatalog()
+        val domainsByName = catalog.schemas.first().domains.associateBy { it.name }
+
+        assertThat(domainsByName.getValue("int_set_for_stacked_domain_test").baseType).isEqualTo("_int4")
+      } finally {
+        connection.createStatement().use {
+          it.execute("DROP DOMAIN IF EXISTS int_set_for_stacked_domain_test")
+        }
+      }
+    }
+  }
+
+  @Nested
   inner class OverLengthIdentifierParameterInference {
 
     @Test

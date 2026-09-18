@@ -66,8 +66,14 @@ public data class Schema(
  * Domains are thin wrappers over a base type with optional constraints.
  * Norm generates a `@JvmInline` value class for each domain referenced by a query column.
  *
+ * PostgreSQL allows stacking domains (`CREATE DOMAIN work_email AS email`, itself `AS text`).
+ * [norm.generator.PgCatalogLoader.introspectDomains] resolves that chain in SQL, so [baseType]
+ * here is always the terminal *non-domain* type — never the name of another domain.
+ *
  * @property name Unqualified domain name as it appears in `pg_type.typname` (e.g. `"email"`).
- * @property baseType Postgres base type name (e.g. `"text"`, `"int4"`).
+ * @property baseType Terminal Postgres base type name (e.g. `"text"`, `"int4"`), resolved through
+ *   any intermediate domains. May be an array type name (e.g. `"_int4"` for a domain over `int[]`);
+ *   Norm does not support a domain over an array type and fails fast when one is encountered.
  * @property comment Comment set via `COMMENT ON DOMAIN`. Empty when absent.
  */
 public data class Domain(val name: String = "", val baseType: String = "", val comment: String = "")

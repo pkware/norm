@@ -265,21 +265,45 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * PostgreSQL domains (e.g., `CREATE DOMAIN email AS TEXT`) are user-defined types that wrap a
    * base type with optional constraints. Comments are set with `COMMENT ON DOMAIN name IS '...'`.
    *
-   * @param schemaName The schema to introspect.
-   * @return One [Domain] per domain type, with [Domain.baseType] as the Postgres base type name
-   *   and [Domain.comment] if present.
+   * PostgreSQL allows stacking domains (`CREATE DOMAIN work_email AS email`, itself a domain over
+   * `text`), so
+   * [`pg_type.typbasetype`](https://www.postgresql.org/docs/current/catalog-pg-type.html) may
+   * point at another domain rather than a terminal type. The query below walks that chain with a
+   * recursive CTE so [Domain.baseType] is always the terminal *non-domain* `typname` — `text` for
+   * both `email` and `work_email` above — matching what every consumer of [Domain.baseType] already
+   * assumes. The recursion only filters `nspname` on the outermost domain (the anchor); an
+   * intermediate or base domain living in a different schema still resolves correctly.
+   *
+   * @param schemaName The schema to introspect. Only domains declared directly in this schema are
+   *   returned; an intermediate or base domain in the chain may live in a different schema.
+   * @return One [Domain] per domain type declared in [schemaName], with [Domain.baseType] as the
+   *   terminal (non-domain) Postgres base type name and [Domain.comment] taken from the outermost
+   *   domain, if present.
    */
   fun introspectDomains(schemaName: String): List<Domain> = buildList {
     connection.createStatement().use { stmt ->
       stmt.executeQuery(
         """
-        SELECT t.typname AS domain_name, bt.typname AS baseType, d.description
-        FROM pg_catalog.pg_type t
-        JOIN pg_catalog.pg_type bt ON t.typbasetype = bt.oid
-        JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
-        LEFT JOIN pg_catalog.pg_description d ON d.objoid = t.oid AND d.objsubid = 0
-        WHERE n.nspname = '$schemaName'
-          AND t.typtype = 'd'
+        WITH RECURSIVE domain_chain(anchor_oid, current_oid) AS (
+          SELECT t.oid, t.typbasetype
+          FROM pg_catalog.pg_type t
+          JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+          WHERE n.nspname = '$schemaName'
+            AND t.typtype = 'd'
+
+          UNION ALL
+
+          SELECT dc.anchor_oid, ct.typbasetype
+          FROM domain_chain dc
+          JOIN pg_catalog.pg_type ct ON ct.oid = dc.current_oid
+          WHERE ct.typtype = 'd'
+        )
+        SELECT anchor.typname AS domain_name, terminal.typname AS baseType, d.description
+        FROM domain_chain dc
+        JOIN pg_catalog.pg_type anchor ON anchor.oid = dc.anchor_oid
+        JOIN pg_catalog.pg_type terminal ON terminal.oid = dc.current_oid
+        LEFT JOIN pg_catalog.pg_description d ON d.objoid = dc.anchor_oid AND d.objsubid = 0
+        WHERE terminal.typtype != 'd'
         """.trimIndent(),
       ).use { rs ->
         while (rs.next()) {

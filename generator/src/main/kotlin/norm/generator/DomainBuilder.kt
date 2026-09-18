@@ -128,6 +128,12 @@ internal fun domainAdapterPropertyName(domain: Domain): String = "${domain.name.
  * (`setObject(..., Types.OTHER)` rather than `setString`) is carried by the [WireCodec] that
  * [TypeRepository] hands to [AdaptedTypeSqlMappable], not by the wrapped Kotlin type.
  *
+ * [baseTypeName] is always a terminal, non-domain Postgres type (see [Domain.baseType]'s KDoc):
+ * stacked domains (`CREATE DOMAIN work_email AS email`) are resolved to their terminal base type
+ * before a [Domain] reaches this function, so `baseTypeName` naming another domain never occurs.
+ * A domain over an array type (`CREATE DOMAIN int_set AS int[]`) is rejected earlier, by
+ * [TypeRepository.tryResolveDomainType], before a referenced domain's base type ever reaches here.
+ *
  * [resolveWireCodec] reads [POSTGRES_BASE_TYPES], the same map [TypeRepository.resolveBaseType]
  * reads for a plain column's type, so [error] here is unreachable for a domain built on any type
  * that map supports — `CREATE DOMAIN d AS timestamptz`/`uuid`/`date`/etc. all resolve, by
