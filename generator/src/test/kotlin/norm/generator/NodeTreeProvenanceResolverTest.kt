@@ -53,6 +53,20 @@ class NodeTreeProvenanceResolverTest {
     }
 
     @Test
+    fun `columns whose walks overlap along a shared CTE chain each resolve to their own hop path`() {
+      val provenance = provenanceFor(
+        "CREATE TABLE t (d TEXT)",
+        "WITH c1 AS (SELECT UPPER(d) AS d FROM t), c2 AS (SELECT d FROM c1), c3 AS (SELECT d FROM c2) " +
+          "SELECT c1.d AS d1, c2.d AS d2, c3.d AS d3 FROM c1, c2, c3",
+      )
+      assertThat(provenance).containsExactly(
+        NodeTreeColumnProvenance(listOf(CteHop("c1", 0)), 1),
+        NodeTreeColumnProvenance(listOf(CteHop("c2", 0), CteHop("c1", 1)), 1),
+        NodeTreeColumnProvenance(listOf(CteHop("c3", 0), CteHop("c2", 1), CteHop("c1", 1)), 1),
+      )
+    }
+
+    @Test
     fun `sibling CTEs that both name their output column the same thing resolve independently`() {
       val provenance = provenanceFor(
         "CREATE TABLE t (d TEXT); CREATE TABLE u (d TEXT)",
