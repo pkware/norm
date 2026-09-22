@@ -127,3 +127,21 @@ UPDATE type SET
   oid_array_type = ?,
   oid_array_notnull_type = ?
 WHERE string_type = ?;
+
+-- Selects the transaction/tuple identifier system columns with no cast, for the given row.
+-- name: selectSystemColumns :one
+SELECT xmin, xmax, ctid FROM type WHERE string_type = ?;
+
+-- Updates the xid, xid8, tid, and cid columns for a given row, binding the boundary values as
+-- parameters to round-trip test the transaction/tuple identifier codec.
+-- name: updateTransactionIdentifiers :execrows
+UPDATE type SET
+  xid_type = ?,
+  xid_notnull_type = ?,
+  xid8_type = ?,
+  xid8_notnull_type = ?,
+  tid_type = ?,
+  tid_notnull_type = ?,
+  cid_type = ?,
+  cid_notnull_type = ?
+WHERE string_type = ?;

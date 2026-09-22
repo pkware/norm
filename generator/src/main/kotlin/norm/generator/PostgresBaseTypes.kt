@@ -132,6 +132,22 @@ internal val POSTGRES_BASE_TYPES: Map<String, PostgresBaseType> = buildMap {
     "bytea",
   )
 
+  // xid, xid8, tid, and cid are transaction/tuple identifiers (xmin/xmax report as xid, ctid as
+  // tid), useful only for equality comparison, never arithmetic. Neither Long nor BigInteger fits:
+  // xid8's range is unsigned 64-bit, so a value like 18446744073709551615 overflows getLong()
+  // outright, and tid's text form ("(0,1)", a block/offset pair) is not numeric at all — getLong()
+  // throws on it too. setLong() and setString() are both rejected by Postgres for these types
+  // ("operator does not exist: xid = bigint" / "... = character varying"). getString() and
+  // setObject(..., Types.OTHER) are the one read/write pair verified to work for all four, so this
+  // reuses the same TypesOtherCodec as json/jsonb rather than a numeric representation.
+  register(
+    TypesOtherCodec(String::class.asTypeName(), "getString", "OTHER"),
+    "xid",
+    "xid8",
+    "tid",
+    "cid",
+  )
+
   // pgjdbc's plain getObject(int) returns java.sql.Date/Time/Timestamp for date/time/timetz/
   // timestamp columns, not the java.time type, so the read needs the class-qualified
   // getObject(int, Class) overload (ClassHintedObjectCodec). The write side needs no such

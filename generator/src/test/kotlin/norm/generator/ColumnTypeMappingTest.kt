@@ -1019,7 +1019,7 @@ class ColumnTypeMappingTest {
       val alreadyCanonicalNames = setOf(
         "int2", "int4", "int8", "float4", "float8", "numeric", "bool",
         "json", "jsonb", "oid", "bytea", "date", "time", "timetz", "timestamp", "timestamptz",
-        "text", "varchar", "bpchar", "uuid",
+        "text", "varchar", "bpchar", "uuid", "xid", "xid8", "tid", "cid",
       )
 
       assertThat(POSTGRES_BASE_TYPES.keys - serialVariants)
@@ -1172,6 +1172,57 @@ class ColumnTypeMappingTest {
       val col = column("payloads", type = "json", notNull = false, isArray = true)
       assertThat(typeRepository.resolveColumnType(col))
         .isEqualTo(ARRAY.parameterizedBy(String::class.asTypeName().copy(nullable = true)).copy(nullable = true))
+    }
+  }
+
+  @Nested
+  @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+  inner class TransactionIdentifierAccessors {
+
+    fun transactionIdentifierTypes(): List<Arguments> = listOf(
+      Arguments.of("xid"),
+      Arguments.of("xid8"),
+      Arguments.of("tid"),
+      Arguments.of("cid"),
+    )
+
+    @ParameterizedTest(name = "{0} column resolves to String")
+    @MethodSource("transactionIdentifierTypes")
+    fun `non-null column resolves to String`(typeName: String) {
+      val col = column("value", type = typeName)
+      assertThat(typeRepository.resolveColumnType(col)).isEqualTo(String::class.asTypeName())
+    }
+
+    @ParameterizedTest(name = "{0} nullable column resolves to nullable String")
+    @MethodSource("transactionIdentifierTypes")
+    fun `nullable column resolves to nullable String`(typeName: String) {
+      val col = column("value", type = typeName, notNull = false)
+      assertThat(typeRepository.resolveColumnType(col))
+        .isEqualTo(String::class.asTypeName().copy(nullable = true))
+    }
+
+    @ParameterizedTest(name = "{0} array column resolves to Array of nullable String")
+    @MethodSource("transactionIdentifierTypes")
+    fun `array column resolves to Array of nullable String`(typeName: String) {
+      val col = column("values", type = typeName, notNull = false, isArray = true)
+      assertThat(typeRepository.resolveColumnType(col))
+        .isEqualTo(ARRAY.parameterizedBy(String::class.asTypeName().copy(nullable = true)).copy(nullable = true))
+    }
+
+    @ParameterizedTest(name = "{0} reads via getString")
+    @MethodSource("transactionIdentifierTypes")
+    fun `reads via getString`(typeName: String) {
+      val col = column("value", type = typeName)
+      val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).isEqualTo("getString(1)")
+    }
+
+    @ParameterizedTest(name = "{0} writes via setObject with Types OTHER")
+    @MethodSource("transactionIdentifierTypes")
+    fun `writes via setObject with Types OTHER`(typeName: String) {
+      val col = column("value", type = typeName)
+      val setter = typeRepository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("value"))
+      assertThat(setter.toString()).isEqualTo("setObject(1, value, java.sql.Types.OTHER)")
     }
   }
 
