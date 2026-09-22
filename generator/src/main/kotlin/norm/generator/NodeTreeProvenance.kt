@@ -80,7 +80,11 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
     // A single-element stack: nodeTreeText's own :cteList is the only scope until the walk
     // descends into a CTE body.
     val outermostScope = listOf(parser.parseCteList(nodeTreeText).associateBy { it.name })
-    return entries.map { entry -> resolveVar(entry.expression, nodeTreeText, outermostScope) }
+    // Every column's walk starts from nodeTreeText's own range table and re-enters the same CTE
+    // bodies, so parsing each block once here is what keeps the cost proportional to the number of
+    // distinct blocks rather than to columns times hops. Local to this call: nothing outlives it.
+    val rangeTables = mutableMapOf<String, Map<Int, RangeTableEntry>>()
+    return entries.map { entry -> resolveVar(entry.expression, nodeTreeText, outermostScope, rangeTables) }
   }
 
   /** `:returningList` when non-empty, else `:targetList` — see [resolveColumnProvenance]. */
@@ -113,11 +117,17 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
    *
    * A `:ctelevelsup` deeper than [scopeStack] bails rather than reading past what has been tracked —
    * a real reference's levelsup can never exceed the number of `WITH` clauses actually enclosing it.
+   *
+   * [rangeTables] holds each already-parsed query block's range table, keyed by that block's text.
+   * The caller owns it and shares one instance across the columns of a single
+   * [resolveColumnProvenance] call; entries are read, never modified, so a block reached by more
+   * than one column is parsed once.
    */
   private fun resolveVar(
     expression: PgNodeExpression,
     queryBlock: String,
     scopeStack: List<Map<String, NodeTreeCteDefinition>>,
+    rangeTables: MutableMap<String, Map<Int, RangeTableEntry>>,
   ): NodeTreeColumnProvenance? {
     var currentQueryBlock = queryBlock
     var currentScopeStack = scopeStack
@@ -128,7 +138,8 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
     var depth = 0
     while (true) {
       if (depth++ >= MAX_PROVENANCE_CHAIN_DEPTH) return null
-      when (val rangeTableEntry = parser.parseRangeTableEntries(currentQueryBlock)[currentVar.varno] ?: return null) {
+      val rangeTable = rangeTables.getOrPut(currentQueryBlock) { parser.parseRangeTableEntries(currentQueryBlock) }
+      when (val rangeTableEntry = rangeTable[currentVar.varno] ?: return null) {
         is RangeTableEntry.Join -> {
           val aliasVar = rangeTableEntry.joinAliasVars.getOrNull(currentVar.varattno - 1) as? PgNodeExpression.Var
             ?: return null
