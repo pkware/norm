@@ -69,6 +69,15 @@ public interface Queries : Transactable {
     json_type: String?,
     jsonb_type: String?,
     blob_type: Blob?,
+    xid_type: String?,
+    xid_notnull_type: String,
+    xid8_type: String?,
+    xid8_notnull_type: String,
+    tid_type: String?,
+    tid_notnull_type: String,
+    cid_type: String?,
+    cid_notnull_type: String,
+    xid_array_type: Array<String?>?,
     text_type: String?,
     varchar_type: String?,
     pg_varchar_type: String?,
@@ -175,6 +184,15 @@ public interface Queries : Transactable {
     json_type: String?,
     jsonb_type: String?,
     blob_type: Blob?,
+    xid_type: String?,
+    xid_notnull_type: String,
+    xid8_type: String?,
+    xid8_notnull_type: String,
+    tid_type: String?,
+    tid_notnull_type: String,
+    cid_type: String?,
+    cid_notnull_type: String,
+    xid_array_type: Array<String?>?,
     text_type: String?,
     varchar_type: String?,
     pg_varchar_type: String?,
@@ -591,6 +609,15 @@ public interface Queries : Transactable {
     json_type: String?,
     jsonb_type: String?,
     blob_type: Blob?,
+    xid_type: String?,
+    xid_notnull_type: String,
+    xid8_type: String?,
+    xid8_notnull_type: String,
+    tid_type: String?,
+    tid_notnull_type: String,
+    cid_type: String?,
+    cid_notnull_type: String,
+    xid_array_type: Array<String?>?,
     text_type: String?,
     varchar_type: String?,
     pg_varchar_type: String?,
@@ -882,6 +909,15 @@ public interface Queries : Transactable {
     json_type: String?,
     jsonb_type: String?,
     blob_type: Blob?,
+    xid_type: String?,
+    xid_notnull_type: String,
+    xid8_type: String?,
+    xid8_notnull_type: String,
+    tid_type: String?,
+    tid_notnull_type: String,
+    cid_type: String?,
+    cid_notnull_type: String,
+    xid_array_type: Array<String?>?,
     text_type: String?,
     varchar_type: String?,
     pg_varchar_type: String?,
@@ -998,6 +1034,15 @@ public interface Queries : Transactable {
     json_type: String?,
     jsonb_type: String?,
     blob_type: Blob?,
+    xid_type: String?,
+    xid_notnull_type: String,
+    xid8_type: String?,
+    xid8_notnull_type: String,
+    tid_type: String?,
+    tid_notnull_type: String,
+    cid_type: String?,
+    cid_notnull_type: String,
+    xid_array_type: Array<String?>?,
     text_type: String?,
     varchar_type: String?,
     pg_varchar_type: String?,
@@ -1723,6 +1768,147 @@ public interface Queries : Transactable {
   public fun updateOidArray(
     oid_array_type: Array<Long?>?,
     oid_array_notnull_type: Array<Long?>,
+    string_type: String,
+  ): Int
+
+  /**
+   * Selects the transaction/tuple identifier system columns with no cast, for the given row.
+   *
+   * ```sql
+   * SELECT xmin, xmax, ctid FROM type WHERE string_type = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> selectSystemColumns(string_type: String, mapper: (
+    xmin: String,
+    xmax: String,
+    ctid: String,
+  ) -> T): T
+
+  /**
+   * Selects the transaction/tuple identifier system columns with no cast, for the given row.
+   *
+   * ```sql
+   * SELECT xmin, xmax, ctid FROM type WHERE string_type = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun selectSystemColumns(string_type: String): SelectSystemColumns = selectSystemColumns(string_type, ::SelectSystemColumns)
+
+  /**
+   * Updates the xid, xid8, tid, and cid columns for a given row, binding the boundary values as
+   * parameters to round-trip test the transaction/tuple identifier codec.
+   *
+   * ```sql
+   * UPDATE type SET
+   *   xid_type = ?,
+   *   xid_notnull_type = ?,
+   *   xid8_type = ?,
+   *   xid8_notnull_type = ?,
+   *   tid_type = ?,
+   *   tid_notnull_type = ?,
+   *   cid_type = ?,
+   *   cid_notnull_type = ?
+   * WHERE string_type = ?
+   * ```
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateTransactionIdentifiers(
+    stream: Iterable<Input>,
+    xid_type: (Input) -> String?,
+    xid_notnull_type: (Input) -> String,
+    xid8_type: (Input) -> String?,
+    xid8_notnull_type: (Input) -> String,
+    tid_type: (Input) -> String?,
+    tid_notnull_type: (Input) -> String,
+    cid_type: (Input) -> String?,
+    cid_notnull_type: (Input) -> String,
+    string_type: (Input) -> String,
+    batchSize: Int,
+  ): IntArray
+
+  /**
+   * Updates the xid, xid8, tid, and cid columns for a given row, binding the boundary values as
+   * parameters to round-trip test the transaction/tuple identifier codec.
+   *
+   * ```sql
+   * UPDATE type SET
+   *   xid_type = ?,
+   *   xid_notnull_type = ?,
+   *   xid8_type = ?,
+   *   xid8_notnull_type = ?,
+   *   tid_type = ?,
+   *   tid_notnull_type = ?,
+   *   cid_type = ?,
+   *   cid_notnull_type = ?
+   * WHERE string_type = ?
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateTransactionIdentifiers(
+    stream: Iterable<Input>,
+    xid_type: (Input) -> String?,
+    xid_notnull_type: (Input) -> String,
+    xid8_type: (Input) -> String?,
+    xid8_notnull_type: (Input) -> String,
+    tid_type: (Input) -> String?,
+    tid_notnull_type: (Input) -> String,
+    cid_type: (Input) -> String?,
+    cid_notnull_type: (Input) -> String,
+    string_type: (Input) -> String,
+  ): IntArray = updateTransactionIdentifiers(stream, xid_type, xid_notnull_type, xid8_type, xid8_notnull_type, tid_type, tid_notnull_type, cid_type, cid_notnull_type, string_type, 100)
+
+  /**
+   * Updates the xid, xid8, tid, and cid columns for a given row, binding the boundary values as
+   * parameters to round-trip test the transaction/tuple identifier codec.
+   *
+   * ```sql
+   * UPDATE type SET
+   *   xid_type = ?,
+   *   xid_notnull_type = ?,
+   *   xid8_type = ?,
+   *   xid8_notnull_type = ?,
+   *   tid_type = ?,
+   *   tid_notnull_type = ?,
+   *   cid_type = ?,
+   *   cid_notnull_type = ?
+   * WHERE string_type = ?
+   * ```
+   *
+   * @return The number of rows updated.
+   */
+  @Throws(SQLException::class)
+  public fun updateTransactionIdentifiers(
+    xid_type: String?,
+    xid_notnull_type: String,
+    xid8_type: String?,
+    xid8_notnull_type: String,
+    tid_type: String?,
+    tid_notnull_type: String,
+    cid_type: String?,
+    cid_notnull_type: String,
     string_type: String,
   ): Int
 }

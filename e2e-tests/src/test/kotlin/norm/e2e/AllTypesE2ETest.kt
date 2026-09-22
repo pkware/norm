@@ -188,6 +188,48 @@ class AllTypesE2ETest : PostgresTestBase() {
     }
   }
 
+  @Nested
+  inner class TransactionIdentifiers {
+
+    @Test
+    fun `xid, xid8, and tid values round-trip through parameter binding, with null for the nullable columns`() {
+      insertRowWithArrays(stringType = "txid-target")
+
+      queries.updateTransactionIdentifiers(
+        null,
+        "4294967295",
+        null,
+        "18446744073709551615",
+        null,
+        "(0,1)",
+        null,
+        "5",
+        "txid-target",
+      )
+
+      val result = queries.filterByStringType("txid-target").list().single()
+
+      assertThat(result.xid_type).isNull()
+      assertThat(result.xid_notnull_type).isEqualTo("4294967295")
+      assertThat(result.xid8_type).isNull()
+      assertThat(result.xid8_notnull_type).isEqualTo("18446744073709551615")
+      assertThat(result.tid_type).isNull()
+      assertThat(result.tid_notnull_type).isEqualTo("(0,1)")
+      assertThat(result.cid_type).isNull()
+    }
+
+    @Test
+    fun `xmin, xmax, and ctid resolve to non-null strings with no cast`() {
+      insertRowWithArrays(stringType = "system-columns-target")
+
+      val result = queries.selectSystemColumns("system-columns-target")
+
+      assertThat(result.xmin).isNotNull()
+      assertThat(result.xmax).isNotNull()
+      assertThat(result.ctid).isNotNull()
+    }
+  }
+
   /**
    * Inserts a row with configurable array values for testing array type handling.
    *
