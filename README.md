@@ -11,6 +11,7 @@ Norm strives to:
 2. Be performant
 3. Give you the APIs needed to meet typical requirements
 4. Be debuggable & readable
+5. Be awesome!
 
 Norm does not:
 - Have an entity model
