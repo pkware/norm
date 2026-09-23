@@ -76,7 +76,7 @@ internal sealed interface PgNodeExpression {
    *   sublinks emit none — or when it has no single-argument `:args` list this parser can read, which
    *   is true of every multi-column row-comparison form (the `BOOLEXPR` shape has no top-level
    *   `:args`; the `ROWCOMPAREEXPR` shape uses `:largs`/`:rargs` and parses to [Unknown] anyway).
-   *   Extracted regardless of `subLinkType` — see [PgNodeTreeParser.parseSubLink].
+   *   Extracted regardless of `subLinkType` — see [PgNodeExpressionParser]'s `parseSubLink`.
    * @property subselectBlock The raw `{QUERY ...}` text of the sublink's `:subselect`, verbatim,
    *   `null` when absent (malformed input, or a node-tree shape this parser does not model). Used
    *   by [NodeTreeNullabilityAnalyzer] to recursively analyze an `ANY_SUBLINK`'s (`IN`/`= ANY`) or
@@ -492,7 +492,7 @@ internal fun Map<Int, RangeTableEntry>.groupRteMap(parser: PgNodeTreeParser): Ma
  * @property expression The parsed expression node for this column.
  * @property resultName The column alias or name (from `:resname`), with `pg_node_tree`
  *   backslash-escaping already removed (an alias `k}x` round-trips as exactly `k}x`, never the raw
- *   `k\}x` — see [PgNodeTreeParser]'s class-level note on escaping). `null` if absent.
+ *   `k\}x` — see [PgNodeTreeScanner]'s note on backslash escaping). `null` if absent.
  * @property resultNumber The 1-based column position (from `:resno`).
  * @property isJunk Whether this entry is a junk column (`:resjunk true`), which should be excluded from results.
  * @property sortGroupRef The entry's `:ressortgroupref` value, `0` when the entry is not a `GROUP BY`/`ORDER
