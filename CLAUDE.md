@@ -158,5 +158,92 @@ The task captures generator output even if it doesn't compile, enabling iterativ
 - `@Language("PostgreSQL")` annotations used throughout for IDE SQL support
 
 ## Documentation
-- Always document things that are optional/nullable. Explain what `null` means and/or the implications of it.
-- In KDoc, use backticks for literals like `null` and numbers.
+
+Documentation is reviewed as strictly as code. A comment that adds noise, reads as machine-generated, or is written for the wrong reader is a defect — it blocks the PR until fixed, the same as a failing test. Getting it wrong costs a review round-trip and makes the change look careless.
+
+A reviewer rejects a comment that:
+- reads as AI-generated filler — hedging, restating the signature, explaining the obvious.
+- narrates a decision log or ADR ("we chose X because…"). Rationale belongs in the commit message.
+- addresses whoever is reading the diff today ("as discussed", "note that we…", "for now") instead of a stranger reading it in a year with none of that context.
+- rambles. One precise sentence beats a paragraph.
+
+Write for that stranger. State what they need; stop.
+
+**Banned phrasings.** These read as machine-generated, in KDoc and inline comments alike, in production and test code. Each is a review-blocking defect on its own:
+
+- Cleft constructions — "which is what releases it to the reaper", "the group is exactly what routes together". Write the plain verb: "releasing it to the reaper", "everything in a group routes to the same queue".
+- Invented collocations — "settlement is unconditional on the outcome" (write "does not depend on"), "skipped rather than thrown on" (write "instead of throwing"), "progress reads over a scan" (write "reads the progress of a scan"), hyphenated coinages like "findings-yielding fixture".
+- An appositive fragment as the opening sentence — "Never invoked, in place of [Foo]." Open with a subject and a verb: "Stands in for [Foo] and is never invoked."
+- Emphatic absolutes standing in for a fact — "re-derived forever", "the one execution that ever scans that group".
+- Capitals or asterisks for emphasis — `REAL`, `OUT OF SCOPE`, `*visible*`. A sentence that needs shouting is the wrong sentence.
+- A metaphor in place of the mechanism — "the backlog is the only door into work" (write "all work enters through the backlog").
+- Words anchored to the moment of writing — "this cycle", "for now", "currently", "as discussed".
+
+**Structural tells.** Word choice is not the only giveaway; sentence shape is. Rewrite a comment built on any of these:
+
+- Claim, colon, argument for the claim — "Batched rather than one call per entry: the statements travel together."
+- Contrastive framing that defines the code by what it is not — "X instead of Y", "rather than a dev-only path". Say what it does.
+- The non-action first — "Nothing is dispatched here." Name the thing that does dispatch.
+- Three parallel verbs or noun phrases in a row — "claims the entries, resolves the routing, and starts the scan."
+- A fronted adverbial that delays the subject — "Against the dev S3 datastore the keys are corpus objects."
+- One sentence carrying more than one claim. Over about 25 words with stacked subordinate clauses, split it or cut it.
+
+**Recurrence outranks any single sentence.** Three or more comments in one change built on the same template is generated prose, even where each reads acceptably alone. Vary the shape or delete the comment. Read a change's comments as one corpus rather than hunk by hunk; the frequency is the signal, and a per-sentence check cannot see it.
+
+**General rules**
+- End all documentation fragments with punctuation (typically a period).
+- Do not document obvious things. Avoid noise.
+- **Be concise.** Prefer short, direct statements over verbose explanations. Example: "Immutable." instead of "Enforced by triggers to be database-generated only (no manual assignment) and immutable."
+- Focus on why, not what. We want to document decisions.
+- Use backticks for literals like `null`, `true`, `false`.
+
+**KDoc linking:**
+- Use KDoc's linking syntax when referencing other classes and members: `[ClassName]` or `[packageName.ClassName]`
+- NEVER use fully qualified names in links. Use imports.
+- Link syntax examples:
+  - `[Organization]` - references a class in scope
+  - `[recurse.onboarding.Organization]` - fully qualified reference - BAD
+  - `[Organization.name]` - references a property
+  - `[findOrganization]` - references a function
+- These links become clickable in IDEs and generated documentation
+
+**Function documentation:**
+- Document what exceptions are thrown and under what conditions.
+- Use `@Throws` annotation in addition to prose documentation.
+- For nullable parameters/returns, document what `null` means, how it occurs, and how it will be treated.
+
+```kotlin
+/**
+ * Retrieves a customer by ID.
+ *
+ * @param customerId the unique identifier of the customer.
+ * @return the customer if found, or `null` if no customer exists with the given ID.
+ *         `null` is treated as "not found" and should be handled by returning a 404.
+ * @throws DatabaseException if the database connection fails.
+ */
+@Throws(DatabaseException::class)
+fun findCustomer(customerId: String): Customer?
+```
+
+**Class documentation:**
+- Use `@param` for constructor parameters, **not** `@property`.
+- Entity/data classes should document what each field represents.
+
+```kotlin
+/**
+ * Represents a customer in the system.
+ *
+ * @param id unique identifier, generated by the database.
+ * @param name customer's display name, must be non-blank.
+ * @param createdAt timestamp when the customer record was created, never `null`.
+ * @param deletedAt timestamp when the customer was soft-deleted, `null` if active.
+ */
+data class Customer(
+  val id: UUID,
+  val name: String,
+  val createdAt: Instant,
+  val deletedAt: Instant?
+)
+```
+
+**Section markers:** Never add divider comments like `// Request DTOs`, `// Response DTOs`, `// Helper functions`. They go stale as code evolves. Make organization self-evident through file structure and naming; if a marker feels needed, split the code into separate files.
