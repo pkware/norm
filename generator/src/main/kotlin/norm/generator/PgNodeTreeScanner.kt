@@ -132,7 +132,7 @@ internal class PgNodeTreeScanner {
    *   `<>`, or has unbalanced delimiters
    */
   internal fun fieldAtDepthOne(text: String, fieldName: String): FieldValue {
-    // The marker stops before the value's delimiter because findMarkerAtDepthOne resets its match on `{`.
+    // findMarkerAtDepthOne returns the index just past the label's single trailing space: the value's first character.
     val markerEnd = findMarkerAtDepthOne(text, "$fieldName ")
     if (markerEnd == -1 || markerEnd >= text.length) return FieldValue.Absent
     return when (text[markerEnd]) {
