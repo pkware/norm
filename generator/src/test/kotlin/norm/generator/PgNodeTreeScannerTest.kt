@@ -196,6 +196,79 @@ class PgNodeTreeScannerTest {
       val text = "{QUERY :ctename k\\(x :args (a b)}"
       assertThat(scanner.fieldAtDepthOne(text, ":args")).isEqualTo(FieldValue.ListContent("a b"))
     }
+
+    @Test
+    fun `an escaped space in a preceding value does not split off an embedded colon-token as a label`() {
+      // Mirrors a quoted identifier containing a literal space and a colon, e.g. "my :resorigtbl":
+      // :resname's own value is "my\ :resorigtbl" — one token, the escaped space kept opaque —
+      // immediately followed by the real :resorigtbl field. An escape-blind scanner would split
+      // the preceding value early at the escaped space, exposing ":resorigtbl" as its own item and
+      // matching that instead of the real label two items later.
+      val text = "{TARGETENTRY :resname my\\ :resorigtbl :resorigtbl 5}"
+      assertThat(scanner.fieldAtDepthOne(text, ":resorigtbl")).isEqualTo(FieldValue.Token("5"))
+    }
+  }
+
+  @Nested
+  inner class LabelClassification {
+
+    @Test
+    fun `a value token equal to the marker does not shadow the real label that follows it`() {
+      // Mirrors a CTE literally named ":cterecursive" (a quoted identifier, preserved verbatim):
+      // :ctename's own value is the text ":cterecursive", immediately followed by the real
+      // :cterecursive field. The value must not be mistaken for the label.
+      val text = "{COMMONTABLEEXPR :ctename :cterecursive :aliascolnames <> :cterecursive true}"
+      assertThat(scanner.boolAtDepthOne(text, ":cterecursive")).isEqualTo(true)
+    }
+
+    @Test
+    fun `a value token ending in the marker text does not shadow the real label that follows it`() {
+      // Mirrors a column aliased ":resorigtbl": :resname's own value is "x:resorigtbl", which
+      // contains the marker text as a suffix but does not start with it as its own label.
+      val text = "{TARGETENTRY :resname x:resorigtbl :resorigtbl 5}"
+      assertThat(scanner.fieldAtDepthOne(text, ":resorigtbl")).isEqualTo(FieldValue.Token("5"))
+    }
+
+    @Test
+    fun `a label is still found after a preceding angle-bracket value`() {
+      val text = "{QUERY :args <> :location -1}"
+      assertThat(scanner.fieldAtDepthOne(text, ":location")).isEqualTo(FieldValue.Token("-1"))
+    }
+
+    @Test
+    fun `a label is still found after a preceding block value`() {
+      val text = "{QUERY :expr {VAR :varno 1} :location -1}"
+      assertThat(scanner.fieldAtDepthOne(text, ":location")).isEqualTo(FieldValue.Token("-1"))
+    }
+
+    @Test
+    fun `a label is still found after a preceding list value`() {
+      val text = "{QUERY :args (a b) :location -1}"
+      assertThat(scanner.fieldAtDepthOne(text, ":location")).isEqualTo(FieldValue.Token("-1"))
+    }
+
+    @Test
+    fun `a label is still found after a preceding multi-token datum value`() {
+      // A CONST's :constvalue datum is "N [ b1 b2 ... ]" — several space-separated tokens that are
+      // all part of one field's value, none of which starts with a colon.
+      val text = "{CONST :constvalue 4 [ 1 0 0 0 ] :location -1}"
+      assertThat(scanner.fieldAtDepthOne(text, ":location")).isEqualTo(FieldValue.Token("-1"))
+    }
+
+    @Test
+    fun `a label is still found after a preceding odd-length datum value`() {
+      // An even number of extra datum tokens (as above) happens to leave a naive positional
+      // alternation realigned by coincidence. An odd count does not — this is what actually
+      // distinguishes the real colon-based classification from position-based alternation.
+      val text = "{CONST :constvalue 3 [ 1 0 0 ] :location -1}"
+      assertThat(scanner.fieldAtDepthOne(text, ":location")).isEqualTo(FieldValue.Token("-1"))
+    }
+
+    @Test
+    fun `a marker-looking token inside a parenthesized list at depth one is not matched`() {
+      val text = "{QUERY :args (:location 1) :other 2}"
+      assertThat(scanner.findMarkerAtDepthOne(text, ":location ")).isEqualTo(-1)
+    }
   }
 
   @Nested

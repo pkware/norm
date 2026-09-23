@@ -35,53 +35,66 @@ internal sealed interface FieldValue {
 internal class PgNodeTreeScanner {
 
   /**
-   * Finds [marker] at brace depth 1 (measured from the first unescaped `{` in [text]) and returns
-   * the index just past the marker's last character, or `-1` when [marker] does not appear at
-   * that depth before the outermost block closes, or [text] contains no unescaped `{`.
+   * Finds [marker] as a field label at brace depth 1 (measured from the first unescaped `{` in
+   * [text]) and returns the index just past the marker's trailing space, or `-1` when [marker]
+   * does not label a field at that depth before the outermost block closes, or [text] contains no
+   * unescaped `{`. [marker] is always a field name followed by exactly one space (e.g.
+   * `":args "`) — every caller passes it in that shape.
    *
    * "Depth 1" means directly inside the outermost `{...}` block, excluding any field nested
    * inside a child `{...}` block — this is what prevents matching, for example, a nested
    * `JOINEXPR`'s own `:quals` field when looking for the top-level `:quals` of a `FROMEXPR`.
    *
-   * Escaping: see the class-level note on backslash escaping. Every `\`-prefixed pair is skipped
-   * as an opaque, non-structural unit — an escaped `\{`/`\}` inside a quoted identifier (e.g. a
-   * column alias containing a literal `}`) is data, not a real brace, and must not perturb
-   * [braceDepth] or terminate the scan early.
+   * At depth 1, items are walked one at a time: a token, a whole `{...}` block, or a whole
+   * `(...)` list — never the interior of a `(...)` list, even though it sits directly inside the
+   * outermost block, so a marker-shaped token inside a list is never mistaken for a label. A
+   * token is a field label iff it starts with `:` and the item immediately before it is not
+   * itself a label; only a label consumes the item that follows it as its value. This is what
+   * tells a real label apart from a value token that happens to start with `:` (e.g. a CTE or
+   * column literally named `:something`, a quoted identifier preserved verbatim in the tree) or
+   * merely end with the marker text (e.g. a value `x:resorigtbl` immediately before the real
+   * `:resorigtbl` label).
+   *
+   * Escaping: see the class-level note on backslash escaping. Every `\`-prefixed pair inside a
+   * token is opaque and part of that token — an escaped `\{`/`\}`/`\(`/`\)` inside a quoted
+   * identifier (e.g. a column alias containing a literal `}`) is data, not a real delimiter, and
+   * must not be read as the start of a block or list, or split the token early.
    */
   internal fun findMarkerAtDepthOne(text: String, marker: String): Int {
     val outerBraceIndex = nextUnescapedIndexOf(text, '{', 0)
     if (outerBraceIndex == -1) return -1
+    val label = marker.dropLast(1)
 
-    var braceDepth = 0
-    var index = outerBraceIndex
-    var markerMatchIndex = 0
+    var index = outerBraceIndex + 1
+    var previousItemIsLabel = false
     while (index < text.length) {
-      val character = text[index]
-      if (character == '\\' && index + 1 < text.length) {
-        index += 2
-        markerMatchIndex = 0
-        continue
-      }
-      when {
-        character == '{' -> {
-          braceDepth++
-          markerMatchIndex = 0
+      while (index < text.length && text[index].isWhitespace()) index++
+      if (index >= text.length) return -1
+      when (text[index]) {
+        '}' -> return -1
+        '{' -> {
+          val block = extractBalancedBraces(text, index) ?: return -1
+          index += block.length
+          previousItemIsLabel = false
         }
-        character == '}' -> {
-          braceDepth--
-          markerMatchIndex = 0
-          if (braceDepth == 0) break
+
+        '(' -> {
+          val list = extractBalancedDelimiters(text, index, '(', ')', includeDelimiters = true) ?: return -1
+          index += list.length
+          previousItemIsLabel = false
         }
-        braceDepth == 1 ->
-          if (character == marker[markerMatchIndex]) {
-            markerMatchIndex++
-            if (markerMatchIndex == marker.length) return index + 1
-          } else {
-            markerMatchIndex = if (character == marker[0]) 1 else 0
+
+        else -> {
+          val token = scanTokenAt(text, index)
+          if (token.isEmpty()) return -1
+          val isLabel = token.startsWith(':') && !previousItemIsLabel
+          if (isLabel && token == label && index + token.length < text.length && text[index + token.length] == ' ') {
+            return index + token.length + 1
           }
-        else -> markerMatchIndex = 0
+          index += token.length
+          previousItemIsLabel = isLabel
+        }
       }
-      index++
     }
     return -1
   }
