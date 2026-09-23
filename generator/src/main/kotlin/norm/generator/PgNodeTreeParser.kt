@@ -4,14 +4,12 @@ package norm.generator
  * Extracts query-level sections such as the target list, range table, and CTE list from PostgreSQL
  * `pg_node_tree` text.
  *
- * No method throws on malformed input. An instance must not be shared across threads.
+ * No method throws on malformed input.
  */
 internal class PgNodeTreeParser {
 
   private val scanner = PgNodeTreeScanner()
   private val expressionParser = PgNodeExpressionParser(scanner)
-
-  private val integerListPattern = Regex("""\(i((?:\s+-?\d+)+)\s*\)""")
 
   /**
    * Parses a single `{NODE_TYPE :field value ...}` expression block into a typed [PgNodeExpression].
@@ -124,7 +122,7 @@ internal class PgNodeTreeParser {
     val fromGroupingSets = scanner.extractOuterSectionContent(nodeTreeText, ":groupingSets (")
       ?.let { groupingSetsContent ->
         integerListPattern.findAll(groupingSetsContent).flatMap { match ->
-          match.groupValues[1].trim().split(scanner.whitespace).mapNotNull { it.toIntOrNull() }
+          match.groupValues[1].trim().split(PgNodeTreeScanner.whitespace).mapNotNull { it.toIntOrNull() }
         }.toList()
       } ?: emptyList()
     return (fromGroupClause + fromGroupingSets).toSet()
@@ -360,9 +358,11 @@ internal class PgNodeTreeParser {
   private fun splitTargetEntries(targetListContent: String): List<String> =
     scanner.splitBraceBlocks(targetListContent).filter { it.startsWith("{TARGETENTRY") }
 
-  /** `:commandType` values — see [parseCommandType]'s KDoc. */
   companion object {
+    /** `:commandType` values — see [parseCommandType]'s KDoc. */
     const val COMMAND_TYPE_DELETE: Int = 4
     const val COMMAND_TYPE_MERGE: Int = 5
+
+    private val integerListPattern = Regex("""\(i((?:\s+-?\d+)+)\s*\)""")
   }
 }
