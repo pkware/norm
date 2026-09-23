@@ -2,6 +2,22 @@ package norm.generator
 
 import java.util.concurrent.ConcurrentHashMap
 
+/** A field's value as read by [PgNodeTreeScanner.fieldAtDepthOne]. */
+internal sealed interface FieldValue {
+
+  /** A `{...}` node, braces included. */
+  data class Block(val content: String) : FieldValue
+
+  /** The interior of a `(...)` list, parentheses excluded; `""` for `()`. */
+  data class ListContent(val content: String) : FieldValue
+
+  /** An undelimited value such as `true` or `42`. */
+  data class Token(val text: String) : FieldValue
+
+  /** The field is missing, is `<>`, or its delimiters never close. */
+  data object Absent : FieldValue
+}
+
 /**
  * Reads field values and balanced `{...}`/`(...)` blocks out of raw `pg_node_tree` text.
  *
@@ -13,12 +29,8 @@ import java.util.concurrent.ConcurrentHashMap
  * a backslash followed by the raw newline byte. Every function here that scans raw text
  * character-by-character for structural `{`, `}`, `(`, or `)` must treat a `\`-prefixed pair as an
  * opaque unit — see [nextUnescapedIndexOf], [findMarkerAtDepthOne], and [extractBalancedDelimiters].
- * Field-name markers (e.g. `:targetList (`, `:expr {`) are Postgres's own fixed labels, never user
- * data, so they are never escaped, and the plain substring searches for them elsewhere in this class
- * ([extractArgListSection] and similar) are safe as long as they hand off to an escape-aware scan
- * for everything past the marker. [extractFieldExpression] is the exception: it searches via the
- * escape-aware and depth-one-aware [findMarkerAtDepthOne] rather than a plain `indexOf` — see its
- * own KDoc for why depth-one-awareness is needed there specifically.
+ * Field-name markers (e.g. `:targetList`, `:expr`) are Postgres's own fixed labels, never user
+ * data, so they are never escaped.
  */
 internal class PgNodeTreeScanner {
 
@@ -98,65 +110,76 @@ internal class PgNodeTreeScanner {
   }
 
   /**
-   * Extracts the content of the `(...)` list after [fieldName] — a direct field of the node [text]
-   * itself represents, at brace depth 1 — without parsing it.
+   * Reads [fieldName] (e.g. `":args"`) as a field of [text]'s outermost node, ignoring same-named
+   * fields of nested nodes. For `SELECT EXISTS (SELECT v FROM u) = ANY (SELECT b FROM x) FROM t`,
+   * the outer `SUBLINK`'s `:subselect` is the query over `x`, even though the inner `EXISTS`
+   * sublink's `:subselect` over `u` is written first.
    *
-   * Depth-one-awareness (via [findMarkerAtDepthOne]) matters here too: when [text]'s own [fieldName]
-   * value is empty (`fieldName <>`, no `(` at all) but [text] also contains a deeper node carrying
-   * its own `fieldName (` — a `JSONCONSTRUCTOREXPR` with an empty `:args <>` whose `:func` holds an
-   * `AGGREF` with a real `:args (...)`, exactly how `JSON_OBJECTAGG`/`JSON_ARRAYAGG` are shaped — a
-   * plain `text.indexOf("$fieldName (")` would find that unrelated nested list and silently
-   * attribute the inner node's arguments to the outer one. See [extractFieldExpression] for why
-   * scanning for literal marker text is nonetheless safe against a string value that resembles a
-   * field marker.
-   *
-   * @return `null` if the field is absent at depth 1, or its value is `<>` (empty/absent in
-   *   `pg_node_tree`), or the value at that position is not actually a `(...)` list.
+   * @return the value's shape, whatever it is; [FieldValue.Absent] if the field is missing, is
+   *   `<>`, or has unbalanced delimiters
    */
-  internal fun extractArgListSection(text: String, fieldName: String): String? {
+  internal fun fieldAtDepthOne(text: String, fieldName: String): FieldValue {
+    // The marker stops before the value's delimiter because findMarkerAtDepthOne resets its match on `{`.
     val markerEnd = findMarkerAtDepthOne(text, "$fieldName ")
-    if (markerEnd == -1 || markerEnd >= text.length || text[markerEnd] != '(') return null
-    val content = extractBalancedParentheses(text, markerEnd)
-    return if (content.isNullOrBlank()) null else content
+    if (markerEnd == -1 || markerEnd >= text.length) return FieldValue.Absent
+    return when (text[markerEnd]) {
+      '{' -> extractBalancedBraces(text, markerEnd)?.let(FieldValue::Block) ?: FieldValue.Absent
+      '(' -> extractBalancedParentheses(text, markerEnd)?.let(FieldValue::ListContent) ?: FieldValue.Absent
+      else ->
+        if (text.startsWith("<>", markerEnd)) {
+          FieldValue.Absent
+        } else {
+          FieldValue.Token(scanTokenAt(text, markerEnd))
+        }
+    }
   }
 
-  /**
-   * Extracts a named `{...}` expression block from a field like `:fieldName {NODETYPE ...}`, at
-   * brace depth 1 of [text] — i.e. [fieldName] must be a direct field of the node [text] itself
-   * represents, not a same-named field belonging to some node NESTED inside one of [text]'s own
-   * field values.
-   *
-   * Depth-one-awareness matters here: [fieldName] is often a field whose own value is a full
-   * expression subtree that can legally contain another node of the same outer type carrying the
-   * same field name — e.g. a `SUBLINK`'s `:testexpr` field can itself contain a nested `SUBLINK`
-   * with its own `:testexpr`/`:subselect`, a `CASEWHEN`'s `:expr` condition can contain a nested
-   * `CASEEXPR` with its own `:result`/`:defresult`, and a `JSONEXPR`'s `:on_empty`/`:on_error`
-   * behavior can nest another `JSONEXPR`. Postgres serializes a node depth-first, so a same-named
-   * field belonging to a nested node is written inside the outer field's own value — textually
-   * earlier than the outer node's own later field of that name, whenever the outer field being
-   * searched for comes before the nested one in that node's field order. On PostgreSQL 17 and 18,
-   * `SUBLINK`'s `:testexpr` field precedes its `:subselect` field, so for `SELECT EXISTS (SELECT v
-   * FROM u) = ANY (SELECT b FROM x) FROM t`, the outer `ANY_SUBLINK`'s `:testexpr` (an `OPEXPR`
-   * whose first argument is the nested `EXISTS` sublink, itself a genuine `{SUBLINK ... :subselect
-   * {QUERY ... u ...} ...}` block) textually precedes the outer `ANY_SUBLINK`'s own `:subselect
-   * {QUERY ... x ...}` — a naive first-match `text.indexOf(":subselect {")` scan over the outer
-   * `ANY_SUBLINK`'s full text would return the inner `EXISTS` sublink's `u`-block, not the outer
-   * sublink's own `x`-block, silently proving the wrong subquery's column nullable or not.
-   * [findMarkerAtDepthOne] (reused here, the same helper used elsewhere for a `:jointree`/`:quals`
-   * extraction) only matches [fieldName] directly inside [text]'s own outermost `{...}` block, so a
-   * nested node's same-named field can never shadow it.
-   *
-   * [findMarkerAtDepthOne] resets its match state on any `{`, so the marker searched for must be
-   * `"$fieldName "` (trailing space, no brace) rather than `"$fieldName {"` — the value's opening
-   * brace is located separately, immediately after the marker.
-   *
-   * Returns `null` if the field is absent, or its value is not a brace block (e.g. `:defresult <>`).
-   */
-  internal fun extractFieldExpression(text: String, fieldName: String): String? {
-    val markerEnd = findMarkerAtDepthOne(text, "$fieldName ")
-    if (markerEnd == -1 || markerEnd >= text.length || text[markerEnd] != '{') return null
-    return extractBalancedBraces(text, markerEnd)
+  /** Returns the token at [startIndex], ending at unescaped whitespace, a delimiter, or the end of [text]. */
+  private fun scanTokenAt(text: String, startIndex: Int): String {
+    var index = startIndex
+    while (index < text.length) {
+      val character = text[index]
+      if (character == '\\' && index + 1 < text.length) {
+        index += 2
+        continue
+      }
+      if (character.isWhitespace() || character == '{' || character == '}' || character == '(' || character == ')') {
+        break
+      }
+      index++
+    }
+    return text.substring(startIndex, index)
   }
+
+  /** @return the `{...}` value of [fieldName] (see [fieldAtDepthOne]), or `null` if the value is not a node */
+  internal fun blockAtDepthOne(text: String, fieldName: String): String? =
+    (fieldAtDepthOne(text, fieldName) as? FieldValue.Block)?.content
+
+  /**
+   * @return the interior of [fieldName]'s `(...)` value (see [fieldAtDepthOne]), or `null` if the
+   *   value is not a list or the list is blank
+   */
+  internal fun listAtDepthOne(text: String, fieldName: String): String? =
+    (fieldAtDepthOne(text, fieldName) as? FieldValue.ListContent)?.content?.takeUnless { it.isBlank() }
+
+  /**
+   * Like [listAtDepthOne], but returns `""` rather than `null` for a blank list.
+   *
+   * @return the interior of [fieldName]'s `(...)` value, or `null` if the value is not a list
+   */
+  internal fun rawListAtDepthOne(text: String, fieldName: String): String? =
+    (fieldAtDepthOne(text, fieldName) as? FieldValue.ListContent)?.content
+
+  /**
+   * @return [fieldName]'s `true`/`false` value (see [fieldAtDepthOne]), or `null` if the value is
+   *   anything else
+   */
+  internal fun boolAtDepthOne(text: String, fieldName: String): Boolean? =
+    when ((fieldAtDepthOne(text, fieldName) as? FieldValue.Token)?.text) {
+      "true" -> true
+      "false" -> false
+      else -> null
+    }
 
   /**
    * Extracts an integer field value from a node block.
@@ -235,40 +258,6 @@ internal class PgNodeTreeScanner {
     if (fieldIndex == -1) return emptySet()
     val content = bitmapsetPattern.find(text, fieldIndex + fieldName.length)?.groupValues?.get(1) ?: return emptySet()
     return content.trim().split(whitespace).mapNotNull { it.toIntOrNull() }.toSet()
-  }
-
-  /**
-   * Extracts a boolean field's value, scoped to [text]'s OWN outermost `{...}` block (brace depth
-   * 1) — the depth-one-aware counterpart to [extractBoolField], required whenever [fieldName] could
-   * also appear, deeper in [text], on a NESTED node of the same type (the concrete case is a CTE
-   * body that declares its own nested `WITH` clause).
-   *
-   * @return `true`/`false` read directly after [fieldName]'s marker, or `null` if [fieldName] is
-   *   absent at depth 1 or its value is neither literal token
-   */
-  internal fun extractBoolFieldAtDepthOne(text: String, fieldName: String): Boolean? {
-    val markerEnd = findMarkerAtDepthOne(text, "$fieldName ")
-    if (markerEnd == -1) return null
-    return when {
-      text.startsWith("true", markerEnd) -> true
-      text.startsWith("false", markerEnd) -> false
-      else -> null
-    }
-  }
-
-  /**
-   * Finds [marker] at the outermost QUERY level (brace depth 1) and extracts the
-   * balanced-parenthesis content that follows the trailing `(` of the marker.
-   *
-   * @param marker a field marker ending in `(`, e.g. `":targetList ("`
-   * @return the content inside the outer parentheses, or `null` if not found or unbalanced
-   */
-  internal fun extractOuterSectionContent(text: String, marker: String): String? {
-    check(marker.endsWith("(")) { "marker must end with '(': $marker" }
-    val markerEnd = findMarkerAtDepthOne(text, marker)
-    if (markerEnd == -1) return null
-    val openParenthesisIndex = markerEnd - 1
-    return extractBalancedParentheses(text, openParenthesisIndex)
   }
 
   /**

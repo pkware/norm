@@ -155,19 +155,18 @@ internal class PgNodeExpressionParser(private val scanner: PgNodeTreeScanner) {
     // ROWCOMPAREEXPR with no readable :args, so a future SubLinkType carrying a real testexpr becomes
     // visible automatically instead of being hidden by a subLinkType gate. isNonNull's ANY/ALL proof
     // stays gated below, so this alone cannot make any sublink provably non-null.
-    val testExprBlock = scanner.extractFieldExpression(text, ":testexpr")
+    val testExprBlock = scanner.blockAtDepthOne(text, ":testexpr")
     val outerOperand = testExprBlock?.let { testExpr ->
-      scanner.extractArgListSection(testExpr, ":args")
+      scanner.listAtDepthOne(testExpr, ":args")
         ?.let { scanner.splitBraceBlocks(it).firstOrNull()?.let(::parseExpression) }
     }
     val testExpressionOperatorOid = (testExprBlock?.let(::parseExpression) as? PgNodeExpression.OpExpr)
       ?.operatorFunctionOid
     // :subselect holds the sublink's subquery body ({QUERY ...}), mirroring parseRangeTableEntries's
     // own :subquery extraction and parseCteList's extraction of the same node shape.
-    // Depth-one-awareness (via extractFieldExpression) is required: :testexpr precedes :subselect in
-    // SUBLINK's field order, and :testexpr's own value can contain a nested sublink with its own
-    // :subselect — see extractFieldExpression's KDoc for the repro this guards against.
-    val subselectBlock = scanner.extractFieldExpression(text, ":subselect")
+    // :testexpr precedes :subselect and can hold a nested sublink with its own :subselect, so this
+    // must read at depth one.
+    val subselectBlock = scanner.blockAtDepthOne(text, ":subselect")
     return PgNodeExpression.SubLink(
       subLinkType = subLinkType,
       outerOperand = outerOperand,
@@ -179,17 +178,17 @@ internal class PgNodeExpressionParser(private val scanner: PgNodeTreeScanner) {
   private fun parseCaseExpr(text: String): PgNodeExpression.CaseExpr {
     // The `CASE testexpr WHEN ...` test expression (`:arg`) holds a real Var for the shorthand
     // form, e.g. `CASE a WHEN 'x' THEN 1 ELSE 2 END` — see PgNodeExpression.CaseExpr's KDoc.
-    val testExpression = scanner.extractFieldExpression(text, ":arg")?.let { parseExpression(it) }
-    val whenBlocks = scanner.extractArgListSection(text, ":args")?.let { scanner.splitBraceBlocks(it) }
+    val testExpression = scanner.blockAtDepthOne(text, ":arg")?.let { parseExpression(it) }
+    val whenBlocks = scanner.listAtDepthOne(text, ":args")?.let { scanner.splitBraceBlocks(it) }
       ?.filter { it.startsWith("{CASEWHEN") }
       ?: emptyList()
-    val resultExpressions = whenBlocks.mapNotNull { block -> scanner.extractFieldExpression(block, ":result") }
+    val resultExpressions = whenBlocks.mapNotNull { block -> scanner.blockAtDepthOne(block, ":result") }
       .map { parseExpression(it) }
     // Each WHEN's own condition (`:expr`) holds the real Var for the explicit form, e.g.
     // `CASE WHEN a = 'x' THEN 1 ELSE 2 END` — see PgNodeExpression.CaseExpr's KDoc.
-    val whenConditions = whenBlocks.mapNotNull { block -> scanner.extractFieldExpression(block, ":expr") }
+    val whenConditions = whenBlocks.mapNotNull { block -> scanner.blockAtDepthOne(block, ":expr") }
       .map { parseExpression(it) }
-    val defaultResult = scanner.extractFieldExpression(text, ":defresult")?.let { parseExpression(it) }
+    val defaultResult = scanner.blockAtDepthOne(text, ":defresult")?.let { parseExpression(it) }
     return PgNodeExpression.CaseExpr(
       resultExpressions = resultExpressions,
       defaultResult = defaultResult,
@@ -204,27 +203,27 @@ internal class PgNodeExpressionParser(private val scanner: PgNodeTreeScanner) {
   )
 
   private fun parseRelabelType(text: String): PgNodeExpression.RelabelType {
-    val argument = scanner.extractFieldExpression(text, ":arg") ?: error("Missing :arg in RELABELTYPE node")
+    val argument = scanner.blockAtDepthOne(text, ":arg") ?: error("Missing :arg in RELABELTYPE node")
     return PgNodeExpression.RelabelType(argument = parseExpression(argument))
   }
 
   private fun parseCoerceViaIo(text: String): PgNodeExpression.CoerceViaIo {
-    val argument = scanner.extractFieldExpression(text, ":arg") ?: error("Missing :arg in COERCEVIAIO node")
+    val argument = scanner.blockAtDepthOne(text, ":arg") ?: error("Missing :arg in COERCEVIAIO node")
     return PgNodeExpression.CoerceViaIo(argument = parseExpression(argument))
   }
 
   private fun parseArrayCoerceExpr(text: String): PgNodeExpression.ArrayCoerceExpr {
-    val argument = scanner.extractFieldExpression(text, ":arg") ?: error("Missing :arg in ARRAYCOERCEEXPR node")
+    val argument = scanner.blockAtDepthOne(text, ":arg") ?: error("Missing :arg in ARRAYCOERCEEXPR node")
     return PgNodeExpression.ArrayCoerceExpr(argument = parseExpression(argument))
   }
 
   private fun parseCollateExpr(text: String): PgNodeExpression.CollateExpr {
-    val argument = scanner.extractFieldExpression(text, ":arg") ?: error("Missing :arg in COLLATEEXPR node")
+    val argument = scanner.blockAtDepthOne(text, ":arg") ?: error("Missing :arg in COLLATEEXPR node")
     return PgNodeExpression.CollateExpr(argument = parseExpression(argument))
   }
 
   private fun parseCoerceToDomain(text: String): PgNodeExpression.CoerceToDomain {
-    val argument = scanner.extractFieldExpression(text, ":arg") ?: error("Missing :arg in COERCETODOMAIN node")
+    val argument = scanner.blockAtDepthOne(text, ":arg") ?: error("Missing :arg in COERCETODOMAIN node")
     return PgNodeExpression.CoerceToDomain(argument = parseExpression(argument))
   }
 
@@ -234,14 +233,14 @@ internal class PgNodeExpressionParser(private val scanner: PgNodeTreeScanner) {
   }
 
   private fun parseNullTest(text: String): PgNodeExpression.NullTest {
-    val argument = scanner.extractFieldExpression(text, ":arg") ?: error("Missing :arg in NULLTEST node")
+    val argument = scanner.blockAtDepthOne(text, ":arg") ?: error("Missing :arg in NULLTEST node")
     // Unknown defaults to the form that proves nothing.
     val nullTestType = scanner.extractIntField(text, ":nulltesttype") ?: PgNodeExpression.NULL_TEST_IS_NULL
     return PgNodeExpression.NullTest(argument = parseExpression(argument), nullTestType = nullTestType)
   }
 
   private fun parseBooleanTest(text: String): PgNodeExpression.BooleanTest {
-    val argument = scanner.extractFieldExpression(text, ":arg") ?: error("Missing :arg in BOOLEANTEST node")
+    val argument = scanner.blockAtDepthOne(text, ":arg") ?: error("Missing :arg in BOOLEANTEST node")
     return PgNodeExpression.BooleanTest(argument = parseExpression(argument))
   }
 
@@ -263,19 +262,19 @@ internal class PgNodeExpressionParser(private val scanner: PgNodeTreeScanner) {
     PgNodeExpression.RowExpr(arguments = parseArgList(text, ":args"))
 
   private fun parseFieldSelect(text: String): PgNodeExpression.FieldSelect {
-    val argument = scanner.extractFieldExpression(text, ":arg") ?: error("Missing :arg in FIELDSELECT node")
+    val argument = scanner.blockAtDepthOne(text, ":arg") ?: error("Missing :arg in FIELDSELECT node")
     val fieldNumber = scanner.extractIntField(text, ":fieldnum") ?: error("Missing :fieldnum in FIELDSELECT node")
     return PgNodeExpression.FieldSelect(argument = parseExpression(argument), fieldNumber = fieldNumber)
   }
 
   private fun parseJsonIsPredicate(text: String): PgNodeExpression.JsonIsPredicate {
-    val argument = scanner.extractFieldExpression(text, ":expr") ?: error("Missing :expr in JSONISPREDICATE node")
+    val argument = scanner.blockAtDepthOne(text, ":expr") ?: error("Missing :expr in JSONISPREDICATE node")
     return PgNodeExpression.JsonIsPredicate(argument = parseExpression(argument))
   }
 
   private fun parseJsonConstructorExpr(text: String): PgNodeExpression.JsonConstructorExpr {
     val type = scanner.extractIntField(text, ":type") ?: error("Missing :type in JSONCONSTRUCTOREXPR node")
-    val function = scanner.extractFieldExpression(text, ":func")?.let(::parseExpression)
+    val function = scanner.blockAtDepthOne(text, ":func")?.let(::parseExpression)
     return PgNodeExpression.JsonConstructorExpr(
       type = type,
       arguments = parseArgList(text, ":args"),
@@ -302,29 +301,29 @@ internal class PgNodeExpressionParser(private val scanner: PgNodeTreeScanner) {
    *   this class never throws (see the class-level KDoc), and this degrades toward nullable.
    */
   private fun parseJsonValueExpr(text: String): PgNodeExpression {
-    val formattedExpression = scanner.extractFieldExpression(text, ":formatted_expr")
+    val formattedExpression = scanner.blockAtDepthOne(text, ":formatted_expr")
       ?: return PgNodeExpression.Unknown("PARSE_ERROR")
     return parseExpression(formattedExpression)
   }
 
   private fun parseJsonExpr(text: String): PgNodeExpression.JsonExpr {
     val op = scanner.extractIntField(text, ":op") ?: error("Missing :op in JSONEXPR node")
-    val argument = scanner.extractFieldExpression(text, ":formatted_expr")
+    val argument = scanner.blockAtDepthOne(text, ":formatted_expr")
       ?: error("Missing :formatted_expr in JSONEXPR node")
-    val onEmptyBlock = scanner.extractFieldExpression(text, ":on_empty")
+    val onEmptyBlock = scanner.blockAtDepthOne(text, ":on_empty")
     val onEmpty = if (onEmptyBlock != null) {
       scanner.extractIntField(onEmptyBlock, ":btype") ?: PgNodeExpression.JSON_BEHAVIOR_NULL
     } else {
       PgNodeExpression.JSON_BEHAVIOR_NULL
     }
-    val onEmptyDefault = onEmptyBlock?.let { scanner.extractFieldExpression(it, ":expr")?.let(::parseExpression) }
-    val onErrorBlock = scanner.extractFieldExpression(text, ":on_error")
+    val onEmptyDefault = onEmptyBlock?.let { scanner.blockAtDepthOne(it, ":expr")?.let(::parseExpression) }
+    val onErrorBlock = scanner.blockAtDepthOne(text, ":on_error")
     val onError = if (onErrorBlock != null) {
       scanner.extractIntField(onErrorBlock, ":btype") ?: PgNodeExpression.JSON_BEHAVIOR_NULL
     } else {
       PgNodeExpression.JSON_BEHAVIOR_NULL
     }
-    val onErrorDefault = onErrorBlock?.let { scanner.extractFieldExpression(it, ":expr")?.let(::parseExpression) }
+    val onErrorDefault = onErrorBlock?.let { scanner.blockAtDepthOne(it, ":expr")?.let(::parseExpression) }
     return PgNodeExpression.JsonExpr(
       op = op,
       argument = parseExpression(argument),
@@ -348,7 +347,7 @@ internal class PgNodeExpressionParser(private val scanner: PgNodeTreeScanner) {
    * Handles `<>` (empty/absent) by returning an empty list.
    */
   internal fun parseArgList(text: String, fieldName: String): List<PgNodeExpression> {
-    val content = scanner.extractArgListSection(text, fieldName) ?: return emptyList()
+    val content = scanner.listAtDepthOne(text, fieldName) ?: return emptyList()
     return scanner.splitBraceBlocks(content).map { parseExpression(it) }
   }
 
@@ -360,10 +359,10 @@ internal class PgNodeExpressionParser(private val scanner: PgNodeTreeScanner) {
    * each one. Non-TARGETENTRY blocks are parsed directly.
    */
   private fun extractTargetEntryExpressions(text: String, fieldName: String): List<PgNodeExpression> {
-    val content = scanner.extractArgListSection(text, fieldName) ?: return emptyList()
+    val content = scanner.listAtDepthOne(text, fieldName) ?: return emptyList()
     return scanner.splitBraceBlocks(content).map { block ->
       if (block.startsWith("{TARGETENTRY")) {
-        val expressionText = scanner.extractFieldExpression(block, ":expr")
+        val expressionText = scanner.blockAtDepthOne(block, ":expr")
         if (expressionText != null) parseExpression(expressionText) else PgNodeExpression.Unknown("TARGETENTRY")
       } else {
         parseExpression(block)

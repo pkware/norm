@@ -88,8 +88,7 @@ internal class PgNodeTreeParser {
    * @param nodeTreeText the raw `pg_rewrite.ev_action` text
    * @return `true` if the outer query uses GROUPING SETS, CUBE, or ROLLUP; `false` otherwise
    */
-  fun hasGroupingSets(nodeTreeText: String): Boolean =
-    scanner.extractOuterSectionContent(nodeTreeText, ":groupingSets (") != null
+  fun hasGroupingSets(nodeTreeText: String): Boolean = scanner.rawListAtDepthOne(nodeTreeText, ":groupingSets") != null
 
   /**
    * Returns the union of `tleSortGroupRef` values that identify a `GROUP BY` grouping key: every
@@ -113,13 +112,13 @@ internal class PgNodeTreeParser {
    *   query has neither a `:groupClause` nor a `:groupingSets`
    */
   fun parseGroupingSortGroupRefs(nodeTreeText: String): Set<Int> {
-    val fromGroupClause = scanner.extractOuterSectionContent(nodeTreeText, ":groupClause (")
+    val fromGroupClause = scanner.rawListAtDepthOne(nodeTreeText, ":groupClause")
       ?.let { groupClauseContent ->
         scanner.splitBraceBlocks(groupClauseContent).mapNotNull { clauseBlock ->
           scanner.extractIntField(clauseBlock, ":tleSortGroupRef")
         }
       } ?: emptyList()
-    val fromGroupingSets = scanner.extractOuterSectionContent(nodeTreeText, ":groupingSets (")
+    val fromGroupingSets = scanner.rawListAtDepthOne(nodeTreeText, ":groupingSets")
       ?.let { groupingSetsContent ->
         integerListPattern.findAll(groupingSetsContent).flatMap { match ->
           match.groupValues[1].trim().split(PgNodeTreeScanner.whitespace).mapNotNull { it.toIntOrNull() }
@@ -143,7 +142,7 @@ internal class PgNodeTreeParser {
    *   contains no `:cteList`
    */
   fun parseCteList(nodeTreeText: String): List<NodeTreeCteDefinition> {
-    val cteListContent = scanner.extractOuterSectionContent(nodeTreeText, ":cteList (") ?: return emptyList()
+    val cteListContent = scanner.rawListAtDepthOne(nodeTreeText, ":cteList") ?: return emptyList()
     return scanner.splitBraceBlocks(cteListContent).mapNotNull { block ->
       if (!block.startsWith("{COMMONTABLEEXPR")) return@mapNotNull null
       val cteName = scanner.extractStringField(block, ":ctename") ?: return@mapNotNull null
@@ -154,10 +153,10 @@ internal class PgNodeTreeParser {
       val queryBlock = scanner.extractBalancedBraces(block, braceStart) ?: return@mapNotNull null
       // :cterecursive is serialized after :ctequery in COMMONTABLEEXPR's field order, so a naive
       // whole-block scan could find a nested COMMONTABLEEXPR's same-named field first if queryBlock
-      // itself declares a nested WITH clause; extractBoolFieldAtDepthOne scopes the search to
-      // block's own outermost brace to avoid that. :ctename needs no such scoping — it is always
-      // serialized before :ctequery.
-      val recursive = scanner.extractBoolFieldAtDepthOne(block, ":cterecursive") ?: false
+      // itself declares a nested WITH clause; boolAtDepthOne scopes the search to block's own
+      // outermost brace to avoid that. :ctename needs no such scoping — it is always serialized
+      // before :ctequery.
+      val recursive = scanner.boolAtDepthOne(block, ":cterecursive") ?: false
       NodeTreeCteDefinition(name = cteName, queryBlock = queryBlock, recursive = recursive)
     }
   }
@@ -179,7 +178,7 @@ internal class PgNodeTreeParser {
    *   malformed or contains no `:rtable`
    */
   fun parseRangeTableEntries(nodeTreeText: String): Map<Int, RangeTableEntry> {
-    val rtableContent = scanner.extractOuterSectionContent(nodeTreeText, ":rtable (") ?: return emptyMap()
+    val rtableContent = scanner.rawListAtDepthOne(nodeTreeText, ":rtable") ?: return emptyMap()
     return buildMap {
       scanner.splitBraceBlocks(rtableContent).forEachIndexed { index, rangeTableEntry ->
         val rtekind = scanner.extractIntField(rangeTableEntry, ":rtekind") ?: return@forEachIndexed
@@ -204,8 +203,8 @@ internal class PgNodeTreeParser {
             RangeTableEntry.Cte(NodeTreeCteReference(cteName, ctelevelsup, selfReference))
           }
           9 -> {
-            // extractOuterSectionContent works on any {NODE ...} block at its "outer" level (depth 1).
-            val groupExprsContent = scanner.extractOuterSectionContent(rangeTableEntry, ":groupexprs (")
+            // rawListAtDepthOne works on any {NODE ...} block at its own outer level (depth 1).
+            val groupExprsContent = scanner.rawListAtDepthOne(rangeTableEntry, ":groupexprs")
             if (groupExprsContent != null) {
               RangeTableEntry.Group(scanner.splitBraceBlocks(groupExprsContent))
             } else {
@@ -235,7 +234,7 @@ internal class PgNodeTreeParser {
    *   node tree, or an empty list if [nodeTreeText] is malformed or contains no `:targetList`
    */
   fun parseTargetList(nodeTreeText: String): List<TargetEntry> {
-    val targetListContent = scanner.extractOuterSectionContent(nodeTreeText, ":targetList (") ?: return emptyList()
+    val targetListContent = scanner.rawListAtDepthOne(nodeTreeText, ":targetList") ?: return emptyList()
     return splitTargetEntries(targetListContent).mapNotNull { entry ->
       parseTargetEntry(entry)
     }
@@ -253,7 +252,7 @@ internal class PgNodeTreeParser {
    *   [nodeTreeText] contains no `:returningList`
    */
   fun parseReturningList(nodeTreeText: String): List<TargetEntry> {
-    val content = scanner.extractOuterSectionContent(nodeTreeText, ":returningList (") ?: return emptyList()
+    val content = scanner.rawListAtDepthOne(nodeTreeText, ":returningList") ?: return emptyList()
     return splitTargetEntries(content).mapNotNull { entry -> parseTargetEntry(entry) }
   }
 
@@ -301,7 +300,7 @@ internal class PgNodeTreeParser {
    *   with no `DELETE` action
    */
   fun hasDeleteMergeAction(nodeTreeText: String): Boolean {
-    val mergeActionListContent = scanner.extractOuterSectionContent(nodeTreeText, ":mergeActionList (")
+    val mergeActionListContent = scanner.rawListAtDepthOne(nodeTreeText, ":mergeActionList")
       ?: return false
     return scanner.splitBraceBlocks(mergeActionListContent).any { actionBlock ->
       scanner.extractIntField(actionBlock, ":commandType") == COMMAND_TYPE_DELETE
