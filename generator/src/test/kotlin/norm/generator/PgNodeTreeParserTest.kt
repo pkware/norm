@@ -207,7 +207,7 @@ class PgNodeTreeParserTest {
     @Test
     fun `a truncated groupexprs list returns an empty map without throwing`() {
       // The :groupexprs opening parenthesis is present but its content is cut off mid-block —
-      // extractOuterSectionContent's balanced-parenthesis scan can never find a matching close, so
+      // rawListAtDepthOne's balanced-parenthesis scan can never find a matching close, so
       // this GROUP RTE contributes nothing rather than parsing a truncated fragment.
       val text = """
         {QUERY :rtable (
@@ -358,7 +358,7 @@ class PgNodeTreeParserTest {
   @Nested
   inner class DepthAwareFieldExtraction {
 
-    // extractFieldExpression must find a field at brace depth 1 of the node it is given, not the
+    // fieldAtDepthOne must find a field at brace depth 1 of the node it is given, not the
     // first textual occurrence of that field name anywhere in the text — several node types have
     // an earlier-serialized field whose own value can legally contain another node of the same
     // type, carrying the same field name, nested deeper. A first-match indexOf scan finds that
@@ -564,7 +564,7 @@ class PgNodeTreeParserTest {
   inner class AggrefArgumentExtraction {
 
     // Both fixtures are verbatim `{AGGREF ...}` blocks from a PostgreSQL 18.4 ev_action dump.
-    // extractArgListSection's prior non-depth-aware `indexOf(":args (")` mis-parsed both, attributing
+    // A non-depth-aware `indexOf(":args (")` mis-parses both, attributing
     // a nested node's argument list to the aggregate. No isNonNull answer moved (that branch never
     // reads Aggref.arguments), but the arguments also feed containsVarOutsideRelation and
     // GroupRteSubstitution, where a Var the wrong list hides becomes a silent wrong-NOT-NULL.
