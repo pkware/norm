@@ -10,8 +10,6 @@ internal class PgNodeExpressionParser(private val scanner: PgNodeTreeScanner) {
 
   private val logger = Logger.getLogger(PgNodeExpressionParser::class.java.name)
 
-  private val nodeTypePattern = Regex("""^\{(\w+)""")
-
   internal fun parseExpression(text: String): PgNodeExpression = try {
     val nodeType = nodeTypePattern.find(text)?.groupValues?.get(1)
       ?: return PgNodeExpression.Unknown("PARSE_ERROR").also {
@@ -371,5 +369,9 @@ internal class PgNodeExpressionParser(private val scanner: PgNodeTreeScanner) {
         parseExpression(block)
       }
     }
+  }
+
+  private companion object {
+    val nodeTypePattern = Regex("""^\{(\w+)""")
   }
 }

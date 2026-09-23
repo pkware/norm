@@ -1,5 +1,7 @@
 package norm.generator
 
+import java.util.concurrent.ConcurrentHashMap
+
 /**
  * Reads field values and balanced `{...}`/`(...)` blocks out of raw `pg_node_tree` text.
  *
@@ -17,16 +19,8 @@ package norm.generator
  * for everything past the marker. [extractFieldExpression] is the exception: it searches via the
  * escape-aware and depth-one-aware [findMarkerAtDepthOne] rather than a plain `indexOf` — see its
  * own KDoc for why depth-one-awareness is needed there specifically.
- *
- * Caches field regexes in unsynchronized maps, so an instance must not be shared across threads.
  */
 internal class PgNodeTreeScanner {
-
-  internal val whitespace = Regex("""\s+""")
-  private val bitmapsetPattern = Regex("""\(([^)]*)\)""")
-  private val intFieldPatterns = mutableMapOf<String, Regex>()
-  private val boolFieldPatterns = mutableMapOf<String, Regex>()
-  private val stringFieldPatterns = mutableMapOf<String, Regex>()
 
   /**
    * Finds [marker] at brace depth 1 (measured from the first unescaped `{` in [text]) and returns
@@ -367,5 +361,13 @@ internal class PgNodeTreeScanner {
       index = braceIndex + entry.length
     }
     return entries
+  }
+
+  companion object {
+    internal val whitespace = Regex("""\s+""")
+    private val bitmapsetPattern = Regex("""\(([^)]*)\)""")
+    private val intFieldPatterns = ConcurrentHashMap<String, Regex>()
+    private val boolFieldPatterns = ConcurrentHashMap<String, Regex>()
+    private val stringFieldPatterns = ConcurrentHashMap<String, Regex>()
   }
 }
