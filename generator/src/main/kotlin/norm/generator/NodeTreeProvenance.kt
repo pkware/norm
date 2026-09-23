@@ -20,6 +20,40 @@ private const val MAX_PROVENANCE_CHAIN_DEPTH = 50
 internal data class CteHop(val name: String, val ctelevelsup: Int)
 
 /**
+ * Lexical `WITH`-clause nesting for a CTE-provenance walk: index `0` is the current query block's own
+ * scope, index `1` the block one level up that declared it, and so on. [Frame] is whatever a resolver
+ * uses to look up a CTE's declaration within one scope — a `Map<String, NodeTreeCteDefinition>` for the
+ * node-tree side, a `List<CteDefinition>` for the SQL-text side.
+ *
+ * A CTE's scope belongs to its declaration site, not to the hop path taken to reach it: entering a
+ * CTE's body rebuilds the stack as [frames]`.drop(levelsUp)` with the body's own scope pushed on
+ * front ([entering]), rather than prepending onto the full accumulated stack. Prepending onto the full
+ * stack instead would attribute a chained reference to the wrong same-named CTE for a chain of three or
+ * more sibling CTEs.
+ *
+ * A `:ctelevelsup` deeper than the tracked frames bails ([frameAt] returning `null`) rather than
+ * reading past what has been tracked — a real reference's levelsup can never exceed the number of
+ * `WITH` clauses actually enclosing it.
+ */
+internal class CteScopeStack<Frame> private constructor(private val frames: List<Frame>) {
+  constructor(outermost: Frame) : this(listOf(outermost))
+
+  /** The frame [levelsUp] scopes up from the current one, or `null` if `levelsUp` is out of range. */
+  fun frameAt(levelsUp: Int): Frame? = frames.getOrNull(levelsUp)
+
+  /**
+   * The scope stack after entering a CTE body declared [levelsUp] scopes up, whose own scope is
+   * [ownScope].
+   *
+   * @throws IllegalArgumentException if `levelsUp` is not a currently tracked frame.
+   */
+  fun entering(levelsUp: Int, ownScope: Frame): CteScopeStack<Frame> {
+    require(levelsUp in frames.indices) { "levelsUp $levelsUp outside ${frames.size} tracked scopes" }
+    return CteScopeStack(listOf(ownScope) + frames.drop(levelsUp))
+  }
+}
+
+/**
  * Where a single output column's expression can be found, verbatim, in the user's original SQL
  * text: at 1-based position [bodyPosition] among the output columns (`:targetList`, or
  * `:returningList` for a data-modifying CTE) of the CTE [hops]'s last entry names.
@@ -77,9 +111,9 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
     val entries = outputEntries(nodeTreeText).filter { !it.isJunk }.sortedBy { it.resultNumber }
     if (entries.isEmpty()) return emptyList()
     if (parser.hasSetOperations(nodeTreeText)) return entries.map { null }
-    // A single-element stack: nodeTreeText's own :cteList is the only scope until the walk
+    // A single-frame stack: nodeTreeText's own :cteList is the only scope until the walk
     // descends into a CTE body.
-    val outermostScope = listOf(parser.parseCteList(nodeTreeText).associateBy { it.name })
+    val outermostScope = CteScopeStack(parser.parseCteList(nodeTreeText).associateBy { it.name })
     // Every column's walk starts from nodeTreeText's own range table and re-enters the same CTE
     // bodies, so parsing each block once here is what keeps the cost proportional to the number of
     // distinct blocks rather than to columns times hops. Local to this call: nothing outlives it.
@@ -107,16 +141,8 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
    * walk continues into whatever it references, updating the best answer only when that is another
    * CTE reference. Landing on anything else stops the walk and returns the current best answer.
    *
-   * [scopeStack] tracks lexical `WITH`-clause nesting: index `0` is [queryBlock]'s own `:cteList`,
-   * index `1` the block one level up that declared it, and so on. Scope belongs to a CTE's
-   * declaration site, not to the hop path taken to reach it, so entering a CTE's body rebuilds the
-   * stack as `scopeStack.drop(reference.ctelevelsup)` with the body's own `:cteList` pushed on
-   * front, rather than prepending onto the full accumulated [scopeStack]; prepending onto the full
-   * stack instead would attribute a chained reference to the wrong same-named CTE for a chain of
-   * three or more sibling CTEs.
-   *
-   * A `:ctelevelsup` deeper than [scopeStack] bails rather than reading past what has been tracked —
-   * a real reference's levelsup can never exceed the number of `WITH` clauses actually enclosing it.
+   * [scopeStack] tracks lexical `WITH`-clause nesting; see [CteScopeStack] for the invariant it
+   * maintains as the walk enters each CTE's body.
    *
    * [rangeTables] holds each already-parsed query block's range table, keyed by that block's text.
    * The caller owns it and shares one instance across the columns of a single
@@ -126,7 +152,7 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
   private fun resolveVar(
     expression: PgNodeExpression,
     queryBlock: String,
-    scopeStack: List<Map<String, NodeTreeCteDefinition>>,
+    scopeStack: CteScopeStack<Map<String, NodeTreeCteDefinition>>,
     rangeTables: MutableMap<String, Map<Int, RangeTableEntry>>,
   ): NodeTreeColumnProvenance? {
     var currentQueryBlock = queryBlock
@@ -149,7 +175,7 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
         is RangeTableEntry.Cte -> {
           val reference = rangeTableEntry.reference
           if (reference.selfReference) return null
-          val scope = currentScopeStack.getOrNull(reference.ctelevelsup) ?: return null
+          val scope = currentScopeStack.frameAt(reference.ctelevelsup) ?: return null
           val definition = scope[reference.name] ?: return null
           if (definition.recursive) return null
           if (parser.hasSetOperations(definition.queryBlock)) return null
@@ -164,7 +190,7 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
           }
           currentQueryBlock = definition.queryBlock
           val ownScope = parser.parseCteList(definition.queryBlock).associateBy { it.name }
-          currentScopeStack = listOf(ownScope) + currentScopeStack.drop(reference.ctelevelsup)
+          currentScopeStack = currentScopeStack.entering(reference.ctelevelsup, ownScope)
           currentVar = bodyVar
         }
         else ->

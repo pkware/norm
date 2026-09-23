@@ -142,22 +142,20 @@ private fun verifiedItem(item: OutputItemWithAlias, resultName: String): Verifie
  * body (`:ctequery` block) — the exact declaration [NodeTreeProvenanceResolver] resolved against,
  * never merely a same-named one elsewhere in the tree.
  *
- * Mirrors [NodeTreeProvenanceResolver.resolveVar]'s scope-stack bookkeeping: entering a hop's CTE body
- * pushes that body's own `:cteList` onto `scopeStack.drop(hop.ctelevelsup)`, not the full accumulated
- * stack, because a hop into a sibling CTE is not a nesting level.
+ * See [CteScopeStack] for the scope-stack bookkeeping this maintains as each hop is replayed.
  *
  * @return `null` if any hop's [CteHop.ctelevelsup] addresses a scope-stack depth that does not exist,
  *   or its [CteHop.name] is not declared in that scope's `:cteList`.
  */
 private fun scopedNodeTreeCteQueryBlock(nodeTreeText: String, hops: List<CteHop>, parser: PgNodeTreeParser): String? {
-  var scopeStack = listOf(parser.parseCteList(nodeTreeText).associateBy { it.name })
+  var scopeStack = CteScopeStack(parser.parseCteList(nodeTreeText).associateBy { it.name })
   var resolvedQueryBlock: String? = null
   for (hop in hops) {
-    val scope = scopeStack.getOrNull(hop.ctelevelsup) ?: return null
+    val scope = scopeStack.frameAt(hop.ctelevelsup) ?: return null
     val definition = scope[hop.name] ?: return null
     resolvedQueryBlock = definition.queryBlock
     val ownScope = parser.parseCteList(definition.queryBlock).associateBy { it.name }
-    scopeStack = listOf(ownScope) + scopeStack.drop(hop.ctelevelsup)
+    scopeStack = scopeStack.entering(hop.ctelevelsup, ownScope)
   }
   return resolvedQueryBlock
 }
@@ -177,17 +175,17 @@ private fun scopedNodeTreeCteQueryBlock(nodeTreeText: String, hops: List<CteHop>
  *   definition in that scope
  */
 private fun scopedSqlCteDefinition(sql: String, hops: List<CteHop>): CteDefinition? {
-  var scopeStack = listOf(rebasedCteDefinitions(sql, 0))
+  var scopeStack = CteScopeStack(rebasedCteDefinitions(sql, 0))
   var resolvedDefinition: CteDefinition? = null
   for (hop in hops) {
-    val scope = scopeStack.getOrNull(hop.ctelevelsup) ?: return null
+    val scope = scopeStack.frameAt(hop.ctelevelsup) ?: return null
     // hop.name comes from the node tree and is already truncated.
     val definition = scope.filter { truncateIdentifier(foldIdentifier(it.rawName)) == hop.name }.singleOrNull()
       ?: return null
     resolvedDefinition = definition
     val bodyOffset = definition.bodyOpenParenthesis + 1
     val bodyText = sql.substring(bodyOffset, definition.bodyCloseParenthesis)
-    scopeStack = listOf(rebasedCteDefinitions(bodyText, bodyOffset)) + scopeStack.drop(hop.ctelevelsup)
+    scopeStack = scopeStack.entering(hop.ctelevelsup, rebasedCteDefinitions(bodyText, bodyOffset))
   }
   return resolvedDefinition
 }
