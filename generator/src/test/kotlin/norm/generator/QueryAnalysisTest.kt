@@ -8037,9 +8037,8 @@ class QueryAnalysisTest {
       // Regression pin for the memo-poisoning/taint-tracking defect: a later, separate top-level
       // resolveViewColumnNullability call must give the identical answer regardless of what an
       // earlier, already-completed (and fully unwound) top-level call happened to touch first — see
-      // viewColumnNullabilityTaintedRelids' KDoc for the mechanism this pins (taint-tracking +
-      // evict-at-depth-0), and viewOrderIndependenceFixtures' KDoc for why each of the three
-      // fixtures is here.
+      // ViewColumnNullabilityResolver for the mechanism this pins, and viewOrderIndependenceFixtures'
+      // KDoc for why each of the three fixtures is here.
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
         connection.createStatement().use {
