@@ -105,6 +105,15 @@ class SqlKeywordScannerTest {
       val result = splitAtTopLevel("func(ARRAY[a, b], c), ARRAY[func(d, e), f], g", ',')
       assertThat(result).containsExactly("func(ARRAY[a, b], c)", " ARRAY[func(d, e), f]", " g")
     }
+
+    @Test
+    fun `does not bail when an unmatched closing parenthesis drives depth negative before a real delimiter`() {
+      // A stray ")" before any "(" dips depth below zero; splitAtTopLevel has no floor and keeps
+      // scanning rather than bailing, so a later "(" bringing depth back to exactly 0 makes the
+      // delimiter after it split normally.
+      val result = splitAtTopLevel(") x (y, z", ',')
+      assertThat(result).containsExactly(") x (y", " z")
+    }
   }
 
   @Nested
@@ -255,6 +264,15 @@ class SqlKeywordScannerTest {
       // match.
       val result = findTopLevelKeyword(") (x FROM t", "FROM")
       assertThat(result).isEqualTo(-1)
+    }
+
+    @Test
+    fun `does not track square brackets as parenthesis depth`() {
+      // Unlike splitAtTopLevel, findTopLevelKeyword only tracks "(" / ")" -- a bare "]" has no
+      // effect on depth at all, so it neither bails nor blocks a real top-level match after it.
+      val sql = "] FROM t"
+      val result = findTopLevelKeyword(sql, "FROM")
+      assertThat(result).isEqualTo(sql.indexOf("FROM"))
     }
   }
 
@@ -501,6 +519,27 @@ class SqlKeywordScannerTest {
       val result = findTopLevelFromClauseKeyword(sql, 0)
       assertThat(result).isEqualTo(sql.indexOf("FROM s"))
     }
+
+    @Test
+    fun `a stray closing parenthesis before an opening one does not bail`() {
+      // findTopLevelClauseKeyword tracks only "(" / ")" and never bails on negative depth -- a
+      // bare ")" dips depth below zero, but a later "(" brings it back to exactly 0, and the
+      // clause keyword right after that is still found.
+      val sql = ") (x FROM t"
+      val result = findTopLevelFromClauseKeyword(sql, 0)
+      assertThat(result).isEqualTo(sql.indexOf("FROM"))
+    }
+
+    @Test
+    fun `a string literal between DISTINCT and FROM resets state, unlike a comment`() {
+      // A comment separates words the way whitespace does (see the comment case above), but any
+      // other skipped token -- here a single-quoted string literal -- clears the
+      // DISTINCT-preceded state entirely, so the FROM right after it is no longer excluded and
+      // matches immediately, rather than the later, second FROM.
+      val sql = "SELECT a IS DISTINCT'x'FROM b FROM t"
+      val result = findTopLevelFromClauseKeyword(sql, 0)
+      assertThat(result).isEqualTo(sql.indexOf("FROM b"))
+    }
   }
 
   @Nested
@@ -511,6 +550,45 @@ class SqlKeywordScannerTest {
       val text = "(regexp_replace(name, '\\(', ''))"
       val result = findMatchingCloseParenthesis(text, 0)
       assertThat(result).isEqualTo(text.length - 1)
+    }
+
+    @Test
+    fun `does not track a bare closing square bracket as parenthesis depth`() {
+      // Unlike splitAtTopLevel, findMatchingCloseParenthesis tracks only "(" / ")" -- a stray "]"
+      // with no matching "[" has no effect at all, so the real closing parenthesis after it is
+      // still found. A version that (wrongly) treated "]" the same as ")" would close early, right
+      // at the "]" itself, instead of here.
+      val text = "(a] b)"
+      val result = findMatchingCloseParenthesis(text, 0)
+      assertThat(result).isEqualTo(text.length - 1)
+    }
+
+    @Test
+    fun `does not track an opening square bracket as parenthesis depth either`() {
+      // An unmatched "[" is likewise invisible to the depth counter: it neither opens nor closes
+      // anything here, so the real closing parenthesis right after it is still found.
+      val text = "(a[b)"
+      val result = findMatchingCloseParenthesis(text, 0)
+      assertThat(result).isEqualTo(text.length - 1)
+    }
+
+    @Test
+    fun `returns -1 when the text ends before the opening parenthesis is matched, regardless of a stray bracket`() {
+      val text = "(a[b"
+      val result = findMatchingCloseParenthesis(text, 0)
+      assertThat(result).isEqualTo(-1)
+    }
+
+    @Test
+    fun `a separator that only exists after stripping still finds the real, final closing parenthesis`() {
+      // "text" and "$q$" were not adjacent in the original text (a space separated them) -- after
+      // stripCommentsAndWhitespace removes it, they abut and "$q$ ) $q$" reads as one dollar-quoted
+      // string (its own tag "q" opens right after "text" and doesn't close until the second "$q$"),
+      // hiding the ")" inside it. The real, final ")" -- not the hidden one -- must be what closes
+      // the outer "(".
+      val stripped = stripCommentsAndWhitespace("(text \$q\$ ) \$q\$)")
+      val expected = stripped.asPlainString().lastIndexOf(')')
+      assertThat(stripped.findMatchingCloseParenthesis(0)).isEqualTo(expected)
     }
   }
 
