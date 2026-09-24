@@ -115,6 +115,19 @@ class SqlOutputClauseTest {
     }
 
     @Test
+    fun `extractAlias does not track square brackets, so an unmatched one does not block AS detection`() {
+      // extractAlias only tracks "(" / ")" -- the unmatched "[" before "AS" has no effect on its
+      // depth counter, so "AS" is still found at (what extractAlias sees as) depth 0 and the alias
+      // is split off normally. A version that also tracked "[" / "]" would see depth 1 at "AS" and
+      // return the item unsplit instead.
+      val result = parseSelectItems("UPDATE t SET x = 1 RETURNING id, a[b AS c")
+      assertThat(result).containsExactly(
+        SelectItem("id", "id", null),
+        SelectItem("a[b", null, null),
+      )
+    }
+
+    @Test
     fun `RETURNING WITH OLD-NEW alias prologue is stripped before the first item`() {
       // PostgreSQL 18's `RETURNING WITH (OLD AS o, NEW AS n) o.x, n.x` — confirmed to return
       // 2 columns. Without stripping the prologue, the first item's expression becomes
