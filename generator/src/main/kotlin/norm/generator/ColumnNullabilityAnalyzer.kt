@@ -3,7 +3,6 @@ package norm.generator
 import org.intellij.lang.annotations.Language
 import java.sql.Connection
 import java.sql.SQLException
-import java.util.UUID
 
 /**
  * Recursion budget for [ColumnNullabilityAnalyzer.subLinkSubqueryColumnNotNull]: how many levels
@@ -157,122 +156,6 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
   private var activeViewNullabilityTraversal: ViewColumnNullabilityResolver? = null
 
   /**
-   * Replaces `?` parameter placeholders in [sql] with typed non-null sentinel values (e.g.,
-   * `0::int4`, `''::text`).
-   *
-   * @return The SQL with `?` replaced by typed sentinels, or `null` if parameter metadata
-   *   cannot be obtained (caller should fall back to NULL replacement).
-   */
-  private fun buildViewSqlWithSentinels(sql: String): String? {
-    if ('?' !in sql) return sql
-    return try {
-      val sentinels = connection.prepareStatement(sql).use { preparedStatement ->
-        val parameterMetaData = preparedStatement.parameterMetaData
-        (1..parameterMetaData.parameterCount).map { index ->
-          nonNullSentinel(parameterMetaData.getParameterTypeName(index))
-        }
-      }
-      replaceParameterPlaceholders(sql) { sentinels.getOrElse(it) { "NULL" } }
-    } catch (_: SQLException) {
-      null
-    }
-  }
-
-  /**
-   * For [nodeTree]'s own outermost statement — never recursing into a CTE it declares; each CTE's
-   * own body resolves its own MERGE independently — determines which of its two base-table
-   * relations (identified by `:rtable` varno) can be entirely absent for some result row, via
-   * [explainMergeSideNullability].
-   *
-   * A `MERGE`'s match-optionality (`WHEN NOT MATCHED BY SOURCE`, `WHEN NOT MATCHED [BY TARGET]
-   * THEN INSERT`) is invisible to `:varnullingrels`: a `MERGE ... WHEN NOT MATCHED BY SOURCE THEN
-   * DELETE RETURNING src.col` has an empty `:varnullingrels` on `src.col`'s `Var`, identical to an
-   * ordinary, always-present reference.
-   *
-   * @param sql the EXACT (already sentinel-substituted) statement text to run `EXPLAIN` against —
-   *   the whole top-level statement, including any leading `WITH` clause, so a `MERGE` nested
-   *   inside a CTE resolves through the same call as a top-level one, keyed by its own
-   *   target/source relation names
-   * @return an EMPTY map when [nodeTree]'s own outermost statement is not a `MERGE` at all; a map
-   *   from varno to whether THAT relation can be entirely absent (containing the target and/or
-   *   source varno, per [MergeSideNullability]) when it is a `MERGE` and `EXPLAIN` successfully
-   *   attributed the join; `null` when it's a `MERGE` but `EXPLAIN` could not resolve it (e.g. a
-   *   `USING` clause with more than one relation of its own) — the caller must then treat this
-   *   `MERGE` as entirely untrustworthy, never guessing at a partial answer
-   */
-  private fun mergeAbsentVarnos(
-    nodeTree: String,
-    rangeTable: Map<Int, Int>,
-    @Language("PostgreSQL") sql: String,
-  ): Map<Int, Boolean>? {
-    if (nodeTreeParser.parseCommandType(nodeTree) != PgNodeTreeParser.COMMAND_TYPE_MERGE) return emptyMap()
-    val targetVarno = nodeTreeParser.parseResultRelation(nodeTree)
-    // A RETURNING list that only reads the target relation's own columns, or OLD/NEW references,
-    // never needs EXPLAIN's resolution at all. Skipping it here matters beyond saving an EXPLAIN
-    // round trip: a MERGE whose USING source is not a plain base table or CTE (e.g. a VALUES list
-    // or a subquery) can never be resolved below, but that must not block a RETURNING list that
-    // never depended on knowing which side of that join is nullable.
-    val returningEntries = nodeTreeParser.parseReturningList(nodeTree)
-    if (returningEntries.none { NodeTreeNullabilityAnalyzer.containsVarOutsideRelation(it.expression, targetVarno) }) {
-      return emptyMap()
-    }
-    val targetRelid = rangeTable[targetVarno] ?: return null
-    // A simple `MERGE INTO target USING source ON ...` has exactly one other :rtable entry besides
-    // the target — the source, of any rtekind. A `USING` clause with more than one relation of its
-    // own (e.g. a join or subquery source) has no single relation this method can attribute a join
-    // side to, so it bails rather than guess. Reads the FULL range table, not [rangeTable] (base
-    // tables only), since a CTE source's own varno never appears there at all.
-    val sourceEntries = nodeTreeParser.parseRangeTableEntries(nodeTree).filterKeys { it != targetVarno }
-    if (sourceEntries.size != 1) return null
-    val (sourceVarno, sourceEntry) = sourceEntries.entries.single()
-    val targetName = resolveTableName(targetRelid) ?: return null
-    val sourceNames = mergeSourceRelationNameCandidates(nodeTree, sourceEntry) ?: return null
-    val mapping = explainMergeSideNullability(connection, sql, targetName, sourceNames) ?: return null
-    return buildMap {
-      put(targetVarno, mapping.targetCanBeAbsent)
-      put(sourceVarno, mapping.sourceCanBeAbsent)
-    }
-  }
-
-  /**
-   * The name(s) `EXPLAIN`'s plan JSON might attribute to [sourceEntry] — a `MERGE`'s own `USING`
-   * source relation — so [explainMergeSideNullability] can match it regardless of how the planner
-   * chooses to execute it.
-   *
-   * A plain base-table source ([RangeTableEntry.Relation]) has exactly one name: its own catalog
-   * name, via [resolveTableName]. A CTE source ([RangeTableEntry.Cte]) can appear in the plan
-   * either under its own `WITH`-clause name (a `"CTE Scan"` node, when not inlined) or, when
-   * PostgreSQL inlines it into whatever it scans, under the name [resolveInlinedBaseRelationName]
-   * recovers — only for the simplest possible body, `SELECT ... FROM oneBaseTable`. Offering both
-   * candidates together never risks a false attribution: for a given plan, at most one can appear.
-   *
-   * @return `null` when [sourceEntry] is neither a base table nor a CTE (a join, subquery, function,
-   *   `VALUES`, or another `rtekind` this cannot safely name)
-   */
-  private fun mergeSourceRelationNameCandidates(nodeTree: String, sourceEntry: RangeTableEntry): Set<String>? =
-    when (sourceEntry) {
-      is RangeTableEntry.Relation -> resolveTableName(sourceEntry.relid)?.let(::setOf)
-      is RangeTableEntry.Cte -> buildSet {
-        add(sourceEntry.reference.name)
-        resolveInlinedBaseRelationName(nodeTree, sourceEntry.reference.name)?.let(::add)
-      }
-      else -> null
-    }
-
-  /**
-   * The bare table name [cteName]'s body resolves to, only when that body is nothing but a plain
-   * `SELECT ... FROM oneBaseTable` — a single `rtekind 0` range-table entry and nothing else.
-   *
-   * @return `null` when [cteName] cannot be found in [nodeTree]'s own `:cteList`, or its body is
-   *   anything other than exactly one base-table range-table entry
-   */
-  private fun resolveInlinedBaseRelationName(nodeTree: String, cteName: String): String? {
-    val cteDefinition = nodeTreeParser.parseCteList(nodeTree).find { it.name == cteName } ?: return null
-    val onlyEntry = nodeTreeParser.parseRangeTableEntries(cteDefinition.queryBlock).values.singleOrNull()
-    return (onlyEntry as? RangeTableEntry.Relation)?.let { resolveTableName(it.relid) }
-  }
-
-  /**
    * Determines which result columns of a SQL query can be NULL, using full expression evaluation,
    * by way of PostgreSQL's `prosqlbody` — the analyzed query tree PostgreSQL stores for a
    * SQL-standard (`BEGIN ATOMIC ... END`) function body.
@@ -282,14 +165,14 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
    * RETURNING` and for data-modifying CTEs, because only `CREATE VIEW` itself rejects a
    * data-modifying statement, not a SQL-standard function body.
    *
-   * The function is created with ZERO arguments: a real `$n` parameter would appear as a `PARAM`
-   * node, silently widening every parameter-touching column to nullable. [sql]'s own `?`
-   * placeholders are therefore replaced with typed non-null sentinel literals internally, via
-   * [buildViewSqlWithSentinels], before this method is ever invoked.
+   * [sql]'s own `?` placeholders are replaced with typed non-null sentinel literals, via
+   * [buildViewSqlWithSentinels], before [withProsqlbodyNodeTree] ever builds the probe function
+   * from them — see that function's own KDoc for why the probe function itself must take zero
+   * arguments.
    *
    * A statement with no result columns at all (an `INSERT`/`UPDATE`/`DELETE`/`MERGE` without
    * `RETURNING`) fails PostgreSQL's `RETURNS SETOF record` check on function creation — there is
-   * nothing to probe, and the [SQLException] is caught here rather than propagated.
+   * nothing to probe, and the resulting [SQLException] is caught here rather than propagated.
    *
    * Provenance piggybacks the same round trip: each column's expression text is extracted and
    * cross-validated from [sql] — the original, un-substituted query text, never [substitutedSql] —
@@ -303,33 +186,12 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
    *   must treat `null` as "this path has no answer", never as "zero columns."
    */
   internal fun queryColumnNullabilityViaProsqlbody(@Language("PostgreSQL") sql: String): List<ColumnAnalysis>? {
-    val substitutedSql = buildViewSqlWithSentinels(sql) ?: replaceParameterPlaceholders(sql) { "NULL" }
-    val functionName = "norm_nullability_${UUID.randomUUID().toString().replace("-", "")}"
+    val substitutedSql = buildViewSqlWithSentinels(connection, sql) ?: replaceParameterPlaceholders(sql) { "NULL" }
     return try {
-      connection.createStatement().use { statement ->
-        statement.execute(
-          "CREATE FUNCTION pg_temp.$functionName() RETURNS SETOF record LANGUAGE sql " +
-            // The newline before "; END" is required, not style: substitutedSql can legitimately
-            // end in a trailing `--` line comment, which extends to end of line; without a newline
-            // separating it from "; END", the comment swallows the terminator too.
-            "BEGIN ATOMIC $substitutedSql\n; END",
-        )
-      }
-      try {
-        val nodeTree = connection.createStatement().use { statement ->
-          statement.executeQuery(
-            "SELECT prosqlbody::text FROM pg_proc " +
-              // "pg_temp" is a per-session ALIAS, not a literal schema name: 'pg_temp'::regnamespace
-              // fails with `ERROR: schema "pg_temp" does not exist`. pg_my_temp_schema() returns the
-              // current session's actual temp schema OID directly.
-              "WHERE proname = '$functionName' AND pronamespace = pg_my_temp_schema()",
-          ).use { resultSet ->
-            check(resultSet.next()) { "No pg_proc row found for probe function $functionName" }
-            resultSet.getString(1)
-          }
-        }
+      withProsqlbodyNodeTree(connection, substitutedSql) { nodeTree ->
         val rangeTable = nodeTreeParser.parseRangeTableEntries(nodeTree).baseRelations()
-        val mergeAbsent = mergeAbsentVarnos(nodeTree, rangeTable, substitutedSql) ?: return null
+        val mergeAbsent =
+          mergeAbsentVarnos(connection, nodeTreeParser, nodeTree, rangeTable, substitutedSql) ?: return null
         // '?' in sql, not substitutedSql: a sentinel-substituted CONST is byte-identical to a
         // hand-written literal once embedded in the SQL text — the parsed tree retains no memory
         // of which one it was. trustAssignedExpressions=false whenever the original sql had any
@@ -348,10 +210,6 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
         val originalColumnNames = resolveOriginalColumnNames(nodeTree)
         nullability.mapIndexed { index, nullable ->
           ColumnAnalysis(nullable, provenance.getOrNull(index), originalColumnNames.getOrNull(index))
-        }
-      } finally {
-        connection.createStatement().use { statement ->
-          statement.execute("DROP FUNCTION IF EXISTS pg_temp.$functionName()")
         }
       }
     } catch (_: SQLException) {
@@ -429,7 +287,7 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
       // 0) — never null for a real INSERT/UPDATE/DELETE/MERGE — but defensively treated as
       // "substitution unsafe" rather than trusting an assignment against an unidentified target.
       val targetRelid = scope.rangeTable[scope.resultRelationVarno]
-      if (targetRelid != null && isSubstitutionSafeForRelation(targetRelid)) {
+      if (targetRelid != null && isSubstitutionSafeForRelation(connection, targetRelid)) {
         nodeTreeParser.parseTargetList(nodeTree).associate { it.resultNumber to it.expression }
       } else {
         emptyMap()
@@ -706,7 +564,7 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
       return analyzeSetOperationBranches(cte.queryBlock, previouslyResolved, cte.name)
     }
     val cteRangeTable = nodeTreeParser.parseRangeTableEntries(cte.queryBlock).baseRelations()
-    val mergeAbsent = mergeAbsentVarnos(cte.queryBlock, cteRangeTable, sql) ?: return null
+    val mergeAbsent = mergeAbsentVarnos(connection, nodeTreeParser, cte.queryBlock, cteRangeTable, sql) ?: return null
     val analyzer = buildCteBodyAnalyzer(cte.queryBlock, previouslyResolved, sql = sql, mergeAbsentVarnos = mergeAbsent)
     // See PgNodeTreeParser.resultProjection for why :returningList is checked before :targetList.
     val projection = nodeTreeParser.resultProjection(cte.queryBlock)
@@ -939,79 +797,4 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
   ): List<Boolean> =
     buildAnalyzer(buildQueryBlockScope(queryBlock, resolvedCtes, sql = sql, depth = depth), depth = depth)
       .extractColumnNullability(queryBlock)
-
-  /**
-   * Answers, for [analyzeNodeTree]'s own `:targetList`-to-`:returningList` substitution, whether a
-   * `RETURNING` item that merely reads back a `:targetList` assignment can be trusted as what
-   * `RETURNING` actually sees for [relid] — `false` whenever a row-level `BEFORE` trigger, a
-   * rewrite rule, an `INSTEAD OF` trigger, or an FDW could substitute a different final value.
-   *
-   * @return `true` only when [relid] and every transitive inheritance/partition descendant is a
-   *   plain table with no risky `relkind`, no mutating row-level trigger, and no non-view rewrite
-   *   rule — `false` for every other case, including the catalog query itself failing to execute
-   *   (treated exactly like a confirmed risk: [analyzeNodeTree] must not trust the substitution
-   *   when it cannot rule the risk out).
-   */
-  private fun isSubstitutionSafeForRelation(relid: Int): Boolean = try {
-    connection.prepareStatement(
-      """
-      WITH RECURSIVE descendants(relid) AS (
-        SELECT ?::integer
-        UNION
-        SELECT i.inhrelid::integer
-        FROM pg_catalog.pg_inherits i
-        JOIN descendants d ON i.inhparent = d.relid
-      )
-      SELECT
-        EXISTS (
-          SELECT 1
-          FROM pg_catalog.pg_class c
-          JOIN descendants d ON c.oid = d.relid
-          WHERE c.relkind IN ('v', 'm', 'f')
-        ) AS has_risky_relkind,
-        EXISTS (
-          SELECT 1
-          FROM pg_catalog.pg_trigger tg
-          JOIN descendants d ON tg.tgrelid = d.relid
-          WHERE NOT tg.tgisinternal
-            AND (tg.tgtype & 1) = 1
-            AND (tg.tgtype & 2) = 2
-            AND ((tg.tgtype & 4) = 4 OR (tg.tgtype & 16) = 16)
-        ) AS has_mutating_row_trigger,
-        EXISTS (
-          SELECT 1
-          FROM pg_catalog.pg_rewrite rw
-          JOIN descendants d ON rw.ev_class = d.relid
-          WHERE rw.rulename <> '_RETURN'
-        ) AS has_non_view_rewrite_rule
-      """.trimIndent(),
-    ).use { preparedStatement ->
-      preparedStatement.setInt(1, relid)
-      preparedStatement.executeQuery().use { resultSet ->
-        check(resultSet.next()) { "Expected exactly one row from the substitution-safety EXISTS query" }
-        !resultSet.getBoolean("has_risky_relkind") &&
-          !resultSet.getBoolean("has_mutating_row_trigger") &&
-          !resultSet.getBoolean("has_non_view_rewrite_rule")
-      }
-    }
-  } catch (_: SQLException) {
-    false
-  }
-
-  /**
-   * The bare (unqualified) table name for [relid], via `pg_class.relname` — used to attribute an
-   * `EXPLAIN` plan's `"Relation Name"` fields (always the real table name, never an alias) back to
-   * a specific `:rtable` entry.
-   *
-   * @return `null` if [relid] cannot be resolved; the caller must fall back to its own safe
-   *   default rather than guess.
-   */
-  private fun resolveTableName(relid: Int): String? = try {
-    connection.prepareStatement("SELECT relname FROM pg_catalog.pg_class WHERE oid = ?").use { preparedStatement ->
-      preparedStatement.setInt(1, relid)
-      preparedStatement.executeQuery().use { resultSet -> if (resultSet.next()) resultSet.getString(1) else null }
-    }
-  } catch (_: SQLException) {
-    null
-  }
 }
