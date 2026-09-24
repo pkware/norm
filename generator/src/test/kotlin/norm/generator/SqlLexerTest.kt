@@ -3,6 +3,7 @@ package norm.generator
 import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.isEqualTo
+import assertk.assertions.isNull
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
@@ -321,6 +322,103 @@ class SqlLexerTest {
       for (input in inputs) {
         assertThat(lexicalTokensOfStripped(input)).isEqualTo(lexicalTokensOfOriginal(input))
       }
+    }
+  }
+
+  @Nested
+  inner class SqlTokenCursorTest {
+
+    @Test
+    fun `returns null once the text is exhausted`() {
+      val cursor = SqlTokenCursor("", 0)
+      assertThat(cursor.advance()).isNull()
+    }
+
+    @Test
+    fun `returns a Word span for a run of identifier characters`() {
+      val cursor = SqlTokenCursor("abc123 def", 0)
+      assertThat(cursor.advance()).isEqualTo(SqlSpan.Word(0, 6))
+    }
+
+    @Test
+    fun `returns a Char span for a single character that is neither a word nor opaque`() {
+      val cursor = SqlTokenCursor("(", 0)
+      assertThat(cursor.advance()).isEqualTo(SqlSpan.Char(0))
+    }
+
+    @Test
+    fun `returns an Opaque span for a string literal, with isComment false`() {
+      val text = "'abc' x"
+      val cursor = SqlTokenCursor(text, 0)
+      assertThat(cursor.advance()).isEqualTo(SqlSpan.Opaque(0, "'abc'".length, false))
+    }
+
+    @Test
+    fun `returns an Opaque span for a line comment, with isComment true`() {
+      val text = "-- c\nx"
+      val cursor = SqlTokenCursor(text, 0)
+      assertThat(cursor.advance()).isEqualTo(SqlSpan.Opaque(0, "-- c\n".length, true))
+    }
+
+    @Test
+    fun `returns an Opaque span for a block comment, with isComment true`() {
+      val text = "/* c */x"
+      val cursor = SqlTokenCursor(text, 0)
+      assertThat(cursor.advance()).isEqualTo(SqlSpan.Opaque(0, "/* c */".length, true))
+    }
+
+    @Test
+    fun `depth increments on an open parenthesis and decrements on a close parenthesis`() {
+      val cursor = SqlTokenCursor("(())", 0)
+      cursor.advance()
+      assertThat(cursor.depth).isEqualTo(1)
+      cursor.advance()
+      assertThat(cursor.depth).isEqualTo(2)
+      cursor.advance()
+      assertThat(cursor.depth).isEqualTo(1)
+      cursor.advance()
+      assertThat(cursor.depth).isEqualTo(0)
+    }
+
+    @Test
+    fun `depth ignores square brackets by default`() {
+      val cursor = SqlTokenCursor("[]", 0)
+      cursor.advance()
+      assertThat(cursor.depth).isEqualTo(0)
+      cursor.advance()
+      assertThat(cursor.depth).isEqualTo(0)
+    }
+
+    @Test
+    fun `depth tracks square brackets the same as parentheses when trackSquareBrackets is true`() {
+      val cursor = SqlTokenCursor("[a]", 0, trackSquareBrackets = true)
+      cursor.advance()
+      assertThat(cursor.depth).isEqualTo(1)
+      cursor.advance()
+      assertThat(cursor.depth).isEqualTo(1)
+      cursor.advance()
+      assertThat(cursor.depth).isEqualTo(0)
+    }
+
+    @Test
+    fun `depth is never clamped and can go negative`() {
+      val cursor = SqlTokenCursor(")", 0)
+      cursor.advance()
+      assertThat(cursor.depth).isEqualTo(-1)
+    }
+
+    @Test
+    fun `a Word never extends into a position where a lexical token starts, even one only fused by stripping`() {
+      // "x" and "$q$a$q$" were not adjacent in the original text (a space separated them) -- after
+      // stripCommentsAndWhitespace removes it, "$" abuts "x", which would otherwise look like "x"
+      // continuing into the dollar-quote tag ("$" is itself a legal identifier-continuation
+      // character). The Word must stop at "x" alone, leaving the dollar-quoted string as its own
+      // Opaque span.
+      val stripped = stripCommentsAndWhitespace("x \$q\$a\$q\$")
+      val cursor = SqlTokenCursor(stripped.asPlainString(), 0, stripped)
+      assertThat(cursor.advance()).isEqualTo(SqlSpan.Word(0, 1))
+      assertThat(cursor.advance()).isEqualTo(SqlSpan.Opaque(1, stripped.length, false))
+      assertThat(cursor.advance()).isNull()
     }
   }
 }
