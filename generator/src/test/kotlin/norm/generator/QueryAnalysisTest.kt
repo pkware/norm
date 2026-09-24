@@ -4143,7 +4143,7 @@ class QueryAnalysisTest {
     fun `MERGE WHEN NOT MATCHED BY SOURCE THEN DELETE RETURNING source column inside a CTE`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
       // WHEN NOT MATCHED BY SOURCE fires for target rows with no matching source row.
-      // `ColumnNullabilityAnalyzer.mergeAbsentVarnos` resolves which side of this match can be
+      // `mergeAbsentVarnos` resolves which side of this match can be
       // absent via `EXPLAIN`'s own join type (`explainMergeSideNullability`), since match-
       // optionality is invisible to `:varnullingrels` on its own. On real Postgres, a target row
       // with no matching source row returns s.name = NULL through this RETURNING.
@@ -4702,7 +4702,7 @@ class QueryAnalysisTest {
     fun `MERGE with a LEFT JOIN nested in its USING subquery reports the joined column nullable`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
       // The MERGE's USING source is a subquery, not a base table or CTE, so
-      // `ColumnNullabilityAnalyzer.mergeSourceRelationNameCandidates` cannot name it and returns
+      // `mergeSourceRelationNameCandidates` cannot name it and returns
       // `null`; `mergeAbsentVarnos` propagates that, and the CTE body's own analysis returns
       // `null` in turn. `resolveCteBodies` skips a body it could not resolve, so the outer query's
       // lookup for "m" misses and all three columns fall back to nullable — "xval" among them.
@@ -4948,7 +4948,7 @@ class QueryAnalysisTest {
       // A ROLLUP supertotal row makes the grouped column NULL by definition, matched into the
       // target only via a COALESCE in the ON condition -- no LEFT/RIGHT/FULL JOIN keyword and no
       // WHEN NOT MATCHED BY SOURCE clause appears anywhere in the body.
-      // The USING source is a subquery, so `ColumnNullabilityAnalyzer.mergeSourceRelationNameCandidates`
+      // The USING source is a subquery, so `mergeSourceRelationNameCandidates`
       // cannot name it and returns `null`; the CTE body's analysis returns `null` in turn and
       // `resolveCteBodies` skips it, leaving every column nullable. "sid" is reported nullable by
       // that fallback, not by any ROLLUP-specific reasoning. PostgreSQL 18, with an "a"
@@ -5039,7 +5039,7 @@ class QueryAnalysisTest {
     @Test
     fun `MERGE fed by a CTE source correctly reports the passed-through column NOT NULL`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
-      // ColumnNullabilityAnalyzer.mergeAbsentVarnos now attributes a MERGE's join to a CTE source too
+      // mergeAbsentVarnos now attributes a MERGE's join to a CTE source too
       // (previously only a plain base table), via the CTE's own literal name -- "ins" appears
       // directly as a "CTE Scan" node's "CTE Name" here, since a data-modifying CTE is never
       // inlined. With an "a" row and no matching "b" row, the INSERT inserts one row into
@@ -5697,7 +5697,7 @@ class QueryAnalysisTest {
       // RETURNING * on a MERGE expands to both relations' columns — this exact statement returns
       // 4 columns (s.id, s.name, t.id, t.name), all genuinely NOT NULL here
       // (the source is a fixed-literal derived table, never actually absent or null). But
-      // ColumnNullabilityAnalyzer.mergeAbsentVarnos only attributes a MERGE's join to a source relation
+      // mergeAbsentVarnos only attributes a MERGE's join to a source relation
       // that is itself a plain base table (an :rtable entry with rtekind 0) — a subquery/VALUES
       // source has no real relation OID or name EXPLAIN's plan can be correlated against, so this
       // shape falls back to reporting every column nullable rather than guessing. This is the
@@ -6166,9 +6166,8 @@ class QueryAnalysisTest {
    * tests exercise [ColumnNullabilityAnalyzer.analyzeNodeTree]'s `:targetList`-to-`:returningList`
    * substitution (lines 539-557): a `:returningList` `Var` on `(resultRelationVarno, attno)` is
    * evaluated as the matching `:targetList` assigned expression instead, gated by
-   * `trustAssignedExpressions = '?' !in sql` (line 451) and
-   * [ColumnNullabilityAnalyzer.isSubstitutionSafeForRelation] (line 1260) — plus every bail
-   * condition that must keep the untrusted, general-constraint answer instead.
+   * `trustAssignedExpressions = '?' !in sql` (line 451) and [isSubstitutionSafeForRelation] — plus
+   * every bail condition that must keep the untrusted, general-constraint answer instead.
    */
   @Nested
   inner class SetAssignmentAwareProbe {
@@ -6410,9 +6409,8 @@ class QueryAnalysisTest {
    * post-rule tuple, never the raw `SET` expression, so a row-level `BEFORE` trigger, an
    * `INSTEAD OF` trigger, a non-view rewrite rule, or a foreign data wrapper's own write path can
    * each substitute something else entirely for a value that assumption would otherwise treat as
-   * provably non-null. These tests exercise
-   * [ColumnNullabilityAnalyzer.isSubstitutionSafeForRelation] (line 1260), which returns `false` —
-   * unsafe to trust — for exactly those cases on the target or any inheritance descendant, so
+   * provably non-null. These tests exercise [isSubstitutionSafeForRelation], which returns
+   * `false` — unsafe to trust — for exactly those cases on the target or any inheritance descendant, so
    * [ColumnNullabilityAnalyzer.analyzeNodeTree] (line 556) leaves `:targetList` untrusted; plus
    * the negative case (a statement-level or `AFTER` trigger) that proves the bail is targeted
    * rather than a blanket "any trigger" check.

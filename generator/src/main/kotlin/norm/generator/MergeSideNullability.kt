@@ -16,12 +16,11 @@ internal data class MergeSideNullability(val targetCanBeAbsent: Boolean, val sou
  * absent (all-`NULL`) for some result row — via `EXPLAIN (FORMAT JSON)` rather than
  * `:mergeActionList`/text inspection.
  *
- * A `MERGE`'s match-optionality is invisible to `:varnullingrels` (see
- * [ColumnNullabilityAnalyzer.mergeAbsentVarnos]): `WHEN NOT MATCHED BY SOURCE` and `WHEN NOT MATCHED [BY
- * TARGET] THEN INSERT` each mean one side of the underlying target/source comparison may have no
- * matching row, but PostgreSQL's `Var` nodes for either relation carry an empty nulling-relations set
- * regardless. The planner, however, executes that comparison as an ordinary join whose type encodes
- * this directly:
+ * A `MERGE`'s match-optionality is invisible to `:varnullingrels` (see [mergeAbsentVarnos]): `WHEN NOT
+ * MATCHED BY SOURCE` and `WHEN NOT MATCHED [BY TARGET] THEN INSERT` each mean one side of the
+ * underlying target/source comparison may have no matching row, but PostgreSQL's `Var` nodes for
+ * either relation carry an empty nulling-relations set regardless. The planner, however, executes
+ * that comparison as an ordinary join whose type encodes this directly:
  * - `WHEN MATCHED` only: `"Join Type": "Inner"` — both sides always present.
  * - `WHEN MATCHED` + `WHEN NOT MATCHED THEN INSERT`: `"Join Type": "Left"`, source as the preserved
  *   (outer) side, target as the side that can be entirely absent (an inserted row has no prior
@@ -38,9 +37,8 @@ internal data class MergeSideNullability(val targetCanBeAbsent: Boolean, val sou
  *   the plan — normally a single real table name, but a CTE source offers two candidates (its own
  *   literal name, for a `MATERIALIZED` or otherwise non-inlined plan; and, when resolvable, the
  *   single base table its body inlines to), since nothing in the parsed query tree says which shape
- *   the planner will choose (see [ColumnNullabilityAnalyzer.mergeAbsentVarnos]). At most one candidate can
- *   ever actually appear in a given plan, so offering more than one never risks attributing the
- *   wrong side.
+ *   the planner will choose (see [mergeAbsentVarnos]). At most one candidate can ever actually
+ *   appear in a given plan, so offering more than one never risks attributing the wrong side.
  * @return `null` when `EXPLAIN` fails, its JSON cannot be parsed, no plan node is uniquely
  *   identifiable as the `ModifyTable` implementing this `MERGE` (see [findMergeModifyTableNode]), or
  *   no join node within that node's own join tree (see [findOwnJoinNodes]) lets [targetRelationName]
@@ -175,4 +173,126 @@ private fun collectRelationNames(node: JsonValue.JsonObject): Set<String> {
   }
   walk(node)
   return names
+}
+
+/**
+ * For [nodeTree]'s own outermost statement — never recursing into a CTE it declares; each CTE's
+ * own body resolves its own MERGE independently — determines which of its two base-table
+ * relations (identified by `:rtable` varno) can be entirely absent for some result row, via
+ * [explainMergeSideNullability].
+ *
+ * A `MERGE`'s match-optionality (`WHEN NOT MATCHED BY SOURCE`, `WHEN NOT MATCHED [BY TARGET]
+ * THEN INSERT`) is invisible to `:varnullingrels`: a `MERGE ... WHEN NOT MATCHED BY SOURCE THEN
+ * DELETE RETURNING src.col` has an empty `:varnullingrels` on `src.col`'s `Var`, identical to an
+ * ordinary, always-present reference.
+ *
+ * @param sql the EXACT (already sentinel-substituted) statement text to run `EXPLAIN` against —
+ *   the whole top-level statement, including any leading `WITH` clause, so a `MERGE` nested
+ *   inside a CTE resolves through the same call as a top-level one, keyed by its own
+ *   target/source relation names
+ * @return an EMPTY map when [nodeTree]'s own outermost statement is not a `MERGE` at all; a map
+ *   from varno to whether THAT relation can be entirely absent (containing the target and/or
+ *   source varno, per [MergeSideNullability]) when it is a `MERGE` and `EXPLAIN` successfully
+ *   attributed the join; `null` when it's a `MERGE` but `EXPLAIN` could not resolve it (e.g. a
+ *   `USING` clause with more than one relation of its own) — the caller must then treat this
+ *   `MERGE` as entirely untrustworthy, never guessing at a partial answer
+ */
+internal fun mergeAbsentVarnos(
+  connection: Connection,
+  nodeTreeParser: PgNodeTreeParser,
+  nodeTree: String,
+  rangeTable: Map<Int, Int>,
+  @Language("PostgreSQL") sql: String,
+): Map<Int, Boolean>? {
+  if (nodeTreeParser.parseCommandType(nodeTree) != PgNodeTreeParser.COMMAND_TYPE_MERGE) return emptyMap()
+  val targetVarno = nodeTreeParser.parseResultRelation(nodeTree)
+  // A RETURNING list that only reads the target relation's own columns, or OLD/NEW references,
+  // never needs EXPLAIN's resolution at all. Skipping it here matters beyond saving an EXPLAIN
+  // round trip: a MERGE whose USING source is not a plain base table or CTE (e.g. a VALUES list
+  // or a subquery) can never be resolved below, but that must not block a RETURNING list that
+  // never depended on knowing which side of that join is nullable.
+  val returningEntries = nodeTreeParser.parseReturningList(nodeTree)
+  if (returningEntries.none { NodeTreeNullabilityAnalyzer.containsVarOutsideRelation(it.expression, targetVarno) }) {
+    return emptyMap()
+  }
+  val targetRelid = rangeTable[targetVarno] ?: return null
+  // A simple `MERGE INTO target USING source ON ...` has exactly one other :rtable entry besides
+  // the target — the source, of any rtekind. A `USING` clause with more than one relation of its
+  // own (e.g. a join or subquery source) has no single relation this method can attribute a join
+  // side to, so it bails rather than guess. Reads the FULL range table, not [rangeTable] (base
+  // tables only), since a CTE source's own varno never appears there at all.
+  val sourceEntries = nodeTreeParser.parseRangeTableEntries(nodeTree).filterKeys { it != targetVarno }
+  if (sourceEntries.size != 1) return null
+  val (sourceVarno, sourceEntry) = sourceEntries.entries.single()
+  val targetName = resolveTableName(connection, targetRelid) ?: return null
+  val sourceNames = mergeSourceRelationNameCandidates(connection, nodeTreeParser, nodeTree, sourceEntry) ?: return null
+  val mapping = explainMergeSideNullability(connection, sql, targetName, sourceNames) ?: return null
+  return buildMap {
+    put(targetVarno, mapping.targetCanBeAbsent)
+    put(sourceVarno, mapping.sourceCanBeAbsent)
+  }
+}
+
+/**
+ * The name(s) `EXPLAIN`'s plan JSON might attribute to [sourceEntry] — a `MERGE`'s own `USING`
+ * source relation — so [explainMergeSideNullability] can match it regardless of how the planner
+ * chooses to execute it.
+ *
+ * A plain base-table source ([RangeTableEntry.Relation]) has exactly one name: its own catalog
+ * name, via [resolveTableName]. A CTE source ([RangeTableEntry.Cte]) can appear in the plan
+ * either under its own `WITH`-clause name (a `"CTE Scan"` node, when not inlined) or, when
+ * PostgreSQL inlines it into whatever it scans, under the name [resolveInlinedBaseRelationName]
+ * recovers — only for the simplest possible body, `SELECT ... FROM oneBaseTable`. Offering both
+ * candidates together never risks a false attribution: for a given plan, at most one can appear.
+ *
+ * @return `null` when [sourceEntry] is neither a base table nor a CTE (a join, subquery, function,
+ *   `VALUES`, or another `rtekind` this cannot safely name)
+ */
+private fun mergeSourceRelationNameCandidates(
+  connection: Connection,
+  nodeTreeParser: PgNodeTreeParser,
+  nodeTree: String,
+  sourceEntry: RangeTableEntry,
+): Set<String>? = when (sourceEntry) {
+  is RangeTableEntry.Relation -> resolveTableName(connection, sourceEntry.relid)?.let(::setOf)
+  is RangeTableEntry.Cte -> buildSet {
+    add(sourceEntry.reference.name)
+    resolveInlinedBaseRelationName(connection, nodeTreeParser, nodeTree, sourceEntry.reference.name)?.let(::add)
+  }
+  else -> null
+}
+
+/**
+ * The bare table name [cteName]'s body resolves to, only when that body is nothing but a plain
+ * `SELECT ... FROM oneBaseTable` — a single `rtekind 0` range-table entry and nothing else.
+ *
+ * @return `null` when [cteName] cannot be found in [nodeTree]'s own `:cteList`, or its body is
+ *   anything other than exactly one base-table range-table entry
+ */
+private fun resolveInlinedBaseRelationName(
+  connection: Connection,
+  nodeTreeParser: PgNodeTreeParser,
+  nodeTree: String,
+  cteName: String,
+): String? {
+  val cteDefinition = nodeTreeParser.parseCteList(nodeTree).find { it.name == cteName } ?: return null
+  val onlyEntry = nodeTreeParser.parseRangeTableEntries(cteDefinition.queryBlock).values.singleOrNull()
+  return (onlyEntry as? RangeTableEntry.Relation)?.let { resolveTableName(connection, it.relid) }
+}
+
+/**
+ * The bare (unqualified) table name for [relid], via `pg_class.relname` — used to attribute an
+ * `EXPLAIN` plan's `"Relation Name"` fields (always the real table name, never an alias) back to
+ * a specific `:rtable` entry.
+ *
+ * @return `null` if [relid] cannot be resolved; the caller must fall back to its own safe
+ *   default rather than guess.
+ */
+private fun resolveTableName(connection: Connection, relid: Int): String? = try {
+  connection.prepareStatement("SELECT relname FROM pg_catalog.pg_class WHERE oid = ?").use { preparedStatement ->
+    preparedStatement.setInt(1, relid)
+    preparedStatement.executeQuery().use { resultSet -> if (resultSet.next()) resultSet.getString(1) else null }
+  }
+} catch (_: SQLException) {
+  null
 }

@@ -339,7 +339,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * @return one [ColumnAnalysis] per result column. If
    *   [ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody] cannot produce an answer at
    *   all — a probe failure, or [sql] is a `MERGE` whose `USING` clause has more than one source
-   *   relation of its own (see [ColumnNullabilityAnalyzer]'s `mergeAbsentVarnos` KDoc) — every real
+   *   relation of its own (see [mergeAbsentVarnos]'s own KDoc) — every real
    *   result column (via `PreparedStatement.getMetaData()`, the only source of a column count this
    *   deep into a fallback) is reported nullable with no provenance: the safe direction, and
    *   consistent with every other fallback in this file. A statement with no result columns at all
