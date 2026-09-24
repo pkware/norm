@@ -190,8 +190,15 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
     return try {
       withProsqlbodyNodeTree(connection, substitutedSql) { nodeTree ->
         val rangeTable = nodeTreeParser.parseRangeTableEntries(nodeTree).baseRelations()
-        val mergeAbsent =
-          mergeAbsentVarnos(connection, nodeTreeParser, nodeTree, rangeTable, substitutedSql) ?: return null
+        val mergeAbsence = mergeAbsentVarnos(connection, nodeTreeParser, nodeTree, rangeTable, substitutedSql)
+        // Unresolvable abandons the whole probe via the elvis below. A `return null` inside the
+        // `when` itself crashes the Kotlin JVM backend (FixStackAnalyzer "Restore stack is
+        // unavailable"): a non-local return from an inline lambda, inside `try`, in a `when` expression.
+        val mergeAbsent = when (mergeAbsence) {
+          MergeAbsence.Unresolvable -> null
+          MergeAbsence.NotApplicable -> emptyMap()
+          is MergeAbsence.Resolved -> mergeAbsence.byVarno
+        } ?: return null
         // '?' in sql, not substitutedSql: a sentinel-substituted CONST is byte-identical to a
         // hand-written literal once embedded in the SQL text — the parsed tree retains no memory
         // of which one it was. trustAssignedExpressions=false whenever the original sql had any
@@ -564,7 +571,13 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
       return analyzeSetOperationBranches(cte.queryBlock, previouslyResolved, cte.name)
     }
     val cteRangeTable = nodeTreeParser.parseRangeTableEntries(cte.queryBlock).baseRelations()
-    val mergeAbsent = mergeAbsentVarnos(connection, nodeTreeParser, cte.queryBlock, cteRangeTable, sql) ?: return null
+    val mergeAbsent = when (
+      val mergeAbsence = mergeAbsentVarnos(connection, nodeTreeParser, cte.queryBlock, cteRangeTable, sql)
+    ) {
+      MergeAbsence.Unresolvable -> return null
+      MergeAbsence.NotApplicable -> emptyMap()
+      is MergeAbsence.Resolved -> mergeAbsence.byVarno
+    }
     val analyzer = buildCteBodyAnalyzer(cte.queryBlock, previouslyResolved, sql = sql, mergeAbsentVarnos = mergeAbsent)
     // See PgNodeTreeParser.resultProjection for why :returningList is checked before :targetList.
     val projection = nodeTreeParser.resultProjection(cte.queryBlock)

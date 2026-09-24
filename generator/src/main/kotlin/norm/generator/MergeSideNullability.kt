@@ -64,7 +64,7 @@ internal fun explainMergeSideNullability(
   val planNode = try {
     val topLevelArray = JsonValue.parse(explainJsonText) as? JsonValue.JsonArray ?: return null
     val firstPlanEntry = topLevelArray.items.firstOrNull() as? JsonValue.JsonObject ?: return null
-    firstPlanEntry.fields["Plan"] as? JsonValue.JsonObject ?: return null
+    firstPlanEntry.objectField("Plan") ?: return null
   } catch (_: IllegalArgumentException) {
     return null
   }
@@ -81,12 +81,9 @@ private fun attributeJoinToSides(
   targetRelationName: String,
   sourceRelationNames: Set<String>,
 ): MergeSideNullability? {
-  val joinType = (joinNode.fields["Join Type"] as? JsonValue.JsonString)?.value ?: return null
+  val joinType = joinNode.stringField("Join Type") ?: return null
   if (joinType != "Inner" && joinType != "Left" && joinType != "Right" && joinType != "Full") return null
-  val childPlans = (joinNode.fields["Plans"] as? JsonValue.JsonArray)
-    ?.items
-    ?.filterIsInstance<JsonValue.JsonObject>()
-    ?: return null
+  val childPlans = joinNode.objectArrayField("Plans")
   if (childPlans.size != 2) return null
   val outerRelationNames = collectRelationNames(childPlans[0])
   val innerRelationNames = collectRelationNames(childPlans[1])
@@ -126,10 +123,10 @@ private fun findMergeModifyTableNode(
 ): JsonValue.JsonObject? {
   val matches = buildList {
     fun walk(node: JsonValue.JsonObject) {
-      val operation = (node.fields["Operation"] as? JsonValue.JsonString)?.value
-      val relationName = (node.fields["Relation Name"] as? JsonValue.JsonString)?.value
+      val operation = node.stringField("Operation")
+      val relationName = node.stringField("Relation Name")
       if (operation == "Merge" && relationName == targetRelationName) add(node)
-      (node.fields["Plans"] as? JsonValue.JsonArray)?.items?.filterIsInstance<JsonValue.JsonObject>()?.forEach(::walk)
+      node.objectArrayField("Plans").forEach(::walk)
     }
     walk(planRoot)
   }
@@ -149,8 +146,8 @@ private fun findMergeModifyTableNode(
 private fun findOwnJoinNodes(mergeModifyTableNode: JsonValue.JsonObject): List<JsonValue.JsonObject> = buildList {
   fun walk(node: JsonValue.JsonObject) {
     if (node.fields.containsKey("Join Type")) add(node)
-    (node.fields["Plans"] as? JsonValue.JsonArray)?.items?.filterIsInstance<JsonValue.JsonObject>()?.forEach { child ->
-      val parentRelationship = (child.fields["Parent Relationship"] as? JsonValue.JsonString)?.value
+    node.objectArrayField("Plans").forEach { child ->
+      val parentRelationship = child.stringField("Parent Relationship")
       if (parentRelationship == "Outer" || parentRelationship == "Inner") walk(child)
     }
   }
@@ -167,12 +164,43 @@ private fun findOwnJoinNodes(mergeModifyTableNode: JsonValue.JsonObject): List<J
 private fun collectRelationNames(node: JsonValue.JsonObject): Set<String> {
   val names = mutableSetOf<String>()
   fun walk(current: JsonValue.JsonObject) {
-    (current.fields["Relation Name"] as? JsonValue.JsonString)?.let { names.add(it.value) }
-    (current.fields["CTE Name"] as? JsonValue.JsonString)?.let { names.add(it.value) }
-    (current.fields["Plans"] as? JsonValue.JsonArray)?.items?.filterIsInstance<JsonValue.JsonObject>()?.forEach(::walk)
+    current.stringField("Relation Name")?.let { names.add(it) }
+    current.stringField("CTE Name")?.let { names.add(it) }
+    current.objectArrayField("Plans").forEach(::walk)
   }
   walk(node)
   return names
+}
+
+/**
+ * The outcome of [mergeAbsentVarnos] resolving which side(s) of a `MERGE` statement can be
+ * entirely absent for some result row.
+ */
+internal sealed interface MergeAbsence {
+
+  /**
+   * No relation needs to be treated as absent: the analyzed statement is not a `MERGE`, or it is a
+   * `MERGE` whose `RETURNING` list reads only the target relation's own columns or `OLD`/`NEW`
+   * references.
+   */
+  object NotApplicable : MergeAbsence
+
+  /**
+   * The analyzed statement is a `MERGE`, and `EXPLAIN` attributed its join to the target and
+   * source relations.
+   *
+   * @property byVarno a map from `:rtable` varno to whether that relation can be entirely absent —
+   *   containing exactly the target and source varno, per [MergeSideNullability]
+   */
+  data class Resolved(val byVarno: Map<Int, Boolean>) : MergeAbsence
+
+  /**
+   * The analyzed statement is a `MERGE`, but which side(s) can be entirely absent could not be
+   * resolved (e.g. a `USING` clause with more than one relation of its own, or `EXPLAIN` could not
+   * attribute the join) — the caller must treat this `MERGE` as entirely untrustworthy, never
+   * guessing at a partial answer.
+   */
+  object Unresolvable : MergeAbsence
 }
 
 /**
@@ -190,12 +218,8 @@ private fun collectRelationNames(node: JsonValue.JsonObject): Set<String> {
  *   the whole top-level statement, including any leading `WITH` clause, so a `MERGE` nested
  *   inside a CTE resolves through the same call as a top-level one, keyed by its own
  *   target/source relation names
- * @return an EMPTY map when [nodeTree]'s own outermost statement is not a `MERGE` at all; a map
- *   from varno to whether THAT relation can be entirely absent (containing the target and/or
- *   source varno, per [MergeSideNullability]) when it is a `MERGE` and `EXPLAIN` successfully
- *   attributed the join; `null` when it's a `MERGE` but `EXPLAIN` could not resolve it (e.g. a
- *   `USING` clause with more than one relation of its own) — the caller must then treat this
- *   `MERGE` as entirely untrustworthy, never guessing at a partial answer
+ * @return [MergeAbsence.NotApplicable], [MergeAbsence.Resolved], or [MergeAbsence.Unresolvable] —
+ *   see each variant's own KDoc for exactly when it applies
  */
 internal fun mergeAbsentVarnos(
   connection: Connection,
@@ -203,8 +227,10 @@ internal fun mergeAbsentVarnos(
   nodeTree: String,
   rangeTable: Map<Int, Int>,
   @Language("PostgreSQL") sql: String,
-): Map<Int, Boolean>? {
-  if (nodeTreeParser.parseCommandType(nodeTree) != PgNodeTreeParser.COMMAND_TYPE_MERGE) return emptyMap()
+): MergeAbsence {
+  if (nodeTreeParser.parseCommandType(nodeTree) != PgNodeTreeParser.COMMAND_TYPE_MERGE) {
+    return MergeAbsence.NotApplicable
+  }
   val targetVarno = nodeTreeParser.parseResultRelation(nodeTree)
   // A RETURNING list that only reads the target relation's own columns, or OLD/NEW references,
   // never needs EXPLAIN's resolution at all. Skipping it here matters beyond saving an EXPLAIN
@@ -213,24 +239,28 @@ internal fun mergeAbsentVarnos(
   // never depended on knowing which side of that join is nullable.
   val returningEntries = nodeTreeParser.parseReturningList(nodeTree)
   if (returningEntries.none { NodeTreeNullabilityAnalyzer.containsVarOutsideRelation(it.expression, targetVarno) }) {
-    return emptyMap()
+    return MergeAbsence.NotApplicable
   }
-  val targetRelid = rangeTable[targetVarno] ?: return null
+  val targetRelid = rangeTable[targetVarno] ?: return MergeAbsence.Unresolvable
   // A simple `MERGE INTO target USING source ON ...` has exactly one other :rtable entry besides
   // the target — the source, of any rtekind. A `USING` clause with more than one relation of its
   // own (e.g. a join or subquery source) has no single relation this method can attribute a join
   // side to, so it bails rather than guess. Reads the FULL range table, not [rangeTable] (base
   // tables only), since a CTE source's own varno never appears there at all.
   val sourceEntries = nodeTreeParser.parseRangeTableEntries(nodeTree).filterKeys { it != targetVarno }
-  if (sourceEntries.size != 1) return null
+  if (sourceEntries.size != 1) return MergeAbsence.Unresolvable
   val (sourceVarno, sourceEntry) = sourceEntries.entries.single()
-  val targetName = resolveTableName(connection, targetRelid) ?: return null
-  val sourceNames = mergeSourceRelationNameCandidates(connection, nodeTreeParser, nodeTree, sourceEntry) ?: return null
-  val mapping = explainMergeSideNullability(connection, sql, targetName, sourceNames) ?: return null
-  return buildMap {
-    put(targetVarno, mapping.targetCanBeAbsent)
-    put(sourceVarno, mapping.sourceCanBeAbsent)
-  }
+  val targetName = resolveTableName(connection, targetRelid) ?: return MergeAbsence.Unresolvable
+  val sourceNames = mergeSourceRelationNameCandidates(connection, nodeTreeParser, nodeTree, sourceEntry)
+    ?: return MergeAbsence.Unresolvable
+  val mapping = explainMergeSideNullability(connection, sql, targetName, sourceNames)
+    ?: return MergeAbsence.Unresolvable
+  return MergeAbsence.Resolved(
+    buildMap {
+      put(targetVarno, mapping.targetCanBeAbsent)
+      put(sourceVarno, mapping.sourceCanBeAbsent)
+    },
+  )
 }
 
 /**
