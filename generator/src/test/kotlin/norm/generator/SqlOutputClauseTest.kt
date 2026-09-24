@@ -513,6 +513,18 @@ class SqlOutputClauseTest {
     }
 
     @Test
+    fun `a candidate AS word match is ASCII-only, not fooled by a character the JVM case-folds to S`() {
+      // U+017F "long s" (ſ) upper-cases to ASCII "S" under Kotlin/Java's ignoreCase comparison, but
+      // PostgreSQL's own AS keyword match is ASCII-only: "SELECT x AS aſ" (confirmed on PostgreSQL
+      // 18.4) has a real "AS" keyword and a column literally named "aſ". A loose ignoreCase check on
+      // the word "aſ" itself would wrongly treat it as a second "AS", becoming the alias boundary
+      // instead of the real one -- stripping "aſ" off as if it were the keyword and leaving no
+      // alias at all.
+      val result = parseOutputItemsWithAlias("SELECT x AS aſ FROM t").single()
+      assertThat(result.alias).isEqualTo("aſ")
+    }
+
+    @Test
     fun `an unquoted uppercase column reference is ASCII-folded to lowercase`() {
       // pgjdbc's ResultSetMetaData.getColumnName reports "id" (PostgreSQL folds an unquoted
       // reference via downcase_identifier before ever resolving it against the catalog).

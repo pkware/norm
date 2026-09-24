@@ -274,6 +274,26 @@ class SqlKeywordScannerTest {
       val result = findTopLevelKeyword(sql, "FROM")
       assertThat(result).isEqualTo(sql.indexOf("FROM"))
     }
+
+    @Test
+    fun `does not match when startIndex lands mid-identifier`() {
+      // "xFROM" is one identifier -- if startIndex (1) lands inside it, the word starting there
+      // ("FROM") must not be treated as a standalone match: the real PostgreSQL token starting at
+      // index 0 is "xFROM" in its entirety, not "x" followed by the keyword "FROM".
+      val result = findTopLevelKeyword("xFROM t", "FROM", 1)
+      assertThat(result).isEqualTo(-1)
+    }
+
+    @Test
+    fun `a dollar-quoted string immediately before the keyword does not block the match`() {
+      // The dollar-quote "$$x$$" ends right where "FROM" begins, with no separator between them
+      // in the original text -- unlike the mid-identifier case above, PostgreSQL itself lexes this
+      // as two separate tokens (the string, then the keyword), so this is a real match, not a
+      // false one.
+      val sql = "SELECT \$\$x\$\$FROM t"
+      val result = findTopLevelKeyword(sql, "FROM")
+      assertThat(result).isEqualTo(sql.indexOf("FROM"))
+    }
   }
 
   @Nested

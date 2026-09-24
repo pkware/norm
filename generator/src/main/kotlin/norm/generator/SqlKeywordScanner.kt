@@ -3,38 +3,30 @@ package norm.generator
 /**
  * Finds the index of the closing parenthesis that matches an opening `(` at [openParenthesisIndex].
  *
- * Skips over string literals, quoted identifiers, dollar-quoted strings, and comments via
- * [skipLexicalToken] so a `(`/`)` that only appears inside one of those (e.g. `RETURNING
- * regexp_replace(name, '\(', '')`, where the string literal contains an unbalanced `(`) is never
- * mistaken for a real parenthesis.
+ * Walks [text] via [SqlTokenCursor], which skips string literals, quoted identifiers,
+ * dollar-quoted strings, and comments, so a `(`/`)` that only appears inside one of those (e.g.
+ * `RETURNING regexp_replace(name, '\(', '')`, where the string literal contains an unbalanced `(`)
+ * is never mistaken for a real parenthesis. Tracks `(`/`)` only, not `[`/`]`.
  *
  * @param text The string to search.
  * @param openParenthesisIndex The index of the opening `(`. The search starts at `openParenthesisIndex + 1`.
  * @param adjacency See [OriginalAdjacency]'s KDoc. Defaults to [ALL_ADJACENT], correct for raw SQL
  *   text; [StrippedText] threads itself here for its own [StrippedText.findMatchingCloseParenthesis]
  *   entry point.
- * @return The index of the matching `)`, or `-1` if unbalanced.
+ * @return The index of the matching `)`, or `-1` when [text] ends before depth returns to the
+ *   level of the opening `(`.
  */
 internal fun findMatchingCloseParenthesis(
   text: String,
   openParenthesisIndex: Int,
   adjacency: OriginalAdjacency = ALL_ADJACENT,
 ): Int {
-  var depth = 1
-  var i = openParenthesisIndex + 1
-  while (i < text.length && depth > 0) {
-    val afterToken = skipLexicalToken(text, i, adjacency)
-    if (afterToken != i) {
-      i = afterToken
-      continue
-    }
-    when (text[i]) {
-      '(' -> depth++
-      ')' -> depth--
-    }
-    i++
+  val cursor = SqlTokenCursor(text, openParenthesisIndex, adjacency)
+  cursor.advance() // The opening "(" itself; cursor.depth is now 1.
+  while (true) {
+    val span = cursor.advance() ?: return -1
+    if (span is SqlSpan.Char && text[span.index] == ')' && cursor.depth == 0) return span.index
   }
-  return if (depth == 0) i - 1 else -1
 }
 
 /**
@@ -56,8 +48,10 @@ internal fun findMatchingCloseParenthesis(
  * AS oldv", "ARRAY[1", "2] AS arr"]` — nothing about those items corresponds to the real columns.
  *
  * Skips string literals, quoted identifiers, dollar-quoted strings, and comments via
- * [skipLexicalToken], so a `(`/`)`/`[`/`]`/[delimiter] that only appears inside one of those (e.g.
+ * [SqlTokenCursor], so a `(`/`)`/`[`/`]`/[delimiter] that only appears inside one of those (e.g.
  * a string literal containing a stray `,` or unbalanced bracket) is not mistaken for a real one.
+ * Depth is never clamped at `0`: a stray unmatched `)`/`]` before a real delimiter does not stop
+ * the scan, so a later `(`/`[` bringing depth back to exactly `0` still splits normally.
  *
  * This function is also used by `SqlParameterInferrer.extractFunctionCalls` (a function call's
  * comma-separated arguments), `SqlParameterInferrer.extractValuesExpressions` (an `INSERT ...
@@ -71,24 +65,14 @@ internal fun findMatchingCloseParenthesis(
  */
 internal fun splitAtTopLevel(text: String, delimiter: Char): List<String> {
   val items = mutableListOf<String>()
-  var depth = 0
   var start = 0
-  var i = 0
-  while (i < text.length) {
-    val afterToken = skipLexicalToken(text, i)
-    if (afterToken != i) {
-      i = afterToken
-      continue
+  val cursor = SqlTokenCursor(text, 0, trackSquareBrackets = true)
+  while (true) {
+    val span = cursor.advance() ?: break
+    if (span is SqlSpan.Char && text[span.index] == delimiter && cursor.depth == 0) {
+      items.add(text.substring(start, span.index))
+      start = span.index + 1
     }
-    when (text[i]) {
-      '(', '[' -> depth++
-      ')', ']' -> depth--
-      delimiter -> if (depth == 0) {
-        items.add(text.substring(start, i))
-        start = i + 1
-      }
-    }
-    i++
   }
   items.add(text.substring(start))
   return items
@@ -97,60 +81,32 @@ internal fun splitAtTopLevel(text: String, delimiter: Char): List<String> {
 /**
  * Finds a SQL keyword at the top level (not inside parentheses) in the given string.
  *
- * Skips over string literals, quoted identifiers, dollar-quoted strings, and comments via
- * [skipLexicalToken] so a keyword-like word or a `(`/`)` that only appears inside one of those
- * (e.g. `SET name = 'copied from source'`, which contains the word `from`) is not mistaken for
- * a real keyword or a real parenthesis. A candidate match is also rejected — via [isIdentifierChar]
- * — when it is adjacent to any character PostgreSQL allows inside an unquoted identifier, so
- * `valid_from`, `from_date`, `data_set`, and similar ordinary column/table names are never
- * mistaken for the keywords `FROM`/`SET` they merely contain as a substring.
+ * Walks [sql] via [SqlTokenCursor], which skips string literals, quoted identifiers, dollar-quoted
+ * strings, and comments, so a keyword-like word or a `(`/`)` that only appears inside one of those
+ * (e.g. `SET name = 'copied from source'`, which contains the word `from`) is never mistaken for a
+ * real keyword or parenthesis. A match requires the whole [SqlSpan.Word] to equal [keyword], so
+ * `valid_from`, `from_date`, `data_set`, and similar identifiers that merely contain [keyword] as a
+ * substring are never mistaken for it.
  *
- * A bare `)` with no matching `(` before it (`depth` going negative) means [sql] is not the
- * well-formed, already-balanced text this scan assumes — this bails immediately to `-1` (not
- * found) rather than clamping `depth` at `0` and continuing. Clamping would let the scan silently
- * recover and keep searching past the unbalanced point, which is not obviously safe either way:
- * this function's own callers (`parseSelectItems`'s KDoc for one) treat a missing keyword as the
- * dangerous direction — e.g. a missing `FROM` making `parseSelectItems` fall through to
- * `window.substring(itemsStart)`, taking more text as items than it should — a clamp-and-continue
- * scan could just as easily find some later, wrongly-in-scope keyword instead of correctly
- * finding none at all. An unbalanced scan's assumptions are already void by that point, so
- * returning `-1` loudly, rather than guessing which recovery is safe, favors an honestly-wrong
- * "not found" a caller's existing fallback already handles, over a confidently-wrong match this
- * function cannot itself tell apart from a correct one.
- *
- * @return The index of the keyword, or `-1` if not found at the top level, including when [sql]
- *   contains an unbalanced closing parenthesis before any top-level match — see above.
+ * @return The index of [keyword], or `-1` if not found at the top level, including as soon as an
+ *   unmatched closing parenthesis drives depth negative — an unbalanced [sql] is not the
+ *   already-balanced text this scan assumes, so it bails rather than risk a match inside the
+ *   malformed region.
  */
 internal fun findTopLevelKeyword(sql: String, keyword: String, startIndex: Int = 0): Int {
-  var depth = 0
-  var i = startIndex
-  while (i <= sql.length - keyword.length) {
-    val afterToken = skipLexicalToken(sql, i)
-    if (afterToken != i) {
-      i = afterToken
-      continue
-    }
-    when (sql[i]) {
-      '(' -> {
-        depth++
-        i++
-      }
-      ')' -> {
-        depth--
-        if (depth < 0) return -1
-        i++
-      }
-      else -> {
-        if (depth == 0 && sql.regionMatches(i, keyword, 0, keyword.length, ignoreCase = true)) {
-          val before = i == 0 || !isIdentifierChar(sql[i - 1])
-          val after = i + keyword.length >= sql.length || !isIdentifierChar(sql[i + keyword.length])
-          if (before && after) return i
-        }
-        i++
-      }
+  val cursor = SqlTokenCursor(sql, startIndex)
+  while (true) {
+    val span = cursor.advance() ?: return -1
+    if (cursor.depth < 0) return -1
+    if (span is SqlSpan.Word &&
+      cursor.depth == 0 &&
+      span.to - span.from == keyword.length &&
+      sql.regionMatches(span.from, keyword, 0, keyword.length, ignoreCase = true) &&
+      !(span.from == startIndex && startIndex > 0 && isIdentifierChar(sql[startIndex - 1]))
+    ) {
+      return span.from
     }
   }
-  return -1
 }
 
 /**
@@ -206,15 +162,19 @@ internal fun findTopLevelFromClauseKeyword(sql: String, startIndex: Int): Int =
 /**
  * Finds the first depth-0 [keyword] in [sql], at or after [startIndex], that starts a clause.
  *
- * Text that [skipLexicalToken] skips does not match. A word spelled like [keyword] also does not match when it is:
- * - a qualified name's field, as in `s.from` or `(s).from`;
- * - a column label, as in `1 AS from`;
- * - the `FROM` of `IS [NOT] DISTINCT FROM`.
+ * A depth-0 word spelled like [keyword] still does not match when it is a qualified name's field
+ * (`s.from`, `(s).from`), a column label (`1 AS from`), or the `FROM` of `IS [NOT] DISTINCT FROM`.
+ * A negative depth (an unmatched closing parenthesis before this point) does not stop the scan;
+ * matching only ever happens at depth `0`.
+ *
+ * Text inside an [SqlSpan.Opaque] span does not match. A comment separates words the way whitespace
+ * does; any other opaque span (a string literal, a quoted identifier, a dollar-quoted string) is a
+ * token of its own, so it ends any `AS` or `IS [NOT] DISTINCT` context before it. A `.` after it
+ * still qualifies the next word, as in `"s".from`.
  *
  * @return The index of the keyword, or `-1` if there is none.
  */
 private fun findTopLevelClauseKeyword(sql: String, keyword: String, startIndex: Int): Int {
-  var depth = 0
   // Set by a `.` that qualifies the next word. The `.` in `1.` belongs to the numeric literal.
   var precededByQualificationDot = false
   var previousTokenIsDigitLeadingWord = false
@@ -222,38 +182,30 @@ private fun findTopLevelClauseKeyword(sql: String, keyword: String, startIndex: 
   var previousWordInPosition = false
   var wordBeforePrevious: String? = null
   var wordBeforePreviousInPosition = false
-  var i = startIndex
-  while (i < sql.length) {
-    val afterToken = skipLexicalToken(sql, i)
-    if (afterToken != i) {
-      // A comment separates words the way whitespace does. Any other skipped token clears the state, and a
-      // quoted identifier followed by `.` still sets precededByQualificationDot below.
-      val isComment = sql[i] == '-' || sql[i] == '/'
-      if (!isComment) {
-        precededByQualificationDot = false
-        previousTokenIsDigitLeadingWord = false
-        previousWord = null
-        previousWordInPosition = false
-        wordBeforePrevious = null
-        wordBeforePreviousInPosition = false
-      }
-      i = afterToken
-      continue
-    }
-    // `Char.isWhitespace()` accepts non-ASCII spaces such as U+00A0, which PostgreSQL reads as identifier
-    // characters, so the identifier branch comes first.
-    when {
-      isIdentifierChar(sql[i]) -> {
-        val wordStart = i
-        while (i < sql.length && isIdentifierChar(sql[i])) i++
-        val word = sql.substring(wordStart, i)
+
+  fun resetWordState() {
+    precededByQualificationDot = false
+    previousTokenIsDigitLeadingWord = false
+    previousWord = null
+    previousWordInPosition = false
+    wordBeforePrevious = null
+    wordBeforePreviousInPosition = false
+  }
+
+  val cursor = SqlTokenCursor(sql, startIndex)
+  while (true) {
+    val span = cursor.advance() ?: return -1
+    when (span) {
+      is SqlSpan.Opaque -> if (!span.isComment) resetWordState()
+      is SqlSpan.Word -> {
+        val word = sql.substring(span.from, span.to)
         val afterAs = previousWordInPosition && previousWord.equals("AS", ignoreCase = true)
         val afterIsDistinct = previousWordInPosition &&
           previousWord.equals("DISTINCT", ignoreCase = true) &&
           wordBeforePreviousInPosition &&
           (wordBeforePrevious.equals("IS", ignoreCase = true) || wordBeforePrevious.equals("NOT", ignoreCase = true))
         val inPosition = !precededByQualificationDot && !afterAs && !afterIsDistinct
-        if (depth == 0 && word.equals(keyword, ignoreCase = true) && inPosition) return wordStart
+        if (cursor.depth == 0 && word.equals(keyword, ignoreCase = true) && inPosition) return span.from
         wordBeforePrevious = previousWord
         wordBeforePreviousInPosition = previousWordInPosition
         previousWord = word
@@ -261,28 +213,17 @@ private fun findTopLevelClauseKeyword(sql: String, keyword: String, startIndex: 
         precededByQualificationDot = false
         previousTokenIsDigitLeadingWord = word[0] in '0'..'9'
       }
-      sql[i].isWhitespace() -> i++
-      sql[i] == '.' -> {
-        // Unquoted identifiers cannot start with an ASCII digit, so such a word before `.` is a numeric literal
-        // such as `1.` or `1_000.`. PostgreSQL accepts non-ASCII digits like `٣` as identifier characters.
-        precededByQualificationDot = !previousTokenIsDigitLeadingWord
-        previousTokenIsDigitLeadingWord = false
-        i++
-      }
-      else -> {
-        when (sql[i]) {
-          '(' -> depth++
-          ')' -> depth--
+      is SqlSpan.Char -> when {
+        sql[span.index].isWhitespace() -> Unit
+        sql[span.index] == '.' -> {
+          // Unquoted identifiers cannot start with an ASCII digit, so such a word before `.` is a
+          // numeric literal such as `1.` or `1_000.`. PostgreSQL accepts non-ASCII digits like `٣`
+          // as identifier characters.
+          precededByQualificationDot = !previousTokenIsDigitLeadingWord
+          previousTokenIsDigitLeadingWord = false
         }
-        precededByQualificationDot = false
-        previousTokenIsDigitLeadingWord = false
-        previousWord = null
-        previousWordInPosition = false
-        wordBeforePrevious = null
-        wordBeforePreviousInPosition = false
-        i++
+        else -> resetWordState()
       }
     }
   }
-  return -1
 }

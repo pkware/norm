@@ -239,61 +239,46 @@ private fun skipOptionalSetQuantifier(sql: String, position: Int): Int {
  * Splits a select item into its expression and alias parts.
  *
  * Handles `expression AS alias` patterns, respecting parentheses so that
- * `CAST(x AS text) AS my_col` correctly identifies `my_col` as the alias. Skips string literals,
- * quoted identifiers, dollar-quoted strings, and comments via [skipLexicalToken], so an `AS`-like
- * substring or an unbalanced paren inside one of those is not mistaken for a real `AS` keyword or
- * a real parenthesis.
+ * `CAST(x AS text) AS my_col` correctly identifies `my_col` as the alias. Walks [item] via
+ * [SqlTokenCursor], which skips string literals, quoted identifiers, dollar-quoted strings, and
+ * comments, so an `AS`-like substring or an unbalanced paren inside one of those is not mistaken
+ * for a real `AS` keyword or a real parenthesis.
  *
  * Tracks `(`/`)` only, not `[`/`]`: [extractAlias] only ever receives an item already split at the
  * top level ([splitAtTopLevel]), so any `[`/`]` pair it contains is already self-balanced and
  * cannot itself hold an unmatched `(`/`)`.
  *
- * The word-boundary check on either side of a candidate `AS`/`as` uses [isIdentifierChar] rather
- * than `Char.isWhitespace()`: PostgreSQL's `AS` keyword only needs to not be fused into a longer
- * identifier on either side, not to be surrounded by literal whitespace. On PostgreSQL 18.4,
- * `SELECT (1)AS b` returns column `b` — `AS` directly abuts the closing `)` with no whitespace,
- * and `)` is not an identifier character, so this is the real keyword. Likewise `SELECT a AS"b",
- * id FROM t` (columns `b`, `id`, with `a` as the first column's source) recognizes `AS"b"` as the
- * keyword since `"` is not an identifier character either. Conversely `SELECT 1 AS$b` returns
- * column `as$b`, a single implicit alias identifier — `$` is an identifier-continuation character,
- * so `AS$b` is one word, not the keyword `AS` followed by `$b`.
+ * A candidate `AS`/`as` only matches as a whole [SqlSpan.Word] — [isIdentifierChar], not
+ * `Char.isWhitespace()`, decides where that word starts and ends, so PostgreSQL's `AS` keyword
+ * only needs to not be fused into a longer identifier on either side, not to be surrounded by
+ * literal whitespace. On PostgreSQL 18.4, `SELECT (1)AS b` returns column `b` — `AS` directly
+ * abuts the closing `)` with no whitespace, and `)` is not an identifier character, so this is the
+ * real keyword. Likewise `SELECT a AS"b", id FROM t` (columns `b`, `id`, with `a` as the first
+ * column's source) recognizes `AS"b"` as the keyword since `"` is not an identifier character
+ * either. Conversely `SELECT 1 AS$b` returns column `as$b`, a single implicit alias identifier —
+ * `$` is an identifier-continuation character, so `AS$b` is one word, not the keyword `AS`
+ * followed by `$b`.
  *
- * @return A pair of (expression, alias). `alias` is `null` when there is no `AS` keyword at all,
- *   and when there is one but [parseAliasToken] finds nothing that legitimately looks like an
- *   alias right after it: a trailing comment, an unterminated quote, or a string literal where an
- *   alias should be, none of which contribute a real alias name.
+ * @return A pair of (expression, alias). `alias` is `null` when there is no `AS` keyword at all;
+ *   when there is one but [parseAliasToken] finds nothing that legitimately looks like an alias
+ *   right after it (a trailing comment, an unterminated quote, or a string literal where an alias
+ *   should be); or as soon as a bare `)` with no matching `(` drives depth negative, in which case
+ *   [item] is returned unsplit rather than risk a later `AS` misplaced by an unbalanced depth count.
  */
 private fun extractAlias(item: String): Pair<String, String?> {
-  // Find the last top-level AS keyword
-  var depth = 0
   var lastAsIndex = -1
-  var i = 0
-  while (i < item.length) {
-    val afterToken = skipLexicalToken(item, i)
-    if (afterToken != i) {
-      i = afterToken
-      continue
+  val cursor = SqlTokenCursor(item, 0)
+  while (true) {
+    val span = cursor.advance() ?: break
+    if (cursor.depth < 0) return item to null
+    if (span is SqlSpan.Word &&
+      cursor.depth == 0 &&
+      span.to - span.from == 2 &&
+      (item[span.from] == 'A' || item[span.from] == 'a') &&
+      (item[span.from + 1] == 'S' || item[span.from + 1] == 's')
+    ) {
+      lastAsIndex = span.from
     }
-    when (item[i]) {
-      '(' -> depth++
-      ')' -> {
-        depth--
-        // A bare ')' with no matching '(' means [item] isn't the well-formed, already-top-level
-        // expression this scan assumes. Bail rather than clamp depth at 0 and continue: returning
-        // [item] unsplit is safer than a depth count that silently recovers and may misplace a
-        // later real AS keyword.
-        if (depth < 0) return item to null
-      }
-      'A', 'a' -> if (depth == 0 && i + 1 < item.length && (item[i + 1] == 'S' || item[i + 1] == 's')) {
-        // Check it's the keyword AS (not fused into a longer identifier on either side)
-        val before = i == 0 || !isIdentifierChar(item[i - 1])
-        val after = i + 2 >= item.length || !isIdentifierChar(item[i + 2])
-        if (before && after) {
-          lastAsIndex = i
-        }
-      }
-    }
-    i++
   }
   return if (lastAsIndex >= 0) {
     item.substring(0, lastAsIndex).trim() to parseAliasToken(item, lastAsIndex + 2)

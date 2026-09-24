@@ -347,3 +347,82 @@ internal fun collapseCosmeticWhitespace(text: String): String {
   }
   return builder.toString()
 }
+
+/** One lexical unit [SqlTokenCursor.advance] returns. */
+internal sealed interface SqlSpan {
+
+  /**
+   * The span [skipLexicalToken] skips starting at [from], ending at [to] (exclusive): a string
+   * literal, a quoted identifier, a dollar-quoted string, or a comment.
+   *
+   * @property isComment `true` iff `text[from]` is `-` or `/` — a comment, as opposed to a string
+   *   literal, quoted identifier, or dollar-quoted string.
+   */
+  data class Opaque(val from: Int, val to: Int, val isComment: Boolean) : SqlSpan
+
+  /**
+   * A run from [from] to [to] (exclusive) that starts at the cursor's position and extends while
+   * [isIdentifierChar] holds and [skipLexicalToken] leaves the position unchanged. [from] can fall
+   * inside a longer identifier when the cursor starts mid-identifier.
+   */
+  data class Word(val from: Int, val to: Int) : SqlSpan
+
+  /** Any other single character, at [index]. */
+  data class Char(val index: Int) : SqlSpan
+}
+
+/**
+ * Walks [text] one [SqlSpan] at a time from [start]. Each caller chooses which brackets count
+ * toward [depth], what a negative [depth] means, and what counts as a match.
+ *
+ * @param adjacency See [OriginalAdjacency]'s KDoc.
+ * @param trackSquareBrackets Whether `[`/`]` count toward [depth] the same as `(`/`)`.
+ */
+internal class SqlTokenCursor(
+  private val text: String,
+  start: Int,
+  private val adjacency: OriginalAdjacency = ALL_ADJACENT,
+  private val trackSquareBrackets: Boolean = false,
+) {
+
+  private var position = start
+
+  /**
+   * The running `(`/`)` nesting level — and, when [trackSquareBrackets], `[`/`]` nesting too —
+   * updated before each [advance] call returns. Never clamped at `0`: it can go negative on
+   * unbalanced input, and a caller must decide for itself what a negative value means.
+   */
+  var depth: Int = 0
+    private set
+
+  /** The next [SqlSpan] at or after the current position, or `null` once [text] is exhausted. */
+  fun advance(): SqlSpan? {
+    if (position >= text.length) return null
+    val afterToken = skipLexicalToken(text, position, adjacency)
+    if (afterToken != position) {
+      val isComment = text[position] == '-' || text[position] == '/'
+      val span = SqlSpan.Opaque(position, afterToken, isComment)
+      position = afterToken
+      return span
+    }
+    if (isIdentifierChar(text[position])) {
+      val wordStart = position
+      while (position < text.length &&
+        isIdentifierChar(text[position]) &&
+        skipLexicalToken(text, position, adjacency) == position
+      ) {
+        position++
+      }
+      return SqlSpan.Word(wordStart, position)
+    }
+    val index = position
+    when (text[index]) {
+      '(' -> depth++
+      ')' -> depth--
+      '[' -> if (trackSquareBrackets) depth++
+      ']' -> if (trackSquareBrackets) depth--
+    }
+    position++
+    return SqlSpan.Char(index)
+  }
+}
