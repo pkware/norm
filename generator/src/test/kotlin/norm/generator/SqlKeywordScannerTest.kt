@@ -352,6 +352,27 @@ class SqlKeywordScannerTest {
       val result = findTopLevelReturningKeyword(sql)
       assertThat(result).isEqualTo(-1)
     }
+
+    @Test
+    fun `a qualified column named returning is not mistaken for the clause keyword`() {
+      val sql = "INSERT INTO t(a) SELECT s.returning FROM s RETURNING a"
+      val result = findTopLevelReturningKeyword(sql)
+      assertThat(result).isEqualTo(sql.indexOf("RETURNING a"))
+    }
+
+    @Test
+    fun `a column alias named as does not make the following RETURNING an alias`() {
+      val sql = "INSERT INTO t(a) SELECT 1 AS as RETURNING a"
+      val result = findTopLevelReturningKeyword(sql)
+      assertThat(result).isEqualTo(sql.indexOf("RETURNING a"))
+    }
+
+    @Test
+    fun `a dot ending a numeric literal right before RETURNING is not a qualification dot`() {
+      val sql = "INSERT INTO t(a) SELECT 1. RETURNING a"
+      val result = findTopLevelReturningKeyword(sql)
+      assertThat(result).isEqualTo(sql.indexOf("RETURNING a"))
+    }
   }
 
   @Nested
@@ -395,6 +416,83 @@ class SqlKeywordScannerTest {
       val sql = "SELECT a IS DISTINCT/*c*/FROM b FROM t"
       val result = findTopLevelFromClauseKeyword(sql, 0)
       assertThat(result).isEqualTo(sql.indexOf("FROM t"))
+    }
+
+    @Test
+    fun `a DISTINCT used as a column alias after AS does not suppress the following FROM`() {
+      val sql = "SELECT a AS distinct FROM t"
+      val result = findTopLevelFromClauseKeyword(sql, 0)
+      assertThat(result).isEqualTo(sql.indexOf("FROM t"))
+    }
+
+    @Test
+    fun `a DISTINCT used as a column alias without AS does not suppress the following FROM`() {
+      val sql = "SELECT a distinct FROM t"
+      val result = findTopLevelFromClauseKeyword(sql, 0)
+      assertThat(result).isEqualTo(sql.indexOf("FROM t"))
+    }
+
+    @Test
+    fun `a qualified column named is does not start IS DISTINCT FROM`() {
+      val sql = "SELECT s.is distinct FROM s"
+      val result = findTopLevelFromClauseKeyword(sql, 0)
+      assertThat(result).isEqualTo(sql.indexOf("FROM s"))
+    }
+
+    @Test
+    fun `a qualified column named not with spaces around the dot does not start IS NOT DISTINCT FROM`() {
+      val sql = "SELECT s . not distinct FROM s"
+      val result = findTopLevelFromClauseKeyword(sql, 0)
+      assertThat(result).isEqualTo(sql.indexOf("FROM s"))
+    }
+
+    @Test
+    fun `a qualified column named from is not mistaken for the clause keyword`() {
+      val sql = "SELECT s.from FROM s"
+      val result = findTopLevelFromClauseKeyword(sql, 0)
+      assertThat(result).isEqualTo(sql.indexOf("FROM s"))
+    }
+
+    @Test
+    fun `a qualified column named from with a space after the dot is not mistaken for the clause keyword`() {
+      val sql = "SELECT s. from FROM s"
+      val result = findTopLevelFromClauseKeyword(sql, 0)
+      assertThat(result).isEqualTo(sql.indexOf("FROM s"))
+    }
+
+    @Test
+    fun `a parenthesized row reference's field named from is not mistaken for the clause keyword`() {
+      val sql = "SELECT (s).from FROM s"
+      val result = findTopLevelFromClauseKeyword(sql, 0)
+      assertThat(result).isEqualTo(sql.indexOf("FROM s"))
+    }
+
+    @Test
+    fun `a column alias named from is not mistaken for the clause keyword`() {
+      val sql = "SELECT 1 AS from FROM s"
+      val result = findTopLevelFromClauseKeyword(sql, 0)
+      assertThat(result).isEqualTo(sql.indexOf("FROM s"))
+    }
+
+    @Test
+    fun `a dot ending a numeric literal is not a qualification dot`() {
+      val sql = "SELECT 1. FROM s"
+      val result = findTopLevelFromClauseKeyword(sql, 0)
+      assertThat(result).isEqualTo(sql.indexOf("FROM s"))
+    }
+
+    @Test
+    fun `a dot ending an underscore-separated numeric literal is not a qualification dot`() {
+      val sql = "SELECT 1_000. FROM s"
+      val result = findTopLevelFromClauseKeyword(sql, 0)
+      assertThat(result).isEqualTo(sql.indexOf("FROM s"))
+    }
+
+    @Test
+    fun `a comment directly after a numeric literal's dot does not disturb the clause match`() {
+      val sql = "SELECT 1./*c*/FROM s"
+      val result = findTopLevelFromClauseKeyword(sql, 0)
+      assertThat(result).isEqualTo(sql.indexOf("FROM s"))
     }
   }
 
