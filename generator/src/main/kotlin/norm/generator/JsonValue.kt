@@ -14,7 +14,29 @@ package norm.generator
  * need numeric or boolean values as anything other than "not an object or array".
  */
 internal sealed interface JsonValue {
-  data class JsonObject(val fields: Map<String, JsonValue>) : JsonValue
+  data class JsonObject(val fields: Map<String, JsonValue>) : JsonValue {
+
+    /**
+     * The `String` value of [key], or `null` when [key] is absent from [fields] or its value is
+     * not a JSON string.
+     */
+    fun stringField(key: String): String? = (fields[key] as? JsonString)?.value
+
+    /**
+     * The [JsonObject] value of [key], or `null` when [key] is absent from [fields] or its value
+     * is not itself a JSON object.
+     */
+    fun objectField(key: String): JsonObject? = fields[key] as? JsonObject
+
+    /**
+     * The [JsonObject] items of [key]'s array value, in order. Empty when [key] is absent from
+     * [fields], its value is not a JSON array, or the array has no object items; a non-object item
+     * anywhere in the array is dropped rather than causing a failure.
+     */
+    fun objectArrayField(key: String): List<JsonObject> =
+      (fields[key] as? JsonArray)?.items?.filterIsInstance<JsonObject>() ?: emptyList()
+  }
+
   data class JsonArray(val items: List<JsonValue>) : JsonValue
   data class JsonString(val value: String) : JsonValue
   data class JsonScalar(val rawText: String) : JsonValue

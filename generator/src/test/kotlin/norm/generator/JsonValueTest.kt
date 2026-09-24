@@ -2,6 +2,7 @@ package norm.generator
 
 import assertk.assertThat
 import assertk.assertions.isEqualTo
+import assertk.assertions.isNull
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -151,6 +152,78 @@ class JsonValueTest {
     @Test
     fun `throws on an unterminated array`() {
       assertThrows<IllegalArgumentException> { JsonValue.parse("[1, 2") }
+    }
+  }
+
+  @Nested
+  inner class JsonObjectAccessors {
+
+    @Test
+    fun `stringField returns the string value when the key is present with a string value`() {
+      val jsonObject = JsonValue.JsonObject(mapOf("name" to JsonValue.JsonString("value")))
+      assertThat(jsonObject.stringField("name")).isEqualTo("value")
+    }
+
+    @Test
+    fun `stringField returns null when the key is absent`() {
+      val jsonObject = JsonValue.JsonObject(emptyMap())
+      assertThat(jsonObject.stringField("name")).isNull()
+    }
+
+    @Test
+    fun `stringField returns null when the key's value is not a string`() {
+      val jsonObject = JsonValue.JsonObject(mapOf("name" to JsonValue.JsonScalar("1")))
+      assertThat(jsonObject.stringField("name")).isNull()
+    }
+
+    @Test
+    fun `objectField returns the object value when the key is present with an object value`() {
+      val nested = JsonValue.JsonObject(mapOf("inner" to JsonValue.JsonString("x")))
+      val jsonObject = JsonValue.JsonObject(mapOf("child" to nested))
+      assertThat(jsonObject.objectField("child")).isEqualTo(nested)
+    }
+
+    @Test
+    fun `objectField returns null when the key is absent`() {
+      val jsonObject = JsonValue.JsonObject(emptyMap())
+      assertThat(jsonObject.objectField("child")).isNull()
+    }
+
+    @Test
+    fun `objectField returns null when the key's value is not an object`() {
+      val jsonObject = JsonValue.JsonObject(mapOf("child" to JsonValue.JsonString("x")))
+      assertThat(jsonObject.objectField("child")).isNull()
+    }
+
+    @Test
+    fun `objectArrayField returns the object items when the key is present with an array value`() {
+      val first = JsonValue.JsonObject(mapOf("id" to JsonValue.JsonScalar("1")))
+      val second = JsonValue.JsonObject(mapOf("id" to JsonValue.JsonScalar("2")))
+      val jsonObject = JsonValue.JsonObject(mapOf("items" to JsonValue.JsonArray(listOf(first, second))))
+      assertThat(jsonObject.objectArrayField("items")).isEqualTo(listOf(first, second))
+    }
+
+    @Test
+    fun `objectArrayField returns an empty list when the key is absent`() {
+      val jsonObject = JsonValue.JsonObject(emptyMap())
+      assertThat(jsonObject.objectArrayField("items")).isEqualTo(emptyList<JsonValue.JsonObject>())
+    }
+
+    @Test
+    fun `objectArrayField returns an empty list when the key's value is not an array`() {
+      val jsonObject = JsonValue.JsonObject(mapOf("items" to JsonValue.JsonString("x")))
+      assertThat(jsonObject.objectArrayField("items")).isEqualTo(emptyList<JsonValue.JsonObject>())
+    }
+
+    @Test
+    fun `objectArrayField drops non-object items from the array`() {
+      val onlyObject = JsonValue.JsonObject(mapOf("id" to JsonValue.JsonScalar("1")))
+      val jsonObject = JsonValue.JsonObject(
+        mapOf(
+          "items" to JsonValue.JsonArray(listOf(onlyObject, JsonValue.JsonString("x"), JsonValue.JsonScalar("2"))),
+        ),
+      )
+      assertThat(jsonObject.objectArrayField("items")).isEqualTo(listOf(onlyObject))
     }
   }
 }

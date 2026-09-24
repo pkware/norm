@@ -4703,7 +4703,7 @@ class QueryAnalysisTest {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "merge_action() requires PostgreSQL 17+")
       // The MERGE's USING source is a subquery, not a base table or CTE, so
       // `mergeSourceRelationNameCandidates` cannot name it and returns
-      // `null`; `mergeAbsentVarnos` propagates that, and the CTE body's own analysis returns
+      // `null`; `mergeAbsentVarnos` returns `Unresolvable`, and the CTE body's own analysis returns
       // `null` in turn. `resolveCteBodies` skips a body it could not resolve, so the outer query's
       // lookup for "m" misses and all three columns fall back to nullable — "xval" among them.
       // The reported answer is therefore the safe direction rather than a proof about this join.
@@ -5011,8 +5011,8 @@ class QueryAnalysisTest {
     fun `MERGE USING a non-MATERIALIZED CTE source correctly reports a passed-through key column NOT NULL`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "MERGE RETURNING requires PostgreSQL 17+")
       // End-to-end pin for the exact shape that previously lost provenance for the whole query
-      // (queryColumnNullabilityViaProsqlbody's mergeAbsentVarnos ?: return null short-circuited
-      // the entire probe, so every column -- not just the CTE-sourced ones -- fell back to
+      // (queryColumnNullabilityViaProsqlbody's mergeAbsentVarnos returning `Unresolvable`
+      // short-circuited the entire probe, so every column -- not just the CTE-sourced ones -- fell back to
       // nullable with no provenance). "desc_source.id" is parent's own primary key, genuinely
       // NOT NULL; "merged_description" is UPPER(description) over a nullable column, genuinely
       // nullable regardless of this fix.
