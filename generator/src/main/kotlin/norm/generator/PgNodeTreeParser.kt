@@ -257,6 +257,32 @@ internal class PgNodeTreeParser {
   }
 
   /**
+   * The result-column list a caller should read for [nodeTreeText]: [parseReturningList] when it
+   * is non-empty, else [parseTargetList], with junk entries removed and the remainder sorted by
+   * [TargetEntry.resultNumber].
+   *
+   * `:returningList` is checked first, not used only as a fallback for an empty `:targetList`: an
+   * `INSERT`/`UPDATE`'s own `:targetList` holds the value expressions being written to each
+   * assigned column — a different, typically shorter list than its `RETURNING` projection — so it
+   * is often non-empty even when `:returningList` is the one a caller needs. `INSERT INTO
+   * t(name) VALUES ('test') RETURNING *` against `t(id, name)` has a one-entry `:targetList` for
+   * `name` alone, but a two-entry `:returningList` for `id, name`.
+   *
+   * @param nodeTreeText the raw `pg_rewrite.ev_action` text, `pg_proc.prosqlbody` text, or a bare
+   *   `{QUERY ...}` block
+   * @return a [ResultProjection] whose [ResultProjection.entries] is empty when [nodeTreeText] is
+   *   malformed, has neither list, or every entry in the chosen list is junk
+   */
+  fun resultProjection(nodeTreeText: String): ResultProjection {
+    val returningEntries = parseReturningList(nodeTreeText)
+    val entries = returningEntries.ifEmpty { parseTargetList(nodeTreeText) }
+    return ResultProjection(
+      fromReturningList = returningEntries.isNotEmpty(),
+      entries = entries.filter { !it.isJunk }.sortedBy { it.resultNumber },
+    )
+  }
+
+  /**
    * Parses the outermost QUERY node's `:resultRelation` field: the 1-based `rtable` index of the
    * table an `INSERT`/`UPDATE`/`DELETE`/`MERGE` writes to, or `0` for a plain `SELECT` (`0` is
    * never a valid `rtable` index, so it is a safe "no target relation" sentinel for callers).

@@ -360,10 +360,9 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
   }
 
   /**
-   * Resolves each result column's REAL source column name from [nodeTree]'s own `:returningList`
-   * (DML `RETURNING`) or `:targetList` (a plain `SELECT`) — the same list, in the same order
-   * ([TargetEntry.isJunk] filtered, sorted by [TargetEntry.resultNumber]), [analyzeNodeTree] reads
-   * for nullability, so the two stay index-aligned.
+   * Resolves each result column's REAL source column name from [PgNodeTreeParser.resultProjection]'s
+   * entries for [nodeTree] — the same projection [analyzeNodeTree] reads for nullability, so the two
+   * stay index-aligned.
    *
    * Each entry's own `:resorigtbl`/`:resorigcol` — [TargetEntry.originalTableOid] and
    * [TargetEntry.originalColumnNumber] — name the column PostgreSQL itself traced this result
@@ -378,26 +377,23 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
    *   merged join column) or the OID/attnum pair is absent from the catalog map for any other
    *   reason. The caller must treat `null` as "fall back to the ordinary resolution", never guess.
    */
-  private fun resolveOriginalColumnNames(nodeTree: String): List<String?> {
-    val returningEntries = nodeTreeParser.parseReturningList(nodeTree)
-    val entries = returningEntries.ifEmpty { nodeTreeParser.parseTargetList(nodeTree) }
-    return entries.filter { !it.isJunk }.sortedBy { it.resultNumber }.map { entry ->
+  private fun resolveOriginalColumnNames(nodeTree: String): List<String?> =
+    nodeTreeParser.resultProjection(nodeTree).entries.map { entry ->
       if (entry.originalTableOid == 0 || entry.originalColumnNumber == 0) {
         null
       } else {
         catalog.columnNameByRelidAndAttnum[entry.originalTableOid to entry.originalColumnNumber]
       }
     }
-  }
 
   /**
    * Computes per-column nullability from [nodeTree] — the `pg_rewrite.ev_action` text of a
    * temporary view, or the `pg_proc.prosqlbody` text of a temporary probe function; both share the
    * same post-parse-analysis `{QUERY ...}` node shape.
    *
-   * Reads `:returningList` when non-empty (a topmost `UPDATE`/`DELETE`/`MERGE ... RETURNING`),
-   * otherwise `:targetList` (every plain `SELECT`, including one that reaches this function only
-   * because it CONTAINS a data-modifying CTE).
+   * Reads [PgNodeTreeParser.resultProjection]'s entries: the `RETURNING` projection of a topmost
+   * `INSERT`/`UPDATE`/`DELETE`/`MERGE ... RETURNING`, otherwise the `:targetList` of every plain
+   * `SELECT`, including one that reaches this function only because it CONTAINS a data-modifying CTE.
    */
   private fun analyzeNodeTree(
     nodeTree: String,
@@ -443,14 +439,9 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
       scope.isSourceColumnNotNull(varno, varattno)
     }
     val analyzer = buildAnalyzer(scope, depth = SUBLINK_ANALYSIS_DEPTH_BUDGET)
-    // :returningList must be checked first, not as a fallback for an empty :targetList: an INSERT
-    // or UPDATE's own :targetList holds the value expressions being written to each assigned
-    // column — a different, typically shorter list than its RETURNING projection — so it is often
-    // non-empty even when :returningList is what this call needs to read. `INSERT INTO t(name)
-    // VALUES ('test') RETURNING *` against `t(id, name)` has a one-entry :targetList for "name"
-    // alone, but a two-entry :returningList for "id, name".
-    val returningEntries = nodeTreeParser.parseReturningList(nodeTree)
-    if (returningEntries.isNotEmpty()) {
+    // See PgNodeTreeParser.resultProjection for why :returningList is checked before :targetList.
+    val projection = nodeTreeParser.resultProjection(nodeTree)
+    if (projection.fromReturningList) {
       // A separate analyzer whose isSourceColumnNotNull substitutes a Var referencing
       // (resultRelationVarno, resno) with the assigned expression's own nullability — evaluated by
       // the plain analyzer, deliberately not this substituting one, so a self-referencing
@@ -473,10 +464,7 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
             plainIsSourceColumnNotNull(varno, varattno)
           }
         }
-      return returningEntries
-        .filter { !it.isJunk }
-        .sortedBy { it.resultNumber }
-        .map { entry -> !returningAnalyzer.isNonNull(entry.expression) }
+      return projection.entries.map { entry -> !returningAnalyzer.isNonNull(entry.expression) }
     }
     return analyzer.extractColumnNullability(nodeTree)
   }
@@ -720,16 +708,10 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
     val cteRangeTable = nodeTreeParser.parseRangeTableEntries(cte.queryBlock).baseRelations()
     val mergeAbsent = mergeAbsentVarnos(cte.queryBlock, cteRangeTable, sql) ?: return null
     val analyzer = buildCteBodyAnalyzer(cte.queryBlock, previouslyResolved, sql = sql, mergeAbsentVarnos = mergeAbsent)
-    // :returningList must be checked first, not as a fallback for an empty :targetList: an
-    // INSERT/UPDATE's own :targetList holds the value expressions being written, a different list
-    // from its RETURNING projection, and is often non-empty even when :returningList is what must
-    // be read.
-    val returningEntries = nodeTreeParser.parseReturningList(cte.queryBlock)
-    if (returningEntries.isNotEmpty()) {
-      return returningEntries
-        .filter { !it.isJunk }
-        .sortedBy { it.resultNumber }
-        .map { entry -> !analyzer.isNonNull(entry.expression) }
+    // See PgNodeTreeParser.resultProjection for why :returningList is checked before :targetList.
+    val projection = nodeTreeParser.resultProjection(cte.queryBlock)
+    if (projection.fromReturningList) {
+      return projection.entries.map { entry -> !analyzer.isNonNull(entry.expression) }
     }
     val result = analyzer.extractColumnNullability(cte.queryBlock)
     return result.ifEmpty { null }

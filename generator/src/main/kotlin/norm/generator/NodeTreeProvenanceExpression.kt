@@ -43,10 +43,7 @@ internal fun resolveNodeTreeProvenanceExpression(
   parser: PgNodeTreeParser = PgNodeTreeParser(),
 ): String? {
   val cteBodyBlock = scopedNodeTreeCteQueryBlock(nodeTreeText, provenance.hops, parser) ?: return null
-  val bodyResultNames = (parser.parseReturningList(cteBodyBlock).ifEmpty { parser.parseTargetList(cteBodyBlock) })
-    .filterNot { it.isJunk }
-    .sortedBy { it.resultNumber }
-    .map { it.resultName }
+  val bodyResultNames = parser.resultProjection(cteBodyBlock).entries.map { it.resultName }
 
   val cteInSql = scopedSqlCteDefinition(sql, provenance.hops) ?: return null
   val bodySql = sql.substring(cteInSql.bodyOpenParenthesis + 1, cteInSql.bodyCloseParenthesis)
