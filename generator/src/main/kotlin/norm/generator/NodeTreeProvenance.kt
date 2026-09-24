@@ -101,14 +101,13 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
    * Resolves every non-junk output column of [nodeTreeText], in `SELECT`/`RETURNING` order, to
    * either its [NodeTreeColumnProvenance] or `null` (no CTE provenance for that column).
    *
-   * Reads `:returningList` first, falling back to `:targetList`: a topmost `RETURNING` populates
-   * both, and `:targetList` there holds the values being written, not the columns being returned.
+   * See [PgNodeTreeParser.resultProjection] for which list this reads.
    *
    * @return one entry per non-junk output column, in position order; every entry is `null` when
    *   [nodeTreeText]'s outermost statement has a top-level set operation.
    */
   fun resolveColumnProvenance(nodeTreeText: String): List<NodeTreeColumnProvenance?> {
-    val entries = outputEntries(nodeTreeText).filter { !it.isJunk }.sortedBy { it.resultNumber }
+    val entries = parser.resultProjection(nodeTreeText).entries
     if (entries.isEmpty()) return emptyList()
     if (parser.hasSetOperations(nodeTreeText)) return entries.map { null }
     // A single-frame stack: nodeTreeText's own :cteList is the only scope until the walk
@@ -119,12 +118,6 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
     // distinct blocks rather than to columns times hops. Local to this call: nothing outlives it.
     val rangeTables = mutableMapOf<String, Map<Int, RangeTableEntry>>()
     return entries.map { entry -> resolveVar(entry.expression, nodeTreeText, outermostScope, rangeTables) }
-  }
-
-  /** `:returningList` when non-empty, else `:targetList` — see [resolveColumnProvenance]. */
-  private fun outputEntries(queryBlock: String): List<TargetEntry> {
-    val returningEntries = parser.parseReturningList(queryBlock)
-    return returningEntries.ifEmpty { parser.parseTargetList(queryBlock) }
   }
 
   /**
@@ -181,9 +174,9 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
           if (parser.hasSetOperations(definition.queryBlock)) return null
           hops.add(CteHop(reference.name, reference.ctelevelsup))
           resolvedPosition = currentVar.varattno
-          val bodyEntry = outputEntries(definition.queryBlock).find { it.resultNumber == currentVar.varattno }
+          val bodyEntry = parser.resultProjection(definition.queryBlock).entries
+            .find { it.resultNumber == currentVar.varattno }
             ?: return null
-          if (bodyEntry.isJunk) return null
           val bodyVar = bodyEntry.expression as? PgNodeExpression.Var
           if (bodyVar == null || bodyVar.levelsUp != 0) {
             return NodeTreeColumnProvenance(hops, resolvedPosition)

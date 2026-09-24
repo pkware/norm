@@ -615,4 +615,89 @@ class PgNodeTreeParserTest {
       assertThat(innerVar.varattno).isEqualTo(1)
     }
   }
+
+  @Nested
+  inner class ResultProjectionSelection {
+
+    @Test
+    fun `a non-empty returningList is chosen over a non-empty targetList`() {
+      // An INSERT's own :targetList holds the values being written (here, just "name"), a
+      // different and typically shorter list than its RETURNING projection (here, "id" and "name").
+      val text = """
+        {QUERY :targetList (
+          {TARGETENTRY :expr {CONST :constisnull false} :resno 1 :resname name :resjunk false}
+        ) :returningList (
+          {TARGETENTRY :expr {CONST :constisnull false} :resno 1 :resname id :resjunk false}
+          {TARGETENTRY :expr {CONST :constisnull false} :resno 2 :resname name :resjunk false}
+        )}
+      """.trimIndent()
+      val result = parser.resultProjection(text)
+      assertThat(result.fromReturningList).isTrue()
+      assertThat(result.entries).hasSize(2)
+      assertThat(result.entries[0].resultName).isEqualTo("id")
+      assertThat(result.entries[1].resultName).isEqualTo("name")
+    }
+
+    @Test
+    fun `targetList is used when returningList is absent`() {
+      val text = """
+        {QUERY :targetList (
+          {TARGETENTRY :expr {CONST :constisnull false} :resno 1 :resname name :resjunk false}
+        )}
+      """.trimIndent()
+      val result = parser.resultProjection(text)
+      assertThat(result.fromReturningList).isFalse()
+      assertThat(result.entries).hasSize(1)
+      assertThat(result.entries[0].resultName).isEqualTo("name")
+    }
+
+    @Test
+    fun `junk entries are dropped from the chosen list`() {
+      val text = """
+        {QUERY :returningList (
+          {TARGETENTRY :expr {CONST :constisnull false} :resno 1 :resname id :resjunk false}
+          {TARGETENTRY :expr {CONST :constisnull false} :resno 2 :resname sortkey :resjunk true}
+        )}
+      """.trimIndent()
+      val result = parser.resultProjection(text)
+      assertThat(result.fromReturningList).isTrue()
+      assertThat(result.entries).hasSize(1)
+      assertThat(result.entries[0].resultName).isEqualTo("id")
+    }
+
+    @Test
+    fun `entries out of resno order are sorted by resultNumber`() {
+      val text = """
+        {QUERY :targetList (
+          {TARGETENTRY :expr {CONST :constisnull false} :resno 2 :resname second :resjunk false}
+          {TARGETENTRY :expr {CONST :constisnull false} :resno 1 :resname first :resjunk false}
+        )}
+      """.trimIndent()
+      val result = parser.resultProjection(text)
+      assertThat(result.entries).hasSize(2)
+      assertThat(result.entries[0].resultName).isEqualTo("first")
+      assertThat(result.entries[1].resultName).isEqualTo("second")
+    }
+
+    @Test
+    fun `a returningList that is entirely junk still reports fromReturningList true with empty entries`() {
+      val text = """
+        {QUERY :targetList (
+          {TARGETENTRY :expr {CONST :constisnull false} :resno 1 :resname name :resjunk false}
+        ) :returningList (
+          {TARGETENTRY :expr {CONST :constisnull false} :resno 1 :resname sortkey :resjunk true}
+        )}
+      """.trimIndent()
+      val result = parser.resultProjection(text)
+      assertThat(result.fromReturningList).isTrue()
+      assertThat(result.entries).hasSize(0)
+    }
+
+    @Test
+    fun `malformed input reports fromReturningList false with empty entries`() {
+      val result = parser.resultProjection("not a node tree at all")
+      assertThat(result.fromReturningList).isFalse()
+      assertThat(result.entries).hasSize(0)
+    }
+  }
 }

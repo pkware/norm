@@ -517,3 +517,16 @@ internal data class TargetEntry(
   val originalTableOid: Int = 0,
   val originalColumnNumber: Int = 0,
 )
+
+/**
+ * The result columns [PgNodeTreeParser.resultProjection] selected for one query block — either its
+ * `RETURNING` projection or its plain `SELECT`/`:targetList` projection, junk entries removed and
+ * sorted into result-column order.
+ *
+ * @property fromReturningList `true` iff the node tree's own `:returningList` (before junk
+ *   filtering) is non-empty; `false` when [entries] came from `:targetList` instead.
+ * @property entries the chosen list's own [TargetEntry] items, junk-filtered and sorted by
+ *   [TargetEntry.resultNumber]; empty when the chosen list is entirely junk, absent, or the input
+ *   is malformed.
+ */
+internal data class ResultProjection(val fromReturningList: Boolean, val entries: List<TargetEntry>)
