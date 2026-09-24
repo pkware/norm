@@ -171,6 +171,22 @@ class SqlOutputClauseTest {
     }
 
     @Test
+    fun `a qualified column named from does not truncate the select list at its own name`() {
+      val result = parseSelectItems("SELECT s.from FROM s")
+      assertThat(result).containsExactly(
+        SelectItem("s.from", "from", "s"),
+      )
+    }
+
+    @Test
+    fun `a qualified column named returning is not taken for the RETURNING clause itself`() {
+      val result = parseSelectItems("INSERT INTO t(a) SELECT s.returning FROM s RETURNING a")
+      assertThat(result).containsExactly(
+        SelectItem("a", "a", null),
+      )
+    }
+
+    @Test
     fun `WITH RECURSIVE CTE body SELECT is not mistaken for the main query's SELECT`() {
       // The CTE body's own SELECT ("SELECT label FROM parent_name") used to be picked over the
       // main query's SELECT ("SELECT id, name FROM new_parent") because the old implementation

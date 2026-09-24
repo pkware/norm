@@ -185,134 +185,101 @@ internal fun findKeyword(sql: String, keyword: String, startIndex: Int = 0): Int
 }
 
 /**
- * Finds the top-level `RETURNING` clause keyword in [sql] — distinguishing it from a bare
- * `returning` used as an explicit `AS returning` column alias, which is otherwise legal PostgreSQL
- * syntax. On PostgreSQL 18.4, `CREATE TABLE bad (returning int)`, `FROM t returning`, `t AS
- * returning`, and the implicit alias `SELECT email returning FROM users` are all syntax errors —
- * an explicit `AS returning` column alias is the only position a bare `returning` token is legal
- * in. A plain [findTopLevelKeyword] search returns the first match, which can be that alias
- * rather than the real clause (`SELECT email AS returning, x FROM t RETURNING id` — the alias
- * comes first); this function instead returns the first `RETURNING` not immediately preceded by
- * the word `AS`, which is exact rather than heuristic given the grammar fact above — an alias
- * position is always `AS`-preceded, and the real clause keyword never is.
+ * Finds the `RETURNING` keyword that opens a DML statement's `RETURNING` clause.
  *
- * A forward single-pass walk in the style of [findTopLevelKeyword]: parenthesis depth is tracked
- * so only a depth-0 `RETURNING` counts, and [skipLexicalToken] skips string literals, quoted
- * identifiers, dollar-quoted strings, and comments so a keyword-like substring inside one of those
- * is never mistaken for a real keyword. A comment does not disturb the "was the previous word
- * `AS`" state — a comment between `AS` and its alias is a separator, not a token (both `SELECT 1
- * AS/*c*/returning` and `SELECT 1 AS--x` followed by a newline then `returning` are legal
- * syntax) — while a string literal, quoted identifier, or dollar-quoted string does clear that
- * state, since none of those can themselves be the word `AS`. Plain whitespace, like a comment,
- * is also not disturbing: it is the ordinary separator between `AS` and an unquoted alias, which
- * is the common case this function must not break. Any other character (a parenthesis, comma, or
- * operator) clears the state, since none of those can be the word `AS` either. Word-boundary
- * handling is inherently correct here, unlike a substring search would be, because the walk
- * consumes whole words at a time via [isIdentifierChar] — an ordinary identifier like
- * `returning_batch`, or one continuing with a `>= 0x80` character like `returning€` (a legal
- * PostgreSQL column name — PostgreSQL's lexer admits any byte `>= 0x80` inside an unquoted
- * identifier), is read as one word, never mistaken for the bare keyword. Stopping the word scan
- * at `€` instead would see the bare word `returning` and misidentify the alias position as the
- * real clause.
+ * For `SELECT email AS returning, x FROM t RETURNING id`, this returns the index of the uppercase `RETURNING`.
  *
- * The identifier branch is checked before the whitespace branch, deliberately: Kotlin's
- * `Char.isWhitespace()` is `true` for several `>= 0x80` characters PostgreSQL does not treat as
- * whitespace at all (e.g. U+00A0 no-break space, U+2000-U+200A the various Unicode spaces, U+3000
- * ideographic space) — every character PostgreSQL's own lexer treats as whitespace is ASCII
- * (`< 0x80`), so [isIdentifierChar]'s wide `>= 0x80` branch never conflicts with a genuine
- * PostgreSQL whitespace character. Checking whitespace first would let one of those non-ASCII
- * "whitespace" characters act as an ordinary separator between two otherwise-adjacent words —
- * splitting what PostgreSQL's lexer reads as one identifier into a leading word that can, in turn,
- * be misread as the bare `RETURNING` keyword.
- *
- * @return The index of the keyword, or `-1` if there is no top-level `RETURNING` that isn't itself
- *   an `AS`-preceded column alias.
+ * @return The index of the keyword, or `-1` if [sql] has no top-level `RETURNING` clause.
  */
-internal fun findTopLevelReturningKeyword(sql: String): Int {
-  var depth = 0
-  var previousWordIsAs = false
-  var i = 0
-  while (i < sql.length) {
-    val afterToken = skipLexicalToken(sql, i)
-    if (afterToken != i) {
-      val isComment = sql[i] == '-' || sql[i] == '/'
-      if (!isComment) previousWordIsAs = false
-      i = afterToken
-      continue
-    }
-    when {
-      isIdentifierChar(sql[i]) -> {
-        val wordStart = i
-        while (i < sql.length && isIdentifierChar(sql[i])) i++
-        val word = sql.substring(wordStart, i)
-        if (depth == 0 && word.equals("RETURNING", ignoreCase = true) && !previousWordIsAs) {
-          return wordStart
-        }
-        previousWordIsAs = word.equals("AS", ignoreCase = true)
-      }
-      sql[i].isWhitespace() -> i++
-      else -> {
-        when (sql[i]) {
-          '(' -> depth++
-          ')' -> depth--
-        }
-        previousWordIsAs = false
-        i++
-      }
-    }
-  }
-  return -1
-}
+internal fun findTopLevelReturningKeyword(sql: String): Int = findTopLevelClauseKeyword(sql, "RETURNING", 0)
 
 /**
- * Finds the top-level `FROM` keyword that opens a `SELECT`'s `FROM` clause, in [sql] starting at or
- * after [startIndex] — distinguishing it from a bare `FROM` that is really part of `IS [NOT]
- * DISTINCT FROM`'s own comparison syntax, which has no clause boundary at that `FROM` at all. A
- * plain [findTopLevelKeyword] search returns the first depth-0 `FROM`, which for `SELECT a IS
- * DISTINCT FROM b FROM t` is the one inside `IS DISTINCT FROM` — truncating the select list to `a IS
- * DISTINCT` and treating `b FROM t` as if it were the real clause.
+ * Finds the `FROM` keyword that opens a `SELECT`'s `FROM` clause, searching [sql] from [startIndex].
  *
- * A forward single-pass walk in the style of [findTopLevelReturningKeyword]: a depth-0 `FROM` is
- * skipped when the word immediately preceding it is `DISTINCT` — the only grammar production in
- * which a bare, unparenthesized `FROM` can appear without opening a real `FROM` clause.
- * `EXTRACT(field FROM source)`, `SUBSTRING(x FROM y)`, and `OVERLAY(... FROM z ...)` all wrap their
- * own `FROM` inside that function call's own parentheses, already excluded by
- * [findTopLevelKeyword]'s ordinary depth tracking. A comment between `DISTINCT` and `FROM` does not
- * disturb this check, exactly as [findTopLevelReturningKeyword]'s own `AS` check treats a comment
- * between `AS` and its alias as a separator, not a token.
+ * For `SELECT a IS DISTINCT FROM b FROM t`, this returns the index of the second `FROM`.
  *
- * @return The index of the keyword, or `-1` if there is no top-level `FROM` at or after
- *   [startIndex] that isn't itself part of `IS [NOT] DISTINCT FROM`.
+ * @return The index of the keyword, or `-1` if no top-level `FROM` clause starts at or after [startIndex].
  */
-internal fun findTopLevelFromClauseKeyword(sql: String, startIndex: Int): Int {
+internal fun findTopLevelFromClauseKeyword(sql: String, startIndex: Int): Int =
+  findTopLevelClauseKeyword(sql, "FROM", startIndex)
+
+/**
+ * Finds the first depth-0 [keyword] in [sql], at or after [startIndex], that PostgreSQL parses as a keyword.
+ *
+ * Text that [skipLexicalToken] skips does not match. A word spelled like [keyword] also does not match when it is:
+ * - a qualified name's field, as in `s.from` or `(s).from`;
+ * - a column label, as in `1 AS from`;
+ * - the `FROM` of `IS [NOT] DISTINCT FROM`.
+ *
+ * @return The index of the keyword, or `-1` if there is none.
+ */
+private fun findTopLevelClauseKeyword(sql: String, keyword: String, startIndex: Int): Int {
   var depth = 0
-  var previousWordIsDistinct = false
+  // Set by a `.` that qualifies the next word. The `.` in `1.` belongs to the numeric literal.
+  var precededByQualificationDot = false
+  var previousTokenIsDigitLeadingWord = false
+  var previousWord: String? = null
+  var previousWordInPosition = false
+  var wordBeforePrevious: String? = null
+  var wordBeforePreviousInPosition = false
   var i = startIndex
   while (i < sql.length) {
     val afterToken = skipLexicalToken(sql, i)
     if (afterToken != i) {
+      // A comment separates words the way whitespace does. A literal or quoted identifier cannot be a qualifier
+      // or keyword, so it clears the state.
       val isComment = sql[i] == '-' || sql[i] == '/'
-      if (!isComment) previousWordIsDistinct = false
+      if (!isComment) {
+        precededByQualificationDot = false
+        previousTokenIsDigitLeadingWord = false
+        previousWord = null
+        previousWordInPosition = false
+        wordBeforePrevious = null
+        wordBeforePreviousInPosition = false
+      }
       i = afterToken
       continue
     }
+    // `Char.isWhitespace()` accepts non-ASCII spaces such as U+00A0, which PostgreSQL reads as identifier
+    // characters, so the identifier branch comes first.
     when {
       isIdentifierChar(sql[i]) -> {
         val wordStart = i
         while (i < sql.length && isIdentifierChar(sql[i])) i++
         val word = sql.substring(wordStart, i)
-        if (depth == 0 && word.equals("FROM", ignoreCase = true) && !previousWordIsDistinct) {
-          return wordStart
-        }
-        previousWordIsDistinct = word.equals("DISTINCT", ignoreCase = true)
+        val afterAs = previousWordInPosition && previousWord.equals("AS", ignoreCase = true)
+        val afterIsDistinct = previousWordInPosition &&
+          previousWord.equals("DISTINCT", ignoreCase = true) &&
+          wordBeforePreviousInPosition &&
+          (wordBeforePrevious.equals("IS", ignoreCase = true) || wordBeforePrevious.equals("NOT", ignoreCase = true))
+        val inPosition = !precededByQualificationDot && !afterAs && !afterIsDistinct
+        if (depth == 0 && word.equals(keyword, ignoreCase = true) && inPosition) return wordStart
+        wordBeforePrevious = previousWord
+        wordBeforePreviousInPosition = previousWordInPosition
+        previousWord = word
+        previousWordInPosition = inPosition
+        precededByQualificationDot = false
+        previousTokenIsDigitLeadingWord = word[0].isDigit()
       }
       sql[i].isWhitespace() -> i++
+      sql[i] == '.' -> {
+        // Unquoted identifiers cannot start with a digit, so a digit-leading word before `.` is a numeric literal
+        // such as `1.` or `1_000.`.
+        precededByQualificationDot = !previousTokenIsDigitLeadingWord
+        previousTokenIsDigitLeadingWord = false
+        i++
+      }
       else -> {
         when (sql[i]) {
           '(' -> depth++
           ')' -> depth--
         }
-        previousWordIsDistinct = false
+        precededByQualificationDot = false
+        previousTokenIsDigitLeadingWord = false
+        previousWord = null
+        previousWordInPosition = false
+        wordBeforePrevious = null
+        wordBeforePreviousInPosition = false
         i++
       }
     }
