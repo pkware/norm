@@ -1,7 +1,5 @@
 package norm.generator
 
-import norm.generator.NodeTreeNullabilityAnalyzer.Companion.MAX_EXPRESSION_DEPTH
-
 /**
  * Substitutes every [PgNodeExpression.Var] in [expression] that references a PostgreSQL 18+ GROUP
  * RTE (see [groupExpressions]) with the resolved `:groupexprs` expression
