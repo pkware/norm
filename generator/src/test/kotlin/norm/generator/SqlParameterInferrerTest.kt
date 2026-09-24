@@ -22,6 +22,7 @@ class SqlParameterInferrerTest {
     "upper" to listOf(FunctionOverload(listOf("str"), isStrict = true)),
     // PostgreSQL's pg_proc for the 3-arg overload has proargnames = {string,pattern,replacement}.
     "regexp_replace" to listOf(FunctionOverload(listOf("string", "pattern", "replacement"), isStrict = true)),
+    "concat" to listOf(FunctionOverload(emptyList(), isStrict = true)),
   )
 
   private val inferrer = SqlParameterInferrer(functionOverloads)
@@ -356,6 +357,131 @@ class SqlParameterInferrerTest {
       // starts at "f".
       val match = FUNCTION_CALL_START.find("SELECT 2fn(?)")
       assertThat(match!!.groupValues[1]).isEqualTo("fn")
+    }
+  }
+
+  @Nested
+  inner class LiteralQuestionMarksAreNotPlaceholders {
+    @Test
+    fun `does not count a question mark inside a string literal as a placeholder`() {
+      // A raw scan for every "?" character treats the one inside 'ok?' as the first placeholder,
+      // shifting the real placeholder's number down by one. placeholderPositions only counts a "?"
+      // that skipLexicalToken does not swallow, so the one real placeholder here is parameter 1.
+      val result = inferrer.inferParameterInfo("SELECT * FROM notes WHERE note = 'ok?' AND id = ?")
+      assertThat(result.getValue(1).name).isEqualTo("id")
+    }
+  }
+
+  @Nested
+  inner class NonPlaceholderQuestionMarksDoNotCorruptOtherMatches {
+    @Test
+    fun `a comparison-shaped fragment inside a string literal is not attributed to a real parameter`() {
+      // COLUMN_COMPARES_PARAM scans raw text, so "x = ?" inside the string literal 'x = ?' still
+      // matches as if "x" were a real column compared against a placeholder. Once placeholderPositions
+      // excludes the "?" inside the literal, that spurious match's paramNumberAt lookup returns null
+      // and is skipped, leaving only the real "id = ?" comparison.
+      val result = inferrer.inferParameterInfo("SELECT * FROM notes WHERE note = 'x = ?' AND id = ?")
+      assertThat(result.size).isEqualTo(1)
+      assertThat(result.getValue(1).name).isEqualTo("id")
+    }
+
+    @Test
+    fun `a question mark inside a VALUES expression's own string literal is not attributed to its column`() {
+      val result = inferrer.inferParameterInfo("INSERT INTO notes(a, b) VALUES ('?', ?)")
+      assertThat(result.size).isEqualTo(1)
+      assertThat(result.getValue(1).columnName).isEqualTo("b")
+    }
+
+    @Test
+    fun `a question mark inside a function argument's string literal is not counted as its placeholder`() {
+      val result = inferrer.inferParameterInfo("SELECT concat('?', ?)")
+      assertThat(result.size).isEqualTo(1)
+      assertThat(result.getValue(1).name).isEqualTo("concat_param2")
+    }
+
+    @Test
+    fun `a question mark inside a function argument's string literal does not spuriously name a second parameter`() {
+      val result = inferrer.inferParameterInfo("SELECT crypt(?, '?')")
+      assertThat(result.size).isEqualTo(1)
+      assertThat(result.getValue(1).name).isEqualTo("password")
+    }
+
+    @Test
+    fun `a function call with no real placeholder does not bump the repeated-call suffix counter`() {
+      // digest('?') has no real placeholder in its argument list, so it must not be counted as a
+      // call at all -- otherwise the second, real digest(?, ?) call is wrongly numbered as the
+      // second call and its parameters get the "digest2_" suffix instead of "digest_".
+      val result = inferrer.inferParameterInfo("SELECT digest('?'), digest(?, ?)")
+      assertThat(result.size).isEqualTo(2)
+      assertThat(result.getValue(1).name).isEqualTo("digest_param1")
+      assertThat(result.getValue(2).name).isEqualTo("digest_param2")
+    }
+  }
+
+  @Nested
+  inner class WhereBoundaryIgnoresLiteralsAndComments {
+    @Test
+    fun `a WHERE keyword inside a string literal before the real SET clause does not truncate the SET clause`() {
+      val result = inferrer.inferParameterInfo(
+        "UPDATE t SET note = 'find WHERE it fits', col = ? WHERE id = ?",
+      )
+      assertThat(result.getValue(1).inheritsNullability).isTrue()
+      assertThat(result.getValue(2).inheritsNullability).isFalse()
+    }
+
+    @Test
+    fun `a WHERE keyword inside a line comment before the real SET clause does not truncate the SET clause`() {
+      val result = inferrer.inferParameterInfo(
+        "UPDATE t SET -- WHERE fake\n col = ? WHERE id = ?",
+      )
+      assertThat(result.getValue(1).inheritsNullability).isTrue()
+      assertThat(result.getValue(2).inheritsNullability).isFalse()
+    }
+
+    @Test
+    fun `a WHERE inside a subquery preceding the outer WHERE still classifies both parameters as non-inheriting`() {
+      // Not new behavior -- a whole-word, lexer-aware WHERE search still finds the first WHERE
+      // regardless of parenthesis depth, exactly as the plain regex it replaces did. Kept as a
+      // regression guard that the depth-ignoring redesign does not start restricting to depth 0.
+      val result = inferrer.inferParameterInfo(
+        "SELECT (SELECT x FROM u WHERE u.id = ?) FROM t WHERE t.id = ?",
+      )
+      assertThat(result.getValue(1).inheritsNullability).isFalse()
+      assertThat(result.getValue(2).inheritsNullability).isFalse()
+    }
+  }
+
+  @Nested
+  inner class ValuesLocatedAsKeyword {
+    @Test
+    fun `a VALUES keyword inside a block comment is not mistaken for the real VALUES clause`() {
+      val result = inferrer.inferParameterInfo("INSERT INTO t(a) /* VALUES (b) */ VALUES (?)")
+      assertThat(result.getValue(1).columnName).isEqualTo("a")
+    }
+  }
+
+  @Nested
+  inner class InsertColumnListIsLexerAware {
+    @Test
+    fun `splits a quoted INSERT column list containing an embedded comma and close parenthesis`() {
+      val result = inferrer.inferParameterInfo("""INSERT INTO t("a,b", "c)d") VALUES (?, ?)""")
+      assertThat(result.getValue(1).columnName).isEqualTo("a,b")
+      assertThat(result.getValue(2).columnName).isEqualTo("c)d")
+    }
+  }
+
+  @Nested
+  inner class IdentifierShapeMatchesSqlIdentifiers {
+    @Test
+    fun `infers a column name containing a dollar sign`() {
+      val result = inferrer.inferParameterInfo("SELECT * FROM t WHERE my\$col = ?")
+      assertThat(result.getValue(1).name).isEqualTo("my\$col")
+    }
+
+    @Test
+    fun `infers a table name containing a non-ASCII identifier character`() {
+      val result = inferrer.inferParameterInfo("UPDATE t€ SET a = ?")
+      assertThat(result.getValue(1).tableName).isEqualTo("t€")
     }
   }
 }

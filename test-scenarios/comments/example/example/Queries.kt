@@ -492,4 +492,30 @@ public interface Queries : Transactable {
    */
   @Throws(SQLException::class)
   public fun getOrderIdAndUser(id: Int): Order = getOrderIdAndUser(id, ::Order)
+
+  /**
+   * A "?" inside the 'ok?' string literal must never be counted as a bind parameter -- the query has
+   * exactly one, for id.
+   *
+   * ```sql
+   * SELECT id, title FROM book WHERE title = 'ok?' AND id = ?
+   * ```
+   *
+   * @param id Unique identifier for the book.
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> getBookByTitleContainingQuestionMark(id: Int, mapper: (id: Int, title: String) -> T): T
+
+  /**
+   * A "?" inside the 'ok?' string literal must never be counted as a bind parameter -- the query has
+   * exactly one, for id.
+   *
+   * ```sql
+   * SELECT id, title FROM book WHERE title = 'ok?' AND id = ?
+   * ```
+   *
+   * @param id Unique identifier for the book.
+   */
+  @Throws(SQLException::class)
+  public fun getBookByTitleContainingQuestionMark(id: Int): GetBookByTitleContainingQuestionMark = getBookByTitleContainingQuestionMark(id, ::GetBookByTitleContainingQuestionMark)
 }

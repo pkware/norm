@@ -124,6 +124,36 @@ class SqlPlaceholdersTest {
   }
 
   @Nested
+  inner class PlaceholderPositionsTest {
+
+    @Test
+    fun `finds each top-level placeholder position`() {
+      val sql = "SELECT a FROM t WHERE a = ? AND b = ?"
+      val result = placeholderPositions(sql)
+      assertThat(result.toList()).isEqualTo(listOf(sql.indexOf('?'), sql.lastIndexOf('?')))
+    }
+
+    @Test
+    fun `excludes a question mark inside a string literal`() {
+      val sql = "SELECT * FROM t WHERE note = 'ok?' AND id = ?"
+      val result = placeholderPositions(sql)
+      assertThat(result.toList()).isEqualTo(listOf(sql.lastIndexOf('?')))
+    }
+
+    @Test
+    fun `excludes a question mark inside a line comment`() {
+      val sql = "SELECT * FROM t -- why?\nWHERE id = ?"
+      val result = placeholderPositions(sql)
+      assertThat(result.toList()).isEqualTo(listOf(sql.lastIndexOf('?')))
+    }
+
+    @Test
+    fun `returns an empty array when there are no placeholders`() {
+      assertThat(placeholderPositions("SELECT * FROM t").toList()).isEqualTo(emptyList<Int>())
+    }
+  }
+
+  @Nested
   inner class NonNullSentinel {
 
     @Test

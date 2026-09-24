@@ -60,12 +60,14 @@ internal fun findMatchingCloseParenthesis(
  * a string literal containing a stray `,` or unbalanced bracket) is not mistaken for a real one.
  *
  * This function is also used by `SqlParameterInferrer.extractFunctionCalls` (a function call's
- * comma-separated arguments) and `SqlParameterInferrer.extractValuesExpressions` (an `INSERT ...
- * VALUES (...)` clause's comma-separated expressions) to attribute each `?` placeholder to its
- * argument/column position for parameter-name inference: a multi-element `ARRAY[...]` literal
- * (2+ placeholders inside it) must be tracked as one argument/column slot, not split into several
- * by its own internal commas, or every placeholder sharing that argument list or `VALUES` list —
- * including ones inside the array itself — gets attributed to the wrong position.
+ * comma-separated arguments), `SqlParameterInferrer.extractValuesExpressions` (an `INSERT ...
+ * VALUES (...)` clause's comma-separated expressions), and its INSERT column list (`INSERT INTO
+ * t(col1, col2)`, split the same way so a quoted column name containing its own `)` or `,` is not
+ * mistaken for a list boundary) to attribute each `?` placeholder to its argument/column position
+ * for parameter-name inference: a multi-element `ARRAY[...]` literal (2+ placeholders inside it)
+ * must be tracked as one argument/column slot, not split into several by its own internal commas,
+ * or every placeholder sharing that argument list or `VALUES` list — including ones inside the
+ * array itself — gets attributed to the wrong position.
  */
 internal fun splitAtTopLevel(text: String, delimiter: Char): List<String> {
   val items = mutableListOf<String>()
@@ -147,6 +149,37 @@ internal fun findTopLevelKeyword(sql: String, keyword: String, startIndex: Int =
         i++
       }
     }
+  }
+  return -1
+}
+
+/**
+ * Finds the first occurrence of [keyword] in [sql], starting at [startIndex], as a complete word at
+ * any parenthesis depth — unlike [findTopLevelKeyword], which only matches at depth 0.
+ *
+ * Skips over string literals, quoted identifiers, dollar-quoted strings, and comments via
+ * [skipLexicalToken] so a keyword-like word inside one of those (e.g. a `VALUES` inside a `/* */`
+ * comment, or a `WHERE` inside the string literal `'copied from WHERE'`) is never mistaken for the
+ * real keyword. A candidate match is also rejected — via [isIdentifierChar] — when it is adjacent
+ * to any character PostgreSQL allows inside an unquoted identifier, so `wherefore` is never
+ * mistaken for the keyword `WHERE`.
+ *
+ * @return The index of the keyword, or `-1` if not found.
+ */
+internal fun findKeyword(sql: String, keyword: String, startIndex: Int = 0): Int {
+  var i = startIndex
+  while (i <= sql.length - keyword.length) {
+    val afterToken = skipLexicalToken(sql, i)
+    if (afterToken != i) {
+      i = afterToken
+      continue
+    }
+    if (sql.regionMatches(i, keyword, 0, keyword.length, ignoreCase = true)) {
+      val before = i == 0 || !isIdentifierChar(sql[i - 1])
+      val after = i + keyword.length >= sql.length || !isIdentifierChar(sql[i + keyword.length])
+      if (before && after) return i
+    }
+    i++
   }
   return -1
 }

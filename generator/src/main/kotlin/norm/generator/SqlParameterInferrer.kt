@@ -35,9 +35,14 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
 
     // INSERT INTO table(col1, col2) VALUES (?, func(?), ...)
     val insertMatch = INSERT_INTO.find(sql)
-    if (insertMatch != null) {
+    val insertColumnListEnd = insertMatch?.let { findMatchingCloseParenthesis(sql, it.range.last) }?.takeIf { it >= 0 }
+    if (insertMatch != null && insertColumnListEnd != null) {
       val tableName = tableSimpleName(insertMatch.groupValues[1])
-      val columns = insertMatch.groupValues[2].split(",").map { unquoteIdentifier(it.trim()) }
+      // The column list spans to its matching ")" via findMatchingCloseParenthesis (not the first
+      // ")" encountered) and is split with splitAtTopLevel, so a quoted column name containing its
+      // own ")" or "," (e.g. "c)d") is not mistaken for a list boundary.
+      val columnListText = sql.substring(insertMatch.range.last + 1, insertColumnListEnd)
+      val columns = splitAtTopLevel(columnListText, ',').map { unquoteIdentifier(it.trim()) }
       val valueExpressions = extractValuesExpressions(sql)
       if (valueExpressions != null) {
         val (expressions, contentStart) = valueExpressions
@@ -50,7 +55,9 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
           val columnName = columns[colIndex]
           for (charIdx in expr.indices) {
             if (expr[charIdx] == '?') {
-              val paramNum = paramIndex.paramNumberAt(exprOffset + charIdx)
+              // A "?" this raw char scan finds may sit inside a string literal within the same
+              // expression (e.g. VALUES ('?', ?)) rather than being a real placeholder; skip it.
+              val paramNum = paramIndex.paramNumberAt(exprOffset + charIdx) ?: continue
               val displayName = funcNames[paramNum] ?: columnName
               params[paramNum] =
                 InferredParameter(displayName, tableName, inheritsNullability = true, columnName = columnName)
@@ -72,7 +79,10 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
     val tableName = UPDATE_TABLE.find(sql)?.groupValues?.get(1)?.let(::tableSimpleName)
       ?: DELETE_FROM.find(sql)?.groupValues?.get(1)?.let(::tableSimpleName)
       ?: FROM_TABLE.find(sql)?.groupValues?.get(1)?.let(::tableSimpleName)
-    val whereIndex = WHERE_KEYWORD.find(sql)?.range?.first ?: -1
+    // Any depth, not just the top level: in `SELECT (SELECT x FROM u WHERE u.id = ?) FROM t WHERE t.id = ?`
+    // a top-level search would put `u.id = ?` before the split, in the SET branch, where it would
+    // inherit the column's nullability even though it is a comparison.
+    val whereIndex = findKeyword(sql, "WHERE")
 
     // COALESCE pattern: SET col = coalesce(?, fallback) — always nullable regardless of column constraint.
     // Scoped to the SET clause (before WHERE) so it doesn't affect WHERE conditions.
@@ -81,7 +91,9 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
     for (match in COLUMN_EQUALS_COALESCE_PARAM.findAll(setClauseForCoalesce)) {
       val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::unquoteIdentifier)
       val colName = unquoteIdentifier(match.groupValues[2])
-      val paramNum = paramIndex.paramNumberAt(match.range.last)
+      // This regex scans raw text, so it can match a "col = coalesce(?"-shaped fragment sitting
+      // inside a string literal or comment; skip anything whose "?" isn't a real placeholder.
+      val paramNum = paramIndex.paramNumberAt(match.range.last) ?: continue
       if (paramNum !in params) {
         params[paramNum] =
           InferredParameter(colName, qualifiedTable ?: tableName, inheritsNullability = false, alwaysNullable = true)
@@ -94,7 +106,9 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
       for (match in COLUMN_COMPARES_PARAM.findAll(setClause)) {
         val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::unquoteIdentifier)
         val colName = unquoteIdentifier(match.groupValues[2])
-        val paramNum = paramIndex.paramNumberAt(match.range.last)
+        // This regex scans raw text, so a "?" it matches on may sit inside a string literal or
+        // comment rather than being a real placeholder; skip anything that isn't real.
+        val paramNum = paramIndex.paramNumberAt(match.range.last) ?: continue
         if (paramNum !in params) {
           params[paramNum] =
             InferredParameter(funcNames[paramNum] ?: colName, qualifiedTable ?: tableName, inheritsNullability = true)
@@ -106,7 +120,7 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
       for (match in COLUMN_COMPARES_PARAM.findAll(whereClause)) {
         val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::unquoteIdentifier)
         val colName = unquoteIdentifier(match.groupValues[2])
-        val paramNum = paramIndex.paramNumberAt(whereIndex + match.range.last)
+        val paramNum = paramIndex.paramNumberAt(whereIndex + match.range.last) ?: continue
         if (paramNum !in params) {
           params[paramNum] =
             InferredParameter(funcNames[paramNum] ?: colName, qualifiedTable ?: tableName, inheritsNullability = false)
@@ -122,7 +136,7 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
       for (match in COLUMN_COMPARES_PARAM.findAll(sql)) {
         val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::unquoteIdentifier)
         val colName = unquoteIdentifier(match.groupValues[2])
-        val paramNum = paramIndex.paramNumberAt(match.range.last)
+        val paramNum = paramIndex.paramNumberAt(match.range.last) ?: continue
         if (paramNum !in params) {
           params[paramNum] =
             InferredParameter(
@@ -192,7 +206,7 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
     // First call to crypt → "crypt", second → "crypt2", etc.
     val functionCallCounts = mutableMapOf<String, Int>()
 
-    for (call in extractFunctionCalls(sql)) {
+    for (call in extractFunctionCalls(sql, paramIndex)) {
       val funcName = call.name.lowercase()
       val argExpressions = call.args
 
@@ -215,7 +229,7 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
         // Only assign the name if the argument contains a single ? (possibly with whitespace).
         // For complex expressions like `gen_salt('bf')`, there's no ? to name.
         if (paramPositions.size == 1) {
-          val paramNum = paramIndex.paramNumberAt(paramPositions[0])
+          val paramNum = paramIndex.paramNumberAt(paramPositions[0]) ?: continue
           if (paramNum !in result) {
             val formalName = formalNames?.getOrNull(argIndex)?.takeIf { it.isNotEmpty() }
             result[paramNum] = formalName ?: "${callPrefix}_param${argIndex + 1}"
@@ -238,7 +252,7 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
    *
    * @return List of [FunctionCall] instances with argument expressions and their `?` positions.
    */
-  private fun extractFunctionCalls(sql: String): List<FunctionCall> {
+  private fun extractFunctionCalls(sql: String, paramIndex: ParamIndex): List<FunctionCall> {
     val calls = mutableListOf<FunctionCall>()
 
     for (match in FUNCTION_CALL_START.findAll(sql)) {
@@ -249,11 +263,13 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
       val closeParenthesis = findMatchingCloseParenthesis(sql, openParenthesis)
       if (closeParenthesis < 0) continue
 
-      val argsText = sql.substring(openParenthesis + 1, closeParenthesis)
-      // Only include calls that contain at least one positional parameter
-      if ('?' in argsText) {
+      // Only include calls that contain at least one real placeholder. A "?" inside a string
+      // literal argument (e.g. digest('?')) doesn't count, and must not bump functionCallCounts
+      // in inferFunctionArgNames -- doing so would misnumber a later, real call to the same function.
+      if (paramIndex.hasPlaceholderIn(openParenthesis + 1, closeParenthesis)) {
+        val argsText = sql.substring(openParenthesis + 1, closeParenthesis)
         val splitArgs = splitAtTopLevel(argsText, ',')
-        val args = buildArgExpressions(splitArgs, sqlIndexOfFirstArg = openParenthesis + 1)
+        val args = buildArgExpressions(splitArgs, sqlIndexOfFirstArg = openParenthesis + 1, paramIndex)
         calls.add(FunctionCall(funcName, args))
       }
     }
@@ -263,14 +279,20 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
 
   /**
    * Converts comma-split argument text into [ArgExpression] objects, recording the SQL-level
-   * character index of each `?` so that [ParamIndex] can map it to a parameter number.
+   * character index of each real placeholder so that [ParamIndex] can map it to a parameter number.
+   * A `?` that is not a real placeholder (e.g. one inside a string literal argument) is excluded,
+   * so an argument like `'?'` counts as having none, not one.
    *
    * @param commaDelimitedArgs The raw argument strings produced by [splitAtTopLevel], potentially
    *   with leading/trailing whitespace (e.g., `[" digest(?, ?)", " ?"]`).
    * @param sqlIndexOfFirstArg The char index in the original SQL where the argument list begins
    *   (i.e., the position right after the opening parenthesis of the function call).
    */
-  private fun buildArgExpressions(commaDelimitedArgs: List<String>, sqlIndexOfFirstArg: Int): List<ArgExpression> {
+  private fun buildArgExpressions(
+    commaDelimitedArgs: List<String>,
+    sqlIndexOfFirstArg: Int,
+    paramIndex: ParamIndex,
+  ): List<ArgExpression> {
     val result = mutableListOf<ArgExpression>()
     var sqlOffset = sqlIndexOfFirstArg
     for (rawArg in commaDelimitedArgs) {
@@ -281,7 +303,8 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
       val paramPositions = mutableListOf<Int>()
       for (i in trimmed.indices) {
         if (trimmed[i] == '?') {
-          paramPositions.add(trimmedStartInSql + i)
+          val globalPosition = trimmedStartInSql + i
+          if (paramIndex.isPlaceholderAt(globalPosition)) paramPositions.add(globalPosition)
         }
       }
 
@@ -306,9 +329,9 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
    *   VALUES clause is found.
    */
   private fun extractValuesExpressions(sql: String): Pair<List<String>, Int>? {
-    val valuesIdx = sql.indexOf("VALUES", ignoreCase = true)
+    val valuesIdx = findKeyword(sql, "VALUES")
     if (valuesIdx < 0) return null
-    val openParenthesis = sql.indexOf('(', valuesIdx + 6)
+    val openParenthesis = sql.indexOf('(', valuesIdx + "VALUES".length)
     if (openParenthesis < 0) return null
     val closeParenthesis = findMatchingCloseParenthesis(sql, openParenthesis)
     if (closeParenthesis < 0) return null
@@ -318,29 +341,23 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
   }
 
   private companion object {
-    // Matches either a double-quoted SQL identifier ("name") or an unquoted one (word). The
-    // quoted branch allows a doubled internal quote (`""`) so it can span PostgreSQL's own
-    // quoted-identifier escape for an embedded `"` character -- `"[^"]+"` alone stops at the first
-    // internal quote, matching only a trailing fragment like `"b"` out of `"a""b"`.
-    private const val SQL_IDENTIFIER = """(?:"(?:[^"]|"")+"|\w+)"""
-
-    // Matches a possibly schema-qualified table name: `table`, `"table"`, or `"schema"."table"`.
-    private const val QUALIFIED_TABLE = """($SQL_IDENTIFIER(?:\.$SQL_IDENTIFIER)?)"""
+    // Matches a possibly schema-qualified table name: `table`, `"table"`, or `"schema"."table"`,
+    // using SqlIdentifiers.kt's own identifier shape rather than a separate, narrower one (a bare
+    // `\w+` excludes both `$` and any `>= 0x80` character, both legal in an unquoted PostgreSQL
+    // identifier after its first character).
+    private const val QUALIFIED_TABLE =
+      """($COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED(?:\.$COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED)?)"""
 
     private val INSERT_INTO =
-      Regex("""INSERT\s+INTO\s+$QUALIFIED_TABLE\s*\(([^)]+)\)""", RegexOption.IGNORE_CASE)
+      Regex("""INSERT\s+INTO\s+$QUALIFIED_TABLE\s*\(""", RegexOption.IGNORE_CASE)
     private val UPDATE_TABLE = Regex("""UPDATE\s+$QUALIFIED_TABLE\s""", RegexOption.IGNORE_CASE)
     private val DELETE_FROM = Regex("""DELETE\s+FROM\s+$QUALIFIED_TABLE""", RegexOption.IGNORE_CASE)
     private val FROM_TABLE = Regex("""\bFROM\s+$QUALIFIED_TABLE""", RegexOption.IGNORE_CASE)
 
-    /**
-     * Matches the WHERE keyword as a standalone word, handling any surrounding whitespace including newlines.
-     * This supports multi-line SQL where WHERE may appear on its own line preceded by `\n` rather than a space.
-     */
-    private val WHERE_KEYWORD = Regex("""\bWHERE\b""", RegexOption.IGNORE_CASE)
     private val COLUMN_COMPARES_PARAM =
       Regex(
-        """(?:($SQL_IDENTIFIER)\.)?($SQL_IDENTIFIER)\s*(?:=|<>|!=|>=|<=|>|<|LIKE|ILIKE)\s*\?""",
+        """(?:($COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED)\.)?($COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED)""" +
+          """\s*(?:=|<>|!=|>=|<=|>|<|LIKE|ILIKE)\s*\?""",
         RegexOption.IGNORE_CASE,
       )
 
@@ -351,7 +368,8 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
      */
     private val COLUMN_EQUALS_COALESCE_PARAM =
       Regex(
-        """(?:($SQL_IDENTIFIER)\.)?($SQL_IDENTIFIER)\s*=\s*coalesce\(\s*\?""",
+        """(?:($COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED)\.)?($COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED)""" +
+          """\s*=\s*coalesce\(\s*\?""",
         RegexOption.IGNORE_CASE,
       )
 
@@ -417,24 +435,31 @@ internal fun findOverload(overloads: List<FunctionOverload>, argCount: Int): Fun
     ?: overloads.find { it.argNames.size >= argCount }
 
 /**
- * Index mapping each `?` character position in a SQL string to its 1-based parameter number.
+ * Index mapping each placeholder position in a SQL string, as [placeholderPositions] defines it, to
+ * its 1-based parameter number.
  */
 private class ParamIndex(sql: String) {
-  private val positions: IntArray
+  private val positions: IntArray = placeholderPositions(sql)
 
-  init {
-    val list = mutableListOf<Int>()
-    for (i in sql.indices) {
-      if (sql[i] == '?') list.add(i)
-    }
-    positions = list.toIntArray()
+  /**
+   * Returns the 1-based parameter number for the placeholder at [charIndex], or `null` if
+   * [charIndex] is not a real placeholder position — e.g. a `?` a caller's own raw-text scan or
+   * regex match landed on that actually sits inside a string literal, quoted identifier,
+   * dollar-quoted string, or comment.
+   */
+  fun paramNumberAt(charIndex: Int): Int? {
+    val idx = positions.asList().binarySearch(charIndex)
+    return if (idx >= 0) idx + 1 else null
   }
 
-  /** Returns the 1-based parameter number for the `?` at [charIndex]. */
-  fun paramNumberAt(charIndex: Int): Int {
-    val idx = positions.asList().binarySearch(charIndex)
-    check(idx >= 0) { "No ? at char index $charIndex" }
-    return idx + 1
+  /** Whether [charIndex] is a real placeholder position. */
+  fun isPlaceholderAt(charIndex: Int): Boolean = paramNumberAt(charIndex) != null
+
+  /** Whether any real placeholder lies within `[startInclusive, endExclusive)`. */
+  fun hasPlaceholderIn(startInclusive: Int, endExclusive: Int): Boolean {
+    val searchResult = positions.asList().binarySearch(startInclusive)
+    val firstAtOrAfterStart = if (searchResult >= 0) searchResult else -(searchResult + 1)
+    return firstAtOrAfterStart < positions.size && positions[firstAtOrAfterStart] < endExclusive
   }
 }
 

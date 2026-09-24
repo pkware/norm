@@ -89,7 +89,7 @@ internal val QUOTED_IDENTIFIER_PATTERN = Regex(QUOTED_IDENTIFIER)
  * [COLUMN_REFERENCE] uses for both its `table` and `column` positions, so either position can
  * independently be quoted or unquoted (`t.col`, `"t".col`, `t."col"`, `"t"."col"`).
  */
-private const val COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED =
+internal const val COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED =
   """(?:$COLUMN_REFERENCE_IDENTIFIER|$QUOTED_IDENTIFIER)"""
 
 /**
