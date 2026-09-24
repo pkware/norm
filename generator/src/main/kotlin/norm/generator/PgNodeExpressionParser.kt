@@ -150,7 +150,7 @@ internal class PgNodeExpressionParser(private val scanner: PgNodeTreeScanner) {
   private fun parseSubLink(text: String): PgNodeExpression.SubLink {
     val subLinkType = scanner.extractIntField(text, ":subLinkType") ?: error("Missing :subLinkType in SUBLINK node")
     // :testexpr is extracted unconditionally, not just for ANY/ALL: outerOperand also feeds
-    // NodeTreeNullabilityAnalyzer.safetyWalkChildren/containsVarOutsideRelation and
+    // GroupingSetNullExtension.safetyWalkChildren, NodeTreeNullabilityAnalyzer.containsVarOutsideRelation, and
     // GroupRteSubstitution's Var walk. Every other sublink type either emits no :testexpr or emits a
     // ROWCOMPAREEXPR with no readable :args, so a future SubLinkType carrying a real testexpr becomes
     // visible automatically instead of being hidden by a subLinkType gate. isNonNull's ANY/ALL proof

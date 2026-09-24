@@ -17,7 +17,7 @@ class GroupRteSubstitutionTest {
 
   @Test
   fun `a Var buried inside an Aggref argument is substituted — synthetic input, not a shape PG18 produces`() {
-    // safetyWalkChildren (NodeTreeNullabilityAnalyzer's other child-walk) treats Aggref as
+    // safetyWalkChildren (GroupingSetNullExtension's other child-walk) treats Aggref as
     // childless, but this substitution needs a branch for Aggref regardless (the when is
     // exhaustive). Unlike the OpExpr case this file also covers, no live PG18 tree puts a
     // GROUP-RTE Var inside an Aggref's own arguments -- PostgreSQL never rewrites aggregate

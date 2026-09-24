@@ -33,11 +33,10 @@ internal class NullabilityCatalog(private val connection: Connection) {
    * safe-lists specific (symbol, operand types) triples rather than a volatility flag every
    * `pg_proc` row already carries.
    *
-   * Used by [NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension]'s `foldsToConst` leg —
-   * see that method's KDoc for why IMMUTABLE specifically (not STRICT, and not restricted to
-   * `pg_catalog`) is the correct test: this mirrors PostgreSQL's own planner rule for constant
-   * folding directly, rather than an empirically-swept safe-list, so a user-defined `IMMUTABLE`
-   * function is exactly as fold-safe as a built-in one and no namespace restriction is needed.
+   * Backs [GroupingSetNullExtension]'s constant-folding check (`foldsToConst`, whose KDoc explains
+   * why IMMUTABLE and not STABLE). This mirrors PostgreSQL's own constant-folding rule rather than
+   * an empirically swept safe-list, so a user-defined `IMMUTABLE` function folds exactly like a
+   * built-in one and no `pg_catalog` restriction is needed.
    */
   val immutableFunctionOids: Set<Int> by lazy(::loadImmutableFunctionOids)
 
@@ -61,10 +60,9 @@ internal class NullabilityCatalog(private val connection: Connection) {
    * The `VARIADIC` calling form (`concat(VARIADIC arr)`) is a different case this list's claim does
    * not cover: it passes the array argument itself as one value rather than exploding it into
    * elements, and `concat(VARIADIC arr)` is `null` when `arr` itself is `null` (PostgreSQL 16-18).
-   * [PgNodeExpression.FuncExpr.isVariadic] exists specifically so [NodeTreeNullabilityAnalyzer.isNonNull]
-   * and [NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension] can detect this form and
-   * require every argument non-null instead of trusting this list unconditionally — see both
-   * methods' KDoc.
+   * [PgNodeExpression.FuncExpr.isVariadic] distinguishes the two forms; neither
+   * [NodeTreeNullabilityAnalyzer.isNonNull] nor [GroupingSetNullExtension.isSafeFromGroupingSetNullExtension]
+   * trusts this list for a `VARIADIC` call.
    *
    * `concat_ws` is not on this list at all, even for the ordinary calling form, despite also being
    * non-strict: it is non-null only when its first argument (the separator) is non-null —
@@ -74,12 +72,10 @@ internal class NullabilityCatalog(private val connection: Connection) {
    * separately — see [nonNullIffFirstArgumentNonNullFunctionOids] and
    * [NodeTreeNullabilityAnalyzer]'s `concat_ws` handling in `isNonNull`'s `FuncExpr` branch.
    *
-   * [NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension] treats membership on this list
-   * (for a non-`VARIADIC` call) as an unconditional safety proof for the grouping-sets
-   * null-extension gate specifically because "non-null regardless of input" also means "non-null
-   * regardless of which argument grouping-set null-extension replaces with `null`". A function that
-   * is only non-null for a particular argument (like `concat_ws`'s separator) does not have that
-   * property — null-extension could target exactly that argument — so it must never be added here.
+   * Because "non-null regardless of input" also covers whichever argument grouping-set
+   * null-extension replaces with `null`, [GroupingSetNullExtension.isSafeFromGroupingSetNullExtension]
+   * relies on this list too. A function that is non-null only for a particular argument (like
+   * `concat_ws`'s separator) lacks that property, so it must never be added here.
    *
    * Restricted to `pronamespace = 'pg_catalog'` at query time — a user-defined function sharing the
    * name `concat` must not ride along onto this list; see the loader.
@@ -98,13 +94,8 @@ internal class NullabilityCatalog(private val connection: Connection) {
    * when `arr` itself is `null` even though the literal separator is non-null (PostgreSQL 16-18) —
    * see [PgNodeExpression.FuncExpr.isVariadic]'s KDoc.
    *
-   * Used by [NodeTreeNullabilityAnalyzer.isNonNull]'s [PgNodeExpression.FuncExpr] branch (for the
-   * non-`VARIADIC` form only). Not used by the grouping-sets safety gate
-   * ([NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension]) at all, `VARIADIC` or not:
-   * unlike [alwaysNonNullFunctionOids], this property depends on which argument is non-null, so a
-   * `Var` in the first-argument position is exactly as unsafe under grouping-set null-extension as
-   * any other `Var` — the generic aggregate/window-domination rule already handles it correctly
-   * without a dedicated leg.
+   * Trusted, for the non-`VARIADIC` form only, by [NodeTreeNullabilityAnalyzer.isNonNull] and
+   * [GroupingSetNullExtension.isSafeFromGroupingSetNullExtension].
    *
    * Restricted to `pronamespace = 'pg_catalog'` at query time — a user-defined function sharing the
    * name `concat_ws` must not ride along onto this list; see the loader.

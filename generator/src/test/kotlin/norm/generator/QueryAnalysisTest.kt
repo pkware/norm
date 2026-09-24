@@ -1582,7 +1582,7 @@ class QueryAnalysisTest {
     // Var for that key sits at the same varno/varattno as the base table column, so this rule is
     // needed even for bare keys there. An expression grouping key (e.g. lower(a)) never produces a
     // {VAR } target-list entry at all — only walking the typed expression tree
-    // (NodeTreeNullabilityAnalyzer.isSafeFromGroupingSetNullExtension) catches these on every
+    // (GroupingSetNullExtension.isSafeFromGroupingSetNullExtension) catches these on every
     // PostgreSQL version.
 
     @Test
@@ -1843,7 +1843,7 @@ class QueryAnalysisTest {
     // structural match against the grouping key's own (stable, non-folded) subexpression — a Const
     // key still gets null-extended, and so does any larger expression built on top of one, even
     // though a lone Const is itself immune (the planner never matches a bare Const). This is why
-    // isEffectivelyNonNull needs both the sortGroupRef-based key check and
+    // GroupingSetNullExtension.forcesNullable needs both the sortGroupRef-based key check and
     // isSafeFromGroupingSetNullExtension's aggregate-domination walk — neither alone is sufficient.
 
     @Test
@@ -2345,9 +2345,9 @@ class QueryAnalysisTest {
     // are argument-nullability-independent (isNonNullIffFirstArgumentNonNull FuncExpr,
     // xmlelement/xmlforest/processing-instruction XmlExpr, JSON_OBJECT/JSON_ARRAY
     // JsonConstructorExpr, SqlValueFunction, NextValExpr) and a Var-free/no-structural-match leg for
-    // constructs with no per-node-kind rule at all (e.g. now()). See NodeTreeNullabilityAnalyzer's
-    // own KDoc for the soundness argument. Every test below was checked on PostgreSQL 16, 17,
-    // and 18.
+    // constructs with no per-node-kind rule at all (e.g. now()). See
+    // GroupingSetNullExtension.isSafeFromGroupingSetNullExtension's own KDoc for the soundness
+    // argument. Every test below was checked on PostgreSQL 16, 17, and 18.
 
     @Test
     fun `now() is non-null under a ROLLUP key it is not itself part of — issue 240 shape 1`() {
@@ -2575,8 +2575,8 @@ class QueryAnalysisTest {
       // such a bug would resolve c's buried Var to u.x instead of the Const — genuinely nullable
       // via the LEFT JOIN — and wrongly report c nullable instead of non-null. columns[1] (k1) is
       // not a discriminator despite also referencing u.x: k1 is the grouping key itself (its own
-      // :ressortgroupref is 1, in groupingSortGroupRefs), so isEffectivelyNonNull's first condition
-      // (NodeTreeNullabilityAnalyzer.kt's groupingSortGroupRefs check) forces it nullable before
+      // :ressortgroupref is 1, in groupingSortGroupRefs), so GroupingSetNullExtension.forcesNullable's
+      // first condition (the groupingSortGroupRefs check) forces it nullable before
       // its substituted expression is ever consulted — an off-by-one bug could resolve k1 to the
       // wrong groupexprs entry and it would still come out nullable regardless. columns[1]/[2] are
       // kept as controls (both keys are still correctly nullable), not because they catch this bug.
@@ -9661,7 +9661,7 @@ class QueryAnalysisTest {
     // On real Postgres, under GROUPING SETS, PostgreSQL rejects the primary-key
     // functional-dependency shortcut that plain GROUP BY allows, so every non-aggregated column in
     // a grouping-sets target list must be, or textually match, the grouping key — forcing it
-    // nullable via `isEffectivelyNonNull`'s `isGroupingKey` check before `isNonNull`, and therefore
+    // nullable via `GroupingSetNullExtension.forcesNullable`'s `isGroupingKey` check before `isNonNull`, and therefore
     // before qual narrowing, is ever reached. This holds identically at the top-level, CTE-body,
     // and subquery-RTE sites, because `isSafeFromGroupingSetNullExtension` keys on
     // `PgNodeExpression` shape, never on what a `Var`'s `varno` resolves to. Both halves of the
