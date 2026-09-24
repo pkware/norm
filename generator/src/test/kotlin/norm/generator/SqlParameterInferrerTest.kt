@@ -458,6 +458,26 @@ class SqlParameterInferrerTest {
       val result = inferrer.inferParameterInfo("INSERT INTO t(a) /* VALUES (b) */ VALUES (?)")
       assertThat(result.getValue(1).columnName).isEqualTo("a")
     }
+
+    @Test
+    fun `a block comment between VALUES and its opening parenthesis is skipped, not treated as the boundary`() {
+      // A "(" character inside the comment "/* ( */" is not a real parenthesis. A raw
+      // sql.indexOf('(', ...) still lands on it, and findMatchingCloseParenthesis then never
+      // reaches depth 0 (the real "(?)" incorrectly opens a second, unmatched level) -- silently
+      // dropping the whole VALUES-to-column mapping instead of finding the real "(?)".
+      val result = inferrer.inferParameterInfo("INSERT INTO t(a) VALUES /* ( */ (?)")
+      assertThat(result.getValue(1)).isEqualTo(
+        InferredParameter("a", "t", inheritsNullability = true, columnName = "a"),
+      )
+    }
+
+    @Test
+    fun `a line comment between VALUES and its opening parenthesis is skipped, not treated as the boundary`() {
+      val result = inferrer.inferParameterInfo("INSERT INTO t(a) VALUES -- (\n (?)")
+      assertThat(result.getValue(1)).isEqualTo(
+        InferredParameter("a", "t", inheritsNullability = true, columnName = "a"),
+      )
+    }
   }
 
   @Nested

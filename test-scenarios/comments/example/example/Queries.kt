@@ -494,8 +494,7 @@ public interface Queries : Transactable {
   public fun getOrderIdAndUser(id: Int): Order = getOrderIdAndUser(id, ::Order)
 
   /**
-   * A "?" inside the 'ok?' string literal must never be counted as a bind parameter -- the query has
-   * exactly one, for id.
+   * Returns the book with the given id, provided its title is exactly `'ok?'`.
    *
    * ```sql
    * SELECT id, title FROM book WHERE title = 'ok?' AND id = ?
@@ -507,8 +506,7 @@ public interface Queries : Transactable {
   public fun <T : Any> getBookByTitleContainingQuestionMark(id: Int, mapper: (id: Int, title: String) -> T): T
 
   /**
-   * A "?" inside the 'ok?' string literal must never be counted as a bind parameter -- the query has
-   * exactly one, for id.
+   * Returns the book with the given id, provided its title is exactly `'ok?'`.
    *
    * ```sql
    * SELECT id, title FROM book WHERE title = 'ok?' AND id = ?
