@@ -36,6 +36,30 @@ internal fun replaceParameterPlaceholders(sql: String, replacement: (parameterIn
 }
 
 /**
+ * Returns the 0-based char index of every `?` in [sql] that is a genuine positional parameter
+ * placeholder -- the same walk [replaceParameterPlaceholders] uses, so the two functions agree on
+ * what counts as a placeholder. A `?` inside a string literal, `E''` escape string, quoted
+ * identifier, dollar-quoted string, line comment, or block comment is not a placeholder and is
+ * excluded.
+ *
+ * @return The placeholder positions, in ascending order.
+ */
+internal fun placeholderPositions(sql: String): IntArray {
+  val positions = mutableListOf<Int>()
+  var index = 0
+  while (index < sql.length) {
+    val afterToken = skipLexicalToken(sql, index)
+    if (afterToken != index) {
+      index = afterToken
+      continue
+    }
+    if (sql[index] == '?') positions.add(index)
+    index++
+  }
+  return positions.toIntArray()
+}
+
+/**
  * Returns a non-null SQL literal expression for the given PostgreSQL type name.
  *
  * Used to replace `?` parameter placeholders with typed non-null constants when creating

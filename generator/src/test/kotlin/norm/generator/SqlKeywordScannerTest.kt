@@ -259,6 +259,45 @@ class SqlKeywordScannerTest {
   }
 
   @Nested
+  inner class FindKeywordTest {
+
+    @Test
+    fun `finds a keyword inside a subquery's own parentheses, unlike findTopLevelKeyword`() {
+      val sql = "SELECT (SELECT x FROM u WHERE u.id = 1) FROM t WHERE t.id = 2"
+      assertThat(findKeyword(sql, "WHERE")).isEqualTo(sql.indexOf("WHERE u.id"))
+    }
+
+    @Test
+    fun `does not match a keyword inside a string literal`() {
+      val sql = "UPDATE t SET name = 'find WHERE it fits' WHERE id = 1"
+      assertThat(findKeyword(sql, "WHERE")).isEqualTo(sql.indexOf("WHERE id"))
+    }
+
+    @Test
+    fun `does not match a keyword inside a line comment`() {
+      val sql = "UPDATE t SET col = 1 -- WHERE fake\nWHERE id = 1"
+      assertThat(findKeyword(sql, "WHERE")).isEqualTo(sql.indexOf("WHERE id"))
+    }
+
+    @Test
+    fun `does not match a keyword inside a block comment`() {
+      val sql = "INSERT INTO t(a) /* VALUES (b) */ VALUES (1)"
+      assertThat(findKeyword(sql, "VALUES")).isEqualTo(sql.indexOf("VALUES (1)"))
+    }
+
+    @Test
+    fun `does not match a keyword that is only a prefix of a longer identifier`() {
+      val sql = "SELECT wherefore FROM t WHERE id = 1"
+      assertThat(findKeyword(sql, "WHERE")).isEqualTo(sql.indexOf("WHERE id"))
+    }
+
+    @Test
+    fun `returns -1 when the keyword is not present`() {
+      assertThat(findKeyword("SELECT * FROM t", "WHERE")).isEqualTo(-1)
+    }
+  }
+
+  @Nested
   inner class FindTopLevelReturningKeywordTest {
 
     @Test

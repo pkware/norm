@@ -58,3 +58,8 @@ SELECT id, title FROM book
 -- Returns an order's id and its "user" column -- both "order" and "user" are reserved words.
 -- name: getOrderIdAndUser :one
 SELECT id, "user" FROM "order" WHERE id = ?;
+
+-- A "?" inside the 'ok?' string literal must never be counted as a bind parameter -- the query has
+-- exactly one, for id.
+-- name: getBookByTitleContainingQuestionMark :one
+SELECT id, title FROM book WHERE title = 'ok?' AND id = ?;
