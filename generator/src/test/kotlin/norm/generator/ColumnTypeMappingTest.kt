@@ -13,6 +13,7 @@ import com.squareup.kotlinpoet.ARRAY
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.INT
+import com.squareup.kotlinpoet.LONG
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.asTypeName
 import org.junit.jupiter.api.Nested
@@ -940,6 +941,109 @@ class ColumnTypeMappingTest {
       val col = column("owner_ids", type = "oid", isArray = true, notNull = true)
       val setter = typeRepository.resolveMappableType(col).statementAction(index(1), CodeBlock.of("owner_ids"))
       assertThat(setter.toString()).contains("""norm.toSqlArray(connection, "oid")""")
+    }
+  }
+
+  @Nested
+  inner class PlainArrayExactExpressions {
+
+    @Test
+    fun `non-null int4 array resolves to Array of nullable Int with exact read and write expressions`() {
+      val col = column("counts", type = "int4", isArray = true, notNull = true)
+      val mappable = typeRepository.resolveMappableType(col)
+
+      assertThat(typeRepository.resolveColumnType(col))
+        .isEqualTo(ARRAY.parameterizedBy(INT.copy(nullable = true)))
+      assertThat(mappable.resultSetAction(1).toString())
+        .isEqualTo("getArray(1).norm.mapElements { getInt(2).takeUnless { wasNull() } }")
+      assertThat(mappable.statementAction(index(1), CodeBlock.of("counts")).toString())
+        .isEqualTo("setArray(1, counts.norm.toSqlArray(connection, \"int4\"))")
+    }
+
+    @Test
+    fun `nullable int4 array resolves to nullable Array of nullable Int with exact read and write expressions`() {
+      val col = column("counts", type = "int4", isArray = true, notNull = false)
+      val mappable = typeRepository.resolveMappableType(col)
+
+      assertThat(typeRepository.resolveColumnType(col))
+        .isEqualTo(ARRAY.parameterizedBy(INT.copy(nullable = true)).copy(nullable = true))
+      assertThat(mappable.resultSetAction(1).toString())
+        .isEqualTo("getArray(1)?.norm.mapElements { getInt(2).takeUnless { wasNull() } }")
+      assertThat(mappable.statementAction(index(1), CodeBlock.of("counts")).toString())
+        .isEqualTo(
+          "counts?.let { setArray(1, it.norm.toSqlArray(connection, \"int4\")) } ?: setNull(1, java.sql.Types.ARRAY)",
+        )
+    }
+
+    @Test
+    fun `non-null timestamptz array resolves to Array of nullable Instant with exact expressions`() {
+      val col = column("moments", type = "timestamptz", isArray = true, notNull = true)
+      val mappable = typeRepository.resolveMappableType(col)
+
+      assertThat(typeRepository.resolveColumnType(col))
+        .isEqualTo(ARRAY.parameterizedBy(Instant::class.asTypeName().copy(nullable = true)))
+      assertThat(mappable.resultSetAction(1).toString())
+        .isEqualTo("getArray(1).norm.mapElements { getObject(2, java.time.OffsetDateTime::class.java)?.toInstant() }")
+      assertThat(mappable.statementAction(index(1), CodeBlock.of("moments")).toString())
+        .isEqualTo("setArray(1, moments.norm.toSqlArray(connection, \"timestamptz\"))")
+    }
+
+    @Test
+    fun `nullable timestamptz array resolves to nullable Array of nullable Instant with exact expressions`() {
+      val col = column("moments", type = "timestamptz", isArray = true, notNull = false)
+      val mappable = typeRepository.resolveMappableType(col)
+
+      assertThat(typeRepository.resolveColumnType(col))
+        .isEqualTo(ARRAY.parameterizedBy(Instant::class.asTypeName().copy(nullable = true)).copy(nullable = true))
+      assertThat(mappable.resultSetAction(1).toString()).isEqualTo(
+        "getArray(1)?.norm.mapElements { getObject(2, java.time.OffsetDateTime::class.java)?.toInstant() }",
+      )
+      assertThat(mappable.statementAction(index(1), CodeBlock.of("moments")).toString()).isEqualTo(
+        "moments?.let { setArray(1, it.norm.toSqlArray(connection, \"timestamptz\")) } ?: " +
+          "setNull(1, java.sql.Types.ARRAY)",
+      )
+    }
+
+    @Test
+    fun `non-null oid array resolves to Array of nullable Long with exact read and write expressions`() {
+      val col = column("owner_ids", type = "oid", isArray = true, notNull = true)
+      val mappable = typeRepository.resolveMappableType(col)
+
+      assertThat(typeRepository.resolveColumnType(col))
+        .isEqualTo(ARRAY.parameterizedBy(LONG.copy(nullable = true)))
+      assertThat(mappable.resultSetAction(1).toString())
+        .isEqualTo("getArray(1).norm.mapElements { getLong(2).takeUnless { wasNull() } }")
+      assertThat(mappable.statementAction(index(1), CodeBlock.of("owner_ids")).toString())
+        .isEqualTo("setArray(1, owner_ids.norm.toSqlArray(connection, \"oid\"))")
+    }
+
+    @Test
+    fun `nullable oid array resolves to nullable Array of nullable Long with exact read and write expressions`() {
+      val col = column("owner_ids", type = "oid", isArray = true, notNull = false)
+      val mappable = typeRepository.resolveMappableType(col)
+
+      assertThat(typeRepository.resolveColumnType(col))
+        .isEqualTo(ARRAY.parameterizedBy(LONG.copy(nullable = true)).copy(nullable = true))
+      assertThat(mappable.resultSetAction(1).toString())
+        .isEqualTo("getArray(1)?.norm.mapElements { getLong(2).takeUnless { wasNull() } }")
+      assertThat(mappable.statementAction(index(1), CodeBlock.of("owner_ids")).toString()).isEqualTo(
+        "owner_ids?.let { setArray(1, it.norm.toSqlArray(connection, \"oid\")) } ?: setNull(1, java.sql.Types.ARRAY)",
+      )
+    }
+  }
+
+  @Nested
+  inner class ArrayWireCodecWriteNullable {
+
+    @Test
+    fun `writeNullable renders a safe call with setNull fallback`() {
+      val codec = ArrayWireCodec(PrimitiveCodec(INT, "Int", "INTEGER"), "int4")
+
+      val written = codec.writeNullable(index(1), CodeBlock.of("value"))
+
+      assertThat(written.toString()).isEqualTo(
+        "value?.let { setArray(1, it.norm.toSqlArray(connection, \"int4\")) } ?: setNull(1, java.sql.Types.ARRAY)",
+      )
     }
   }
 

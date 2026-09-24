@@ -87,12 +87,8 @@ internal interface WireCodec {
   /**
    * Writes a value at [index] that may be `null` at runtime.
    *
-   * Defaults to [write]: most codecs' JDBC setter already accepts and forwards a `null` argument
-   * correctly (`setObject`, or a plain named setter whose Postgres-side coercion handles `NULL`),
-   * so no extra branching is needed. [PrimitiveCodec] overrides this — a JVM primitive setter
-   * cannot accept `null` at all — and is the only override; changing any other codec's default
-   * here would regenerate goldens for `text`, `numeric`, `oid`, `bytea`, `date`, `time`, `timetz`,
-   * `timestamp`, `uuid`, `json`, and `jsonb` plain nullable columns.
+   * Most JDBC setters bind a `null` argument as SQL `NULL`, so the default delegates to [write].
+   * A codec whose [write] cannot take `null` overrides this.
    */
   fun writeNullable(index: CodeBlock, value: CodeBlock): CodeBlock = write(index, value)
 }
@@ -259,25 +255,16 @@ internal object InstantViaOffsetDateTimeCodec : WireCodec {
 }
 
 /**
- * [WireCodec] for a Postgres array type used as a domain's base type (`CREATE DOMAIN int_set AS
- * int[]`), composing an element [WireCodec] the same way [ArrayTypeDecorator] does for a plain
- * array column.
+ * [WireCodec] for a Postgres array column or a domain over an array type (`CREATE DOMAIN int_set AS int[]`).
  *
- * This is a [WireCodec], not a new [SqlMappable]: [kotlinType] is the array itself
- * (`Array<Int?>`), so [TypeRepository.tryResolveDomainType]'s existing [AdaptedTypeSqlMappable]
- * line handles the domain unchanged — the adapter's `decode`/`encode` convert between the value
- * class (wrapping `List<Int?>`, per [domainKotlinPropertyType]) and this codec's `Array<Int?>`
- * wire type.
+ * pgjdbc's `setObject` infers `character varying[]` for a `jsonb[]` value and cannot infer any `java.time`
+ * element type, so writes name the element type through `toSqlArray`.
  *
- * Array elements are always nullable regardless of the domain column's `NOT NULL` constraint,
- * because Postgres arrays may contain `NULL` — so [read] always reads the element via
- * [elementCodec] with `nullable = true`, and [nullable] here controls only whether the array
- * itself (not its elements) may be SQL `NULL`.
+ * A Postgres array can hold `NULL` elements even in a `NOT NULL` column. [read] therefore always reads
+ * elements as nullable.
  *
- * @param elementCodec [WireCodec] for the array's element type (e.g. the `int4` codec for
- *   `int[]`).
- * @param postgresElementTypeName The canonical Postgres element type name passed to
- *   [norm.toSqlArray] (e.g. `"int4"`).
+ * @param elementCodec codec for the element type, such as the `int4` codec for `int[]`.
+ * @param postgresElementTypeName canonical Postgres element type name passed to `toSqlArray`, such as `"int4"`.
  */
 internal class ArrayWireCodec(private val elementCodec: WireCodec, private val postgresElementTypeName: String) :
   WireCodec {
@@ -301,6 +288,9 @@ internal class ArrayWireCodec(private val elementCodec: WireCodec, private val p
     CodeBlock.of("setArray(%L, %L.%M(connection, %S))", index, value, toSqlArrayMember, postgresElementTypeName)
 
   override fun writeNull(index: CodeBlock): CodeBlock = CodeBlock.of("setNull(%L, %T.ARRAY)", index, Types::class)
+
+  override fun writeNullable(index: CodeBlock, value: CodeBlock): CodeBlock =
+    CodeBlock.of("%L?.let { %L } ?: %L", value, write(index, CodeBlock.of("it")), writeNull(index))
 }
 
 /**
@@ -322,81 +312,6 @@ internal class ScalarSqlMappable(private val codec: WireCodec, private val notNu
 
   override val resultSetAction: (index: Int) -> CodeBlock
     get() = { index -> codec.read(index, !notNull) }
-}
-
-/**
- * Decorates a [SqlMappable] to handle PostgreSQL array types.
- *
- * Writes bind through [norm.toSqlArray], which names the Postgres element type explicitly. A bare
- * `setObject(index, array)` leaves the element OID to the driver's inference, which produces
- * `character varying[]` for `jsonb[]` (rejected by Postgres) and fails outright for every
- * `java.time` element type.
- *
- * @param delegate The base type mapper for the array element type. Supplies the element read via
- *   [SqlMappable.resultSetAction]; its [SqlMappable.statementAction] is unused, because element
- *   values are rendered into a Postgres array literal by the driver rather than bound individually.
- * @param arrayTypeName The Kotlin array type (e.g. `Array<String?>`). Its nullability is the
- *   column's: elements are always nullable, the array itself only when the column is.
- * @param postgresElementTypeName The canonical Postgres element type name passed to
- *   [norm.toSqlArray] (e.g. `"jsonb"`, `"timestamptz"`). See [postgresArrayElementTypeName].
- */
-internal class ArrayTypeDecorator(
-  private val delegate: SqlMappable,
-  private val arrayTypeName: TypeName,
-  private val postgresElementTypeName: String,
-) : SqlMappable {
-
-  private val toSqlArrayMember = MemberName("norm", "toSqlArray", isExtension = true)
-  private val mapElementsMember = MemberName("norm", "mapElements", isExtension = true)
-
-  override val typeName: TypeName
-    get() = arrayTypeName
-
-  override val statementAction: (index: CodeBlock, parameterName: CodeBlock) -> CodeBlock
-    get() = if (arrayTypeName.isNullable) {
-      { index, parameterName ->
-        CodeBlock.of(
-          "%L?.let { setArray(%L, it.%M(connection, %S)) } ?: setNull(%L, %T.ARRAY)",
-          parameterName,
-          index,
-          toSqlArrayMember,
-          postgresElementTypeName,
-          index,
-          Types::class,
-        )
-      }
-    } else {
-      { index, parameterName ->
-        CodeBlock.of(
-          "setArray(%L, %L.%M(connection, %S))",
-          index,
-          parameterName,
-          toSqlArrayMember,
-          postgresElementTypeName,
-        )
-      }
-    }
-
-  override val resultSetAction: (index: Int) -> CodeBlock
-    get() = if (arrayTypeName.isNullable) {
-      { index ->
-        CodeBlock.of(
-          "getArray(%L)?.%M { %L }",
-          index,
-          mapElementsMember,
-          delegate.resultSetAction(ELEMENT_VALUE_COLUMN_INDEX),
-        )
-      }
-    } else {
-      { index ->
-        CodeBlock.of(
-          "getArray(%L).%M { %L }",
-          index,
-          mapElementsMember,
-          delegate.resultSetAction(ELEMENT_VALUE_COLUMN_INDEX),
-        )
-      }
-    }
 }
 
 /**
@@ -462,10 +377,8 @@ internal class AdaptedTypeSqlMappable(
 /**
  * [SqlMappable] for an array column whose elements use a `norm.ColumnAdapter`.
  *
- * Like [ArrayTypeDecorator], this class reads and writes elements one at a time rather than
- * casting the bulk JDBC array. It differs in that each element is routed through a
- * `norm.ColumnAdapter`, because the JDBC wire type (`String[]` for enums, `Integer[]` for int4
- * domains) differs from the application type (`Array<Mood?>`, `Array<PositiveInteger?>`).
+ * Each element goes through the adapter, because the JDBC wire type (`String[]` for enums, `Integer[]`
+ * for int4 domains) differs from the application type (`Array<Mood?>`, `Array<PositiveInteger?>`).
  *
  * The Kotlin type is always `Array<ApplicationType?>` — elements are nullable because Postgres
  * arrays can contain `NULL` values regardless of the column's `NOT NULL` constraint. Column-level

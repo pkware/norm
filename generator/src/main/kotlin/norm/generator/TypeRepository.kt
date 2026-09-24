@@ -1,12 +1,10 @@
 package norm.generator
 
-import com.squareup.kotlinpoet.ARRAY
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterSpec
-import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
@@ -353,8 +351,7 @@ internal class TypeRepository(
    * Uses [SqlMappable.typeName], which generated types (like enum classes) can provide directly
    * without needing a [kotlin.reflect.KClass] at generator time.
    *
-   * Array wrapping is handled by [tryResolveStandardType] which returns an [ArrayTypeDecorator]
-   * whose [SqlMappable.typeName] is already the correct parameterized array type.
+   * [SqlMappable.typeName] of an array column is already the array type.
    */
   fun resolveColumnType(column: Column): TypeName =
     resolveMappableType(column).typeName.copy(nullable = !column.notNull)
@@ -481,20 +478,12 @@ internal class TypeRepository(
     // 4294967295 is rejected by Postgres with "value out of range". Callers must keep bound values
     // within `0..4294967295` themselves; this mapping does not validate that range.
     if (typeName == "oid" || typeName == "pg_catalog.oid") {
-      val elementType = ScalarSqlMappable(POSTGRES_BASE_TYPES.getValue("int8").codec, notNull = false)
-      val arrayTypeName = ARRAY.parameterizedBy(elementType.typeName.copy(nullable = true))
-        .copy(nullable = !notNull)
-      return ArrayTypeDecorator(elementType, arrayTypeName, postgresArrayElementTypeName(typeName))
+      val elementCodec = POSTGRES_BASE_TYPES.getValue("int8").codec
+      return ScalarSqlMappable(ArrayWireCodec(elementCodec, postgresArrayElementTypeName(typeName)), notNull)
     }
 
-    // Postgres array elements are always nullable regardless of the column's NOT NULL constraint,
-    // so the element read must be the nullable form: getInt would turn a NULL element into 0, and
-    // InstantViaOffsetDateTimeCodec's non-null read would throw NullPointerException on one.
-    val elementType = resolveBaseType(typeName, notNull = false) ?: return null
-
-    val arrayTypeName = ARRAY.parameterizedBy(elementType.typeName.copy(nullable = true))
-      .copy(nullable = !notNull)
-    return ArrayTypeDecorator(elementType, arrayTypeName, postgresArrayElementTypeName(typeName))
+    val elementCodec = POSTGRES_BASE_TYPES[typeName.removePrefix("pg_catalog.")]?.codec ?: return null
+    return ScalarSqlMappable(ArrayWireCodec(elementCodec, postgresArrayElementTypeName(typeName)), notNull)
   }
 
   /**
