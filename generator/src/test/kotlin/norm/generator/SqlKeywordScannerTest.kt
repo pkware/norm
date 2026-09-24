@@ -475,6 +475,13 @@ class SqlKeywordScannerTest {
     }
 
     @Test
+    fun `a field of a table whose name starts with a non-ASCII digit is not mistaken for the clause keyword`() {
+      val sql = "SELECT \u0663.from FROM \u0663"
+      val result = findTopLevelFromClauseKeyword(sql, 0)
+      assertThat(result).isEqualTo(sql.indexOf("FROM \u0663"))
+    }
+
+    @Test
     fun `a dot ending a numeric literal is not a qualification dot`() {
       val sql = "SELECT 1. FROM s"
       val result = findTopLevelFromClauseKeyword(sql, 0)

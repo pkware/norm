@@ -204,7 +204,7 @@ internal fun findTopLevelFromClauseKeyword(sql: String, startIndex: Int): Int =
   findTopLevelClauseKeyword(sql, "FROM", startIndex)
 
 /**
- * Finds the first depth-0 [keyword] in [sql], at or after [startIndex], that PostgreSQL parses as a keyword.
+ * Finds the first depth-0 [keyword] in [sql], at or after [startIndex], that starts a clause.
  *
  * Text that [skipLexicalToken] skips does not match. A word spelled like [keyword] also does not match when it is:
  * - a qualified name's field, as in `s.from` or `(s).from`;
@@ -226,8 +226,8 @@ private fun findTopLevelClauseKeyword(sql: String, keyword: String, startIndex: 
   while (i < sql.length) {
     val afterToken = skipLexicalToken(sql, i)
     if (afterToken != i) {
-      // A comment separates words the way whitespace does. A literal or quoted identifier cannot be a qualifier
-      // or keyword, so it clears the state.
+      // A comment separates words the way whitespace does. Any other skipped token clears the state, and a
+      // quoted identifier followed by `.` still sets precededByQualificationDot below.
       val isComment = sql[i] == '-' || sql[i] == '/'
       if (!isComment) {
         precededByQualificationDot = false
@@ -259,12 +259,12 @@ private fun findTopLevelClauseKeyword(sql: String, keyword: String, startIndex: 
         previousWord = word
         previousWordInPosition = inPosition
         precededByQualificationDot = false
-        previousTokenIsDigitLeadingWord = word[0].isDigit()
+        previousTokenIsDigitLeadingWord = word[0] in '0'..'9'
       }
       sql[i].isWhitespace() -> i++
       sql[i] == '.' -> {
-        // Unquoted identifiers cannot start with a digit, so a digit-leading word before `.` is a numeric literal
-        // such as `1.` or `1_000.`.
+        // Unquoted identifiers cannot start with an ASCII digit, so such a word before `.` is a numeric literal
+        // such as `1.` or `1_000.`. PostgreSQL accepts non-ASCII digits like `٣` as identifier characters.
         precededByQualificationDot = !previousTokenIsDigitLeadingWord
         previousTokenIsDigitLeadingWord = false
         i++
