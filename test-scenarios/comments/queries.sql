@@ -59,7 +59,6 @@ SELECT id, title FROM book
 -- name: getOrderIdAndUser :one
 SELECT id, "user" FROM "order" WHERE id = ?;
 
--- A "?" inside the 'ok?' string literal must never be counted as a bind parameter -- the query has
--- exactly one, for id.
+-- Returns the book with the given id, provided its title is exactly `'ok?'`.
 -- name: getBookByTitleContainingQuestionMark :one
 SELECT id, title FROM book WHERE title = 'ok?' AND id = ?;

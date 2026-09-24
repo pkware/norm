@@ -326,13 +326,17 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
    *
    * @return A pair of (expressions, contentStartIndex) where `contentStartIndex` is the char
    *   position in [sql] of the first character inside the VALUES parentheses, or `null` if no
-   *   VALUES clause is found.
+   *   VALUES clause is found or its keyword isn't followed by a real opening parenthesis.
    */
   private fun extractValuesExpressions(sql: String): Pair<List<String>, Int>? {
     val valuesIdx = findKeyword(sql, "VALUES")
     if (valuesIdx < 0) return null
-    val openParenthesis = sql.indexOf('(', valuesIdx + "VALUES".length)
-    if (openParenthesis < 0) return null
+    // A "(" this function is looking for must be the real opening parenthesis of the VALUES list,
+    // not one that merely appears, character-for-character, inside a comment separating VALUES
+    // from it (e.g. "VALUES /* ( */ (?)"); skipWhitespaceAndComments advances past any such comment
+    // first, so only a real "(" satisfies the check below.
+    val openParenthesis = skipWhitespaceAndComments(sql, valuesIdx + "VALUES".length)
+    if (openParenthesis >= sql.length || sql[openParenthesis] != '(') return null
     val closeParenthesis = findMatchingCloseParenthesis(sql, openParenthesis)
     if (closeParenthesis < 0) return null
 
