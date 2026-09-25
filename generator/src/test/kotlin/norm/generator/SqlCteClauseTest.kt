@@ -130,6 +130,15 @@ class SqlCteClauseTest {
     }
 
     @Test
+    fun `a digit-led CTE name is not recognized, since PostgreSQL itself rejects one`() {
+      // Same reasoning as the dollar-led case above: parseSingleCteDefinition's unquoted-name run
+      // gates its first character on isIdentifierStartChar, which does not admit a digit. In
+      // PostgreSQL 18.4, "WITH 1x AS (SELECT 1) SELECT a FROM x" is a syntax error.
+      val result = parseCteClause("WITH 1x AS (SELECT 1) SELECT a FROM x")
+      assertThat(result).isNull()
+    }
+
+    @Test
     fun `an over-length unquoted CTE name is truncated to 63 bytes, while rawName keeps the full untruncated text`() {
       val overLongName = "c".repeat(70)
       val sql = "WITH $overLongName AS (SELECT 1) SELECT * FROM $overLongName"

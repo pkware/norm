@@ -47,5 +47,37 @@ class SqlStarItemTest {
       val result = splitTrailingImplicitAlias("a\$b dx")
       assertThat(result).isEqualTo(ItemAndImplicitAlias("a\$b", "dx"))
     }
+
+    @Test
+    fun `a doubled-quote escape inside an implicit quoted alias is not mistaken for its closing quote`() {
+      val result = splitTrailingImplicitAlias("description \"He\"\"llo\"")
+      assertThat(result).isEqualTo(ItemAndImplicitAlias("description", "\"He\"\"llo\""))
+    }
+
+    @Test
+    fun `two identifiers only adjacent after stripping are not fused into one alias segment`() {
+      // "col" and "a" and "b" are three separate words in the original text, but stripping the
+      // spaces between them makes "a" and "b" sit right next to each other in the stripped text.
+      // matchTrailingAliasSegment's continuation loop must still stop after "a", not fuse it with
+      // "b" into "ab" -- so only "b" (the last segment reaching the end) is the implicit alias.
+      val result = splitTrailingImplicitAlias("col a b")
+      assertThat(result).isEqualTo(ItemAndImplicitAlias("col a", "b"))
+    }
+
+    @Test
+    fun `two separately quoted identifiers separated only by a stripped whitespace are not fused into one token`() {
+      // Stripping the space between "a" and "b" leaves the stripped text "a""b" -- exactly what a
+      // single escaped quoted identifier ("a\"b") looks like. skipDoubleQuotedIdentifier's own
+      // adjacency gate on the "" doubled-quote check keeps this from being misread as one fused
+      // token, so "a" and "b" stay two separate segments and only "b" is the implicit alias.
+      val result = splitTrailingImplicitAlias("description \"a\" \"b\"")
+      assertThat(result).isEqualTo(ItemAndImplicitAlias("description \"a\"", "\"b\""))
+    }
+
+    @Test
+    fun `a Unicode-escape identifier as an implicit alias is still recognized as the trailing segment`() {
+      val result = splitTrailingImplicitAlias("description U&\"x\"")
+      assertThat(result).isEqualTo(ItemAndImplicitAlias("description", "U&\"x\""))
+    }
   }
 }
