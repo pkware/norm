@@ -81,6 +81,8 @@ internal class StrippedText(private val text: String, private val originalOffset
   fun findMatchingCloseParenthesis(openParenthesisIndex: Int): Int =
     norm.generator.findMatchingCloseParenthesis(text, openParenthesisIndex, this)
 
+  fun readIdentifierToken(position: Int): Int? = norm.generator.readIdentifierToken(text, position, this)
+
   /**
    * The escape hatch out of this class's lexer entry points, back to a plain `String`. Safe only
    * for a caller that does no lexing and so has no adjacency decision to gate.
@@ -207,40 +209,17 @@ internal data class ItemAndImplicitAlias(val expression: String, val alias: Stri
  * 1. A Unicode-escape identifier — `U&`/`u&` immediately followed by a double-quoted identifier,
  *    optionally extended through a `UESCAPE '<char>'` clause (see
  *    [matchUnicodeEscapeIdentifierSegment]). Tried first: for `u.*U&"a"`, matching the bare
- *    identifier rule (3, below) first would consume `U` alone as a segment, then `"a"` as a
+ *    identifier rule (2, below) first would consume `U` alone as a segment, then `"a"` as a
  *    separate later segment, leaving a dangling `U&` attached to the prefix and hiding the star.
- * 2. A bare double-quoted identifier, `"..."` (`""`-doubling included).
- * 3. An unquoted identifier: first character [isIdentifierStartChar], every subsequent character
- *    [isIdentifierChar] — PostgreSQL identifiers may not start with a digit or `$`.
+ * 2. A quoted or unquoted identifier, via [StrippedText.readIdentifierToken] — gated on [text]'s
+ *    own adjacency, so this never fuses two identifiers that were only made to look adjacent by
+ *    stripping the whitespace or comment between them.
  *
  * @return The index immediately after the matched segment, or `null` if [start] does not begin
  *   one.
  */
-private fun matchTrailingAliasSegment(text: StrippedText, start: Int): Int? {
-  matchUnicodeEscapeIdentifierSegment(text, start)?.let { return it }
-  if (start >= text.length) return null
-  if (text[start] == '"') {
-    val afterToken = text.skipLexicalToken(start)
-    return if (afterToken != start) afterToken else null
-  }
-  // PostgreSQL's lexer admits any byte >= 0x80 to start an unquoted identifier, not merely a
-  // Unicode `isLetter()`: a combining mark (an alias written in NFD, e.g. "préfs" spelled
-  // p-r-e-COMBINING_ACUTE-f-s), a currency sign (`€`), and a supplementary-plane character (an
-  // astral emoji, a mathematical alphanumeric symbol like `𝐀`) are all legal first characters that
-  // `isLetter()` does not recognize as letters. A surrogate pair is covered without special
-  // handling, since both of its code units are >= 0x80.
-  if (!isIdentifierStartChar(text[start])) return null
-  var i = start + 1
-  while (i < text.length && isIdentifierChar(text[i]) && text.wereAdjacent(i - 1)) {
-    // Gated on adjacency for every continuation character, not just "$": stripping deletes the
-    // separator between two independently-lexed identifiers, so without this gate the run would
-    // fuse both into one segment spanning the whole text and no alias would be found at all. A
-    // non-adjacent "$" is handed back to [StrippedText.skipLexicalToken], which recognizes a
-    // dollar-quoted string as one opaque token.
-    i++
-  }
-  return i
-}
+private fun matchTrailingAliasSegment(text: StrippedText, start: Int): Int? =
+  matchUnicodeEscapeIdentifierSegment(text, start) ?: text.readIdentifierToken(start)
 
 /**
  * Matches a Unicode-escape identifier — `U&`/`u&` immediately followed by a double-quoted

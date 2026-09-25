@@ -309,18 +309,7 @@ private fun parseAliasToken(item: String, start: Int): String? {
   val tokenStart = skipWhitespaceAndComments(item, start)
   if (tokenStart >= item.length) return null
 
-  val tokenEnd = when {
-    item[tokenStart] == '"' -> {
-      val match = QUOTED_IDENTIFIER_PATTERN.matchAt(item, tokenStart) ?: return null
-      match.range.last + 1
-    }
-    isIdentifierStartChar(item[tokenStart]) -> {
-      var end = tokenStart + 1
-      while (end < item.length && isIdentifierChar(item[end])) end++
-      end
-    }
-    else -> return null
-  }
+  val tokenEnd = readIdentifierToken(item, tokenStart) ?: return null
 
   // Nothing legitimate can follow a real alias inside an already comma-split, FROM-trimmed select
   // item -- only trailing whitespace/comments are tolerated; anything else means this wasn't a

@@ -96,4 +96,72 @@ class SqlIdentifiersTest {
       assertThat(quoteSqlIdentifierIfNeeded("my\$col", reservedWords = emptySet())).isEqualTo("my\$col")
     }
   }
+
+  @Nested
+  inner class ReadIdentifierToken {
+
+    @Test
+    fun `an empty quoted identifier ends right after its closing quote`() {
+      assertThat(readIdentifierToken("\"\"", 0)).isEqualTo(2)
+    }
+
+    @Test
+    fun `a doubled-quote escape followed immediately by the end of input is unterminated`() {
+      assertThat(readIdentifierToken("\"a\"\"", 0)).isEqualTo(null)
+    }
+
+    @Test
+    fun `two quote characters with nothing between them and no closer is unterminated`() {
+      assertThat(readIdentifierToken("\"\"\"", 0)).isEqualTo(null)
+    }
+
+    @Test
+    fun `an escaped quote followed by a genuine closing quote ends right after it`() {
+      assertThat(readIdentifierToken("\"a\"\"\"", 0)).isEqualTo(5)
+    }
+
+    @Test
+    fun `back-to-back doubled quotes closing exactly at the boundary end there`() {
+      assertThat(readIdentifierToken("\"\"\"\"", 0)).isEqualTo(4)
+    }
+
+    @Test
+    fun `a quoted identifier with no closing quote at all is unterminated`() {
+      assertThat(readIdentifierToken("\"abc", 0)).isEqualTo(null)
+    }
+
+    @Test
+    fun `a bare unquoted identifier extends to the end of its run`() {
+      assertThat(readIdentifierToken("ux", 0)).isEqualTo(2)
+    }
+
+    @Test
+    fun `an unquoted identifier extends through digits, underscores, and dollar signs after its first character`() {
+      assertThat(readIdentifierToken("a1_\$", 0)).isEqualTo(4)
+    }
+
+    @Test
+    fun `a digit at the given position cannot start an identifier`() {
+      assertThat(readIdentifierToken("1x", 0)).isEqualTo(null)
+    }
+
+    @Test
+    fun `a dollar sign at the given position cannot start an identifier`() {
+      assertThat(readIdentifierToken("\$x", 0)).isEqualTo(null)
+    }
+
+    @Test
+    fun `a position at or past the end of the text has no token to read`() {
+      assertThat(readIdentifierToken("abc", 3)).isEqualTo(null)
+    }
+
+    @Test
+    fun `an unquoted identifier's continuation run stops at a character not adjacent in the original text`() {
+      // A fake OriginalAdjacency reporting every pair as non-adjacent stands in for what a
+      // StrippedText would report across a stripped-out separator: the run must stop after "a",
+      // never continuing into "b" as if they were one fused identifier.
+      val neverAdjacent = OriginalAdjacency { false }
+      assertThat(readIdentifierToken("ab", 0, neverAdjacent)).isEqualTo(1)
+    }
+  }
 }

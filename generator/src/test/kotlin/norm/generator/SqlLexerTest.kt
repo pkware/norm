@@ -421,4 +421,28 @@ class SqlLexerTest {
       assertThat(cursor.advance()).isNull()
     }
   }
+
+  @Nested
+  inner class FindDoubleQuotedIdentifierEndTest {
+
+    @Test
+    fun `a terminated quoted identifier returns the index right after its closing quote`() {
+      assertThat(findDoubleQuotedIdentifierEnd("\"abc\"", 0)).isEqualTo(5)
+    }
+
+    @Test
+    fun `a doubled-quote escape does not end the identifier early`() {
+      assertThat(findDoubleQuotedIdentifierEnd("\"a\"\"b\"", 0)).isEqualTo(6)
+    }
+
+    @Test
+    fun `an unterminated quoted identifier returns null`() {
+      assertThat(findDoubleQuotedIdentifierEnd("\"abc", 0)).isNull()
+    }
+
+    @Test
+    fun `skipDoubleQuotedIdentifier runs an unterminated identifier to the end of the text`() {
+      assertThat(skipDoubleQuotedIdentifier("\"abc", 0)).isEqualTo(4)
+    }
+  }
 }
