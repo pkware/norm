@@ -1646,4 +1646,39 @@ class SqlOutputClauseTest {
       assertThat(result.alias!!.endsWith("\"")).isTrue()
     }
   }
+
+  /** The token after an explicit `AS`, as [parseOutputItemsWithAlias] reports it in `alias`. */
+  @Nested
+  inner class ExplicitAliasToken {
+
+    @Test
+    fun `a doubled-quote escape inside a quoted alias is not mistaken for its closing quote`() {
+      val result = parseOutputItemsWithAlias("SELECT x AS \"He\"\"llo\" FROM t").single()
+      assertThat(result.alias).isEqualTo("\"He\"\"llo\"")
+    }
+
+    @Test
+    fun `a bare unquoted alias is captured whole`() {
+      val result = parseOutputItemsWithAlias("SELECT x AS ux FROM t").single()
+      assertThat(result.alias).isEqualTo("ux")
+    }
+
+    @Test
+    fun `an alias token starting with a digit is rejected`() {
+      val result = parseOutputItemsWithAlias("SELECT x AS 1x FROM t").single()
+      assertThat(result.alias).isNull()
+    }
+
+    @Test
+    fun `an unterminated quoted alias yields no alias`() {
+      val result = parseOutputItemsWithAlias("SELECT x AS \"abc FROM t").single()
+      assertThat(result.alias).isNull()
+    }
+
+    @Test
+    fun `trailing text after the alias token yields no alias`() {
+      val result = parseOutputItemsWithAlias("SELECT x AS ux zz FROM t").single()
+      assertThat(result.alias).isNull()
+    }
+  }
 }
