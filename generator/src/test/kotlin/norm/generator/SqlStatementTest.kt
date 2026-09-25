@@ -1164,6 +1164,45 @@ class SqlStatementTest {
     }
 
     @Test
+    fun `no named parameters sorts out-of-order params and binds each to its own index`() {
+      val statement = createStatement(
+        "INSERT INTO t (a, b, c) VALUES (?, ?, ?);",
+        cmd = ":execrows",
+        params = listOf(
+          param(3, "c", "text"),
+          param(1, "a", "text"),
+          param(2, "b", "text"),
+        ),
+      )
+
+      val sortedParams = listOf(param(1, "a", "text"), param(2, "b", "text"), param(3, "c", "text"))
+      assertThat(statement.parameters).isEqualTo(sortedParams)
+      assertThat(statement.parameterBindings).isEqualTo(
+        listOf(
+          ParameterBinding(1, 0, sortedParams[0].column!!),
+          ParameterBinding(2, 1, sortedParams[1].column!!),
+          ParameterBinding(3, 2, sortedParams[2].column!!),
+        ),
+      )
+    }
+
+    @Test
+    fun `no named parameters keeps same-named columns as distinct parameters`() {
+      val statement = createStatement(
+        "SELECT * FROM crosstab(?, ?);",
+        cmd = ":many",
+        params = listOf(
+          param(1, "crosstab", "text"),
+          param(2, "crosstab", "text"),
+        ),
+        columns = listOf(column("id", type = "int4")),
+      )
+
+      assertThat(statement.parameters).hasSize(2)
+      assertThat(statement.parameterBindings.map { it.parameterIndex }).containsExactly(0, 1)
+    }
+
+    @Test
     fun `reused named parameter collapses to single parameter`() {
       val statement = createStatement(
         "INSERT INTO t (a, b) VALUES (?, ?);",
