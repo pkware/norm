@@ -12,6 +12,7 @@ internal fun createStatement(
   isSynthesizedInsert: Boolean = false,
   namedParameters: Map<Int, String> = emptyMap(),
   overridableDefaultParameterPositions: Set<Int> = emptySet(),
+  batchSql: String? = null,
 ): SqlStatement {
   val repository = TypeRepository("test", catalog)
   return SqlStatement(
@@ -26,6 +27,7 @@ internal fun createStatement(
       isSynthesizedInsert = isSynthesizedInsert,
       namedParameters = namedParameters,
       overridableDefaultParameterPositions = overridableDefaultParameterPositions,
+      batchSql = batchSql,
     ),
     repository,
   )

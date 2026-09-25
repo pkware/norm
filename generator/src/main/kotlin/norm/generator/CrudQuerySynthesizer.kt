@@ -114,15 +114,20 @@ public object CrudQuerySynthesizer {
     val columnNames = insertColumns.joinToString(", ") { quoteIdentifier(it.name) }
     val placeholders = insertColumns.joinToString(", ") { "?" }
 
+    val insertSql = "INSERT INTO $qualifiedTable ($columnNames) VALUES ($placeholders)"
+
     val sql: String
     val command: Command
+    val batchSql: String?
     if (returningColumns.isNotEmpty()) {
       val returningNames = returningColumns.joinToString(", ") { quoteIdentifier(it.name) }
-      sql = "INSERT INTO $qualifiedTable ($columnNames) VALUES ($placeholders) RETURNING $returningNames"
+      sql = "$insertSql RETURNING $returningNames"
       command = Command.ONE
+      batchSql = insertSql
     } else {
-      sql = "INSERT INTO $qualifiedTable ($columnNames) VALUES ($placeholders)"
+      sql = insertSql
       command = Command.EXEC
+      batchSql = null
     }
 
     // 1-based positions of the overridable-default columns' `?` placeholders -- they always come
@@ -137,6 +142,7 @@ public object CrudQuerySynthesizer {
       comments = emptyList(),
       isSynthesizedInsert = true,
       overridableDefaultParameterPositions = overridableDefaultPositions,
+      batchSql = batchSql,
     )
   }
 

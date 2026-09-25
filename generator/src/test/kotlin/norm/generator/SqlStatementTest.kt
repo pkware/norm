@@ -715,19 +715,20 @@ class SqlStatementTest {
     }
 
     @Test
-    fun `batchSql strips RETURNING clause`() {
+    fun `batchSql returns the query's batchSql`() {
       val statement = createStatement(
         "INSERT INTO t (name) VALUES (?) RETURNING id, created_at",
         cmd = Command.ONE,
         params = listOf(param(1)),
         columns = listOf(column("id", type = "int4"), column("created_at", type = "timestamptz")),
         isSynthesizedInsert = true,
+        batchSql = "INSERT INTO t (name) VALUES (?)",
       )
       assertThat(statement.batchSql).isEqualTo("INSERT INTO t (name) VALUES (?)")
     }
 
     @Test
-    fun `batchSql keeps every placeholder, including an overridable-default column's, when stripping RETURNING`() {
+    fun `batchSql keeps every placeholder, including an overridable-default column's`() {
       val statement = createStatement(
         "INSERT INTO t (name, created_at) VALUES (?, ?) RETURNING id, created_at",
         cmd = Command.ONE,
@@ -735,22 +736,24 @@ class SqlStatementTest {
         columns = listOf(column("id", type = "int4"), column("created_at", type = "timestamptz")),
         isSynthesizedInsert = true,
         overridableDefaultParameterPositions = setOf(2),
+        batchSql = "INSERT INTO t (name, created_at) VALUES (?, ?)",
       )
       assertThat(statement.batchSql).isEqualTo("INSERT INTO t (name, created_at) VALUES (?, ?)")
       assertThat(statement.optionalParameterIndices).containsExactly(1)
     }
 
     @Test
-    fun `batchSql throws when RETURNING is missing`() {
+    fun `batchSql throws when the query's batchSql is null`() {
       val statement = createStatement(
         "INSERT INTO t (name) VALUES (?)",
         cmd = Command.EXEC,
         params = listOf(param(1)),
         isSynthesizedInsert = true,
+        name = "insertT",
       )
       assertFailure {
         statement.batchSql
-      }.hasMessage("Expected RETURNING clause in synthesized INSERT: INSERT INTO t (name) VALUES (?)")
+      }.hasMessage("Expected batchSql to be set on query \"insertT\"")
     }
 
     @Test
