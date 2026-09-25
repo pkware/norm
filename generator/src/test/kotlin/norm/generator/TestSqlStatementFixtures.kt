@@ -3,7 +3,7 @@ package norm.generator
 /** Builds an [SqlStatement] with sensible defaults for tests that only care about a subset of [Query]'s fields. */
 internal fun createStatement(
   sql: String,
-  cmd: String = ":one",
+  cmd: Command = Command.ONE,
   name: String = "TestQuery",
   columns: List<Column> = emptyList(),
   params: List<Parameter> = emptyList(),

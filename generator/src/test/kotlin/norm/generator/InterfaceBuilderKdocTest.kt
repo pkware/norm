@@ -26,7 +26,7 @@ class InterfaceBuilderKdocTest {
   fun `a stray backtick in one parameter comment cannot swallow a later param's own line into one code span`() {
     val statement = createStatement(
       sql = "SELECT 1",
-      cmd = ":exec",
+      cmd = Command.EXEC,
       params = listOf(
         Parameter(1, column("aParam", comment = "Say `hello")),
         Parameter(2, column("bParam", comment = "cruel world`")),
@@ -59,7 +59,7 @@ class InterfaceBuilderKdocTest {
     // this test's sibling above already guards against for a bare backtick.
     val statement = createStatement(
       sql = "SELECT 1",
-      cmd = ":exec",
+      cmd = Command.EXEC,
       params = listOf(
         Parameter(1, column("aParam", comment = "weird \\" + "`")),
         Parameter(2, column("bParam", comment = "cruel world`")),
@@ -88,7 +88,7 @@ class InterfaceBuilderKdocTest {
     // the comment be read as a format specifier and throw building the KDoc.
     val statement = createStatement(
       sql = "SELECT 1",
-      cmd = ":exec",
+      cmd = Command.EXEC,
       comments = listOf("Matches 100% of rows."),
     )
 

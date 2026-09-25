@@ -9,7 +9,7 @@ import com.squareup.kotlinpoet.UNIT
 /**
  * Command indicating how a SQL statement should be executed.
  */
-internal enum class Command(private val value: String) {
+public enum class Command(private val value: String) {
   /**
    * The SQL statement must return at exactly 1 result.
    *
@@ -42,7 +42,7 @@ internal enum class Command(private val value: String) {
    * return row.
    * @return The type
    */
-  fun applyTo(singleRowType: TypeName?): TypeName = when (this) {
+  internal fun applyTo(singleRowType: TypeName?): TypeName = when (this) {
     ONE -> requireNotNull(singleRowType) { "A DML statement marked as $this doesn't return anything" }
     MANY -> {
       requireNotNull(singleRowType) { "A DML statement marked as $this doesn't return anything" }
@@ -55,15 +55,18 @@ internal enum class Command(private val value: String) {
 
   override fun toString(): String = value
 
-  companion object {
+  internal companion object {
     private val NORM_MANY = ClassName(RUNTIME_PACKAGE, "Many")
     internal val NORM_QUERY = ClassName(RUNTIME_PACKAGE, "Query")
 
     /**
-     * Finds the [Command] matching the [value].
+     * Finds the [Command] whose SQL form (e.g. `:one`) is [value]. Matching is exact and
+     * case-sensitive.
+     *
+     * @throws IllegalArgumentException if no [Command] has [value] as its SQL form.
      */
-    fun fromSql(value: String): Command = entries.firstOrNull {
+    internal fun fromSql(value: String): Command = entries.firstOrNull {
       it.value == value
-    } ?: throw UnsupportedOperationException("Unsupported sqlc query annotation '$value'.")
+    } ?: throw IllegalArgumentException("Unrecognized command annotation '$value'.")
   }
 }

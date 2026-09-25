@@ -138,12 +138,12 @@ class JdbcAnalyzerTest {
   @Test
   fun `analyzeQuery resolves SELECT star result columns`() {
     val catalog = analyzer.buildCatalog()
-    val parsed = ParsedQuery("all", ":many", "SELECT * FROM type", emptyList())
+    val parsed = ParsedQuery("all", Command.MANY, "SELECT * FROM type", emptyList())
 
     val query = analyzer.analyzeQuery(parsed, catalog)
 
     assertThat(query.name).isEqualTo("all")
-    assertThat(query.cmd).isEqualTo(":many")
+    assertThat(query.cmd).isEqualTo(Command.MANY)
     assertThat(query.text).isEqualTo("SELECT * FROM type")
     assertThat(query.columns.size).isEqualTo(
       catalog.schemas.first().tables.first { it.rel.name == "type" }.columns.size,
@@ -159,7 +159,7 @@ class JdbcAnalyzerTest {
   @Test
   fun `analyzeQuery resolves single column result`() {
     val catalog = analyzer.buildCatalog()
-    val parsed = ParsedQuery("single", ":one", "SELECT string_type FROM type", emptyList())
+    val parsed = ParsedQuery("single", Command.ONE, "SELECT string_type FROM type", emptyList())
 
     val query = analyzer.analyzeQuery(parsed, catalog)
 
@@ -173,7 +173,7 @@ class JdbcAnalyzerTest {
     val catalog = analyzer.buildCatalog()
     val parsed = ParsedQuery(
       "insertOne",
-      ":execrows",
+      Command.EXEC_ROWS,
       "INSERT INTO type(string_type) VALUES (?)",
       emptyList(),
     )
@@ -190,7 +190,7 @@ class JdbcAnalyzerTest {
     val catalog = analyzer.buildCatalog()
     val parsed = ParsedQuery(
       "insertMultiple",
-      ":execrows",
+      Command.EXEC_ROWS,
       "INSERT INTO type(string_type, int_type) VALUES (?, ?)",
       emptyList(),
     )
@@ -207,7 +207,7 @@ class JdbcAnalyzerTest {
     val catalog = analyzer.buildCatalog()
     val parsed = ParsedQuery(
       "deleteAll",
-      ":execrows",
+      Command.EXEC_ROWS,
       "DELETE FROM type",
       emptyList(),
     )
@@ -223,7 +223,7 @@ class JdbcAnalyzerTest {
     val catalog = analyzer.buildCatalog()
     val parsed = ParsedQuery(
       "resetTypes",
-      ":exec",
+      Command.EXEC,
       "CALL reset_type_table()",
       emptyList(),
     )
@@ -239,7 +239,7 @@ class JdbcAnalyzerTest {
     val catalog = analyzer.buildCatalog()
     val parsed = ParsedQuery(
       "updateStringType",
-      ":exec",
+      Command.EXEC,
       "CALL update_string_type(?, ?)",
       emptyList(),
     )
@@ -262,7 +262,7 @@ class JdbcAnalyzerTest {
     val catalog = analyzer.buildCatalog()
     val parsed = ParsedQuery(
       "updateStringType",
-      ":exec",
+      Command.EXEC,
       "CALL public.update_string_type(?, ?)",
       emptyList(),
     )
@@ -277,7 +277,7 @@ class JdbcAnalyzerTest {
   fun `analyzeQuery preserves comments`() {
     val catalog = analyzer.buildCatalog()
     val comments = listOf("This is a test query", "with multiple comment lines")
-    val parsed = ParsedQuery("test", ":many", "SELECT * FROM type", comments)
+    val parsed = ParsedQuery("test", Command.MANY, "SELECT * FROM type", comments)
 
     val query = analyzer.analyzeQuery(parsed, catalog)
 
@@ -287,7 +287,7 @@ class JdbcAnalyzerTest {
   @Test
   fun `analyzeQuery result columns reference tables`() {
     val catalog = analyzer.buildCatalog()
-    val parsed = ParsedQuery("all", ":many", "SELECT * FROM type", emptyList())
+    val parsed = ParsedQuery("all", Command.MANY, "SELECT * FROM type", emptyList())
 
     val query = analyzer.analyzeQuery(parsed, catalog)
 
@@ -311,7 +311,7 @@ class JdbcAnalyzerTest {
       val catalog = analyzer.buildCatalog()
       val parsed = ParsedQuery(
         "existsCheck",
-        ":one",
+        Command.ONE,
         "SELECT EXISTS(SELECT 1 FROM type WHERE string_type = ?) AS found",
         emptyList(),
       )
@@ -329,7 +329,7 @@ class JdbcAnalyzerTest {
       val catalog = analyzer.buildCatalog()
       val parsed = ParsedQuery(
         "notNull",
-        ":one",
+        Command.ONE,
         "SELECT string_type FROM type WHERE serial_type = ?",
         emptyList(),
       )
@@ -345,7 +345,7 @@ class JdbcAnalyzerTest {
       val catalog = analyzer.buildCatalog()
       val parsed = ParsedQuery(
         "nullable",
-        ":one",
+        Command.ONE,
         "SELECT text_type FROM type WHERE serial_type = ?",
         emptyList(),
       )
@@ -361,7 +361,7 @@ class JdbcAnalyzerTest {
       val catalog = analyzer.buildCatalog()
       val parsed = ParsedQuery(
         "upper",
-        ":one",
+        Command.ONE,
         "SELECT upper(text_type) AS uppered FROM type WHERE serial_type = ?",
         emptyList(),
       )
@@ -379,7 +379,7 @@ class JdbcAnalyzerTest {
       val catalog = analyzer.buildCatalog()
       val parsed = ParsedQuery(
         "mixed",
-        ":one",
+        Command.ONE,
         "SELECT COUNT(*) AS total, int_type FROM type WHERE serial_type = ? GROUP BY int_type",
         emptyList(),
       )
@@ -397,7 +397,7 @@ class JdbcAnalyzerTest {
       val catalog = analyzer.buildCatalog()
       val parsed = ParsedQuery(
         "viewQuery",
-        ":many",
+        Command.MANY,
         "SELECT serial_type, string_type, int4_type FROM not_null_view",
         emptyList(),
       )
@@ -416,7 +416,7 @@ class JdbcAnalyzerTest {
       val catalog = analyzer.buildCatalog()
       val parsed = ParsedQuery(
         "matViewQuery",
-        ":one",
+        Command.ONE,
         "SELECT serial_type, string_type, text_type FROM not_null_materialized_view LIMIT 1",
         emptyList(),
       )
@@ -436,7 +436,7 @@ class JdbcAnalyzerTest {
       val catalog = analyzer.buildCatalog()
       val parsed = ParsedQuery(
         "arithmetic",
-        ":one",
+        Command.ONE,
         "SELECT int_type + 1 AS incremented FROM type WHERE serial_type = ?",
         emptyList(),
       )
@@ -457,7 +457,7 @@ class JdbcAnalyzerTest {
         val catalog = analyzer.buildCatalog()
         val parsed = ParsedQuery(
           "leftJoinNotNull",
-          ":many",
+          Command.MANY,
           "SELECT d.id, e.name FROM department d LEFT JOIN employee e ON e.department_id = d.id",
           emptyList(),
         )
@@ -476,7 +476,7 @@ class JdbcAnalyzerTest {
         val catalog = analyzer.buildCatalog()
         val parsed = ParsedQuery(
           "leftJoinNullable",
-          ":many",
+          Command.MANY,
           "SELECT d.id, e.nickname FROM department d LEFT JOIN employee e ON e.department_id = d.id",
           emptyList(),
         )
@@ -494,7 +494,7 @@ class JdbcAnalyzerTest {
         val catalog = analyzer.buildCatalog()
         val parsed = ParsedQuery(
           "leftJoinLeftSide",
-          ":many",
+          Command.MANY,
           "SELECT d.name, e.name AS employee_name FROM department d LEFT JOIN employee e ON e.department_id = d.id",
           emptyList(),
         )
@@ -513,7 +513,7 @@ class JdbcAnalyzerTest {
         val catalog = analyzer.buildCatalog()
         val parsed = ParsedQuery(
           "rightJoinNotNull",
-          ":many",
+          Command.MANY,
           "SELECT d.name, e.name AS employee_name FROM department d RIGHT JOIN employee e ON e.department_id = d.id",
           emptyList(),
         )
@@ -532,7 +532,7 @@ class JdbcAnalyzerTest {
         val catalog = analyzer.buildCatalog()
         val parsed = ParsedQuery(
           "innerJoinNotNull",
-          ":many",
+          Command.MANY,
           "SELECT d.name, e.name AS employee_name FROM department d JOIN employee e ON e.department_id = d.id",
           emptyList(),
         )
@@ -550,7 +550,7 @@ class JdbcAnalyzerTest {
         val catalog = analyzer.buildCatalog()
         val parsed = ParsedQuery(
           "leftJoinSubquery",
-          ":many",
+          Command.MANY,
           """
             SELECT d.id, s.name
             FROM department d
@@ -576,7 +576,7 @@ class JdbcAnalyzerTest {
         val catalog = analyzer.buildCatalog()
         val parsed = ParsedQuery(
           "crossJoin",
-          ":many",
+          Command.MANY,
           "SELECT d.name, e.name AS employee_name FROM department d CROSS JOIN employee e",
           emptyList(),
         )
@@ -594,7 +594,7 @@ class JdbcAnalyzerTest {
         val catalog = analyzer.buildCatalog()
         val parsed = ParsedQuery(
           "fullJoin",
-          ":many",
+          Command.MANY,
           "SELECT d.name, e.name AS employee_name FROM department d FULL OUTER JOIN employee e ON e.department_id = d.id",
           emptyList(),
         )
@@ -612,7 +612,7 @@ class JdbcAnalyzerTest {
         val catalog = analyzer.buildCatalog()
         val parsed = ParsedQuery(
           "chainedLeftJoins",
-          ":many",
+          Command.MANY,
           """
             SELECT d.name, e.name AS employee_name, p.title
             FROM department d
@@ -638,7 +638,7 @@ class JdbcAnalyzerTest {
         val catalog = analyzer.buildCatalog()
         val parsed = ParsedQuery(
           "cteLeftJoin",
-          ":many",
+          Command.MANY,
           """
             WITH dept_employees AS (
               SELECT d.id AS dept_id, d.name AS dept_name, e.name AS employee_name
@@ -664,7 +664,7 @@ class JdbcAnalyzerTest {
         val catalog = analyzer.buildCatalog()
         val parsed = ParsedQuery(
           "selfLeftJoin",
-          ":many",
+          Command.MANY,
           """
             SELECT e1.name AS manager_name, e2.name AS report_name
             FROM employee e1
@@ -687,7 +687,7 @@ class JdbcAnalyzerTest {
         val catalog = analyzer.buildCatalog()
         val parsed = ParsedQuery(
           "subqueryContainment",
-          ":many",
+          Command.MANY,
           """
             SELECT s.dept_name
             FROM (
@@ -716,7 +716,7 @@ class JdbcAnalyzerTest {
         val catalog = analyzer.buildCatalog()
         val parsed = ParsedQuery(
           "unionAll",
-          ":many",
+          Command.MANY,
           """
             SELECT name FROM department
             UNION ALL
@@ -737,7 +737,7 @@ class JdbcAnalyzerTest {
         val catalog = analyzer.buildCatalog()
         val parsed = ParsedQuery(
           "intersect",
-          ":many",
+          Command.MANY,
           """
             SELECT name FROM department
             INTERSECT
@@ -756,7 +756,7 @@ class JdbcAnalyzerTest {
         val catalog = analyzer.buildCatalog()
         val parsed = ParsedQuery(
           "except",
-          ":many",
+          Command.MANY,
           """
             SELECT name FROM department
             EXCEPT
@@ -796,7 +796,7 @@ class JdbcAnalyzerTest {
           val catalog = analyzer.buildCatalog()
           val parsed = ParsedQuery(
             "issue65",
-            ":many",
+            Command.MANY,
             "SELECT name, nickname FROM issue65_view",
             emptyList(),
           )
@@ -836,7 +836,7 @@ class JdbcAnalyzerTest {
     }
 
     private fun analyzeSimpleQuery(sql: String): Query {
-      val parsedQuery = ParsedQuery("test", ":one", sql, emptyList())
+      val parsedQuery = ParsedQuery("test", Command.ONE, sql, emptyList())
       return analyzer.analyzeQuery(parsedQuery, catalog)
     }
 
@@ -1299,7 +1299,7 @@ class JdbcAnalyzerTest {
 
       try {
         val catalog = analyzer.buildCatalog()
-        val parsed = ParsedQuery("getBacktick", ":one", """SELECT "a`b" FROM backtick_test_query""", emptyList())
+        val parsed = ParsedQuery("getBacktick", Command.ONE, """SELECT "a`b" FROM backtick_test_query""", emptyList())
 
         val query = analyzer.analyzeQuery(parsed, catalog)
 
@@ -1495,7 +1495,7 @@ class JdbcAnalyzerTest {
         val catalog = analyzer.buildCatalog()
         val parsed = ParsedQuery(
           "getOverLengthDomainRow",
-          ":one",
+          Command.ONE,
           // Written with the full, over-length column name -- exactly as a developer would copy it
           // from their own DDL -- while the server-side relation/column are already truncated.
           "SELECT * FROM $truncatedTableName WHERE $overLengthColumnName = ?",
@@ -1535,7 +1535,7 @@ class JdbcAnalyzerTest {
         val catalog = analyzer.buildCatalog()
         val parsed = ParsedQuery(
           "insertFoldParamTest",
-          ":execrows",
+          Command.EXEC_ROWS,
           "INSERT INTO Fold_Param_Test(Bio) VALUES (?)",
           emptyList(),
         )

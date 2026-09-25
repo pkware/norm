@@ -172,7 +172,7 @@ class GroupingSetNullExtensionSweepTest {
         val analyzer = JdbcAnalyzer(connection)
         val catalog = analyzer.buildCatalog(listOf(schemaName))
         val query = analyzer.analyzeQuery(
-          ParsedQuery(name = "test", command = ":many", sql = case.sql, comments = emptyList()),
+          ParsedQuery(name = "test", command = Command.MANY, sql = case.sql, comments = emptyList()),
           catalog,
         )
         val liveEverNull = connection.createStatement().use { statement ->
