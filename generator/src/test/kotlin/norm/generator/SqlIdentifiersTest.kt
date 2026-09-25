@@ -69,6 +69,37 @@ class SqlIdentifiersTest {
   }
 
   @Nested
+  inner class LogicalIdentifierSweep {
+
+    @Test
+    fun `an unquoted mixed-case identifier folds its ASCII letters to lowercase`() {
+      assertThat(logicalIdentifier("MyCol")).isEqualTo("mycol")
+    }
+
+    @Test
+    fun `an unquoted identifier's non-ASCII letter is left unchanged by folding`() {
+      assertThat(logicalIdentifier("Ü")).isEqualTo("Ü")
+    }
+
+    @Test
+    fun `a quoted identifier keeps its case and collapses a doubled quote escape`() {
+      assertThat(logicalIdentifier("\"He\"\"llo\"")).isEqualTo("He\"llo")
+    }
+
+    @Test
+    fun `an over-63-byte quoted name truncates after unquoting, not counting the quote bytes`() {
+      val name = "c".repeat(70)
+      assertThat(logicalIdentifier("\"$name\"")).isEqualTo("c".repeat(63))
+    }
+
+    @Test
+    fun `an over-63-byte unquoted name truncates`() {
+      val name = "c".repeat(70)
+      assertThat(logicalIdentifier(name)).isEqualTo("c".repeat(63))
+    }
+  }
+
+  @Nested
   inner class QuoteSqlIdentifierIfNeededSweep {
 
     @Test
