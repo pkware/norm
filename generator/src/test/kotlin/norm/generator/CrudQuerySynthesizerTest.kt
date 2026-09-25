@@ -6,6 +6,7 @@ import assertk.assertions.extracting
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isNotEmpty
+import assertk.assertions.isNull
 import assertk.assertions.none
 import org.junit.jupiter.api.Test
 
@@ -70,6 +71,64 @@ class CrudQuerySynthesizerTest {
       .isEqualTo("INSERT INTO author (name, bio, created_at) VALUES (?, ?, ?) RETURNING id, created_at")
     assertThat(insert.command).isEqualTo(Command.ONE)
     assertThat(insert.overridableDefaultParameterPositions).isEqualTo(setOf(3))
+  }
+
+  @Test
+  fun `batchSql is the pre-RETURNING text for a RETURNING insert, null for every other synthesized query`() {
+    val table = table(
+      "author",
+      column("id", "int4", notNull = true, isPrimaryKey = true, isAutoIncrement = true),
+      column("name", "text", notNull = true),
+      column("bio", "text"),
+      column("created_at", "timestamptz", notNull = true, hasDefault = true),
+    )
+    val catalog = catalog(table)
+
+    val queries = CrudQuerySynthesizer.synthesize(catalog)
+    val byName = queries.associateBy { it.name }
+
+    assertThat(byName.getValue("insertAuthor").batchSql)
+      .isEqualTo("INSERT INTO author (name, bio, created_at) VALUES (?, ?, ?)")
+    assertThat(byName.getValue("findAuthorById").batchSql).isNull()
+    assertThat(byName.getValue("existsAuthorById").batchSql).isNull()
+    assertThat(byName.getValue("deleteAuthorById").batchSql).isNull()
+    assertThat(byName.getValue("findAllAuthor").batchSql).isNull()
+    assertThat(byName.getValue("countAuthor").batchSql).isNull()
+    assertThat(byName.getValue("deleteAllAuthor").batchSql).isNull()
+  }
+
+  @Test
+  fun `batchSql is null for an exec insert`() {
+    val table = table(
+      "order_item",
+      column("order_id", "int4", notNull = true, isPrimaryKey = true),
+      column("item_id", "int4", notNull = true, isPrimaryKey = true),
+      column("quantity", "int4", notNull = true),
+    )
+    val catalog = catalog(table)
+
+    val insert = CrudQuerySynthesizer.synthesize(catalog).first { it.name == "insertOrderItem" }
+
+    assertThat(insert.batchSql).isNull()
+  }
+
+  @Test
+  fun `batchSql is not truncated by a required column named with a literal RETURNING separator`() {
+    // The quoted column name puts " RETURNING " in the column list, ahead of the real RETURNING clause.
+    val table = table(
+      "t",
+      column("id", "int4", notNull = true, isPrimaryKey = true, isAutoIncrement = true),
+      column("a RETURNING b", "text", notNull = true),
+    )
+    val catalog = catalog(table)
+    val quoter = { identifier: String ->
+      if (identifier.matches(Regex("[a-z_][a-z0-9_\$]*"))) identifier else "\"$identifier\""
+    }
+
+    val insert = CrudQuerySynthesizer.synthesize(catalog, quoter).first { it.name == "insertT" }
+
+    assertThat(insert.batchSql).isEqualTo("""INSERT INTO t ("a RETURNING b") VALUES (?)""")
+    assertThat(insert.sql).isEqualTo(insert.batchSql + " RETURNING id")
   }
 
   @Test

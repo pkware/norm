@@ -29,6 +29,7 @@ class ImplementationBuilderOptionalColumnTest {
       columns = listOf(column("id", type = "int4")),
       isSynthesizedInsert = true,
       overridableDefaultParameterPositions = setOf(2),
+      batchSql = "INSERT INTO t (name, tags) VALUES (?, ?)",
     )
 
     val builder = TypeSpec.classBuilder("Test")
@@ -58,6 +59,7 @@ class ImplementationBuilderOptionalColumnTest {
       columns = listOf(column("id", type = "int4")),
       isSynthesizedInsert = true,
       overridableDefaultParameterPositions = setOf(2),
+      batchSql = "INSERT INTO t (name, tags) VALUES (?, ?)",
     )
 
     val builder = TypeSpec.classBuilder("Test")
