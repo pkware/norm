@@ -94,6 +94,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
       isSynthesizedInsert = parsedQuery.isSynthesizedInsert,
       namedParameters = parsedQuery.namedParameters,
       overridableDefaultParameterPositions = parsedQuery.overridableDefaultParameterPositions,
+      batchSql = parsedQuery.batchSql,
     )
   }
 

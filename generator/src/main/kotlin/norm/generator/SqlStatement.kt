@@ -63,10 +63,9 @@ internal class SqlStatement(
    * clauses — batch results are only available via [java.sql.PreparedStatement.getGeneratedKeys].
    *
    * Only true for CRUD-synthesized `:one` INSERT queries that have both parameters (insertable
-   * columns) and result columns (RETURNING columns). The RETURNING clause is stripped from [sql]
-   * to produce [batchSql], and the column names are passed to
-   * [java.sql.Connection.prepareStatement] for [java.sql.PreparedStatement.getGeneratedKeys]
-   * retrieval.
+   * columns) and result columns (RETURNING columns). [batchSql] holds the `RETURNING`-free SQL for
+   * this case, and the column names are passed to [java.sql.Connection.prepareStatement] for
+   * [java.sql.PreparedStatement.getGeneratedKeys] retrieval.
    */
   val canBeBatchedWithReturn: Boolean
     get() = query.isSynthesizedInsert &&
@@ -75,18 +74,14 @@ internal class SqlStatement(
       query.columns.isNotEmpty()
 
   /**
-   * SQL text for the batch variant, with the RETURNING clause stripped.
+   * SQL text for the batch variant, without a `RETURNING` clause.
    *
-   * Only valid when [canBeBatchedWithReturn] is `true`. The RETURNING clause is stripped by
-   * finding the literal `" RETURNING "` separator, which is safe because
-   * [norm.generator.CrudQuerySynthesizer] produces SQL in a known format.
+   * Only valid when [canBeBatchedWithReturn] is `true`.
+   *
+   * @throws IllegalStateException if [Query.batchSql] is `null`.
    */
   val batchSql: String
-    get() {
-      val result = sql.substringBefore(" RETURNING ")
-      check(result != sql) { "Expected RETURNING clause in synthesized INSERT: $sql" }
-      return result
-    }
+    get() = checkNotNull(query.batchSql) { "Expected batchSql to be set on query \"${query.name}\"" }
 
   /**
    * Column names for [java.sql.Connection.prepareStatement]'s second argument.

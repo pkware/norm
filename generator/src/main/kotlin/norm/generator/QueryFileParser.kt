@@ -21,6 +21,9 @@ package norm.generator
  *   `DEFAULT` the caller may override. Empty for every query except a CRUD-synthesized INSERT that
  *   has at least one such column — in particular, always empty for hand-written queries, since only
  *   [CrudQuerySynthesizer] populates this.
+ * @param batchSql [sql] with its `RETURNING` clause removed, for a CRUD-synthesized INSERT that has
+ *   one. `null` for every other query, including a synthesized INSERT with no `RETURNING` clause and
+ *   every hand-written query — only [CrudQuerySynthesizer.synthesizeInsert] populates this.
  */
 public data class ParsedQuery(
   val name: String,
@@ -32,6 +35,7 @@ public data class ParsedQuery(
   val sourceFile: String = "",
   val isSynthesizedInsert: Boolean = false,
   val overridableDefaultParameterPositions: Set<Int> = emptySet(),
+  val batchSql: String? = null,
 )
 
 /**

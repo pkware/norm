@@ -183,6 +183,8 @@ public data class Column(
  *   — see its KDoc. Empty for every query except a CRUD-synthesized INSERT with at least one such
  *   column; [JdbcAnalyzer.buildParameters] cannot re-derive this from the analyzed parameters alone,
  *   since it constructs each parameter's [Column] fresh with `hasDefault` left at its `false` default.
+ * @property batchSql Copied verbatim from [ParsedQuery.batchSql] — see its KDoc. `null` for every
+ *   query except a CRUD-synthesized INSERT with a `RETURNING` clause.
  */
 public data class Query(
   val text: String = "",
@@ -195,6 +197,7 @@ public data class Query(
   val isSynthesizedInsert: Boolean = false,
   val namedParameters: Map<Int, String> = emptyMap(),
   val overridableDefaultParameterPositions: Set<Int> = emptySet(),
+  val batchSql: String? = null,
 )
 
 /**
