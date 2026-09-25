@@ -29,12 +29,12 @@ class SqlCteClauseTest {
     }
 
     @Test
-    fun `mixed-case unquoted name is preserved as-is in both name and rawName`() {
-      // Unquoted identifiers are case-INsensitive to PostgreSQL (folded to lowercase), but
-      // parseCteClause does no folding of its own — it must return exactly what the user wrote
-      // in both properties, leaving any folding decision to PostgreSQL itself.
+    fun `mixed-case unquoted name is folded in name but preserved as-is in rawName`() {
+      // Unquoted identifiers are case-INsensitive to PostgreSQL (folded to lowercase): name is
+      // PostgreSQL's logical, folded identifier value, while rawName keeps exactly what the user
+      // wrote for splicing back into SQL.
       val result = parseCteClause("WITH MyCte AS (SELECT 1) SELECT * FROM MyCte")
-      assertThat(result!!.definitions[0].name).isEqualTo("MyCte")
+      assertThat(result!!.definitions[0].name).isEqualTo("mycte")
       assertThat(result.definitions[0].rawName).isEqualTo("MyCte")
     }
 

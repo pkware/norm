@@ -42,7 +42,7 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
       // ")" encountered) and is split with splitAtTopLevel, so a quoted column name containing its
       // own ")" or "," (e.g. "c)d") is not mistaken for a list boundary.
       val columnListText = sql.substring(insertMatch.range.last + 1, insertColumnListEnd)
-      val columns = splitAtTopLevel(columnListText, ',').map { unquoteIdentifier(it.trim()) }
+      val columns = splitAtTopLevel(columnListText, ',').map { logicalIdentifier(it.trim()) }
       val valueExpressions = extractValuesExpressions(sql)
       if (valueExpressions != null) {
         val (expressions, contentStart) = valueExpressions
@@ -89,8 +89,8 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
     val setEndIndex = if (whereIndex > 0) whereIndex else sql.length
     val setClauseForCoalesce = sql.substring(0, setEndIndex)
     for (match in COLUMN_EQUALS_COALESCE_PARAM.findAll(setClauseForCoalesce)) {
-      val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::unquoteIdentifier)
-      val colName = unquoteIdentifier(match.groupValues[2])
+      val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::logicalIdentifier)
+      val colName = logicalIdentifier(match.groupValues[2])
       // This regex scans raw text, so it can match a "col = coalesce(?"-shaped fragment sitting
       // inside a string literal or comment; skip anything whose "?" isn't a real placeholder.
       val paramNum = paramIndex.paramNumberAt(match.range.last) ?: continue
@@ -104,8 +104,8 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
       // SET col = ? (before WHERE — inherits nullability)
       val setClause = sql.substring(0, whereIndex)
       for (match in COLUMN_COMPARES_PARAM.findAll(setClause)) {
-        val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::unquoteIdentifier)
-        val colName = unquoteIdentifier(match.groupValues[2])
+        val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::logicalIdentifier)
+        val colName = logicalIdentifier(match.groupValues[2])
         // This regex scans raw text, so a "?" it matches on may sit inside a string literal or
         // comment rather than being a real placeholder; skip anything that isn't real.
         val paramNum = paramIndex.paramNumberAt(match.range.last) ?: continue
@@ -118,8 +118,8 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
       // WHERE col <op> ? (after WHERE — does NOT inherit nullability)
       val whereClause = sql.substring(whereIndex)
       for (match in COLUMN_COMPARES_PARAM.findAll(whereClause)) {
-        val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::unquoteIdentifier)
-        val colName = unquoteIdentifier(match.groupValues[2])
+        val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::logicalIdentifier)
+        val colName = logicalIdentifier(match.groupValues[2])
         val paramNum = paramIndex.paramNumberAt(whereIndex + match.range.last) ?: continue
         if (paramNum !in params) {
           params[paramNum] =
@@ -134,8 +134,8 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
       // never match, so they do not inherit nullability.
       val setParametersInheritNullability = UPDATE_TABLE.containsMatchIn(sql)
       for (match in COLUMN_COMPARES_PARAM.findAll(sql)) {
-        val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::unquoteIdentifier)
-        val colName = unquoteIdentifier(match.groupValues[2])
+        val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::logicalIdentifier)
+        val colName = logicalIdentifier(match.groupValues[2])
         val paramNum = paramIndex.paramNumberAt(match.range.last) ?: continue
         if (paramNum !in params) {
           params[paramNum] =
@@ -378,25 +378,12 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
       )
 
     /**
-     * Strips surrounding double-quotes from a SQL identifier, if present, and truncates the result
-     * to PostgreSQL's identifier limit. For example, `"name"` becomes `name`, and `author` stays
-     * `author`.
-     *
-     * The truncation matters because `catalog.findColumn` matches this value against a catalog name
-     * the server already truncated.
+     * Extracts the simple (unqualified) table name from a possibly schema-qualified SQL table
+     * reference like `"schema"."tablename"` or `"tablename"`, as PostgreSQL's logical identifier
+     * value ([logicalIdentifier]).
      */
-    private fun unquoteIdentifier(identifier: String): String = truncateIdentifier(
-      // PostgreSQL reads an embedded "" inside a quoted identifier as one literal " character, not
-      // two -- unescapeQuotedIdentifier un-doubles it, recovering the real column name (e.g. a"b)
-      // rather than leaving the SQL-escaped spelling (a""b) as the inferred parameter name.
-      if (isQuotedIdentifier(identifier)) unescapeQuotedIdentifier(identifier) else identifier,
-    )
-
-    /**
-     * Extracts the simple (unqualified, unquoted) table name from a possibly
-     * schema-qualified SQL table reference like `"schema"."tablename"` or `"tablename"`.
-     */
-    private fun tableSimpleName(qualifiedName: String): String = unquoteIdentifier(qualifiedName.split('.').last())
+    // Logical, not raw: catalog.findColumn compares against names the server already folded and truncated.
+    private fun tableSimpleName(qualifiedName: String): String = logicalIdentifier(qualifiedName.split('.').last())
   }
 }
 

@@ -491,6 +491,25 @@ class SqlParameterInferrerTest {
   }
 
   @Nested
+  inner class FoldsUnquotedIdentifiers {
+    @Test
+    fun `an unquoted mixed-case INSERT column and table fold to their PostgreSQL logical names`() {
+      val result = inferrer.inferParameterInfo("INSERT INTO Users(Bio) VALUES (?)")
+      assertThat(result.getValue(1)).isEqualTo(
+        InferredParameter("bio", "users", inheritsNullability = true, columnName = "bio"),
+      )
+    }
+
+    @Test
+    fun `an unquoted mixed-case UPDATE SET column and table fold to their PostgreSQL logical names`() {
+      val result = inferrer.inferParameterInfo("UPDATE Users SET Bio = ?")
+      assertThat(result.getValue(1)).isEqualTo(
+        InferredParameter("bio", "users", inheritsNullability = true),
+      )
+    }
+  }
+
+  @Nested
   inner class IdentifierShapeMatchesSqlIdentifiers {
     @Test
     fun `infers a column name containing a dollar sign`() {
