@@ -169,7 +169,7 @@ public data class Column(
  *
  * @property text The SQL text with `?` placeholders.
  * @property name Query name from the `-- name:` annotation.
- * @property cmd Command type (`:one`, `:many`, `:exec`, `:execrows`).
+ * @property cmd How the query executes. See [Command].
  * @property columns Result columns produced by this query.
  * @property params Positional parameters for this query.
  * @property comments Comments associated with this query.
@@ -187,7 +187,7 @@ public data class Column(
 public data class Query(
   val text: String = "",
   val name: String = "",
-  val cmd: String = "",
+  val cmd: Command,
   val columns: List<Column> = emptyList(),
   val params: List<Parameter> = emptyList(),
   val comments: List<String> = emptyList(),

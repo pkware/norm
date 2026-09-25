@@ -26,7 +26,7 @@ class SqlStatementTest {
     fun `query has no return`() {
       val statement = createStatement(
         "CALL my_procedure();",
-        cmd = ":exec",
+        cmd = Command.EXEC,
       )
       assertThat(statement.resultRowShape.kotlinType).isNull()
       assertThat(statement.resultRowShape.builder).isEmpty()
@@ -468,7 +468,7 @@ class SqlStatementTest {
     fun `query with multiple parameters in order`() {
       val statement = createStatement(
         "INSERT INTO author (name, email, bio) VALUES (?, ?, ?);",
-        cmd = ":exec",
+        cmd = Command.EXEC,
         params = listOf(
           param(1, "name"),
           param(2, "email"),
@@ -487,7 +487,7 @@ class SqlStatementTest {
     fun `empty for a query with no overridable-default columns`() {
       val statement = createStatement(
         "INSERT INTO author (name, bio) VALUES (?, ?)",
-        cmd = ":exec",
+        cmd = Command.EXEC,
         params = listOf(param(1, "name"), param(2, "bio")),
         isSynthesizedInsert = true,
       )
@@ -511,7 +511,7 @@ class SqlStatementTest {
     fun `maps 1-based overridable-default positions to 0-based parameter indices, trailing required columns`() {
       val statement = createStatement(
         "INSERT INTO author (name, bio, created_at) VALUES (?, ?, ?) RETURNING id, created_at",
-        cmd = ":one",
+        cmd = Command.ONE,
         params = listOf(param(1, "name"), param(2, "bio"), param(3, "created_at")),
         columns = listOf(column("id", type = "int4"), column("created_at", type = "timestamptz")),
         isSynthesizedInsert = true,
@@ -524,7 +524,7 @@ class SqlStatementTest {
     fun `supports multiple overridable-default columns`() {
       val statement = createStatement(
         "INSERT INTO t (a, b, c) VALUES (?, ?, ?) RETURNING b, c",
-        cmd = ":one",
+        cmd = Command.ONE,
         params = listOf(param(1, "a"), param(2, "b"), param(3, "c")),
         columns = listOf(column("b", type = "int4"), column("c", type = "int4")),
         isSynthesizedInsert = true,
@@ -567,25 +567,25 @@ class SqlStatementTest {
 
     @Test
     fun `command one`() {
-      val statement = createStatement("SELECT * FROM t LIMIT 1;", cmd = ":one")
+      val statement = createStatement("SELECT * FROM t LIMIT 1;", cmd = Command.ONE)
       assertThat(statement.command).isEqualTo(Command.ONE)
     }
 
     @Test
     fun `command many`() {
-      val statement = createStatement("SELECT * FROM t;", cmd = ":many")
+      val statement = createStatement("SELECT * FROM t;", cmd = Command.MANY)
       assertThat(statement.command).isEqualTo(Command.MANY)
     }
 
     @Test
     fun `command exec`() {
-      val statement = createStatement("DELETE FROM t;", cmd = ":exec")
+      val statement = createStatement("DELETE FROM t;", cmd = Command.EXEC)
       assertThat(statement.command).isEqualTo(Command.EXEC)
     }
 
     @Test
     fun `command execrows`() {
-      val statement = createStatement("UPDATE t SET x = 1;", cmd = ":execrows")
+      val statement = createStatement("UPDATE t SET x = 1;", cmd = Command.EXEC_ROWS)
       assertThat(statement.command).isEqualTo(Command.EXEC_ROWS)
     }
   }
@@ -597,7 +597,7 @@ class SqlStatementTest {
     fun `SELECT cannot be batched`() {
       val statement = createStatement(
         "SELECT * FROM t WHERE id = ?;",
-        cmd = ":one",
+        cmd = Command.ONE,
         params = listOf(param(1)),
       )
       assertThat(statement.canBeBatched).isFalse()
@@ -607,7 +607,7 @@ class SqlStatementTest {
     fun `MANY cannot be batched`() {
       val statement = createStatement(
         "SELECT * FROM t WHERE status = ?;",
-        cmd = ":many",
+        cmd = Command.MANY,
         params = listOf(param(1)),
       )
       assertThat(statement.canBeBatched).isFalse()
@@ -617,7 +617,7 @@ class SqlStatementTest {
     fun `DML without params cannot be batched`() {
       val statement = createStatement(
         "DELETE FROM t WHERE status = 'old';",
-        cmd = ":exec",
+        cmd = Command.EXEC,
       )
       assertThat(statement.canBeBatched).isFalse()
     }
@@ -626,7 +626,7 @@ class SqlStatementTest {
     fun `DML with RETURNING cannot be batched`() {
       val statement = createStatement(
         "INSERT INTO t (name) VALUES (?) RETURNING id;",
-        cmd = ":exec",
+        cmd = Command.EXEC,
         params = listOf(param(1)),
         columns = listOf(column("id", type = "int4")),
       )
@@ -637,7 +637,7 @@ class SqlStatementTest {
     fun `DML with params and no RETURNING can be batched`() {
       val statement = createStatement(
         "INSERT INTO t (name) VALUES (?);",
-        cmd = ":exec",
+        cmd = Command.EXEC,
         params = listOf(param(1)),
       )
       assertThat(statement.canBeBatched).isTrue()
@@ -647,7 +647,7 @@ class SqlStatementTest {
     fun `execrows with params can be batched`() {
       val statement = createStatement(
         "UPDATE t SET status = 'done' WHERE id = ?;",
-        cmd = ":execrows",
+        cmd = Command.EXEC_ROWS,
         params = listOf(param(1)),
       )
       assertThat(statement.canBeBatched).isTrue()
@@ -660,7 +660,7 @@ class SqlStatementTest {
     fun `synthesized INSERT ONE with params and returning columns`() {
       val statement = createStatement(
         "INSERT INTO t (name) VALUES (?) RETURNING id",
-        cmd = ":one",
+        cmd = Command.ONE,
         params = listOf(param(1)),
         columns = listOf(column("id", type = "int4")),
         isSynthesizedInsert = true,
@@ -672,7 +672,7 @@ class SqlStatementTest {
     fun `non-synthesized INSERT ONE is not eligible`() {
       val statement = createStatement(
         "INSERT INTO t (name) VALUES (?) RETURNING id",
-        cmd = ":one",
+        cmd = Command.ONE,
         params = listOf(param(1)),
         columns = listOf(column("id", type = "int4")),
         isSynthesizedInsert = false,
@@ -684,7 +684,7 @@ class SqlStatementTest {
     fun `non-synthesized ONE SELECT is not eligible`() {
       val statement = createStatement(
         "SELECT EXISTS(SELECT 1 FROM t WHERE id = ?)",
-        cmd = ":one",
+        cmd = Command.ONE,
         params = listOf(param(1)),
         columns = listOf(column("exists", type = "bool")),
         isSynthesizedInsert = false,
@@ -696,7 +696,7 @@ class SqlStatementTest {
     fun `synthesized INSERT with no params is not eligible`() {
       val statement = createStatement(
         "INSERT INTO t DEFAULT VALUES RETURNING id",
-        cmd = ":one",
+        cmd = Command.ONE,
         columns = listOf(column("id", type = "int4")),
         isSynthesizedInsert = true,
       )
@@ -707,7 +707,7 @@ class SqlStatementTest {
     fun `synthesized EXEC INSERT without RETURNING is not eligible`() {
       val statement = createStatement(
         "INSERT INTO t (a, b) VALUES (?, ?)",
-        cmd = ":exec",
+        cmd = Command.EXEC,
         params = listOf(param(1), param(2)),
         isSynthesizedInsert = true,
       )
@@ -718,7 +718,7 @@ class SqlStatementTest {
     fun `batchSql strips RETURNING clause`() {
       val statement = createStatement(
         "INSERT INTO t (name) VALUES (?) RETURNING id, created_at",
-        cmd = ":one",
+        cmd = Command.ONE,
         params = listOf(param(1)),
         columns = listOf(column("id", type = "int4"), column("created_at", type = "timestamptz")),
         isSynthesizedInsert = true,
@@ -730,7 +730,7 @@ class SqlStatementTest {
     fun `batchSql keeps every placeholder, including an overridable-default column's, when stripping RETURNING`() {
       val statement = createStatement(
         "INSERT INTO t (name, created_at) VALUES (?, ?) RETURNING id, created_at",
-        cmd = ":one",
+        cmd = Command.ONE,
         params = listOf(param(1, "name"), param(2, "created_at")),
         columns = listOf(column("id", type = "int4"), column("created_at", type = "timestamptz")),
         isSynthesizedInsert = true,
@@ -744,7 +744,7 @@ class SqlStatementTest {
     fun `batchSql throws when RETURNING is missing`() {
       val statement = createStatement(
         "INSERT INTO t (name) VALUES (?)",
-        cmd = ":exec",
+        cmd = Command.EXEC,
         params = listOf(param(1)),
         isSynthesizedInsert = true,
       )
@@ -757,7 +757,7 @@ class SqlStatementTest {
     fun `returningColumnNames matches query columns`() {
       val statement = createStatement(
         "INSERT INTO t (name) VALUES (?) RETURNING id, created_at",
-        cmd = ":one",
+        cmd = Command.ONE,
         params = listOf(param(1)),
         columns = listOf(column("id", type = "int4"), column("created_at", type = "timestamptz")),
         isSynthesizedInsert = true,
@@ -773,7 +773,7 @@ class SqlStatementTest {
     fun `MANY without params can be dynamic`() {
       val statement = createStatement(
         "SELECT * FROM t;",
-        cmd = ":many",
+        cmd = Command.MANY,
         columns = listOf(column("id")),
       )
       assertThat(statement.canBeDynamic).isTrue()
@@ -783,7 +783,7 @@ class SqlStatementTest {
     fun `MANY with params cannot be dynamic`() {
       val statement = createStatement(
         "SELECT * FROM t WHERE status = ?;",
-        cmd = ":many",
+        cmd = Command.MANY,
         params = listOf(param(1)),
         columns = listOf(column("id")),
       )
@@ -794,7 +794,7 @@ class SqlStatementTest {
     fun `ONE cannot be dynamic`() {
       val statement = createStatement(
         "SELECT * FROM t LIMIT 1;",
-        cmd = ":one",
+        cmd = Command.ONE,
         columns = listOf(column("id")),
       )
       assertThat(statement.canBeDynamic).isFalse()
@@ -804,7 +804,7 @@ class SqlStatementTest {
     fun `EXEC cannot be dynamic`() {
       val statement = createStatement(
         "DELETE FROM t;",
-        cmd = ":exec",
+        cmd = Command.EXEC,
       )
       assertThat(statement.canBeDynamic).isFalse()
     }
@@ -813,7 +813,7 @@ class SqlStatementTest {
     fun `EXECROWS cannot be dynamic`() {
       val statement = createStatement(
         "UPDATE t SET x = 1;",
-        cmd = ":execrows",
+        cmd = Command.EXEC_ROWS,
       )
       assertThat(statement.canBeDynamic).isFalse()
     }
@@ -950,7 +950,7 @@ class SqlStatementTest {
     fun `three duplicate names get deduplicated`() {
       val statement = createStatement(
         "SELECT * FROM normal_rand(?, ?, ?);",
-        cmd = ":many",
+        cmd = Command.MANY,
         params = listOf(
           param(1, "normal_rand", "int4"),
           param(2, "normal_rand", "float8"),
@@ -1022,7 +1022,7 @@ class SqlStatementTest {
     fun `crosstab function with duplicate parameter names`() {
       val statement = createStatement(
         "SELECT * FROM crosstab(?, ?) AS ct(user_id int, setting1 text, setting2 text);",
-        cmd = ":many",
+        cmd = Command.MANY,
         params = listOf(
           param(1, "crosstab", "text"),
           param(2, "crosstab", "text"),
@@ -1150,7 +1150,7 @@ class SqlStatementTest {
     fun `no named parameters means no reuse`() {
       val statement = createStatement(
         "INSERT INTO t (a, b) VALUES (?, ?);",
-        cmd = ":execrows",
+        cmd = Command.EXEC_ROWS,
         params = listOf(
           param(1, "a", "text"),
           param(2, "b", "text"),
@@ -1167,7 +1167,7 @@ class SqlStatementTest {
     fun `no named parameters sorts out-of-order params and binds each to its own index`() {
       val statement = createStatement(
         "INSERT INTO t (a, b, c) VALUES (?, ?, ?);",
-        cmd = ":execrows",
+        cmd = Command.EXEC_ROWS,
         params = listOf(
           param(3, "c", "text"),
           param(1, "a", "text"),
@@ -1190,7 +1190,7 @@ class SqlStatementTest {
     fun `no named parameters keeps same-named columns as distinct parameters`() {
       val statement = createStatement(
         "SELECT * FROM crosstab(?, ?);",
-        cmd = ":many",
+        cmd = Command.MANY,
         params = listOf(
           param(1, "crosstab", "text"),
           param(2, "crosstab", "text"),
@@ -1206,7 +1206,7 @@ class SqlStatementTest {
     fun `reused named parameter collapses to single parameter`() {
       val statement = createStatement(
         "INSERT INTO t (a, b) VALUES (?, ?);",
-        cmd = ":execrows",
+        cmd = Command.EXEC_ROWS,
         params = listOf(
           param(1, "scannedAt", "timestamptz"),
           param(2, "scannedAt", "timestamptz"),
@@ -1225,7 +1225,7 @@ class SqlStatementTest {
     fun `mixed unique and reused named parameters`() {
       val statement = createStatement(
         "INSERT INTO t (a, b, c) VALUES (?, ?, ?);",
-        cmd = ":execrows",
+        cmd = Command.EXEC_ROWS,
         params = listOf(
           param(1, "dataCenterId", "uuid"),
           param(2, "scannedAt", "timestamptz"),
@@ -1247,7 +1247,7 @@ class SqlStatementTest {
     fun `inferred duplicate names are NOT collapsed without namedParameters`() {
       val statement = createStatement(
         "SELECT * FROM crosstab(?, ?);",
-        cmd = ":many",
+        cmd = Command.MANY,
         params = listOf(
           param(1, "crosstab", "text"),
           param(2, "crosstab", "text"),
@@ -1264,7 +1264,7 @@ class SqlStatementTest {
     fun `three positions sharing same named parameter`() {
       val statement = createStatement(
         "INSERT INTO t (a, b, c) VALUES (?, ?, ?);",
-        cmd = ":execrows",
+        cmd = Command.EXEC_ROWS,
         params = listOf(
           param(1, "value", "text"),
           param(2, "value", "text"),
@@ -1282,7 +1282,7 @@ class SqlStatementTest {
     fun `multiple distinct named parameters each reused`() {
       val statement = createStatement(
         "INSERT INTO t (a, b, c, d) VALUES (?, ?, ?, ?);",
-        cmd = ":execrows",
+        cmd = Command.EXEC_ROWS,
         params = listOf(
           param(1, "x", "text"),
           param(2, "y", "int4"),

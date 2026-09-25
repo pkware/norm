@@ -115,14 +115,14 @@ public object CrudQuerySynthesizer {
     val placeholders = insertColumns.joinToString(", ") { "?" }
 
     val sql: String
-    val command: String
+    val command: Command
     if (returningColumns.isNotEmpty()) {
       val returningNames = returningColumns.joinToString(", ") { quoteIdentifier(it.name) }
       sql = "INSERT INTO $qualifiedTable ($columnNames) VALUES ($placeholders) RETURNING $returningNames"
-      command = ":one"
+      command = Command.ONE
     } else {
       sql = "INSERT INTO $qualifiedTable ($columnNames) VALUES ($placeholders)"
-      command = ":exec"
+      command = Command.EXEC
     }
 
     // 1-based positions of the overridable-default columns' `?` placeholders -- they always come
@@ -149,7 +149,7 @@ public object CrudQuerySynthesizer {
     val whereClause = primaryKeyColumns.joinToString(" AND ") { "${quoteIdentifier(it.name)} = ?" }
     return ParsedQuery(
       name = "find${methodSuffix}${primaryKeySuffix(primaryKeyColumns)}",
-      command = ":many",
+      command = Command.MANY,
       sql = "SELECT * FROM $qualifiedTable WHERE $whereClause",
       comments = emptyList(),
     )
@@ -164,7 +164,7 @@ public object CrudQuerySynthesizer {
     val whereClause = primaryKeyColumns.joinToString(" AND ") { "${quoteIdentifier(it.name)} = ?" }
     return ParsedQuery(
       name = "exists${methodSuffix}${primaryKeySuffix(primaryKeyColumns)}",
-      command = ":one",
+      command = Command.ONE,
       sql = "SELECT EXISTS(SELECT 1 FROM $qualifiedTable WHERE $whereClause)",
       comments = emptyList(),
     )
@@ -172,14 +172,14 @@ public object CrudQuerySynthesizer {
 
   private fun synthesizeFindAll(qualifiedTable: String, methodSuffix: String): ParsedQuery = ParsedQuery(
     name = "findAll$methodSuffix",
-    command = ":many",
+    command = Command.MANY,
     sql = "SELECT * FROM $qualifiedTable",
     comments = emptyList(),
   )
 
   private fun synthesizeCount(qualifiedTable: String, methodSuffix: String): ParsedQuery = ParsedQuery(
     name = "count$methodSuffix",
-    command = ":one",
+    command = Command.ONE,
     sql = "SELECT COUNT(*) FROM $qualifiedTable",
     comments = emptyList(),
   )
@@ -193,7 +193,7 @@ public object CrudQuerySynthesizer {
     val whereClause = primaryKeyColumns.joinToString(" AND ") { "${quoteIdentifier(it.name)} = ?" }
     return ParsedQuery(
       name = "delete${methodSuffix}${primaryKeySuffix(primaryKeyColumns)}",
-      command = ":execrows",
+      command = Command.EXEC_ROWS,
       sql = "DELETE FROM $qualifiedTable WHERE $whereClause",
       comments = emptyList(),
     )
@@ -201,7 +201,7 @@ public object CrudQuerySynthesizer {
 
   private fun synthesizeDeleteAll(qualifiedTable: String, methodSuffix: String): ParsedQuery = ParsedQuery(
     name = "deleteAll$methodSuffix",
-    command = ":execrows",
+    command = Command.EXEC_ROWS,
     sql = "DELETE FROM $qualifiedTable",
     comments = emptyList(),
   )

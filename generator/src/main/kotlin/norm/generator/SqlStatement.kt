@@ -38,7 +38,7 @@ internal class SqlStatement(
    *
    * See [Command].
    */
-  val command get() = Command.fromSql(query.cmd)
+  val command get() = query.cmd
 
   /**
    * Whether the SQL statement is batchable in JDBC.

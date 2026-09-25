@@ -56,7 +56,7 @@ class FrameworkAnnotationTest {
      */
     private fun createQuery(queryName: String, tableName: String, columns: List<Column>): Query = Query(
       name = queryName,
-      cmd = ":many",
+      cmd = Command.MANY,
       text = "SELECT * FROM $tableName",
       columns = columns,
     )

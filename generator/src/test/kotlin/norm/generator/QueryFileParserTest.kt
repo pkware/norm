@@ -6,7 +6,9 @@ import assertk.assertions.containsExactly
 import assertk.assertions.hasSize
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
+import assertk.assertions.isInstanceOf
 import assertk.assertions.messageContains
+import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
 class QueryFileParserTest {
@@ -22,7 +24,7 @@ class QueryFileParserTest {
 
     assertThat(result).hasSize(1)
     assertThat(result[0].name).isEqualTo("getAll")
-    assertThat(result[0].command).isEqualTo(":many")
+    assertThat(result[0].command).isEqualTo(Command.MANY)
     assertThat(result[0].sql).isEqualTo("SELECT * FROM users")
     assertThat(result[0].comments).isEmpty()
   }
@@ -41,9 +43,9 @@ class QueryFileParserTest {
 
     assertThat(result).hasSize(2)
     assertThat(result[0].name).isEqualTo("getAll")
-    assertThat(result[0].command).isEqualTo(":many")
+    assertThat(result[0].command).isEqualTo(Command.MANY)
     assertThat(result[1].name).isEqualTo("getById")
-    assertThat(result[1].command).isEqualTo(":one")
+    assertThat(result[1].command).isEqualTo(Command.ONE)
     assertThat(result[1].sql).isEqualTo("SELECT * FROM users WHERE id = ?")
   }
 
@@ -98,10 +100,10 @@ class QueryFileParserTest {
     val result = QueryFileParser.parse(content)
 
     assertThat(result).hasSize(4)
-    assertThat(result[0].command).isEqualTo(":one")
-    assertThat(result[1].command).isEqualTo(":many")
-    assertThat(result[2].command).isEqualTo(":exec")
-    assertThat(result[3].command).isEqualTo(":execrows")
+    assertThat(result[0].command).isEqualTo(Command.ONE)
+    assertThat(result[1].command).isEqualTo(Command.MANY)
+    assertThat(result[2].command).isEqualTo(Command.EXEC)
+    assertThat(result[3].command).isEqualTo(Command.EXEC_ROWS)
   }
 
   @Test
@@ -482,5 +484,38 @@ class QueryFileParserTest {
 
     assertThat(result[0].sql).isEqualTo("""SELECT * FROM users WHERE note = E'it\'s :x' AND id = ?""")
     assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "id"))
+  }
+
+  @Nested
+  inner class UnrecognizedCommand {
+
+    @Test
+    fun `unrecognized command annotation names the query, the annotation, and the line`() {
+      val content = """
+        -- name: getAll :many
+        SELECT * FROM users;
+
+        -- name: foo :bogus
+        SELECT 1;
+      """.trimIndent()
+
+      val exception = assertFailure { QueryFileParser.parse(content) }
+      exception.isInstanceOf(IllegalArgumentException::class)
+      exception.messageContains("foo")
+      exception.messageContains(":bogus")
+      exception.messageContains("line 4")
+    }
+
+    @Test
+    fun `command matching is case-sensitive`() {
+      val content = """
+        -- name: getAll :ONE
+        SELECT 1;
+      """.trimIndent()
+
+      val exception = assertFailure { QueryFileParser.parse(content) }
+      exception.isInstanceOf(IllegalArgumentException::class)
+      exception.messageContains(":ONE")
+    }
   }
 }

@@ -4,7 +4,7 @@ package norm.generator
  * A query parsed from a SQL file.
  *
  * @param name Developer-assigned name from the `-- name:` annotation.
- * @param command The command type (`:one`, `:many`, `:exec`, `:execrows`).
+ * @param command How the query should be executed. See [Command].
  * @param sql The SQL text, with `?` positional parameters. If the original SQL used `:name`-style named
  *   parameters, they have been converted to `?` form.
  * @param comments Comment lines preceding the query annotation, used for KDoc generation.
@@ -24,7 +24,7 @@ package norm.generator
  */
 public data class ParsedQuery(
   val name: String,
-  val command: String,
+  val command: Command,
   val sql: String,
   val comments: List<String>,
   val namedParameters: Map<Int, String> = emptyMap(),
@@ -72,8 +72,9 @@ public object QueryFileParser {
    * @param sourceFile Path to the SQL file being parsed, stored on each [ParsedQuery] for diagnostics.
    *   Empty string if the source path is unknown.
    * @return Parsed queries in the order they appear in the file.
-   * @throws IllegalArgumentException if a `-- name:` annotation has an invalid format, or if a
-   *   query mixes named and positional parameter styles.
+   * @throws IllegalArgumentException if a `-- name:` annotation has an invalid format, names a
+   *   command that doesn't match any [Command]'s SQL form (for example `:foo`), or if a query
+   *   mixes named and positional parameter styles.
    */
   public fun parse(content: String, sourceFile: String = ""): List<ParsedQuery> {
     val lines = content.lines()
@@ -155,13 +156,31 @@ public object QueryFileParser {
 
     return ParsedQuery(
       name = name,
-      command = ":$command",
+      command = resolveCommand(name, command, sourceLine),
       sql = sql,
       comments = comments,
       namedParameters = namedParameters,
       sourceLine = sourceLine,
       sourceFile = sourceFile,
     )
+  }
+
+  /**
+   * Resolves the text following the colon in a `-- name:` annotation (for example `one` from
+   * `:one`) to a [Command].
+   *
+   * @throws IllegalArgumentException if [rawCommand] doesn't match any [Command]'s SQL form.
+   */
+  private fun resolveCommand(name: String, rawCommand: String, sourceLine: Int): Command {
+    val annotation = ":$rawCommand"
+    return try {
+      Command.fromSql(annotation)
+    } catch (exception: IllegalArgumentException) {
+      throw IllegalArgumentException(
+        "Query '$name' at line $sourceLine has an unrecognized command annotation '$annotation'.",
+        exception,
+      )
+    }
   }
 
   /**
