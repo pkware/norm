@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.7.0](https://github.com/pkware/norm/compare/v0.6.0...v0.7.0) (2026-09-25)
+
+
+### Features
+
+* map xid, xid8, tid, and cid to Kotlin String ([4709ac6](https://github.com/pkware/norm/commit/4709ac6d81e0f59e270e9f033cc1333177f5c594)), closes [#304](https://github.com/pkware/norm/issues/304)
+* support domains over array types ([3b0ac63](https://github.com/pkware/norm/commit/3b0ac63f60b6b0f69abd592709febe760ee71724))
+
+
+### Bug Fixes
+
+* **deps:** update dependency io.micronaut:micronaut-inject to v5.2.3 ([71a99c2](https://github.com/pkware/norm/commit/71a99c26f010b0fbc85f1bd0d906e0e44f84ba9d))
+* **deps:** update dependency io.micronaut:micronaut-runtime to v5.2.7 ([191fd73](https://github.com/pkware/norm/commit/191fd730766165655a67d3e4c6feede2872829d1))
+* **deps:** update dependency io.micronaut.sql:micronaut-jdbc-hikari to v7.1.3 ([aae9db7](https://github.com/pkware/norm/commit/aae9db7954ac38d2081d66a9ed9b914c968dba01))
+* **deps:** update dependency io.micronaut.sql:micronaut-jdbc-hikari to v7.2.0 ([555e618](https://github.com/pkware/norm/commit/555e6184d76f518e24b1c7fc93d3a94a06222b8e))
+* **deps:** update dependency io.micronaut.test:micronaut-test-junit5 to v5.2.0 ([86431f0](https://github.com/pkware/norm/commit/86431f0bf84ec07f32335a6d7cd990680399eb81))
+* **deps:** update dependency org.mockito:mockito-junit-jupiter to v5.24.0 ([b5719e8](https://github.com/pkware/norm/commit/b5719e817456e460f769d4591921c68a1b6ece84))
+* **deps:** update dependency org.mockito.kotlin:mockito-kotlin to v6.4.0 ([a31d067](https://github.com/pkware/norm/commit/a31d067ce290eb34a7f364952ab3d91c922a37bb))
+* **deps:** update micronaut to v5.2.4 ([a3020a5](https://github.com/pkware/norm/commit/a3020a5fcbd25d92d3edf799cfd7532508da647c))
+* **deps:** update micronaut to v5.2.5 ([8c85a6d](https://github.com/pkware/norm/commit/8c85a6dbd6b32b7e1b34a144ebf7cce2e85a2b8f))
+* **deps:** update micronaut to v5.2.6 ([e3ed8b9](https://github.com/pkware/norm/commit/e3ed8b963a505d3a9d9db1b055fdac0f127a2036))
+* **deps:** update micronautdata to v5.1.5 ([fbe3074](https://github.com/pkware/norm/commit/fbe307455a33693e522243129db8d1d4c0f04cbd))
+* find RETURNING/FROM clause keywords only in keyword position ([57a9849](https://github.com/pkware/norm/commit/57a9849e5bccaeade0b35206b3da0725135f58ca)), closes [#331](https://github.com/pkware/norm/issues/331)
+* fold unquoted identifiers in parameter inference and CTE-name resolution ([dfc22f8](https://github.com/pkware/norm/commit/dfc22f80ff49d6e802aa6755f4fcc86a83e44889))
+* number parameters only at real placeholders in SqlParameterInferrer ([9f62c19](https://github.com/pkware/norm/commit/9f62c19523be6a00077b0056370e66a582ff474f)), closes [#329](https://github.com/pkware/norm/issues/329)
+* resolve stacked domain chains during catalog introspection ([fcf6a88](https://github.com/pkware/norm/commit/fcf6a88582266c8e1393d6d82bb5da6034abd79d)), closes [#305](https://github.com/pkware/norm/issues/305)
+* skip comments between VALUES and its opening parenthesis ([9501978](https://github.com/pkware/norm/commit/9501978f299420fe26e22d7d93f00b69fbdd7d41))
+* stop matching a colon-leading identifier value as a pg_node_tree field label ([c96f2b3](https://github.com/pkware/norm/commit/c96f2b3e6c2b6d348805eee4ef2426c0be0e872a))
+* treat only ASCII digits as numeric-literal starts before a dot ([717e7f7](https://github.com/pkware/norm/commit/717e7f705fa9f8661aba9c71eaa8781714806f71))
+
 ## [0.6.0](https://github.com/pkware/norm/compare/v0.5.0...v0.6.0) (2026-09-15)
 
 
