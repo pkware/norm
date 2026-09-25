@@ -25,6 +25,19 @@ internal fun foldIdentifier(logicalValue: String, isQuoted: Boolean): String =
   if (isQuoted) logicalValue else foldAsciiCase(logicalValue)
 
 /**
+ * Converts a raw identifier token, exactly as written in the source SQL, to PostgreSQL's logical
+ * identifier value: [foldIdentifier] resolves its quoting (unquoted folds via [foldAsciiCase];
+ * quoted unescapes via [unescapeQuotedIdentifier]), then [truncateIdentifier] applies the server's
+ * byte-length limit.
+ *
+ * The result is safe to compare against a name the server already reports (a catalog column name,
+ * a `ResultSetMetaData` label, a node tree's `:resname`) — never safe to splice back into SQL as an
+ * identifier, since a quoted result may need requoting and an unquoted one has already lost the
+ * quoting decision.
+ */
+internal fun logicalIdentifier(rawToken: String): String = truncateIdentifier(foldIdentifier(rawToken))
+
+/**
  * Folds only the ASCII letters `A`-`Z` to lowercase, leaving every other character untouched —
  * never through Kotlin's `String.lowercase()`, which applies full Unicode case mapping instead.
  *
@@ -186,7 +199,8 @@ internal fun quoteSqlIdentifierIfNeeded(identifier: String, reservedWords: Set<S
  * only measures bytes and has no opinion on quoting. Truncating a still-quoted name would count
  * the quote characters and can drop the closing one.
  *
- * Not part of [foldIdentifier]: `parse_ident()` does not truncate.
+ * Not part of [foldIdentifier]: `parse_ident()` does not truncate. See [logicalIdentifier] for
+ * a raw token's fold-then-truncate combination.
  */
 internal fun truncateIdentifier(identifier: String): String {
   var byteLength = 0
