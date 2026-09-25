@@ -213,7 +213,19 @@ private fun skipSingleQuotedString(sql: String, openQuoteIndex: Int, adjacency: 
 }
 
 /**
- * Advances past a double-quoted identifier opening at [openQuoteIndex] (where
+ * [findDoubleQuotedIdentifierEnd], except an unterminated identifier reports `sql.length` rather
+ * than `null`, for scanners that treat an unterminated token as running to the end of the text.
+ *
+ * @return The index after the closing quote, or `sql.length` if unterminated.
+ */
+internal fun skipDoubleQuotedIdentifier(
+  sql: String,
+  openQuoteIndex: Int,
+  adjacency: OriginalAdjacency = ALL_ADJACENT,
+): Int = findDoubleQuotedIdentifierEnd(sql, openQuoteIndex, adjacency) ?: sql.length
+
+/**
+ * Finds the end of a double-quoted identifier opening at [openQuoteIndex] (where
  * `sql[openQuoteIndex] == '"'`), honoring `""`-doubled-quote escapes (`"foo""bar"` is the single
  * identifier `foo"bar`). Unlike string literals, double-quoted identifiers do not support
  * backslash escapes.
@@ -221,13 +233,14 @@ private fun skipSingleQuotedString(sql: String, openQuoteIndex: Int, adjacency: 
  * @param adjacency See [OriginalAdjacency]'s KDoc. Gates the `""` doubled-quote-escape check for
  *   consistency with [skipSingleQuotedString]'s own `''` gate — no concrete wrong-answer case has
  *   been found for double-quoted identifiers specifically, but the two scanners should agree.
- * @return The index after the closing quote, or `sql.length` if unterminated.
+ * @return The index after the closing quote, or `null` if [openQuoteIndex]'s identifier is never
+ *   closed.
  */
-internal fun skipDoubleQuotedIdentifier(
+internal fun findDoubleQuotedIdentifierEnd(
   sql: String,
   openQuoteIndex: Int,
   adjacency: OriginalAdjacency = ALL_ADJACENT,
-): Int {
+): Int? {
   var i = openQuoteIndex + 1
   while (i < sql.length) {
     if (sql[i] == '"') {
@@ -242,7 +255,9 @@ internal fun skipDoubleQuotedIdentifier(
       i++
     }
   }
-  return i
+  // Callers can't infer this from the end index: `"ab"` and the unterminated `"a""` both end at
+  // sql.length.
+  return null
 }
 
 /**

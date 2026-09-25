@@ -88,21 +88,9 @@ internal fun parseCteClause(sql: String): ParsedCteClause? {
 private fun parseSingleCteDefinition(sql: String, startPosition: Int): Pair<CteDefinition, Int>? {
   var position = skipWhitespaceAndComments(sql, startPosition)
 
-  // Read CTE name: an unquoted identifier (isIdentifierStartChar, then a run of isIdentifierChar
-  // characters), or a double-quoted one. The first character is gated by isIdentifierStartChar,
-  // not isIdentifierChar — a leading digit or "$" is not a legal identifier start (see
-  // isIdentifierStartChar's KDoc). The quoted branch uses QUOTED_IDENTIFIER_PATTERN, the same
-  // ""-escape-aware matcher parseAliasToken uses, rather than stopping at the first '"' — a naive
-  // scan truncates a name like `"He""llo"` to `"He"` at the escaped quote's first half.
+  // CTE name: an unquoted or double-quoted identifier. An unterminated quote is not a name.
   val nameStart = position
-  if (position < sql.length && sql[position] == '"') {
-    val match = QUOTED_IDENTIFIER_PATTERN.matchAt(sql, position)
-    position = if (match != null) match.range.last + 1 else position + 1
-  } else if (position < sql.length && isIdentifierStartChar(sql[position])) {
-    position++
-    while (position < sql.length && isIdentifierChar(sql[position])) position++
-  }
-  if (position == nameStart) return null
+  position = readIdentifierToken(sql, position) ?: return null
   val rawName = sql.substring(nameStart, position)
   // rawName keeps its quotes, so only the unescaped form is truncated.
   val name = truncateIdentifier(if (isQuotedIdentifier(rawName)) unescapeQuotedIdentifier(rawName) else rawName)

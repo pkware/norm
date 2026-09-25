@@ -5,8 +5,8 @@ package norm.generator
  * fact every multi-character lexical decision in the lexer that spans two adjacent characters (a
  * `--` line-comment or `/* */` block-comment opener, a `$`-prefixed dollar-quote's identifier
  * lookback, a standalone-`E` escape-string marker's lookback, a `''`/`""` doubled-quote escape, and
- * [matchTrailingAliasSegment]'s own bare-identifier run stopping before a `$` that should instead
- * open a fresh dollar-quoted string) must be gated on, whenever the text being scanned might be
+ * [readIdentifierToken]'s own bare-identifier run stopping before a `$` that should instead open a
+ * fresh dollar-quoted string) must be gated on, whenever the text being scanned might be
  * [stripCommentsAndWhitespace]'s stripped output rather than raw SQL.
  *
  * This exists because deleting a separator PostgreSQL itself lexed on can manufacture a token that

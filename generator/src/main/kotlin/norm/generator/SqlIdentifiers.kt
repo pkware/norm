@@ -51,6 +51,28 @@ internal fun isQuotedIdentifier(rawIdentifier: String): Boolean {
 }
 
 /**
+ * Reads the identifier token starting exactly at [position] in [sql] — a double-quoted identifier
+ * (via [findDoubleQuotedIdentifierEnd]) or an unquoted one ([isIdentifierStartChar] followed by a
+ * run of [isIdentifierChar] characters) — with no leading whitespace skip of its own.
+ *
+ * @param adjacency See [OriginalAdjacency]'s KDoc. Gates both the quoted branch's `""` escape (via
+ *   [findDoubleQuotedIdentifierEnd]) and every character the unquoted branch's run extends through,
+ *   so a caller scanning a [StrippedText] never fuses two identifiers that were only made to look
+ *   adjacent by stripping out the whitespace or comment between them.
+ * @return The end-exclusive index of the token, or `null` when [position] is at or past
+ *   `sql.length`, the character at [position] can neither open a quoted identifier nor start an
+ *   unquoted one, or it opens a quoted identifier that is never closed.
+ */
+internal fun readIdentifierToken(sql: String, position: Int, adjacency: OriginalAdjacency = ALL_ADJACENT): Int? {
+  if (position >= sql.length) return null
+  if (sql[position] == '"') return findDoubleQuotedIdentifierEnd(sql, position, adjacency)
+  if (!isIdentifierStartChar(sql[position])) return null
+  var end = position + 1
+  while (end < sql.length && isIdentifierChar(sql[end]) && adjacency.wereAdjacent(end - 1)) end++
+  return end
+}
+
+/**
  * The character class an unquoted PostgreSQL identifier's first character may be: a letter, `_`,
  * or any character whose code is `>= 0x80` — never a digit or `$`, which are legal only after the
  * first character.
@@ -76,13 +98,6 @@ private const val COLUMN_REFERENCE_IDENTIFIER =
  * [unescapeQuotedIdentifier]'s job.
  */
 private const val QUOTED_IDENTIFIER = "\"(?:[^\"]|\"\")*\""
-
-/**
- * [QUOTED_IDENTIFIER] compiled once, for callers that need to match a quoted identifier token
- * starting at a known position within a larger string (via [Regex.matchAt]) rather than matching
- * an entire already-isolated string (via [Regex.matchEntire], as [COLUMN_REFERENCE] does).
- */
-internal val QUOTED_IDENTIFIER_PATTERN = Regex(QUOTED_IDENTIFIER)
 
 /**
  * Matches either an unquoted [COLUMN_REFERENCE_IDENTIFIER] or a [QUOTED_IDENTIFIER] — the shape
