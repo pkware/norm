@@ -184,30 +184,23 @@ internal class SqlStatement(
       checkNotNull(param.column) { "Parameter at position ${param.number} in query '${query.name}' has no column" }
     }
 
-    if (query.namedParameters.isEmpty()) {
-      parameters = allParams
-      parameterBindings = allParams.mapIndexed { index, param ->
-        ParameterBinding(param.number, index, param.column!!)
+    val seen = linkedMapOf<String, Int>()
+    val unique = mutableListOf<Parameter>()
+    val bindings = mutableListOf<ParameterBinding>()
+    for (param in allParams) {
+      val name = query.namedParameters[param.number]
+      val parameterIndex = if (name != null && name in seen) {
+        seen.getValue(name)
+      } else {
+        val index = unique.size
+        unique.add(param)
+        if (name != null) seen[name] = index
+        index
       }
-    } else {
-      val seen = linkedMapOf<String, Int>()
-      val unique = mutableListOf<Parameter>()
-      val bindings = mutableListOf<ParameterBinding>()
-      for (param in allParams) {
-        val name = query.namedParameters[param.number]
-        val parameterIndex = if (name != null && name in seen) {
-          seen.getValue(name)
-        } else {
-          val index = unique.size
-          unique.add(param)
-          if (name != null) seen[name] = index
-          index
-        }
-        bindings.add(ParameterBinding(param.number, parameterIndex, param.column!!))
-      }
-      parameters = unique
-      parameterBindings = bindings
+      bindings.add(ParameterBinding(param.number, parameterIndex, param.column!!))
     }
+    parameters = unique
+    parameterBindings = bindings
 
     optionalParameterIndices = parameters.indices.filter { index ->
       parameters[index].number in query.overridableDefaultParameterPositions
