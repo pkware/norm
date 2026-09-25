@@ -21,7 +21,7 @@ class ImplementationBuilderOptionalColumnTest {
   fun `single-row insert computes a nullable array column's bind index once, into a val, before binding`() {
     val statement = createStatement(
       sql = "INSERT INTO t (name, tags) VALUES (?, ?) RETURNING id",
-      cmd = ":one",
+      cmd = Command.ONE,
       params = listOf(
         Parameter(1, column("name", type = "text")),
         Parameter(2, column("tags", type = "text", isArray = true, notNull = false)),
@@ -50,7 +50,7 @@ class ImplementationBuilderOptionalColumnTest {
   fun `batch insert computes a nullable array column's bind index once per call, into a val, before the row loop`() {
     val statement = createStatement(
       sql = "INSERT INTO t (name, tags) VALUES (?, ?) RETURNING id",
-      cmd = ":one",
+      cmd = Command.ONE,
       params = listOf(
         Parameter(1, column("name", type = "text")),
         Parameter(2, column("tags", type = "text", isArray = true, notNull = false)),

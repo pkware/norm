@@ -49,7 +49,7 @@ class CrudQuerySynthesizerTest {
     val insert = CrudQuerySynthesizer.synthesize(catalog).first { it.name == "insertProduct" }
 
     assertThat(insert.sql).isEqualTo("INSERT INTO product (name, price) VALUES (?, ?) RETURNING id, total")
-    assertThat(insert.command).isEqualTo(":one")
+    assertThat(insert.command).isEqualTo(Command.ONE)
     assertThat(insert.overridableDefaultParameterPositions).isEmpty()
   }
 
@@ -68,7 +68,7 @@ class CrudQuerySynthesizerTest {
 
     assertThat(insert.sql)
       .isEqualTo("INSERT INTO author (name, bio, created_at) VALUES (?, ?, ?) RETURNING id, created_at")
-    assertThat(insert.command).isEqualTo(":one")
+    assertThat(insert.command).isEqualTo(Command.ONE)
     assertThat(insert.overridableDefaultParameterPositions).isEqualTo(setOf(3))
   }
 
@@ -102,7 +102,7 @@ class CrudQuerySynthesizerTest {
     val insert = CrudQuerySynthesizer.synthesize(catalog).first { it.name == "insertOrderItem" }
 
     assertThat(insert.sql).isEqualTo("INSERT INTO order_item (order_id, item_id, quantity) VALUES (?, ?, ?)")
-    assertThat(insert.command).isEqualTo(":exec")
+    assertThat(insert.command).isEqualTo(Command.EXEC)
   }
 
   @Test
@@ -133,7 +133,7 @@ class CrudQuerySynthesizerTest {
 
     assertThat(insert.sql)
       .isEqualTo("INSERT INTO all_default (created_at, status) VALUES (?, ?) RETURNING id, created_at, status")
-    assertThat(insert.command).isEqualTo(":one")
+    assertThat(insert.command).isEqualTo(Command.ONE)
     assertThat(insert.overridableDefaultParameterPositions).isEqualTo(setOf(1, 2))
   }
 
@@ -150,7 +150,7 @@ class CrudQuerySynthesizerTest {
     val findById = CrudQuerySynthesizer.synthesize(catalog).first { it.name == "findOrderItemByOrderIdAndItemId" }
 
     assertThat(findById.sql).isEqualTo("SELECT * FROM order_item WHERE order_id = ? AND item_id = ?")
-    assertThat(findById.command).isEqualTo(":many")
+    assertThat(findById.command).isEqualTo(Command.MANY)
   }
 
   @Test
@@ -230,7 +230,7 @@ class CrudQuerySynthesizerTest {
     val catalog = catalog(table)
     val userFindAll = ParsedQuery(
       name = "findAllAuthor",
-      command = ":many",
+      command = Command.MANY,
       sql = "SELECT name FROM author",
       comments = emptyList(),
     )

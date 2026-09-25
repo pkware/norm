@@ -6518,7 +6518,7 @@ class QueryAnalysisTest {
           val catalog = analyzer.buildCatalog(listOf(schemaName))
           val parsedQuery = ParsedQuery(
             name = "test",
-            command = ":one",
+            command = Command.ONE,
             sql = "UPDATE ft SET note = 'x' WHERE id = 1 RETURNING lower(note) AS n",
             comments = emptyList(),
           )
@@ -6579,7 +6579,7 @@ class QueryAnalysisTest {
           val catalog = analyzer.buildCatalog(listOf(schemaName))
           val parsedQuery = ParsedQuery(
             name = "test",
-            command = ":one",
+            command = Command.ONE,
             sql = "UPDATE p SET note = 'x' WHERE id = 1 RETURNING lower(note) AS n",
             comments = emptyList(),
           )
@@ -6637,7 +6637,7 @@ class QueryAnalysisTest {
           val catalog = analyzer.buildCatalog(listOf(schemaName))
           val parsedQuery = ParsedQuery(
             name = "test",
-            command = ":one",
+            command = Command.ONE,
             sql = "UPDATE parent2 SET note = 'x' WHERE id = 1 RETURNING lower(note) AS n",
             comments = emptyList(),
           )
@@ -9885,7 +9885,7 @@ class QueryAnalysisTest {
       try {
         val analyzer = JdbcAnalyzer(connection)
         val catalog = analyzer.buildCatalog(listOf(schemaName))
-        val parsedQuery = ParsedQuery(name = "test", command = ":one", sql = sql, comments = emptyList())
+        val parsedQuery = ParsedQuery(name = "test", command = Command.ONE, sql = sql, comments = emptyList())
         return analyzer.analyzeQuery(parsedQuery, catalog)
       } finally {
         connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
