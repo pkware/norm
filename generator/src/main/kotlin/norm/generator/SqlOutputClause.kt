@@ -330,7 +330,7 @@ private fun parseAliasToken(item: String, start: Int): String? {
  * error), so this shape can never actually reach here from an accepted query, but an empty
  * non-null name would still be a worse `null` than `null` itself.
  *
- * An unquoted column/table name is folded via [foldAsciiCase] — PostgreSQL's own
+ * An unquoted column/table name is folded via [logicalIdentifier] — PostgreSQL's own
  * `downcase_identifier` behavior, ASCII `A`-`Z` only — so [SelectItem.columnName]/
  * [SelectItem.tableName] agree with what `ResultSetMetaData.getColumnName` reports for the same
  * reference. A quoted name is never folded — quoting is how PostgreSQL preserves a name's
@@ -347,12 +347,10 @@ internal fun parseColumnReference(expression: String): SelectItem {
   val rawColumn = match.groups["column"]!!.value
   val tableIsQuoted = rawTable?.startsWith('"') == true
   val columnIsQuoted = rawColumn.startsWith('"')
-  // Truncated here so callers comparing these against server-reported names, such as
-  // catalog.findColumn, are comparing like with like.
-  val column = truncateIdentifier(if (columnIsQuoted) unescapeQuotedIdentifier(rawColumn) else foldAsciiCase(rawColumn))
-  val table = rawTable?.let {
-    truncateIdentifier(if (tableIsQuoted) unescapeQuotedIdentifier(it) else foldAsciiCase(it))
-  }
+  // Converted to PostgreSQL's logical identifier value so callers comparing these against
+  // server-reported names, such as catalog.findColumn, are comparing like with like.
+  val column = logicalIdentifier(rawColumn)
+  val table = rawTable?.let(::logicalIdentifier)
   if (column.isEmpty() || table?.isEmpty() == true) return noMatch
 
   return SelectItem(

@@ -104,8 +104,8 @@ private data class VerifiedItem(val expression: String, val matchKind: AliasMatc
  * node tree's authoritative `:resname` for this position), or `null` if none did. Tried in
  * PostgreSQL's own precedence order for naming a select-list item:
  *
- * 1. An explicit `AS alias` — folded via [foldIdentifier]'s raw-text overload, since
- *    [OutputItemWithAlias.alias] still carries its own quotes, if any.
+ * 1. An explicit `AS alias` — converted via [logicalIdentifier], since [OutputItemWithAlias.alias]
+ *    still carries its own quotes, if any.
  * 2. A bare column reference with no alias at all — PostgreSQL exposes such an item under the
  *    column's own name.
  * 3. Neither of the above: the item's text may still end with an implicit (no-`AS`) alias token
@@ -115,9 +115,9 @@ private data class VerifiedItem(val expression: String, val matchKind: AliasMatc
 private fun verifiedItem(item: OutputItemWithAlias, resultName: String): VerifiedItem? {
   val alias = item.alias
   if (alias != null) {
-    // resultName comes from the server and is already truncated. Truncating after the fold, not
-    // before: the raw alias still carries its quotes, and those bytes are not part of the name.
-    return item.selectItem.expression.takeIf { truncateIdentifier(foldIdentifier(alias)) == resultName }
+    // resultName comes from the server and is already truncated. Folding before truncating: the
+    // raw alias still carries its quotes, and those bytes are not part of the name.
+    return item.selectItem.expression.takeIf { logicalIdentifier(alias) == resultName }
       ?.let { VerifiedItem(it, AliasMatchKind.EXPLICIT_ALIAS) }
   }
 
@@ -130,7 +130,7 @@ private fun verifiedItem(item: OutputItemWithAlias, resultName: String): Verifie
   }
 
   val implicitAlias = splitTrailingImplicitAlias(item.selectItem.expression)?.alias ?: return null
-  return item.selectItem.expression.takeIf { truncateIdentifier(foldIdentifier(implicitAlias)) == resultName }
+  return item.selectItem.expression.takeIf { logicalIdentifier(implicitAlias) == resultName }
     ?.let { VerifiedItem(it, AliasMatchKind.IMPLICIT_ALIAS) }
 }
 
@@ -168,17 +168,17 @@ private fun scopedNodeTreeCteQueryBlock(nodeTreeText: String, hops: List<CteHop>
  * slices [sql] directly by whichever [CteDefinition] this function returns.
  *
  * @return `null` if any hop's [CteHop.ctelevelsup] addresses a scope-stack depth that does not exist,
- *   or its [CteHop.name] does not fold-match ([foldIdentifier] against [CteDefinition.rawName]) any
- *   definition in that scope
+ *   or its [CteHop.name] does not match ([CteDefinition.name], PostgreSQL's own logical identifier
+ *   value) any definition in that scope
  */
 private fun scopedSqlCteDefinition(sql: String, hops: List<CteHop>): CteDefinition? {
   var scopeStack = CteScopeStack(rebasedCteDefinitions(sql, 0))
   var resolvedDefinition: CteDefinition? = null
   for (hop in hops) {
     val scope = scopeStack.frameAt(hop.ctelevelsup) ?: return null
-    // hop.name comes from the node tree and is already truncated.
-    val definition = scope.filter { truncateIdentifier(foldIdentifier(it.rawName)) == hop.name }.singleOrNull()
-      ?: return null
+    // hop.name comes from the node tree and is already truncated; CteDefinition.name is already
+    // the logical, folded, truncated value, so a direct comparison is exact.
+    val definition = scope.filter { it.name == hop.name }.singleOrNull() ?: return null
     resolvedDefinition = definition
     val bodyOffset = definition.bodyOpenParenthesis + 1
     val bodyText = sql.substring(bodyOffset, definition.bodyCloseParenthesis)

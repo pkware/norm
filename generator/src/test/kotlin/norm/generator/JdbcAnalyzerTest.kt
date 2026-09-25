@@ -1516,6 +1516,40 @@ class JdbcAnalyzerTest {
     }
   }
 
+  @Nested
+  inner class ParameterInferenceFoldsUnquotedIdentifiers {
+
+    @Test
+    fun `an unquoted mixed-case INSERT into a nullable column infers a nullable parameter`() {
+      // Both the table and column are created unquoted, so PostgreSQL itself already folded them
+      // to fold_param_test/bio; referencing them as Fold_Param_Test(Bio) later is an ordinary
+      // unquoted mixed-case reference, resolving to the very same relation and column. If
+      // parameter inference compares the un-folded "Fold_Param_Test"/"Bio" against the catalog's
+      // already-folded names, the lookup misses and resolveParameterNotNull falls back to true
+      // (non-nullable) even though the real column allows NULL.
+      connection.createStatement().use {
+        it.execute("CREATE TABLE Fold_Param_Test (id SERIAL PRIMARY KEY, Bio TEXT)")
+      }
+
+      try {
+        val catalog = analyzer.buildCatalog()
+        val parsed = ParsedQuery(
+          "insertFoldParamTest",
+          ":execrows",
+          "INSERT INTO Fold_Param_Test(Bio) VALUES (?)",
+          emptyList(),
+        )
+
+        val query = analyzer.analyzeQuery(parsed, catalog)
+
+        val parameter = query.params.single()
+        assertThat(parameter.column!!.notNull).isFalse()
+      } finally {
+        connection.createStatement().use { it.execute("DROP TABLE IF EXISTS fold_param_test") }
+      }
+    }
+  }
+
   companion object {
     @JvmField
     @Container

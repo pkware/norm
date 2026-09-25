@@ -3,15 +3,12 @@ package norm.generator
 /**
  * A parsed CTE definition from a `WITH` clause.
  *
- * @property name The CTE name, with surrounding double quotes stripped (if any). Safe for display,
- *   and for a quote-insensitive comparison where losing the quoted/unquoted distinction is
- *   genuinely harmless. Not safe for constructing SQL to send to PostgreSQL, and not safe for any
- *   comparison that resolves what the name actually addresses — quoting changes case-folding
- *   (`"MyCte"` is distinct from `MyCte`, which folds to `mycte`), so both building a `FROM <name>`
- *   reference from this stripped form, and comparing it against another identifier to decide
- *   whether they denote the same relation, can silently pick the wrong (or a nonexistent) one —
- *   see [resolveNodeTreeProvenanceExpression]'s own use of [rawName] instead, for exactly this
- *   reason. Use [rawName] for both constructing SQL and any identifier-resolution comparison.
+ * @property name The CTE name as PostgreSQL's logical identifier value — [logicalIdentifier]
+ *   applied to [rawName]: an unquoted name folded to lowercase ASCII, a quoted name with its
+ *   quotes stripped and any doubled `""` escape collapsed, both truncated to the server's byte
+ *   limit. Safe for a comparison against a server-reported name. Not safe for constructing SQL to
+ *   send to PostgreSQL — a quoted name may need requoting to round-trip correctly; use [rawName]
+ *   for that instead.
  * @property rawName The CTE name exactly as written in the original SQL, including surrounding
  *   double quotes if the user quoted it. Safe to splice verbatim into a `FROM <rawName>` probe.
  * @property bodyOpenParenthesis Index of `(` that opens the CTE body in the original SQL.
@@ -92,8 +89,7 @@ private fun parseSingleCteDefinition(sql: String, startPosition: Int): Pair<CteD
   val nameStart = position
   position = readIdentifierToken(sql, position) ?: return null
   val rawName = sql.substring(nameStart, position)
-  // rawName keeps its quotes, so only the unescaped form is truncated.
-  val name = truncateIdentifier(if (isQuotedIdentifier(rawName)) unescapeQuotedIdentifier(rawName) else rawName)
+  val name = logicalIdentifier(rawName)
 
   position = skipWhitespaceAndComments(sql, position)
 
