@@ -128,7 +128,7 @@ private fun adapterParameters(
   // User-configured adapter params (no default value → must come first)
   val userAdapterParams = typeMappings.map { mapping ->
     val applicationTypeName = parseTypeName(mapping.kotlinType)
-    val databaseTypeName = resolveWireTypeName(mapping, catalog)
+    val databaseTypeName = resolveWireTypeName(mapping, typeRepository, catalog)
     AdapterParameter(
       userAdapterPropertyName(mapping),
       COLUMN_ADAPTER.parameterizedBy(applicationTypeName, databaseTypeName),
@@ -339,13 +339,13 @@ internal fun userAdapterPropertyName(mapping: TypeMapping): String = if (mapping
  * For type-level overrides, this maps the Postgres type directly.
  * For column-level overrides, this looks up the column's actual type from the catalog first.
  */
-private fun resolveWireTypeName(mapping: TypeMapping, catalog: Catalog): TypeName {
+private fun resolveWireTypeName(mapping: TypeMapping, typeRepository: TypeRepository, catalog: Catalog): TypeName {
   val postgresType = if (mapping.isColumnLevel) {
     resolveColumnPostgresType(catalog, mapping.table!!, mapping.column!!)
   } else {
     mapping.postgresType
   }
-  return resolveWireKotlinType(postgresType, catalog)
+  return typeRepository.resolveAdapterWireCodec(postgresType).kotlinType
 }
 
 /**
@@ -364,37 +364,3 @@ private fun resolveColumnPostgresType(catalog: Catalog, table: String, column: S
     ?.type?.name
     ?: error("Column '$truncatedTable.$truncatedColumn' not found in catalog")
 }
-
-/**
- * Maps a Postgres type name to the Kotlin type that JDBC delivers it as (the wire type).
- *
- * - Enums → `String` (JDBC delivers enum values as strings)
- * - Domains → chains to the domain's base type
- * - Standard types → uses [wireKotlinType]
- */
-private fun resolveWireKotlinType(postgresType: String, catalog: Catalog): TypeName {
-  // Check if it's an enum
-  val isEnum = catalog.schemas.flatMap { it.enums }.any { it.name == postgresType }
-  if (isEnum) return String::class.asTypeName()
-
-  // Check if it's a domain — chain to base type
-  val domain = catalog.schemas.flatMap { it.domains }.firstOrNull { it.name == postgresType }
-  if (domain != null) return resolveWireKotlinType(domain.baseType, catalog)
-
-  // Standard type
-  return wireKotlinType(postgresType)
-}
-
-/**
- * Maps a Postgres base type name to the Kotlin type that JDBC delivers it as.
- *
- * Delegates to [resolveWireCodec] as the single source of truth for type mappings, so the set of
- * usable adapter wire types is the same as the set of usable domain bases ([domainKotlinWireType]).
- * The two differ only in the error message they raise for a type with no entry.
- */
-private fun wireKotlinType(postgresType: String): TypeName = resolveWireCodec(postgresType)?.kotlinType
-  ?: error(
-    "Postgres type '$postgresType' cannot be used as the wire type for a custom adapter. " +
-      "Supported wire types: text, varchar, bpchar, json, jsonb, int2, int4, int8, float4, float8, " +
-      "bool, numeric.",
-  )

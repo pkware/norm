@@ -408,11 +408,7 @@ internal class TypeRepository(
   ): SqlMappable {
     val applicationTypeName = parseTypeName(mapping.kotlinType)
     val adapterPropertyName = userAdapterPropertyName(mapping)
-    val codec = resolveWireCodecForType(postgresType)
-      ?: error(
-        "Postgres type '$postgresType' cannot be used with a custom adapter — " +
-          "no JDBC type mapping is available.",
-      )
+    val codec = resolveAdapterWireCodec(postgresType)
 
     if (isArray) {
       return AdaptedArrayTypeSqlMappable(
@@ -426,17 +422,23 @@ internal class TypeRepository(
   }
 
   /**
-   * Resolves a [WireCodec] for any Postgres type, chaining through enums and domains as needed.
+   * Resolves the [WireCodec] that a user-configured adapter converts to and from.
    *
-   * - Enum types → String (VARCHAR)
-   * - Domain types → chains to the domain's base type
-   * - Standard types → uses [resolveWireCodec]
+   * An enum resolves to [ENUM_CODEC], and a domain to the codec of its base type.
+   *
+   * @param postgresType Postgres type name of the mapped type or column.
+   * @throws IllegalStateException if [postgresType] has no [WireCodec].
    */
-  private fun resolveWireCodecForType(postgresType: String): WireCodec? {
+  @Throws(IllegalStateException::class)
+  internal fun resolveAdapterWireCodec(postgresType: String): WireCodec {
     if (postgresType in enumsByName) return ENUM_CODEC
     val domain = domainsByName[postgresType]
-    if (domain != null) return resolveWireCodecForType(domain.baseType)
+    if (domain != null) return resolveAdapterWireCodec(domain.baseType)
     return resolveWireCodec(postgresType)
+      ?: error(
+        "Postgres type '$postgresType' cannot be used with a custom adapter — " +
+          "no JDBC type mapping is available.",
+      )
   }
 
   /**
