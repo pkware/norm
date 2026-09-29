@@ -13,25 +13,23 @@ internal fun createStatement(
   namedParameters: Map<Int, String> = emptyMap(),
   overridableDefaultParameterPositions: Set<Int> = emptySet(),
   batchSql: String? = null,
-): SqlStatement {
-  val repository = TypeRepository("test", catalog)
-  return SqlStatement(
-    catalog,
-    Query(
-      text = sql,
-      cmd = cmd,
-      name = name,
-      columns = columns,
-      params = params,
-      comments = comments,
-      isSynthesizedInsert = isSynthesizedInsert,
-      namedParameters = namedParameters,
-      overridableDefaultParameterPositions = overridableDefaultParameterPositions,
-      batchSql = batchSql,
-    ),
-    repository,
-  )
-}
+  typeRepository: TypeRepository = TypeRepository("test", catalog),
+): SqlStatement = SqlStatement(
+  catalog,
+  Query(
+    text = sql,
+    cmd = cmd,
+    name = name,
+    columns = columns,
+    params = params,
+    comments = comments,
+    isSynthesizedInsert = isSynthesizedInsert,
+    namedParameters = namedParameters,
+    overridableDefaultParameterPositions = overridableDefaultParameterPositions,
+    batchSql = batchSql,
+  ),
+  typeRepository,
+)
 
 /** Builds a [Column] with sensible defaults for [SqlStatement] and [TypeRepository] tests. */
 internal fun column(

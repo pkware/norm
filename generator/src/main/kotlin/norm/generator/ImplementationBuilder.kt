@@ -33,9 +33,9 @@ internal fun sqlFunction(statement: SqlStatement): FunSpec.Builder {
   }
 
   val optionalIndices = statement.optionalParameterIndices.toSet()
-  for ((index, parameter) in statement.parameters.withIndex()) {
+  for (index in statement.parameters.indices) {
     val parameterName = statement.getParameterName(index)
-    val columnType = statement.resolveColumnType(parameter.column!!)
+    val columnType = statement.parameterTypes[index]
     val parameterType = if (index in optionalIndices) {
       COLUMN_VALUE_CLASS_NAME.parameterizedBy(columnType)
     } else {
@@ -247,7 +247,7 @@ private fun FunSpec.Builder.buildOne(statement: SqlStatement) {
       val parameterName = statement.getParameterName(parameterIndex)
       val indexReference = "${parameterName}Index"
       val binding = statement.parameterBindings.first { it.parameterIndex == parameterIndex }
-      val typeInfo = statement.resolveMappableType(binding.column)
+      val typeInfo = binding.mappable
       beginControlFlow("if (%N is %T)", parameterName, COLUMN_VALUE_SET_CLASS_NAME)
       addStatement("nextParameterIndex += 1")
       addStatement("val %N = nextParameterIndex", indexReference)
@@ -302,10 +302,10 @@ internal fun batchFunction(statement: SqlStatement): FunSpec.Builder = sqlFuncti
   addParameter("stream", ITERABLE.parameterizedBy(t))
 
   val optionalIndices = statement.optionalParameterIndices.toSet()
-  for ((index, parameter) in statement.parameters.withIndex()) {
+  for (index in statement.parameters.indices) {
     val lambda = LambdaTypeName.get(
       parameters = arrayOf(ParameterSpec.unnamed(t)),
-      returnType = statement.resolveColumnType(parameter.column!!),
+      returnType = statement.parameterTypes[index],
     )
     val parameterType = if (index in optionalIndices) lambda.copy(nullable = true) else lambda
     addParameter(statement.getParameterName(index), parameterType)
@@ -336,10 +336,10 @@ internal fun batchWithReturnFunction(statement: SqlStatement): FunSpec.Builder {
     addParameter("stream", ITERABLE.parameterizedBy(inputType))
 
     val optionalIndices = statement.optionalParameterIndices.toSet()
-    for ((index, parameter) in statement.parameters.withIndex()) {
+    for (index in statement.parameters.indices) {
       val lambda = LambdaTypeName.get(
         parameters = arrayOf(ParameterSpec.unnamed(inputType)),
-        returnType = statement.resolveColumnType(parameter.column!!),
+        returnType = statement.parameterTypes[index],
       )
       val parameterType = if (index in optionalIndices) lambda.copy(nullable = true) else lambda
       addParameter(statement.getParameterName(index), parameterType)
@@ -476,7 +476,7 @@ private fun buildBatchWithReturn(statement: SqlStatement): FunSpec = batchWithRe
     val parameterName = statement.getParameterName(parameterIndex)
     val indexName = optionalIndexNames.getValue(parameterIndex)
     val binding = statement.parameterBindings.first { it.parameterIndex == parameterIndex }
-    val typeInfo = statement.resolveMappableType(binding.column)
+    val typeInfo = binding.mappable
     beginControlFlow("if (%N != null)", indexName)
     addStatement(
       "%L",
@@ -552,7 +552,7 @@ private fun bindStatements(
   statement: SqlStatement,
   nameTransform: (CodeBlock) -> CodeBlock = { it },
 ): List<CodeBlock> = statement.parameterBindings.map { binding ->
-  val typeInfo = statement.resolveMappableType(binding.column)
+  val typeInfo = binding.mappable
   val parameterNameReference = CodeBlock.of("%N", statement.getParameterName(binding.parameterIndex))
   val paramName = nameTransform(parameterNameReference)
   typeInfo.statementAction(CodeBlock.of("%L", binding.jdbcPosition), paramName)
@@ -573,7 +573,7 @@ private fun requiredBindStatements(
   return statement.parameterBindings
     .filter { it.parameterIndex !in optionalIndices }
     .map { binding ->
-      val typeInfo = statement.resolveMappableType(binding.column)
+      val typeInfo = binding.mappable
       val parameterNameReference = CodeBlock.of("%N", statement.getParameterName(binding.parameterIndex))
       val paramName = nameTransform(parameterNameReference)
       typeInfo.statementAction(CodeBlock.of("%L", binding.jdbcPosition), paramName)

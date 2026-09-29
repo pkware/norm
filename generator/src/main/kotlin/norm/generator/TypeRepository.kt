@@ -108,7 +108,7 @@ internal class TypeRepository(
   /**
    * The set of Postgres enum types discovered as referenced by query columns.
    *
-   * Available after all queries have been resolved via [resolveMappableType].
+   * Complete once every [SqlStatement] has been constructed.
    */
   val discoveredEnums: Set<Enum>
     get() = referencedEnums
@@ -116,7 +116,7 @@ internal class TypeRepository(
   /**
    * The set of Postgres domain types discovered as referenced by query columns.
    *
-   * Available after all queries have been resolved via [resolveMappableType].
+   * Complete once every [SqlStatement] has been constructed.
    */
   val discoveredDomains: Set<Domain>
     get() = referencedDomains
