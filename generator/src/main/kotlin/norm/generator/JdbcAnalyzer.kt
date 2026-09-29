@@ -22,6 +22,15 @@ public class JdbcAnalyzer(private val connection: Connection) {
 
   private val catalogLoader = PgCatalogLoader(connection)
   private val parameterInferrer = SqlParameterInferrer(catalogLoader.functionOverloads)
+  private val reservedWords: Set<String> by lazy {
+    buildSet {
+      connection.createStatement().use { statement ->
+        statement.executeQuery("SELECT word FROM pg_get_keywords() WHERE catcode IN ('R', 'T')").use { resultSet ->
+          while (resultSet.next()) add(resultSet.getString(1))
+        }
+      }
+    }
+  }
 
   /**
    * Builds a [Catalog] representing the database schema.
@@ -362,15 +371,11 @@ public class JdbcAnalyzer(private val connection: Connection) {
    * function or type name). These are the words that PostgreSQL rejects as bare identifiers in
    * column/table positions.
    *
+   * The query runs once per analyzer, on first use. Later calls return the same set.
+   *
    * @return A set of lowercase reserved words.
    */
-  public fun fetchReservedWords(): Set<String> = buildSet {
-    connection.createStatement().use { statement ->
-      statement.executeQuery("SELECT word FROM pg_get_keywords() WHERE catcode IN ('R', 'T')").use { resultSet ->
-        while (resultSet.next()) add(resultSet.getString(1))
-      }
-    }
-  }
+  public fun fetchReservedWords(): Set<String> = reservedWords
 
   /**
    * Builds an identifier-quoting function based on the connected PostgreSQL instance's reserved words.

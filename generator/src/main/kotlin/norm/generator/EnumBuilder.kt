@@ -26,7 +26,7 @@ import com.squareup.kotlinpoet.asTypeName
  * @param packageName The package for the generated enum class.
  */
 internal fun buildEnumTypeSpec(enumDefinition: Enum, packageName: String): TypeSpec {
-  val enumClassName = ClassName(packageName, enumDefinition.name.snakeToCamelCase().titleCase())
+  val enumClassName = enumClassName(enumDefinition, packageName)
 
   val enumBuilder = TypeSpec.enumBuilder(enumClassName)
     // Passed as a "%L" argument rather than interpolated into the format string itself -- a
@@ -92,8 +92,8 @@ internal fun buildEnumTypeSpec(enumDefinition: Enum, packageName: String): TypeS
  * @param frameworks The DI frameworks to annotate the adapter with.
  */
 internal fun buildAdapterTypeSpec(enumDefinition: Enum, packageName: String, frameworks: Set<Framework>): TypeSpec {
-  val enumClassName = ClassName(packageName, enumDefinition.name.snakeToCamelCase().titleCase())
-  val adapterClassName = ClassName(packageName, "${enumDefinition.name.snakeToCamelCase().titleCase()}Adapter")
+  val enumClassName = enumClassName(enumDefinition, packageName)
+  val adapterClassName = adapterClassName(enumDefinition, packageName)
   val adapterSupertype = COLUMN_ADAPTER.parameterizedBy(enumClassName, String::class.asTypeName())
 
   val decodeFunction = FunSpec.builder("decode")
@@ -126,6 +126,15 @@ internal fun buildAdapterTypeSpec(enumDefinition: Enum, packageName: String, fra
 
   return classBuilder.build()
 }
+
+/**
+ * Returns the [ClassName] for the enum class generated for a Postgres enum type.
+ *
+ * @param enumDefinition The Postgres enum definition.
+ * @param packageName The package in which the enum class is generated.
+ */
+internal fun enumClassName(enumDefinition: Enum, packageName: String): ClassName =
+  ClassName(packageName, enumDefinition.name.snakeToCamelCase().titleCase())
 
 /**
  * Returns the [ClassName] for the adapter class generated for a Postgres enum type.

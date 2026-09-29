@@ -147,10 +147,7 @@ internal class TypeRepository(
    */
   // TODO Does the columnOffset result in a bug if the same table is sometimes standalone and sometimes embedded?
   fun getTypeProjectionForTable(table: Table, columnOffset: Int = 1): ReturnType = tableModels.computeIfAbsent(table) {
-    val tableName = table.rel.name
-      .snakeToCamelCase()
-      .titleCase()
-    val nameOfTypeBeingDefined = ClassName(packageName, tableName)
+    val nameOfTypeBeingDefined = tableClassName(table, packageName)
     val typeBeingDefined = TypeSpec.classBuilder(nameOfTypeBeingDefined)
       .addModifiers(KModifier.DATA)
       .addAnnotation(JvmRecord::class)
@@ -218,10 +215,7 @@ internal class TypeRepository(
         // Register the embedded type itself (with default offset) so it gets generated
         getTypeProjectionForTable(table, columnOffset = 1)
 
-        val embeddedTypeClassName = ClassName(
-          packageName,
-          table.rel.name.snakeToCamelCase().titleCase(),
-        )
+        val embeddedTypeClassName = tableClassName(table, packageName)
 
         val embeddedTypeConstructorInvocation = CodeBlock.builder()
           .addStatement("%T(", embeddedTypeClassName)
@@ -407,7 +401,7 @@ internal class TypeRepository(
     val enumDefinition = enumsByName[typeName] ?: return null
     referencedEnums.add(enumDefinition)
 
-    val enumClassName = ClassName(packageName, enumDefinition.name.snakeToCamelCase().titleCase())
+    val enumClassName = enumClassName(enumDefinition, packageName)
     val propertyName = adapterPropertyName(enumDefinition)
 
     if (isArray) {
@@ -477,7 +471,7 @@ internal class TypeRepository(
       )
     }
 
-    val domainClassName = ClassName(packageName, domain.name.snakeToCamelCase().titleCase())
+    val domainClassName = domainValueClassName(domain, packageName)
     val propertyName = domainAdapterPropertyName(domain)
     val codec = resolveWireCodec(domain.baseType) ?: error(unsupportedDomainBaseTypeMessage(domain))
 
@@ -531,3 +525,12 @@ internal class TypeRepository(
   private fun resolveBaseType(typeName: String, notNull: Boolean): SqlMappable? =
     POSTGRES_BASE_TYPES[typeName.removePrefix("pg_catalog.")]?.let { ScalarSqlMappable(it.codec, notNull) }
 }
+
+/**
+ * Returns the [ClassName] for the data class generated for a Postgres table.
+ *
+ * @param table The table definition from the catalog.
+ * @param packageName The package in which the data class is generated.
+ */
+internal fun tableClassName(table: Table, packageName: String): ClassName =
+  ClassName(packageName, table.rel.name.snakeToCamelCase().titleCase())
