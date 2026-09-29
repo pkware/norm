@@ -74,8 +74,6 @@ public fun generateCode(
       )
     }
 
-  // Computed only now, after generateQueryInterface has resolved every query parameter's column
-  // type — see adapterParameters' KDoc for why this ordering matters.
   val adapterParameters =
     adapterParameters(typeRepository, typeMappings, catalog, packageName, typeOverridePostgresTypes)
 
@@ -116,13 +114,6 @@ private data class AdapterParameter(val propertyName: String, val adapterType: T
  * 1. User-configured adapters (no default) — must come first in the constructor.
  * 2. Auto-generated adapters, for enums and domains discovered while resolving column types (with a
  *    default) — come after.
- *
- * Must be called only after every query has been resolved into a Kotlin interface (i.e., after
- * [generateQueryInterface]). [TypeRepository.discoveredEnums] and [TypeRepository.discoveredDomains]
- * are populated as a side effect of resolving column types, and a query *parameter*'s column type is
- * first resolved while building the interface method for that query, not while constructing
- * [SqlStatement]. Calling this before every query is resolved silently drops any enum or domain
- * referenced only as a query parameter.
  *
  * @param typeOverridePostgresTypes Postgres type names with a user-configured type-level override,
  *   already computed by the caller so it's derived from [typeMappings] exactly once.

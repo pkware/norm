@@ -30,6 +30,11 @@ internal class SqlStatement(
   val parameters: List<Parameter>
 
   /**
+   * Kotlin type, including nullability, of the entry at the same index in [parameters].
+   */
+  val parameterTypes: List<TypeName>
+
+  /**
    * Command applied to the SQL statement.
    *
    * Statements are annotated with a Command that defines how they'll behave at runtime. Where [resultRowShape]
@@ -148,7 +153,7 @@ internal class SqlStatement(
    *
    * One entry per `?` in the SQL. Each binding carries the 1-based JDBC position,
    * the index into [parameters] that provides the value, and the column metadata
-   * for type resolution.
+   * with its resolved [SqlMappable].
    *
    * When named parameters are reused (e.g., `:scannedAt` at positions 1 and 2), multiple
    * bindings share the same [ParameterBinding.parameterIndex]. When all parameters are
@@ -192,10 +197,12 @@ internal class SqlStatement(
         if (name != null) seen[name] = index
         index
       }
-      bindings.add(ParameterBinding(param.number, parameterIndex, param.column!!))
+      val column = param.column!!
+      bindings.add(ParameterBinding(param.number, parameterIndex, column, typeRepository.resolveMappableType(column)))
     }
     parameters = unique
     parameterBindings = bindings
+    parameterTypes = unique.map { typeRepository.resolveColumnType(it.column!!) }
 
     optionalParameterIndices = parameters.indices.filter { index ->
       parameters[index].number in query.overridableDefaultParameterPositions
@@ -224,16 +231,6 @@ internal class SqlStatement(
    * Returns the deduplicated parameter name at the given index in [parameters].
    */
   fun getParameterName(index: Int): String = deduplicatedParameterNames.getOrElse(index) { "param$index" }
-
-  /**
-   * Resolves the mappable type for a column with domain type support.
-   */
-  fun resolveMappableType(column: Column): SqlMappable = typeRepository.resolveMappableType(column)
-
-  /**
-   * Resolves the Kotlin [TypeName] for a column with domain type support.
-   */
-  fun resolveColumnType(column: Column): TypeName = typeRepository.resolveColumnType(column)
 
   private fun computeReturnType(): ReturnType {
     val queryResults = query.columns
@@ -302,6 +299,12 @@ internal data class ReturnType(
  *
  * @param jdbcPosition 1-based position of the `?` in the prepared statement.
  * @param parameterIndex Index into [SqlStatement.parameters] (and [SqlStatement.getParameterName]).
- * @param column Column metadata for type resolution (always non-null; validated in [SqlStatement.init]).
+ * @param column Column metadata of this occurrence (always non-null; validated in [SqlStatement.init]).
+ * @param mappable Type mapping of [column], used to bind the value at [jdbcPosition].
  */
-internal data class ParameterBinding(val jdbcPosition: Int, val parameterIndex: Int, val column: Column)
+internal data class ParameterBinding(
+  val jdbcPosition: Int,
+  val parameterIndex: Int,
+  val column: Column,
+  val mappable: SqlMappable,
+)

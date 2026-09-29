@@ -4,6 +4,7 @@ import assertk.assertFailure
 import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.containsExactly
+import assertk.assertions.containsOnly
 import assertk.assertions.hasMessage
 import assertk.assertions.hasSize
 import assertk.assertions.isEmpty
@@ -13,7 +14,6 @@ import assertk.assertions.isNull
 import assertk.assertions.isTrue
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.asTypeName
-import norm.generator.ParameterBinding
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
@@ -1180,13 +1180,9 @@ class SqlStatementTest {
 
       val sortedParams = listOf(param(1, "a", "text"), param(2, "b", "text"), param(3, "c", "text"))
       assertThat(statement.parameters).isEqualTo(sortedParams)
-      assertThat(statement.parameterBindings).isEqualTo(
-        listOf(
-          ParameterBinding(1, 0, sortedParams[0].column!!),
-          ParameterBinding(2, 1, sortedParams[1].column!!),
-          ParameterBinding(3, 2, sortedParams[2].column!!),
-        ),
-      )
+      assertThat(statement.parameterBindings.map { it.jdbcPosition }).containsExactly(1, 2, 3)
+      assertThat(statement.parameterBindings.map { it.parameterIndex }).containsExactly(0, 1, 2)
+      assertThat(statement.parameterBindings.map { it.column }).isEqualTo(sortedParams.map { it.column!! })
     }
 
     @Test
@@ -1220,8 +1216,9 @@ class SqlStatementTest {
       assertThat(statement.parameters).hasSize(1)
       assertThat(statement.getParameterName(0)).isEqualTo("scannedAt")
       assertThat(statement.parameterBindings).hasSize(2)
-      assertThat(statement.parameterBindings[0]).isEqualTo(ParameterBinding(1, 0, statement.parameters[0].column!!))
-      assertThat(statement.parameterBindings[1]).isEqualTo(ParameterBinding(2, 0, statement.parameters[0].column!!))
+      assertThat(statement.parameterBindings.map { it.jdbcPosition }).containsExactly(1, 2)
+      assertThat(statement.parameterBindings.map { it.parameterIndex }).containsExactly(0, 0)
+      assertThat(statement.parameterBindings.map { it.column }).isEqualTo(List(2) { statement.parameters[0].column!! })
     }
 
     @Test
@@ -1300,6 +1297,57 @@ class SqlStatementTest {
       assertThat(statement.getParameterName(1)).isEqualTo("y")
       assertThat(statement.parameterBindings.map { it.parameterIndex }).containsExactly(0, 1, 0, 1)
       assertThat(statement.parameterBindings.map { it.jdbcPosition }).containsExactly(1, 2, 3, 4)
+    }
+  }
+
+  @Nested
+  inner class ParameterTypeDiscovery {
+
+    private val moodEnum = Enum(name = "mood", vals = listOf("happy", "sad"))
+    private val emailDomain = Domain(name = "email", baseType = "text")
+    private val catalog = Catalog(
+      schemas = listOf(Schema(name = "public", enums = listOf(moodEnum), domains = listOf(emailDomain))),
+    )
+    private val typeRepository = TypeRepository("test", catalog)
+
+    @Test
+    fun `enum referenced only by a parameter is discovered on construction`() {
+      createStatement(
+        "SELECT 1 FROM person WHERE current_mood = ?;",
+        params = listOf(param(1, "current_mood", "mood")),
+        columns = listOf(column("one", type = "int4")),
+        catalog = catalog,
+        typeRepository = typeRepository,
+      )
+
+      assertThat(typeRepository.discoveredEnums).containsOnly(moodEnum)
+    }
+
+    @Test
+    fun `domain referenced only by a parameter is discovered on construction`() {
+      createStatement(
+        "SELECT 1 FROM person WHERE email = ?;",
+        params = listOf(param(1, "email", "email")),
+        columns = listOf(column("one", type = "int4")),
+        catalog = catalog,
+        typeRepository = typeRepository,
+      )
+
+      assertThat(typeRepository.discoveredDomains).containsOnly(emailDomain)
+    }
+
+    @Test
+    fun `enum referenced only by a later occurrence of a reused named parameter is discovered on construction`() {
+      createStatement(
+        "SELECT 1 FROM person WHERE name = ? OR current_mood = ?;",
+        params = listOf(param(1, "value", "text"), param(2, "value", "mood")),
+        columns = listOf(column("one", type = "int4")),
+        namedParameters = mapOf(1 to "value", 2 to "value"),
+        catalog = catalog,
+        typeRepository = typeRepository,
+      )
+
+      assertThat(typeRepository.discoveredEnums).containsOnly(moodEnum)
     }
   }
 
