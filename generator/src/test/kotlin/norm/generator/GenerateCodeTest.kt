@@ -248,6 +248,47 @@ class GenerateCodeTest {
     assertThat(implementationFile.contents).contains("CustomJson")
   }
 
+  @Test
+  fun `column-level type mapping resolves when an earlier schema has a same-named table without the column`() {
+    connection.createStatement().use {
+      it.execute(
+        """
+        CREATE SCHEMA first_schema;
+        CREATE TABLE first_schema.shared_table (id integer PRIMARY KEY);
+        CREATE SCHEMA second_schema;
+        CREATE TABLE second_schema.shared_table (id integer PRIMARY KEY, metadata jsonb NOT NULL);
+        """.trimIndent(),
+      )
+    }
+    try {
+      val analyzer = JdbcAnalyzer(connection)
+      val catalog = analyzer.buildCatalog(listOf("first_schema", "second_schema"))
+      val mapping = TypeMapping(
+        "",
+        "shared_table",
+        "metadata",
+        "com.example.CustomJson",
+        "com.example.CustomJsonAdapter",
+      )
+
+      val result = generateCode(
+        catalog,
+        emptyList(),
+        "example",
+        emptySet(),
+        analyzer.fetchReservedWords(),
+        listOf(mapping),
+      )
+
+      val implementationFile = result.first { it.name.endsWith("PostgresQueries.kt") }
+      assertThat(implementationFile.contents).contains(userAdapterPropertyName(mapping))
+    } finally {
+      connection.createStatement().use {
+        it.execute("DROP SCHEMA first_schema CASCADE; DROP SCHEMA second_schema CASCADE;")
+      }
+    }
+  }
+
   /**
    * `adapterParameters` must run after `generateQueryInterface`, since a query parameter's column
    * type is only resolved while building interface methods, not while constructing `SqlStatement`.
