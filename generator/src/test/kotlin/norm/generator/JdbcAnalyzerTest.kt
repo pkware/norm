@@ -1101,6 +1101,22 @@ class JdbcAnalyzerTest {
     assertThat(fromFetchReservedWords).isEqualTo(fromIndependentLiveQuery)
   }
 
+  @Test
+  fun `fetchReservedWords reuses the set fetched by buildIdentifierQuoter after the connection closes`() {
+    val ownConnection = DriverManager.getConnection(container.jdbcUrl, container.username, container.password)
+    val ownAnalyzer = JdbcAnalyzer(ownConnection)
+    ownAnalyzer.buildIdentifierQuoter()
+    ownConnection.close()
+
+    val expected = connection.createStatement().use { statement ->
+      statement.executeQuery("SELECT word FROM pg_get_keywords() WHERE catcode IN ('R', 'T')").use { resultSet ->
+        buildSet { while (resultSet.next()) add(resultSet.getString(1)) }
+      }
+    }
+
+    assertThat(ownAnalyzer.fetchReservedWords()).isEqualTo(expected)
+  }
+
   @Nested
   inner class FoldIdentifierParseIdentDifferentialTest {
 

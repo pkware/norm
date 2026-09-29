@@ -139,7 +139,7 @@ private fun adapterParameters(
   val autoAdapterParams = buildList {
     for (enumDefinition in typeRepository.discoveredEnums) {
       if (enumDefinition.name in typeOverridePostgresTypes) continue
-      val enumClassName = ClassName(packageName, enumDefinition.name.snakeToCamelCase().titleCase())
+      val enumClassName = enumClassName(enumDefinition, packageName)
       add(
         AdapterParameter(
           adapterPropertyName(enumDefinition),
