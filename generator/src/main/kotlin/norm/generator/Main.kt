@@ -1,6 +1,5 @@
 package norm.generator
 
-import com.squareup.kotlinpoet.AnnotationSpec
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
@@ -212,53 +211,20 @@ private fun generateQueryImplementation(
   return classBuilder.build()
 }
 
-/**
- * Adds framework-specific dependency injection annotations to generated classes.
- *
- * - Micronaut: `@Singleton` + `@Requires(missingBeans = [beanType])` — auto-registers the class as a bean,
- *   but steps aside if the user provides their own implementation.
- * - Spring: `@Component` — auto-registers via component scanning.
- *
- * @param classBuilder The class to annotate.
- * @param frameworks The frameworks for which to generate annotations.
- * @param missingBeanType The type to check in `@Requires(missingBeans)`. When this type is already
- *   present in the DI container, the generated bean is skipped.
- */
 private fun addDependencyInjectionAnnotations(
   classBuilder: TypeSpec.Builder,
   frameworks: Set<Framework>,
   missingBeanType: TypeName,
 ) {
-  for (framework in frameworks) {
-    when (framework) {
-      Framework.MICRONAUT_DATA, Framework.MICRONAUT -> {
-        classBuilder.addAnnotation(JAKARTA_SINGLETON)
-        classBuilder.addAnnotation(
-          AnnotationSpec.builder(MICRONAUT_REQUIRES)
-            .addMember("missingBeans = [%T::class]", missingBeanType)
-            .build(),
-        )
-        classBuilder.addAnnotation(
-          AnnotationSpec.builder(MICRONAUT_REQUIRES)
-            .addMember("beans = [%T::class]", JAVAX_DATASOURCE)
-            .build(),
-        )
-      }
-      Framework.SPRING_DATA -> classBuilder.addAnnotation(SPRING_COMPONENT)
-    }
-  }
+  frameworks.flatMap { it.queriesAnnotations(missingBeanType) }.forEach { classBuilder.addAnnotation(it) }
 }
 
 /**
  * Whether transactions are managed by Norm's own `norm.Transactable` API (backed by a
  * `norm.TransactionalConnectionProvider`) rather than delegated to a framework's `@Transactional`.
- *
- * True with no framework and with the DI-only [Framework.MICRONAUT] mode. [Framework.MICRONAUT_DATA] and
- * [Framework.SPRING_DATA] delegate transactions to the framework, so Norm does not expose its own
- * transaction API in those modes.
  */
 private fun usesNormManagedTransactions(frameworks: Set<Framework>): Boolean =
-  Framework.MICRONAUT_DATA !in frameworks && Framework.SPRING_DATA !in frameworks
+  frameworks.none { it.delegatesTransactions }
 
 private fun generateQueryInterface(
   queries: List<SqlStatement>,
@@ -283,30 +249,15 @@ private fun generateQueryInterface(
 private const val PACKAGE_PLACEHOLDER = "packages.placeholder"
 
 /**
- * Generates framework-specific [ConnectionProvider] implementations from template resources.
+ * Loads one [ConnectionProvider] implementation per framework from its template resource.
  *
- * When a DI framework is configured, users need a [ConnectionProvider] that bridges the framework's
- * connection management to Norm. Rather than requiring users to write this boilerplate, we generate it.
+ * The implementations have no per-schema variation, so they ship as plain `.kt` templates with a package
+ * placeholder and bypass KotlinPoet.
  *
- * These implementations are static (no per-schema variation), so they're shipped as plain `.kt` template
- * files with a package placeholder, rather than using KotlinPoet.
- *
- * - Micronaut Data (`MICRONAUT_DATA`): Uses `ConnectionOperations<Connection>` to participate in
- *   `@Transactional` scopes.
- * - Micronaut DI-only (`MICRONAUT`): A `@Factory` produces a `TransactionalConnectionProvider` from the
- *   `DataSource`; transactions are Norm-managed.
- * - Spring (`SPRING_DATA`): Uses `DataSourceUtils` to participate in `@Transactional` scopes.
- *
- * @return A list of [GeneratedFile]s to include in the generated output. Empty when no DI frameworks are configured.
+ * @return the [GeneratedFile]s to include in the generated output. Empty when no frameworks are configured.
  */
 private fun generateConnectionProviders(packageName: String, frameworks: Set<Framework>): List<GeneratedFile> =
-  frameworks.map { framework ->
-    when (framework) {
-      Framework.MICRONAUT_DATA -> loadTemplate(packageName, "MicronautConnectionProvider")
-      Framework.MICRONAUT -> loadTemplate(packageName, "NormConnectionProviderFactory")
-      Framework.SPRING_DATA -> loadTemplate(packageName, "SpringConnectionProvider")
-    }
-  }
+  frameworks.map { loadTemplate(packageName, it.connectionProviderTemplate) }
 
 /**
  * Loads a `.kt.template` resource, substitutes the package name, and returns it as a [GeneratedFile].

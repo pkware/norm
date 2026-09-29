@@ -12,16 +12,10 @@ internal val JAVAX_DATASOURCE = ClassName("javax.sql", "DataSource")
 internal val SPRING_COMPONENT = ClassName("org.springframework.stereotype", "Component")
 
 /**
- * Adds framework-specific DI annotations to an adapter class.
+ * Adds each framework's [Framework.adapterAnnotations] to an adapter class.
  *
- * Unlike `PostgresQueries`, adapters don't use `@Requires(missingBeans)` because there's no
- * interface to check against — users override adapters via constructor parameter defaults instead.
+ * Users override adapters through constructor parameter defaults, so adapters need no `@Requires(missingBeans)`.
  */
 internal fun addAdapterDependencyInjectionAnnotations(classBuilder: TypeSpec.Builder, frameworks: Set<Framework>) {
-  for (framework in frameworks) {
-    when (framework) {
-      Framework.MICRONAUT_DATA, Framework.MICRONAUT -> classBuilder.addAnnotation(JAKARTA_SINGLETON)
-      Framework.SPRING_DATA -> classBuilder.addAnnotation(SPRING_COMPONENT)
-    }
-  }
+  frameworks.flatMap { it.adapterAnnotations }.forEach { classBuilder.addAnnotation(it) }
 }
