@@ -88,7 +88,7 @@ public object CrudQuerySynthesizer {
    *
    * The VALUES clause here holds a `?` for every required AND every overridable-default column;
    * this SQL is only used for [JdbcAnalyzer] parameter-type analysis. At runtime,
-   * [norm.generator.ImplementationBuilder] builds a different SQL string per call, substituting the
+   * code emitted by [addDynamicInsertSqlDeclaration] builds a different SQL string per call, substituting the
    * literal `DEFAULT` for any overridable-default column's `?` that the caller didn't supply a value
    * for.
    *
