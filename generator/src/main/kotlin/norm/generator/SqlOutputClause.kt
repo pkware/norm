@@ -74,6 +74,20 @@ internal data class SelectItem(
 internal fun parseSelectItems(sql: String): List<SelectItem> = parseOutputItemsWithAlias(sql).map { it.selectItem }
 
 /**
+ * Parses [sql]'s output clause with [parseSelectItems] and keeps the result only when it lines up
+ * one-to-one with the result set's [columnCount] columns.
+ *
+ * [parseSelectItems] cannot confirm its own item count. A star spelling it does not recognize expands
+ * to several columns and would shift every later item onto the wrong column.
+ *
+ * @return The parsed items, or empty when parsing found none or their count differs from [columnCount].
+ */
+internal fun alignSelectItems(sql: String, columnCount: Int): List<SelectItem> {
+  val items = parseSelectItems(sql)
+  return if (items.size == columnCount) items else emptyList()
+}
+
+/**
  * The single window both [hasTopLevelSetOperation] and [parseOutputItemsWithAlias] scan: [sql]'s
  * main query, after any leading `WITH` clause ([parseCteClause]'s
  * [ParsedCteClause.mainQueryStart]), with any redundant outer `(`...`)` pair stripped via

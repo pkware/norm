@@ -9,25 +9,22 @@ import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
 /**
- * Tests for [TypeRepository.buildTypeProjectionForQuery]'s generated class-level KDoc, in
- * particular the `@property` source-reference line a computed expression (one with no source
- * table and no [SelectItem.columnName]) gets via `PropertySource.sourceReference()`.
+ * Tests for the class-level KDoc [TypeRepository.buildTypeProjectionForQuery] generates, in particular
+ * the `@property` source-reference line of a computed expression (a column with no source table and
+ * no [SelectItem.columnName]).
+ *
+ * Each test resolves [Column.computedExpression] with [resolveComputedExpressions] first, the same
+ * step [JdbcAnalyzer] performs, because [TypeRepository] only renders the expression it is handed.
  */
 class TypeRepositoryTest {
 
   /**
-   * Regression coverage for the guard added at [TypeRepository.buildTypeProjectionForQuery]'s
-   * `parseSelectItems` call site: [parseSelectItems] has no independent way to confirm its own
-   * item count against the real result column count (see its KDoc), so a spelling it
-   * mis-recognizes -- most concretely, an unrecognized star item that expands to several real
-   * columns -- degrades silently to a shifted, wrong mapping of names/expressions onto columns
-   * they don't belong to, rather than the documented empty-list fail-safe, unless the caller
-   * cross-checks the count itself.
+   * Coverage for the count guard in [alignSelectItems], applied through [resolveComputedExpressions]:
+   * a query text whose select-item count differs from the result column count attributes no
+   * expression to any column.
    *
-   * The mismatch here is constructed directly at [TypeRepository.buildTypeProjectionForQuery]'s
-   * own seam (a [queryText] whose select-item count disagrees with the passed `queryResults`)
-   * rather than via a real unrecognized-star SQL input, since [TypeRepository] has no dependency
-   * on [java.sql.ResultSetMetaData] to construct such a case end-to-end.
+   * The mismatch is built from a `queryText` with more select items than the passed columns, since
+   * [TypeRepository] has no result-set metadata to reproduce an unrecognized star item.
    */
   @Nested
   inner class SelectItemColumnCountMismatchGuard {
@@ -47,7 +44,11 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("computeThings", queryResults, queryText)
+      repository.buildTypeProjectionForQuery(
+        "computeThings",
+        resolveComputedExpressions(queryText, queryResults),
+        queryText,
+      )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       // The raw SQL always appears verbatim in a fenced code block regardless of attribution, so
@@ -71,19 +72,24 @@ class TypeRepositoryTest {
       // Regression test for a behavior change from the COLUMN_REFERENCE identifier-start fix:
       // main's COLUMN_REFERENCE regex was a bare "\w+", which matches a digit-leading run too, so
       // parseSelectItems("SELECT 5") wrongly resolved the literal "5" as if it were a column named
-      // "5" (columnName = "5"). That made isComputedExpression (TypeRepository.kt) false, so
+      // "5" (columnName = "5"). resolveComputedExpressions then left computedExpression null, so
       // PropertySource.expression was never populated, and sourceReference() returned null for
       // this property entirely -- the KDoc carried no reference to the literal's origin.
       //
       // With COLUMN_REFERENCE's leading-character restricted to a legal identifier start (no
       // digit, no "$"), "5" no longer matches as a column reference: columnName is correctly
-      // null, isComputedExpression is true, and sourceReference() now renders "`5`" -- this is
+      // null, computedExpression is "5", and sourceReference() now renders "`5`" -- this is
       // the desired, more correct behavior (see COLUMN_REFERENCE's own KDoc), but nothing
       // previously exercised the downstream KDoc-generation effect of that change.
       val repository = TypeRepository("test", Catalog())
       val literalColumn = Column(name = "column1", notNull = true, type = Identifier(name = "int4"))
 
-      repository.buildTypeProjectionForQuery("getFive", listOf(literalColumn), "SELECT 5")
+      val queryText = "SELECT 5"
+      repository.buildTypeProjectionForQuery(
+        "getFive",
+        resolveComputedExpressions(queryText, listOf(literalColumn)),
+        queryText,
+      )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).contains("`5`")
@@ -92,13 +98,18 @@ class TypeRepositoryTest {
     @Test
     fun `a simple column reference select item gets no source-reference KDoc line`() {
       // Contrast case: a genuine column reference (not a computed expression) still gets no
-      // source-reference KDoc line at all -- echoing the column's own name back adds no value
-      // (see buildTypeProjectionForQuery's own comment). Guards against a future change making
-      // isComputedExpression fire for every property regardless of columnName.
+      // source-reference KDoc line at all -- echoing the column's own name back adds no value.
+      // Guards against a future change setting computedExpression for every column regardless of
+      // columnName.
       val simpleColumn = Column(name = "id", notNull = true, type = Identifier(name = "int4"))
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("getId", listOf(simpleColumn), "SELECT id FROM t")
+      val queryText = "SELECT id FROM t"
+      repository.buildTypeProjectionForQuery(
+        "getId",
+        resolveComputedExpressions(queryText, listOf(simpleColumn)),
+        queryText,
+      )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).doesNotContain("`id`")
@@ -115,10 +126,11 @@ class TypeRepositoryTest {
       val maxColumn = Column(name = "m", notNull = false, type = Identifier(name = "text"))
 
       val repository = TypeRepository("test", Catalog())
+      val queryText = "SELECT count(*) c, max(name) m FROM t"
       repository.buildTypeProjectionForQuery(
         "countAndMax",
-        listOf(countColumn, maxColumn),
-        "SELECT count(*) c, max(name) m FROM t",
+        resolveComputedExpressions(queryText, listOf(countColumn, maxColumn)),
+        queryText,
       )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
@@ -133,8 +145,8 @@ class TypeRepositoryTest {
     @Test
     fun `a computed expression under a top-level UNION gets no source-reference KDoc line`() {
       // "SELECT UPPER(x) AS u FROM t UNION SELECT LOWER(x) FROM t" -- parseSelectItems only ever
-      // sees the first branch (it has no concept of set operations at all), so isComputedExpression
-      // must not fire on the first branch's own item and document "UPPER(x)" as if that were the
+      // sees the first branch (it has no concept of set operations at all), so
+      // resolveComputedExpressions must not set computedExpression to "UPPER(x)" as if that were the
       // query's one true expression, when branch 2 actually computes LOWER(x) for the same column.
       // One branch presented as the whole answer is a wrong emission; there is no per-branch text
       // to attribute a single property to, so this must emit nothing rather than
@@ -143,7 +155,11 @@ class TypeRepositoryTest {
       val unionColumn = Column(name = "u", notNull = true, type = Identifier(name = "text"))
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("upperOrLower", listOf(unionColumn), queryText)
+      repository.buildTypeProjectionForQuery(
+        "upperOrLower",
+        resolveComputedExpressions(queryText, listOf(unionColumn)),
+        queryText,
+      )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       // The raw SQL always appears verbatim in a fenced code block regardless of attribution (see
@@ -160,12 +176,16 @@ class TypeRepositoryTest {
       // outer parentheses stripped. Wrapping the whole set operation in one parenthesis pair sinks
       // the UNION to paren depth 1 in the raw window, so the guard missed it -- while the parser,
       // seeing the parentheses stripped, still split the (still branch-1-only) items and let
-      // isComputedExpression fire on "UPPER(x)" as if it were the whole answer.
+      // computedExpression become "UPPER(x)" as if it were the whole answer.
       val queryText = "(SELECT UPPER(x) AS u FROM t UNION SELECT LOWER(x) FROM t)"
       val unionColumn = Column(name = "u", notNull = true, type = Identifier(name = "text"))
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("upperOrLowerParenthesized", listOf(unionColumn), queryText)
+      repository.buildTypeProjectionForQuery(
+        "upperOrLowerParenthesized",
+        resolveComputedExpressions(queryText, listOf(unionColumn)),
+        queryText,
+      )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).doesNotContain("@property u")
@@ -182,7 +202,11 @@ class TypeRepositoryTest {
       val plainColumn = Column(name = "a", notNull = true, type = Identifier(name = "int4"))
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("aOrB", listOf(plainColumn), queryText)
+      repository.buildTypeProjectionForQuery(
+        "aOrB",
+        resolveComputedExpressions(queryText, listOf(plainColumn)),
+        queryText,
+      )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).doesNotContain("@property a")
@@ -196,8 +220,8 @@ class TypeRepositoryTest {
     fun `a CTE-wrapped expression column gets a source-reference KDoc line resolved through the CTE body`() {
       // Regression test: a result column that is both CTE-wrapped and
       // expression-derived previously got no @property line at all. The outer select item
-      // (`description_upper`, a plain column reference into the CTE) makes isComputedExpression
-      // false, so this only passes if TypeRepository also reads column.provenanceExpression —
+      // (`description_upper`, a plain column reference into the CTE) leaves computedExpression
+      // null, so this only passes if TypeRepository also reads column.provenanceExpression —
       // populated here directly, standing in for what ColumnNullabilityAnalyzer's own node-tree
       // resolution (NodeTreeProvenanceResolver + resolveNodeTreeProvenanceExpression) would have
       // computed during analysis; TypeRepository itself no longer does any SQL-text CTE resolution
@@ -218,7 +242,7 @@ class TypeRepositoryTest {
       val repository = TypeRepository("test", Catalog())
       repository.buildTypeProjectionForQuery(
         "deleteParentReturningDescriptionUpperViaCte",
-        listOf(expressionColumn),
+        resolveComputedExpressions(queryText, listOf(expressionColumn)),
         queryText,
       )
 
@@ -240,7 +264,11 @@ class TypeRepositoryTest {
       val passThroughColumn = Column(name = "name", notNull = true, type = Identifier(name = "text"))
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("listDeletedParentNamesViaCte", listOf(passThroughColumn), queryText)
+      repository.buildTypeProjectionForQuery(
+        "listDeletedParentNamesViaCte",
+        resolveComputedExpressions(queryText, listOf(passThroughColumn)),
+        queryText,
+      )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).isEqualTo("```sql\n$queryText\n```")
@@ -252,7 +280,7 @@ class TypeRepositoryTest {
 
     @Test
     fun `a comment inside a top-level computed expression is stripped, not embedded verbatim`() {
-      // The top-level path (isComputedExpression == true) must not emit selectItem.expression raw,
+      // resolveComputedExpressions must not emit selectItem.expression raw,
       // applying neither stripComments nor collapseCosmeticWhitespace -- unlike the CTE path
       // (resolveNodeTreeProvenanceExpression), which applies both. A developer who read the KDoc
       // and pasted the rendered text back into psql would get "a + -- note\n  b", where the line
@@ -262,7 +290,11 @@ class TypeRepositoryTest {
       val sumColumn = Column(name = "sum2", notNull = true, type = Identifier(name = "int4"))
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("sumWithComment", listOf(sumColumn), queryText)
+      repository.buildTypeProjectionForQuery(
+        "sumWithComment",
+        resolveComputedExpressions(queryText, listOf(sumColumn)),
+        queryText,
+      )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).contains("@property sum2 (`a + b`)")
@@ -288,7 +320,12 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("newlineExpression", listOf(expressionColumn), "SELECT u FROM c")
+      val queryText = "SELECT u FROM c"
+      repository.buildTypeProjectionForQuery(
+        "newlineExpression",
+        resolveComputedExpressions(queryText, listOf(expressionColumn)),
+        queryText,
+      )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).doesNotContain("@property u")
@@ -309,7 +346,12 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("backtickExpression", listOf(expressionColumn), "SELECT u FROM c")
+      val queryText = "SELECT u FROM c"
+      repository.buildTypeProjectionForQuery(
+        "backtickExpression",
+        resolveComputedExpressions(queryText, listOf(expressionColumn)),
+        queryText,
+      )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).contains("@property u (``s || '`'``)")
@@ -333,7 +375,12 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("getMyCol", listOf(spacedColumn), "SELECT \"My Col\" FROM t")
+      val queryText = "SELECT \"My Col\" FROM t"
+      repository.buildTypeProjectionForQuery(
+        "getMyCol",
+        resolveComputedExpressions(queryText, listOf(spacedColumn)),
+        queryText,
+      )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).contains("@property `My Col` Column name containing a space.")
@@ -352,7 +399,12 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("getBacktickNamed", listOf(backtickNamedColumn), "SELECT x FROM t")
+      val queryText = "SELECT x FROM t"
+      repository.buildTypeProjectionForQuery(
+        "getBacktickNamed",
+        resolveComputedExpressions(queryText, listOf(backtickNamedColumn)),
+        queryText,
+      )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).contains("@property ``a`b`` Comment.")
@@ -373,7 +425,12 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("getCafe", listOf(unicodeColumn), "SELECT café FROM t")
+      val queryText = "SELECT café FROM t"
+      repository.buildTypeProjectionForQuery(
+        "getCafe",
+        resolveComputedExpressions(queryText, listOf(unicodeColumn)),
+        queryText,
+      )
 
       val renderedFile = repository.requiredTypes.first().toString()
       assertThat(renderedFile).contains("@property café Comment.")
@@ -392,7 +449,12 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("getObject", listOf(keywordColumn), "SELECT \"object\" FROM t")
+      val queryText = "SELECT \"object\" FROM t"
+      repository.buildTypeProjectionForQuery(
+        "getObject",
+        resolveComputedExpressions(queryText, listOf(keywordColumn)),
+        queryText,
+      )
 
       val renderedFile = repository.requiredTypes.first().toString()
       assertThat(renderedFile).contains("@property `object` Comment.")
@@ -409,7 +471,12 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("getUnderscore", listOf(underscoreColumn), "SELECT \"_\" FROM t")
+      val queryText = "SELECT \"_\" FROM t"
+      repository.buildTypeProjectionForQuery(
+        "getUnderscore",
+        resolveComputedExpressions(queryText, listOf(underscoreColumn)),
+        queryText,
+      )
 
       val renderedFile = repository.requiredTypes.first().toString()
       assertThat(renderedFile).contains("@property `_` Comment.")
@@ -428,7 +495,12 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("getDollar", listOf(dollarColumn), "SELECT \"a\$b\" FROM t")
+      val queryText = "SELECT \"a\$b\" FROM t"
+      repository.buildTypeProjectionForQuery(
+        "getDollar",
+        resolveComputedExpressions(queryText, listOf(dollarColumn)),
+        queryText,
+      )
 
       val renderedFile = repository.requiredTypes.first().toString()
       assertThat(renderedFile).contains("@property `a\$b` Comment.")
@@ -445,7 +517,12 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("getMyColAgreement", listOf(spacedColumn), "SELECT \"My Col\" FROM t")
+      val queryText = "SELECT \"My Col\" FROM t"
+      repository.buildTypeProjectionForQuery(
+        "getMyColAgreement",
+        resolveComputedExpressions(queryText, listOf(spacedColumn)),
+        queryText,
+      )
 
       val renderedFile = repository.requiredTypes.first().toString()
       assertThat(renderedFile).contains("@property `My Col` Comment.")
@@ -466,10 +543,11 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog())
+      val queryText = "SELECT \"col·lecció d'art\" FROM t"
       repository.buildTypeProjectionForQuery(
         "getInterpunct",
-        listOf(interpunctColumn),
-        "SELECT \"col·lecció d'art\" FROM t",
+        resolveComputedExpressions(queryText, listOf(interpunctColumn)),
+        queryText,
       )
 
       val renderedFile = repository.requiredTypes.first().toString()
@@ -488,7 +566,12 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("getIdAgreement", listOf(plainColumn), "SELECT id FROM t")
+      val queryText = "SELECT id FROM t"
+      repository.buildTypeProjectionForQuery(
+        "getIdAgreement",
+        resolveComputedExpressions(queryText, listOf(plainColumn)),
+        queryText,
+      )
 
       val renderedFile = repository.requiredTypes.first().toString()
       assertThat(renderedFile).contains("@property id Comment.")
@@ -514,7 +597,12 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("getBar", listOf(quotedColumn), "SELECT \"Foo\" AS bar FROM tq")
+      val queryText = "SELECT \"Foo\" AS bar FROM tq"
+      repository.buildTypeProjectionForQuery(
+        "getBar",
+        resolveComputedExpressions(queryText, listOf(quotedColumn)),
+        queryText,
+      )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).contains("@property bar (`tq.\"Foo\"`)")
@@ -532,7 +620,12 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("getMyCol", listOf(spacedColumn), "SELECT \"My Col\" FROM tq")
+      val queryText = "SELECT \"My Col\" FROM tq"
+      repository.buildTypeProjectionForQuery(
+        "getMyCol",
+        resolveComputedExpressions(queryText, listOf(spacedColumn)),
+        queryText,
+      )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).contains("@property myCol (`tq.\"My Col\"`)")
@@ -551,7 +644,12 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("getId", listOf(plainColumn), "SELECT id FROM tq")
+      val queryText = "SELECT id FROM tq"
+      repository.buildTypeProjectionForQuery(
+        "getId",
+        resolveComputedExpressions(queryText, listOf(plainColumn)),
+        queryText,
+      )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).contains("@property id (`tq.id`)")
@@ -577,7 +675,12 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog(), reservedWords = setOf("order"))
-      repository.buildTypeProjectionForQuery("getId", listOf(orderColumn), "SELECT id FROM \"order\"")
+      val queryText = "SELECT id FROM \"order\""
+      repository.buildTypeProjectionForQuery(
+        "getId",
+        resolveComputedExpressions(queryText, listOf(orderColumn)),
+        queryText,
+      )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).contains("@property id (`\"order\".id`)")
@@ -595,7 +698,12 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog(), reservedWords = setOf("user"))
-      repository.buildTypeProjectionForQuery("getName", listOf(userColumn), "SELECT \"user\" FROM author")
+      val queryText = "SELECT \"user\" FROM author"
+      repository.buildTypeProjectionForQuery(
+        "getName",
+        resolveComputedExpressions(queryText, listOf(userColumn)),
+        queryText,
+      )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).contains("@property name (`author.\"user\"`)")
@@ -615,7 +723,12 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("getId", listOf(plainColumn), "SELECT id FROM author")
+      val queryText = "SELECT id FROM author"
+      repository.buildTypeProjectionForQuery(
+        "getId",
+        resolveComputedExpressions(queryText, listOf(plainColumn)),
+        queryText,
+      )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).contains("@property id (`author.id`)")
@@ -640,7 +753,12 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("getCStarSlashD", listOf(starSlashColumn), "SELECT x FROM t")
+      val queryText = "SELECT x FROM t"
+      repository.buildTypeProjectionForQuery(
+        "getCStarSlashD",
+        resolveComputedExpressions(queryText, listOf(starSlashColumn)),
+        queryText,
+      )
 
       val renderedFile = repository.requiredTypes.first().toString()
       assertThat(renderedFile).doesNotContain("@property")
@@ -674,7 +792,12 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("getXAndY", listOf(xColumn, yColumn), "SELECT x, y FROM t")
+      val queryText = "SELECT x, y FROM t"
+      repository.buildTypeProjectionForQuery(
+        "getXAndY",
+        resolveComputedExpressions(queryText, listOf(xColumn, yColumn)),
+        queryText,
+      )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).contains("@property y (`t.y`)")
@@ -690,7 +813,7 @@ class TypeRepositoryTest {
       // single star item ("*") as-is rather than the empty-list fail-safe it uses for a star
       // followed by more items (see parseOutputItemsWithAlias's own KDoc), so
       // selectItem.columnName == null for it exactly as for a genuine computed expression.
-      // isComputedExpression must not fire on the star's own literal text and document "*" as if it
+      // computedExpression must not hold the star's own literal text and document "*" as if it
       // were the expression that produced the column -- even though provenanceExpression (stood
       // in for here, as elsewhere in this file, for what the node-tree resolver would have
       // computed) already held the real answer.
@@ -703,7 +826,11 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("starOverCte", listOf(starColumn), queryText)
+      repository.buildTypeProjectionForQuery(
+        "starOverCte",
+        resolveComputedExpressions(queryText, listOf(starColumn)),
+        queryText,
+      )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       assertThat(kdoc).contains("@property u (`UPPER(s)`)")
@@ -718,10 +845,11 @@ class TypeRepositoryTest {
       val starColumn = Column(name = "generate_series", notNull = true, type = Identifier(name = "int4"))
 
       val repository = TypeRepository("test", Catalog())
+      val queryText = "SELECT * FROM generate_series(1,3)"
       repository.buildTypeProjectionForQuery(
         "generateSeriesStar",
-        listOf(starColumn),
-        "SELECT * FROM generate_series(1,3)",
+        resolveComputedExpressions(queryText, listOf(starColumn)),
+        queryText,
       )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
@@ -735,10 +863,11 @@ class TypeRepositoryTest {
       val starColumn = Column(name = "u", notNull = false, type = Identifier(name = "text"))
 
       val repository = TypeRepository("test", Catalog())
+      val queryText = "SELECT c.* FROM (SELECT UPPER(s) AS u FROM t) c"
       repository.buildTypeProjectionForQuery(
         "qualifiedStar",
-        listOf(starColumn),
-        "SELECT c.* FROM (SELECT UPPER(s) AS u FROM t) c",
+        resolveComputedExpressions(queryText, listOf(starColumn)),
+        queryText,
       )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
@@ -765,7 +894,12 @@ class TypeRepositoryTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("starSlashExpression", listOf(starSlashColumn), "SELECT u FROM c")
+      val queryText = "SELECT u FROM c"
+      repository.buildTypeProjectionForQuery(
+        "starSlashExpression",
+        resolveComputedExpressions(queryText, listOf(starSlashColumn)),
+        queryText,
+      )
 
       val renderedFile = repository.requiredTypes.first().toString()
       assertThat(renderedFile).doesNotContain("@property u")
@@ -778,7 +912,11 @@ class TypeRepositoryTest {
       val queryText = "SELECT id /* note */ FROM t"
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("getIdWithComment", listOf(plainColumn), queryText)
+      repository.buildTypeProjectionForQuery(
+        "getIdWithComment",
+        resolveComputedExpressions(queryText, listOf(plainColumn)),
+        queryText,
+      )
 
       val renderedFile = repository.requiredTypes.first().toString()
       assertThat(renderedFile).doesNotContain("```sql")

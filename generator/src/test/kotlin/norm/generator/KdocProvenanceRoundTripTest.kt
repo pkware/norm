@@ -51,7 +51,11 @@ class KdocProvenanceRoundTripTest {
       val sumColumn = Column(name = "sum2", notNull = true, type = Identifier(name = "int4"))
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("sumWithComment", listOf(sumColumn), queryText)
+      repository.buildTypeProjectionForQuery(
+        "sumWithComment",
+        resolveComputedExpressions(queryText, listOf(sumColumn)),
+        queryText,
+      )
       val renderedExpression = extractSourceReferenceExpression("sum2", renderedFileTextFor(repository))
       checkNotNull(renderedExpression)
 
@@ -92,7 +96,12 @@ class KdocProvenanceRoundTripTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("backtickExpression", listOf(expressionColumn), "SELECT u FROM c")
+      val queryText = "SELECT u FROM c"
+      repository.buildTypeProjectionForQuery(
+        "backtickExpression",
+        resolveComputedExpressions(queryText, listOf(expressionColumn)),
+        queryText,
+      )
       val renderedExpression = extractSourceReferenceExpression("u", renderedFileTextFor(repository))
 
       // Decoding the real Markdown render must recover the developer's own expression byte for byte
@@ -128,7 +137,12 @@ class KdocProvenanceRoundTripTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("parenthesizedExpression", listOf(expressionColumn), "SELECT u FROM c")
+      val queryText = "SELECT u FROM c"
+      repository.buildTypeProjectionForQuery(
+        "parenthesizedExpression",
+        resolveComputedExpressions(queryText, listOf(expressionColumn)),
+        queryText,
+      )
       val renderedExpression = extractSourceReferenceExpression("u", renderedFileTextFor(repository))
 
       assertThat(renderedExpression).isEqualTo("COALESCE(a, 0) + (b * 2)")
@@ -166,7 +180,12 @@ class KdocProvenanceRoundTripTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("newlineExpression", listOf(expressionColumn), "SELECT u FROM c")
+      val queryText = "SELECT u FROM c"
+      repository.buildTypeProjectionForQuery(
+        "newlineExpression",
+        resolveComputedExpressions(queryText, listOf(expressionColumn)),
+        queryText,
+      )
       val generatedFile = renderedFileTextFor(repository)
 
       assertThat(generatedFile.contains("@property u")).isFalse()
@@ -193,7 +212,12 @@ class KdocProvenanceRoundTripTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("starSlashExpression", listOf(expressionColumn), "SELECT u FROM c")
+      val queryText = "SELECT u FROM c"
+      repository.buildTypeProjectionForQuery(
+        "starSlashExpression",
+        resolveComputedExpressions(queryText, listOf(expressionColumn)),
+        queryText,
+      )
       val generatedFile = renderedFileTextFor(repository)
 
       assertThat(generatedFile).doesNotContain("@property u")
@@ -207,7 +231,11 @@ class KdocProvenanceRoundTripTest {
       val queryText = "SELECT id /* note */ FROM t"
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("getIdWithComment", listOf(plainColumn), queryText)
+      repository.buildTypeProjectionForQuery(
+        "getIdWithComment",
+        resolveComputedExpressions(queryText, listOf(plainColumn)),
+        queryText,
+      )
       val generatedFile = renderedFileTextFor(repository)
 
       assertThat(generatedFile).doesNotContain("```sql")
@@ -228,7 +256,12 @@ class KdocProvenanceRoundTripTest {
       )
 
       val repository = TypeRepository("test", Catalog())
-      repository.buildTypeProjectionForQuery("getCStarSlashD", listOf(starSlashColumn), "SELECT x FROM t")
+      val queryText = "SELECT x FROM t"
+      repository.buildTypeProjectionForQuery(
+        "getCStarSlashD",
+        resolveComputedExpressions(queryText, listOf(starSlashColumn)),
+        queryText,
+      )
       val generatedFile = renderedFileTextFor(repository)
 
       assertThat(generatedFile).doesNotContain("@property")

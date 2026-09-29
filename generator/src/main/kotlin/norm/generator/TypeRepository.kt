@@ -270,62 +270,18 @@ internal class TypeRepository(
       )
       primaryConstructor.addParameter(column.name, columnType)
     }
-    // A non-empty parseSelectItems() result whose size disagrees with the real column count
-    // (queryResults.size, ultimately from ResultSetMetaData.getColumnCount()) means at least one
-    // select item didn't map 1:1 onto a result column (e.g. an unrecognized star item expanding to
-    // several columns) -- see parseSelectItems' KDoc for why it has no independent cross-check of
-    // its own. Treating the mismatch as if parsing had failed outright (the documented empty-list
-    // fail-safe) avoids a wrong, shifted mapping of names/comments/expressions onto columns they
-    // don't belong to.
-    val rawSelectItems = parseSelectItems(queryText)
-    val selectItems = if (rawSelectItems.isNotEmpty() && rawSelectItems.size != queryResults.size) {
-      emptyList()
-    } else {
-      rawSelectItems
-    }
-    // A top-level set operation (UNION/INTERSECT/EXCEPT) means parseSelectItems only parsed ONE
-    // branch's own items, so a computed expression documented from that branch alone would present
-    // it as the whole answer. A bare column reference is unaffected -- see hasTopLevelSetOperation.
-    val hasSetOperation = hasTopLevelSetOperation(queryText)
     typeBeingDefined.addClassKdoc(
       classComment = "",
       tableName = null,
-      properties = queryResults.mapIndexed { columnIndex, column ->
-        val selectItem = selectItems.getOrNull(columnIndex)
-        // A star item (`*`, `c.*`) is never itself a provenance expression -- parseOutputItemsWithAlias
-        // returns a lone star item with columnName == null, same as a genuine computed expression.
-        // Without this guard, isComputedExpression would document the wildcard's own literal text as
-        // the "expression", shadowing a CTE pass-through's real expression in provenanceExpression.
-        val isStarSelectItem = selectItem != null && isStarItem(selectItem.expression)
-        // For computed expressions (no source table and not a simple column reference), include the SQL
-        // expression so it can appear in KDoc. Simple column references (e.g. crosstab output columns)
-        // are excluded because echoing the column name back adds no value.
-        val isComputedExpression =
-          column.table == null &&
-            selectItem != null &&
-            selectItem.columnName == null &&
-            !hasSetOperation &&
-            !isStarSelectItem
-        // A plain reference into a CTE's output (a simple column reference or a star item) can still
-        // be expression-derived one level down, inside the CTE body. column.provenanceExpression was
-        // already resolved and cross-validated against queryText during analysis -- see
-        // resolveNodeTreeProvenanceExpression. `null` means no resolved expression, so this property
-        // gets no source-reference line at all -- never the star text itself.
-        val cteExpression = if (!isComputedExpression && column.table == null) column.provenanceExpression else null
+      properties = queryResults.map { column ->
         PropertySource(
           propertyName = column.name,
           comment = column.comment,
           sourceTable = column.table?.name,
           sourceColumn = column.originalName.ifEmpty { null },
-          // This top-level path re-lexes selectItem.expression straight from queryText, so it must
-          // apply the same comment-stripping and whitespace-collapsing normalizations
-          // resolveNodeTreeProvenanceExpression applies on the CTE path, to avoid embedding comment
-          // text or leftover whitespace verbatim in generated KDoc.
-          expression = if (isComputedExpression) {
-            collapseCosmeticWhitespace(stripComments(selectItem.expression))
-          } else {
-            cteExpression ?: ""
-          },
+          expression = column.computedExpression
+            ?: (if (column.table == null) column.provenanceExpression else null)
+            ?: "",
         )
       },
       sql = queryText,
