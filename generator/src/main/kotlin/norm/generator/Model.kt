@@ -132,13 +132,16 @@ public data class Identifier(val schema: String = "", val name: String = "")
  *   that produced this column's value one level down inside a CTE body — populated when this
  *   column's own select item is merely a bare reference into a CTE's output (e.g. the outer query
  *   reads `description_upper`, but the CTE body actually computed it as `UPPER(description)`).
- *   `null` when there is no such CTE-body expression to report: a plain table column, a column
- *   whose defining expression was written directly in the outer query (already covered by
- *   [TypeRepository]'s own top-level computed-expression handling), a CTE body pass-through of
- *   another column with no transformation, or a shape [NodeTreeProvenanceResolver] and
- *   [resolveNodeTreeProvenanceExpression] could not prove correct by cross-validating the query's
- *   own parsed node tree against its original SQL text — see those functions' KDoc for the full
- *   list of gates that must all hold before this is ever populated.
+ *   `null` for a plain table column and for an expression written in the outer query, which
+ *   [computedExpression] carries. A CTE body that passes another column through unchanged gives
+ *   `null` too. [NodeTreeProvenanceResolver] and [resolveNodeTreeProvenanceExpression] leave it `null`
+ *   when they cannot cross-validate the query's node tree against its SQL text; their KDoc lists the
+ *   checks.
+ * @property computedExpression The SQL expression from the outer query's own select list that produced
+ *   this column's value, with comments removed and whitespace collapsed. `null` for a table column, a
+ *   bare column reference, or a `*` item.
+ *   [resolveComputedExpressions] leaves every column's value `null` under a top-level
+ *   `UNION`/`INTERSECT`/`EXCEPT` or when the select-item count differs from the column count.
  */
 public data class Column(
   val name: String = "",
@@ -155,6 +158,7 @@ public data class Column(
   val hasDefault: Boolean = false,
   val isGenerated: Boolean = false,
   val provenanceExpression: String? = null,
+  val computedExpression: String? = null,
 ) {
 
   internal val fullyQualifiedName: String
