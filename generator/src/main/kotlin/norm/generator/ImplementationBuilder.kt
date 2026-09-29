@@ -289,6 +289,22 @@ private fun FunSpec.Builder.buildExec(statement: SqlStatement) {
 }
 
 /**
+ * Adds one lambda parameter per entry of [SqlStatement.parameters] that extracts the parameter's value from an
+ * [inputType]. Parameters in [SqlStatement.optionalParameterIndices] take a nullable lambda.
+ */
+private fun FunSpec.Builder.addParameterExtractors(statement: SqlStatement, inputType: TypeVariableName) {
+  val optionalIndices = statement.optionalParameterIndices.toSet()
+  for (index in statement.parameters.indices) {
+    val lambda = LambdaTypeName.get(
+      parameters = arrayOf(ParameterSpec.unnamed(inputType)),
+      returnType = statement.parameterTypes[index],
+    )
+    val parameterType = if (index in optionalIndices) lambda.copy(nullable = true) else lambda
+    addParameter(statement.getParameterName(index), parameterType)
+  }
+}
+
+/**
  * Produces a function builder with a signature reflecting a SQL statement, a generic return type, a stream to take
  * multiple inputs, a batch size, and a mapper to produce the return type.
  *
@@ -301,15 +317,7 @@ internal fun batchFunction(statement: SqlStatement): FunSpec.Builder = sqlFuncti
   returns(INT_ARRAY)
   addParameter("stream", ITERABLE.parameterizedBy(t))
 
-  val optionalIndices = statement.optionalParameterIndices.toSet()
-  for (index in statement.parameters.indices) {
-    val lambda = LambdaTypeName.get(
-      parameters = arrayOf(ParameterSpec.unnamed(t)),
-      returnType = statement.parameterTypes[index],
-    )
-    val parameterType = if (index in optionalIndices) lambda.copy(nullable = true) else lambda
-    addParameter(statement.getParameterName(index), parameterType)
-  }
+  addParameterExtractors(statement, t)
 
   addParameter("batchSize", INT)
 }
@@ -335,15 +343,7 @@ internal fun batchWithReturnFunction(statement: SqlStatement): FunSpec.Builder {
     addTypeVariable(mapperReturnType)
     addParameter("stream", ITERABLE.parameterizedBy(inputType))
 
-    val optionalIndices = statement.optionalParameterIndices.toSet()
-    for (index in statement.parameters.indices) {
-      val lambda = LambdaTypeName.get(
-        parameters = arrayOf(ParameterSpec.unnamed(inputType)),
-        returnType = statement.parameterTypes[index],
-      )
-      val parameterType = if (index in optionalIndices) lambda.copy(nullable = true) else lambda
-      addParameter(statement.getParameterName(index), parameterType)
-    }
+    addParameterExtractors(statement, inputType)
 
     addParameter(
       ParameterSpec(
@@ -542,28 +542,18 @@ internal const val MAPPER_PARAMETER_NAME = "mapper"
 /**
  * Produces a [CodeBlock] per JDBC bind position that sets the parameter on the [PreparedStatement].
  *
- * @param nameTransform Converts the parameter's name reference (built via `%N`, so a name needing
- *   backtick-escaping — e.g. `My Col` — is escaped exactly as [ParameterSpec]'s own declaration
- *   already is, unlike the plain string interpolation this replaced) into the code expression that
- *   provides the value. For single-item functions this is just the name reference itself; for batch
- *   functions it calls it as a function of `entry` (`%L(entry)` around the same escaped reference).
+ * @param nameTransform turns the `%N` name reference into the value expression. Batch functions wrap it
+ *   as `%L(entry)` to call the extractor lambda.
  */
 private fun bindStatements(
   statement: SqlStatement,
   nameTransform: (CodeBlock) -> CodeBlock = { it },
-): List<CodeBlock> = statement.parameterBindings.map { binding ->
-  val typeInfo = binding.mappable
-  val parameterNameReference = CodeBlock.of("%N", statement.getParameterName(binding.parameterIndex))
-  val paramName = nameTransform(parameterNameReference)
-  typeInfo.statementAction(CodeBlock.of("%L", binding.jdbcPosition), paramName)
-}
+): List<CodeBlock> = statement.parameterBindings.map { bindStatement(statement, it, nameTransform) }
 
 /**
- * Like [bindStatements], but only for the columns NOT in [SqlStatement.optionalParameterIndices].
+ * Produces the [bindStatements] output for parameters outside [SqlStatement.optionalParameterIndices].
  *
- * Used for a CRUD-synthesized INSERT with at least one overridable-default column, whose optional
- * columns need their own dynamic-index bind code (built separately by each caller of this function)
- * rather than [bindStatements]' fixed-position one.
+ * Callers bind the optional parameters themselves at dynamic positions.
  */
 private fun requiredBindStatements(
   statement: SqlStatement,
@@ -572,12 +562,21 @@ private fun requiredBindStatements(
   val optionalIndices = statement.optionalParameterIndices.toSet()
   return statement.parameterBindings
     .filter { it.parameterIndex !in optionalIndices }
-    .map { binding ->
-      val typeInfo = binding.mappable
-      val parameterNameReference = CodeBlock.of("%N", statement.getParameterName(binding.parameterIndex))
-      val paramName = nameTransform(parameterNameReference)
-      typeInfo.statementAction(CodeBlock.of("%L", binding.jdbcPosition), paramName)
-    }
+    .map { bindStatement(statement, it, nameTransform) }
+}
+
+/**
+ * Builds the code that binds [binding] to its JDBC position, reading the value through [nameTransform] applied to
+ * the parameter's name reference.
+ */
+private fun bindStatement(
+  statement: SqlStatement,
+  binding: ParameterBinding,
+  nameTransform: (CodeBlock) -> CodeBlock,
+): CodeBlock {
+  val parameterNameReference = CodeBlock.of("%N", statement.getParameterName(binding.parameterIndex))
+  val value = nameTransform(parameterNameReference)
+  return binding.mappable.statementAction(CodeBlock.of("%L", binding.jdbcPosition), value)
 }
 
 /**

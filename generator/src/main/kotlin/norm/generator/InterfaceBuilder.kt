@@ -19,7 +19,11 @@ import java.sql.Statement
 internal fun TypeSpec.Builder.addSqlStatementInterfaceMethod(query: SqlStatement) {
   val simpleFunction = sqlFunction(query)
   simpleFunction.addStandardKdoc(query)
-  simpleFunction.applyOptionalColumnValueDefaults(query, parameterOffset = 0)
+  simpleFunction.applyOptionalParameterDefaults(
+    query,
+    parameterOffset = 0,
+    defaultValue = CodeBlock.of("%T", COLUMN_VALUE_DEFAULT_CLASS_NAME),
+  )
 
   when (query.command) {
     Command.ONE, Command.MANY -> {
@@ -27,7 +31,11 @@ internal fun TypeSpec.Builder.addSqlStatementInterfaceMethod(query: SqlStatement
       val mapperFunction = mapperFunction(query)
         .addModifiers(ABSTRACT)
       mapperFunction.addStandardKdoc(query)
-      mapperFunction.applyOptionalColumnValueDefaults(query, parameterOffset = 0)
+      mapperFunction.applyOptionalParameterDefaults(
+        query,
+        parameterOffset = 0,
+        defaultValue = CodeBlock.of("%T", COLUMN_VALUE_DEFAULT_CLASS_NAME),
+      )
       addFunction(mapperFunction.build())
 
       // The simple function delegates to the mapper function with a constructor reference.
@@ -114,7 +122,7 @@ private fun TypeSpec.Builder.addBatchOverloads(query: SqlStatement) {
  */
 private fun TypeSpec.Builder.addBatchWithReturnOverloads(query: SqlStatement) {
   val batchFunction = batchWithReturnFunction(query)
-    .apply { applyOptionalExtractorDefaults(query, parameterOffset = 1) }
+    .apply { applyOptionalParameterDefaults(query, parameterOffset = 1, defaultValue = CodeBlock.of("null")) }
     .build()
 
   // Full overload: abstract, with all parameters (stream, extractors, mapper, batchSize) → List<T>
@@ -297,38 +305,18 @@ private val INPUT_VALUE_REFERENCE = MemberName(RUNTIME_PACKAGE, "inputValue").re
 private const val BATCH_SIZE = 100
 
 /**
- * Adds `= ColumnValue.Default` as the default value for each of [statement]'s overridable-default
- * parameters ([SqlStatement.optionalParameterIndices]) in [this] builder's parameter list, so a
- * caller of the resulting (non-`override`) function can omit them.
+ * Sets [defaultValue] as the default of each parameter in [SqlStatement.optionalParameterIndices].
  *
- * Must only be called on a [FunSpec.Builder] that will be emitted for an interface-facing
- * declaration — never on [norm.generator.ImplementationBuilder]'s own, separately built copy of the
- * same signature: Kotlin forbids specifying a default value on an overriding function's parameter.
+ * Kotlin forbids default values on overriding parameters, so call this only on interface declarations.
  *
- * @param parameterOffset Index in [FunSpec.Builder.parameters] of the entry corresponding to
- *   [SqlStatement.parameters] index `0`. `0` for the simple and mapper functions, whose parameters
- *   mirror [SqlStatement.parameters] directly.
+ * @param parameterOffset index in [FunSpec.Builder.parameters] of the entry for [SqlStatement.parameters] index `0`.
+ * @param defaultValue the expression written after `=` in each optional parameter.
  */
-private fun FunSpec.Builder.applyOptionalColumnValueDefaults(statement: SqlStatement, parameterOffset: Int) {
-  val defaultValue = CodeBlock.of("%T", COLUMN_VALUE_DEFAULT_CLASS_NAME)
-  for (index in statement.optionalParameterIndices) {
-    val position = parameterOffset + index
-    parameters[position] = parameters[position].toBuilder().defaultValue(defaultValue).build()
-  }
-}
-
-/**
- * Adds `= null` as the default value for each of [statement]'s overridable-default parameters
- * ([SqlStatement.optionalParameterIndices]) in [this] builder's parameter list — the per-row
- * extractor lambda for a batch function. See [applyOptionalColumnValueDefaults]'s KDoc for why this
- * must only be called on an interface-facing declaration.
- *
- * @param parameterOffset Index in [FunSpec.Builder.parameters] of the entry corresponding to
- *   [SqlStatement.parameters] index `0`. `1` for the batch functions, which have a leading `stream`
- *   parameter before the per-column extractor lambdas.
- */
-private fun FunSpec.Builder.applyOptionalExtractorDefaults(statement: SqlStatement, parameterOffset: Int) {
-  val defaultValue = CodeBlock.of("null")
+private fun FunSpec.Builder.applyOptionalParameterDefaults(
+  statement: SqlStatement,
+  parameterOffset: Int,
+  defaultValue: CodeBlock,
+) {
   for (index in statement.optionalParameterIndices) {
     val position = parameterOffset + index
     parameters[position] = parameters[position].toBuilder().defaultValue(defaultValue).build()
