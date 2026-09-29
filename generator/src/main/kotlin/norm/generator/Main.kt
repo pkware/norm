@@ -309,9 +309,6 @@ private fun resolveWireTypeName(mapping: TypeMapping, typeRepository: TypeReposi
 private fun resolveColumnPostgresType(catalog: Catalog, table: String, column: String): String {
   val truncatedTable = truncateIdentifier(table)
   val truncatedColumn = truncateIdentifier(column)
-  return catalog.schemas.flatMap { it.tables }
-    .firstOrNull { it.rel.name == truncatedTable }
-    ?.columns?.firstOrNull { it.name == truncatedColumn }
-    ?.type?.name
+  return catalog.findColumn(truncatedTable, truncatedColumn)?.type?.name
     ?: error("Column '$truncatedTable.$truncatedColumn' not found in catalog")
 }
