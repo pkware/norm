@@ -2829,6 +2829,45 @@ class ColumnTypeMappingTest {
       )
       assertThat(kotlinType).isEqualTo(expectedType)
     }
+
+    @Test
+    fun `adapter constructor parameter and column binding agree when two schemas declare the same domain name`() {
+      val catalog = Catalog(
+        schemas = listOf(
+          Schema(name = "first", domains = listOf(Domain(name = "code", baseType = "text"))),
+          Schema(name = "second", domains = listOf(Domain(name = "code", baseType = "int4"))),
+        ),
+      )
+      val mappings = listOf(
+        TypeMapping("code", null, null, "com.example.Code", "com.example.CodeAdapter"),
+      )
+      val query = Query(
+        name = "listCodes",
+        cmd = Command.MANY,
+        text = "SELECT code FROM item",
+        columns = listOf(Column(name = "code", notNull = true, type = Identifier(name = "code"))),
+      )
+
+      val files = generateCode(catalog, listOf(query), "test.example", emptySet(), emptySet(), mappings)
+
+      val contents = files.first { it.name.endsWith("PostgresQueries.kt") }.contents
+      assertThat(contents).contains("ColumnAdapter<Code, Int>")
+      assertThat(contents).contains("codeAdapter.decode(getInt(")
+    }
+
+    @Test
+    fun `type mapping on an unsupported type fails even when no query uses it`() {
+      val mappings = listOf(
+        TypeMapping("xml", null, null, "com.example.XmlDoc", "com.example.XmlDocAdapter"),
+      )
+
+      val exception = assertThrows<IllegalStateException> {
+        generateCode(Catalog(), emptyList(), "test.example", emptySet(), emptySet(), mappings)
+      }
+
+      assertThat(exception.message!!).contains("xml")
+      assertThat(exception.message!!).contains("cannot be used with a custom adapter")
+    }
   }
 
   @Nested
