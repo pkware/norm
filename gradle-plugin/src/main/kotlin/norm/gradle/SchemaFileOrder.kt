@@ -35,13 +35,41 @@ private val repeatableMigrationPattern = Regex("^R__.+\\.sql$")
  * Returns `true` if [file]'s name matches the Flyway undo migration naming convention
  * (`U<version>__<description>.sql`).
  *
- * Exposed so that the configuration-time input declaration (`NormGenerateTask.resolveSqlInputs`) can
- * exclude undo migrations from `@InputFiles` tracking using the exact same predicate that
- * [orderMigrationFiles] uses to exclude them from the replayed file list. Keeping both call sites on one
- * predicate guarantees a file's presence as a tracked input always matches whether it is actually
- * replayed, so editing only an undo migration does not needlessly invalidate the task's up-to-date check.
+ * [orderMigrationFiles] uses it to leave undo migrations out of the replayed files, and [NormGenerateTask]
+ * uses it to leave them out of the `schemas` task inputs.
  */
 internal fun isUndoMigration(file: File): Boolean = undoMigrationPattern.matches(file.name)
+
+/**
+ * Resolves a user-declared [path] against [projectDirectory] unless it is absolute.
+ *
+ * @return the resolved path with `.` and `..` segments removed. It may not exist.
+ */
+internal fun resolveDeclaredPath(projectDirectory: File, path: String): File =
+  projectDirectory.toPath().resolve(path).normalize().toFile()
+
+/**
+ * Turns each of [declaredPaths] into a [SchemaSource], in declared order.
+ *
+ * A path naming a directory becomes a [SchemaSource.Directory] of the [sqlFiles] located directly inside it.
+ * Every other path becomes a [SchemaSource.SingleFile], whether or not it exists.
+ *
+ * @param projectDirectory the directory relative paths are resolved against.
+ * @param declaredPaths the paths as declared in [Database.schemas].
+ * @param sqlFiles the SQL files found in the declared directories.
+ */
+internal fun resolveSchemaSources(
+  projectDirectory: File,
+  declaredPaths: List<String>,
+  sqlFiles: Set<File>,
+): List<SchemaSource> = declaredPaths.map { path ->
+  val resolved = resolveDeclaredPath(projectDirectory, path)
+  if (resolved.isDirectory) {
+    SchemaSource.Directory(sqlFiles.filter { it.parentFile == resolved })
+  } else {
+    SchemaSource.SingleFile(resolved)
+  }
+}
 
 /**
  * Orders the SQL files declared across every `schemas` entry, globally, the way Flyway orders migrations
