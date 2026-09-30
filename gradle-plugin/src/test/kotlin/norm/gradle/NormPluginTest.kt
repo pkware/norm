@@ -1004,6 +1004,45 @@ class NormPluginTest {
     assertThat(result.output).contains("Found more than one schema file with version 1")
   }
 
+  @Test
+  fun `postgresVersion defaults to 18-alpine and changing it reruns the generate task`() {
+    val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
+    project.setupSettingsOnly()
+
+    val schemaDir = projectDir.resolve("migrations")
+    Files.createDirectories(schemaDir)
+    schemaDir.resolve("V1__create_author.sql").writeText(AUTHOR_TABLE_SCHEMA_SQL)
+    writeSchemaDirectoryBuildFile(project, schemaDir)
+
+    val defaultResult = project.gradle("normGenerateTest").build()
+    assertThat(defaultResult.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+    assertThat(defaultResult.output).contains("Norm: Starting PostgreSQL 18-alpine container")
+
+    project.buildFile.writeText(
+      """
+      plugins {
+        kotlin("jvm")
+        id("com.pkware.norm")
+      }
+
+      norm {
+        databases {
+          create("Test") {
+            packageName = "example"
+            schemas.addAll("$schemaDir")
+            generateCrud = true
+            postgresVersion = "18"
+          }
+        }
+      }
+      """.trimIndent(),
+    )
+
+    val changedResult = project.gradle("normGenerateTest").build()
+    assertThat(changedResult.task(":normGenerateTest")?.outcome).isNotEqualTo(UP_TO_DATE)
+    assertThat(changedResult.output).contains("Norm: Starting PostgreSQL 18 container")
+  }
+
   private fun writeSchemaDirectoryBuildFile(project: TestProject, schemaDir: Path) {
     project.buildFile.writeText(
       """
