@@ -48,10 +48,6 @@ public class NormPlugin : Plugin<Project> {
         this,
       )
 
-      generateTask.configure {
-        postgresVersion.set(this@all.postgresVersion)
-      }
-
       IdeIntegration.registerGeneratedSources(mainSourceSet, generateTask)
     }
 

@@ -11,9 +11,7 @@ import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileTree
 import org.gradle.api.provider.ListProperty
-import org.gradle.api.provider.Property
 import org.gradle.api.tasks.CacheableTask
-import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.Nested
@@ -55,12 +53,6 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
   @get:InputFiles
   @get:PathSensitive(PathSensitivity.ABSOLUTE)
   abstract val queries: ConfigurableFileCollection
-
-  /**
-   * PostgreSQL version for the database container.
-   */
-  @get:Input
-  abstract val postgresVersion: Property<String>
 
   @get:OutputDirectory
   abstract val generatedSources: DirectoryProperty
@@ -257,7 +249,7 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
   }
 
   private fun createAndStartContainer(): PostgreSQLContainer<*> {
-    val version = postgresVersion.get()
+    val version = database.postgresVersion.get()
     logger.lifecycle("Norm: Starting PostgreSQL $version container...")
 
     val imageName = DockerImageName.parse("postgres:$version")
