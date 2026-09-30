@@ -5,6 +5,7 @@ import assertk.assertions.contains
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isNotEmpty
+import assertk.assertions.isNotEqualTo
 import assertk.assertions.isTrue
 import org.gradle.testkit.runner.TaskOutcome.SUCCESS
 import org.gradle.testkit.runner.TaskOutcome.UP_TO_DATE
@@ -28,6 +29,7 @@ import kotlin.io.path.pathString
 import kotlin.io.path.readText
 import kotlin.io.path.relativeTo
 import kotlin.io.path.walk
+import kotlin.io.path.writeBytes
 import kotlin.io.path.writeText
 
 // Shares `COMPOSITE_BUILD_RESOURCE_LOCK` with `IdeSyncIntegrationTest`: both classes run
@@ -944,6 +946,86 @@ class NormPluginTest {
   }
 
   @Test
+  fun `editor and OS metadata files in a schema directory are not replayed`() {
+    val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
+    project.setupSettingsOnly()
+
+    val schemaDir = projectDir.resolve("migrations")
+    Files.createDirectories(schemaDir)
+    schemaDir.resolve("V1__create_author.sql").writeText(AUTHOR_TABLE_SCHEMA_SQL)
+    schemaDir.resolve("._V1__create_author.sql").writeBytes(byteArrayOf(0, 5, 22, 7, 0xFF.toByte(), 0x80.toByte()))
+    writeSchemaDirectoryBuildFile(project, schemaDir)
+
+    val result = project.gradle("normGenerateTest").build()
+    assertThat(result.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+
+    val generatedFiles = collectKotlinFiles(project.generatedCodeDirectory, project.generatedCodeDirectory)
+    assertThat(generatedFiles.values.any { it.contains("Author") }, "Expected the author table in generated code")
+      .isTrue()
+  }
+
+  @Test
+  fun `schema file added between configuration-cached builds is replayed`() {
+    val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
+    project.setupSettingsOnly()
+
+    val schemaDir = projectDir.resolve("migrations")
+    Files.createDirectories(schemaDir)
+    schemaDir.resolve("V1__create_author.sql").writeText(AUTHOR_TABLE_SCHEMA_SQL)
+    writeSchemaDirectoryBuildFile(project, schemaDir)
+
+    val firstResult = project.gradle("normGenerateTest", "--configuration-cache").build()
+    assertThat(firstResult.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+
+    schemaDir.resolve("V2__create_book.sql").writeText(BOOK_TABLE_SCHEMA_SQL)
+
+    val secondResult = project.gradle("normGenerateTest", "--configuration-cache").build()
+    assertThat(secondResult.task(":normGenerateTest")?.outcome).isNotEqualTo(UP_TO_DATE)
+
+    val generatedFiles = collectKotlinFiles(project.generatedCodeDirectory, project.generatedCodeDirectory)
+    assertThat(generatedFiles.values.any { it.contains("Book") }, "Expected the book table in generated code")
+      .isTrue()
+  }
+
+  @Test
+  fun `duplicate migration versions fail only when the generate task runs`() {
+    val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
+    project.setupSettingsOnly()
+
+    val schemaDir = projectDir.resolve("migrations")
+    Files.createDirectories(schemaDir)
+    schemaDir.resolve("V1__create_author.sql").writeText(AUTHOR_TABLE_SCHEMA_SQL)
+    schemaDir.resolve("V1__create_book.sql").writeText(BOOK_TABLE_SCHEMA_SQL)
+    writeSchemaDirectoryBuildFile(project, schemaDir)
+
+    project.gradle("help").build()
+
+    val result = project.gradle("normGenerateTest").buildAndFail()
+    assertThat(result.output).contains("Found more than one schema file with version 1")
+  }
+
+  private fun writeSchemaDirectoryBuildFile(project: TestProject, schemaDir: Path) {
+    project.buildFile.writeText(
+      """
+      plugins {
+        kotlin("jvm")
+        id("com.pkware.norm")
+      }
+
+      norm {
+        databases {
+          create("Test") {
+            packageName = "example"
+            schemas.addAll("$schemaDir")
+            generateCrud = true
+          }
+        }
+      }
+      """.trimIndent(),
+    )
+  }
+
+  @Test
   fun `CRUD generation succeeds for tables with reserved keyword names`() {
     val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
     project.setupSettingsOnly()
@@ -980,6 +1062,8 @@ class NormPluginTest {
   }
 
   companion object {
+
+    private const val BOOK_TABLE_SCHEMA_SQL = "CREATE TABLE book (id serial PRIMARY KEY, title text NOT NULL);"
 
     /**
      * A scenario with a simple `author` table, used by hand-written tests that
