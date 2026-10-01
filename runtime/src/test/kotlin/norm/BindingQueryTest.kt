@@ -4,6 +4,7 @@ import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.containsExactly
 import assertk.assertions.doesNotContain
+import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isNotNull
 import org.intellij.lang.annotations.Language
@@ -189,6 +190,86 @@ class BindingQueryTest {
     }
 
     @Test
+    fun `iterable named parameter binds each element at consecutive positions`() {
+      val capturedBindings = mutableListOf<Pair<Int, Any?>>()
+      val query = BindingQuery("SELECT name FROM users", rowReader, normDriver)
+      setupDriverToCaptureInputs(
+        "SELECT name FROM users WHERE status = ? AND id IN (?, ?, ?) AND name = ?",
+        capturedBindings,
+      )
+
+      query
+        .append(" WHERE status = :status AND id IN (:ids) AND name = :name")
+        .bind("name", "Alice")
+        .bind("ids", listOf(1, 2, 3))
+        .bind("status", "active")
+        .single()
+
+      assertThat(capturedBindings).containsExactly(
+        1 to "active",
+        2 to 1,
+        3 to 2,
+        4 to 3,
+        5 to "Alice",
+      )
+    }
+
+    @Test
+    fun `array elements of an iterable bind one argument per component`() {
+      val capturedBindings = mutableListOf<Pair<Int, Any?>>()
+      val query = BindingQuery("SELECT name FROM users", rowReader, normDriver)
+      setupDriverToCaptureInputs(
+        "SELECT name FROM users WHERE (name, age) IN ((?, ?), (?, ?))",
+        capturedBindings,
+      )
+
+      query
+        .append(" WHERE (name, age) IN (:pairs)")
+        .bind("pairs", listOf(arrayOf<Any?>("John", 35), arrayOf<Any?>("Ann", 50)))
+        .single()
+
+      assertThat(capturedBindings).containsExactly(
+        1 to "John",
+        2 to 35,
+        3 to "Ann",
+        4 to 50,
+      )
+    }
+
+    @Test
+    fun `iterable named parameter used multiple times is expanded at each location`() {
+      val capturedBindings = mutableListOf<Pair<Int, Any?>>()
+      val query = BindingQuery("SELECT name FROM users", rowReader, normDriver)
+      setupDriverToCaptureInputs("SELECT name FROM users WHERE id IN (?, ?) OR owner IN (?, ?)", capturedBindings)
+
+      query
+        .append(" WHERE id IN (:ids) OR owner IN (:ids)")
+        .bind("ids", listOf(1, 2))
+        .single()
+
+      assertThat(capturedBindings).containsExactly(
+        1 to 1,
+        2 to 2,
+        3 to 1,
+        4 to 2,
+      )
+    }
+
+    @Test
+    fun `empty iterable executes empty parentheses with no bindings`() {
+      val capturedBindings = mutableListOf<Pair<Int, Any?>>()
+      val query = BindingQuery("SELECT name FROM users", rowReader, normDriver)
+      setupDriverToCaptureInputs("SELECT name FROM users WHERE id IN ()", capturedBindings)
+
+      query
+        .append(" WHERE id IN (:ids)")
+        .bind("ids", emptyList<Int>())
+        .single()
+
+      assertThat(capturedBindings).isEmpty()
+    }
+
+    @Test
     fun `toString does not include bound values`() {
       val query = BindingQuery("SELECT name FROM users", rowReader, normDriver)
         .append(" WHERE id = :userId")
@@ -253,6 +334,22 @@ class BindingQueryTest {
         .single()
 
       assertThat(capturedNulls).containsExactly(1 to Types.NULL)
+    }
+
+    @Test
+    fun `null element in an iterable uses setNull with Types NULL at its position`() {
+      val capturedBindings = mutableListOf<Pair<Int, Any?>>()
+      val capturedNulls = mutableListOf<Pair<Int, Int>>()
+      val query = BindingQuery("SELECT name FROM users", rowReader, normDriver)
+      setupDriverToCaptureInputs("SELECT name FROM users WHERE id IN (?, ?, ?)", capturedBindings, capturedNulls)
+
+      query
+        .append(" WHERE id IN (:ids)")
+        .bind("ids", listOf(1, null, 3))
+        .single()
+
+      assertThat(capturedBindings).containsExactly(1 to 1, 3 to 3)
+      assertThat(capturedNulls).containsExactly(2 to Types.NULL)
     }
   }
 

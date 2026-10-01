@@ -26,7 +26,7 @@ import java.util.List;
  * @author Juergen Hoeller
  * @since 2.0
  */
-public class ParsedSql {
+class ParsedSql {
 
 	private final String originalSql;
 
@@ -72,7 +72,7 @@ public class ParsedSql {
 	 * Return all the parameters (bind variables) in the parsed SQL statement.
 	 * Repeated occurrences of the same parameter name are included here.
 	 */
-	public List<String> getParameterNames() {
+	List<String> getParameterNames() {
 		return this.parameterNames;
 	}
 

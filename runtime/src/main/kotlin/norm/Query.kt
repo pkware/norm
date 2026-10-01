@@ -67,8 +67,12 @@ public interface Query<RowType> : Many<RowType> {
    * Note that positional and named arguments cannot be mixed. Unused arguments are ignored.
    * Overwriting a previously supplied argument is supported.
    *
+   * An [Iterable] value binds each element to its own placeholder. `IN (:ids)` bound to `listOf(1, 2, 3)` executes as
+   * `IN (?, ?, ?)`. Each [Array] element of an [Iterable] becomes a parenthesized tuple, as in
+   * `(a, b) IN ((?, ?), (?, ?))`. An empty [Iterable] produces `IN ()`, which Postgres rejects.
+   *
    * @param name The name of the parameter to bind.
-   * @param value The value to bind.
+   * @param value The value to bind. A `null` value, or a `null` element of an [Iterable], binds SQL `NULL`.
    * @return This query.
    * @throws IllegalStateException if positional arguments have been supplied.
    */

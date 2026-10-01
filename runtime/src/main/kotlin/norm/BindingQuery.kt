@@ -1,6 +1,6 @@
 package norm
 
-import norm.vendor.org.springframework.jdbc.core.namedparam.NamedParameterUtils
+import norm.vendor.org.springframework.jdbc.core.namedparam.NamedParameters
 import org.intellij.lang.annotations.Language
 import java.sql.PreparedStatement
 import java.sql.ResultSet
@@ -71,14 +71,9 @@ internal class BindingQuery<RowType>(
       jdbcSql = sql
       arguments = positionalArguments
     } else {
-      val parsedSql = NamedParameterUtils.parseSqlStatement(sql)
-      jdbcSql = NamedParameterUtils.substituteNamedParameters(parsedSql, namedArguments)
-      arguments = parsedSql.parameterNames.map { name ->
-        namedArguments.getOrElse(name) {
-          check(namedArguments.containsKey(name)) { "No value provided for parameter '$name'" }
-          null
-        }
-      }
+      val substituted = NamedParameters.substitute(sql, namedArguments)
+      jdbcSql = substituted.sql
+      arguments = substituted.arguments
     }
 
     return driverMethod(jdbcSql, rowReader) {
