@@ -23,3 +23,12 @@ RETURNING id, preferences AS old_preferences;
 INSERT INTO users (email, age, current_mood, metadata, preferences)
 SELECT email, age, current_mood, metadata, preferences FROM users WHERE id = ?
 RETURNING id, preferences AS duplicated_preferences;
+
+-- name: getScheduleById :one
+SELECT * FROM schedules WHERE id = ?;
+
+-- name: updateSchedule :exec
+UPDATE schedules SET event_dates = ?, scores = ?, notes = ?, holidays = ? WHERE id = ?;
+
+-- name: getScheduleArraysByStatement :one
+SELECT event_dates, scores, notes, holidays FROM schedules WHERE id = :statement;

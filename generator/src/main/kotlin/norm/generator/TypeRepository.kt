@@ -349,7 +349,11 @@ internal class TypeRepository(
    * Resolves the JDBC wire type for the Postgres type, then creates either an
    * [AdaptedTypeSqlMappable] (scalar) or [AdaptedArrayTypeSqlMappable] (array) with
    * the user's application type and adapter property name.
+   *
+   * @throws IllegalStateException if [postgresType] has no [WireCodec], or if [isArray] is `true` and
+   *   [postgresType] is a domain over an array type.
    */
+  @Throws(IllegalStateException::class)
   private fun buildUserConfiguredMappable(
     mapping: TypeMapping,
     postgresType: String,
@@ -361,11 +365,14 @@ internal class TypeRepository(
     val codec = resolveAdapterWireCodec(postgresType)
 
     if (isArray) {
+      domainsByName[postgresType]?.let { rejectArrayOfArrayBasedDomain(postgresType, it) }
       return AdaptedArrayTypeSqlMappable(
         applicationTypeName = applicationTypeName,
         adapterPropertyName = adapterPropertyName,
         columnNotNull = notNull,
         postgresTypeName = postgresType,
+        elementCodec = codec,
+        domainBaseTypeName = domainsByName[postgresType]?.baseType,
       )
     }
     return AdaptedTypeSqlMappable(applicationTypeName, adapterPropertyName, notNull, codec)
@@ -410,6 +417,8 @@ internal class TypeRepository(
         adapterPropertyName = propertyName,
         columnNotNull = notNull,
         postgresTypeName = typeName,
+        elementCodec = ENUM_CODEC,
+        domainBaseTypeName = null,
       )
     }
     return AdaptedTypeSqlMappable(enumClassName, propertyName, notNull, ENUM_CODEC)
@@ -463,13 +472,7 @@ internal class TypeRepository(
     val domain = domainsByName[typeName] ?: return null
     referencedDomains.add(domain)
 
-    if (isArray && domain.baseType.startsWith("_")) {
-      error(
-        "Column type '$typeName[]' uses domain ${domain.name} (over array type ${domain.baseType}) " +
-          "as an array element — Norm does not support an array column whose element type is an " +
-          "array-based domain.",
-      )
-    }
+    if (isArray) rejectArrayOfArrayBasedDomain(typeName, domain)
 
     val domainClassName = domainValueClassName(domain, packageName)
     val propertyName = domainAdapterPropertyName(domain)
@@ -481,9 +484,28 @@ internal class TypeRepository(
         adapterPropertyName = propertyName,
         columnNotNull = notNull,
         postgresTypeName = typeName,
+        elementCodec = codec,
+        domainBaseTypeName = domain.baseType,
       )
     }
     return AdaptedTypeSqlMappable(domainClassName, propertyName, notNull, codec)
+  }
+
+  /**
+   * Rejects an array column whose element type is a domain over an array type (`int_set[]` for
+   * `CREATE DOMAIN int_set AS int[]`). Does nothing for any other [domain].
+   *
+   * @param typeName Postgres type name of the array's element type, the name of [domain].
+   * @throws IllegalStateException if [domain]'s [Domain.baseType] is an array type.
+   */
+  @Throws(IllegalStateException::class)
+  private fun rejectArrayOfArrayBasedDomain(typeName: String, domain: Domain) {
+    if (!domain.baseType.startsWith("_")) return
+    error(
+      "Column type '$typeName[]' uses domain ${domain.name} (over array type ${domain.baseType}) " +
+        "as an array element — Norm does not support an array column whose element type is an " +
+        "array-based domain.",
+    )
   }
 
   /**

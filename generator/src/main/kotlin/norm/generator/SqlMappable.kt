@@ -377,31 +377,39 @@ internal class AdaptedTypeSqlMappable(
 /**
  * [SqlMappable] for an array column whose elements use a `norm.ColumnAdapter`.
  *
- * Each element goes through the adapter, because the JDBC wire type (`String[]` for enums, `Integer[]`
- * for int4 domains) differs from the application type (`Array<Mood?>`, `Array<PositiveInteger?>`).
+ * Reads go through `getArray(i).mapElements`, which hands each element to [elementCodec] and then to
+ * the adapter, the same way [AdaptedTypeSqlMappable] reads a scalar. The read of a domain array calls
+ * `withElementType` first, so [elementCodec] sees the domain's base type.
  *
  * The Kotlin type is always `Array<ApplicationType?>` — elements are nullable because Postgres
  * arrays can contain `NULL` values regardless of the column's `NOT NULL` constraint. Column-level
  * nullability controls only whether the array itself is nullable.
  *
- * For reads, delegates to the runtime `decodeArray` extension. For writes, delegates to the
- * runtime `encodeToSqlArray` extension, which calls `connection.createArrayOf(postgresTypeName, ...)`
- * — required because the Postgres JDBC driver cannot infer the type from a plain `String[]`.
+ * Writes call the runtime `encodeToSqlArray` extension, which names the element type through
+ * `connection.createArrayOf(postgresTypeName, ...)`. The Postgres JDBC driver cannot infer it from a
+ * plain `String[]`.
  *
  * @param applicationTypeName The element's application type (e.g., `example.Mood`, or a parameterized
  *   type like `kotlin.collections.Map<kotlin.String, kotlin.Any?>`).
  * @param adapterPropertyName The adapter property name on `PostgresQueries` (e.g., `"moodAdapter"`).
  * @param columnNotNull Whether the column is `NOT NULL` (controls array-level nullability).
  * @param postgresTypeName The Postgres type name for `encodeToSqlArray` (e.g., `"mood"`, `"email"`).
+ * @param elementCodec Wire-level read access for one element, such as the `date` codec for a `date`
+ *   type override.
+ * @param domainBaseTypeName The canonical Postgres name of the domain's base type when the element type
+ *   is a domain (e.g., `"int4"`), or `null` otherwise.
  */
 internal class AdaptedArrayTypeSqlMappable(
   private val applicationTypeName: TypeName,
   private val adapterPropertyName: String,
   private val columnNotNull: Boolean,
   private val postgresTypeName: String,
+  private val elementCodec: WireCodec,
+  private val domainBaseTypeName: String?,
 ) : SqlMappable {
 
-  private val decodeArrayMember = MemberName("norm", "decodeArray", isExtension = true)
+  private val mapElementsMember = MemberName("norm", "mapElements", isExtension = true)
+  private val withElementTypeMember = MemberName("norm", "withElementType", isExtension = true)
   private val encodeToSqlArrayMember = MemberName("norm", "encodeToSqlArray", isExtension = true)
 
   override val typeName: TypeName
@@ -435,9 +443,19 @@ internal class AdaptedArrayTypeSqlMappable(
     }
 
   override val resultSetAction: (index: Int) -> CodeBlock
-    get() = if (columnNotNull) {
-      { index -> CodeBlock.of("getArray(%L).%M(%N)", index, decodeArrayMember, adapterPropertyName) }
-    } else {
-      { index -> CodeBlock.of("getArray(%L)?.%M(%N)", index, decodeArrayMember, adapterPropertyName) }
+    get() = { index ->
+      val call = if (columnNotNull) "." else "?."
+      val read = CodeBlock.builder().add("getArray(%L)", index)
+      if (domainBaseTypeName != null) {
+        read.add("%L%M(this.statement.connection, %S)", call, withElementTypeMember, domainBaseTypeName)
+      }
+      read.add(
+        "%L%M { %L?.let { %N.decode(it) } }",
+        call,
+        mapElementsMember,
+        elementCodec.read(ELEMENT_VALUE_COLUMN_INDEX, true),
+        adapterPropertyName,
+      )
+      read.build()
     }
 }

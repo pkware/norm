@@ -1386,21 +1386,21 @@ class ColumnTypeMappingTest {
     }
 
     @Test
-    fun `enum array resultSetAction delegates to decodeArray runtime helper`() {
+    fun `non-null enum array reads each element through mapElements and the adapter`() {
       val repository = TypeRepository("test", enumCatalog)
       val col = column("moods", type = "mood", isArray = true)
       val accessor = repository.resolveMappableType(col).resultSetAction(1)
-      assertThat(accessor.toString()).contains("getArray(1)")
-      assertThat(accessor.toString()).contains("norm.decodeArray(moodAdapter)")
+      assertThat(accessor.toString())
+        .isEqualTo("getArray(1).norm.mapElements { getString(2)?.let { moodAdapter.decode(it) } }")
     }
 
     @Test
-    fun `nullable enum array uses safe call to decodeArray`() {
+    fun `nullable enum array uses safe call before mapElements`() {
       val repository = TypeRepository("test", enumCatalog)
       val col = column("moods", type = "mood", isArray = true, notNull = false)
       val accessor = repository.resolveMappableType(col).resultSetAction(1)
-      assertThat(accessor.toString()).contains("getArray(1)?.")
-      assertThat(accessor.toString()).contains("norm.decodeArray(moodAdapter)")
+      assertThat(accessor.toString())
+        .isEqualTo("getArray(1)?.norm.mapElements { getString(2)?.let { moodAdapter.decode(it) } }")
     }
 
     @Test
@@ -1545,21 +1545,36 @@ class ColumnTypeMappingTest {
     }
 
     @Test
-    fun `domain array resultSetAction delegates to decodeArray runtime helper`() {
+    fun `text domain array re-types its elements to text before mapElements`() {
       val repository = TypeRepository("test", domainCatalog)
       val col = column("emails", type = "email", isArray = true)
       val accessor = repository.resolveMappableType(col).resultSetAction(1)
-      assertThat(accessor.toString()).contains("getArray(1)")
-      assertThat(accessor.toString()).contains("norm.decodeArray(emailAdapter)")
+      assertThat(accessor.toString()).isEqualTo(
+        "getArray(1).norm.withElementType(this.statement.connection, \"text\")" +
+          ".norm.mapElements { getString(2)?.let { emailAdapter.decode(it) } }",
+      )
     }
 
     @Test
-    fun `integer domain array also delegates to decodeArray`() {
+    fun `integer domain array re-types its elements to int4 before mapElements`() {
       val repository = TypeRepository("test", domainCatalog)
       val col = column("scores", type = "positive_integer", isArray = true)
       val accessor = repository.resolveMappableType(col).resultSetAction(1)
-      assertThat(accessor.toString()).contains("getArray(1)")
-      assertThat(accessor.toString()).contains("norm.decodeArray(positiveIntegerAdapter)")
+      assertThat(accessor.toString()).isEqualTo(
+        "getArray(1).norm.withElementType(this.statement.connection, \"int4\")" +
+          ".norm.mapElements { getInt(2).takeUnless { wasNull() }?.let { positiveIntegerAdapter.decode(it) } }",
+      )
+    }
+
+    @Test
+    fun `nullable domain array uses safe calls through withElementType and mapElements`() {
+      val repository = TypeRepository("test", domainCatalog)
+      val col = column("emails", type = "email", isArray = true, notNull = false)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).isEqualTo(
+        "getArray(1)?.norm.withElementType(this.statement.connection, \"text\")" +
+          "?.norm.mapElements { getString(2)?.let { emailAdapter.decode(it) } }",
+      )
     }
 
     @Test
@@ -2786,6 +2801,99 @@ class ColumnTypeMappingTest {
       val accessor = repository.resolveMappableType(col).resultSetAction(1)
       // Domain base type is int4 → getInt
       assertThat(accessor.toString()).isEqualTo("positiveIntegerAdapter.decode(getInt(1))")
+    }
+
+    @Test
+    fun `date array with a type override reads elements through the date codec`() {
+      val mappings = listOf(
+        TypeMapping("date", null, null, "com.example.CalendarDate", "com.example.CalendarDateAdapter"),
+      )
+      val repository = TypeRepository("test", Catalog(), mappings)
+      val col = column("holidays", type = "date", isArray = true)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).isEqualTo(
+        "getArray(1).norm.mapElements { getObject(2, java.time.LocalDate::class.java)" +
+          "?.let { dateAdapter.decode(it) } }",
+      )
+    }
+
+    @Test
+    fun `timestamptz array with a type override converts elements to Instant before the adapter`() {
+      val mappings = listOf(
+        TypeMapping("timestamptz", null, null, "com.example.Moment", "com.example.MomentAdapter"),
+      )
+      val repository = TypeRepository("test", Catalog(), mappings)
+      val col = column("moments", type = "timestamptz", isArray = true, notNull = false)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).isEqualTo(
+        "getArray(1)?.norm.mapElements { getObject(2, java.time.OffsetDateTime::class.java)?.toInstant()" +
+          "?.let { timestamptzAdapter.decode(it) } }",
+      )
+    }
+
+    @Test
+    fun `column-level override on a date array reads elements through the date codec`() {
+      val mappings = listOf(
+        TypeMapping("", "events", "days", "com.example.CalendarDate", "com.example.CalendarDateAdapter"),
+      )
+      val repository = TypeRepository("test", Catalog(), mappings)
+      val col = column("days", type = "date", isArray = true, table = Identifier(name = "events"))
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).isEqualTo(
+        "getArray(1).norm.mapElements { getObject(2, java.time.LocalDate::class.java)" +
+          "?.let { eventsDaysAdapter.decode(it) } }",
+      )
+    }
+
+    @Test
+    fun `type override on an integer domain array re-types its elements to the domain base type`() {
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(positiveIntDomain))))
+      val mappings = listOf(
+        TypeMapping("positive_integer", null, null, "com.example.Age", "com.example.AgeAdapter"),
+      )
+      val repository = TypeRepository("test", catalog, mappings)
+      val col = column("ages", type = "positive_integer", isArray = true)
+      val accessor = repository.resolveMappableType(col).resultSetAction(1)
+      assertThat(accessor.toString()).isEqualTo(
+        "getArray(1).norm.withElementType(this.statement.connection, \"int4\")" +
+          ".norm.mapElements { getInt(2).takeUnless { wasNull() }?.let { positiveIntegerAdapter.decode(it) } }",
+      )
+    }
+
+    @Test
+    fun `type-level override on an array column of an array-based domain throws naming the domain and base type`() {
+      val intSetDomain = Domain(name = "int_set", baseType = "_int4")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(intSetDomain))))
+      val mappings = listOf(
+        TypeMapping("int_set", null, null, "com.example.TagIds", "com.example.TagIdsAdapter"),
+      )
+      val repository = TypeRepository("test", catalog, mappings)
+
+      val exception = assertThrows<IllegalStateException> {
+        repository.resolveMappableType(column("tag_id_sets", type = "int_set", isArray = true))
+      }
+      assertThat(exception.message!!).contains("int_set")
+      assertThat(exception.message!!).contains("_int4")
+      assertThat(exception.message!!).contains("array")
+    }
+
+    @Test
+    fun `column-level override on an array column of an array-based domain throws naming the domain and base type`() {
+      val intSetDomain = Domain(name = "int_set", baseType = "_int4")
+      val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(intSetDomain))))
+      val mappings = listOf(
+        TypeMapping("", "tags", "tag_id_sets", "com.example.TagIds", "com.example.TagIdsAdapter"),
+      )
+      val repository = TypeRepository("test", catalog, mappings)
+
+      val exception = assertThrows<IllegalStateException> {
+        repository.resolveMappableType(
+          column("tag_id_sets", type = "int_set", isArray = true, table = Identifier(name = "tags")),
+        )
+      }
+      assertThat(exception.message!!).contains("int_set")
+      assertThat(exception.message!!).contains("_int4")
+      assertThat(exception.message!!).contains("array")
     }
 
     @Test
