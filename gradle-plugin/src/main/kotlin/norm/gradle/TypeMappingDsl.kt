@@ -24,7 +24,8 @@ public class TypeMappingDsl {
    *
    * @param postgresType The Postgres type name (e.g., `"mood"`, `"jsonb"`).
    */
-  public fun type(postgresType: String): TypeMappingTarget = TypeMappingTarget(postgresType = postgresType)
+  public fun type(postgresType: String): TypeMappingTarget =
+    TypeMappingTarget { kotlinType, adapterType -> TypeMapping.ByType(postgresType, kotlinType, adapterType) }
 
   /**
    * Starts a column-level mapping for a specific table and column.
@@ -33,15 +34,13 @@ public class TypeMappingDsl {
    * @param column The column name to override.
    */
   public fun column(table: String, column: String): TypeMappingTarget =
-    TypeMappingTarget(table = table, column = column)
+    TypeMappingTarget { kotlinType, adapterType -> TypeMapping.ByColumn(table, column, kotlinType, adapterType) }
 
   /**
    * Intermediate builder holding the target (type or column) of a mapping.
    */
   public inner class TypeMappingTarget internal constructor(
-    internal val postgresType: String = "",
-    internal val table: String? = null,
-    internal val column: String? = null,
+    internal val build: (kotlinType: String, adapterType: String) -> TypeMapping,
   ) {
     /**
      * Specifies the Kotlin type that the Postgres type or column should map to.
@@ -65,15 +64,7 @@ public class TypeMappingDsl {
      *   implementation (e.g., `"com.example.JsonDataAdapter"`).
      */
     public infix fun using(adapterType: String) {
-      mappings.add(
-        TypeMapping(
-          postgresType = target.postgresType,
-          table = target.table,
-          column = target.column,
-          kotlinType = kotlinType,
-          adapterType = adapterType,
-        ),
-      )
+      mappings.add(target.build(kotlinType, adapterType))
     }
   }
 
