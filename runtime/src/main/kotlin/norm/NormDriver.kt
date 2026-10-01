@@ -5,6 +5,7 @@ import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.SQLException
 import java.sql.SQLTimeoutException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.stream.Stream
 import java.util.stream.StreamSupport
 import javax.sql.DataSource
@@ -74,14 +75,9 @@ public class NormDriver(private val connectionProvider: ConnectionProvider) {
     @Language("PostgreSQL") sql: String,
     rowReader: (ResultSet) -> RowType,
     queryBinder: (PreparedStatement.() -> Unit)? = null,
-  ): RowType = execute(sql) {
-    if (queryBinder != null) queryBinder(this)
-    executeQuery().use { resultSet ->
-      check(resultSet.next()) { "No results returned for $sql" }
-      val result = rowReader(resultSet)
-      check(!resultSet.next()) { "ResultSet returned more than 1 row for $sql" }
-      result
-    }
+  ): RowType = readRows(sql, queryBinder) { resultSet ->
+    check(resultSet.next()) { "No results returned for $sql" }
+    resultSet.readLastRow(sql, rowReader)
   }
 
   /**
@@ -120,7 +116,7 @@ public class NormDriver(private val connectionProvider: ConnectionProvider) {
     @Language("PostgreSQL") sql: String,
     queryBinder: (PreparedStatement.() -> Unit)? = null,
   ): Int = execute(sql) {
-    if (queryBinder != null) queryBinder(this)
+    queryBinder?.invoke(this)
     executeUpdate()
   }
 
@@ -178,6 +174,21 @@ public class NormDriver(private val connectionProvider: ConnectionProvider) {
     rowReader: ResultSet.() -> RowType,
   ): Query<RowType> = BindingQuery(sql, rowReader, this)
 
+  private fun <RowType> readRows(
+    sql: String,
+    queryBinder: (PreparedStatement.() -> Unit)?,
+    read: (ResultSet) -> RowType,
+  ): RowType = execute(sql) {
+    queryBinder?.invoke(this)
+    executeQuery().use(read)
+  }
+
+  private fun <RowType> ResultSet.readLastRow(sql: String, rowReader: (ResultSet) -> RowType): RowType {
+    val result = rowReader(this)
+    check(!next()) { "ResultSet returned more than 1 row for $sql" }
+    return result
+  }
+
   /**
    * @param sql to execute.
    * @param rowReader Expression to extract a [RowType] from the [ResultSet].
@@ -192,40 +203,49 @@ public class NormDriver(private val connectionProvider: ConnectionProvider) {
 
     override fun stream(): Stream<RowType> {
       val borrowed = connectionProvider.borrowConnection()
-      val statement = borrowed.connection.prepareStatement(sql)
-      queryBinder?.let { it(statement) }
-      val resultSet = statement.executeQuery()
-      val closeAll = {
-        resultSet.close()
-        statement.close()
-        borrowed.close()
+      var statement: PreparedStatement? = null
+      try {
+        val prepared = borrowed.connection.prepareStatement(sql)
+        statement = prepared
+        queryBinder?.invoke(prepared)
+        val resultSet = prepared.executeQuery()
+        val closed = AtomicBoolean(false)
+        val closeAll = {
+          if (closed.compareAndSet(false, true)) {
+            resultSet.close()
+            prepared.close()
+            borrowed.close()
+          }
+        }
+        val spliterator = ResultSetSpliterator(resultSet, closeAll, rowReader)
+        return StreamSupport.stream(spliterator, false).onClose(closeAll)
+      } catch (cause: Throwable) {
+        cause.suppressFailuresOf { statement?.close() }
+        cause.suppressFailuresOf { borrowed.close() }
+        throw cause
       }
-      val spliterator = ResultSetSpliterator(resultSet, closeAll, rowReader)
-      val stream = StreamSupport.stream(spliterator, false)
-      return stream.onClose(closeAll)
     }
 
     override fun <C : MutableCollection<RowType>> collection(factory: () -> C): C {
       val collection = factory()
-      execute(sql) {
-        queryBinder?.let { it(this) }
-        executeQuery().use { resultSet ->
-          while (resultSet.next()) {
-            collection.add(rowReader(resultSet))
-          }
+      readRows(sql, queryBinder) { resultSet ->
+        while (resultSet.next()) {
+          collection.add(rowReader(resultSet))
         }
       }
       return collection
     }
 
-    override fun firstOrNull(): RowType? = execute(sql) {
-      queryBinder?.let { it(this) }
-      executeQuery().use { resultSet ->
-        if (!resultSet.next()) return@use null
-        val result = rowReader(resultSet)
-        check(!resultSet.next()) { "ResultSet returned more than 1 row for $sql" }
-        result
-      }
+    override fun firstOrNull(): RowType? = readRows(sql, queryBinder) { resultSet ->
+      if (resultSet.next()) resultSet.readLastRow(sql, rowReader) else null
+    }
+  }
+
+  private inline fun Throwable.suppressFailuresOf(cleanup: () -> Unit) {
+    try {
+      cleanup()
+    } catch (causeOfCleanup: Throwable) {
+      addSuppressed(causeOfCleanup)
     }
   }
 }

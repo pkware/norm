@@ -1,8 +1,11 @@
 package norm
 
+import assertk.assertFailure
 import assertk.assertThat
 import assertk.assertions.containsExactly
+import assertk.assertions.hasMessage
 import assertk.assertions.isEqualTo
+import assertk.assertions.isInstanceOf
 import assertk.assertions.isNull
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
@@ -105,6 +108,18 @@ class ManyTest {
       val result = many().firstOrNull()
 
       assertThat(result).isEqualTo("Alice")
+    }
+
+    @Test
+    fun `two rows throws`() {
+      whenever(resultSet.next()).thenReturn(true, true)
+      whenever(resultSet.getString(1)).thenReturn("Alice")
+
+      assertFailure {
+        many().firstOrNull()
+      }.isInstanceOf<IllegalStateException>().hasMessage(
+        "ResultSet returned more than 1 row for SELECT name FROM users",
+      )
     }
   }
 
