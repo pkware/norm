@@ -1,28 +1,26 @@
 package norm
 
 import java.sql.Connection
+import java.sql.SQLException
 
 /**
- * Decodes a JDBC array into a typed Kotlin array by applying [adapter] to each element.
+ * Returns a copy of this JDBC array whose element type is [elementTypeName].
  *
- * The JDBC driver returns the underlying data as an array of wire-type values
- * (e.g., `String[]` for enum columns, `Integer[]` for int4 domain columns). This function
- * casts to `Array<W?>` and maps each element through [ColumnAdapter.decode].
- *
- * Elements are always `A?` (nullable) because Postgres arrays can contain `NULL` values
- * regardless of the column's `NOT NULL` constraint.
+ * The element `ResultSet` of a domain array carries the domain's own OID, and `getObject(index, Class)`
+ * cannot map that OID to a Java type. This function reads each element as text and rebuilds the array
+ * under the domain's base type. [mapElements] then reads each element like a column of that type.
  *
  * Usage in generated code:
- * - Non-null column: `getArray(i).decodeArray(adapter)`
- * - Nullable column: `getArray(i)?.decodeArray(adapter)` (safe call makes result nullable)
+ * - Non-null column: `getArray(i).withElementType(this.statement.connection, "date").mapElements { ... }`
+ * - Nullable column: `getArray(i)?.withElementType(this.statement.connection, "date")?.mapElements { ... }`
  *
- * @param WireType The JDBC wire type returned by the driver for each element (e.g., [String], [Int]).
- * @param ApplicationType The application type decoded by the adapter (e.g., `Mood`, `Email`).
+ * @param connection The JDBC connection that creates the returned array.
+ * @param elementTypeName The canonical Postgres name of the domain's base type (`int4`, not `integer`).
+ * @throws SQLException if reading the elements fails or [elementTypeName] is not a known Postgres type.
  */
-@Suppress("UNCHECKED_CAST") // Mapping from Postgres to Kotlin is inherently unchecked. Norm makes it safe.
-public inline fun <reified WireType : Any, reified ApplicationType : Any> java.sql.Array.decodeArray(
-  adapter: ColumnAdapter<ApplicationType, WireType>,
-): Array<ApplicationType?> = (array as Array<WireType?>).map { it?.let(adapter::decode) }.toTypedArray()
+@Throws(SQLException::class)
+public fun java.sql.Array.withElementType(connection: Connection, elementTypeName: String): java.sql.Array =
+  connection.createArrayOf(elementTypeName, mapElements { getString(2) })
 
 /**
  * Encodes a Kotlin array into a JDBC [java.sql.Array] by applying [adapter] to each element.

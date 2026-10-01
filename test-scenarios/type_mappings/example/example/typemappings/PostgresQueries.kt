@@ -1,5 +1,6 @@
 package example.typemappings
 
+import com.example.CalendarDate
 import com.example.CustomMood
 import com.example.JsonData
 import com.example.UserPreferences
@@ -7,6 +8,7 @@ import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.SQLException
 import java.sql.Types
+import java.time.LocalDate
 import kotlin.Any
 import kotlin.Array
 import kotlin.Int
@@ -22,17 +24,21 @@ import norm.ManyProcessor
 import norm.NormDriver
 import norm.RealTransactable
 import norm.combineExecBatchResults
-import norm.decodeArray
 import norm.encodeToSqlArray
+import norm.mapElements
+import norm.withElementType
 
 public class PostgresQueries(
   connectionProvider: ConnectionProvider,
+  private val dateAdapter: ColumnAdapter<CalendarDate, LocalDate>,
   private val jsonAdapter: ColumnAdapter<JsonData, String>,
   private val jsonbAdapter: ColumnAdapter<JsonData, String>,
   private val moodAdapter: ColumnAdapter<CustomMood, String>,
   private val usersPreferencesAdapter: ColumnAdapter<UserPreferences, String>,
   private val emailAdapter: ColumnAdapter<Email, String> = EmailAdapter(),
+  private val eventDateAdapter: ColumnAdapter<EventDate, LocalDate> = EventDateAdapter(),
   private val jsonDocumentAdapter: ColumnAdapter<JsonDocument, String> = JsonDocumentAdapter(),
+  private val noteTextAdapter: ColumnAdapter<NoteText, String> = NoteTextAdapter(),
   private val positiveIntegerAdapter:
       ColumnAdapter<PositiveInteger, Int> = PositiveIntegerAdapter(),
 ) : RealTransactable(connectionProvider),
@@ -59,8 +65,8 @@ public class PostgresQueries(
         moodAdapter.decode(getString(4)),
         jsonbAdapter.decode(getString(5)),
         usersPreferencesAdapter.decode(getString(6)),
-        getArray(7)?.decodeArray(moodAdapter),
-        getArray(8)?.decodeArray(jsonbAdapter),
+        getArray(7)?.mapElements { getString(2)?.let { moodAdapter.decode(it) } },
+        getArray(8)?.mapElements { getString(2)?.let { jsonbAdapter.decode(it) } },
       )
     }
     return driver.queryOne(sql, rowReader) {
@@ -293,4 +299,105 @@ public class PostgresQueries(
   }
 
   override fun <T : Any> duplicateUserReturningAliasedPreferences(p1: Int, mapper: (id: Int, duplicated_preferences: UserPreferences) -> T): Many<T> = duplicateUserReturningAliasedPreferences(p1, mapper, driver::queryMany)
+
+  @Throws(SQLException::class)
+  override fun <T : Any> getScheduleById(id: Int, mapper: (
+    id: Int,
+    event_dates: Array<EventDate?>?,
+    scores: Array<PositiveInteger?>?,
+    notes: Array<NoteText?>?,
+    holidays: Array<CalendarDate?>?,
+  ) -> T): T {
+    val sql = "SELECT * FROM schedules WHERE id = ?"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        getArray(2)?.withElementType(this.statement.connection, "date")?.mapElements { getObject(2, LocalDate::class.java)?.let { eventDateAdapter.decode(it) } },
+        getArray(3)?.withElementType(this.statement.connection, "int4")?.mapElements { getInt(2).takeUnless { wasNull() }?.let { positiveIntegerAdapter.decode(it) } },
+        getArray(4)?.withElementType(this.statement.connection, "text")?.mapElements { getString(2)?.let { noteTextAdapter.decode(it) } },
+        getArray(5)?.mapElements { getObject(2, LocalDate::class.java)?.let { dateAdapter.decode(it) } },
+      )
+    }
+    return driver.queryOne(sql, rowReader) {
+      setInt(1, id)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun updateSchedule(
+    event_dates: Array<EventDate?>?,
+    scores: Array<PositiveInteger?>?,
+    notes: Array<NoteText?>?,
+    holidays: Array<CalendarDate?>?,
+    id: Int,
+  ) {
+    val sql = "UPDATE schedules SET event_dates = ?, scores = ?, notes = ?, holidays = ? WHERE id = ?"
+    driver.execute(sql) {
+      event_dates?.let { setArray(1, it.encodeToSqlArray(connection, "event_date", eventDateAdapter)) } ?: setNull(1, Types.ARRAY)
+      scores?.let { setArray(2, it.encodeToSqlArray(connection, "positive_integer", positiveIntegerAdapter)) } ?: setNull(2, Types.ARRAY)
+      notes?.let { setArray(3, it.encodeToSqlArray(connection, "note_text", noteTextAdapter)) } ?: setNull(3, Types.ARRAY)
+      holidays?.let { setArray(4, it.encodeToSqlArray(connection, "date", dateAdapter)) } ?: setNull(4, Types.ARRAY)
+      setInt(5, id)
+      execute()
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <Input : Any> updateSchedule(
+    stream: Iterable<Input>,
+    event_dates: (Input) -> Array<EventDate?>?,
+    scores: (Input) -> Array<PositiveInteger?>?,
+    notes: (Input) -> Array<NoteText?>?,
+    holidays: (Input) -> Array<CalendarDate?>?,
+    id: (Input) -> Int,
+    batchSize: Int,
+  ): IntArray {
+    val sql = "UPDATE schedules SET event_dates = ?, scores = ?, notes = ?, holidays = ? WHERE id = ?"
+    return driver.execute(sql) {
+      var totalCount = 0
+      var batchCount = 0
+      val results = mutableListOf<IntArray>()
+      for (entry in stream) {
+        event_dates(entry)?.let { setArray(1, it.encodeToSqlArray(connection, "event_date", eventDateAdapter)) } ?: setNull(1, Types.ARRAY)
+        scores(entry)?.let { setArray(2, it.encodeToSqlArray(connection, "positive_integer", positiveIntegerAdapter)) } ?: setNull(2, Types.ARRAY)
+        notes(entry)?.let { setArray(3, it.encodeToSqlArray(connection, "note_text", noteTextAdapter)) } ?: setNull(3, Types.ARRAY)
+        holidays(entry)?.let { setArray(4, it.encodeToSqlArray(connection, "date", dateAdapter)) } ?: setNull(4, Types.ARRAY)
+        setInt(5, id(entry))
+        addBatch()
+        batchCount++
+        if (batchCount == batchSize) {
+          results.add(executeBatch())
+          batchCount = 0
+          // Performance optimization to reduce register updates per loop iteration
+          totalCount += batchSize
+        }
+      }
+      if (batchCount > 0) {
+        results.add(executeBatch())
+        totalCount += batchCount
+      }
+      combineExecBatchResults(results, totalCount, batchSize)
+    }
+  }
+
+  @Throws(SQLException::class)
+  override fun <T : Any> getScheduleArraysByStatement(statement: Int, mapper: (
+    event_dates: Array<EventDate?>?,
+    scores: Array<PositiveInteger?>?,
+    notes: Array<NoteText?>?,
+    holidays: Array<CalendarDate?>?,
+  ) -> T): T {
+    val sql = "SELECT event_dates, scores, notes, holidays FROM schedules WHERE id = ?"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getArray(1)?.withElementType(this.statement.connection, "date")?.mapElements { getObject(2, LocalDate::class.java)?.let { eventDateAdapter.decode(it) } },
+        getArray(2)?.withElementType(this.statement.connection, "int4")?.mapElements { getInt(2).takeUnless { wasNull() }?.let { positiveIntegerAdapter.decode(it) } },
+        getArray(3)?.withElementType(this.statement.connection, "text")?.mapElements { getString(2)?.let { noteTextAdapter.decode(it) } },
+        getArray(4)?.mapElements { getObject(2, LocalDate::class.java)?.let { dateAdapter.decode(it) } },
+      )
+    }
+    return driver.queryOne(sql, rowReader) {
+      setInt(1, statement)
+    }
+  }
 }

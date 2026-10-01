@@ -9,6 +9,10 @@ CHECK (VALUE > 0);
 -- wraps String just as a plain json column would; only the binding differs (Types.OTHER).
 CREATE DOMAIN json_document AS json;
 
+CREATE DOMAIN event_date AS date;
+
+CREATE DOMAIN note_text AS text;
+
 -- Enum type that will be overridden by a user type mapping
 CREATE TYPE mood AS ENUM ('happy', 'sad', 'angry');
 
@@ -27,4 +31,13 @@ CREATE TABLE documents (
   id SERIAL PRIMARY KEY,
   payload json NOT NULL,  -- type-level override: json → JsonData, wire type json
   doc json_document       -- nullable domain over json; adapter is auto-generated
+);
+
+-- Array columns of domains, and of date, which has a type-level override (CalendarDate).
+CREATE TABLE schedules (
+  id SERIAL PRIMARY KEY,
+  event_dates event_date[],
+  scores positive_integer[],
+  notes note_text[],
+  holidays date[]
 );

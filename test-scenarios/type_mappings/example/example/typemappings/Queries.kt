@@ -1,5 +1,6 @@
 package example.typemappings
 
+import com.example.CalendarDate
 import com.example.CustomMood
 import com.example.JsonData
 import com.example.UserPreferences
@@ -288,4 +289,114 @@ public interface Queries : Transactable {
    * ```
    */
   public fun duplicateUserReturningAliasedPreferences(p1: Int): Many<DuplicateUserReturningAliasedPreferences> = duplicateUserReturningAliasedPreferences(p1, ::DuplicateUserReturningAliasedPreferences)
+
+  /**
+   * ```sql
+   * SELECT * FROM schedules WHERE id = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> getScheduleById(id: Int, mapper: (
+    id: Int,
+    event_dates: Array<EventDate?>?,
+    scores: Array<PositiveInteger?>?,
+    notes: Array<NoteText?>?,
+    holidays: Array<CalendarDate?>?,
+  ) -> T): T
+
+  /**
+   * ```sql
+   * SELECT * FROM schedules WHERE id = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun getScheduleById(id: Int): Schedules = getScheduleById(id, ::Schedules)
+
+  /**
+   * ```sql
+   * UPDATE schedules SET event_dates = ?, scores = ?, notes = ?, holidays = ? WHERE id = ?
+   * ```
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateSchedule(
+    stream: Iterable<Input>,
+    event_dates: (Input) -> Array<EventDate?>?,
+    scores: (Input) -> Array<PositiveInteger?>?,
+    notes: (Input) -> Array<NoteText?>?,
+    holidays: (Input) -> Array<CalendarDate?>?,
+    id: (Input) -> Int,
+    batchSize: Int,
+  ): IntArray
+
+  /**
+   * ```sql
+   * UPDATE schedules SET event_dates = ?, scores = ?, notes = ?, holidays = ? WHERE id = ?
+   * ```
+   *
+   * Uses a batch size of 100.
+   *
+   * @return An array containing the result of each batch. The array has the same number as elements as [stream]
+   *         had. The number in each slot can have one of several meanings:
+   *         1. A number greater than or equal to zero -- indicates that the
+   *            command was processed successfully and is an update count giving the
+   *            number of rows in the database that were affected by the command's execution
+   *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
+   *            but that the number of rows affected is unknown
+   *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
+   *            successfully and occurs only if a driver continues to process commands after a command fails
+   */
+  @Throws(SQLException::class)
+  public fun <Input : Any> updateSchedule(
+    stream: Iterable<Input>,
+    event_dates: (Input) -> Array<EventDate?>?,
+    scores: (Input) -> Array<PositiveInteger?>?,
+    notes: (Input) -> Array<NoteText?>?,
+    holidays: (Input) -> Array<CalendarDate?>?,
+    id: (Input) -> Int,
+  ): IntArray = updateSchedule(stream, event_dates, scores, notes, holidays, id, 100)
+
+  /**
+   * ```sql
+   * UPDATE schedules SET event_dates = ?, scores = ?, notes = ?, holidays = ? WHERE id = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun updateSchedule(
+    event_dates: Array<EventDate?>?,
+    scores: Array<PositiveInteger?>?,
+    notes: Array<NoteText?>?,
+    holidays: Array<CalendarDate?>?,
+    id: Int,
+  )
+
+  /**
+   * ```sql
+   * SELECT event_dates, scores, notes, holidays FROM schedules WHERE id = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> getScheduleArraysByStatement(statement: Int, mapper: (
+    event_dates: Array<EventDate?>?,
+    scores: Array<PositiveInteger?>?,
+    notes: Array<NoteText?>?,
+    holidays: Array<CalendarDate?>?,
+  ) -> T): T
+
+  /**
+   * ```sql
+   * SELECT event_dates, scores, notes, holidays FROM schedules WHERE id = ?
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun getScheduleArraysByStatement(statement: Int): GetScheduleArraysByStatement = getScheduleArraysByStatement(statement, ::GetScheduleArraysByStatement)
 }
