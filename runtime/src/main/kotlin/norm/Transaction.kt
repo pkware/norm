@@ -1,23 +1,13 @@
 package norm
 
 import java.sql.Connection
-import java.sql.Savepoint
 
 /**
  * Internal representation of an active transaction on the current thread.
  *
- * @property connection The JDBC connection used for this transaction.
- * @property savepoint The savepoint created for a nested transaction, or `null` for the outermost
- *   transaction.
- * @property parent The enclosing [Transaction], or `null` if this is the outermost transaction.
- * @property readOnly Whether the transaction is read-only.
- * @property poisoned Whether this transaction has been poisoned by an exception in a nested
- *   transaction. A poisoned transaction is rolled back instead of committed when it completes.
+ * @property connection the JDBC connection used for this transaction.
+ * @property readOnly whether the transaction is read-only.
+ * @property poisoned whether an exception escaped a transaction nested within this one. A poisoned transaction rolls
+ *   back when its body returns, and a poisoned nested transaction also poisons its parent.
  */
-internal class Transaction(
-  val connection: Connection,
-  val savepoint: Savepoint?,
-  val parent: Transaction?,
-  val readOnly: Boolean,
-  var poisoned: Boolean = false,
-)
+internal class Transaction(val connection: Connection, val readOnly: Boolean, var poisoned: Boolean = false)

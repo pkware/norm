@@ -183,6 +183,61 @@ class TransactionalConnectionProviderTest {
 
       assertThat(countRows()).isEqualTo(0)
     }
+
+    @Test
+    fun `exception two levels down poisons every enclosing transaction — all rolled back`() {
+      class InnerFailure : RuntimeException()
+
+      provider.transaction(readOnly = false) {
+        insertRow("outer")
+        provider.transaction(readOnly = false) {
+          insertRow("middle")
+          try {
+            provider.transaction(readOnly = false) {
+              insertRow("inner")
+              throw InnerFailure()
+            }
+          } catch (_: InnerFailure) {
+            // Swallowed so the middle transaction completes normally while poisoned.
+          }
+          insertRow("middle-after")
+        }
+      }
+
+      assertThat(countRows()).isEqualTo(0)
+    }
+
+    @Test
+    fun `explicit rollback in a poisoned middle transaction leaves outer unpoisoned`() {
+      class InnerFailure : RuntimeException()
+
+      provider.transaction(readOnly = false) {
+        insertRow("outer")
+        provider.transaction(readOnly = false) {
+          insertRow("middle")
+          try {
+            provider.transaction(readOnly = false) {
+              insertRow("inner")
+              throw InnerFailure()
+            }
+          } catch (_: InnerFailure) {
+            // Swallowed so the middle transaction reaches its explicit rollback.
+          }
+          rollback()
+        }
+      }
+
+      assertThat(countRows()).isEqualTo(1)
+      val value = provider.withConnection { conn ->
+        conn.createStatement().use { stmt ->
+          stmt.executeQuery("SELECT value FROM test_data").use { rs ->
+            rs.next()
+            rs.getString(1)
+          }
+        }
+      }
+      assertThat(value).isEqualTo("outer")
+    }
   }
 
   @Nested
