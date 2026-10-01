@@ -1,5 +1,6 @@
 package packages.placeholder
 
+import io.micronaut.context.annotation.Bean
 import io.micronaut.context.annotation.Factory
 import io.micronaut.context.annotation.Requires
 import jakarta.inject.Singleton
@@ -10,6 +11,7 @@ import javax.sql.DataSource
 @Factory
 public class NormConnectionProviderFactory {
   @Singleton
+  @Bean(typed = [ConnectionProvider::class, TransactionalConnectionProvider::class])
   @Requires(missingBeans = [ConnectionProvider::class])
   @Requires(beans = [DataSource::class])
   public fun connectionProvider(dataSource: DataSource): TransactionalConnectionProvider =

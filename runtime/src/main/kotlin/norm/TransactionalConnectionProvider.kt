@@ -16,7 +16,9 @@ import kotlin.jvm.Throws
  *
  * @param dataSource The data source from which to acquire connections.
  */
-public class TransactionalConnectionProvider(private val dataSource: DataSource) : ConnectionProvider {
+public class TransactionalConnectionProvider(private val dataSource: DataSource) :
+  ConnectionProvider,
+  Transactable {
 
   private val activeTransaction: ThreadLocal<Transaction> = ThreadLocal()
 
@@ -58,14 +60,8 @@ public class TransactionalConnectionProvider(private val dataSource: DataSource)
     return BorrowedConnection(connection, connection::close)
   }
 
-  /**
-   * Runs [body] in a transaction. See [Transactable.transaction] for full semantics.
-   *
-   * @throws SQLException if a database access error occurs.
-   * @throws IllegalStateException if a read-write transaction is nested inside a read-only one.
-   */
   @Throws(SQLException::class, IllegalStateException::class)
-  public fun transaction(readOnly: Boolean = true, body: TransactionScope.() -> Unit) {
+  override fun transaction(readOnly: Boolean, body: TransactionScope.() -> Unit) {
     try {
       transactionWithResult(readOnly, body)
     } catch (_: RollbackException) {
@@ -74,15 +70,8 @@ public class TransactionalConnectionProvider(private val dataSource: DataSource)
     }
   }
 
-  /**
-   * Runs [body] in a transaction and returns its result. See [Transactable.transactionWithResult]
-   * for full semantics.
-   *
-   * @throws SQLException if a database access error occurs.
-   * @throws IllegalStateException if a read-write transaction is nested inside a read-only one.
-   */
   @Throws(SQLException::class, IllegalStateException::class)
-  public fun <R> transactionWithResult(readOnly: Boolean = true, body: TransactionScope.() -> R): R {
+  override fun <R> transactionWithResult(readOnly: Boolean, body: TransactionScope.() -> R): R {
     val parent = activeTransaction.get()
     return if (parent != null) {
       executeNested(parent, readOnly, body)

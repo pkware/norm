@@ -2,6 +2,7 @@ package norm
 
 import assertk.assertThat
 import assertk.assertions.contains
+import assertk.assertions.containsAll
 import assertk.assertions.isEqualTo
 import assertk.assertions.isNotNull
 import assertk.assertions.isTrue
@@ -17,6 +18,7 @@ import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import java.sql.Connection
 import java.sql.DriverManager
+import java.sql.SQLException
 import java.util.concurrent.ConcurrentHashMap
 import javax.sql.DataSource
 
@@ -253,6 +255,25 @@ class TransactionalConnectionProviderTest {
     }
 
     @Test
+    fun `transaction without readOnly argument is read-only`() {
+      assertThrows<SQLException> {
+        provider.transaction {
+          insertRow("should-fail")
+        }
+      }
+    }
+
+    @Test
+    fun `transaction without readOnly argument is read-only through Transactable`() {
+      val transactable: Transactable = provider
+      assertThrows<SQLException> {
+        transactable.transaction {
+          insertRow("should-fail")
+        }
+      }
+    }
+
+    @Test
     fun `readOnly=false allows writes`() {
       provider.transaction(readOnly = false) {
         insertRow("allowed")
@@ -282,6 +303,30 @@ class TransactionalConnectionProviderTest {
           assertThat(count).isEqualTo(1)
         }
       }
+    }
+  }
+
+  @Nested
+  inner class DeclaredExceptions {
+
+    @Test
+    fun `transaction declares SQLException and IllegalStateException`() {
+      val method = TransactionalConnectionProvider::class.java
+        .getMethod("transaction", Boolean::class.javaPrimitiveType, Function1::class.java)
+
+      assertThat(
+        method.exceptionTypes.toList(),
+      ).containsAll(SQLException::class.java, IllegalStateException::class.java)
+    }
+
+    @Test
+    fun `transactionWithResult declares SQLException and IllegalStateException`() {
+      val method = TransactionalConnectionProvider::class.java
+        .getMethod("transactionWithResult", Boolean::class.javaPrimitiveType, Function1::class.java)
+
+      assertThat(
+        method.exceptionTypes.toList(),
+      ).containsAll(SQLException::class.java, IllegalStateException::class.java)
     }
   }
 

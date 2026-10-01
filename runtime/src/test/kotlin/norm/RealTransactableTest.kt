@@ -2,9 +2,11 @@ package norm
 
 import assertk.assertThat
 import assertk.assertions.contains
+import assertk.assertions.containsAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import java.sql.Connection
+import java.sql.SQLException
 
 class RealTransactableTest {
 
@@ -20,5 +22,21 @@ class RealTransactableTest {
     }
     assertThat(exception.message!!)
       .contains("TransactionalConnectionProvider", "@Transactional")
+  }
+
+  @Test
+  fun `transaction declares SQLException and IllegalStateException`() {
+    val method = RealTransactable::class.java
+      .getMethod("transaction", Boolean::class.javaPrimitiveType, Function1::class.java)
+
+    assertThat(method.exceptionTypes.toList()).containsAll(SQLException::class.java, IllegalStateException::class.java)
+  }
+
+  @Test
+  fun `transactionWithResult declares SQLException and IllegalStateException`() {
+    val method = RealTransactable::class.java
+      .getMethod("transactionWithResult", Boolean::class.javaPrimitiveType, Function1::class.java)
+
+    assertThat(method.exceptionTypes.toList()).containsAll(SQLException::class.java, IllegalStateException::class.java)
   }
 }
