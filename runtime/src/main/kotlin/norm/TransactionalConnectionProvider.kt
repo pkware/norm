@@ -2,7 +2,6 @@ package norm
 
 import java.sql.Connection
 import java.sql.SQLException
-import java.sql.Savepoint
 import javax.sql.DataSource
 import kotlin.jvm.Throws
 
@@ -116,8 +115,6 @@ public class TransactionalConnectionProvider(private val dataSource: DataSource)
     connection.isReadOnly = readOnly
     val tx = Transaction(
       connection = connection,
-      savepoint = null,
-      parent = null,
       readOnly = readOnly,
     )
     activeTransaction.set(tx)
@@ -142,8 +139,10 @@ public class TransactionalConnectionProvider(private val dataSource: DataSource)
   }
 
   private fun <R> executeNested(parent: Transaction, readOnly: Boolean, body: TransactionScope.() -> R): R {
-    val (connection, savepoint) = beginNested(parent, readOnly)
+    val tx = beginNested(parent, readOnly)
     try {
+      val connection = tx.connection
+      val savepoint = connection.setSavepoint()
       val scope = TransactionScopeImpl()
       val result: R
       try {
@@ -157,27 +156,28 @@ public class TransactionalConnectionProvider(private val dataSource: DataSource)
         parent.poisoned = true
         throw expected
       }
-      connection.releaseSavepoint(savepoint)
+      if (tx.poisoned) {
+        connection.rollback(savepoint)
+        parent.poisoned = true
+      } else {
+        connection.releaseSavepoint(savepoint)
+      }
       return result
     } finally {
       activeTransaction.set(parent)
     }
   }
 
-  private fun beginNested(parent: Transaction, readOnly: Boolean): Pair<Connection, Savepoint> {
+  private fun beginNested(parent: Transaction, readOnly: Boolean): Transaction {
     check(!parent.readOnly || readOnly) {
       "Cannot open a read-write transaction nested inside a read-only transaction"
     }
-    val connection = parent.connection
-    val savepoint = connection.setSavepoint()
     val tx = Transaction(
-      connection = connection,
-      savepoint = savepoint,
-      parent = parent,
+      connection = parent.connection,
       readOnly = readOnly,
     )
     activeTransaction.set(tx)
-    return Pair(connection, savepoint)
+    return tx
   }
 
   private class TransactionScopeImpl : TransactionScope {
