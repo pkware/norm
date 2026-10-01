@@ -5,6 +5,7 @@ rootProject.name = "norm"
 include(
   "e2e-tests",
   "e2e-tests-micronaut",
+  "e2e-tests-micronaut-di",
   "e2e-tests-spring",
   "generator",
   "gradle-plugin",
