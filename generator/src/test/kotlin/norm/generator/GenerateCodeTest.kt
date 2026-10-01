@@ -225,8 +225,7 @@ class GenerateCodeTest {
 
     // Configured with the full, untruncated names -- what a user would write, taken from their
     // own DDL -- not the server-truncated forms the catalog actually holds.
-    val mapping = TypeMapping(
-      "",
+    val mapping = TypeMapping.ByColumn(
       overLengthTableName,
       overLengthColumnName,
       "com.example.CustomJson",
@@ -263,8 +262,7 @@ class GenerateCodeTest {
     try {
       val analyzer = JdbcAnalyzer(connection)
       val catalog = analyzer.buildCatalog(listOf("first_schema", "second_schema"))
-      val mapping = TypeMapping(
-        "",
+      val mapping = TypeMapping.ByColumn(
         "shared_table",
         "metadata",
         "com.example.CustomJson",
@@ -385,14 +383,14 @@ class GenerateCodeTest {
 
         if (keyStr.startsWith("typeMapping.type.")) {
           val postgresType = keyStr.removePrefix("typeMapping.type.")
-          add(TypeMapping(postgresType, null, null, kotlinType, adapterType))
+          add(TypeMapping.ByType(postgresType, kotlinType, adapterType))
         } else if (keyStr.startsWith("typeMapping.column.")) {
           val remainder = keyStr.removePrefix("typeMapping.column.")
           val dotIndex = remainder.indexOf('.')
           require(dotIndex > 0) { "Invalid column mapping key: $keyStr" }
           val table = remainder.substring(0, dotIndex)
           val column = remainder.substring(dotIndex + 1)
-          add(TypeMapping("", table, column, kotlinType, adapterType))
+          add(TypeMapping.ByColumn(table, column, kotlinType, adapterType))
         }
       }
     }

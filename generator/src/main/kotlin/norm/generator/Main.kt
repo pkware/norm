@@ -49,7 +49,7 @@ public fun generateCode(
   val interfaceCode = generateQueryInterface(resolvedQueries, "Queries", frameworks)
 
   // Type-level overrides suppress auto-generation for the overridden type.
-  val typeOverridePostgresTypes = typeMappings.filter { it.isTypeLevel }.map { it.postgresType }.toSet()
+  val typeOverridePostgresTypes = typeMappings.filterIsInstance<TypeMapping.ByType>().map { it.postgresType }.toSet()
 
   // Build enum + adapter TypeSpecs for all enums discovered during query resolution.
   val enumTypeSpecs = typeRepository.discoveredEnums
@@ -275,26 +275,25 @@ private fun loadTemplate(packageName: String, className: String): GeneratedFile 
 /**
  * Returns the adapter property name for a user-configured [TypeMapping].
  *
- * - Type-level: `${postgresType}Adapter` (e.g., `"jsonb"` → `"jsonbAdapter"`, `"mood"` → `"moodAdapter"`)
- * - Column-level: `${table}${Column}Adapter` (e.g., `users.metadata` → `"usersMetadataAdapter"`)
+ * - [TypeMapping.ByType]: `${postgresType}Adapter` (e.g., `"jsonb"` → `"jsonbAdapter"`, `"mood"` → `"moodAdapter"`)
+ * - [TypeMapping.ByColumn]: `${table}${Column}Adapter` (e.g., `users.metadata` → `"usersMetadataAdapter"`)
  */
-internal fun userAdapterPropertyName(mapping: TypeMapping): String = if (mapping.isColumnLevel) {
-  "${mapping.table!!.snakeToCamelCase()}${mapping.column!!.snakeToCamelCase().titleCase()}Adapter"
-} else {
-  "${mapping.postgresType.snakeToCamelCase()}Adapter"
+internal fun userAdapterPropertyName(mapping: TypeMapping): String = when (mapping) {
+  is TypeMapping.ByType -> "${mapping.postgresType.snakeToCamelCase()}Adapter"
+  is TypeMapping.ByColumn ->
+    "${mapping.table.snakeToCamelCase()}${mapping.column.snakeToCamelCase().titleCase()}Adapter"
 }
 
 /**
  * Resolves the Kotlin [TypeName] for the database (wire) side of a user-configured adapter.
  *
- * For type-level overrides, this maps the Postgres type directly.
- * For column-level overrides, this looks up the column's actual type from the catalog first.
+ * A [TypeMapping.ByType] mapping names the Postgres type directly. A [TypeMapping.ByColumn] mapping takes the
+ * column's type from the catalog.
  */
 private fun resolveWireTypeName(mapping: TypeMapping, typeRepository: TypeRepository, catalog: Catalog): TypeName {
-  val postgresType = if (mapping.isColumnLevel) {
-    resolveColumnPostgresType(catalog, mapping.table!!, mapping.column!!)
-  } else {
-    mapping.postgresType
+  val postgresType = when (mapping) {
+    is TypeMapping.ByType -> mapping.postgresType
+    is TypeMapping.ByColumn -> resolveColumnPostgresType(catalog, mapping.table, mapping.column)
   }
   return typeRepository.resolveAdapterWireCodec(postgresType).kotlinType
 }

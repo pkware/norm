@@ -104,7 +104,7 @@ public abstract class Database(private val name: String) : Named {
    *
    * Type-level overrides apply to all columns of that Postgres type and suppress auto-generation
    * of the matching enum or domain adapter. Column-level overrides apply to a single column and
-   * do NOT suppress auto-generation — other columns of the same type may still need it.
+   * leave auto-generation in place, because other columns of the same type may still need it.
    *
    * Use the [typeMappings] builder for a concise DSL:
    * ```kotlin

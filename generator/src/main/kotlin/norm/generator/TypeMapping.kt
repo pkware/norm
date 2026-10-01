@@ -1,32 +1,45 @@
 package norm.generator
 
+import java.io.Serializable
+
 /**
- * A user-configured mapping from a Postgres type (or specific column) to a Kotlin type via an adapter.
+ * A user-configured mapping from Postgres values to a Kotlin type via an adapter.
  *
- * Type-level overrides apply to all columns of that Postgres type and suppress auto-generation
- * of the matching enum or domain adapter. Column-level overrides apply to a single column and
- * do NOT suppress auto-generation — other columns of the same type may still need it.
- *
- * @property postgresType The Postgres type name to override (e.g., `"mood"`, `"jsonb"`).
- *   Empty for column-level overrides (the actual type is resolved from the catalog).
- * @property table The table name for column-level overrides. `null` for type-level overrides.
- * @property column The column name for column-level overrides. `null` for type-level overrides.
- * @property kotlinType Fully-qualified Kotlin class name for the application type
- *   (e.g., `"com.example.Mood"`).
- * @property adapterType Fully-qualified Kotlin class name for the
- *   [ColumnAdapter][norm.ColumnAdapter] implementation (e.g., `"com.example.MoodAdapter"`).
+ * A [ByType] mapping applies to every column of a Postgres type and suppresses auto-generation of the
+ * matching enum or domain adapter. A [ByColumn] mapping applies to a single column and leaves
+ * auto-generation in place, because other columns of the same type may still need it.
  */
-public data class TypeMapping(
-  val postgresType: String,
-  val table: String?,
-  val column: String?,
-  val kotlinType: String,
-  val adapterType: String,
-) : java.io.Serializable {
+public sealed interface TypeMapping : Serializable {
 
-  /** Whether this mapping targets a specific column rather than all columns of a type. */
-  val isColumnLevel: Boolean get() = table != null && column != null
+  /** Fully-qualified Kotlin class name for the application type (e.g., `"com.example.Mood"`). */
+  public val kotlinType: String
 
-  /** Whether this mapping targets all columns of a Postgres type. */
-  val isTypeLevel: Boolean get() = !isColumnLevel
+  /**
+   * Fully-qualified Kotlin class name of the `norm.ColumnAdapter` implementation (e.g., `"com.example.MoodAdapter"`).
+   */
+  public val adapterType: String
+
+  /**
+   * Maps every column of a Postgres type.
+   *
+   * @param postgresType the Postgres type name (e.g., `"mood"`, `"jsonb"`).
+   */
+  public data class ByType(
+    val postgresType: String,
+    override val kotlinType: String,
+    override val adapterType: String,
+  ) : TypeMapping
+
+  /**
+   * Maps a single column.
+   *
+   * @param table the table name as written in DDL, truncated to the server's identifier limit before matching.
+   * @param column the column name, truncated the same way.
+   */
+  public data class ByColumn(
+    val table: String,
+    val column: String,
+    override val kotlinType: String,
+    override val adapterType: String,
+  ) : TypeMapping
 }

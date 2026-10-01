@@ -75,7 +75,7 @@ internal class TypeRepository(
 
   /** Type-level overrides, keyed by Postgres type name. */
   private val typeLevelOverrides: Map<String, TypeMapping> =
-    typeMappings.filter { it.isTypeLevel }.associateBy { it.postgresType }
+    typeMappings.filterIsInstance<TypeMapping.ByType>().associateBy { it.postgresType }
 
   /**
    * Column-level overrides, keyed by (table, column) pair.
@@ -86,8 +86,8 @@ internal class TypeRepository(
    * silently dropped.
    */
   private val columnLevelOverrides: Map<Pair<String, String>, TypeMapping> =
-    typeMappings.filter { it.isColumnLevel }
-      .associateBy { truncateIdentifier(it.table!!) to truncateIdentifier(it.column!!) }
+    typeMappings.filterIsInstance<TypeMapping.ByColumn>()
+      .associateBy { truncateIdentifier(it.table) to truncateIdentifier(it.column) }
 
   /**
    * Enum types that are actually referenced by columns in resolved queries.

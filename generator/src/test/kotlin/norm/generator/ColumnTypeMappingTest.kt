@@ -2549,7 +2549,7 @@ class ColumnTypeMappingTest {
     fun `type-level override on enum type`() {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", enums = listOf(moodEnum))))
       val mappings = listOf(
-        TypeMapping("mood", null, null, "com.example.CustomMood", "com.example.CustomMoodAdapter"),
+        TypeMapping.ByType("mood", "com.example.CustomMood", "com.example.CustomMoodAdapter"),
       )
       val repository = TypeRepository("test", catalog, mappings)
       val col = column("current_mood", type = "mood")
@@ -2561,7 +2561,7 @@ class ColumnTypeMappingTest {
     fun `type-level override on domain type`() {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(emailDomain))))
       val mappings = listOf(
-        TypeMapping("email", null, null, "com.example.CustomEmail", "com.example.CustomEmailAdapter"),
+        TypeMapping.ByType("email", "com.example.CustomEmail", "com.example.CustomEmailAdapter"),
       )
       val repository = TypeRepository("test", catalog, mappings)
       val col = column("email", type = "email")
@@ -2572,7 +2572,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `type-level override on standard type`() {
       val mappings = listOf(
-        TypeMapping("jsonb", null, null, "com.example.JsonData", "com.example.JsonDataAdapter"),
+        TypeMapping.ByType("jsonb", "com.example.JsonData", "com.example.JsonDataAdapter"),
       )
       val repository = TypeRepository("test", Catalog(), mappings)
       val col = column("metadata", type = "jsonb")
@@ -2583,7 +2583,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `column-level override`() {
       val mappings = listOf(
-        TypeMapping("", "users", "metadata", "com.example.Metadata", "com.example.MetadataAdapter"),
+        TypeMapping.ByColumn("users", "metadata", "com.example.Metadata", "com.example.MetadataAdapter"),
       )
       val repository = TypeRepository("test", Catalog(), mappings)
       val col = column("metadata", type = "jsonb", table = Identifier(name = "users"))
@@ -2594,8 +2594,8 @@ class ColumnTypeMappingTest {
     @Test
     fun `column override takes precedence over type override`() {
       val mappings = listOf(
-        TypeMapping("jsonb", null, null, "com.example.JsonData", "com.example.JsonDataAdapter"),
-        TypeMapping("", "users", "preferences", "com.example.UserPrefs", "com.example.UserPrefsAdapter"),
+        TypeMapping.ByType("jsonb", "com.example.JsonData", "com.example.JsonDataAdapter"),
+        TypeMapping.ByColumn("users", "preferences", "com.example.UserPrefs", "com.example.UserPrefsAdapter"),
       )
       val repository = TypeRepository("test", Catalog(), mappings)
 
@@ -2612,7 +2612,7 @@ class ColumnTypeMappingTest {
     fun `type override suppresses auto-generated enum`() {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", enums = listOf(moodEnum))))
       val mappings = listOf(
-        TypeMapping("mood", null, null, "com.example.CustomMood", "com.example.CustomMoodAdapter"),
+        TypeMapping.ByType("mood", "com.example.CustomMood", "com.example.CustomMoodAdapter"),
       )
       val repository = TypeRepository("test", catalog, mappings)
       repository.resolveMappableType(column("current_mood", type = "mood"))
@@ -2630,7 +2630,7 @@ class ColumnTypeMappingTest {
     fun `type override suppresses auto-generated domain`() {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(emailDomain))))
       val mappings = listOf(
-        TypeMapping("email", null, null, "com.example.CustomEmail", "com.example.CustomEmailAdapter"),
+        TypeMapping.ByType("email", "com.example.CustomEmail", "com.example.CustomEmailAdapter"),
       )
       val repository = TypeRepository("test", catalog, mappings)
       val col = column("email", type = "email")
@@ -2642,7 +2642,7 @@ class ColumnTypeMappingTest {
     fun `column override does NOT suppress auto-generated enum`() {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", enums = listOf(moodEnum))))
       val mappings = listOf(
-        TypeMapping("", "users", "current_mood", "com.example.CustomMood", "com.example.CustomMoodAdapter"),
+        TypeMapping.ByColumn("users", "current_mood", "com.example.CustomMood", "com.example.CustomMoodAdapter"),
       )
       val repository = TypeRepository("test", catalog, mappings)
 
@@ -2666,7 +2666,7 @@ class ColumnTypeMappingTest {
         schemas = listOf(Schema(name = "public", domains = listOf(emailDomain, positiveIntDomain))),
       )
       val mappings = listOf(
-        TypeMapping("", "users", "email", "com.example.CustomEmail", "com.example.CustomEmailAdapter"),
+        TypeMapping.ByColumn("users", "email", "com.example.CustomEmail", "com.example.CustomEmailAdapter"),
       )
       val repository = TypeRepository("test", catalog, mappings)
 
@@ -2694,7 +2694,7 @@ class ColumnTypeMappingTest {
       // its originalName is "id" -- before this fix, originalName mirrored the alias itself
       // ("parentId"), and the mapping silently never matched.
       val mappings = listOf(
-        TypeMapping("", "parent", "id", "com.example.ParentId", "com.example.ParentIdAdapter"),
+        TypeMapping.ByColumn("parent", "id", "com.example.ParentId", "com.example.ParentIdAdapter"),
       )
       val repository = TypeRepository("test", Catalog(), mappings)
 
@@ -2712,7 +2712,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `unsupported postgres type in type mapping produces error`() {
       val mappings = listOf(
-        TypeMapping("xml", null, null, "com.example.XmlDoc", "com.example.XmlDocAdapter"),
+        TypeMapping.ByType("xml", "com.example.XmlDoc", "com.example.XmlDocAdapter"),
       )
       val repository = TypeRepository("test", Catalog(), mappings)
       val col = column("doc", type = "xml")
@@ -2727,7 +2727,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `non-null type override uses adapter decode in resultSetAction`() {
       val mappings = listOf(
-        TypeMapping("jsonb", null, null, "com.example.JsonData", "com.example.JsonDataAdapter"),
+        TypeMapping.ByType("jsonb", "com.example.JsonData", "com.example.JsonDataAdapter"),
       )
       val repository = TypeRepository("test", Catalog(), mappings)
       val col = column("metadata", type = "jsonb")
@@ -2738,7 +2738,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `nullable type override uses safe call in resultSetAction`() {
       val mappings = listOf(
-        TypeMapping("jsonb", null, null, "com.example.JsonData", "com.example.JsonDataAdapter"),
+        TypeMapping.ByType("jsonb", "com.example.JsonData", "com.example.JsonDataAdapter"),
       )
       val repository = TypeRepository("test", Catalog(), mappings)
       val col = column("metadata", type = "jsonb", notNull = false)
@@ -2749,7 +2749,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `non-null type override uses setObject with Types OTHER in statementAction`() {
       val mappings = listOf(
-        TypeMapping("jsonb", null, null, "com.example.JsonData", "com.example.JsonDataAdapter"),
+        TypeMapping.ByType("jsonb", "com.example.JsonData", "com.example.JsonDataAdapter"),
       )
       val repository = TypeRepository("test", Catalog(), mappings)
       val col = column("metadata", type = "jsonb")
@@ -2760,7 +2760,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `nullable type override uses setNull fallback in statementAction`() {
       val mappings = listOf(
-        TypeMapping("jsonb", null, null, "com.example.JsonData", "com.example.JsonDataAdapter"),
+        TypeMapping.ByType("jsonb", "com.example.JsonData", "com.example.JsonDataAdapter"),
       )
       val repository = TypeRepository("test", Catalog(), mappings)
       val col = column("metadata", type = "jsonb", notNull = false)
@@ -2773,7 +2773,7 @@ class ColumnTypeMappingTest {
     fun `type override on enum resolves JDBC type through enum`() {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", enums = listOf(moodEnum))))
       val mappings = listOf(
-        TypeMapping("mood", null, null, "com.example.CustomMood", "com.example.CustomMoodAdapter"),
+        TypeMapping.ByType("mood", "com.example.CustomMood", "com.example.CustomMoodAdapter"),
       )
       val repository = TypeRepository("test", catalog, mappings)
       val col = column("current_mood", type = "mood")
@@ -2788,10 +2788,8 @@ class ColumnTypeMappingTest {
         schemas = listOf(Schema(name = "public", domains = listOf(positiveIntDomain))),
       )
       val mappings = listOf(
-        TypeMapping(
+        TypeMapping.ByType(
           "positive_integer",
-          null,
-          null,
           "com.example.Age",
           "com.example.AgeAdapter",
         ),
@@ -2806,7 +2804,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `date array with a type override reads elements through the date codec`() {
       val mappings = listOf(
-        TypeMapping("date", null, null, "com.example.CalendarDate", "com.example.CalendarDateAdapter"),
+        TypeMapping.ByType("date", "com.example.CalendarDate", "com.example.CalendarDateAdapter"),
       )
       val repository = TypeRepository("test", Catalog(), mappings)
       val col = column("holidays", type = "date", isArray = true)
@@ -2820,7 +2818,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `timestamptz array with a type override converts elements to Instant before the adapter`() {
       val mappings = listOf(
-        TypeMapping("timestamptz", null, null, "com.example.Moment", "com.example.MomentAdapter"),
+        TypeMapping.ByType("timestamptz", "com.example.Moment", "com.example.MomentAdapter"),
       )
       val repository = TypeRepository("test", Catalog(), mappings)
       val col = column("moments", type = "timestamptz", isArray = true, notNull = false)
@@ -2834,7 +2832,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `column-level override on a date array reads elements through the date codec`() {
       val mappings = listOf(
-        TypeMapping("", "events", "days", "com.example.CalendarDate", "com.example.CalendarDateAdapter"),
+        TypeMapping.ByColumn("events", "days", "com.example.CalendarDate", "com.example.CalendarDateAdapter"),
       )
       val repository = TypeRepository("test", Catalog(), mappings)
       val col = column("days", type = "date", isArray = true, table = Identifier(name = "events"))
@@ -2849,7 +2847,7 @@ class ColumnTypeMappingTest {
     fun `type override on an integer domain array re-types its elements to the domain base type`() {
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(positiveIntDomain))))
       val mappings = listOf(
-        TypeMapping("positive_integer", null, null, "com.example.Age", "com.example.AgeAdapter"),
+        TypeMapping.ByType("positive_integer", "com.example.Age", "com.example.AgeAdapter"),
       )
       val repository = TypeRepository("test", catalog, mappings)
       val col = column("ages", type = "positive_integer", isArray = true)
@@ -2865,7 +2863,7 @@ class ColumnTypeMappingTest {
       val intSetDomain = Domain(name = "int_set", baseType = "_int4")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(intSetDomain))))
       val mappings = listOf(
-        TypeMapping("int_set", null, null, "com.example.TagIds", "com.example.TagIdsAdapter"),
+        TypeMapping.ByType("int_set", "com.example.TagIds", "com.example.TagIdsAdapter"),
       )
       val repository = TypeRepository("test", catalog, mappings)
 
@@ -2882,7 +2880,7 @@ class ColumnTypeMappingTest {
       val intSetDomain = Domain(name = "int_set", baseType = "_int4")
       val catalog = Catalog(schemas = listOf(Schema(name = "public", domains = listOf(intSetDomain))))
       val mappings = listOf(
-        TypeMapping("", "tags", "tag_id_sets", "com.example.TagIds", "com.example.TagIdsAdapter"),
+        TypeMapping.ByColumn("tags", "tag_id_sets", "com.example.TagIds", "com.example.TagIdsAdapter"),
       )
       val repository = TypeRepository("test", catalog, mappings)
 
@@ -2899,10 +2897,8 @@ class ColumnTypeMappingTest {
     @Test
     fun `type-level override with generic Kotlin type`() {
       val mappings = listOf(
-        TypeMapping(
+        TypeMapping.ByType(
           "jsonb",
-          null,
-          null,
           "kotlin.collections.Map<kotlin.String, kotlin.Any?>",
           "com.example.JsonAdapter",
         ),
@@ -2920,8 +2916,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `column-level override with generic Kotlin type`() {
       val mappings = listOf(
-        TypeMapping(
-          "",
+        TypeMapping.ByColumn(
           "events",
           "payload",
           "kotlin.collections.Map<kotlin.String, kotlin.Any?>",
@@ -2947,7 +2942,7 @@ class ColumnTypeMappingTest {
         ),
       )
       val mappings = listOf(
-        TypeMapping("code", null, null, "com.example.Code", "com.example.CodeAdapter"),
+        TypeMapping.ByType("code", "com.example.Code", "com.example.CodeAdapter"),
       )
       val query = Query(
         name = "listCodes",
@@ -2966,7 +2961,7 @@ class ColumnTypeMappingTest {
     @Test
     fun `type mapping on an unsupported type fails even when no query uses it`() {
       val mappings = listOf(
-        TypeMapping("xml", null, null, "com.example.XmlDoc", "com.example.XmlDocAdapter"),
+        TypeMapping.ByType("xml", "com.example.XmlDoc", "com.example.XmlDocAdapter"),
       )
 
       val exception = assertThrows<IllegalStateException> {
@@ -2994,8 +2989,7 @@ class ColumnTypeMappingTest {
       // The catalog only ever holds the truncated name, so an override keyed by the full name the
       // user wrote would never match.
       val mappings = listOf(
-        TypeMapping(
-          "",
+        TypeMapping.ByColumn(
           overLengthTableName,
           overLengthColumnName,
           "com.example.CustomType",
@@ -3019,7 +3013,7 @@ class ColumnTypeMappingTest {
       // Companion to the over-length case above: an override whose names are already <= 63 bytes must
       // keep matching exactly, catching an over-eager truncation that would corrupt a short name too.
       val mappings = listOf(
-        TypeMapping("", "short_table", "short_column", "com.example.CustomType", "com.example.CustomTypeAdapter"),
+        TypeMapping.ByColumn("short_table", "short_column", "com.example.CustomType", "com.example.CustomTypeAdapter"),
       )
       val repository = TypeRepository("test", Catalog(), mappings)
       val shortNamedColumn = column(
