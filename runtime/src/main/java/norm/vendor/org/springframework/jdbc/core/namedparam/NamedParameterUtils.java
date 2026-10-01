@@ -36,7 +36,7 @@ import org.jetbrains.annotations.Nullable;
  * @author Yanming Zhou
  * @since 2.0
  */
-public abstract class NamedParameterUtils {
+abstract class NamedParameterUtils {
 
 	/**
 	 * Set of characters that qualify as comment or quotes starting characters.
@@ -77,7 +77,7 @@ public abstract class NamedParameterUtils {
 	 * @param sql the SQL statement
 	 * @return the parsed statement, represented as {@link ParsedSql} instance
 	 */
-	public static ParsedSql parseSqlStatement(String sql) {
+	static ParsedSql parseSqlStatement(String sql) {
     Objects.requireNonNull(sql);
 
 		Set<String> namedParameters = new HashSet<>();
@@ -277,10 +277,12 @@ public abstract class NamedParameterUtils {
 	 * is strictly vendor-dependent.
 	 * @param parsedSql the parsed representation of the SQL statement
 	 * @param paramSource the source for named parameters
+	 * @param arguments receives one entry per placeholder written, in placeholder order.
 	 * @return the SQL statement with substituted parameters
 	 * @see #parseSqlStatement
 	 */
-	public static String substituteNamedParameters(ParsedSql parsedSql, @Nullable Map<String, Object> paramSource) {
+	static String substituteNamedParameters(ParsedSql parsedSql, @Nullable Map<String, Object> paramSource,
+			List<Object> arguments) {
 		String originalSql = parsedSql.getOriginalSql();
 		List<String> paramNames = parsedSql.getParameterNames();
 		if (paramNames.isEmpty()) {
@@ -313,20 +315,24 @@ public abstract class NamedParameterUtils {
 									actualSql.append(", ");
 								}
 								actualSql.append('?');
+								arguments.add(expressionList[m]);
 							}
 							actualSql.append(')');
 						}
 						else {
 							actualSql.append('?');
+							arguments.add(entryItem);
 						}
 					}
 				}
 				else {
 					actualSql.append('?');
+					arguments.add(value);
 				}
 			}
 			else {
 				actualSql.append('?');
+				arguments.add(null);
 			}
 			lastIndex = endIndex;
 		}
