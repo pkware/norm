@@ -31,9 +31,13 @@ private val TRANSACTABLE = ClassName(RUNTIME_PACKAGE, "Transactable")
  *   explicitly rather than silently falling back to an empty set (or, worse, a hardcoded snapshot
  *   that could drift from whichever server this run actually targets).
  * @param typeMappings User-configured type/column overrides. Type-level overrides suppress
- *   auto-generation of the matching enum or domain.
+ *   auto-generation of the matching enum or domain. Duplicate entries are ignored.
  * @return The generated files. File names include the package hierarchy.
+ * @throws IllegalStateException if two unequal [typeMappings] target the same Postgres type or column.
+ *   Also thrown if an adapter property name is shared by two [typeMappings] or by a mapping and the
+ *   auto-generated adapter of a referenced enum or domain.
  */
+@Throws(IllegalStateException::class)
 public fun generateCode(
   catalog: Catalog,
   queries: List<Query>,
@@ -116,6 +120,8 @@ private data class AdapterParameter(val propertyName: String, val adapterType: T
  *
  * @param typeOverridePostgresTypes Postgres type names with a user-configured type-level override,
  *   already computed by the caller so it's derived from [typeMappings] exactly once.
+ * @throws IllegalStateException if a user-configured adapter has the same property name as the
+ *   auto-generated adapter of a discovered enum or domain.
  */
 private fun adapterParameters(
   typeRepository: TypeRepository,
@@ -125,7 +131,8 @@ private fun adapterParameters(
   typeOverridePostgresTypes: Set<String>,
 ): List<AdapterParameter> {
   // User-configured adapter params (no default value → must come first)
-  val userAdapterParams = typeMappings.map { mapping ->
+  val userMappings = typeMappings.distinct()
+  val userAdapterParams = userMappings.map { mapping ->
     val applicationTypeName = parseTypeName(mapping.kotlinType)
     val databaseTypeName = resolveWireTypeName(mapping, typeRepository, catalog)
     AdapterParameter(
@@ -133,12 +140,22 @@ private fun adapterParameters(
       COLUMN_ADAPTER.parameterizedBy(applicationTypeName, databaseTypeName),
       null,
     )
-  }.distinctBy { it.propertyName }.sortedBy { it.propertyName }
+  }.sortedBy { it.propertyName }
+  val userMappingsByPropertyName = userMappings.associateBy(::userAdapterPropertyName)
+
+  fun checkNoUserCollision(propertyName: String, kind: String, postgresTypeName: String) {
+    val userMapping = userMappingsByPropertyName[propertyName] ?: return
+    error(
+      "Mapping ${userMapping.describe()} generates the adapter parameter `$propertyName`, " +
+        "which the generated adapter for $kind \"$postgresTypeName\" also uses.",
+    )
+  }
 
   // Auto-generated adapter params (with default → come after)
   val autoAdapterParams = buildList {
     for (enumDefinition in typeRepository.discoveredEnums) {
       if (enumDefinition.name in typeOverridePostgresTypes) continue
+      checkNoUserCollision(adapterPropertyName(enumDefinition), "enum", enumDefinition.name)
       val enumClassName = enumClassName(enumDefinition, packageName)
       add(
         AdapterParameter(
@@ -150,6 +167,7 @@ private fun adapterParameters(
     }
     for (domain in typeRepository.discoveredDomains) {
       if (domain.name in typeOverridePostgresTypes) continue
+      checkNoUserCollision(domainAdapterPropertyName(domain), "domain", domain.name)
       val valueClassName = domainValueClassName(domain, packageName)
       val wireKotlinType = domainKotlinWireType(domain.baseType)
       add(

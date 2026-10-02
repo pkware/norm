@@ -43,3 +43,16 @@ public sealed interface TypeMapping : Serializable {
     override val adapterType: String,
   ) : TypeMapping
 }
+
+/**
+ * Renders this mapping in the form a user writes it in configuration, for error messages.
+ *
+ * Example: `column("users", "metadata") -> com.example.Metadata via com.example.MetadataAdapter`.
+ */
+internal fun TypeMapping.describe(): String {
+  val target = when (this) {
+    is TypeMapping.ByType -> """type("$postgresType")"""
+    is TypeMapping.ByColumn -> """column("$table", "$column")"""
+  }
+  return "$target -> $kotlinType via $adapterType"
+}
