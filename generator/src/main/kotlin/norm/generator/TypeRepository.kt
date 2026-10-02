@@ -35,6 +35,7 @@ private val ENUM_CODEC: WireCodec = POSTGRES_BASE_TYPES.getValue("json").codec
  * @param catalog Postgres catalog to use when resolving projection information.
  * @param typeMappings User-configured type/column overrides. Type-level overrides take precedence
  *   over auto-generated enums/domains; column-level overrides take precedence over everything.
+ *   Duplicate entries are ignored.
  * @param reservedWords The connected PostgreSQL server's reserved keywords, from
  *   [JdbcAnalyzer.fetchReservedWords] — consulted by [quoteSqlIdentifierIfNeeded] when rendering a
  *   `` `table.column` `` source reference, so a relation or column named after a reserved word
@@ -43,6 +44,8 @@ private val ENUM_CODEC: WireCodec = POSTGRES_BASE_TYPES.getValue("json").codec
  *   with no live connection) whose fixtures never name anything after a reserved word;
  *   [generateCode] — the real production entry point — always supplies
  *   [JdbcAnalyzer.fetchReservedWords]'s live result explicitly instead of relying on this default.
+ * @throws IllegalStateException if two unequal [typeMappings] target the same Postgres type or column.
+ *   Also thrown if two of them generate the same adapter property name.
  */
 internal class TypeRepository(
   private val packageName: String,
@@ -72,6 +75,10 @@ internal class TypeRepository(
    */
   private val domainsByName: Map<String, Domain> =
     catalog.schemas.flatMap(Schema::domains).associateBy(Domain::name)
+
+  init {
+    checkMappingsDoNotConflict(typeMappings.distinct())
+  }
 
   /** Type-level overrides, keyed by Postgres type name. */
   private val typeLevelOverrides: Map<String, TypeMapping> =
@@ -129,6 +136,22 @@ internal class TypeRepository(
       yieldAll(queryModels.asSequence().map { it.second })
       yieldAll(tableModels.values.asSequence().map { it.second })
     }
+
+  private fun checkMappingsDoNotConflict(mappings: List<TypeMapping>) {
+    val sameTargetGroups = mappings.filterIsInstance<TypeMapping.ByType>().groupBy { it.postgresType }.values +
+      mappings.filterIsInstance<TypeMapping.ByColumn>()
+        .groupBy { truncateIdentifier(it.table) to truncateIdentifier(it.column) }.values
+    for (group in sameTargetGroups) {
+      check(group.size == 1) {
+        "Conflicting mappings for the same target: ${group.joinToString(" and ") { it.describe() }}."
+      }
+    }
+    for ((propertyName, group) in mappings.groupBy(::userAdapterPropertyName)) {
+      check(group.size == 1) {
+        "Mappings ${group.joinToString(" and ") { it.describe() }} both generate the adapter parameter `$propertyName`."
+      }
+    }
+  }
 
   /**
    * Builds a type projection for a Kotlin representation of the columns in this table.

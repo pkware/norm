@@ -1,12 +1,16 @@
 package norm.generator
 
+import assertk.assertFailure
 import assertk.assertThat
 import assertk.assertions.contains
+import assertk.assertions.hasClass
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isTrue
+import assertk.assertions.messageContains
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
+import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
@@ -340,6 +344,179 @@ class GenerateCodeTest {
 
     val implementationFile = result.first { it.name.endsWith("PostgresQueries.kt") }
     assertThat(implementationFile.contents).contains("moodAdapter: ColumnAdapter<Mood, String> = MoodAdapter()")
+  }
+
+  @Nested
+  inner class AdapterNameCollisions {
+
+    private val jsonAdapterTypes = "com.example.Json" to "com.example.JsonAdapter"
+    private val otherAdapterTypes = "com.example.Other" to "com.example.OtherAdapter"
+
+    private fun resetSchema(schemaSql: String) {
+      connection.createStatement().use {
+        it.execute(
+          """
+          DEALLOCATE ALL;
+          DROP SCHEMA public CASCADE;
+          CREATE SCHEMA public;
+          GRANT ALL ON SCHEMA public TO public;
+          """.trimIndent(),
+        )
+      }
+      connection.createStatement().use { it.execute(schemaSql) }
+    }
+
+    private fun generatePostgresQueries(querySql: String, mappings: List<TypeMapping>): String {
+      val analyzer = JdbcAnalyzer(connection)
+      val catalog = analyzer.buildCatalog()
+      val analyzedQueries = QueryFileParser.parse(querySql).map { analyzer.analyzeQuery(it, catalog) }
+      val result =
+        generateCode(catalog, analyzedQueries, "example", emptySet(), analyzer.fetchReservedWords(), mappings)
+      return result.first { it.name.endsWith("PostgresQueries.kt") }.contents
+    }
+
+    private fun byType(postgresType: String, types: Pair<String, String> = jsonAdapterTypes) =
+      TypeMapping.ByType(postgresType, types.first, types.second)
+
+    private fun byColumn(table: String, column: String, types: Pair<String, String> = jsonAdapterTypes) =
+      TypeMapping.ByColumn(table, column, types.first, types.second)
+
+    @Test
+    fun `type and column mappings producing the same property name fail naming both`() {
+      resetSchema(
+        """
+        CREATE DOMAIN users_metadata AS jsonb;
+        CREATE TABLE users (id integer PRIMARY KEY, metadata jsonb NOT NULL);
+        """.trimIndent(),
+      )
+
+      assertFailure {
+        generatePostgresQueries(
+          "-- name: listUsers :many\nSELECT id FROM users;",
+          listOf(byType("users_metadata"), byColumn("users", "metadata")),
+        )
+      }.also {
+        it.hasClass(IllegalStateException::class)
+        it.messageContains("usersMetadataAdapter")
+        it.messageContains("""type("users_metadata")""")
+        it.messageContains("""column("users", "metadata")""")
+      }
+    }
+
+    @Test
+    fun `column mappings on different columns producing the same property name fail naming both`() {
+      resetSchema(
+        """
+        CREATE TABLE user_s (id integer PRIMARY KEY, x jsonb NOT NULL);
+        CREATE TABLE "user" (id integer PRIMARY KEY, s_x jsonb NOT NULL);
+        """.trimIndent(),
+      )
+
+      assertFailure {
+        generatePostgresQueries(
+          "-- name: listUserS :many\nSELECT id FROM user_s;",
+          listOf(byColumn("user_s", "x"), byColumn("user", "s_x")),
+        )
+      }.also {
+        it.hasClass(IllegalStateException::class)
+        it.messageContains("userSXAdapter")
+        it.messageContains("""column("user_s", "x")""")
+        it.messageContains("""column("user", "s_x")""")
+      }
+    }
+
+    @Test
+    fun `two different type mappings for the same Postgres type fail naming both`() {
+      resetSchema("CREATE TABLE users (id integer PRIMARY KEY, metadata jsonb NOT NULL);")
+
+      assertFailure {
+        generatePostgresQueries(
+          "-- name: listUsers :many\nSELECT id, metadata FROM users;",
+          listOf(byType("jsonb", jsonAdapterTypes), byType("jsonb", otherAdapterTypes)),
+        )
+      }.also {
+        it.hasClass(IllegalStateException::class)
+        it.messageContains("""type("jsonb")""")
+        it.messageContains("com.example.JsonAdapter")
+        it.messageContains("com.example.OtherAdapter")
+      }
+    }
+
+    @Test
+    fun `two different column mappings for the same truncated column fail naming both`() {
+      val longTable = "t".repeat(63)
+      resetSchema("CREATE TABLE $longTable (id integer PRIMARY KEY, metadata jsonb NOT NULL);")
+
+      assertFailure {
+        generatePostgresQueries(
+          "-- name: listRows :many\nSELECT id FROM $longTable;",
+          listOf(
+            byColumn("${longTable}aaa", "metadata", jsonAdapterTypes),
+            byColumn("${longTable}bbb", "metadata", otherAdapterTypes),
+          ),
+        )
+      }.also {
+        it.hasClass(IllegalStateException::class)
+        it.messageContains("""column("${longTable}aaa", "metadata")""")
+        it.messageContains("""column("${longTable}bbb", "metadata")""")
+      }
+    }
+
+    @Test
+    fun `column mapping colliding with a referenced enum adapter fails naming the mapping and the enum`() {
+      resetSchema(
+        """
+        CREATE TYPE users_metadata AS ENUM ('a', 'b');
+        CREATE TABLE users (id integer PRIMARY KEY, metadata jsonb NOT NULL, kind users_metadata NOT NULL);
+        """.trimIndent(),
+      )
+
+      assertFailure {
+        generatePostgresQueries(
+          "-- name: listUsers :many\nSELECT id, kind FROM users;",
+          listOf(byColumn("users", "metadata")),
+        )
+      }.also {
+        it.hasClass(IllegalStateException::class)
+        it.messageContains("usersMetadataAdapter")
+        it.messageContains("""column("users", "metadata")""")
+        it.messageContains("""enum "users_metadata"""")
+      }
+    }
+
+    @Test
+    fun `column mapping colliding with a referenced domain adapter fails naming the mapping and the domain`() {
+      resetSchema(
+        """
+        CREATE DOMAIN users_metadata AS text;
+        CREATE TABLE users (id integer PRIMARY KEY, metadata jsonb NOT NULL, kind users_metadata NOT NULL);
+        """.trimIndent(),
+      )
+
+      assertFailure {
+        generatePostgresQueries(
+          "-- name: listUsers :many\nSELECT id FROM users WHERE kind = ?;",
+          listOf(byColumn("users", "metadata")),
+        )
+      }.also {
+        it.hasClass(IllegalStateException::class)
+        it.messageContains("usersMetadataAdapter")
+        it.messageContains("""column("users", "metadata")""")
+        it.messageContains("""domain "users_metadata"""")
+      }
+    }
+
+    @Test
+    fun `equal duplicate mappings generate one constructor parameter`() {
+      resetSchema("CREATE TABLE users (id integer PRIMARY KEY, metadata jsonb NOT NULL);")
+
+      val contents = generatePostgresQueries(
+        "-- name: listUsers :many\nSELECT id, metadata FROM users;",
+        listOf(byColumn("users", "metadata"), byColumn("users", "metadata")),
+      )
+
+      assertThat(Regex("usersMetadataAdapter: ColumnAdapter").findAll(contents).count()).isEqualTo(1)
+    }
   }
 
   companion object {
