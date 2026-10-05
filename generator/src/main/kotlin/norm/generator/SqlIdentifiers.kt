@@ -44,7 +44,7 @@ internal fun logicalIdentifier(rawToken: String): String = truncateIdentifier(fo
  * PostgreSQL's own case-folding for an unquoted identifier folds only plain ASCII `A`-`Z`, never a
  * non-ASCII letter, even one with an obvious upper/lower pairing: on PostgreSQL 18.4, with a column
  * named `"ü"` (quoted, lowercase), the bare, unquoted reference `SELECT Ü FROM t` fails outright
- * (`column "Ü" does not exist`) rather than resolving to it.
+ * (`column "Ü" does not exist`).
  */
 internal fun foldAsciiCase(text: String): String {
   val builder = StringBuilder(text.length)
@@ -192,7 +192,7 @@ internal fun quoteSqlIdentifierIfNeeded(identifier: String, reservedWords: Set<S
 /**
  * Truncates [identifier] the way PostgreSQL does when it reaches the server
  * (`downcase_truncate_identifier` in `scan.l`): to the longest prefix of at most
- * [MAX_IDENTIFIER_LENGTH_BYTES] UTF-8 bytes, dropping whole characters rather than splitting one.
+ * [MAX_IDENTIFIER_LENGTH_BYTES] UTF-8 bytes, dropping whole characters.
  * A 32-character name of `é` is 64 bytes and truncates to 31 characters, not to a broken 63rd byte.
  *
  * [identifier] must be the logical value, with quotes and any `""` escape already resolved; this

@@ -6,7 +6,7 @@ package norm.generator
  * Applies multiple strategies to map `?` positional parameters to descriptive names and
  * determine their nullability based on SQL context (INSERT vs WHERE clauses, function arguments).
  *
- * @param functionOverloads Metadata about PostgreSQL functions from `pg_proc`, used to resolve
+ * @property functionOverloads Metadata about PostgreSQL functions from `pg_proc`, used to resolve
  *   formal argument names for parameters passed to function calls.
  */
 internal class SqlParameterInferrer(private val functionOverloads: Map<String, List<FunctionOverload>>) {
@@ -21,7 +21,7 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
    *
    * Function names take priority because they describe what the caller should provide.
    * For example, `INSERT INTO t(password_hash) VALUES (crypt(?, gen_salt('bf')))` names the first `?`
-   * as `data` (from `crypt`'s signature) rather than `password_hash` (the target column).
+   * as `data` (from `crypt`'s signature), where the target column is `password_hash`.
    *
    * @return A map from 1-based parameter number to inferred parameter info.
    */
@@ -56,7 +56,7 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
           for (charIdx in expr.indices) {
             if (expr[charIdx] == '?') {
               // A "?" this raw char scan finds may sit inside a string literal within the same
-              // expression (e.g. VALUES ('?', ?)) rather than being a real placeholder; skip it.
+              // expression (e.g. VALUES ('?', ?)), where it is not a real placeholder; skip it.
               val paramNum = paramIndex.paramNumberAt(exprOffset + charIdx) ?: continue
               val displayName = funcNames[paramNum] ?: columnName
               params[paramNum] =
@@ -106,8 +106,8 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
       for (match in COLUMN_COMPARES_PARAM.findAll(setClause)) {
         val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::logicalIdentifier)
         val colName = logicalIdentifier(match.groupValues[2])
-        // This regex scans raw text, so a "?" it matches on may sit inside a string literal or
-        // comment rather than being a real placeholder; skip anything that isn't real.
+        // This regex scans raw text, so a "?" it matches on may be text inside a string literal or
+        // comment; skip anything that isn't a real placeholder.
         val paramNum = paramIndex.paramNumberAt(match.range.last) ?: continue
         if (paramNum !in params) {
           params[paramNum] =
@@ -130,8 +130,8 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
       // No WHERE clause.
       // For UPDATE statements, all col = ? patterns are SET assignments that inherit nullability from
       // the target column's schema definition.
-      // For other statements (SELECT, DELETE), col = ? patterns are comparisons; passing null would
-      // never match, so they do not inherit nullability.
+      // For other statements (SELECT, DELETE), col = ? patterns are comparisons. A `null` argument
+      // never matches, so they do not inherit nullability.
       val setParametersInheritNullability = UPDATE_TABLE.containsMatchIn(sql)
       for (match in COLUMN_COMPARES_PARAM.findAll(sql)) {
         val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::logicalIdentifier)
@@ -163,7 +163,7 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
    *
    * For parameters in INSERT or SET context ([InferredParameter.inheritsNullability] = `true`),
    * the result mirrors the target column's `NOT NULL` constraint. For WHERE parameters,
-   * the result is always `true` (non-nullable) since `col = NULL` is never true in SQL.
+   * the result is always `true` (non-nullable) since `col = NULL` never matches a row in SQL.
    *
    * @return A map from 1-based parameter number to whether the parameter is non-nullable (`true` = `NOT NULL`).
    */
@@ -346,9 +346,8 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
 
   private companion object {
     // Matches a possibly schema-qualified table name: `table`, `"table"`, or `"schema"."table"`,
-    // using SqlIdentifiers.kt's own identifier shape rather than a separate, narrower one (a bare
-    // `\w+` excludes both `$` and any `>= 0x80` character, both legal in an unquoted PostgreSQL
-    // identifier after its first character).
+    // using SqlIdentifiers.kt's own identifier shape (a bare `\w+` excludes both `$` and any `>= 0x80`
+    // character, both legal in an unquoted PostgreSQL identifier after its first character).
     private const val QUALIFIED_TABLE =
       """($COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED(?:\.$COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED)?)"""
 
@@ -395,11 +394,11 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
  * character, both of which PostgreSQL admits after an identifier's first character (see
  * [isIdentifierChar]). For `SELECT my$fn(?)`, `\w+` cannot match `my$fn` as one run (`$` breaks
  * it), so `findAll` instead matches the shorter run `fn` immediately before the `(` — handing
- * `SqlParameterInferrer.extractFunctionCalls` the wrong function name, `fn` instead of `my$fn`.
+ * `SqlParameterInferrer.extractFunctionCalls` the wrong function name (`fn` for `my$fn`).
  * On PostgreSQL 18.4, `CREATE FUNCTION "my$fn"(...)` and the unquoted call `my$fn(...)` both
  * resolve to the same function, and an unquoted `>= 0x80`-named function (`fn€(...)`) is likewise
  * legal, while a digit-led name (`2fn(...)`) is rejected outright ("trailing junk after numeric
- * literal") — exactly the identifier shape this regex now encodes.
+ * literal") — exactly the identifier shape this regex encodes.
  */
 internal val FUNCTION_CALL_START = Regex(
   """($COLUMN_REFERENCE_IDENTIFIER_START$COLUMN_REFERENCE_IDENTIFIER_CONTINUATION*)\(""",

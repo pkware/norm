@@ -8,7 +8,7 @@ package norm.generator
  * form. [nodeTreeText] is trusted only for where the expression lives ([provenance]'s CTE name and
  * body position); [sql] is trusted only for what it says.
  *
- * Returns `null` instead of a possibly-wrong expression if any of these checks fails:
+ * Returns `null` if any of these checks fails:
  * - the CTE [provenance] points at is resolved by replaying [NodeTreeColumnProvenance.hops] step by
  *   step ([scopedNodeTreeCteQueryBlock], [scopedSqlCteDefinition]), so a nested `WITH` that shadows an
  *   outer CTE of the same name resolves against the exact declaration, not merely a same-named one
@@ -190,7 +190,7 @@ private fun scopedSqlCteDefinition(sql: String, hops: List<CteHop>): CteDefiniti
 /**
  * [parseCteClause]'s own definitions for [text], with every [CteDefinition.bodyOpenParenthesis]/
  * [CteDefinition.bodyCloseParenthesis] shifted by [offset] so they index into the original SQL
- * string [text] was sliced from, rather than [text] itself.
+ * string [text] was sliced from.
  */
 private fun rebasedCteDefinitions(text: String, offset: Int): List<CteDefinition> =
   parseCteClause(text)?.definitions?.map {

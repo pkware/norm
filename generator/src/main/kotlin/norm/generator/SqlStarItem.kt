@@ -115,7 +115,7 @@ internal class StrippedText(private val text: String, private val originalOffset
  *
  * Not claimed exhaustive: [parseSelectItems] has no independent real-column-count to check this
  * function's answer against, so an item shape this function fails to recognize degrades silently
- * to a wrong, shifted mapping rather than a fail-safe.
+ * to a wrong, shifted mapping, with no fail-safe.
  */
 internal fun isStarItem(item: String): Boolean {
   val text = stripCommentsAndWhitespace(item.trim())
@@ -269,11 +269,9 @@ private fun matchUnicodeEscapeIdentifierSegment(text: StrippedText, start: Int):
  * with a table literally named `٣` (ARABIC-INDIC DIGIT THREE), `SELECT ٣.* x, a FROM ٣` returns
  * 3 columns.
  *
- * The run scan uses [isIdentifierChar] rather than a narrower letter-or-digit-only check: a
- * `>= 0x80` character that is not a letter or digit (`€`) would otherwise truncate the run early,
- * making an ASCII digit before it look like the run's own start: scanning `x€9.` backward with a
- * letter-or-digit-only check stops at `€`, so `9` looks like the run's start and the qualifier is
- * wrongly rejected as numeric, when the real run is `x€9` — letter-led, and acceptable.
+ * The run scan uses [isIdentifierChar], so a `>= 0x80` character that is not a letter or digit
+ * (`€`) stays inside the run. Scanning `x€9.` backward finds the run `x€9`, which is letter-led,
+ * so the qualifier is accepted.
  *
  * Accepts in every other case, including an empty run (the character immediately before the dot is
  * `"`, `)`, `]`, or a Unicode-escape's closing `'`, as in `U&"!0074" UESCAPE '!'.`).

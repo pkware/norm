@@ -90,9 +90,9 @@ class MarkdownEscapingTest {
      * A minimal, self-contained copy of the extraction real KDoc verification
      * ([SourceReferenceLiveVerificationTest]'s own `extractSourceReferenceSpans`) uses: a real
      * CommonMark parse for a [org.commonmark.node.Code] node whose immediately preceding text ends
-     * in `(` — the shape [TypeSpec.Builder.addClassKdoc] produces via `append("($source)")`. Kept
-     * here, rather than shared, so this pure-text unit test needs no live database and cannot be
-     * broken by unrelated changes to that file's live-verification concerns.
+     * in `(` — the shape [TypeSpec.Builder.addClassKdoc] produces via `append("($source)")`. Duplicated
+     * here so this pure-text unit test needs no live database and cannot be broken by unrelated
+     * changes to that file's live-verification concerns.
      */
     private fun extractSourceReferenceSpans(markdown: String): List<String> {
       val spans = mutableListOf<String>()

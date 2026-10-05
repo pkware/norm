@@ -1,6 +1,6 @@
 // PropertySource is the only top-level class in this file, but the file also holds every free
-// function that renders it into KDoc (addClassKdoc and its helpers) — deliberately, per this
-// file's role as the single home for KDoc-rendering logic, not a naming slip.
+// function that renders it into KDoc (addClassKdoc and its helpers), as the single home for
+// KDoc-rendering logic.
 @file:Suppress("MatchingDeclarationName")
 
 package norm.generator
@@ -29,8 +29,8 @@ internal data class PropertySource(
 /**
  * Adds a class-level KDoc block with an optional description, table mapping, and `@property` tags.
  *
- * Produces a single consolidated KDoc block rather than separate per-property doc comments, which is the
- * idiomatic Kotlin style for data classes with constructor properties.
+ * Produces a single consolidated KDoc block, the idiomatic Kotlin style for data classes with
+ * constructor properties.
  *
  * For table projections, the table name is shown as "Maps to the `X` table.".
  * For query projections, the SQL is included and source columns are shown per-property as `table.column` references.
@@ -58,8 +58,8 @@ internal fun TypeSpec.Builder.addClassKdoc(
   // choice for a query containing either sequence.
   val canRenderSqlVerbatim = sql.isNotEmpty() && !containsUnescapableBlockCommentDelimiter(sql)
   // A property whose name can't be rendered as a `@property` name token at all
-  // (formatAsKdocPropertyReference returns `null`) is dropped here rather than emitted with a
-  // mangled name that reads back as a different property than the one actually declared.
+  // (formatAsKdocPropertyReference returns `null`) is dropped here. A mangled name reads back as a
+  // different property than the one actually declared.
   val documentedProperties = properties.mapNotNull { property ->
     if (!property.hasDocumentation(hasTableMapping, reservedWords)) return@mapNotNull null
     val formattedName = property.propertyName.formatAsKdocPropertyReference() ?: return@mapNotNull null
@@ -93,8 +93,8 @@ internal fun TypeSpec.Builder.addClassKdoc(
         if (property.comment.isNotEmpty()) {
           // Every `@property` line shares one CommonMark paragraph (no blank line between them), so
           // an unescaped backtick in one comment could pair with a later property's own
-          // source-reference span instead of closing here. Escaping it keeps it from ever being read
-          // as a code-span delimiter.
+          // source-reference span, leaving it unclosed here. Escaping it keeps it from being read as
+          // a code-span delimiter.
           append(escapeMarkdownBacktick(property.comment))
         }
         if (!hasTableMapping) {
@@ -125,9 +125,9 @@ private fun PropertySource.hasDocumentation(hasTableMapping: Boolean, reservedWo
  * the keyword set are `internal` to it, so a copy here would drift. Rendering a throwaway
  * [PropertySpec] asks KotlinPoet directly instead.
  *
- * Tests for a backtick anywhere in the rendered text rather than for `` `$name` `` specifically:
- * KotlinPoet's line wrapper substitutes a space for the characters it reserves as wrapping markers
- * (U+00B7 and U+2662), so such a name is escaped in the output without appearing there verbatim.
+ * Tests for a backtick anywhere in the rendered text, since KotlinPoet's line wrapper substitutes a
+ * space for the characters it reserves as wrapping markers (U+00B7 and U+2662). Such a name is
+ * escaped in the output without appearing there verbatim as `` `$name` ``.
  * Callers must rule out a name containing its own backtick first -- KotlinPoet treats one as already
  * escaped and skips all four checks.
  */
@@ -144,9 +144,8 @@ private fun needsKotlinPoetDeclarationBackticks(name: String): Boolean =
  * left bare only when the declaration KotlinPoet renders for it is bare too, so the two never
  * disagree.
  *
- * Uses [wrapInBacktickDelimiter]'s longest-run rule rather than a fixed single-backtick wrap, since a
- * name containing its own literal backtick (e.g. `` a`b ``) would otherwise close the `@property`
- * tag's span early, corrupting the rest of the line.
+ * Uses [wrapInBacktickDelimiter]'s longest-run rule, so a name containing its own literal
+ * backtick (e.g. `` a`b ``) stays inside the `@property` tag's span.
  *
  * Returns `null` — decline, emit no `@property` line at all — when [this] contains a literal
  * block-comment open or close delimiter ([containsUnescapableBlockCommentDelimiter]): widening the
@@ -156,9 +155,9 @@ private fun needsKotlinPoetDeclarationBackticks(name: String): Boolean =
  *
  * This fixes only the KDoc span; it does not and cannot fix the Kotlin property declaration itself
  * (`` public val `a\`b`: ... ``), which is not valid Kotlin — a backtick-quoted identifier cannot
- * contain a backtick, and there is no escape for one. That is a separate, pre-existing defect in how
- * a column's raw database identifier becomes a Kotlin property name, left unfixed here because the
- * same field also carries the identifier back into generated SQL and catalog lookups.
+ * contain a backtick, and there is no escape for one. That is a separate defect in how a column's
+ * raw database identifier becomes a Kotlin property name. The same field also carries the
+ * identifier back into generated SQL and catalog lookups, so it is not rewritten.
  */
 private fun String.formatAsKdocPropertyReference(): String? = when {
   !contains('`') && !needsKotlinPoetDeclarationBackticks(this) -> this

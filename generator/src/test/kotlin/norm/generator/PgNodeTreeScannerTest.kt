@@ -203,7 +203,7 @@ class PgNodeTreeScannerTest {
       // :resname's own value is "my\ :resorigtbl" — one token, the escaped space kept opaque —
       // immediately followed by the real :resorigtbl field. An escape-blind scanner would split
       // the preceding value early at the escaped space, exposing ":resorigtbl" as its own item and
-      // matching that instead of the real label two items later.
+      // matching that item and missing the real label two items later.
       val text = "{TARGETENTRY :resname my\\ :resorigtbl :resorigtbl 5}"
       assertThat(scanner.fieldAtDepthOne(text, ":resorigtbl")).isEqualTo(FieldValue.Token("5"))
     }
@@ -258,7 +258,7 @@ class PgNodeTreeScannerTest {
     @Test
     fun `a label is still found after a preceding odd-length datum value`() {
       // An even number of extra datum tokens (as above) happens to leave a naive positional
-      // alternation realigned by coincidence. An odd count does not — this is what actually
+      // alternation realigned by coincidence. An odd count does not, and so
       // distinguishes the real colon-based classification from position-based alternation.
       val text = "{CONST :constvalue 3 [ 1 0 0 ] :location -1}"
       assertThat(scanner.fieldAtDepthOne(text, ":location")).isEqualTo(FieldValue.Token("-1"))

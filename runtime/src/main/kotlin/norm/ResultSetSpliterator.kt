@@ -12,9 +12,9 @@ import java.util.stream.Stream
  * [Stream.onClose] to ensure resources are adequately closed. This instance will also close resources when it reaches
  * the end of the [ResultSet].
  *
- * @param resultSet from which to load rows.
- * @param closeSqlResources Action which closes all related SQL resources.
- * @param rowReader Action to read a row from the [resultSet] and turn it into a [RowType].
+ * @property resultSet from which to load rows.
+ * @property closeSqlResources Action which closes all related SQL resources.
+ * @property rowReader Action to read a row from the [resultSet] and turn it into a [RowType].
  */
 internal class ResultSetSpliterator<RowType>(
   private val resultSet: ResultSet,

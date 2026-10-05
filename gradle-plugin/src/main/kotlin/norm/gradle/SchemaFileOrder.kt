@@ -77,11 +77,11 @@ internal fun resolveSchemaSources(
  * version, and every repeatable migration is applied after all versioned migrations, regardless of which
  * `schemas` entry either came from.
  *
- * The `V`/`U`/`R` prefixes and the `__` separator are Flyway's *defaults*; Norm does not read a Flyway
+ * The `V`/`U`/`R` prefixes and the `__` separator are Flyway's defaults; Norm does not read a Flyway
  * configuration file and has no way to know if a project has reconfigured them, so a project using
  * non-default Flyway naming will not get matching behavior here.
  *
- * This is a minimal permutation of each directory's lexical-by-filename order, not a full re-sort: every
+ * This is a minimal permutation of each directory's lexical-by-filename order, not a full re-sort. Every
  * file that is not a Flyway-versioned migration keeps the exact position it would have in the concatenation
  * of (a) each [SchemaSource.SingleFile] at its declared position and (b) each [SchemaSource.Directory]'s
  * files sorted lexically by filename, in `schemaSources` order. Only the slots occupied by versioned

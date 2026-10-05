@@ -46,7 +46,7 @@ kotlin {
 }
 
 // Generate a BuildConfig with the project version so the plugin can add the correct runtime
-// dependency version at apply-time, rather than relying on a hardcoded constant.
+// dependency version at apply time.
 val generateBuildConfig by tasks.registering {
   val outputDir = layout.buildDirectory.dir("generated/buildconfig")
   val projectVersion = project.version.toString()
@@ -93,7 +93,7 @@ tasks.jar {
   archiveClassifier = "plain"
 }
 
-// Publish the shadow JAR instead of the plain JAR. java-gradle-plugin's auto-publication uses
+// Publish the shadow JAR. java-gradle-plugin's auto-publication uses
 // components["java"], which reads artifacts from these outgoing configurations.
 configurations.apiElements {
   outgoing.artifacts.clear()

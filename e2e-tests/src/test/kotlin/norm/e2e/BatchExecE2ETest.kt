@@ -12,7 +12,7 @@ import java.math.BigDecimal
 
 /**
  * Covers the `:exec` and `:execrows` batch overloads against a real database, with particular attention to the
- * element counts that used to throw or silently truncate the returned array (issue #189): an empty stream, and a
+ * element counts at which a batch can throw or silently truncate the returned array: an empty stream, and a
  * stream whose size is a nonzero exact multiple of `batchSize`.
  *
  * `insertOrderItem` is the `:exec` batch (composite primary key, so the synthesized insert has no `RETURNING`

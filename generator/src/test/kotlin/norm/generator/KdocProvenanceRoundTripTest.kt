@@ -31,10 +31,9 @@ import java.sql.DriverManager
  * [com.squareup.kotlinpoet.CodeWriter]'s own unconditional `"/*"`/`"*/"` → `"/&#42;"`/`"&#42;/"`
  * rewrite inside every KDoc block (see [BlockCommentDelimiterDeclines]).
  *
- * Extracts the rendered expression with a real CommonMark parse ([extractSourceReferenceExpression])
- * rather than cutting the surrounding text at the first `)` -- the previous version of this test did
- * that, which cannot handle an expression containing its own parenthesis (nearly every real
- * expression -- see [ParenthesisContainingExpressionRoundTrips]).
+ * Extracts the rendered expression with a real CommonMark parse ([extractSourceReferenceExpression]),
+ * which handles an expression containing its own parenthesis (nearly every real expression -- see
+ * [ParenthesisContainingExpressionRoundTrips]).
  */
 @Testcontainers
 class KdocProvenanceRoundTripTest {
@@ -125,10 +124,8 @@ class KdocProvenanceRoundTripTest {
 
     @Test
     fun `an expression containing its own nested parentheses round-trips whole, not truncated at the first one`() {
-      // The old extraction helper cut the span at the first ")" in the surrounding text, so any
-      // expression containing a parenthesis -- nearly every real one -- would have been truncated to
-      // "COALESCE(a, 0" here, which does not even parse. A real CommonMark parse locates the actual
-      // Code node instead of guessing from a bracket count.
+      // "COALESCE(a, 0) + (b * 2)" contains parentheses, as nearly every real expression does, and
+      // must come back whole. A real CommonMark parse locates the actual Code node.
       val expressionColumn = Column(
         name = "u",
         notNull = false,
@@ -171,7 +168,7 @@ class KdocProvenanceRoundTripTest {
     fun `a newline-containing expression is declined entirely -- there is nothing to extract or run`() {
       // Rendering "s || 'a\nb'" as a single-line inline code span would fold the literal's own
       // newline to a space, silently changing "'a\nb'" into the different value "'a b'"
-      // (`SELECT ('a\nb' = 'a b')` is false).
+      // (`SELECT ('a\nb' = 'a b')` is `false`).
       val expressionColumn = Column(
         name = "u",
         notNull = false,
@@ -202,7 +199,7 @@ class KdocProvenanceRoundTripTest {
       // never prematurely close the surrounding "/** ... */" comment, but CommonMark never decodes
       // an HTML entity back to a literal character inside a code span. Reading
       // typeSpec.kdoc.toString() (the pre-render CodeBlock text) would miss this rewrite entirely --
-      // it only happens when the TypeSpec is actually rendered, which is exactly what
+      // it only happens when the TypeSpec is actually rendered, as
       // renderedFileTextFor does here.
       val expressionColumn = Column(
         name = "u",

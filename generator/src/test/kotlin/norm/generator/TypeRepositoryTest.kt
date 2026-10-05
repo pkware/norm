@@ -34,7 +34,7 @@ class TypeRepositoryTest {
       // 3 select items, all computed expressions with distinct, individually-recognizable text.
       val queryText = "SELECT LENGTH(a) AS a_len, UPPER(b) AS b_upper, LOWER(c) AS c_lower FROM t"
 
-      // Only 2 real result columns -- simulates the exact shape of the bug: parseSelectItems'
+      // Only 2 real result columns -- simulates the mismatch the guard handles: parseSelectItems'
       // item count (3) disagrees with the real column count (2, what queryResults.size stands in
       // for here). Without the guard, the second queryResult ("c_lower", conceptually LOWER(c))
       // would incorrectly borrow selectItems[1] -- UPPER(b), a different expression entirely.
@@ -53,13 +53,13 @@ class TypeRepositoryTest {
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       // The raw SQL always appears verbatim in a fenced code block regardless of attribution, so
       // asserting on "@property" lines specifically (not bare substring presence of the SQL text)
-      // is what actually distinguishes the fail-safe from the wrong, shifted mapping.
+      // distinguishes the fail-safe from the wrong, shifted mapping.
       assertThat(kdoc).doesNotContain("@property c_lower (`UPPER(b)`)")
       assertThat(kdoc).doesNotContain("@property c_lower")
       // The fail-safe treats the whole mapping as unreliable once the counts disagree -- not just
       // the specific item that would otherwise be shifted -- so a_len loses its (individually
-      // correct) attribution too, exactly like oldOrNewReturningColumns' callers, which fall back
-      // to forcing every column rather than only the ones they can specifically identify as risky.
+      // correct) attribution too, like oldOrNewReturningColumns' callers, which fall back to
+      // forcing every column.
       assertThat(kdoc).doesNotContain("@property a_len")
     }
   }
@@ -69,18 +69,10 @@ class TypeRepositoryTest {
 
     @Test
     fun `a bare numeric literal select item gets a source-reference KDoc line, not silence`() {
-      // Regression test for a behavior change from the COLUMN_REFERENCE identifier-start fix:
-      // main's COLUMN_REFERENCE regex was a bare "\w+", which matches a digit-leading run too, so
-      // parseSelectItems("SELECT 5") wrongly resolved the literal "5" as if it were a column named
-      // "5" (columnName = "5"). resolveComputedExpressions then left computedExpression null, so
-      // PropertySource.expression was never populated, and sourceReference() returned null for
-      // this property entirely -- the KDoc carried no reference to the literal's origin.
-      //
-      // With COLUMN_REFERENCE's leading-character restricted to a legal identifier start (no
-      // digit, no "$"), "5" no longer matches as a column reference: columnName is correctly
-      // null, computedExpression is "5", and sourceReference() now renders "`5`" -- this is
-      // the desired, more correct behavior (see COLUMN_REFERENCE's own KDoc), but nothing
-      // previously exercised the downstream KDoc-generation effect of that change.
+      // COLUMN_REFERENCE's leading character is restricted to a legal identifier start (no digit,
+      // no "$"), so parseSelectItems("SELECT 5") does not resolve the literal "5" as a column named
+      // "5". columnName is `null`, computedExpression is "5", and sourceReference() renders "`5`"
+      // (see COLUMN_REFERENCE's own KDoc).
       val repository = TypeRepository("test", Catalog())
       val literalColumn = Column(name = "column1", notNull = true, type = Identifier(name = "int4"))
 
@@ -149,8 +141,7 @@ class TypeRepositoryTest {
       // resolveComputedExpressions must not set computedExpression to "UPPER(x)" as if that were the
       // query's one true expression, when branch 2 actually computes LOWER(x) for the same column.
       // One branch presented as the whole answer is a wrong emission; there is no per-branch text
-      // to attribute a single property to, so this must emit nothing rather than
-      // guess branch 1's text.
+      // to attribute a single property to, so this must emit nothing.
       val queryText = "SELECT UPPER(x) AS u FROM t UNION SELECT LOWER(x) FROM t"
       val unionColumn = Column(name = "u", notNull = true, type = Identifier(name = "text"))
 
@@ -164,19 +155,16 @@ class TypeRepositoryTest {
       val kdoc = repository.requiredTypes.first().kdoc.toString()
       // The raw SQL always appears verbatim in a fenced code block regardless of attribution (see
       // SelectItemColumnCountMismatchGuard's own test above), so "UPPER(x)" alone would trivially
-      // still be present there -- asserting on the "@property" line specifically is what actually
-      // distinguishes "no attribution" from "wrongly attributed to branch 1".
+      // still be present there -- asserting on the "@property" line specifically distinguishes
+      // "no attribution" from "wrongly attributed to branch 1".
       assertThat(kdoc).doesNotContain("@property u")
     }
 
     @Test
     fun `a computed expression under a parenthesized top-level UNION gets no source-reference KDoc line`() {
-      // hasTopLevelSetOperation used to inspect the raw main-query window while
-      // parseOutputItemsWithAlias (via parseSelectItems) inspected the same window with redundant
-      // outer parentheses stripped. Wrapping the whole set operation in one parenthesis pair sinks
-      // the UNION to paren depth 1 in the raw window, so the guard missed it -- while the parser,
-      // seeing the parentheses stripped, still split the (still branch-1-only) items and let
-      // computedExpression become "UPPER(x)" as if it were the whole answer.
+      // parseOutputItemsWithAlias (via parseSelectItems) strips redundant outer parentheses from
+      // the main-query window. hasTopLevelSetOperation scans that same stripped window, so it sees
+      // the UNION at depth zero and computedExpression stays `null`.
       val queryText = "(SELECT UPPER(x) AS u FROM t UNION SELECT LOWER(x) FROM t)"
       val unionColumn = Column(name = "u", notNull = true, type = Identifier(name = "text"))
 
@@ -218,14 +206,13 @@ class TypeRepositoryTest {
 
     @Test
     fun `a CTE-wrapped expression column gets a source-reference KDoc line resolved through the CTE body`() {
-      // Regression test: a result column that is both CTE-wrapped and
-      // expression-derived previously got no @property line at all. The outer select item
-      // (`description_upper`, a plain column reference into the CTE) leaves computedExpression
-      // null, so this only passes if TypeRepository also reads column.provenanceExpression —
-      // populated here directly, standing in for what ColumnNullabilityAnalyzer's own node-tree
-      // resolution (NodeTreeProvenanceResolver + resolveNodeTreeProvenanceExpression) would have
-      // computed during analysis; TypeRepository itself no longer does any SQL-text CTE resolution
-      // of its own.
+      // A result column that is both CTE-wrapped and expression-derived gets an @property line.
+      // The outer select item (`description_upper`, a plain column reference into the CTE) leaves
+      // computedExpression `null`, so this only passes if TypeRepository also reads
+      // column.provenanceExpression — populated here directly, standing in for what
+      // ColumnNullabilityAnalyzer's own node-tree resolution (NodeTreeProvenanceResolver +
+      // resolveNodeTreeProvenanceExpression) computes during analysis. TypeRepository does no
+      // SQL-text CTE resolution of its own.
       val queryText = """
         WITH deleted_parent AS (
           DELETE FROM parent WHERE id = ? RETURNING UPPER(description) AS description_upper
@@ -309,9 +296,9 @@ class TypeRepositoryTest {
       // A Markdown inline code span (the single backtick pair sourceReference() wraps an expression
       // in) can never faithfully carry a raw newline -- CommonMark folds it to a single space when
       // rendered, silently changing "s || 'a\nb'" (a string literal containing a real newline) into
-      // "s || 'a b'", a different value (`SELECT ('a\nb' = 'a b')` is false). The CTE-body text
+      // "s || 'a b'", a different value (`SELECT ('a\nb' = 'a b')` is `false`). The CTE-body text
       // extraction is right to preserve that newline verbatim -- the defect is at emission -- so
-      // this must decline (emit nothing) rather than render a corrupted span.
+      // this must decline (emit nothing).
       val expressionColumn = Column(
         name = "u",
         notNull = false,
@@ -337,7 +324,7 @@ class TypeRepositoryTest {
       // let a literal backtick inside the expression (e.g. "s || '`'") close the inline code span
       // early, corrupting the rendered Markdown. A run of backticks strictly longer than any run
       // inside the expression is a valid CommonMark delimiter that can never be mistaken for a
-      // closing delimiter, so the expression is escaped rather than declined.
+      // closing delimiter, so the expression is escaped.
       val expressionColumn = Column(
         name = "u",
         notNull = false,
@@ -485,7 +472,7 @@ class TypeRepositoryTest {
 
     @Test
     fun `a dollar-sign-containing property name is backtick-quoted in both the property tag and the declaration`() {
-      // Character.isJavaIdentifierPart('$') is true, so widening only to the Java identifier rule
+      // Character.isJavaIdentifierPart('$') is `true`, so widening only to the Java identifier rule
       // would leave this bare while KotlinPoet still backticks the declaration.
       val dollarColumn = Column(
         name = "a\$b",
@@ -740,11 +727,11 @@ class TypeRepositoryTest {
 
     @Test
     fun `a property name containing a block-comment close delimiter gets no @property line at all`() {
-      // Widening the backtick delimiter (formatAsKdocPropertyReference's normal fix for a name
+      // Widening the backtick delimiter (how formatAsKdocPropertyReference handles a name
       // containing its own literal backtick) does not help here -- KotlinPoet's own KDoc emission
       // unconditionally rewrites "*/" to an HTML entity inside every KDoc block it renders, so
       // "@property `c*/d`" would render with the entity substituted in, naming a different property
-      // than the one actually declared (`` `c*/d` ``). Declining the whole line is the fix.
+      // than the one actually declared (`` `c*/d` ``). The whole line is declined.
       val starSlashColumn = Column(
         name = "c*/d",
         notNull = true,
@@ -773,7 +760,7 @@ class TypeRepositoryTest {
     fun `a backtick in one property's comment does not mis-pair a later property's own source-reference span`() {
       // Every @property line lives in one continuous CommonMark paragraph (no blank line separates
       // them), so an unescaped, unpaired backtick in property "x"'s own comment could pair with the
-      // backtick belonging to property "y"'s source-reference span instead of its own, turning "y"'s
+      // backtick belonging to property "y"'s source-reference span, turning "y"'s
       // span from a real inline code span into plain, undelimited text.
       val xColumn = Column(
         name = "x",
@@ -810,9 +797,9 @@ class TypeRepositoryTest {
     @Test
     fun `a lone star select item over a CTE reports the CTE body's own resolved expression`() {
       // "WITH c AS (SELECT UPPER(s) AS u FROM t) SELECT * FROM c" -- parseSelectItems returns the
-      // single star item ("*") as-is rather than the empty-list fail-safe it uses for a star
+      // single star item ("*") as-is and uses the empty-list fail-safe only for a star
       // followed by more items (see parseOutputItemsWithAlias's own KDoc), so
-      // selectItem.columnName == null for it exactly as for a genuine computed expression.
+      // selectItem.columnName is `null` for it, as for a genuine computed expression.
       // computedExpression must not hold the star's own literal text and document "*" as if it
       // were the expression that produced the column -- even though provenanceExpression (stood
       // in for here, as elsewhere in this file, for what the node-tree resolver would have
@@ -840,8 +827,8 @@ class TypeRepositoryTest {
     @Test
     fun `a lone star select item with no resolved expression gets no source-reference KDoc line at all`() {
       // Contrast case: "SELECT * FROM generate_series(1,3)" -- a single-column, non-table source
-      // with nothing for the node-tree resolver to resolve (provenanceExpression stays null).
-      // Before this fix this still emitted "(`*`)"; the star must never be the fallback answer.
+      // with nothing for the node-tree resolver to resolve (provenanceExpression stays `null`).
+      // The star is never the fallback answer, so no "(`*`)" is emitted.
       val starColumn = Column(name = "generate_series", notNull = true, type = Identifier(name = "int4"))
 
       val repository = TypeRepository("test", Catalog())

@@ -16,10 +16,7 @@ import java.util.UUID
 
 /**
  * Brute-force, ground-truth sweep guarding [NodeTreeProvenanceResolver]'s "correct or silent"
- * invariant across the scope-stack bug class this file's sibling test suites already caught — only
- * because a fresh-context verifier happened to probe the exact shape that triggers it. This test
- * exists so the next scope defect, whatever shape it takes, is caught by a systematic sweep instead
- * of by luck.
+ * invariant across scope-stack defects, whatever shape they take.
  *
  * For every generated shape, this test does not compare against a hand-computed expected string —
  * it runs the actual query against seeded rows to capture what PostgreSQL itself returns for the
@@ -40,18 +37,16 @@ import java.util.UUID
  * - **shadowing**: for `chainDepth >= 2`, the outermost CTE additionally declares its own nested
  *   `WITH c1 AS (...)`, re-declaring the first CTE's name with a differently-computed, easily
  *   distinguished body. At `chainDepth == 3` specifically, this reproduces a scope-stack index
- *   collision that made the old (buggy) resolver silently attribute the result to the wrong CTE — a
+ *   collision that attributes the result to the wrong CTE when the scope stack is mishandled — a
  *   genuine non-null wrong answer, not merely a missing one (see this file's own mutation note
  *   below). At other depths the same shadow shape does not happen to hit that exact index collision
  *   (the corrupted lookup falls further down the chain, past the single unrelated shadow frame this
  *   test declares, and correctly bails to `null` instead) — still asserted here, since "correct or
  *   silent" makes `null` a pass, not a gap in coverage.
  *
- * Reverting [NodeTreeProvenanceResolver.resolveVar]'s `currentScopeStack = listOf(ownScope) +
- * currentScopeStack.drop(reference.ctelevelsup)` to the old, unconditional `listOf(ownScope) +
- * currentScopeStack` fails this test on the `chainDepth=3, shadowed=true` cases: the emitted
- * expression evaluates to the shadow's `LOWER(description)` value instead of the real chain's
- * `UPPER(name)` value.
+ * The `chainDepth=3, shadowed=true` cases pin [CteScopeStack.entering]'s `frames.drop(levelsUp)`.
+ * Keeping the dropped frames makes the emitted expression evaluate to the shadow's
+ * `LOWER(description)`. The real chain yields `UPPER(name)`.
  */
 @Testcontainers
 class NodeTreeProvenanceScopeSweepTest {
@@ -59,8 +54,7 @@ class NodeTreeProvenanceScopeSweepTest {
   @Test
   fun `every generated CTE chain shape emits either nothing or the value it actually produced`() {
     val cases = generateSweepCases()
-    // The real corpus size, not a lower bound: shrinking any axis below changes this literal,
-    // forcing a conscious update rather than a silently smaller sweep going unnoticed.
+    // Exact corpus size. Changing any axis changes this literal.
     assertThat(cases.size).isEqualTo(99)
 
     val failures = mutableListOf<String>()
@@ -81,7 +75,7 @@ class NodeTreeProvenanceScopeSweepTest {
     // The sweep's own sensitivity: every one of these 99 shapes is constructed so `x` chases back to
     // c1's own computed expression through nothing but bare-column pass-throughs -- no axis
     // (chainDepth, shadowed, siblingCount, nestingDepth) combination here has a legitimate reason to
-    // bail to null. `isGreaterThan(0)` previously let a regression that bails for every chainDepth >=
+    // bail to `null`. `isGreaterThan(0)` lets a regression that bails for every chainDepth >=
     // 2 case slip through: the 9 chainDepth == 1 cases (siblingCount 0..2 x nestingDepth 0..2, no
     // shadow variant since chainDepth 1 has none) still emit, satisfying "more than zero" while 90
     // genuine resolutions silently vanished. Asserting the full expected count closes that gap:
@@ -116,7 +110,7 @@ class NodeTreeProvenanceScopeSweepTest {
      * `c1` computes the real value (`UPPER(name)`); every `c2..cN` is an ordinary pass-through of
      * its predecessor, except the outermost (`cN`) when [shadowed] — which additionally declares
      * its own nested `WITH c1 AS (...)`, a different body (this file's own KDoc explains why this
-     * specific placement is the one that reproduces the scope-stack bug at `chainDepth == 3`)
+     * specific placement is the one that reproduces a scope-stack index collision at `chainDepth == 3`)
      * that `cN`'s own `SELECT` never itself references.
      */
     private fun buildChainDefinitions(): List<String> {
@@ -137,8 +131,8 @@ class NodeTreeProvenanceScopeSweepTest {
      * layer's own `wrap_N` CTE has [core] (or the previous layer) as its entire body, so the
      * reference from one layer into the next is always `ctelevelsup 0` (a real nesting level),
      * never a sibling hop `ctelevelsup 1` — the one relationship
-     * [NodeTreeProvenanceResolver.resolveVar]'s scope-stack fix changes the handling of at all (see
-     * this file's own KDoc).
+     * [NodeTreeProvenanceResolver.resolveVar]'s scope-stack handling affects at all (see this
+     * file's own KDoc).
      */
     private fun wrapWithNesting(core: String): String {
       var current = core

@@ -6,13 +6,13 @@ package norm.generator
  * computed value with `NULL` for a row belonging to a grouping set that omits it. Its answers are
  * meaningful only for a query block that uses GROUPING SETS, CUBE, or ROLLUP.
  *
- * @param isAlwaysNonNull Returns `true` for function OIDs that never return `null` for any
+ * @property isAlwaysNonNull Returns `true` for function OIDs that never return `null` for any
  *   combination of argument values, including when every argument is `null`, in the ordinary
  *   (non-`VARIADIC`) calling form.
- * @param isNonNullIffFirstArgumentNonNull Returns `true` for function OIDs that are non-null if and
+ * @property isNonNullIffFirstArgumentNonNull Returns `true` for function OIDs that are non-null if and
  *   only if their first argument is non-null, regardless of any other argument's nullability, in
  *   the ordinary (non-`VARIADIC`) calling form.
- * @param isFoldableToConst Returns `true` for function/operator OIDs that are IMMUTABLE and not
+ * @property isFoldableToConst Returns `true` for function/operator OIDs that are IMMUTABLE and not
  *   set-returning (`pg_proc.provolatile = 'i' AND NOT proretset`).
  */
 internal class GroupingSetNullExtension(
@@ -36,7 +36,7 @@ internal class GroupingSetNullExtension(
    * even though `l1` (the ref'd occurrence) does become `NULL`.
    *
    * [entries] must already be run through [substituteGroupRteVars]. On PostgreSQL 18, unresolved
-   * entries are bare `Var`s referencing the synthesized `*GROUP*` RTE rather than the `FuncExpr`/
+   * entries are bare `Var`s referencing the synthesized `*GROUP*` RTE, which hides the `FuncExpr`/
    * `Const` this exclusion recognizes.
    */
   internal fun groupingKeyExpressions(
@@ -52,12 +52,12 @@ internal class GroupingSetNullExtension(
    * Returns `true` when [entry] must be forced nullable by PostgreSQL's GROUPING SETS/CUBE/ROLLUP
    * null-extension mechanism, because any of:
    * - [entry] is a grouping key itself: its [TargetEntry.sortGroupRef] is non-zero and appears in
-   *   [groupingSortGroupRefs]. Alone this misses a *derived* expression over a key, e.g.
+   *   [groupingSortGroupRefs]. Alone this misses a derived expression over a key, e.g.
    *   `upper(lower(a))` when the key is `lower(a)` — caught by the third condition instead.
-   * - [entry]'s expression structurally equals one of [groupingKeyExpressions] — a *duplicate*
+   * - [entry]'s expression structurally equals one of [groupingKeyExpressions] — a duplicate
    *   occurrence of a grouping key expression that PostgreSQL did not assign the matching
    *   `ressortgroupref` to. Not subsumed by the third condition, which proves only that a result
-   *   cannot be forced null by a *deeper* subexpression being null-extended, not that the whole
+   *   cannot be forced to `NULL` by a deeper subexpression being null-extended, not that the whole
    *   expression is swapped for `NULL` because it structurally repeats the grouping key.
    * - [entry]'s expression is not proven [isSafeFromGroupingSetNullExtension]. Alone this misses a
    *   bare-`Const` grouping key (e.g. `GROUP BY ROLLUP('ALL'::text)`): a `Const` is always
@@ -79,14 +79,14 @@ internal class GroupingSetNullExtension(
 
   /**
    * Returns `true` if [expression] is provably immune to PostgreSQL's GROUPING SETS/CUBE/ROLLUP
-   * null-extension mechanism — i.e. it cannot be the *value* PostgreSQL replaces with `NULL` for a
+   * null-extension mechanism — i.e. it cannot be the value PostgreSQL replaces with `NULL` for a
    * row belonging to a grouping set that omits it. Only meaningful for a query block that uses
    * GROUPING SETS, CUBE, or ROLLUP.
    *
    * Null-extension is a structural, planner-level substitution: PostgreSQL scans the target list
    * for stable, non-folded subexpressions that match a grouping key and replaces their computed
    * value with `NULL` outright, without evaluating the subexpression's own semantics — so even a
-   * construct that is *semantically* always non-null (`EXISTS(...)`, `ARRAY[...]`, `IS NULL`) can
+   * construct that is semantically always non-null (`EXISTS(...)`, `ARRAY[...]`, `IS NULL`) can
    * still be replaced with `NULL` if it structurally matches a grouping key.
    *
    * Two node kinds are exempt from ever matching a grouping key: `Aggref`/`GroupingFunc`
@@ -194,9 +194,9 @@ internal class GroupingSetNullExtension(
    * so a correlated `Var` inside the subselect is invisible to the `Var` check.
    *
    * The structural-equality match is sound in this direction only: [PgNodeExpression]'s subtypes
-   * retain a SUBSET of the fields PostgreSQL's own `equal()` compares (e.g.
-   * [PgNodeExpression.Const] keeps only `isNull`), so this class's equality is COARSER than
-   * PostgreSQL's — a false "no match" verdict can never arise from a field this parser dropped.
+   * retain a subset of the fields PostgreSQL's own `equal()` compares (e.g.
+   * [PgNodeExpression.Const] keeps only `isNull`), so this class's equality is coarser than
+   * PostgreSQL's — an incorrect "no match" verdict can never arise from a field this parser dropped.
    *
    * @param depth remaining recursion budget, mirroring [MAX_EXPRESSION_DEPTH]; returns `false` (not
    *   provably immune) once exhausted.

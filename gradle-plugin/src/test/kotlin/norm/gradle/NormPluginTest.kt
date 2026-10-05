@@ -434,13 +434,12 @@ class NormPluginTest {
     assertThat(result.output).contains("Cannot mix named")
   }
 
-  // A "synthesized CRUD query failure identifies the source table" test used to live here, triggered by a
-  // table name containing a literal double quote ("tab""le") that CrudQuerySynthesizer wrapped without
-  // doubling the embedded quote, producing invalid SQL. That quoting bug was fixed, so the build started
-  // succeeding instead of failing and the test broke.
+  // CrudQuerySynthesizer doubles a literal double quote in a table name ("tab""le"), so the generated SQL
+  // stays valid and no table name makes a synthesized CRUD query fail. No test therefore checks that such
+  // a failure identifies the source table.
   //
   // No replacement trigger was found that fails to analyze by construction, live against PostgreSQL 18:
-  // reserved/mixed-case/space-containing/quote-containing identifiers are now correctly quoted;
+  // reserved/mixed-case/space-containing/quote-containing identifiers are quoted correctly;
   // GENERATED ALWAYS AS IDENTITY and STORED-generated columns are already excluded from INSERT via
   // pgjdbc's IS_AUTOINCREMENT/IS_GENERATEDCOLUMN metadata; a primary key of a type with no default btree
   // operator class (point, json, xml) fails at CREATE TABLE, before CrudQuerySynthesizer sees the table;
@@ -451,8 +450,8 @@ class NormPluginTest {
   // Every statement CrudQuerySynthesizer builds is either `INSERT INTO t (cols) VALUES (?, ...)`, where
   // each `?` resolves unambiguously from a real column, or `... WHERE pk = ? [AND pk2 = ? ...]`, where each
   // `pk` column already has a working btree equality operator by virtue of being a primary key. There is no
-  // longer a schema shape that makes synthesized CRUD fail to analyze. The shared error-wrapping mechanism
-  // (`NormGenerateTask.sourceLabel`) is still exercised by the sibling
+  // schema shape that makes synthesized CRUD fail to analyze. The shared error-wrapping mechanism
+  // (`NormGenerateTask.sourceLabel`) is exercised by the sibling
   // `query analysis failure includes the query name in the error` test, via a query referencing a
   // nonexistent table.
 
@@ -744,11 +743,9 @@ class NormPluginTest {
     val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
     project.setupSettingsOnly()
 
-    // Regression case for per-entry (rather than global) ordering: the first directory's repeatable
-    // migration depends on a table created by the second directory's versioned migration. Per-entry
-    // ordering applied the first directory's repeatable migration right after that directory's own
-    // (empty) versioned-migration list, before the second directory was even considered — running the
-    // view creation before the table it selects from existed.
+    // The first directory's repeatable migration depends on a table created by the second
+    // directory's versioned migration, so ordering is global across entries and the versioned
+    // migration runs first.
     val firstDirectory = projectDir.resolve("views")
     Files.createDirectories(firstDirectory)
     firstDirectory.resolve("R__author_view.sql").writeText(
@@ -796,9 +793,9 @@ class NormPluginTest {
     val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
     project.setupSettingsOnly()
 
-    // "Base.sql" sorts lexically before "V1__add_email.sql". Treating every versioned file as
-    // sorting ahead of every plain file (rather than only reordering versioned files among
-    // themselves) would run this ALTER TABLE before the CREATE TABLE it depends on.
+    // "Base.sql" sorts lexically before "V1__add_email.sql" and holds the CREATE TABLE that the
+    // ALTER TABLE in the versioned file depends on. Versioned files are reordered only among
+    // themselves.
     val schemaDir = projectDir.resolve("migrations")
     Files.createDirectories(schemaDir)
     schemaDir.resolve("Base.sql").writeText(

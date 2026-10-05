@@ -22,7 +22,7 @@ public sealed interface TypeMapping : Serializable {
   /**
    * Maps every column of a Postgres type.
    *
-   * @param postgresType the Postgres type name (e.g., `"mood"`, `"jsonb"`).
+   * @property postgresType the Postgres type name (e.g., `"mood"`, `"jsonb"`).
    */
   public data class ByType(
     val postgresType: String,
@@ -33,8 +33,8 @@ public sealed interface TypeMapping : Serializable {
   /**
    * Maps a single column.
    *
-   * @param table the table name as written in DDL, truncated to the server's identifier limit before matching.
-   * @param column the column name, truncated the same way.
+   * @property table the table name as written in DDL, truncated to the server's identifier limit before matching.
+   * @property column the column name, truncated the same way.
    */
   public data class ByColumn(
     val table: String,

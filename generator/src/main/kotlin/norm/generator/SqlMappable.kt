@@ -32,12 +32,11 @@ internal interface SqlMappable {
    * Receiver action to call on a [Statement][java.sql.Statement] when mapping the data from Java
    * to SQL.
    *
-   * `index` is a [CodeBlock] rather than a plain `Int` so a CRUD-synthesized INSERT's
-   * overridable-default column ([norm.generator.CrudQuerySynthesizer]) can pass a runtime-computed
-   * bind position (an immutable local, per [SqlStatement.optionalParameterIndices]'s KDoc) instead
-   * of a fixed one. The nullable-array and adapted-type implementations below render `index` twice,
-   * so callers must pass a side-effect-free expression -- a literal or a `val` reference, never a
-   * mutating expression like `i++`.
+   * `index` is a [CodeBlock] so a CRUD-synthesized INSERT's overridable-default column
+   * ([CrudQuerySynthesizer]) can pass a runtime-computed bind position (an immutable local, per
+   * [SqlStatement.optionalParameterIndices]'s KDoc) as well as a fixed one. The nullable-array and adapted-type
+   * implementations below render `index` twice, so callers must pass a side-effect-free expression -- a literal or a
+   * `val` reference, never a mutating expression like `i++`.
    */
   val statementAction: (index: CodeBlock, parameterName: CodeBlock) -> CodeBlock
 
@@ -71,16 +70,16 @@ internal interface WireCodec {
   /**
    * Writes a non-null [value] at [index].
    *
-   * `index` is a [CodeBlock] (a literal or a side-effect-free `val` reference) rather than a plain
-   * `Int` — see [SqlMappable.statementAction]'s KDoc for why.
+   * `index` is a [CodeBlock] (a literal or a side-effect-free `val` reference) — see
+   * [SqlMappable.statementAction]'s KDoc for why.
    */
   fun write(index: CodeBlock, value: CodeBlock): CodeBlock
 
   /**
    * Writes SQL `NULL` at [index].
    *
-   * `index` is a [CodeBlock] (a literal or a side-effect-free `val` reference) rather than a plain
-   * `Int` — see [SqlMappable.statementAction]'s KDoc for why.
+   * `index` is a [CodeBlock] (a literal or a side-effect-free `val` reference) — see
+   * [SqlMappable.statementAction]'s KDoc for why.
    */
   fun writeNull(index: CodeBlock): CodeBlock
 
@@ -95,14 +94,13 @@ internal interface WireCodec {
 
 /**
  * [WireCodec] for a JVM primitive delivered through a named getter/setter pair (`getInt`/`setInt`,
- * etc.). JDBC getters for primitives return `0`/`false` rather than `null` for a SQL `NULL`, so a
- * nullable read needs a `wasNull()` check; a JVM primitive setter cannot accept `null` at all, so a
- * nullable write goes through a `norm.set<X>` runtime extension (which accepts a nullable argument
- * and calls `setNull` itself when it is `null`) instead of the plain setter.
+ * etc.). JDBC getters for primitives return `0`/`false` for a SQL `NULL`, so a nullable read needs
+ * a `wasNull()` check; a JVM primitive setter cannot accept `null` at all, so a nullable write goes through a
+ * `norm.set<X>` runtime extension (which accepts a nullable argument and calls `setNull` itself when it is `null`).
  *
- * @param methodName The JDBC method name suffix shared by the getter/setter pair (e.g. `"Int"` for
+ * @property methodName The JDBC method name suffix shared by the getter/setter pair (e.g. `"Int"` for
  *   `getInt`/`setInt`).
- * @param sqlTypeConstant The field name on [java.sql.Types] for `setNull()` calls (e.g.
+ * @property sqlTypeConstant The field name on [java.sql.Types] for `setNull()` calls (e.g.
  *   `"INTEGER"`).
  */
 internal class PrimitiveCodec(
@@ -136,7 +134,7 @@ internal class PrimitiveCodec(
  * nullability: the getter returns Kotlin `null` for a SQL `NULL` without a `wasNull()` check, and
  * the setter accepts a nullable argument directly.
  *
- * @param sqlTypeConstant The field name on [java.sql.Types] for `setNull()` calls (e.g.
+ * @property sqlTypeConstant The field name on [java.sql.Types] for `setNull()` calls (e.g.
  *   `"VARCHAR"`).
  */
 internal class ObjectGetterCodec(
@@ -156,16 +154,16 @@ internal class ObjectGetterCodec(
 }
 
 /**
- * [WireCodec] for a type bound with `setObject(index, value, Types.OTHER)` rather than a named
- * setter — required for Postgres custom/coercion-sensitive types (`json`, `jsonb`, enums) where
- * the JDBC driver refuses to coerce a `VARCHAR` binding; `Types.OTHER` bypasses the driver's type
- * enforcement and lets Postgres perform the coercion itself. `setObject(index, null, targetSqlType)`
+ * [WireCodec] for a type bound with `setObject(index, value, Types.OTHER)` — required for Postgres
+ * custom/coercion-sensitive types (`json`, `jsonb`, enums) where the JDBC driver refuses to coerce a
+ * `VARCHAR` binding; `Types.OTHER` bypasses the driver's type enforcement and lets Postgres perform
+ * the coercion itself. `setObject(index, null, targetSqlType)`
  * already delegates to `setNull(index, targetSqlType)`, so, like [ObjectGetterCodec], neither read
  * nor write branches on nullability.
  *
- * @param getterName The `ResultSet` getter method name (always `"getString"` for this codec's
+ * @property getterName The `ResultSet` getter method name (always `"getString"` for this codec's
  *   current uses).
- * @param sqlTypeConstant The field name on [java.sql.Types] used both for the `setObject` hint and
+ * @property sqlTypeConstant The field name on [java.sql.Types] used both for the `setObject` hint and
  *   for `setNull()` calls (always `"OTHER"` for this codec's current uses).
  */
 internal class TypesOtherCodec(
@@ -185,8 +183,8 @@ internal class TypesOtherCodec(
 
 /**
  * [WireCodec] for a type whose read needs the class-qualified `getObject(index, X::class.java)`
- * overload rather than a named getter — required whenever the wire type has no dedicated JDBC
- * getter: `java.sql.ResultSet.getObject(int)` is declared to return `Object`, so a bare
+ * overload — required whenever the wire type has no dedicated JDBC getter:
+ * `java.sql.ResultSet.getObject(int)` is declared to return `Object`, so a bare
  * `getObject(index)` call is statically `Any` in Kotlin no matter what concrete type the driver
  * returns at runtime. Covers the `java.time` types (`LocalDate`, `LocalTime`, `OffsetTime`,
  * `LocalDateTime`), where pgjdbc's plain `getObject(int)` returns the legacy
@@ -201,10 +199,10 @@ internal class TypesOtherCodec(
  * argument directly (pgjdbc 42.7.13's source), so `write` is a plain `setObject(index, value)`.
  * Like [ObjectGetterCodec], neither read nor write branches on nullability.
  *
- * @param getterClassHint The class passed to `getObject(index, X::class.java)`; also this codec's
+ * @property getterClassHint The class passed to `getObject(index, X::class.java)`; also this codec's
  *   [kotlinType], since the wire and Kotlin representations are the same type for every use of
  *   this codec.
- * @param sqlTypeConstant The field name on [java.sql.Types] for `setNull()` calls (e.g. `"DATE"`,
+ * @property sqlTypeConstant The field name on [java.sql.Types] for `setNull()` calls (e.g. `"DATE"`,
  *   `"OTHER"` for `uuid`).
  */
 internal class ClassHintedObjectCodec(private val getterClassHint: ClassName, private val sqlTypeConstant: String) :
@@ -263,8 +261,8 @@ internal object InstantViaOffsetDateTimeCodec : WireCodec {
  * A Postgres array can hold `NULL` elements even in a `NOT NULL` column. [read] therefore always reads
  * elements as nullable.
  *
- * @param elementCodec codec for the element type, such as the `int4` codec for `int[]`.
- * @param postgresElementTypeName canonical Postgres element type name passed to `toSqlArray`, such as `"int4"`.
+ * @property elementCodec codec for the element type, such as the `int4` codec for `int[]`.
+ * @property postgresElementTypeName canonical Postgres element type name passed to `toSqlArray`, such as `"int4"`.
  */
 internal class ArrayWireCodec(private val elementCodec: WireCodec, private val postgresElementTypeName: String) :
   WireCodec {
@@ -297,7 +295,7 @@ internal class ArrayWireCodec(private val elementCodec: WireCodec, private val p
  * [SqlMappable] for a plain (adapterless) column of a Postgres base type, built from its
  * [WireCodec].
  *
- * @param notNull Whether the column is `NOT NULL`. Controls [typeName] nullability and which of
+ * @property notNull Whether the column is `NOT NULL`. Controls [typeName] nullability and which of
  *   [WireCodec.write]/[WireCodec.writeNullable] the write side uses.
  */
 internal class ScalarSqlMappable(private val codec: WireCodec, private val notNull: Boolean) : SqlMappable {
@@ -327,11 +325,11 @@ internal class ScalarSqlMappable(private val codec: WireCodec, private val notNu
  * `PostgresQueries` class, which is visible inside the `ResultSet`/`PreparedStatement` receiver lambdas
  * via Kotlin closure scoping.
  *
- * @param applicationTypeName The KotlinPoet [TypeName] of the application type (e.g., `example.Email`,
+ * @property applicationTypeName The KotlinPoet [TypeName] of the application type (e.g., `example.Email`,
  *   or a parameterized type like `kotlin.collections.Map<kotlin.String, kotlin.Any?>`).
- * @param adapterPropertyName The property name on `PostgresQueries` for the adapter (e.g., `"emailAdapter"`).
- * @param notNull Whether the column is `NOT NULL`.
- * @param codec Wire-level access for the adapter's wire type.
+ * @property adapterPropertyName The property name on `PostgresQueries` for the adapter (e.g., `"emailAdapter"`).
+ * @property notNull Whether the column is `NOT NULL`.
+ * @property codec Wire-level access for the adapter's wire type.
  */
 internal class AdaptedTypeSqlMappable(
   private val applicationTypeName: TypeName,
@@ -389,14 +387,14 @@ internal class AdaptedTypeSqlMappable(
  * `connection.createArrayOf(postgresTypeName, ...)`. The Postgres JDBC driver cannot infer it from a
  * plain `String[]`.
  *
- * @param applicationTypeName The element's application type (e.g., `example.Mood`, or a parameterized
+ * @property applicationTypeName The element's application type (e.g., `example.Mood`, or a parameterized
  *   type like `kotlin.collections.Map<kotlin.String, kotlin.Any?>`).
- * @param adapterPropertyName The adapter property name on `PostgresQueries` (e.g., `"moodAdapter"`).
- * @param columnNotNull Whether the column is `NOT NULL` (controls array-level nullability).
- * @param postgresTypeName The Postgres type name for `encodeToSqlArray` (e.g., `"mood"`, `"email"`).
- * @param elementCodec Wire-level read access for one element, such as the `date` codec for a `date`
+ * @property adapterPropertyName The adapter property name on `PostgresQueries` (e.g., `"moodAdapter"`).
+ * @property columnNotNull Whether the column is `NOT NULL` (controls array-level nullability).
+ * @property postgresTypeName The Postgres type name for `encodeToSqlArray` (e.g., `"mood"`, `"email"`).
+ * @property elementCodec Wire-level read access for one element, such as the `date` codec for a `date`
  *   type override.
- * @param domainBaseTypeName The canonical Postgres name of the domain's base type when the element type
+ * @property domainBaseTypeName The canonical Postgres name of the domain's base type when the element type
  *   is a domain (e.g., `"int4"`), or `null` otherwise.
  */
 internal class AdaptedArrayTypeSqlMappable(

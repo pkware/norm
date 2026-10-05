@@ -30,17 +30,17 @@ internal fun findMatchingCloseParenthesis(
 }
 
 /**
- * Splits text on a delimiter character, respecting nested parentheses AND square brackets.
+ * Splits text on a delimiter character, respecting nested parentheses and square brackets.
  *
  * For `"EXISTS(...) AS valid, col1"` split on `,`, returns `["EXISTS(...) AS valid", "col1"]`.
  *
- * Both bracket kinds share one depth counter rather than two independently-tracked ones: SQL
+ * Both bracket kinds share one depth counter. SQL
  * never interleaves them invalidly (a `[` is always closed by its own `]` before any enclosing
  * `(` closes, and vice versa), so treating `(`/`[` as "one level deeper" and `)`/`]` as "one level
  * shallower" — regardless of which bracket kind opened that level — is sufficient to find the
  * real top-level delimiters. Leaving square brackets untracked would split an `ARRAY[1, 2]` item
  * into two, since its internal comma is not hidden by any enclosing `(...)` — on real Postgres,
- * `ARRAY[1, 2] AS arr, OLD.tval AS oldv` splits into 3 items instead of 2 real columns. Worse,
+ * `ARRAY[1, 2] AS arr, OLD.tval AS oldv` splits into 3 items for 2 real columns. Worse,
  * that error can silently cancel out a separate star-caused split error elsewhere in the same
  * list, making a real-column-count cross-check see a coincidentally-matching count and trust a
  * garbled, wrongly-indexed split: `tgt . *, OLD.tval AS oldv, ARRAY[1, 2] AS arr` splits into 4
@@ -90,8 +90,8 @@ internal fun splitAtTopLevel(text: String, delimiter: Char): List<String> {
  *
  * @return The index of [keyword], or `-1` if not found at the top level, including as soon as an
  *   unmatched closing parenthesis drives depth negative — an unbalanced [sql] is not the
- *   already-balanced text this scan assumes, so it bails rather than risk a match inside the
- *   malformed region.
+ *   already-balanced text this scan assumes, so it bails, and no match inside the
+ *   malformed region is returned.
  */
 internal fun findTopLevelKeyword(sql: String, keyword: String, startIndex: Int = 0): Int {
   val cursor = SqlTokenCursor(sql, startIndex)

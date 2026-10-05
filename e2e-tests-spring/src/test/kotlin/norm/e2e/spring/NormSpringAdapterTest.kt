@@ -80,7 +80,7 @@ class NormSpringAdapterTest {
 
   @Test
   fun `nullable adapted column returns null`() {
-    // Insert with bio=null
+    // Insert with `bio=null`
     val id = insertPersonRaw()
 
     // Box in a list to satisfy T : Any — the mapper cannot return a nullable T directly.

@@ -22,7 +22,7 @@ import java.sql.Connection
  * - Explicit rollback via `setRollbackOnly()`
  * - Nested transactions (savepoints) via `NESTED` propagation
  *
- * The nested transaction tests are currently disabled due to a Micronaut Data bug where `NESTED`
+ * The nested transaction tests are disabled due to a Micronaut Data bug where `NESTED`
  * propagation does not create savepoints. See https://github.com/micronaut-projects/micronaut-data/issues/3334
  */
 @MicronautTest
@@ -56,7 +56,7 @@ class NormMicronautTransactionTest {
 
   /**
    * `setRollbackOnly()` marks the transaction for rollback without throwing an exception.
-   * When the block returns, the framework sees the flag and rolls back instead of committing.
+   * When the block returns, the framework sees the flag and rolls back.
    */
   @Test
   fun `scoped transaction rolls back explicitly`() {

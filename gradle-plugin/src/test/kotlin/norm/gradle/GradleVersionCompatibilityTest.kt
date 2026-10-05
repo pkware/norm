@@ -14,10 +14,10 @@ import kotlin.io.path.writeText
  * `GradleRunner.withGradleVersion(...)` (see the module README's Requirements section).
  *
  * [MINIMUM_SUPPORTED_GRADLE_VERSION] (9.1.0) is confirmed to apply the plugin successfully. Gradle 9.1.0 is
- * the only version this project supports, so no lower version is exercised here: asserting that older
+ * the only version this project supports. No lower version is exercised, because asserting that older
  * versions fail would make CI download a full Gradle distribution per version for no coverage of anything
  * Norm promises. Lower versions are expected to fail because this module is compiled to Java 25 bytecode
- * (the toolchain configured by buildSrc's `JavaConventionsPlugin`), which is what pushes the floor above
+ * (the toolchain configured by buildSrc's `JavaConventionsPlugin`), and that pushes the floor above
  * whatever Norm's own Gradle API usage would require on its own.
  *
  * This test does not use [TestProject]'s composite `includeBuild` of the Norm root project, because that
@@ -34,7 +34,7 @@ class GradleVersionCompatibilityTest {
     writeProjectFiles()
 
     // "tasks" merely lists what the plugin registered; it does not execute normGenerateTest, so this
-    // stays a fast smoke test of plugin application rather than a full Testcontainers-backed run.
+    // is a fast smoke test of plugin application.
     val result = TestProject.gradleRunner(projectDir, "tasks", "--group=norm")
       .withGradleVersion(MINIMUM_SUPPORTED_GRADLE_VERSION)
       .build()

@@ -111,9 +111,8 @@ class SqlStatementTest {
 
     @Test
     fun `partial projection detected even when all columns have same type`() {
-      // Regression test: previously isSingleTableStarProjection compared by Column::type
-      // which caused partial projections to be incorrectly detected as star projections
-      // when all columns had the same type
+      // isSingleTableStarProjection must not compare by Column::type. Same-typed columns make a
+      // partial projection look like a star projection.
       val authorTable = Table(
         Identifier(name = "author"),
         columns = listOf(
@@ -496,9 +495,9 @@ class SqlStatementTest {
 
     @Test
     fun `empty for a hand-written query, even if overridableDefaultParameterPositions were somehow set`() {
-      // isSynthesizedInsert = false here -- only CrudQuerySynthesizer ever populates
-      // overridableDefaultParameterPositions, but SqlStatement itself only translates what Query
-      // carries, so this pins that translation rather than the synthesizer's own behavior.
+      // isSynthesizedInsert is `false` here. Only CrudQuerySynthesizer populates
+      // overridableDefaultParameterPositions, but SqlStatement translates whatever Query
+      // carries, and this pins that translation.
       val statement = createStatement(
         "SELECT * FROM author WHERE id = ?",
         params = listOf(param(1, "id")),

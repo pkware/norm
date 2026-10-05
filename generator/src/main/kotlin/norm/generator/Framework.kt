@@ -7,10 +7,10 @@ import com.squareup.kotlinpoet.TypeName
 /**
  * Framework-specific code generation options.
  *
- * @param connectionProviderTemplate name of the `.kt` template resource emitted as the connection provider.
- * @param delegatesTransactions `true` when the framework's `@Transactional` owns transactions. Norm then omits its own
+ * @property connectionProviderTemplate name of the `.kt` template resource emitted as the connection provider.
+ * @property delegatesTransactions `true` when the framework's `@Transactional` owns transactions. Norm then omits its own
  *   transaction API.
- * @param adapterAnnotations placed on generated enum and domain adapters.
+ * @property adapterAnnotations placed on generated enum and domain adapters.
  */
 public enum class Framework(
   internal val connectionProviderTemplate: String,
@@ -43,12 +43,12 @@ public enum class Framework(
 
   /**
    * Generates Micronaut DI annotations and a `@Factory` that provides a
-   * [norm.TransactionalConnectionProvider] from an injected `javax.sql.DataSource`.
+   * `norm.TransactionalConnectionProvider` from an injected `javax.sql.DataSource`.
    *
-   * Unlike [MICRONAUT_DATA], this mode does **not** generate a `MicronautConnectionProvider` and
+   * Unlike [MICRONAUT_DATA], this mode does not generate a `MicronautConnectionProvider` and
    * requires no `micronaut-data` dependency. Transactions are Norm-managed: the generated `Queries`
    * interface extends `norm.Transactable`, so callers can run `transaction { }` on the injected
-   * `Queries` bean rather than using Micronaut's `@Transactional`.
+   * `Queries` bean without Micronaut's `@Transactional`.
    */
   MICRONAUT(
     connectionProviderTemplate = "NormConnectionProviderFactory",

@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test
  * whitespace, and the backslash character itself when they appear inside a string/identifier
  * value (e.g. a column alias). A scanner that counts braces/parens without skipping these escaped
  * pairs miscounts, and — for a query using GROUPING SETS/CUBE/ROLLUP — silently defeats the whole
- * grouping-sets nullability fix (see [NodeTreeNullabilityAnalyzer]).
+ * grouping-sets nullability analysis (see [NodeTreeNullabilityAnalyzer]).
  */
 class PgNodeTreeParserTest {
 
@@ -57,9 +57,9 @@ class PgNodeTreeParserTest {
     fun `parseTargetList reads the full, unescaped resname of an entry whose alias contains an escaped brace`() {
       // Without escape-awareness, extractBalancedBraces closes the first {TARGETENTRY ...} block
       // early at the escaped `}` inside its own :resname, truncating the block before ":resname"'s
-      // real value ends — resultName comes back as "k\}" (missing the trailing "x") instead of
-      // the correctly-bounded and unescaped "k}x". This is the same brace-counting bug
-      // hasGroupingSets hits, just visible through a different accessor: the fields extracted
+      // real value ends — resultName comes back as "k\}" (missing the trailing "x"). The
+      // correctly-bounded and unescaped value is "k}x". hasGroupingSets is affected by the same
+      // brace-counting problem, visible here through a different accessor. The fields extracted
       // from a wrongly-bounded block are wrong, not just the block boundary.
       val text = """
         {QUERY :targetList (
@@ -84,8 +84,8 @@ class PgNodeTreeParserTest {
     // outer FUNCEXPR's own :funcvariadic always precedes :args textually. These two tests use real
     // ev_action text from PostgreSQL 17 (`upper(concat(VARIADIC arr))` and
     // `concat(VARIADIC ARRAY[upper(a)])`) covering both nesting directions, so a future PostgreSQL
-    // format change that broke this invariant would fail a test here instead of silently flipping
-    // a nullability verdict.
+    // format change that broke this invariant fails a test here and cannot silently flip a
+    // nullability verdict.
 
     @Test
     fun `a non-variadic outer FuncExpr wrapping a variadic inner one keeps both flags correct`() {
@@ -141,7 +141,7 @@ class PgNodeTreeParserTest {
 
     @Test
     fun `a real non-null CONST with a correctly-parsed constisnull field is reported non-null`() {
-      // Positive case: the happy path must not be widened to nullable by the safe-default fix.
+      // Positive case: the happy path must not be widened to nullable by the safe default.
       val text = "{CONST :consttype 25 :consttypmod -1 :constcollid 100 :constlen -1 " +
         ":constbyval false :constisnull false :location -1 :constvalue 5 [ 97 98 99 100 101 ]}"
       val result = parser.parseExpression(text) as PgNodeExpression.Const
@@ -208,7 +208,7 @@ class PgNodeTreeParserTest {
     fun `a truncated groupexprs list returns an empty map without throwing`() {
       // The :groupexprs opening parenthesis is present but its content is cut off mid-block —
       // rawListAtDepthOne's balanced-parenthesis scan can never find a matching close, so
-      // this GROUP RTE contributes nothing rather than parsing a truncated fragment.
+      // this GROUP RTE contributes nothing.
       val text = """
         {QUERY :rtable (
           {RANGETBLENTRY :eref {ALIAS :aliasname *GROUP* :colnames ("k")} :rtekind 9 :groupexprs (
@@ -245,7 +245,7 @@ class PgNodeTreeParserTest {
 
     @Test
     fun `groupRteMap and groupExpressions intentionally disagree on a non-Var grouping expression`() {
-      // The grouping key is `0::bigint`'s FUNCEXPR cast, wrapping a VAR rather than being one.
+      // The grouping key is `0::bigint`'s FUNCEXPR cast, wrapping a VAR.
       // groupRteMap's textual scan reaches past the FUNCEXPR to the first :varno/:varattno it finds
       // — the nested VAR's — while groupExpressions keeps the full FuncExpr node.
       val text = """
@@ -337,7 +337,7 @@ class PgNodeTreeParserTest {
     fun `a ROWCOMPARE sublink's testexpr yields no outer operand and no operator OID`() {
       // A ROWCOMPAREEXPR testexpr carries its operands under :largs/:rargs, not :args, and is not a
       // node type this parser's `when` dispatch recognizes, so it parses to Unknown. Both fields stay
-      // null even though parseSubLink now extracts :testexpr unconditionally. Fixture is verbatim from
+      // `null` even though parseSubLink extracts :testexpr unconditionally. Fixture is verbatim from
       // a live PostgreSQL 18.4 ev_action dump, including the "o" OID-list type tags and the absence of
       // any :location field on ROWCOMPAREEXPR itself.
       val rowCompareTestexpr = "{ROWCOMPAREEXPR :cmptype 1 :opnos (o 97 97) :opfamilies (o 1976 1976) " +
@@ -440,10 +440,8 @@ class PgNodeTreeParserTest {
       // the ROLLUP key" test) by comparing parsed PgNodeExpression subtrees with `==`. Postgres
       // assigns each occurrence of the same literal its own :location (a source-text byte
       // offset), so this equality must hold across two Consts whose :location values genuinely
-      // differ — pinning this directly, rather than only through the end-to-end grouping-sets
-      // test, so a future change adding a location-like field to Const (this project already
-      // tried once, for prosqlbody's per-assignment parameter-trust check, and reverted it for
-      // exactly this reason) fails a fast, obvious, unit-level test instead of a live-database one.
+      // differ. Pinning this at the unit level makes a change that adds a location-like field to
+      // Const fail fast and obviously, without a live database.
       val first = parser.parseExpression(
         "{CONST :consttype 25 :consttypmod -1 :constcollid 100 :constlen -1 " +
           ":constbyval false :constisnull false :location 42 :constvalue 5 [ 20 0 0 0 45 ]}",
@@ -479,7 +477,7 @@ class PgNodeTreeParserTest {
     @Test
     fun `a CTE range table entry missing ctelevelsup entirely defaults to 0, a local (same-level) reference`() {
       // Malformed or future-format input. The safe default is `0`, the "declares its own WITH" case
-      // resolved from the block's own CTE list rather than an enclosing one.
+      // resolved from the block's own CTE list.
       val text = """
         {QUERY :rtable (
           {RANGETBLENTRY :eref {ALIAS :aliasname c :colnames ("v")} :rtekind 6 :ctename c

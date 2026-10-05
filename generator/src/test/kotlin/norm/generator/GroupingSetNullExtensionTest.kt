@@ -60,8 +60,8 @@ class GroupingSetNullExtensionTest {
     @Test
     fun `a non-VARIADIC FuncExpr with isNonNullIffFirstArgumentNonNull is unsafe when its first argument is the key`() {
       // Models concat_ws(concat(a, b), 'x', 'y') under a key of concat(a, b): the separator is
-      // itself null-extendable, so the leg must recurse into it rather than assume any first
-      // argument is automatically safe.
+      // itself null-extendable, so the leg must recurse into it. A first
+      // argument is not automatically safe.
       val separator = PgNodeExpression.FuncExpr(functionOid = 999, arguments = listOf(varArgument))
       val expression = PgNodeExpression.FuncExpr(
         functionOid = someFunctionOid,

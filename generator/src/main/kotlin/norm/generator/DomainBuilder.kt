@@ -139,17 +139,17 @@ internal fun domainAdapterPropertyName(domain: Domain): String = "${domain.name.
  *
  * Delegates to [resolveWireCodec] as the single source of truth for type mappings. Every type
  * with an entry there is usable as a domain base, including `json` and `jsonb`: the wire type
- * matches the same Kotlin type the plain column would produce, and the binding difference
- * (`setObject(..., Types.OTHER)` rather than `setString`) is carried by the [WireCodec] that
- * [TypeRepository] hands to [AdaptedTypeSqlMappable], not by the wire type itself.
+ * matches the same Kotlin type the plain column would produce, and the `setObject(..., Types.OTHER)`
+ * binding is carried by the [WireCodec] that [TypeRepository] hands to [AdaptedTypeSqlMappable], not
+ * by the wire type itself.
  *
  * [baseTypeName] is always a terminal, non-domain Postgres type (see [Domain.baseType]'s KDoc):
  * stacked domains (`CREATE DOMAIN work_email AS email`) are resolved to their terminal base type
  * before a [Domain] reaches this function, so `baseTypeName` naming another domain never occurs.
  * For a domain over an array type (`CREATE DOMAIN int_set AS int[]`, `baseTypeName` like
- * `"_int4"`), this returns the *wire* type (`Array<Int?>`) — the adapter's `ColumnAdapter` type
+ * `"_int4"`), this returns the wire type (`Array<Int?>`) — the adapter's `ColumnAdapter` type
  * argument and `decode`/`encode` parameter/return type. It is [domainKotlinPropertyType], not this
- * function, that returns the *property* type the value class wraps (`List<Int?>`); see that
+ * function, that returns the property type the value class wraps (`List<Int?>`); see that
  * function's KDoc for why the two differ.
  *
  * [resolveWireCodec] reads [POSTGRES_BASE_TYPES], the same map [TypeRepository.resolveBaseType]
@@ -168,7 +168,7 @@ internal fun domainKotlinWireType(baseTypeName: String): TypeName =
   resolveWireCodec(baseTypeName)?.kotlinType ?: error("Unsupported domain base type: $baseTypeName")
 
 /**
- * Maps a Postgres base type name to the Kotlin type the domain's *value class* wraps.
+ * Maps a Postgres base type name to the Kotlin type the domain's value class wraps.
  *
  * Equal to [domainKotlinWireType] for every base type except an array type (`baseTypeName` like
  * `"_int4"`, for `CREATE DOMAIN int_set AS int[]`): there, [domainKotlinWireType] returns

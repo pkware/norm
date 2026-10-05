@@ -5,8 +5,8 @@ package norm
  *
  * Adapters are used by generated code to convert between Kotlin classes and their database representation.
  *
- * Adapters never see `null` values — null handling is performed by the generated code before
- * calling [decode] or [encode]. Implementations can safely assume non-null inputs.
+ * Adapters never see `null` values. The generated code handles `null` before calling [decode] or
+ * [encode], so implementations can safely assume non-null inputs.
  *
  * @param ApplicationType The Kotlin type used in application code (e.g., a generated enum class).
  * @param DatabaseType The JDBC type used for database storage (e.g., [String]).

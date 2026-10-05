@@ -3,9 +3,9 @@ package norm.generator
 /**
  * Recursion budget for [NodeTreeProvenanceResolver]'s chained-CTE follow.
  *
- * Not required to prevent a true infinite loop — PostgreSQL's grammar already forbids a CTE
- * referencing a later-declared one, so no reference cycle exists among the CTEs this resolver
- * enters. This is a defensive bound on stack/work for a pathologically long chain of CTEs.
+ * PostgreSQL's grammar forbids a CTE referencing a later-declared one, so no reference cycle exists
+ * among the CTEs this resolver enters. The bound caps stack depth and work for a pathologically long
+ * chain of CTEs.
  */
 private const val MAX_PROVENANCE_CHAIN_DEPTH = 50
 
@@ -27,13 +27,11 @@ internal data class CteHop(val name: String, val ctelevelsup: Int)
  *
  * A CTE's scope belongs to its declaration site, not to the hop path taken to reach it: entering a
  * CTE's body rebuilds the stack as [frames]`.drop(levelsUp)` with the body's own scope pushed on
- * front ([entering]), rather than prepending onto the full accumulated stack. Prepending onto the full
- * stack instead would attribute a chained reference to the wrong same-named CTE for a chain of three or
- * more sibling CTEs.
+ * front ([entering]). A chained reference through three or more sibling CTEs therefore resolves to
+ * the same-named CTE its own scope declares.
  *
- * A `:ctelevelsup` deeper than the tracked frames bails ([frameAt] returning `null`) rather than
- * reading past what has been tracked — a real reference's levelsup can never exceed the number of
- * `WITH` clauses actually enclosing it.
+ * A `:ctelevelsup` deeper than the tracked frames bails ([frameAt] returning `null`). A real
+ * reference's levelsup never exceeds the number of `WITH` clauses enclosing it.
  */
 internal class CteScopeStack<Frame> private constructor(private val frames: List<Frame>) {
   constructor(outermost: Frame) : this(listOf(outermost))
@@ -45,7 +43,7 @@ internal class CteScopeStack<Frame> private constructor(private val frames: List
    * The scope stack after entering a CTE body declared [levelsUp] scopes up, whose own scope is
    * [ownScope].
    *
-   * @throws IllegalArgumentException if `levelsUp` is not a currently tracked frame.
+   * @throws IllegalArgumentException if `levelsUp` is not a tracked frame.
    */
   fun entering(levelsUp: Int, ownScope: Frame): CteScopeStack<Frame> {
     require(levelsUp in frames.indices) { "levelsUp $levelsUp outside ${frames.size} tracked scopes" }
@@ -62,10 +60,8 @@ internal class CteScopeStack<Frame> private constructor(private val frames: List
  * can shadow an outer CTE of the same name with a different body; only replaying the whole path
  * distinguishes which declaration was meant. Always non-empty.
  *
- * Not the expression text itself: resolution answers only "where"; extracting and cross-validating
- * the source text against the user's original SQL is a separate step.
- *
- * @property cteName The last hop's CTE name, for a caller that only needs "where the text lives".
+ * Resolution answers only "where". Extracting the source text and cross-validating it against the
+ * user's original SQL is a separate step.
  */
 internal data class NodeTreeColumnProvenance(val hops: List<CteHop>, val bodyPosition: Int) {
 
@@ -73,6 +69,7 @@ internal data class NodeTreeColumnProvenance(val hops: List<CteHop>, val bodyPos
     require(hops.isNotEmpty()) { "NodeTreeColumnProvenance requires at least one CTE hop" }
   }
 
+  /** The last hop's CTE name, for a caller that only needs "where the text lives". */
   val cteName: String get() = hops.last().name
 
   /** Convenience constructor for a direct reference into a CTE declared at the same query level. */
@@ -83,7 +80,7 @@ internal data class NodeTreeColumnProvenance(val hops: List<CteHop>, val bodyPos
  * Resolves each of a query's output columns to the CTE body position that expression was written
  * at, working entirely from the query's own parsed node tree.
  *
- * Returns `null` (no provenance) rather than guessing whenever the honest answer is unavailable:
+ * Returns `null` (no provenance) whenever the source expression cannot be determined:
  * - an outer-query reference (`:varlevelsup != 0`), whose `varno` addresses an enclosing query's
  *   range table, not this block's;
  * - a `USING`/`NATURAL`-merged join column, which PostgreSQL represents as `COALESCE(left, right)`
@@ -93,7 +90,7 @@ internal data class NodeTreeColumnProvenance(val hops: List<CteHop>, val bodyPos
  * - a query (main or CTE body) with a top-level set operation, whose result depends on every branch;
  * - a range-table entry this resolver does not recognize as a CTE or a `JOIN`.
  *
- * @param parser the node-tree parser to use; defaults to a fresh, stateless instance
+ * @property parser the node-tree parser to use; defaults to a fresh, stateless instance
  */
 internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser = PgNodeTreeParser()) {
 
@@ -114,8 +111,8 @@ internal class NodeTreeProvenanceResolver(private val parser: PgNodeTreeParser =
     // descends into a CTE body.
     val outermostScope = CteScopeStack(parser.parseCteList(nodeTreeText).associateBy { it.name })
     // Every column's walk starts from nodeTreeText's own range table and re-enters the same CTE
-    // bodies, so parsing each block once here is what keeps the cost proportional to the number of
-    // distinct blocks rather than to columns times hops. Local to this call: nothing outlives it.
+    // bodies. Parsing each block once keeps the cost proportional to the number of distinct blocks.
+    // The cache is local to this call.
     val rangeTables = mutableMapOf<String, Map<Int, RangeTableEntry>>()
     return entries.map { entry -> resolveVar(entry.expression, nodeTreeText, outermostScope, rangeTables) }
   }

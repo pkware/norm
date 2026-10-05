@@ -14,10 +14,9 @@ import java.io.File
  * the real `tag_group` table in `test-scenarios/crud_generation/schema.sql`.
  *
  * The value class generated for such a domain wraps `List<Int?>`, not `Array<Int?>` — see
- * [norm.generator.domainKotlinPropertyType]'s KDoc for why. [readingTheSameRowTwiceProducesEqualValues]
- * is the regression test for that decision: `kotlin.Array` has identity equality, so if the value
- * class wrapped `Array` instead, two separate JDBC reads of the same row would each build a distinct
- * array instance and this test would fail even though both reads returned the same database row.
+ * `norm.generator.domainKotlinPropertyType`'s KDoc for why. [readingTheSameRowTwiceProducesEqualValues]
+ * pins that two separate JDBC reads of the same row produce equal values. `List` has structural
+ * equality, unlike `kotlin.Array`'s identity equality.
  */
 class IntSetDomainE2ETest : PostgresTestBase() {
 

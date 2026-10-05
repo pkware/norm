@@ -42,9 +42,8 @@ class SqlLexerTest {
 
     @Test
     fun `does not match FROM inside a SET-clause column named a-dollar-b-dollar-c`() {
-      // The historical bug: the "$" between "b" and "c" was read as opening a "$b$"-tagged
-      // dollar-quote, swallowing the rest of the string looking for a closing "$b$" that never
-      // comes — so the real "FROM a" was never found at all.
+      // The "$" between "b" and "c" is identifier text, not the opening of a "$b$"-tagged
+      // dollar-quote, so the real "FROM a" is found.
       val sql = "UPDATE t SET a\$b\$c = 'x' FROM a"
       val result = findTopLevelKeyword(sql, "FROM")
       assertThat(result).isEqualTo(sql.indexOf("FROM a"))
@@ -75,8 +74,7 @@ class SqlLexerTest {
 
     @Test
     fun `a dollar-sign positional-parameter-style marker is not treated as a dollar quote`() {
-      // "$1" has no closing "$1" tag anywhere, so it must be treated as ordinary text (already
-      // the behavior pre-fix too — this guards it doesn't regress alongside the identifier fix).
+      // "$1" has no closing "$1" tag anywhere, so it must be treated as ordinary text.
       val sql = "SELECT \$1 FROM a"
       val result = findTopLevelKeyword(sql, "FROM")
       assertThat(result).isEqualTo(sql.indexOf("FROM a"))
@@ -95,10 +93,8 @@ class SqlLexerTest {
     @Test
     fun `a dollar-quote tag containing a non-ASCII character is recognized as a tag`() {
       // scan.l's dolq_start/dolq_cont admit any byte >= 0x80, same as an ordinary identifier's
-      // ident_start/ident_cont -- so "€" is a legal (one-character) tag. Before the fix, the tag
-      // run used the narrow letter/digit/underscore class, which doesn't include "€", so the run
-      // ended immediately (empty tag), the closing delimiter search looked for a bare "$$" instead
-      // of "$€$", and never found one before the real one -- swallowing everything after it.
+      // ident_start/ident_cont -- so "€" is a legal (one-character) tag. The tag run includes
+      // "€", and the closing delimiter search looks for "$€$".
       val sql = "\$€\$x,\$€\$ AS lbl"
       val result = skipLexicalToken(sql, 0)
       assertThat(result).isEqualTo(sql.indexOf(" AS lbl"))
@@ -108,9 +104,7 @@ class SqlLexerTest {
     fun `a digit-leading dollar-quote tag is not recognized as a tag`() {
       // PostgreSQL 18.4 scan.l: dolq_start excludes digits (unlike dolq_cont,
       // which admits them after the first character) -- "$1$foo$1$" is not a dollar-quoted
-      // string at all; "$1" is left as an ordinary "$"-prefixed token. Before the fix, the tag
-      // run's start character used the same letter/digit/underscore class as its continuation, so
-      // a leading digit was wrongly accepted as if it opened a valid tag.
+      // string at all; "$1" is left as an ordinary "$"-prefixed token.
       val sql = "\$1\$foo\$1\$"
       assertThat(skipLexicalToken(sql, 0)).isEqualTo(0)
     }
@@ -127,15 +121,11 @@ class SqlLexerTest {
       // quote is an ordinary character, not an escape: the first bare "'" after it -- not a
       // doubled "''" -- ends the string.
       //
-      // Before OriginalAdjacency existed, this lookback used a narrow letter/digit/underscore-only
-      // class that did not recognize "€" as an identifier character at all, wrongly treating "E"
-      // as standalone here and accepting this as a deliberate, known deviation from PostgreSQL's
-      // lexer. Now that the lookback can distinguish a genuinely fused character from
-      // one a stripped-away separator merely left adjacent (see OriginalAdjacency's KDoc), it is
-      // safe to use the full isIdentifierChar class -- and for this raw, never-stripped call
-      // (using the default ALL_ADJACENT, correct here since every neighbour genuinely is
-      // adjacent), that makes this call match PostgreSQL's real answer instead of deviating from
-      // it.
+      // The lookback uses the full isIdentifierChar class, which includes "€". It can tell a
+      // genuinely fused character from one a stripped-away separator left adjacent (see
+      // OriginalAdjacency's KDoc). This raw, never-stripped call uses the default ALL_ADJACENT,
+      // correct here since every neighbour genuinely is adjacent, and so matches PostgreSQL's real
+      // answer.
       val sql = "x€E'a\\' FROM t"
       val quoteIndex = sql.indexOf('\'')
       val result = skipLexicalToken(sql, quoteIndex)
@@ -280,8 +270,8 @@ class SqlLexerTest {
       // even the simpler "SELECT \$q FROM t" is rejected outright ("syntax error at or near "\$""),
       // since a bare "\$" not immediately followed by a digit (a positional parameter) or a genuine
       // dollar-quote tag is not valid PostgreSQL syntax at all. Like the "''"/E-string composition
-      // gate above, this closes the class structurally rather than fixing an observed user-visible
-      // bug.
+      // gate above, this is a structural guard for the whole class with no known user-visible
+      // failure.
       val input = "SELECT \$q  b \$/ / FROM t"
       assertThat(lexicalTokensOfStripped(input)).isEqualTo(lexicalTokensOfOriginal(input))
     }
@@ -291,8 +281,7 @@ class SqlLexerTest {
       // The invariant this relies on: walking the original text and the stripped text with
       // skipLexicalToken must find the same lexical tokens, in the same order — if stripping ever
       // fuses two characters into a token that was never in the original query (or hides one that
-      // was there), this comparison catches it directly, rather than relying on each individual
-      // gate's own, narrower unit test. Includes every fusion-class input below, plus a
+      // was there), this comparison catches it directly. Includes every fusion-class input below, plus a
       // representative sample of the star shapes already covered elsewhere in this file (line and
       // block comments, string literals, dollar-quoted strings, double-quoted identifiers
       // containing a literal star, a Unicode-escape identifier with a UESCAPE clause, and

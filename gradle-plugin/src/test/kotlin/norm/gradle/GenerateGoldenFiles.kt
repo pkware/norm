@@ -1,5 +1,6 @@
 package norm.gradle
 
+import norm.generator.Framework
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
@@ -135,7 +136,7 @@ class GenerateGoldenFiles {
  *
  * @property scenarioDirectory The directory containing the scenario's schema.sql and queries.sql files.
  * @property frameworks The set of framework names to enable for code generation. These must match
- *   [Framework][norm.generator.Framework] enum constant names (e.g., "MICRONAUT_DATA").
+ *   [Framework] enum constant names (e.g., "MICRONAUT_DATA").
  * @property goldenSubdir The subdirectory name where golden files should be output relative to
  *   [scenarioDirectory] (e.g., "micronaut", "spring").
  */

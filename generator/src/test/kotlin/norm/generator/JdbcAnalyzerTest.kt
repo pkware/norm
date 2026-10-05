@@ -27,10 +27,8 @@ import java.sql.DriverManager
 // Every test in this class shares one JDBC Connection (see the companion object below) -- a
 // java.sql.Connection is not safe for concurrent use from multiple threads, and this repository
 // enables concurrent JUnit test execution by default (JavaConventionsPlugin). Without pinning this
-// class to a single thread, two tests issuing overlapping statements on the shared connection race
-// (observed: an unrelated view-nullability assertion failed only once two backtick-column DDL tests
-// were added alongside it — see BacktickColumnNamePreservation below). GenerateCodeTest, which
-// shares the same single-connection pattern, already applies this same fix.
+// class to a single thread, two tests issuing overlapping statements on the shared connection race.
+// GenerateCodeTest, which shares the same single-connection pattern, applies the same pinning.
 @Testcontainers
 @Execution(ExecutionMode.SAME_THREAD)
 class JdbcAnalyzerTest {
@@ -254,8 +252,8 @@ class JdbcAnalyzerTest {
 
   /**
    * Schema qualification (`public.`) defeats `CALL_PROCEDURE_NAME`'s bare-identifier regex, so
-   * `analyzeCallParameters` falls back to `prepareStatement(...).parameterMetaData` instead of the
-   * `pg_proc` lookup exercised by `analyzeQuery handles CALL with parameters`.
+   * `analyzeCallParameters` falls back to `prepareStatement(...).parameterMetaData`. The
+   * `pg_proc` lookup is exercised by `analyzeQuery handles CALL with parameters`.
    */
   @Test
   fun `analyzeQuery handles schema-qualified CALL with parameters via the prepareStatement fallback`() {
@@ -1017,9 +1015,8 @@ class JdbcAnalyzerTest {
 
     @Test
     fun `strict function wrapping parameter placeholders is non-null`() {
-      // digest(?, ?) — strict function over non-null parameters. The old SqlNullabilityAnalyzer
-      // correctly returned non-null; the node tree analysis must replicate this by replacing ?
-      // with typed non-null sentinels instead of NULL.
+      // digest(?, ?) — strict function over non-null parameters. The node tree analysis must
+      // report non-null here by replacing ? with typed non-null sentinels.
       val query = analyzeSimpleQuery("SELECT upper(?) AS upper_input FROM department")
       assertThat(query.columns.first().notNull).isTrue()
     }
@@ -1081,16 +1078,12 @@ class JdbcAnalyzerTest {
 
   @Test
   fun `fetchReservedWords matches an independently issued pg_get_keywords query against the same connection`() {
-    // Confirms fetchReservedWords() round-trips to the connected server rather than returning a
-    // hardcoded snapshot — a membership assertion over a fixed list (as the two tests above use)
-    // cannot tell a live query apart from a hardcoded set that happens to contain those few words.
+    // Confirms fetchReservedWords() queries the connected server.
     // This test issues its own pg_get_keywords() query, independent of fetchReservedWords()'s own
     // implementation, against the same live connection, and compares the two results for exact set
-    // equality. Any staleness, transcription slip, or drift from a PostgreSQL version whose
-    // reserved set differs (system_user became reserved only in PostgreSQL 16, and a hardcoded set
-    // predating that change once missed it silently) fails here outright. Run at every PostgreSQL
-    // major version this project supports (-Dnorm.test.pgVersion) so a hardcoded snapshot has no
-    // single version left where staleness could hide.
+    // equality. Reserved sets differ between versions; `system_user` became reserved in
+    // PostgreSQL 16. Runs at every PostgreSQL major version this project supports
+    // (-Dnorm.test.pgVersion).
     val fromFetchReservedWords = analyzer.fetchReservedWords()
     val fromIndependentLiveQuery = connection.createStatement().use { statement ->
       statement.executeQuery("SELECT word FROM pg_get_keywords() WHERE catcode IN ('R', 'T')").use { resultSet ->
@@ -1139,11 +1132,10 @@ class JdbcAnalyzerTest {
 
     @Test
     fun `foldIdentifier matches the live server's parse_ident across a representative identifier corpus`() {
-      // Each pair's second value is what live parse_ident reported on PostgreSQL 18.4 when this
-      // corpus was written -- re-querying it here, rather than trusting that literal, is what
-      // makes this a genuine differential test: it fails if this run's connected server (any of
-      // PG16/17/18 -- see -Dnorm.test.pgVersion) disagrees with either the recorded expectation or
-      // foldIdentifier's own answer, not merely with a fixed list.
+      // Each pair's second value is the answer live parse_ident gave on PostgreSQL 18.4 when this
+      // corpus was written. The test re-queries parse_ident and fails
+      // if this run's connected server (any of PG16/17/18 -- see -Dnorm.test.pgVersion)
+      // disagrees with either the recorded expectation or foldIdentifier's own answer.
       val corpus = listOf(
         "foo" to "foo", // ASCII lowercase, unquoted
         "FooBar" to "foobar", // ASCII mixed case, unquoted -- folds
@@ -1199,8 +1191,8 @@ class JdbcAnalyzerTest {
       // 3. A Unicode-escape identifier (U&"..."): parse_ident does not understand this syntax at
       //    all ("string is not a valid identifier"). isQuotedIdentifier also
       //    rejects it (it only recognizes a plain "..." token), so foldIdentifier would, if ever
-      //    handed one, wrongly ASCII-fold the literal "U&..." text instead of resolving the
-      //    escape -- but QUOTED_IDENTIFIER (the only pattern that ever captures a raw
+      //    handed one, wrongly ASCII-fold the literal "U&..." text and leave the escape
+      //    unresolved -- but QUOTED_IDENTIFIER (the only pattern that ever captures a raw
       //    table/column/alias/CTE-name token in this file) matches a plain quote only, so
       //    foldIdentifier never actually receives a U&"..." token from any real call site.
       assertThat(runCatching { liveParseIdent("U&\"foo\"") }.isFailure).isTrue()
@@ -1272,16 +1264,11 @@ class JdbcAnalyzerTest {
   @Nested
   inner class BacktickColumnNamePreservation {
 
-    // A prior fix rewrote a backtick in Column.name to an apostrophe to keep KotlinPoet's generated
-    // declaration compilable. That name field is also what CRUD synthesis builds SQL from and what
-    // Catalog.findColumn matches column comments by, so the rewrite was a regression worse than the
-    // invalid-Kotlin defect it fixed: generateCrud (the plugin default) aborted with "column \"a'b\"
-    // of relation ... does not exist", two distinct columns differing only by backtick-vs-apostrophe
-    // collided into one Kotlin declaration, and a column's comment silently stopped being found.
-    // Reverted. A column name containing a backtick still cannot produce a compilable Kotlin
-    // property declaration -- that is a pre-existing limitation of the whole naming pipeline (shared
-    // by "*/", ".", and a literal newline in a column name), not a
-    // provenance defect, and is out of scope here.
+    // Column.name keeps a backtick verbatim, since that field is also what CRUD synthesis builds
+    // SQL from and what Catalog.findColumn matches column comments by. A column name containing a
+    // backtick still cannot produce a compilable Kotlin property declaration. The whole naming
+    // pipeline shares that limitation with "*/", ".", and a literal newline in a column name; it
+    // is not a provenance defect and is out of scope here.
 
     @Test
     fun `buildCatalog keeps a backtick in a column's name and originalName identical`() {
@@ -1363,9 +1350,9 @@ class JdbcAnalyzerTest {
 
         assertThat(queries).isNotEmpty()
         for (query in queries) {
-          // A malformed SQL string (e.g. referencing the wrong, sanitized column name) throws
-          // during analysis against the live server -- this is the exact failure e15d412's fix
-          // caused ("column \"a'b\" of relation ... does not exist").
+          // A malformed SQL string (e.g. referencing a rewritten column name) throws during
+          // analysis against the live server, with an error such as
+          // "column \"a'b\" of relation ... does not exist".
           val analyzed = analyzer.analyzeQuery(query, catalog)
           assertThat(analyzed.text).isNotEmpty()
         }
@@ -1486,7 +1473,7 @@ class JdbcAnalyzerTest {
     @Test
     fun `analyzeQuery resolves a parameter on an over-length domain column to the domain type and its comment`() {
       // An unresolved catalog column falls back to ParameterMetaData.getParameterTypeName, which
-      // reports a domain column's base type rather than the domain, and carries no comment.
+      // reports a domain column's base type and carries no comment.
       val overLengthTableName = "over_length_table_used_for_domain_parameter_inference_regressionzzzzzz"
       val overLengthColumnName = "over_length_column_used_for_domain_parameter_inference_regressionzzzzz"
       val truncatedTableName = truncateIdentifier(overLengthTableName)
@@ -1541,7 +1528,7 @@ class JdbcAnalyzerTest {
       // to fold_param_test/bio; referencing them as Fold_Param_Test(Bio) later is an ordinary
       // unquoted mixed-case reference, resolving to the very same relation and column. If
       // parameter inference compares the un-folded "Fold_Param_Test"/"Bio" against the catalog's
-      // already-folded names, the lookup misses and resolveParameterNotNull falls back to true
+      // already-folded names, the lookup misses and resolveParameterNotNull falls back to `true`
       // (non-nullable) even though the real column allows NULL.
       connection.createStatement().use {
         it.execute("CREATE TABLE Fold_Param_Test (id SERIAL PRIMARY KEY, Bio TEXT)")

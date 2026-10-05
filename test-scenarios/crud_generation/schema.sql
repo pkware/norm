@@ -34,7 +34,7 @@ CREATE TABLE product (
 CREATE VIEW author_names AS
   SELECT id, name FROM author;
 
--- Table with a nullable jsonb column: pins jsonb binding in the synthesized CRUD insert (#187).
+-- Table with a nullable jsonb column: pins jsonb binding in the synthesized CRUD insert.
 CREATE TABLE document (
   id SERIAL PRIMARY KEY,
   title TEXT NOT NULL,
@@ -43,7 +43,7 @@ CREATE TABLE document (
 
 -- Table where every non-auto-increment column has a DEFAULT, and one of them is nullable: pins the
 -- synthesized INSERT whose parameters are all optional, and a nullable default column's
--- ColumnValue<T?> shape, together (#299).
+-- ColumnValue<T?> shape, together.
 CREATE TABLE preference (
   id SERIAL PRIMARY KEY,
   theme TEXT NOT NULL DEFAULT 'light',
@@ -51,13 +51,12 @@ CREATE TABLE preference (
 );
 
 -- Table with quoted, mixed-case, space-containing, and mixed-case-reserved-word column names: pins
--- CrudQuerySynthesizer's own identifier quoting in the SQL it BUILDS (INSERT), a different surface
--- from reading such columns back, which test-scenarios/comments/schema.sql's "tq" table already
--- covers (#238). An embedded double quote (e.g. "a""b") is deliberately NOT added here: it produces
--- valid SQL (JdbcAnalyzerTest and SqlParameterInferrerTest pin that at the unit level, #238 11.4),
--- but the resulting Kotlin identifier containing a literal `"` still trips a kotlinc "problems on
--- Windows" warning-as-error in a real compiling project -- the same pre-existing, out-of-scope
--- naming-pipeline gap already documented for a backtick, "*/", ".", and a literal newline.
+-- CrudQuerySynthesizer's own identifier quoting in the INSERT it builds. Reading such columns back
+-- is covered by the "tq" table in test-scenarios/comments/schema.sql. This table has no column with
+-- an embedded double quote (e.g. "a""b"). That SQL is valid, and JdbcAnalyzerTest and
+-- SqlParameterInferrerTest cover it. The Kotlin identifier it produces contains a literal `"`,
+-- which kotlinc reports as a "problems on Windows" warning. The compiling test project treats
+-- warnings as errors. A backtick, "*/", ".", and a literal newline have the same naming limitation.
 CREATE TABLE quoted_columns (
   id SERIAL PRIMARY KEY,
   "Foo" TEXT NOT NULL,
@@ -65,7 +64,7 @@ CREATE TABLE quoted_columns (
   "Select" TEXT
 );
 
--- Domain over an array type (#305 follow-up): pins full read/write support for a domain whose base
+-- Domain over an array type: pins full read/write support for a domain whose base
 -- type is itself an array, not just the domain-over-scalar case the other domains above cover.
 CREATE DOMAIN int_set AS INTEGER[];
 

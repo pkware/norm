@@ -20,7 +20,7 @@ CREATE TABLE publisher (
 CREATE TYPE mood AS ENUM ('happy', 'sad', 'angry');
 -- The percent sign is deliberate: interpolating this comment directly into a KotlinPoet KDoc format
 -- string, rather than passing it as a "%L" argument, reads it as a format specifier and aborts
--- generation entirely (#238 11.3).
+-- generation entirely.
 COMMENT ON TYPE mood IS 'Feeling 100% of the time.';
 
 CREATE DOMAIN email_address AS TEXT

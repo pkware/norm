@@ -233,8 +233,8 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
   /**
    * Converts a 1-based character position in a SQL string to a (line, column) pair.
    *
-   * PostgreSQL reports errors using a character position ([org.postgresql.util.ServerErrorMessage.position])
-   * rather than a line number. This function converts that position to a human-readable line and column
+   * PostgreSQL reports errors using a character position ([org.postgresql.util.ServerErrorMessage.position]).
+   * This function converts that position to a human-readable line and column
    * so that errors can be traced back to the correct location in the source file.
    *
    * @param sql The full SQL string that was submitted to PostgreSQL.
@@ -261,7 +261,7 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
       withPassword("norm_password")
       // Run entirely in RAM — no disk I/O for the throwaway database.
       // PostgreSQL 18+ stores data in a version-specific subdirectory under /var/lib/postgresql,
-      // so the mount must be at the parent rather than /var/lib/postgresql/data.
+      // so the mount is placed on the parent of /var/lib/postgresql/data.
       withTmpFs(mapOf("/var/lib/postgresql" to "rw"))
       // Disable durability features we don't need in a throwaway container.
       withCommand(

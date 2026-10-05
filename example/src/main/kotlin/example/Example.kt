@@ -31,7 +31,7 @@ open class Example(
     val georgeStatus: AuthorStatus = george.status  // AuthorStatus.ACTIVE, not the raw String "active"
 
     // Custom projections are effortless, correctly typed, and have the right nullability.
-    // Here a LEFT JOIN means columns from the book table can be null.
+    // Here a LEFT JOIN means columns from the book table can be `null`.
     // Note that Norm doesn't do name mangling. Entity members have the same name as in the database.
     val georgesBestSeller = queries.authorAndMostPopularBook("George R.R. Martin")
     if (georgesBestSeller.title == null) {

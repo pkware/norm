@@ -98,7 +98,7 @@ class AllTypesE2ETest : PostgresTestBase() {
       // When: Query and retrieve the Type object
       val result = queries.all().list().first()
 
-      // Then: Nullable array columns should be null
+      // Then: Nullable array columns should be `null`
       assertThat(result.int_array_type).isNull()
       assertThat(result.text_array_type).isNull()
     }
@@ -114,14 +114,14 @@ class AllTypesE2ETest : PostgresTestBase() {
       // When: Query and retrieve the Type object
       val result = queries.all().list().first()
 
-      // Then: Arrays should be empty, not null
+      // Then: Arrays should be empty, not `null`
       assertThat(result.int_array_type).isNotNull().isEmpty()
       assertThat(result.text_array_type).isNotNull().isEmpty()
     }
 
     @Test
     fun `arrays can contain null elements`() {
-      // Given: Arrays containing null elements
+      // Given: Arrays containing `null` elements
       insertRowWithArrays(
         intArrayNotNull = "ARRAY[1, NULL, 3]",
         textArrayNotNull = "ARRAY['a', NULL, 'c']",
@@ -130,7 +130,7 @@ class AllTypesE2ETest : PostgresTestBase() {
       // When: Query and retrieve the Type object
       val result = queries.all().list().first()
 
-      // Then: Arrays should have 3 elements with null at index 1
+      // Then: Arrays should have 3 elements with `null` at index 1
       assertThat(result.int_array_notnull_type).containsExactly(1, null, 3)
       assertThat(result.text_array_notnull_type).containsExactly("a", null, "c")
     }

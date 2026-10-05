@@ -12,7 +12,7 @@ import java.sql.SQLTimeoutException
  *
  * ## Parameter Binding
  *
- * Two styles of parameter binding are supported, but they **cannot be mixed** within a single query:
+ * Two styles of parameter binding are supported, but they cannot be mixed within a single query:
  *
  * - **Named parameters**: Use `:paramName` syntax in SQL and bind with [bind(name, value)][bind].
  *   Recommended for readability and maintainability.
@@ -64,7 +64,7 @@ public interface Query<RowType> : Many<RowType> {
   /**
    * Binds the given value to the given name in the query.
    *
-   * Note that positional and named arguments cannot be mixed. Unused arguments are ignored.
+   * Positional and named arguments cannot be mixed. Unused arguments are ignored.
    * Overwriting a previously supplied argument is supported.
    *
    * An [Iterable] value binds each element to its own placeholder. `IN (:ids)` bound to `listOf(1, 2, 3)` executes as
@@ -85,7 +85,7 @@ public interface Query<RowType> : Many<RowType> {
    * It's likely that named parameters are a better choice for readability.
    * This method is provided for use in simple cases where the intent and correctness are obvious.
    *
-   * Note that positional and named arguments cannot be mixed.
+   * Positional and named arguments cannot be mixed.
    *
    * @param value The value to bind.
    * @return This query.

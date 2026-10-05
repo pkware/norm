@@ -21,7 +21,7 @@ import javax.sql.DataSource
  *
  * Connection decoration happens at the
  * [DataSource] level, and [DataSourceUtils.getConnection] handles transaction-bound connection reuse. These tests
- * verify that Norm's `SpringConnectionProvider` properly delegates to [DataSourceUtils] rather than bypassing it.
+ * verify that Norm's `SpringConnectionProvider` properly delegates to [DataSourceUtils].
  */
 @SpringBootTest
 @ActiveProfiles("test")

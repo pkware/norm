@@ -13,8 +13,7 @@ internal data class MergeSideNullability(val targetCanBeAbsent: Boolean, val sou
 
 /**
  * Determines, for a `MERGE` statement, whether its target and/or source relation can be entirely
- * absent (all-`NULL`) for some result row — via `EXPLAIN (FORMAT JSON)` rather than
- * `:mergeActionList`/text inspection.
+ * absent (all-`NULL`) for some result row — via `EXPLAIN (FORMAT JSON)`.
  *
  * A `MERGE`'s match-optionality is invisible to `:varnullingrels` (see [mergeAbsentVarnos]): `WHEN NOT
  * MATCHED BY SOURCE` and `WHEN NOT MATCHED [BY TARGET] THEN INSERT` each mean one side of the
@@ -245,8 +244,8 @@ internal fun mergeAbsentVarnos(
   // A simple `MERGE INTO target USING source ON ...` has exactly one other :rtable entry besides
   // the target — the source, of any rtekind. A `USING` clause with more than one relation of its
   // own (e.g. a join or subquery source) has no single relation this method can attribute a join
-  // side to, so it bails rather than guess. Reads the FULL range table, not [rangeTable] (base
-  // tables only), since a CTE source's own varno never appears there at all.
+  // side to, so it bails. Reads the full range table, not [rangeTable] (base tables only), since a
+  // CTE source's own varno never appears there at all.
   val sourceEntries = nodeTreeParser.parseRangeTableEntries(nodeTree).filterKeys { it != targetVarno }
   if (sourceEntries.size != 1) return MergeAbsence.Unresolvable
   val (sourceVarno, sourceEntry) = sourceEntries.entries.single()
@@ -273,7 +272,7 @@ internal fun mergeAbsentVarnos(
  * either under its own `WITH`-clause name (a `"CTE Scan"` node, when not inlined) or, when
  * PostgreSQL inlines it into whatever it scans, under the name [resolveInlinedBaseRelationName]
  * recovers — only for the simplest possible body, `SELECT ... FROM oneBaseTable`. Offering both
- * candidates together never risks a false attribution: for a given plan, at most one can appear.
+ * candidates together never risks a wrong attribution: for a given plan, at most one can appear.
  *
  * @return `null` when [sourceEntry] is neither a base table nor a CTE (a join, subquery, function,
  *   `VALUES`, or another `rtekind` this cannot safely name)
@@ -316,7 +315,7 @@ private fun resolveInlinedBaseRelationName(
  * a specific `:rtable` entry.
  *
  * @return `null` if [relid] cannot be resolved; the caller must fall back to its own safe
- *   default rather than guess.
+ *   default.
  */
 private fun resolveTableName(connection: Connection, relid: Int): String? = try {
   connection.prepareStatement("SELECT relname FROM pg_catalog.pg_class WHERE oid = ?").use { preparedStatement ->

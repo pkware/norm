@@ -132,8 +132,8 @@ class GenerateCodeTest {
 
     val parsedQueries = QueryFileParser.parse(scenarioDirectory.resolve("queries.sql").readText())
 
-    // Scenarios opt in to CRUD generation via norm.properties. The default here is false (not true
-    // as in production) because most test scenarios' golden files were written without CRUD output.
+    // Scenarios opt in to CRUD generation via norm.properties. The default here is `false` (production
+    // uses `true`) because most test scenarios' golden files were written without CRUD output.
     val scenarioProperties = Properties().apply {
       val propsFile = scenarioDirectory.resolve("norm.properties")
       if (propsFile.exists()) propsFile.inputStream().use { load(it) }
@@ -183,9 +183,9 @@ class GenerateCodeTest {
   }
 
   /**
-   * Goes through [generateCode] rather than calling `resolveColumnPostgresType` directly, which is
-   * private. Looking that column up under the name the user configured, rather than the truncated
-   * one the catalog holds, used to fail the whole generation with "not found in catalog".
+   * Exercises `resolveColumnPostgresType` through [generateCode] because the function is private.
+   * The user configures the full over-length name and the catalog holds the truncated one; a lookup
+   * by the configured name that misses fails generation with "not found in catalog".
    */
   @Test
   fun `column-level type mapping on an over-length table and column name resolves through the catalog`() {

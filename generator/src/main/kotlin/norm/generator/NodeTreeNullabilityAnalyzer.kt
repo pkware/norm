@@ -11,23 +11,23 @@ internal const val MAX_EXPRESSION_DEPTH = 100
  * expression via [isNonNull]. This covers outer-join-induced nullability (VAR nodes with
  * non-empty `varnullingrels`), aggregate nullability, strict-function propagation, and more.
  *
- * @param isStrict Returns `true` if the function or operator with the given OID is strict (returns
+ * @property isStrict Returns `true` if the function or operator with the given OID is strict (returns
  *   `null` when any argument is `null`). Used for [isNonNull] evaluation of [PgNodeExpression.FuncExpr],
  *   [PgNodeExpression.OpExpr], [PgNodeExpression.ScalarArrayOpExpr], and [PgNodeExpression.WindowFunc].
- * @param hasNonNullInitialValue Returns `true` if the aggregate with the given OID has a non-null
+ * @property hasNonNullInitialValue Returns `true` if the aggregate with the given OID has a non-null
  *   initial transition value (`agginitval IS NOT NULL` in `pg_aggregate`). Used for [isNonNull]
  *   evaluation of [PgNodeExpression.Aggref].
- * @param isSourceColumnNotNull Returns `true` if the source column identified by `varno` and
+ * @property isSourceColumnNotNull Returns `true` if the source column identified by `varno` and
  *   `varattno` has a `NOT NULL` constraint. Used for [isNonNull] evaluation of [PgNodeExpression.Var].
- * @param isOuterJoinNullable Returns `true` if the given `nullingRelations` set indicates the column
+ * @property isOuterJoinNullable Returns `true` if the given `nullingRelations` set indicates the column
  *   can be nulled by an outer join. Typically `true` when the set is non-empty.
- * @param isAlwaysNonNull Returns `true` for function OIDs that never return `null` for any
+ * @property isAlwaysNonNull Returns `true` for function OIDs that never return `null` for any
  *   combination of argument values, including when every argument is `null` (e.g. `concat`, which
  *   renders a `null` argument as an empty string) — but only for the ordinary (non-`VARIADIC`)
  *   calling form. `concat(VARIADIC arr)` is `null` when `arr` itself is `null` (PostgreSQL 16-18);
  *   `isNonNull`'s [PgNodeExpression.FuncExpr] branch checks [PgNodeExpression.FuncExpr.isVariadic]
  *   before trusting this callback for that form.
- * @param isNeverNullForNonNullInput Returns `true` for function/operator OIDs that are proven total
+ * @property isNeverNullForNonNullInput Returns `true` for function/operator OIDs that are proven total
  *   on non-null input — every combination of non-null arguments produces a non-null result (an
  *   error is fine; only a silent `null` return disqualifies a candidate). `pg_proc.proisstrict`
  *   alone cannot answer this: strict only guarantees NULL-in => NULL-out, never the converse, so
@@ -35,31 +35,31 @@ internal const val MAX_EXPRESSION_DEPTH = 100
  *   ordinary, element-wise calling convention: `isNonNull`'s [PgNodeExpression.FuncExpr] branch
  *   never consults this parameter for a `VARIADIC` call, since the array argument being non-null
  *   says nothing about whether an element inside it is.
- * @param isLagLeadWithDefault Returns `true` for the 3-argument overloads of `lag` and `lead` window
+ * @property isLagLeadWithDefault Returns `true` for the 3-argument overloads of `lag` and `lead` window
  *   functions, which return non-null when both the value and default arguments are non-null.
- * @param isFoldableToConst Returns `true` for function/operator OIDs that are IMMUTABLE and not
+ * @property isFoldableToConst Returns `true` for function/operator OIDs that are IMMUTABLE and not
  *   set-returning (`pg_proc.provolatile = 'i' AND NOT proretset`).
- * @param isNonNullIffFirstArgumentNonNull Returns `true` for function OIDs that are non-null if and
+ * @property isNonNullIffFirstArgumentNonNull Returns `true` for function OIDs that are non-null if and
  *   only if their first argument is non-null, regardless of any other argument's nullability, in
- *   the ORDINARY (non-`VARIADIC`) calling form — used for [isNonNull] evaluation of
+ *   the ordinary (non-`VARIADIC`) calling form — used for [isNonNull] evaluation of
  *   [PgNodeExpression.FuncExpr] when [PgNodeExpression.FuncExpr.isVariadic] is `false`. Backs
  *   `concat_ws`: its first argument is the separator, and `concat_ws(null, 'x', 'y')` is `null`
  *   even though the later, individually-null-tolerant arguments are non-null (PostgreSQL 16-18).
  *   `concat_ws(',', VARIADIC arr)` is a different case this parameter's guarantee does not cover:
- *   it is `null` when `arr` itself is `null` even though the literal separator is non-null (also
- *   true on PostgreSQL 16-18).
- * @param hasGroupingSets `true` when the query block this analyzer evaluates uses GROUPING SETS,
+ *   it is `null` when `arr` itself is `null` even though the literal separator is non-null (the
+ *   same holds on PostgreSQL 16-18).
+ * @property hasGroupingSets `true` when the query block this analyzer evaluates uses GROUPING SETS,
  *   CUBE, or ROLLUP (see [PgNodeTreeParser.hasGroupingSets]). When `true`, [extractColumnNullability]
  *   forces a result column nullable when it is itself a grouping key, or when its expression is not
  *   provably immune to the grouping-set null-extension mechanism. Defaults to `false` (ordinary
  *   [isNonNull] evaluation only) for query blocks without grouping sets.
- * @param isSubLinkSubqueryColumnNotNull Returns `true` when [subselectBlock] — the raw `{QUERY ...}`
+ * @property isSubLinkSubqueryColumnNotNull Returns `true` when [subselectBlock] — the raw `{QUERY ...}`
  *   text of an `ANY_SUBLINK`'s or `ALL_SUBLINK`'s `:subselect` (see
  *   [PgNodeExpression.SubLink.subselectBlock]) — produces exactly one non-junk output column and
  *   that column is provably non-null. Defaults to `{ false }`: every construction site that does
  *   not wire this callback stays conservative (nullable), which is also correct for a nested
  *   sublink once the caller's own depth budget for this analysis is exhausted.
- * @param forceNewNullable `true` when a `RETURNING WITH (OLD AS o, NEW AS n)` reference to `NEW`
+ * @property forceNewNullable `true` when a `RETURNING WITH (OLD AS o, NEW AS n)` reference to `NEW`
  *   (`Var.returningType == `[PgNodeExpression.VAR_RETURNING_TYPE_NEW]`) must be treated as
  *   unconditionally nullable. Set by the caller when the enclosing statement is a plain `DELETE`
  *   (`NEW` never exists — the row is gone; `NEW.col` is `NULL` for every row a `DELETE` returns) or
@@ -186,7 +186,7 @@ internal class NodeTreeNullabilityAnalyzer(
           if (isAlwaysNonNull(expression.functionOid) || isNonNullIffFirstArgumentNonNull(expression.functionOid)) {
             // VARIADIC passes the array argument itself as one value, not exploded into elements,
             // so both guarantees are unsound here as stated: concat(VARIADIC arr) and
-            // concat_ws(',', VARIADIC arr) are both null when arr itself is null (PostgreSQL
+            // concat_ws(',', VARIADIC arr) are both `null` when `arr` itself is `null` (PostgreSQL
             // 16-18). Requiring every argument non-null is sound for both in this form (the
             // separator is still one of the arguments) and preserves real precision
             // (concat_ws(',', VARIADIC ARRAY['a', NULL]) is 'a', still non-null).
@@ -195,7 +195,7 @@ internal class NodeTreeNullabilityAnalyzer(
             // Does not fall through to isStrict/isNeverNullForNonNullInput: that safe-list's
             // "total on non-null input" guarantee was verified only for the ordinary, element-wise
             // calling convention. For a VARIADIC call, recurse() on the array argument is
-            // unconditionally true regardless of NULL elements inside it, so that leg would prove
+            // unconditionally `true` regardless of NULL elements inside it, so that leg would prove
             // nothing about an internal NULL element even if reached.
             false
           }
@@ -235,16 +235,16 @@ internal class NodeTreeNullabilityAnalyzer(
           // matching row, and a NULL row is present. Proving non-null requires all three: the
           // outer operand is non-null; the comparison operator is both isStrict and
           // isNeverNullForNonNullInput; and the subquery's single output column is itself provably
-          // non-null. testExpressionOperatorOid is null for the multi-column `(a, b) IN (SELECT p,
+          // non-null. testExpressionOperatorOid is `null` for the multi-column `(a, b) IN (SELECT p,
           // q FROM w)` row-comparison form, so that form always falls through to nullable.
           //
-          // ALL_SUBLINK (`x op ALL (subquery)`) gets the identical proof, being ANY's dual over AND
-          // instead of OR. An empty subquery is TRUE for ALL (FALSE for ANY) — non-null either way.
+          // ALL_SUBLINK (`x op ALL (subquery)`) gets the identical proof, being ANY's dual over AND.
+          // An empty subquery is TRUE for ALL (FALSE for ANY) — non-null either way.
           // `NOT IN` desugars to a BOOLEXPR not around an ANY_SUBLINK, never an ALL_SUBLINK. The
           // multi-column row-comparison ALL forms fail automatically for the same reason as above.
           //
           // ROWCOMPARE_SUBLINK (`(a, id) < (SELECT v, 1 FROM u)`, no ALL/ANY keyword) is excluded
-          // despite sharing SUBLINK's shape: an EMPTY subquery yields NULL for ROWCOMPARE, so no
+          // despite sharing SUBLINK's shape: an empty subquery yields NULL for ROWCOMPARE, so no
           // combination of the three conditions can rescue it.
           (
             (
@@ -296,7 +296,7 @@ internal class NodeTreeNullabilityAnalyzer(
     }
     // NTILE is strict and always returns non-null from non-null input, so it is on the
     // isNeverNullForNonNullInput safe-list. Other strict window functions (FIRST_VALUE,
-    // LAST_VALUE, NTH_VALUE, LAG/LEAD 1-2 arg) can return null at frame boundaries and are
+    // LAST_VALUE, NTH_VALUE, LAG/LEAD 1-2 arg) can return `null` at frame boundaries and are
     // excluded by omission from that safe-list.
     if (isStrict(expression.windowFunctionOid) &&
       isNeverNullForNonNullInput(expression.windowFunctionOid) &&
@@ -312,13 +312,13 @@ internal class NodeTreeNullabilityAnalyzer(
    * `JSON_SERIALIZE` constructor, branching on [PgNodeExpression.JsonConstructorExpr.type].
    *
    * - `OBJECT`/`ARRAY`: unconditionally non-null, including the zero-argument forms. `ABSENT ON
-   *   NULL`/`NULL ON NULL` only change the JSON document's CONTENT — whether a key with a JSON-`null`
+   *   NULL`/`NULL ON NULL` only change the JSON document's content — whether a key with a JSON-`null`
    *   value is omitted or kept — never whether the SQL-level result is `null`, so `:absent_on_null`
    *   and `:unique` are deliberately not parsed at all.
-   * - `OBJECTAGG`/`ARRAYAGG`: [PgNodeExpression.JsonConstructorExpr.arguments] is always EMPTY for
-   *   these two, so an arguments-based rule would be vacuously true; the underlying
+   * - `OBJECTAGG`/`ARRAYAGG`: [PgNodeExpression.JsonConstructorExpr.arguments] is always empty for
+   *   these two. The analyzer recurses into the underlying
    *   [PgNodeExpression.Aggref]/[PgNodeExpression.WindowFunc] in
-   *   [PgNodeExpression.JsonConstructorExpr.function] is recursed into instead, reaching the existing
+   *   [PgNodeExpression.JsonConstructorExpr.function], reaching the existing
    *   rules that already report an aggregate over an empty group nullable.
    * - `PARSE`/`SCALAR`/`SERIALIZE`: strict single-argument constructs, non-null only when there is an
    *   argument and every argument is non-null.
@@ -374,13 +374,13 @@ internal class NodeTreeNullabilityAnalyzer(
    * an allow-list. An unrecognized code defaults to nullable, the safe direction.
    *
    * The four allowed codes:
-   * - [PgNodeExpression.JSON_BEHAVIOR_ERROR]: raises a runtime error rather than returning a value.
+   * - [PgNodeExpression.JSON_BEHAVIOR_ERROR]: raises a runtime error.
    * - [PgNodeExpression.JSON_BEHAVIOR_EMPTY_ARRAY]/[PgNodeExpression.JSON_BEHAVIOR_EMPTY_OBJECT]:
    *   substitute Postgres's own internal `[]`/`{}` `jsonb` constant, never a user-supplied
    *   expression.
    * - [PgNodeExpression.JSON_BEHAVIOR_DEFAULT]: the one code backed by a genuinely user-supplied
    *   expression (`DEFAULT expr ON EMPTY`/`ON ERROR`), which is why [emptyOk]/[errorOk] recurse into
-   *   it rather than trusting the behavior code alone; `DEFAULT null::jsonb ON EMPTY` is legal and
+   *   it; `DEFAULT null::jsonb ON EMPTY` is legal and
    *   must not be treated as non-null.
    *
    * Deliberately not on this list: [PgNodeExpression.JSON_BEHAVIOR_NULL] (explicitly nullable by
@@ -398,7 +398,7 @@ internal class NodeTreeNullabilityAnalyzer(
   /**
    * Returns `true` only for a `JsonBehaviorType` code confirmed (on PostgreSQL 17) to
    * make `JSON_EXISTS`'s `ON ERROR` clause produce a definite, non-null (`true`/`false`) outcome, or
-   * raise an error rather than returning a value at all. `JSON_EXISTS` has no `ON EMPTY` clause.
+   * raise an error. `JSON_EXISTS` has no `ON EMPTY` clause.
    *
    * With no `ON ERROR` clause written at all, Postgres materializes
    * [PgNodeExpression.JSON_BEHAVIOR_FALSE] — the SQL-standard default — so an absent clause is
@@ -416,15 +416,15 @@ internal class NodeTreeNullabilityAnalyzer(
    * Evaluates an `XMLELEMENT`/`XMLFOREST`/`XMLPI`/`XMLCONCAT`/`XMLROOT`/`XMLPARSE`/`XMLSERIALIZE`
    * construct, branching on [PgNodeExpression.XmlExpr.op]. Only `XMLELEMENT` is total over `null`
    * input. PostgreSQL 16, 17 and 18 agree:
-   * - `xmlelement(name e, NULL::text)` is not `null` — a null child renders as empty content, and a
-   *   null `xmlattributes` value omits that attribute, so the element tag itself always materializes.
+   * - `xmlelement(name e, NULL::text)` is not `null` — a `null` child renders as empty content, and a
+   *   `null` `xmlattributes` value omits that attribute, so the element tag itself always materializes.
    * - `xmlforest(NULL::text AS q)` is `null`, while `xmlforest(NULL::text AS q, 'x' AS r)` is not —
-   *   a null field is omitted and the result nulls only once every field is gone.
+   *   a `null` field is omitted and the result nulls only once every field is gone.
    * - `xmlpi(name php, NULL::text)` is `null`, while the content-less `xmlpi(name php)` is not.
    *
    * [PgNodeExpression.XmlExpr.arguments] merges the node's `:named_args` with its `:args`, so an
-   * `XMLFOREST` field value — which lives in `:named_args` — is visible to the check rather than
-   * silently absent. Any other op code falls through to `false` (nullable), the safe default.
+   * `XMLFOREST` field value — which lives in `:named_args` — is visible to the check. Any other op code falls through
+   * to `false` (nullable), the safe default.
    */
   private fun evaluateXmlExpr(expression: PgNodeExpression.XmlExpr, recurse: (PgNodeExpression) -> Boolean): Boolean =
     when (expression.op) {
@@ -481,9 +481,8 @@ internal class NodeTreeNullabilityAnalyzer(
      * [PgNodeExpression.children], so no variant can silently keep a child unwalked — e.g. a
      * `RETURNING JSON_QUERY(source.column, ...)` is still walked into.
      *
-     * @param depth remaining recursion budget; exhausting it answers `true` (needs resolving)
-     *   rather than `false`, the same fail-toward-conservative default every depth guard in this
-     *   file uses
+     * @param depth remaining recursion budget; exhausting it answers `true` (needs resolving),
+     *   the same fail-toward-conservative default every depth guard in this file uses.
      */
     internal fun containsVarOutsideRelation(
       expression: PgNodeExpression,

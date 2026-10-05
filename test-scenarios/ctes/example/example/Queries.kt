@@ -266,7 +266,7 @@ public interface Queries : Transactable {
   public fun deleteParentReturningQuotedDescriptionUpperViaCte(id: UUID): Many<DeleteParentReturningQuotedDescriptionUpperViaCte> = deleteParentReturningQuotedDescriptionUpperViaCte(id, ::DeleteParentReturningQuotedDescriptionUpperViaCte)
 
   /**
-   * #238: two independently declared CTEs, each referenced by its own real name.
+   * Two independently declared CTEs, each referenced by its own real name.
    *
    * ```sql
    * WITH parent_upper AS (
@@ -282,7 +282,7 @@ public interface Queries : Transactable {
   public fun <T : Any> selectUpperNamesFromTwoCtes(mapper: (parent_name_upper: String, child_name_upper: String) -> T): Many<T>
 
   /**
-   * #238: two independently declared CTEs, each referenced by its own real name.
+   * Two independently declared CTEs, each referenced by its own real name.
    *
    * ```sql
    * WITH parent_upper AS (
@@ -302,7 +302,7 @@ public interface Queries : Transactable {
   public fun selectUpperNamesFromTwoCtesDynamically(): Query<SelectUpperNamesFromTwoCtes> = selectUpperNamesFromTwoCtesDynamically(::SelectUpperNamesFromTwoCtes)
 
   /**
-   * #238: sibling CTEs that both name their output column the same thing must still resolve
+   * Sibling CTEs that both name their output column the same thing must still resolve
    * independently, not to whichever sibling a text scan happens to see first.
    *
    * ```sql
@@ -319,7 +319,7 @@ public interface Queries : Transactable {
   public fun <T : Any> selectSiblingCtesWithSameOutputName(mapper: (parent_same: String, child_same: String) -> T): Many<T>
 
   /**
-   * #238: sibling CTEs that both name their output column the same thing must still resolve
+   * Sibling CTEs that both name their output column the same thing must still resolve
    * independently, not to whichever sibling a text scan happens to see first.
    *
    * ```sql
@@ -340,7 +340,7 @@ public interface Queries : Transactable {
   public fun selectSiblingCtesWithSameOutputNameDynamically(): Query<SelectSiblingCtesWithSameOutputName> = selectSiblingCtesWithSameOutputNameDynamically(::SelectSiblingCtesWithSameOutputName)
 
   /**
-   * #238: a CTE addressed through an explicit `AS x` FROM alias, referenced by the alias.
+   * A CTE addressed through an explicit `AS x` FROM alias, referenced by the alias.
    *
    * ```sql
    * WITH parent_upper2 AS (
@@ -352,7 +352,7 @@ public interface Queries : Transactable {
   public fun <T : Any> selectCteViaExplicitFromAliasAs(mapper: (parent_id: UUID, aliased_name_upper: String) -> T): Many<T>
 
   /**
-   * #238: a CTE addressed through an explicit `AS x` FROM alias, referenced by the alias.
+   * A CTE addressed through an explicit `AS x` FROM alias, referenced by the alias.
    *
    * ```sql
    * WITH parent_upper2 AS (
@@ -368,7 +368,7 @@ public interface Queries : Transactable {
   public fun selectCteViaExplicitFromAliasAsDynamically(): Query<SelectCteViaExplicitFromAliasAs> = selectCteViaExplicitFromAliasAsDynamically(::SelectCteViaExplicitFromAliasAs)
 
   /**
-   * #238: a CTE addressed through an implicit (no `AS`) FROM alias, referenced by the alias.
+   * A CTE addressed through an implicit (no `AS`) FROM alias, referenced by the alias.
    *
    * ```sql
    * WITH parent_upper3 AS (
@@ -380,7 +380,7 @@ public interface Queries : Transactable {
   public fun <T : Any> selectCteViaImplicitFromAlias(mapper: (parent_id: UUID, aliased_name_upper: String) -> T): Many<T>
 
   /**
-   * #238: a CTE addressed through an implicit (no `AS`) FROM alias, referenced by the alias.
+   * A CTE addressed through an implicit (no `AS`) FROM alias, referenced by the alias.
    *
    * ```sql
    * WITH parent_upper3 AS (
@@ -396,7 +396,7 @@ public interface Queries : Transactable {
   public fun selectCteViaImplicitFromAliasDynamically(): Query<SelectCteViaImplicitFromAlias> = selectCteViaImplicitFromAliasDynamically(::SelectCteViaImplicitFromAlias)
 
   /**
-   * #238: two CTEs joined with an explicit ON predicate.
+   * Two CTEs joined with an explicit ON predicate.
    *
    * ```sql
    * WITH parent_upper4 AS (
@@ -412,7 +412,7 @@ public interface Queries : Transactable {
   public fun <T : Any> selectCtesJoinedOnPredicate(mapper: (parent_name_upper: String, child_name_upper: String) -> T): Many<T>
 
   /**
-   * #238: two CTEs joined with an explicit ON predicate.
+   * Two CTEs joined with an explicit ON predicate.
    *
    * ```sql
    * WITH parent_upper4 AS (
@@ -432,8 +432,8 @@ public interface Queries : Transactable {
   public fun selectCtesJoinedOnPredicateDynamically(): Query<SelectCtesJoinedOnPredicate> = selectCtesJoinedOnPredicateDynamically(::SelectCtesJoinedOnPredicate)
 
   /**
-   * #238: an INNER JOIN USING merged column between two CTEs; PostgreSQL aliases it directly to the
-   * left side, so this DOES resolve. child_own_name is a bare, non-merged column from the right side,
+   * An INNER JOIN USING merged column between two CTEs; PostgreSQL aliases it directly to the
+   * left side, so this resolves. child_own_name is a bare, non-merged column from the right side,
    * included only to force a generated data class to inspect.
    *
    * ```sql
@@ -449,8 +449,8 @@ public interface Queries : Transactable {
   public fun <T : Any> selectCtesInnerJoinUsingMergedColumn(mapper: (shared_label: String, child_own_name: String) -> T): Many<T>
 
   /**
-   * #238: an INNER JOIN USING merged column between two CTEs; PostgreSQL aliases it directly to the
-   * left side, so this DOES resolve. child_own_name is a bare, non-merged column from the right side,
+   * An INNER JOIN USING merged column between two CTEs; PostgreSQL aliases it directly to the
+   * left side, so this resolves. child_own_name is a bare, non-merged column from the right side,
    * included only to force a generated data class to inspect.
    *
    * ```sql
@@ -470,7 +470,7 @@ public interface Queries : Transactable {
   public fun selectCtesInnerJoinUsingMergedColumnDynamically(): Query<SelectCtesInnerJoinUsingMergedColumn> = selectCtesInnerJoinUsingMergedColumnDynamically(::SelectCtesInnerJoinUsingMergedColumn)
 
   /**
-   * #238: a FULL JOIN USING merged column between two CTEs is `COALESCE(left, right)`, so it must
+   * A FULL JOIN USING merged column between two CTEs is `COALESCE(left, right)`, so it must
    * resolve to nothing rather than attributing it to either side.
    *
    * ```sql
@@ -486,7 +486,7 @@ public interface Queries : Transactable {
   public fun <T : Any> selectCtesFullJoinUsingMergedColumn(mapper: (shared_label: String?, child_own_name: String?) -> T): Many<T>
 
   /**
-   * #238: a FULL JOIN USING merged column between two CTEs is `COALESCE(left, right)`, so it must
+   * A FULL JOIN USING merged column between two CTEs is `COALESCE(left, right)`, so it must
    * resolve to nothing rather than attributing it to either side.
    *
    * ```sql
@@ -506,8 +506,8 @@ public interface Queries : Transactable {
   public fun selectCtesFullJoinUsingMergedColumnDynamically(): Query<SelectCtesFullJoinUsingMergedColumn> = selectCtesFullJoinUsingMergedColumnDynamically(::SelectCtesFullJoinUsingMergedColumn)
 
   /**
-   * #238: a plain (inner) NATURAL JOIN merged column between two CTEs; like INNER JOIN USING, this
-   * DOES resolve.
+   * A plain (inner) NATURAL JOIN merged column between two CTEs; like INNER JOIN USING, this
+   * resolves.
    *
    * ```sql
    * WITH parent_label AS (
@@ -522,8 +522,8 @@ public interface Queries : Transactable {
   public fun <T : Any> selectCtesNaturalJoin(mapper: (shared_label: String, child_own_name: String) -> T): Many<T>
 
   /**
-   * #238: a plain (inner) NATURAL JOIN merged column between two CTEs; like INNER JOIN USING, this
-   * DOES resolve.
+   * A plain (inner) NATURAL JOIN merged column between two CTEs; like INNER JOIN USING, this
+   * resolves.
    *
    * ```sql
    * WITH parent_label AS (
@@ -542,7 +542,7 @@ public interface Queries : Transactable {
   public fun selectCtesNaturalJoinDynamically(): Query<SelectCtesNaturalJoin> = selectCtesNaturalJoinDynamically(::SelectCtesNaturalJoin)
 
   /**
-   * #238: a NATURAL FULL JOIN merged column between two CTEs is the same COALESCE case as
+   * A NATURAL FULL JOIN merged column between two CTEs is the same COALESCE case as
    * selectCtesFullJoinUsingMergedColumn above, so it must resolve to nothing.
    *
    * ```sql
@@ -558,7 +558,7 @@ public interface Queries : Transactable {
   public fun <T : Any> selectCtesNaturalFullJoin(mapper: (shared_label: String?, child_own_name: String?) -> T): Many<T>
 
   /**
-   * #238: a NATURAL FULL JOIN merged column between two CTEs is the same COALESCE case as
+   * A NATURAL FULL JOIN merged column between two CTEs is the same COALESCE case as
    * selectCtesFullJoinUsingMergedColumn above, so it must resolve to nothing.
    *
    * ```sql
@@ -578,7 +578,7 @@ public interface Queries : Transactable {
   public fun selectCtesNaturalFullJoinDynamically(): Query<SelectCtesNaturalFullJoin> = selectCtesNaturalFullJoinDynamically(::SelectCtesNaturalFullJoin)
 
   /**
-   * #238: a comma-separated FROM list mixing a CTE, an ordinary table, a view, a derived table, and
+   * A comma-separated FROM list mixing a CTE, an ordinary table, a view, a derived table, and
    * a set-returning function; only the CTE-derived column should document its expression.
    *
    * ```sql
@@ -605,7 +605,7 @@ public interface Queries : Transactable {
   ) -> T): Many<T>
 
   /**
-   * #238: a comma-separated FROM list mixing a CTE, an ordinary table, a view, a derived table, and
+   * A comma-separated FROM list mixing a CTE, an ordinary table, a view, a derived table, and
    * a set-returning function; only the CTE-derived column should document its expression.
    *
    * ```sql
@@ -636,7 +636,7 @@ public interface Queries : Transactable {
   public fun selectMixedFromSourcesCommaSeparatedDynamically(): Query<SelectMixedFromSourcesCommaSeparated> = selectMixedFromSourcesCommaSeparatedDynamically(::SelectMixedFromSourcesCommaSeparated)
 
   /**
-   * #238: a CTE selecting from another CTE; provenance must chase the bare column reference through
+   * A CTE selecting from another CTE; provenance must chase the bare column reference through
    * to the CTE that actually computed it.
    *
    * ```sql
@@ -652,7 +652,7 @@ public interface Queries : Transactable {
   public fun <T : Any> selectChainedCteProvenance(mapper: (id: UUID, name_upper: String) -> T): Many<T>
 
   /**
-   * #238: a CTE selecting from another CTE; provenance must chase the bare column reference through
+   * A CTE selecting from another CTE; provenance must chase the bare column reference through
    * to the CTE that actually computed it.
    *
    * ```sql
@@ -672,9 +672,9 @@ public interface Queries : Transactable {
   public fun selectChainedCteProvenanceDynamically(): Query<SelectChainedCteProvenance> = selectChainedCteProvenanceDynamically(::SelectChainedCteProvenance)
 
   /**
-   * #238: a nested WITH inside a CTE body shadows an outer CTE of the same name; provenance must
+   * A nested WITH inside a CTE body shadows an outer CTE of the same name; provenance must
    * resolve against the inner, correctly scoped body, not the outer one. The literal `1 AS n` proves
-   * the OUTER cte's own body position is also correctly attributed, independent of either "shadow_cte".
+   * the outer CTE's own body position is also correctly attributed, independent of either "shadow_cte".
    *
    * ```sql
    * WITH shadow_cte AS (
@@ -692,9 +692,9 @@ public interface Queries : Transactable {
   public fun <T : Any> selectNestedCteShadowingOuterName(mapper: (ux: String, n: Int) -> T): Many<T>
 
   /**
-   * #238: a nested WITH inside a CTE body shadows an outer CTE of the same name; provenance must
+   * A nested WITH inside a CTE body shadows an outer CTE of the same name; provenance must
    * resolve against the inner, correctly scoped body, not the outer one. The literal `1 AS n` proves
-   * the OUTER cte's own body position is also correctly attributed, independent of either "shadow_cte".
+   * the outer CTE's own body position is also correctly attributed, independent of either "shadow_cte".
    *
    * ```sql
    * WITH shadow_cte AS (
@@ -716,7 +716,7 @@ public interface Queries : Transactable {
   public fun selectNestedCteShadowingOuterNameDynamically(): Query<SelectNestedCteShadowingOuterName> = selectNestedCteShadowingOuterNameDynamically(::SelectNestedCteShadowingOuterName)
 
   /**
-   * #238: UPDATE ... FROM cte ... RETURNING resolves the returned CTE column to its body position.
+   * UPDATE ... FROM cte ... RETURNING resolves the returned CTE column to its body position.
    *
    * ```sql
    * WITH desc_source AS (
@@ -731,7 +731,7 @@ public interface Queries : Transactable {
   public fun <T : Any> updateChildNameFromParentDescriptionUpper(mapper: (source_parent_id: UUID, updated_description: String?) -> T): Many<T>
 
   /**
-   * #238: UPDATE ... FROM cte ... RETURNING resolves the returned CTE column to its body position.
+   * UPDATE ... FROM cte ... RETURNING resolves the returned CTE column to its body position.
    *
    * ```sql
    * WITH desc_source AS (
@@ -750,7 +750,7 @@ public interface Queries : Transactable {
   public fun updateChildNameFromParentDescriptionUpperDynamically(): Query<UpdateChildNameFromParentDescriptionUpper> = updateChildNameFromParentDescriptionUpperDynamically(::UpdateChildNameFromParentDescriptionUpper)
 
   /**
-   * #238: DELETE ... USING cte ... RETURNING resolves the returned CTE column to its body position.
+   * DELETE ... USING cte ... RETURNING resolves the returned CTE column to its body position.
    *
    * ```sql
    * WITH desc_source AS (
@@ -764,7 +764,7 @@ public interface Queries : Transactable {
   public fun <T : Any> deleteChildUsingParentDescriptionUpper(mapper: (source_parent_id: UUID, deleted_description: String?) -> T): Many<T>
 
   /**
-   * #238: DELETE ... USING cte ... RETURNING resolves the returned CTE column to its body position.
+   * DELETE ... USING cte ... RETURNING resolves the returned CTE column to its body position.
    *
    * ```sql
    * WITH desc_source AS (
@@ -782,7 +782,7 @@ public interface Queries : Transactable {
   public fun deleteChildUsingParentDescriptionUpperDynamically(): Query<DeleteChildUsingParentDescriptionUpper> = deleteChildUsingParentDescriptionUpperDynamically(::DeleteChildUsingParentDescriptionUpper)
 
   /**
-   * #238: INSERT ... SELECT ... FROM cte RETURNING; the RETURNING list resolves against the INSERT
+   * INSERT ... SELECT ... FROM cte RETURNING; the RETURNING list resolves against the INSERT
    * target relation, never the feeding CTE, so this must document the ordinary columns, not the CTE.
    *
    * ```sql
@@ -797,7 +797,7 @@ public interface Queries : Transactable {
   public fun <T : Any> insertChildFromParentDescriptionUpper(mapper: (inserted_parent_id: UUID, inserted_name: String?) -> T): Many<T>
 
   /**
-   * #238: INSERT ... SELECT ... FROM cte RETURNING; the RETURNING list resolves against the INSERT
+   * INSERT ... SELECT ... FROM cte RETURNING; the RETURNING list resolves against the INSERT
    * target relation, never the feeding CTE, so this must document the ordinary columns, not the CTE.
    *
    * ```sql
@@ -816,10 +816,10 @@ public interface Queries : Transactable {
   public fun insertChildFromParentDescriptionUpperDynamically(): Query<InsertChildFromParentDescriptionUpper> = insertChildFromParentDescriptionUpperDynamically(::InsertChildFromParentDescriptionUpper)
 
   /**
-   * #238: an explicit column list is resolved positionally against the body's own resname, not the
+   * An explicit column list is resolved positionally against the body's own resname, not the
    * renamed column name -- but "parent_label" itself still resolves to nothing here, since its body
    * item ("UPPER(name)", with no AS and no implicit alias token at all) has no verifiable name to
-   * cross-validate the position against. "parent_id" (a bare, unaliased "id") IS verifiable by its
+   * cross-validate the position against. "parent_id" (a bare, unaliased "id") is verifiable by its
    * own name, and resolves correctly to "parent.id".
    *
    * ```sql
@@ -832,10 +832,10 @@ public interface Queries : Transactable {
   public fun <T : Any> selectParentViaCteWithExplicitColumnList(mapper: (parent_label: String, parent_id: UUID) -> T): Many<T>
 
   /**
-   * #238: an explicit column list is resolved positionally against the body's own resname, not the
+   * An explicit column list is resolved positionally against the body's own resname, not the
    * renamed column name -- but "parent_label" itself still resolves to nothing here, since its body
    * item ("UPPER(name)", with no AS and no implicit alias token at all) has no verifiable name to
-   * cross-validate the position against. "parent_id" (a bare, unaliased "id") IS verifiable by its
+   * cross-validate the position against. "parent_id" (a bare, unaliased "id") is verifiable by its
    * own name, and resolves correctly to "parent.id".
    *
    * ```sql
@@ -852,7 +852,7 @@ public interface Queries : Transactable {
   public fun selectParentViaCteWithExplicitColumnListDynamically(): Query<SelectParentViaCteWithExplicitColumnList> = selectParentViaCteWithExplicitColumnListDynamically(::SelectParentViaCteWithExplicitColumnList)
 
   /**
-   * #238: WITH RECURSIVE resolves to nothing, since no single body position feeds every iteration.
+   * WITH RECURSIVE resolves to nothing, since no single body position feeds every iteration.
    *
    * ```sql
    * WITH RECURSIVE parent_chain AS (
@@ -872,7 +872,7 @@ public interface Queries : Transactable {
   ) -> T): Many<T>
 
   /**
-   * #238: WITH RECURSIVE resolves to nothing, since no single body position feeds every iteration.
+   * WITH RECURSIVE resolves to nothing, since no single body position feeds every iteration.
    *
    * ```sql
    * WITH RECURSIVE parent_chain AS (
@@ -896,7 +896,7 @@ public interface Queries : Transactable {
   public fun countChildGenerationsRecursiveDynamically(): Query<CountChildGenerationsRecursive> = countChildGenerationsRecursiveDynamically(::CountChildGenerationsRecursive)
 
   /**
-   * #238: a CTE body with a top-level set operation resolves to nothing.
+   * A CTE body with a top-level set operation resolves to nothing.
    *
    * ```sql
    * WITH combined_upper AS (
@@ -910,7 +910,7 @@ public interface Queries : Transactable {
   public fun <T : Any> selectUpperNameViaCteWithSetOperationBody(mapper: (id: UUID, name_upper: String) -> T): Many<T>
 
   /**
-   * #238: a CTE body with a top-level set operation resolves to nothing.
+   * A CTE body with a top-level set operation resolves to nothing.
    *
    * ```sql
    * WITH combined_upper AS (
@@ -928,7 +928,7 @@ public interface Queries : Transactable {
   public fun selectUpperNameViaCteWithSetOperationBodyDynamically(): Query<SelectUpperNameViaCteWithSetOperationBody> = selectUpperNameViaCteWithSetOperationBodyDynamically(::SelectUpperNameViaCteWithSetOperationBody)
 
   /**
-   * #238: a CTE body that is a bare `TABLE x`. `TABLE x` cannot itself carry a computed expression,
+   * A CTE body that is a bare `TABLE x`. `TABLE x` cannot itself carry a computed expression,
    * so the derived column that pins provenance is computed in the main query instead, over a column
    * passed straight through from the CTE.
    *
@@ -946,7 +946,7 @@ public interface Queries : Transactable {
   ) -> T): Many<T>
 
   /**
-   * #238: a CTE body that is a bare `TABLE x`. `TABLE x` cannot itself carry a computed expression,
+   * A CTE body that is a bare `TABLE x`. `TABLE x` cannot itself carry a computed expression,
    * so the derived column that pins provenance is computed in the main query instead, over a column
    * passed straight through from the CTE.
    *
@@ -968,7 +968,7 @@ public interface Queries : Transactable {
   public fun selectParentViaCteTableDynamically(): Query<SelectParentViaCteTable> = selectParentViaCteTableDynamically(::SelectParentViaCteTable)
 
   /**
-   * #238: a CTE body that is a bare `VALUES (...)`.
+   * A CTE body that is a bare `VALUES (...)`.
    *
    * ```sql
    * WITH constant_rows AS (
@@ -980,7 +980,7 @@ public interface Queries : Transactable {
   public fun <T : Any> selectViaCteValues(mapper: (column1: Int?, column2: String?) -> T): Many<T>
 
   /**
-   * #238: a CTE body that is a bare `VALUES (...)`.
+   * A CTE body that is a bare `VALUES (...)`.
    *
    * ```sql
    * WITH constant_rows AS (
@@ -996,7 +996,7 @@ public interface Queries : Transactable {
   public fun selectViaCteValuesDynamically(): Query<SelectViaCteValues> = selectViaCteValuesDynamically(::SelectViaCteValues)
 
   /**
-   * #238: a CTE body wrapped in redundant parentheses still resolves normally.
+   * A CTE body wrapped in redundant parentheses still resolves normally.
    *
    * ```sql
    * WITH upper_name AS (
@@ -1008,7 +1008,7 @@ public interface Queries : Transactable {
   public fun <T : Any> selectParentUpperNameViaParenthesizedCte(mapper: (id: UUID, name_upper: String) -> T): Many<T>
 
   /**
-   * #238: a CTE body wrapped in redundant parentheses still resolves normally.
+   * A CTE body wrapped in redundant parentheses still resolves normally.
    *
    * ```sql
    * WITH upper_name AS (
@@ -1024,7 +1024,7 @@ public interface Queries : Transactable {
   public fun selectParentUpperNameViaParenthesizedCteDynamically(): Query<SelectParentUpperNameViaParenthesizedCte> = selectParentUpperNameViaParenthesizedCteDynamically(::SelectParentUpperNameViaParenthesizedCte)
 
   /**
-   * #238: a top-level set operation in the main query must never document just the first branch's
+   * A top-level set operation in the main query must never document just the first branch's
    * expression, so this resolves to nothing.
    *
    * ```sql
@@ -1039,7 +1039,7 @@ public interface Queries : Transactable {
   public fun <T : Any> selectUpperNameUnionAcrossTables(mapper: (id: UUID?, name_upper: String?) -> T): Many<T>
 
   /**
-   * #238: a top-level set operation in the main query must never document just the first branch's
+   * A top-level set operation in the main query must never document just the first branch's
    * expression, so this resolves to nothing.
    *
    * ```sql
@@ -1058,7 +1058,7 @@ public interface Queries : Transactable {
   public fun selectUpperNameUnionAcrossTablesDynamically(): Query<SelectUpperNameUnionAcrossTables> = selectUpperNameUnionAcrossTablesDynamically(::SelectUpperNameUnionAcrossTables)
 
   /**
-   * #238: `SELECT *` at the OUTER level, expanding a CTE's own explicit column list -- including one
+   * `SELECT *` at the outer level, expanding a CTE's own explicit column list -- including one
    * that is itself a computed expression, so the star-expanded result gets its own type with a
    * pinned `@property` line instead of aliasing `Parent` and pinning nothing.
    *
@@ -1077,7 +1077,7 @@ public interface Queries : Transactable {
   ) -> T): Many<T>
 
   /**
-   * #238: `SELECT *` at the OUTER level, expanding a CTE's own explicit column list -- including one
+   * `SELECT *` at the outer level, expanding a CTE's own explicit column list -- including one
    * that is itself a computed expression, so the star-expanded result gets its own type with a
    * pinned `@property` line instead of aliasing `Parent` and pinning nothing.
    *
@@ -1100,8 +1100,8 @@ public interface Queries : Transactable {
   public fun selectAllColumnsOuterFromCteDynamically(): Query<SelectAllColumnsOuterFromCte> = selectAllColumnsOuterFromCteDynamically(::SelectAllColumnsOuterFromCte)
 
   /**
-   * #238: `SELECT *` at the INNER (CTE body) level. A star sharing a body with any other item -- even
-   * a computed one -- is deliberately UNRESOLVABLE text-side (parseOutputItemsWithAlias's own star
+   * `SELECT *` at the inner (CTE body) level. A star sharing a body with any other item -- even
+   * a computed one -- is deliberately unresolvable text-side (parseOutputItemsWithAlias's own star
    * truncation guard drops the star and everything after it, so the item count can never match the
    * node tree's), so the derived column that pins provenance is computed in the main query instead,
    * over a column passed straight through the inner star.
@@ -1120,8 +1120,8 @@ public interface Queries : Transactable {
   ) -> T): Many<T>
 
   /**
-   * #238: `SELECT *` at the INNER (CTE body) level. A star sharing a body with any other item -- even
-   * a computed one -- is deliberately UNRESOLVABLE text-side (parseOutputItemsWithAlias's own star
+   * `SELECT *` at the inner (CTE body) level. A star sharing a body with any other item -- even
+   * a computed one -- is deliberately unresolvable text-side (parseOutputItemsWithAlias's own star
    * truncation guard drops the star and everything after it, so the item count can never match the
    * node tree's), so the derived column that pins provenance is computed in the main query instead,
    * over a column passed straight through the inner star.
@@ -1144,7 +1144,7 @@ public interface Queries : Transactable {
   public fun selectAllColumnsInnerCteDynamically(): Query<SelectAllColumnsInnerCte> = selectAllColumnsInnerCteDynamically(::SelectAllColumnsInnerCte)
 
   /**
-   * #238: a CTE body item with an implicit (no `AS`) alias.
+   * A CTE body item with an implicit (no `AS`) alias.
    *
    * ```sql
    * WITH upper_name AS (
@@ -1156,7 +1156,7 @@ public interface Queries : Transactable {
   public fun <T : Any> selectParentUpperNameImplicitAlias(mapper: (id: UUID, y: String) -> T): Many<T>
 
   /**
-   * #238: a CTE body item with an implicit (no `AS`) alias.
+   * A CTE body item with an implicit (no `AS`) alias.
    *
    * ```sql
    * WITH upper_name AS (
@@ -1172,7 +1172,7 @@ public interface Queries : Transactable {
   public fun selectParentUpperNameImplicitAliasDynamically(): Query<SelectParentUpperNameImplicitAlias> = selectParentUpperNameImplicitAliasDynamically(::SelectParentUpperNameImplicitAlias)
 
   /**
-   * #238: a CTE name with escaped embedded double quotes, resolved by its real, unescaped name, and
+   * A CTE name with escaped embedded double quotes, resolved by its real, unescaped name, and
    * a quoted, mixed-case, space-containing output column.
    *
    * ```sql
@@ -1185,7 +1185,7 @@ public interface Queries : Transactable {
   public fun <T : Any> selectViaQuotedCteNameWithEmbeddedQuotes(mapper: (id: UUID, `My Col`: String) -> T): Many<T>
 
   /**
-   * #238: a CTE name with escaped embedded double quotes, resolved by its real, unescaped name, and
+   * A CTE name with escaped embedded double quotes, resolved by its real, unescaped name, and
    * a quoted, mixed-case, space-containing output column.
    *
    * ```sql
@@ -1202,7 +1202,7 @@ public interface Queries : Transactable {
   public fun selectViaQuotedCteNameWithEmbeddedQuotesDynamically(): Query<SelectViaQuotedCteNameWithEmbeddedQuotes> = selectViaQuotedCteNameWithEmbeddedQuotesDynamically(::SelectViaQuotedCteNameWithEmbeddedQuotes)
 
   /**
-   * #238 9.2: a lone `SELECT *` over a CTE whose FIRST output column is itself computed. The
+   * A lone `SELECT *` over a CTE whose first output column is itself computed. The
    * pre-existing select-item/result-column count mismatch guard (buildTypeProjectionForQuery's own
    * parseSelectItems call site) already declines attribution here regardless -- a star's expansion
    * width is never knowable from text alone, so the raw item count (1, just "*") can never match the
@@ -1220,7 +1220,7 @@ public interface Queries : Transactable {
   public fun <T : Any> selectComputedColumnFirstViaOuterStar(mapper: (name_upper: String, id: UUID) -> T): Many<T>
 
   /**
-   * #238 9.2: a lone `SELECT *` over a CTE whose FIRST output column is itself computed. The
+   * A lone `SELECT *` over a CTE whose first output column is itself computed. The
    * pre-existing select-item/result-column count mismatch guard (buildTypeProjectionForQuery's own
    * parseSelectItems call site) already declines attribution here regardless -- a star's expansion
    * width is never knowable from text alone, so the raw item count (1, just "*") can never match the

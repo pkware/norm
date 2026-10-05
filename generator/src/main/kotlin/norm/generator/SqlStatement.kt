@@ -67,7 +67,7 @@ internal class SqlStatement(
    * JDBC's batch API ([java.sql.PreparedStatement.executeBatch]) does not support SQL `RETURNING`
    * clauses — batch results are only available via [java.sql.PreparedStatement.getGeneratedKeys].
    *
-   * Only true for CRUD-synthesized `:one` INSERT queries that have both parameters (insertable
+   * Only `true` for CRUD-synthesized `:one` INSERT queries that have both parameters (insertable
    * columns) and result columns (RETURNING columns). [batchSql] holds the `RETURNING`-free SQL for
    * this case, and the column names are passed to [java.sql.Connection.prepareStatement] for
    * [java.sql.PreparedStatement.getGeneratedKeys] retrieval.
@@ -100,8 +100,8 @@ internal class SqlStatement(
   /**
    * Whether this SQL statement can have a dynamic variant generated.
    *
-   * Dynamic queries return [Query] instead of [Many], allowing callers to append SQL fragments
-   * and bind parameters at runtime. Only parameterless `:many` queries are eligible, as they
+   * Dynamic queries return [Query], allowing callers to append SQL fragments and bind parameters
+   * at runtime. Only parameterless `:many` queries are eligible, as they
    * serve as a base for dynamic composition.
    */
   val canBeDynamic: Boolean
@@ -163,11 +163,11 @@ internal class SqlStatement(
 
   /**
    * 0-based indices into [parameters] for CRUD-synthesized INSERT columns that have a database
-   * `DEFAULT` the caller may override (see [norm.generator.CrudQuerySynthesizer]).
+   * `DEFAULT` the caller may override (see [CrudQuerySynthesizer]).
    *
    * Always trailing: every index before the first one here is a required column, in table order,
    * followed by these in table order — see [ParsedQuery.overridableDefaultParameterPositions] and
-   * [norm.generator.InterfaceBuilder]'s parameter ordering, which both rely on this.
+   * [InterfaceBuilder]'s parameter ordering, which both rely on this.
    *
    * Empty for every statement except such an INSERT with at least one such column. This can't be
    * recovered from [parameters] itself: [JdbcAnalyzer.buildParameters] constructs each parameter's
@@ -260,7 +260,7 @@ internal class SqlStatement(
     // If any of the columns reference different tables then we don't need to keep going
     if (queryColumns.asSequence().map(Column::table).toSet().size > 1) return null
 
-    // Table is null when using sqlc.embed(). Just means it's not a star projection.
+    // Table is `null` when using sqlc.embed(). Just means it's not a star projection.
     val table = queryColumns.first().table ?: return null
     return catalog.resolveTable(table)
   }
@@ -269,10 +269,10 @@ internal class SqlStatement(
 /**
  * Details about the return type of a Kotlin function representing a [SqlStatement].
  *
- * @param kotlinType The base Kotlin type. For example, `Person` or `String`. This does not take into account
+ * @property kotlinType The base Kotlin type. For example, `Person` or `String`. This does not take into account
  * the query's arity - for that, see [Command]. If `null`, the statement does not return any values.
- * @param builder Code to build the [kotlinType]. Assume a [ResultSet] is the receiver.
- * @param creationParameters Inputs to a function (constructor, mapper, etc.) able to create a [kotlinType].
+ * @property builder Code to build the [kotlinType]. Assume a [ResultSet] is the receiver.
+ * @property creationParameters Inputs to a function (constructor, mapper, etc.) able to create a [kotlinType].
  */
 internal data class ReturnType(
   val kotlinType: TypeName?,
@@ -297,10 +297,10 @@ internal data class ReturnType(
 /**
  * Maps a single JDBC `?` placeholder to the [SqlStatement] parameter that provides its value.
  *
- * @param jdbcPosition 1-based position of the `?` in the prepared statement.
- * @param parameterIndex Index into [SqlStatement.parameters] (and [SqlStatement.getParameterName]).
- * @param column Column metadata of this occurrence (always non-null; validated in [SqlStatement.init]).
- * @param mappable Type mapping of [column], used to bind the value at [jdbcPosition].
+ * @property jdbcPosition 1-based position of the `?` in the prepared statement.
+ * @property parameterIndex Index into [SqlStatement.parameters] (and [SqlStatement.getParameterName]).
+ * @property column Column metadata of this occurrence (always non-null; validated in [SqlStatement.init]).
+ * @property mappable Type mapping of [column], used to bind the value at [jdbcPosition].
  */
 internal data class ParameterBinding(
   val jdbcPosition: Int,

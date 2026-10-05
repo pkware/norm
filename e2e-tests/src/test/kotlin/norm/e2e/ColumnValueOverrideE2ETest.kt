@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test
 import java.io.File
 
 /**
- * Live-database coverage for #299: a synthesized `insert*` function's overridable-default column
+ * Live-database coverage that a synthesized `insert*` function's overridable-default column
  * (`preference.note`, nullable with `DEFAULT 'n/a'`) supports all three [ColumnValue] states --
  * omitted (the database's own `DEFAULT`), an explicit value, and an explicit SQL `NULL` -- and each
  * is distinguishable from the others, for both the single-row and the batch insert path.

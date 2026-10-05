@@ -32,7 +32,7 @@ internal fun testPostgresContainer(databaseName: String, inMemory: Boolean = fal
     if (inMemory) {
       // Run entirely in RAM — no disk I/O for the throwaway database.
       // PostgreSQL 18+ stores data in a version-specific subdirectory under /var/lib/postgresql,
-      // so the mount must be at the parent rather than /var/lib/postgresql/data.
+      // so the mount is /var/lib/postgresql, the parent of the data directory.
       withTmpFs(mapOf("/var/lib/postgresql" to "rw"))
       // Disable durability features we don't need in a throwaway container.
       withCommand(

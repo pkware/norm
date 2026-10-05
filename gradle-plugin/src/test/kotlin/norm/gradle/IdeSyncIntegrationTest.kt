@@ -24,10 +24,8 @@ import kotlin.io.path.writeText
  * under its own name that IntelliJ IDEA runs on every Gradle sync (see [IdeIntegration] for why the name
  * matters).
  *
- * Replaces an earlier `gradle-idea-ext` `afterSync` approach, which reached from a project into
- * `project.rootProject` and was illegal under Gradle's Isolated Projects for any project but the root.
- * `configureGenerationOnIdeSync` only touches its own project's `tasks` container, so it needs no such
- * guard.
+ * `configureGenerationOnIdeSync` touches only its own project's `tasks` container, never
+ * `project.rootProject`, so it is compatible with Gradle's Isolated Projects in every project.
  *
  * Shares [TestProject.COMPOSITE_BUILD_RESOURCE_LOCK] with `NormPluginTest`: both run TestKit builds that
  * `includeBuild` the Norm root project, and two running at once race on the shared `buildSrc` project's
@@ -63,8 +61,8 @@ class IdeSyncIntegrationTest {
     fun `configures cleanly with zero cross-project problems`() {
       setUpMultiProjectAppBuild(appDirectory = projectDir.resolve("app"))
 
-      // Under Gradle 9.7, an Isolated Projects violation fails the build instead of printing a
-      // diagnostic. `.build()` returning at all (not throwing `UnexpectedBuildFailure`) is the proof no
+      // Under Gradle 9.7, an Isolated Projects violation fails the build.
+      // `.build()` returning at all (not throwing `UnexpectedBuildFailure`) is the proof no
       // cross-project access occurred.
       val result = gradleRunner(":app:help", "--isolated-projects").build()
 
@@ -76,7 +74,7 @@ class IdeSyncIntegrationTest {
   inner class RealGenerationOnSync {
 
     /**
-     * Confirms the wiring actually runs generation, not just that a dependency edge exists on paper.
+     * Confirms the wiring runs generation.
      * Single-project build, cheaper than a second Testcontainers-backed multi-project build, since
      * [SubprojectUnderIsolatedProjects] already covers the subproject dependency wiring via `--dry-run`.
      * Isolated Projects stays enabled here too, to confirm real execution is unaffected by it.
@@ -97,9 +95,9 @@ class IdeSyncIntegrationTest {
   inner class ResolvedTaskGraph {
 
     /**
-     * Asserts directly on [org.gradle.api.tasks.TaskDependency] rather than `--dry-run` text or build
-     * outcome: a verification task queries `prepareKotlinIdeaImportNorm`'s resolved dependencies and fails
-     * the build if `normGenerateTest` is not among them. Catches a `dependsOn` resolving to an empty list
+     * Asserts directly on [org.gradle.api.tasks.TaskDependency]. A verification task queries
+     * `prepareKotlinIdeaImportNorm`'s resolved dependencies and fails the build if `normGenerateTest` is not
+     * among them. Catches a `dependsOn` resolving to an empty list
      * even if the rest of the build still happens to succeed.
      */
     @Test
@@ -158,9 +156,8 @@ class IdeSyncIntegrationTest {
     }
 
     /**
-     * Same scenario, but the consumer's task is registered at build-script top level, which ran before
-     * Norm's `afterEvaluate` even in the pre-fix design and so already passed. Kept alongside the test
-     * above to cover both orderings.
+     * Same scenario, but the consumer's task is registered at build-script top level, which runs before
+     * Norm's `afterEvaluate`. Covers the other ordering from the test above.
      */
     @Test
     fun `builds successfully when the consumer's task is registered at top level`() {

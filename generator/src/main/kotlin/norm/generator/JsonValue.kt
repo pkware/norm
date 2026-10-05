@@ -31,7 +31,7 @@ internal sealed interface JsonValue {
     /**
      * The [JsonObject] items of [key]'s array value, in order. Empty when [key] is absent from
      * [fields], its value is not a JSON array, or the array has no object items; a non-object item
-     * anywhere in the array is dropped rather than causing a failure.
+     * anywhere in the array is dropped without causing a failure.
      */
     fun objectArrayField(key: String): List<JsonObject> =
       (fields[key] as? JsonArray)?.items?.filterIsInstance<JsonObject>() ?: emptyList()

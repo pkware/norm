@@ -152,8 +152,8 @@ internal class PgNodeExpressionParser(private val scanner: PgNodeTreeScanner) {
     // :testexpr is extracted unconditionally, not just for ANY/ALL: outerOperand also feeds
     // GroupingSetNullExtension.safetyWalkChildren, NodeTreeNullabilityAnalyzer.containsVarOutsideRelation, and
     // GroupRteSubstitution's Var walk. Every other sublink type either emits no :testexpr or emits a
-    // ROWCOMPAREEXPR with no readable :args, so a future SubLinkType carrying a real testexpr becomes
-    // visible automatically instead of being hidden by a subLinkType gate. isNonNull's ANY/ALL proof
+    // ROWCOMPAREEXPR with no readable :args, so any SubLinkType carrying a real testexpr is
+    // visible automatically. isNonNull's ANY/ALL proof
     // stays gated below, so this alone cannot make any sublink provably non-null.
     val testExprBlock = scanner.blockAtDepthOne(text, ":testexpr")
     val outerOperand = testExprBlock?.let { testExpr ->
@@ -284,8 +284,7 @@ internal class PgNodeExpressionParser(private val scanner: PgNodeTreeScanner) {
 
   /**
    * Parses a `{JSONVALUEEXPR ...}` block — Postgres's wrapper around a JSON-constructor argument
-   * needing `FORMAT`-aware coercion — by transparently unwrapping to its `:formatted_expr` child
-   * rather than modeling it as its own [PgNodeExpression] variant.
+   * needing `FORMAT`-aware coercion — by transparently unwrapping to its `:formatted_expr` child.
    *
    * Without this case a `{JSONVALUEEXPR ...}` parses to [PgNodeExpression.Unknown], which
    * [NodeTreeNullabilityAnalyzer.isNonNull] always treats as nullable, so

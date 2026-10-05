@@ -13,12 +13,12 @@ import org.commonmark.parser.Parser
 import org.junit.jupiter.api.Test
 
 /**
- * Regression coverage for [addSqlStatementInterfaceMethod]'s `@param` KDoc lines: a stray backtick in
- * one parameter's column comment must not be free to pair with a backtick belonging to a later
- * parameter's own comment, the exact defect class [escapeMarkdownBacktick] already fixed for
- * [TypeRepository]'s `@property` lines — this emission path shares the same "single `\n`, no blank
- * line, between consecutive tags" shape, but is invisible to
- * [SourceReferenceLiveVerificationTest] since it produces no `@property` source-reference span.
+ * Coverage for [addSqlStatementInterfaceMethod]'s `@param` KDoc lines: a stray backtick in one
+ * parameter's column comment must not pair with a backtick in a later parameter's comment.
+ * [escapeMarkdownBacktick] prevents this for [TypeRepository]'s `@property` lines, and this emission
+ * path has the same shape (a single `\n`, no blank line, between consecutive tags).
+ * [SourceReferenceLiveVerificationTest] does not cover it because it produces no `@property`
+ * source-reference span.
  */
 class InterfaceBuilderKdocTest {
 

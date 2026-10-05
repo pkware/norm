@@ -55,7 +55,7 @@ public object CrudQuerySynthesizer {
     val sourceFile = "<synthesized CRUD for table '$qualifiedTable'>"
 
     val queries = buildList {
-      // INSERT — null when all columns are auto-increment and/or generated-always
+      // INSERT — `null` when all columns are auto-increment and/or generated-always
       synthesizeInsert(qualifiedTable, methodSuffix, allColumns, quoteIdentifier)?.let(::add)
 
       // PK-dependent methods
@@ -78,15 +78,14 @@ public object CrudQuerySynthesizer {
    * Generates an INSERT query. Auto-increment and generated-always columns are always excluded from
    * the VALUES clause and included in a RETURNING clause.
    *
-   * Columns with a server-side `DEFAULT` are *overridable-default* columns (see
-   * [ParsedQuery.overridableDefaultParameterPositions]): rather than being excluded like an
-   * auto-increment or generated-always column, each becomes its own optional parameter on the
-   * synthesized `insert*` function ([norm.generator.InterfaceBuilder]), placed in the VALUES clause
+   * Columns with a server-side `DEFAULT` are overridable-default columns (see
+   * [ParsedQuery.overridableDefaultParameterPositions]): each becomes its own optional parameter on the
+   * synthesized `insert*` function ([InterfaceBuilder]), placed in the VALUES clause
    * alongside the required columns so JDBC can type it ([JdbcAnalyzer.buildParameters]). They are
    * also kept in RETURNING — unconditionally, whether the caller overrides the column or not — so
    * the result row type stays stable across both cases.
    *
-   * The VALUES clause here holds a `?` for every required AND every overridable-default column;
+   * The VALUES clause here holds a `?` for every required and every overridable-default column;
    * this SQL is only used for [JdbcAnalyzer] parameter-type analysis. At runtime,
    * code emitted by [addDynamicInsertSqlDeclaration] builds a different SQL string per call, substituting the
    * literal `DEFAULT` for any overridable-default column's `?` that the caller didn't supply a value

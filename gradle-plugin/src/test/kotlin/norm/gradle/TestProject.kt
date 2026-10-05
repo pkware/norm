@@ -209,8 +209,8 @@ class TestProject(private val projectDir: Path, private val scenarioDirectory: P
 
     /**
      * Builds a [GradleRunner] against [projectDir] with the arguments and plugin classpath every test in
-     * this module needs. Shared so that tests which manage their own project directory (rather than going
-     * through a [TestProject] instance) don't each declare their own, identical builder.
+     * this module needs. Shared so that tests which manage their own project directory without a
+     * [TestProject] instance don't each declare their own, identical builder.
      */
     fun gradleRunner(projectDir: Path, vararg tasks: String): GradleRunner = GradleRunner.create()
       .withProjectDir(projectDir.toFile())

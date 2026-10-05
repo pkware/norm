@@ -16,7 +16,7 @@ import java.sql.ResultSetMetaData
  * for query type analysis. This works because PostgreSQL's JDBC driver prepares statements
  * server-side and returns full type information without executing the query.
  *
- * @param connection An open JDBC connection to a PostgreSQL database with the schema applied.
+ * @property connection An open JDBC connection to a PostgreSQL database with the schema applied.
  */
 public class JdbcAnalyzer(private val connection: Connection) {
 
@@ -214,8 +214,8 @@ public class JdbcAnalyzer(private val connection: Connection) {
       val columnLabel = rsmd.getColumnLabel(i)
       val selectItem = selectItems.getOrNull(i - 1)
 
-      // The node tree is the authoritative source for nullability. columnNullability[i-1].nullable
-      // is true when nullable. Default to nullable, with no provenance, when the index is out of
+      // The node tree is the authoritative source for nullability. `columnNullability[i-1].nullable`
+      // is `true` when nullable. Default to nullable, with no provenance, when the index is out of
       // bounds.
       val analysis = columnNullability.getOrElse(i - 1) { ColumnAnalysis(nullable = true, provenanceExpression = null) }
 
@@ -253,7 +253,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
    * Builds [Parameter] objects from JDBC [ParameterMetaData][java.sql.ParameterMetaData].
    *
    * JDBC's [java.sql.ParameterMetaData.getParameterTypeName] returns the base Postgres type name for
-   * domain columns (e.g., `"text"` instead of `"email"`). When [inferredParameters] maps a parameter
+   * domain columns (e.g., `"text"` for a column of domain `"email"`). When [inferredParameters] maps a parameter
    * to a catalog column, the catalog column's type name is used instead to preserve domain information.
    *
    * @param pmd The parameter metadata from a prepared statement.
@@ -287,7 +287,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
       }
 
       // JDBC's getParameterTypeName() returns the base Postgres type for domain columns (e.g., "text"
-      // instead of "email"), losing domain information. When the inferred parameter maps to a known
+      // for a column of domain "email"), losing domain information. When the inferred parameter maps to a known
       // catalog column, use the catalog column's type name instead — it was populated via
       // DatabaseMetaData.getColumns() which preserves the domain name (e.g., "email").
       val typeName = catalogColumn?.type?.name ?: jdbcTypeName
