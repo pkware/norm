@@ -6,7 +6,7 @@ package norm.generator
  * it stands in for, restoring the same tree shape PostgreSQL 16 and 17 produce directly (where the
  * original grouping-key expression is left in the target list, never masked behind a `Var`). This
  * lets [NodeTreeNullabilityAnalyzer] apply one set of nullability rules to every supported
- * PostgreSQL version, instead of needing PG18-specific reasoning layered on top.
+ * PostgreSQL version.
  *
  * A `Var` is substituted only when all of the following hold — otherwise it is returned unchanged:
  * - [PgNodeExpression.Var.levelsUp] is `0`. A `Var` with `levelsUp > 0` refers to an outer query

@@ -6,13 +6,13 @@ import java.sql.ResultSet
 /**
  * Wraps this Kotlin array in a JDBC [java.sql.Array] whose element type is [typeName].
  *
- * Norm's generated code binds plain (adapterless) array parameters through this function rather
- * than `setObject(index, array)`. The Postgres JDBC driver infers an element OID from the Kotlin
+ * Norm's generated code binds plain (adapterless) array parameters through this function. Passing the
+ * array to `setObject(index, array)` makes the Postgres JDBC driver infer an element OID from the Kotlin
  * array's component type, and that inference is either wrong or impossible for several types:
  * `jsonb[]` is inferred as `character varying[]` and rejected by Postgres, and
  * `Array<java.time.LocalDate>` and the other `java.time` arrays are rejected outright with
  * `Cannot cast an instance of [Ljava.time.LocalDate; to type Types.ARRAY`. Naming the element type
- * explicitly removes the driver's inference from the picture.
+ * explicitly bypasses the driver's inference.
  *
  * Element values are rendered by the driver, not by Norm: it uses a dedicated encoder where one
  * exists for the component type (`Int`, `Long`, `Short`, `Float`, `Double`, `Boolean`, `String`,
@@ -29,7 +29,7 @@ import java.sql.ResultSet
  *
  * @param connection The JDBC connection, used to create a typed SQL array. In generated code this
  *   resolves to [java.sql.Statement.getConnection] on the enclosing `PreparedStatement` receiver.
- * @param typeName The Postgres **element** type name, which must be a canonical `pg_type` name
+ * @param typeName The Postgres element type name, which must be a canonical `pg_type` name
  *   (`int4`, not `integer`; `bool`, not `boolean`). The driver appends `[]` and looks the result up
  *   in `pg_type`, so a non-canonical name fails with
  *   `Unable to find server array type for provided name`.
@@ -43,8 +43,8 @@ public fun Array<*>.toSqlArray(connection: Connection, typeName: String): java.s
  * The receiver of [read] is the element [ResultSet] from [java.sql.Array.getResultSet], which has
  * two columns: column `1` is `INDEX` and column `2` is `VALUE`. Callers read column `2`.
  *
- * Norm's generated code reads plain (adapterless) arrays through this function rather than casting
- * [java.sql.Array.getArray]. The bulk path returns legacy JDBC element classes — `java.sql.Date`
+ * Norm's generated code reads plain (adapterless) arrays through this function. The
+ * [java.sql.Array.getArray] bulk path returns legacy JDBC element classes — `java.sql.Date`
  * for `date`, `java.sql.Time` for both `time` and `timetz`, `java.sql.Timestamp` for `timestamp`
  * and `timestamptz` — so casting it to the `java.time` array Norm advertises throws
  * `ClassCastException`, and converting element by element still cannot represent `timetz` (a

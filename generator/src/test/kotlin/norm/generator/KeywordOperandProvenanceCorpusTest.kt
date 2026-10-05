@@ -35,7 +35,7 @@ internal data class KeywordOperandCase(
 
 /**
  * Live-server proof that [resolveNodeTreeProvenanceExpression] never truncates a CTE body item
- * whose last token is a keyword operand rather than a genuine alias — see this file's own
+ * whose last token is a keyword operand — see this file's own
  * [KeywordOperandCase] KDoc — but also never emits that item's complete, uncut text when the only
  * way to verify it is via that same implicit alias: the complete text is a legal select-list item
  * (`ts AT TIME ZONE 'UTC' res`), never a legal standalone expression (`(ts AT TIME ZONE 'UTC' res)`

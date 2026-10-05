@@ -19,11 +19,11 @@ import java.util.concurrent.atomic.AtomicInteger
  * PostgreSQL never actually returns `null` is not a failure here -- that is an accepted, safe
  * over-widening, the same standard [NodeTreeNullabilityAnalyzer]'s own KDoc holds itself to.
  *
- * This sweep reads its expectation from live PostgreSQL alone, never from a hand-written true/false
+ * This sweep reads its expectation from live PostgreSQL alone, never from a hand-written `true`/`false`
  * table, mirroring [SafeListSweepTest]'s reasoning for why a brute-force sweep -- not hand-reasoning
  * about a specific shape -- backs a claim like this.
  *
- * [cases] covers: the five grouping-set null-extension shapes this fix recovers (`now()`,
+ * [cases] covers: the five grouping-set null-extension shapes that must be non-null (`now()`,
  * `current_date`, `concat_ws`, `xmlelement`, `JSON_OBJECT`), constructs that must stay nullable
  * despite superficially resembling a recovered shape, the self-match guard (a nested occurrence of
  * the grouping key inside an already-shipped `isAlwaysNonNull` call), a `Var`-free grouping key never
@@ -40,7 +40,7 @@ class GroupingSetNullExtensionSweepTest {
   """.trimIndent()
 
   private val cases = listOf(
-    // Shapes recovered by this fix -- must now be non-null.
+    // Grouping-set null-extension shapes that must be non-null.
     Case(
       "shape 1 — now() is non-null under ROLLUP(a)",
       twoNotNullTextColumns,

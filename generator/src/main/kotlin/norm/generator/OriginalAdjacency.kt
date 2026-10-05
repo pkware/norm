@@ -7,14 +7,14 @@ package norm.generator
  * lookback, a standalone-`E` escape-string marker's lookback, a `''`/`""` doubled-quote escape, and
  * [readIdentifierToken]'s own bare-identifier run stopping before a `$` that should instead open a
  * fresh dollar-quoted string) must be gated on, whenever the text being scanned might be
- * [stripCommentsAndWhitespace]'s stripped output rather than raw SQL.
+ * [stripCommentsAndWhitespace]'s stripped output.
  *
  * This exists because deleting a separator PostgreSQL itself lexed on can manufacture a token that
  * was never in the query: `1 - -1` (two separate `-` tokens, genuinely separated by a space) strips
  * to `1--1`, which [skipLexicalToken] would otherwise read as a `--` line comment that was never
  * there. [StrippedText] is the sole [OriginalAdjacency] implementation with real gaps to report —
- * see its KDoc — while [ALL_ADJACENT] is what every raw-text caller passes (implicitly, via the
- * default parameter on [skipLexicalToken]/[findMatchingCloseParenthesis]): for text that was never
+ * see its KDoc — while every raw-text caller passes [ALL_ADJACENT] (implicitly, via the default
+ * parameter on [skipLexicalToken]/[findMatchingCloseParenthesis]): for text that was never
  * stripped, every neighbouring pair of characters genuinely is adjacent, so the gate is always
  * satisfied and raw-text callers see no behavior change at all.
  */

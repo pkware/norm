@@ -18,7 +18,7 @@ internal object IdeIntegration {
   /**
    * Name of the task Norm registers so IntelliJ IDEA runs Norm's generation tasks on every Gradle sync.
    *
-   * IntelliJ's Kotlin Gradle Plugin tooling discovers sync tasks by name *prefix* `prepareKotlinIdeaImport`,
+   * IntelliJ's Kotlin Gradle Plugin tooling discovers sync tasks by name prefix `prepareKotlinIdeaImport`,
    * not exact match, so this constant's value must keep that prefix — pinned by
    * [IdeSyncIntegrationTest.TaskNamePrefixContract]. The name intentionally differs from Kotlin Gradle
    * Plugin's own `prepareKotlinIdeaImport` task, so Norm's task can never collide with one a consumer, or

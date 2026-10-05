@@ -25,11 +25,9 @@ private val TRANSACTABLE = ClassName(RUNTIME_PACKAGE, "Transactable")
  * @param frameworks The frameworks for which to generate DI annotations and connection providers.
  * @param reservedWords The connected PostgreSQL server's reserved keywords, from
  *   [JdbcAnalyzer.fetchReservedWords] — used when rendering a `` `table.column` `` KDoc source
- *   reference for a relation or column named after a reserved word (`order`, `user`), which must be
- *   quoted rather than emitted as text PostgreSQL rejects with a syntax error. Required rather than
- *   defaulted here: this is the seam where a per-database, per-run value must be threaded through
- *   explicitly rather than silently falling back to an empty set (or, worse, a hardcoded snapshot
- *   that could drift from whichever server this run actually targets).
+ *   reference for a relation or column named after a reserved word (`order`, `user`), which
+ *   PostgreSQL rejects with a syntax error unless quoted. Has no default because the set must come
+ *   from the server this run targets.
  * @param typeMappings User-configured type/column overrides. Type-level overrides suppress
  *   auto-generation of the matching enum or domain. Duplicate entries are ignored.
  * @return The generated files. File names include the package hierarchy.
@@ -102,9 +100,9 @@ public fun generateCode(
 /**
  * A single adapter constructor parameter for the generated `PostgresQueries` implementation.
  *
- * @param propertyName The constructor parameter (and private property) name.
- * @param adapterType The `ColumnAdapter<Application, Database>` type of the parameter.
- * @param defaultClass The adapter class to instantiate as the parameter's default value
+ * @property propertyName The constructor parameter (and private property) name.
+ * @property adapterType The `ColumnAdapter<Application, Database>` type of the parameter.
+ * @property defaultClass The adapter class to instantiate as the parameter's default value
  *   (`= DefaultClass()`), or `null` for user-configured adapters, which have no default and must be
  *   supplied explicitly.
  */
@@ -239,7 +237,7 @@ private fun addDependencyInjectionAnnotations(
 
 /**
  * Whether transactions are managed by Norm's own `norm.Transactable` API (backed by a
- * `norm.TransactionalConnectionProvider`) rather than delegated to a framework's `@Transactional`.
+ * `norm.TransactionalConnectionProvider`), without a framework's `@Transactional`.
  */
 private fun usesNormManagedTransactions(frameworks: Set<Framework>): Boolean =
   frameworks.none { it.delegatesTransactions }
@@ -321,7 +319,7 @@ private fun resolveWireTypeName(mapping: TypeMapping, typeRepository: TypeReposi
  *
  * [table] and [column] come from a user-configured [TypeMapping], spelled the way the user wrote
  * them in DDL, while the catalog's names came back from the server already truncated. Both are
- * truncated here so an override on an over-length name resolves instead of failing this lookup.
+ * truncated here so an override on an over-length name resolves in this lookup.
  */
 private fun resolveColumnPostgresType(catalog: Catalog, table: String, column: String): String {
   val truncatedTable = truncateIdentifier(table)

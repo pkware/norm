@@ -24,19 +24,18 @@ public abstract class Database(private val name: String) : Named {
    * (`R__<description>.sql`) are always applied last, sorted lexically among themselves, after
    * every versioned migration in every entry. Flyway undo migrations
    * (`U<version>__<description>.sql`) are skipped entirely, matching Flyway's own behavior during
-   * `migrate`. The `V`/`U`/`R` prefixes and the `__` separator are Flyway's *defaults*; a project
+   * `migrate`. The `V`/`U`/`R` prefixes and the `__` separator are Flyway's defaults; a project
    * that has reconfigured them in Flyway will not get matching behavior here.
    *
    * A file that is not itself a versioned migration keeps its position: the position it has in a
    * plain lexicographic sort within its own directory, at the point that directory occupies among
-   * the entries declared here. It is *not* moved earlier. **Limitation:** within a single
+   * the entries declared here. It is not moved earlier. Limitation: within a single
    * directory, that means a plain file only runs before the versioned migrations in it if its name
    * sorts before `V` (e.g. `Base.sql`, `A.sql`, `00_setup.sql`) — a lowercase name such as
-   * `base.sql` sorts *after* every `V...` file in that same directory and is therefore applied
+   * `base.sql` sorts after every `V...` file in that same directory and is therefore applied
    * after all of them, which can break a migration that depends on it. To guarantee that shared
    * setup runs before a directory of migrations regardless of its filename, declare it as its own,
-   * earlier entry in [schemas] instead of placing it inside the migrations directory — entries are
-   * always applied in the order declared here.
+   * earlier entry in [schemas]. Entries are always applied in the order declared here.
    *
    * Relative paths are resolved against the project directory.
    */

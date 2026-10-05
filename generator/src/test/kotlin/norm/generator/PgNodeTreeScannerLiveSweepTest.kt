@@ -36,9 +36,9 @@ class PgNodeTreeScannerLiveSweepTest {
   /**
    * Every `pg_catalog`/`information_schema` view's `_RETURN` rule is real, PostgreSQL-authored
    * `pg_node_tree` text with no user-supplied identifiers — nothing in this corpus is quoted the
-   * way a user's `":cterecursive"` CTE name or `":resorigtbl"` column alias would be. This test's
-   * precondition (no two consecutive depth-1 items both start with `:`) is exactly what that buys:
-   * every `:`-leading token here is unambiguously a label, so this sweep alone cannot exercise the
+   * way a user's `":cterecursive"` CTE name or `":resorigtbl"` column alias would be. No two
+   * consecutive depth-1 items both start with `:`, so every `:`-leading token here is
+   * unambiguously a label and this sweep alone cannot exercise the
    * value/label ambiguity the unit tests in [PgNodeTreeScannerTest] pin directly. What it does
    * prove is that the depth-one item walk itself — skipping whole `{...}` blocks and `(...)` lists,
    * including multi-token datums — never desyncs against real, large, deeply nested trees.
@@ -81,7 +81,7 @@ class PgNodeTreeScannerLiveSweepTest {
       }
     }
 
-    // pg_rewrite.ev_action is a *list* of actions (`({QUERY ...})`), even for a single-action
+    // pg_rewrite.ev_action is a list of actions (`({QUERY ...})`), even for a single-action
     // _RETURN rule — split the outer list before visiting each action's own {QUERY ...} node.
     trees.forEach { tree -> scanner.splitBraceBlocks(tree).forEach(::visit) }
 

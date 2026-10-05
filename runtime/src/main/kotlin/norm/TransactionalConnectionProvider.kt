@@ -14,7 +14,7 @@ import kotlin.jvm.Throws
  *
  * For framework-managed transactions, use the framework's `ConnectionProvider` and `@Transactional`.
  *
- * @param dataSource The data source from which to acquire connections.
+ * @property dataSource The data source from which to acquire connections.
  */
 public class TransactionalConnectionProvider(private val dataSource: DataSource) :
   ConnectionProvider,

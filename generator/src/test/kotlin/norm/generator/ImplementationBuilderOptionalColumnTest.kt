@@ -67,7 +67,7 @@ class ImplementationBuilderOptionalColumnTest {
     val body = builder.build().funSpecs.joinToString("\n") { it.body.toString() }
 
     // The index is computed once per batch call (outside the `for (entry in stream)` loop), from
-    // whether the extractor argument is null -- not per row.
+    // whether the extractor argument is `null` -- not per row.
     assertThat(body).contains("val tagsIndex: kotlin.Int? = if (tags != null)")
     assertThat(body).contains("setArray(tagsIndex")
     assertThat(body).contains("setNull(tagsIndex")

@@ -15,8 +15,8 @@ import java.sql.DriverManager
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Stage 2 of the `prosqlbody` cutover: `EXPLAIN (FORMAT JSON)` never executes the statement it
- * plans, and reports a `MERGE`'s per-relation match-optionality — the one thing
+ * `EXPLAIN (FORMAT JSON)` never executes the statement it plans, and reports a `MERGE`'s per-relation
+ * match-optionality — the one thing
  * [mergeAbsentVarnos]'s KDoc documents as invisible to `:varnullingrels` on the
  * `CREATE VIEW`/`ev_action` or `prosqlbody` route.
  */
@@ -289,8 +289,7 @@ class ExplainAnalysisTest {
     fun `a MERGE fed by a MATERIALIZED CTE source attributes through its own CTE Scan node`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 17, "WHEN NOT MATCHED BY SOURCE requires PostgreSQL 17+")
       // MATERIALIZED forces PostgreSQL to plan the CTE as its own "CTE Scan" node carrying "CTE
-      // Name" rather than inlining it, so the literal CTE name candidate is what must match here,
-      // never the underlying "src".
+      // Name", so the literal CTE name candidate must match here, not the underlying "src".
       val result = withMergeSideNullabilitySchema { connection ->
         explainMergeSideNullability(
           connection,
@@ -351,7 +350,7 @@ class ExplainAnalysisTest {
             targetRelationName = "tgt",
             sourceRelationNames = setOf("src"),
           )
-          // Every case here is a real MERGE executed against PostgreSQL; a null result would hide
+          // Every case here is a real MERGE executed against PostgreSQL; a `null` result would hide
           // a mapping failure behind the caller's safe fallback.
           assertThat(result != null).isTrue()
           return result

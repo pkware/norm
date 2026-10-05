@@ -3,9 +3,9 @@ package norm.generator
 /**
  * A view's resolved column nullability.
  *
- * @param flags one flag per user-visible column, `true` meaning nullable, index `i` for attnum `i + 1`. `null` when
+ * @property flags one flag per user-visible column, `true` meaning nullable, index `i` for attnum `i + 1`. `null` when
  *   the relid is not a view or materialized view.
- * @param tainted `true` when [flags] depends on a guard placeholder or an unanalyzable node tree, directly or through
+ * @property tainted `true` when [flags] depends on a guard placeholder or an unanalyzable node tree, directly or through
  *   another tainted entry. Such an answer depends on traversal order, so it is discarded after one top-level call.
  */
 internal data class ViewNullabilityCacheEntry(val flags: List<Boolean>?, val tainted: Boolean)
@@ -29,12 +29,12 @@ internal fun alignedViewColumnNullability(nullability: List<Boolean>?, expectedC
  * frames returns plain flags. A frame's taint is therefore recorded in [frameTaint] and added to its caller's entry
  * when the frame finishes.
  *
- * @param permanentCache entries kept across top-level calls. Receives untainted entries only.
- * @param fetchNodeTree returns a relid's `_RETURN` rule text, or `null` when the relid is not a view or materialized
+ * @property permanentCache entries kept across top-level calls. Receives untainted entries only.
+ * @property fetchNodeTree returns a relid's `_RETURN` rule text, or `null` when the relid is not a view or materialized
  *   view.
- * @param analyzeNodeTree returns one nullable flag per target-list entry of a relid's node tree, or `null` when the
+ * @property analyzeNodeTree returns one nullable flag per target-list entry of a relid's node tree, or `null` when the
  *   tree cannot be analyzed.
- * @param columnCountFor returns a relid's user-visible column count.
+ * @property columnCountFor returns a relid's user-visible column count.
  */
 internal class ViewColumnNullabilityResolver(
   private val permanentCache: MutableMap<Int, ViewNullabilityCacheEntry>,

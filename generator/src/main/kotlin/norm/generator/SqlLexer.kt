@@ -2,9 +2,9 @@ package norm.generator
 
 /**
  * Removes every `--` line comment and `/* */` block comment from [text], replacing each with a
- * single space rather than deleting it outright, so two tokens a comment used to separate (e.g.
- * `d\n-- only the active ones\nWHERE`, where [skipLineComment] consumes the comment's own trailing
- * newline along with its text) can't fuse into one run once the comment text is gone.
+ * single space, so two tokens a comment used to separate (e.g. `d\n-- only the active ones\nWHERE`,
+ * where [skipLineComment] consumes the comment's own trailing newline along with its text) can't
+ * fuse into one run once the comment text is gone.
  * Preserves whitespace, string literals, quoted identifiers, and dollar-quoted strings verbatim.
  */
 internal fun stripComments(text: String): String {
@@ -131,10 +131,9 @@ internal fun skipBlockComment(sql: String, start: Int): Int {
  * itself (as a keyword character, a parenthesis, a delimiter, etc.).
  *
  * Every paren-depth or keyword search in this file calls this at each position and jumps ahead
- * when it returns a different index, rather than inspecting `sql[position]` directly — so a `(`
- * or keyword that only appears inside a string, a quoted identifier, or a comment is never
- * misread as a real one (`RETURNING regexp_replace(name, '\(', '')` has an unbalanced `(` inside
- * its string literal).
+ * when it returns a different index, so a `(` or keyword that only appears inside a string, a quoted
+ * identifier, or a comment is never misread as a real one (`RETURNING regexp_replace(name, '\(', '')`
+ * has an unbalanced `(` inside its string literal).
  *
  * @param adjacency See [OriginalAdjacency]'s KDoc. Defaults to [ALL_ADJACENT], correct for raw SQL
  *   text; [StrippedText] threads itself here for its own [StrippedText.skipLexicalToken] entry
@@ -331,10 +330,9 @@ private fun skipDollarQuotedString(sql: String, position: Int, adjacency: Origin
  * or a comment to a single space, then removes a single such space immediately after `(` or before
  * `)` — never semantically significant in SQL.
  *
- * Walks every span verbatim via [skipLexicalToken] rather than a whitespace-collapse regex, which
- * can't tell a cosmetic space from one inside the developer's own SQL and would rewrite a quoted
- * identifier's internal spacing (`"My  Col"` to `"My Col"`, a column name PostgreSQL then rejects)
- * or a string literal's contents (`'( x )'` to `'(x)'`).
+ * Walks every span verbatim via [skipLexicalToken], so a quoted identifier's internal spacing
+ * (`"My  Col"` and `"My Col"` are different column names) and a string literal's contents
+ * (`'( x )'`) are preserved.
  */
 internal fun collapseCosmeticWhitespace(text: String): String {
   val trimmed = text.trim()
@@ -390,8 +388,8 @@ internal sealed interface SqlSpan {
  * Walks [text] one [SqlSpan] at a time from [start]. Each caller chooses which brackets count
  * toward [depth], what a negative [depth] means, and what counts as a match.
  *
- * @param adjacency See [OriginalAdjacency]'s KDoc.
- * @param trackSquareBrackets Whether `[`/`]` count toward [depth] the same as `(`/`)`.
+ * @property adjacency See [OriginalAdjacency]'s KDoc.
+ * @property trackSquareBrackets Whether `[`/`]` count toward [depth] the same as `(`/`)`.
  */
 internal class SqlTokenCursor(
   private val text: String,

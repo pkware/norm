@@ -10,7 +10,7 @@ dependencies {
   // test-only and never produces an executable boot jar, so the BOM alone is enough.
   //
   // Note this is not identical to the `io.spring.dependency-management` plugin the boot plugin used
-  // to bring along: that plugin *forces* its managed versions, while a BOM platform only
+  // to bring along: that plugin forces its managed versions, while a BOM platform only
   // participates in normal highest-wins conflict resolution. Versions declared in
   // `gradle/libs.versions.toml` therefore win over Boot's when they are newer (JUnit, for example).
   implementation(platform(libs.spring.boot.bom))

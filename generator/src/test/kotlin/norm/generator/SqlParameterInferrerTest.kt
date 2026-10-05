@@ -49,9 +49,8 @@ class SqlParameterInferrerTest {
     @Test
     fun `un-doubles an embedded double quote in a quoted INSERT column name`() {
       // A column literally named a"b is spelled "a""b" in SQL, per PostgreSQL's own quoted-identifier
-      // escape rule (the embedded "" is one literal " character, not two) -- unquoteIdentifier
-      // stripped only the outer quotes, leaving the doubled internal quote as two literal characters
-      // instead of un-escaping it back to the one character the real column is actually named.
+      // escape rule (the embedded "" is one literal " character) -- unquoteIdentifier must
+      // un-escape the doubled internal quote back to the one character the real column is named.
       val result = inferrer.inferParameterInfo("""INSERT INTO t("a""b") VALUES (?)""")
 
       assertThat(result.getValue(1)).isEqualTo(
@@ -204,11 +203,9 @@ class SqlParameterInferrerTest {
 
     @Test
     fun `resolves the formal argument name even when a later argument's literal contains an unbalanced parenthesis`() {
-      // findMatchingCloseParenthesis previously miscounted the "(" inside the string literal
-      // '\(' as a real parenthesis, so extractFunctionCalls's own paren search never found a
-      // balanced close for this call — the call was skipped entirely, and the parameter fell
-      // through to a caller-level generic default (p1) instead of a real name. Fixed by
-      // SqlKeywordScanner.kt's lexical-aware findMatchingCloseParenthesis.
+      // findMatchingCloseParenthesis skips the "(" inside the string literal '\(' as part of the
+      // string token, so extractFunctionCalls's own paren search finds a balanced close for this
+      // call and the parameter is named from pg_proc.
       // "string" is the correct name per Norm's own rule (see "infers formal argument names from
       // pg_proc" above): a pg_proc formal argument name always wins over a generic fallback, and
       // regexp_replace(string, pattern, replacement) is regexp_replace's real 3-argument
@@ -238,21 +235,19 @@ class SqlParameterInferrerTest {
 
     @Test
     fun `un-doubles an embedded double quote in a quoted WHERE column name`() {
-      // SQL_IDENTIFIER's quoted branch could not span a doubled internal quote, so `"a""b" = ?`
-      // matched only the trailing `"b"` fragment instead of the whole identifier -- the un-doubling
-      // added for the INSERT path was never reached from here. The WHERE path never sets
-      // `columnName` separately (it reuses `name` for both the parameter's display name and its
-      // catalog lookup key, via `inferred?.columnName ?: inferred?.name` in
-      // JdbcAnalyzer.buildParameters), so `name` alone must carry the un-doubled column name.
+      // The quoted branch of COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED spans a doubled internal quote,
+      // so `"a""b" = ?` matches as one identifier. The WHERE path does not set `columnName`
+      // separately. It reuses `name` for both the parameter's display name and its catalog lookup
+      // key (via `inferred?.columnName ?: inferred?.name` in JdbcAnalyzer.buildParameters), so
+      // `name` carries the un-doubled column name.
       val result = inferrer.inferParameterInfo("""SELECT id FROM q WHERE "a""b" = ?""")
       assertThat(result.getValue(1).name).isEqualTo("a\"b")
     }
 
     @Test
     fun `un-doubles an embedded double quote in a quoted WHERE column name for a second column`() {
-      // Proves the whole WHERE clause is fixed, not just its first match -- distinct doubled-quote
-      // identifiers in the same clause must each resolve to their own real column name rather than
-      // colliding on a shared malformed fragment.
+      // Distinct doubled-quote identifiers in the same clause must each resolve to their own real
+      // column name.
       val result = inferrer.inferParameterInfo("""SELECT id FROM q WHERE "a""b" = ? AND "c""b" = ?""")
       assertThat(result.getValue(1).name).isEqualTo("a\"b")
       assertThat(result.getValue(2).name).isEqualTo("c\"b")
@@ -332,9 +327,8 @@ class SqlParameterInferrerTest {
 
     @Test
     fun `captures the whole dollar-containing function name, not just the run after the dollar sign`() {
-      // FUNCTION_CALL_START previously used a bare "\w+", which excludes "$" -- "\w+" cannot match
-      // "my$fn" as one run, so findAll instead matched the shorter run "fn" immediately before the
-      // "(", handing SqlParameterInferrer.extractFunctionCalls the wrong function name. In
+      // FUNCTION_CALL_START must match "my$fn" as one run, giving
+      // SqlParameterInferrer.extractFunctionCalls the whole function name. In
       // PostgreSQL 18.4, "my$fn" is a legal unquoted function name (CREATE FUNCTION "my$fn"(...)
       // and the unquoted call my$fn(...) resolve to the same function).
       val match = FUNCTION_CALL_START.find("SELECT my\$fn(?)")
@@ -378,7 +372,7 @@ class SqlParameterInferrerTest {
     fun `a comparison-shaped fragment inside a string literal is not attributed to a real parameter`() {
       // COLUMN_COMPARES_PARAM scans raw text, so "x = ?" inside the string literal 'x = ?' still
       // matches as if "x" were a real column compared against a placeholder. Once placeholderPositions
-      // excludes the "?" inside the literal, that spurious match's paramNumberAt lookup returns null
+      // excludes the "?" inside the literal, that spurious match's paramNumberAt lookup returns `null`
       // and is skipped, leaving only the real "id = ?" comparison.
       val result = inferrer.inferParameterInfo("SELECT * FROM notes WHERE note = 'x = ?' AND id = ?")
       assertThat(result.size).isEqualTo(1)
@@ -410,7 +404,7 @@ class SqlParameterInferrerTest {
     fun `a function call with no real placeholder does not bump the repeated-call suffix counter`() {
       // digest('?') has no real placeholder in its argument list, so it must not be counted as a
       // call at all -- otherwise the second, real digest(?, ?) call is wrongly numbered as the
-      // second call and its parameters get the "digest2_" suffix instead of "digest_".
+      // second call and its parameters get the "digest2_" suffix.
       val result = inferrer.inferParameterInfo("SELECT digest('?'), digest(?, ?)")
       assertThat(result.size).isEqualTo(2)
       assertThat(result.getValue(1).name).isEqualTo("digest_param1")
@@ -440,9 +434,8 @@ class SqlParameterInferrerTest {
 
     @Test
     fun `a WHERE inside a subquery preceding the outer WHERE still classifies both parameters as non-inheriting`() {
-      // Not new behavior -- a whole-word, lexer-aware WHERE search still finds the first WHERE
-      // regardless of parenthesis depth, exactly as the plain regex it replaces did. Kept as a
-      // regression guard that the depth-ignoring redesign does not start restricting to depth 0.
+      // A whole-word, lexer-aware WHERE search finds the first WHERE regardless of parenthesis
+      // depth, not only at depth 0.
       val result = inferrer.inferParameterInfo(
         "SELECT (SELECT x FROM u WHERE u.id = ?) FROM t WHERE t.id = ?",
       )
@@ -464,7 +457,7 @@ class SqlParameterInferrerTest {
       // A "(" character inside the comment "/* ( */" is not a real parenthesis. A raw
       // sql.indexOf('(', ...) still lands on it, and findMatchingCloseParenthesis then never
       // reaches depth 0 (the real "(?)" incorrectly opens a second, unmatched level) -- silently
-      // dropping the whole VALUES-to-column mapping instead of finding the real "(?)".
+      // dropping the whole VALUES-to-column mapping.
       val result = inferrer.inferParameterInfo("INSERT INTO t(a) VALUES /* ( */ (?)")
       assertThat(result.getValue(1)).isEqualTo(
         InferredParameter("a", "t", inheritsNullability = true, columnName = "a"),

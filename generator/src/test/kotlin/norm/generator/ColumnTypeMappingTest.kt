@@ -78,8 +78,8 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `pg_catalog integer maps to Int`() {
-      // Closes a gap resolveBaseType previously had: pg_catalog.bool/varchar/bpchar were accepted,
-      // but pg_catalog.integer was not, even though the bare "integer" spelling was.
+      // resolveBaseType accepts pg_catalog.bool/varchar/bpchar, so pg_catalog.integer must resolve
+      // as the bare "integer" spelling does.
       val statement = createStatement(
         "SELECT val FROM t;",
         columns = listOf(column("val", type = "pg_catalog.integer")),
@@ -123,8 +123,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `pg_catalog text maps to String`() {
-      // Closes a gap resolveBaseType previously had: pg_catalog.varchar/bpchar were accepted, but
-      // pg_catalog.text was not.
+      // pg_catalog.text resolves to String just as pg_catalog.varchar/bpchar do.
       val statement = createStatement(
         "SELECT val FROM t;",
         columns = listOf(column("val", type = "pg_catalog.text")),
@@ -146,8 +145,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `pg_catalog boolean maps to Boolean`() {
-      // Closes a gap resolveBaseType previously had: pg_catalog.bool was accepted, but
-      // pg_catalog.boolean was not.
+      // pg_catalog.boolean resolves like pg_catalog.bool.
       val statement = createStatement(
         "SELECT active FROM user;",
         columns = listOf(column("active", type = "pg_catalog.boolean")),
@@ -846,7 +844,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `non-null int array element read uses a wasNull check`() {
-      // Same reason as the timestamptz case: getInt on a NULL element returns 0, not null.
+      // Same reason as the timestamptz case: getInt on a NULL element returns 0, not `null`.
       val col = column("tags", type = "int4", isArray = true, notNull = true)
       val accessor = typeRepository.resolveMappableType(col).resultSetAction(1)
       assertThat(accessor.toString()).contains("getInt(2).takeUnless { wasNull() }")
@@ -1087,12 +1085,9 @@ class ColumnTypeMappingTest {
 
     /**
      * Anti-drift sweep for [postgresArrayElementTypeName], pinned against a hardcoded,
-     * independently-verified classification rather than [POSTGRES_BASE_TYPES] membership. A
-     * membership check is a tautology here: every [POSTGRES_BASE_TYPES] key that is not folded
-     * still passes itself through unchanged (`postgresArrayElementTypeName`'s `else` branch), and
-     * every SQL-spelling alias is, by construction, also a [POSTGRES_BASE_TYPES] key — so deleting
-     * every fold branch would still leave every folded result a [POSTGRES_BASE_TYPES] key and a
-     * membership check green.
+     * independently-verified classification. A [POSTGRES_BASE_TYPES] membership check cannot
+     * detect a broken fold. Unfolded keys pass through unchanged (`postgresArrayElementTypeName`'s
+     * `else` branch), and every SQL-spelling alias is itself a [POSTGRES_BASE_TYPES] key.
      *
      * [expectedCanonicalNameByAlias] and [alreadyCanonicalNames] below come from a PostgreSQL 17
      * server via `SELECT typname FROM pg_type WHERE oid = to_regtype(?)` — see
@@ -1100,7 +1095,7 @@ class ColumnTypeMappingTest {
      * [postgresArrayElementTypeName] themselves. The set-equality assertion catches a new
      * [POSTGRES_BASE_TYPES] key added without being classified into either bucket; the per-alias
      * assertions catch a fold branch that is deleted, or wrong, by checking the actual fold result
-     * against this table's fixed expectation rather than a self-referential set.
+     * against this table's fixed expectation.
      *
      * Serial variants (`serial`, `bigserial`, ...) are excluded: [postgresArrayElementTypeName]'s
      * own KDoc documents that a serial column can never reach the array path, so they need no fold
@@ -1187,7 +1182,7 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `nullable jsonb writes via setObject with Types OTHER`() {
-      // pgjdbc's setObject(index, null, targetSqlType) delegates to setNull(index, targetSqlType),
+      // pgjdbc's `setObject(index, null, targetSqlType)` delegates to `setNull(index, targetSqlType)`,
       // so the nullable case needs no separate branch.
       val col = column("metadata", type = "jsonb", notNull = false)
       val setter = typeRepository.resolveMappableType(col).statementAction(index(2), CodeBlock.of("metadata"))
@@ -1209,8 +1204,8 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `pg_catalog jsonb column resolves to String`() {
-      // Closes a gap resolveBaseType previously had: the json/jsonb branch had no pg_catalog.-
-      // qualified literals at all, so pg_catalog.jsonb resolved to null rather than falling through.
+      // The json/jsonb branch includes pg_catalog.-qualified literals, so pg_catalog.jsonb
+      // resolves to String.
       val col = column("metadata", type = "pg_catalog.jsonb")
       assertThat(typeRepository.resolveColumnType(col)).isEqualTo(String::class.asTypeName())
     }
@@ -1973,7 +1968,7 @@ class ColumnTypeMappingTest {
       val repository = TypeRepository("test", catalog)
       val col = column("amount", type = "currency_amount", notNull = false)
       val accessor = repository.resolveMappableType(col).resultSetAction(1)
-      // numeric is non-primitive, so uses ?.let instead of wasNull() check
+      // numeric is non-primitive, so it uses ?.let
       assertThat(accessor.toString())
         .isEqualTo("getBigDecimal(1)?.let { currencyAmountAdapter.decode(it) }")
     }
@@ -2011,9 +2006,8 @@ class ColumnTypeMappingTest {
   }
 
   /**
-   * Regression coverage for the build-breaking bug: `CREATE DOMAIN d AS timestamptz` (or `uuid`,
-   * `date`, `time`, `timetz`, `bytea`, `oid`) aborted code generation entirely, because
-   * [resolveWireCodec] had no entry for any of these types even though
+   * Pins that `CREATE DOMAIN d AS timestamptz` (or `uuid`, `date`, `time`, `timetz`, `bytea`,
+   * `oid`) generates code. [resolveWireCodec] has an entry for each of these types, and
    * [TypeRepository.resolveBaseType] supports every one of them as a plain column type. Each read
    * assertion below is verified against pgjdbc 42.7.13's actual `PgResultSet`/`PgPreparedStatement`
    * source (see [resolveWireCodec]'s KDoc for the specific methods checked), not assumed.
@@ -2455,23 +2449,21 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `unsupported type returns null`() {
-      // xml has no entry anywhere -- Norm has never mapped it to a Kotlin type, as a plain column
-      // type or a domain base. bytea is supported (see POSTGRES_BASE_TYPES) -- it used to return
-      // null here, which is exactly the bug this fix closes: CREATE DOMAIN d AS bytea aborted code
-      // generation entirely.
+      // xml has no entry anywhere -- Norm does not map it to a Kotlin type, as a plain column
+      // type or a domain base. bytea is supported (see POSTGRES_BASE_TYPES), so CREATE DOMAIN d AS
+      // bytea does not abort code generation.
       assertThat(resolveWireCodec("xml")).isEqualTo(null)
     }
   }
 
   /**
-   * Regression coverage for the build-breaking bug: the `uuid` entry in [resolveWireCodec] used
-   * the generic `"getObject"` getter with no class hint, which generates a bare `getObject(index)`
-   * read. `java.sql.ResultSet.getObject(int)` is declared to return `Object`, so that read is
-   * statically `Any` in Kotlin no matter what concrete type pgjdbc's `PgResultSet` returns at
-   * runtime — it does not compile as an argument to `ColumnAdapter<Application, Wire>.decode`.
-   * This sweeps every entry [resolveWireCodec] can produce, for both a `NOT NULL` and a nullable
-   * read, so a future type added with the same mistake fails immediately, rather than surfacing
-   * only when a generated scenario happens to be compiled.
+   * Pins that no [resolveWireCodec] entry generates a bare `getObject(index)` read.
+   * `java.sql.ResultSet.getObject(int)` is declared to return `Object`, so that read is statically
+   * `Any` in Kotlin no matter what concrete type pgjdbc's `PgResultSet` returns at runtime — it does
+   * not compile as an argument to `ColumnAdapter<Application, Wire>.decode`. Entries such as `uuid`
+   * read through the class-hinted `getObject(index, Class)` overload. This sweeps every entry
+   * [resolveWireCodec] can produce, for both a `NOT NULL` and a nullable read, so a type added
+   * without a class hint fails immediately, before any generated scenario is compiled.
    */
   @Nested
   inner class GetObjectReadsRequireAClassHint {
@@ -2490,9 +2482,8 @@ class ColumnTypeMappingTest {
   }
 
   /**
-   * Pins Correction 1 directly: [ScalarSqlMappable.statementAction] for a nullable plain column
-   * must keep rendering the exact shape each of the five [WireCodec] kinds rendered before the
-   * [WireCodec] refactor. Golden-file invariance alone would not catch a regression here — a
+   * Pins the exact shape [ScalarSqlMappable.statementAction] renders for a nullable plain column
+   * of each of the five [WireCodec] kinds. Golden-file invariance alone would not catch a regression here — a
    * scenario compiling successfully says nothing about which exact `wasNull()`/`setNull` fallback
    * ran, only that some shape did.
    */
@@ -2686,13 +2677,12 @@ class ColumnTypeMappingTest {
 
     @Test
     fun `column override matches the real source column, not a CTE's own output alias`() {
-      // JdbcAnalyzer.buildResultColumns now populates originalName from the node tree's own
+      // JdbcAnalyzer.buildResultColumns populates originalName from the node tree's own
       // :resorigtbl/:resorigcol -- the real source column, resolved through a CTE even when the
       // outer select item is a plain reference to the CTE's own (possibly renamed) output alias.
       // tryResolveColumnOverride keys columnLevelOverrides off that same originalName, so a
       // columnMapping("parent", "id") must match a column whose outer name is "parentId" as long as
-      // its originalName is "id" -- before this fix, originalName mirrored the alias itself
-      // ("parentId"), and the mapping silently never matched.
+      // its originalName is "id".
       val mappings = listOf(
         TypeMapping.ByColumn("parent", "id", "com.example.ParentId", "com.example.ParentIdAdapter"),
       )

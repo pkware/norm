@@ -139,7 +139,7 @@ internal val POSTGRES_BASE_TYPES: Map<String, PostgresBaseType> = buildMap {
   // throws on it too. setLong() and setString() are both rejected by Postgres for these types
   // ("operator does not exist: xid = bigint" / "... = character varying"). getString() and
   // setObject(..., Types.OTHER) are the one read/write pair verified to work for all four, so this
-  // reuses the same TypesOtherCodec as json/jsonb rather than a numeric representation.
+  // reuses the same TypesOtherCodec as json/jsonb.
   register(
     TypesOtherCodec(String::class.asTypeName(), "getString", "OTHER"),
     "xid",
@@ -242,7 +242,7 @@ internal fun postgresArrayElementTypeName(typeName: String): String =
  * [TypeRepository.resolveBaseType] itself supports (e.g. `CREATE DOMAIN d AS timestamptz`) always
  * resolves here too, since both come from the same row. [TypeRepository]'s domain resolution
  * chains through this function (see [TypeRepository.tryResolveDomainType] and
- * [domainKotlinWireType][norm.generator.domainKotlinWireType]); its `error()` calls are reachable
+ * [domainKotlinWireType]); its `error()` calls are reachable
  * only for a base type [TypeRepository.resolveBaseType] itself does not support either (e.g. `xml`,
  * `interval`, `money` — Postgres allows a domain over any of these, but Norm has never mapped them
  * to a Kotlin type as a plain column type, so the same limitation applies to a domain built on
@@ -257,7 +257,7 @@ internal fun postgresArrayElementTypeName(typeName: String): String =
  * row), but a plain `oid[]` column maps to `Array<Long?>` ([TypeRepository.tryResolveStandardType]):
  * an array of large-object handles has no coherent JDBC semantics, and real-world `oid[]` columns
  * hold plain catalog identifiers. Resolving `"_oid"` to `Array<Blob?>` here would silently
- * contradict that, so it is excluded explicitly rather than falling out of the lookup. An array of
+ * contradict that, so it is excluded explicitly. An array of
  * an enum or of a domain (`_mood`, `_email`) needs no such exclusion: the stripped element name
  * (`"mood"`, `"email"`) is never a [POSTGRES_BASE_TYPES] key, so the lookup below already returns
  * `null` for those.

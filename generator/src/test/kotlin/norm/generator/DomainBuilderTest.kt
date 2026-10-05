@@ -139,9 +139,8 @@ class DomainBuilderTest {
 
     @Test
     fun `TIMESTAMPTZ domain generates an Instant value class`() {
-      // Regression coverage for the build-breaking bug: CREATE DOMAIN d AS timestamptz used to
-      // abort code generation entirely -- resolveWireCodec had no entry for timestamptz even
-      // though it is one of the most common domain base types.
+      // A domain over timestamptz generates code, since resolveWireCodec has an entry for
+      // timestamptz, one of the most common domain base types.
       val domain = Domain(name = "occurred_at", baseType = "timestamptz", comment = "")
       val output = generateValueClassCode(domain, "example")
       assertThat(output).contains("import java.time.Instant")

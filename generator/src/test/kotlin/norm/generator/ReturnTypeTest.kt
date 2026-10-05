@@ -43,8 +43,8 @@ class ReturnTypeTest {
 
     @Test
     fun `null kotlinType produces non-null bounded T`() {
-      // Edge case: when kotlinType is null, kotlinType?.isNullable evaluates to null
-      // which becomes false in the boolean expression
+      // Edge case: when kotlinType is `null`, kotlinType?.isNullable evaluates to `null`,
+      // which becomes `false` in the boolean expression.
       val returnType = ReturnType(
         kotlinType = null,
         builder = emptyList(),

@@ -168,7 +168,7 @@ class SafeListSweepTest {
   }
 
   /**
-   * pgcrypto's `digest`/`hmac` are keyed through `pg_depend` rather than appearing on any of the
+   * pgcrypto's `digest`/`hmac` are keyed through `pg_depend` and appear on none of the
    * three static safe lists (see [NullabilityCatalog.loadNeverNullForNonNullInputOids]'s pgcrypto
    * carve-out), so none of the three tests above exercises them. This test runs the same
    * brute-force sweep over all four documented-total overloads (`digest(text, text)`,
@@ -266,9 +266,8 @@ class SafeListSweepTest {
 
   /**
    * The positive counterpart to the test above: a [CoverageTracker] that has recorded a genuine
-   * [CaseOutcome.EvaluatedNonNull] case reports no failure. Without this test, a
-   * `requirePositiveCoverage` that always failed (rather than one that failed only on zero
-   * coverage) would also make the test above pass, hiding a rule that rejects every signature.
+   * [CaseOutcome.EvaluatedNonNull] case reports no failure. This test fails if
+   * `requirePositiveCoverage` rejects every signature, which the test above cannot detect.
    */
   @Test
   fun `requirePositiveCoverage passes for a signature with at least one evaluated-non-null case`() {
@@ -407,16 +406,12 @@ class SafeListSweepTest {
    * property (ii), where a `NULL` first argument must poison the whole result regardless of every
    * other argument.
    *
-   * Returns `true` only when the case genuinely evaluated and confirmed a `null` result — the one
-   * outcome that actually proves the property, mirroring how only [CaseOutcome.EvaluatedNonNull]
-   * proves totality for [checkTotal]. Returns `false` for a non-`null` result (also recorded as a
-   * failure) and `null` for anything that did not confirm the property one way or the other: a
-   * class-42 (never-evaluated) SQLSTATE, matching [isNotEvaluatedSqlState], or a genuine runtime
-   * error. An earlier version of this method conflated "evaluated to `null`" with "raised any
-   * non-class-42 exception", returning `true` for both — a future entry whose every NULL-first case
-   * happened to raise a real (non-class-42) runtime error, rather than actually returning `null`,
-   * would then have passed this sweep having proven nothing about the property under test. The
-   * caller must require at least one `true` case per signature, exactly the way
+   * Returns `true` only when the case evaluated and the result was `null` — the one outcome that
+   * proves the property, mirroring how only [CaseOutcome.EvaluatedNonNull] proves totality for
+   * [checkTotal]. Returns `false` for a non-`null` result (also recorded as a failure). Returns
+   * `null` when the statement throws a [SQLException], whether a class-42 (never-evaluated)
+   * SQLSTATE, matching [isNotEvaluatedSqlState], or a genuine runtime error, because neither
+   * confirms the property. The caller must require at least one `true` case per signature, the way
    * [CoverageTracker.requirePositiveCoverage] requires at least one [CaseOutcome.EvaluatedNonNull]
    * for [checkTotal] — a `false`/`null` case is not proof, the same way an [CaseOutcome.EvaluatedError]/
    * [CaseOutcome.NotEvaluated] case is not positive coverage there.
@@ -454,10 +449,10 @@ class SafeListSweepTest {
    * combination.
    *
    * OIDs are read from [NullabilityCatalog.alwaysNonNullFunctionOids] itself — computed live, the same
-   * way production does — rather than a hardcoded OID, and resolved back to a `pg_proc.proname` via
-   * [resolveProcName] so this test automatically covers whatever the production list actually
-   * contains today. [NULL_ARGUMENT_SWEEP_SIGNATURES_BY_NAME] supplies the concrete arity/types to
-   * call each name with, since `concat`'s single `pg_catalog` row is declared `VARIADIC "any"` — a
+   * way production does — and resolved back to a `pg_proc.proname` via [resolveProcName] so this
+   * test automatically covers whatever the production list actually contains.
+   * [NULL_ARGUMENT_SWEEP_SIGNATURES_BY_NAME] supplies the concrete arity/types to call each name
+   * with, since `concat`'s single `pg_catalog` row is declared `VARIADIC "any"` — a
    * pseudo-type with no literal form of its own, unlike `anyarray`/`anyrange`/`anyelement`, which
    * [concreteInstantiationsFor] already knows how to instantiate.
    */
@@ -644,7 +639,7 @@ class SafeListSweepTest {
      * successful non-null result), leaving the signature with zero positive coverage despite the
      * sweep having run dozens of cases against it. The empty-string entry is kept specifically so
      * an unrecognized-format case stays in the corpus too, landing in the "evaluated and errored"
-     * bucket (see [isNotEvaluatedSqlState]) rather than being lost entirely.
+     * bucket (see [isNotEvaluatedSqlState]).
      */
     private val FORMAT_NAME_CORPUS = listOf("'base64'", "'hex'", "'escape'", "''")
 
@@ -671,8 +666,7 @@ class SafeListSweepTest {
     /**
      * Edge-case literal values (unquoted where bare numeric literals suffice, single-quoted
      * otherwise), keyed by `pg_type.typname`. Every literal is cast explicitly (`$literal::type`)
-     * at the call site rather than left untyped, so PostgreSQL resolves the exact overload under
-     * test instead of picking whichever overload its untyped-literal defaulting rules prefer.
+     * at the call site, so PostgreSQL resolves the exact overload under test.
      */
     private val EDGE_VALUE_CORPUS: Map<String, List<String>> = mapOf(
       // The minimum-integer literals are parenthesized because every call site embeds a corpus
@@ -723,8 +717,8 @@ class SafeListSweepTest {
      * pgcrypto's `digest`/`hmac` overloads, brute-force-swept for total-ness the same way as the
      * three static [PgCatalogLoader] safe lists, but not sourced from any of them: they are an
      * extension carve-out keyed through `pg_depend`, not a name/argument-type entry on a list (see
-     * [NullabilityCatalog.loadNeverNullForNonNullInputOids]). Defined here, in the test, rather than
-     * in production code, since nothing else needs a [SafeFunctionSignature] for them.
+     * [NullabilityCatalog.loadNeverNullForNonNullInputOids]). Defined here in the test, since nothing else needs a
+     * [SafeFunctionSignature] for them.
      */
     private val PGCRYPTO_FUNCTION_SIGNATURES = listOf(
       SafeFunctionSignature("digest", listOf("text", "text")),
@@ -762,7 +756,7 @@ class SafeListSweepTest {
      * [EDGE_VALUE_CORPUS]'s plain corpus for the same source type, with at least one literal added
      * that is longer/more-precise than the typmod in [SELF_CAST_TYPMOD_SUFFIX], so truncation or
      * rounding is actually exercised (`'abcdef'::varchar(3)` truncates to `'abc'`;
-     * `123.456::numeric(5,2)` rounds to `123.46`) rather than every case happening to already fit.
+     * `123.456::numeric(5,2)` rounds to `123.46`).
      */
     private val SELF_CAST_TYPMOD_LITERAL_CORPUS: Map<String, List<String>> = mapOf(
       "bpchar" to listOf("''", "'a'", "'abcdef'"),
@@ -809,12 +803,9 @@ class SafeListSweepTest {
      * [concreteInstantiationsFor] already knows how to instantiate. This map supplies the concrete
      * arity/types actually exercised at the call site instead.
      *
-     * `concat_ws` is registered here even though production correctly never lists it under
-     * [NullabilityCatalog.alwaysNonNullFunctionOids] today — if that regressed (this is exactly the
-     * shipped bug this whole file's KDoc describes), the always-non-null sweep must actually
-     * exercise `concat_ws`'s real NULL-argument behavior and fail on the genuine semantic violation
-     * (`concat_ws(NULL, 'x', 'y')` returns `null`), not merely fail on a missing corpus
-     * registration that would just as easily hide a real regression.
+     * `concat_ws` is registered here although [NullabilityCatalog.alwaysNonNullFunctionOids] does not
+     * list it. If it ever were listed, the always-non-null sweep exercises its NULL-argument behavior
+     * and fails because `concat_ws(NULL, 'x', 'y')` returns `null`.
      */
     private val NULL_ARGUMENT_SWEEP_SIGNATURES_BY_NAME: Map<String, List<SafeFunctionSignature>> = mapOf(
       "concat" to listOf(
@@ -849,8 +840,8 @@ class SafeListSweepTest {
      * Resolves [oid] to its unqualified `pg_proc.proname` — lets the
      * `alwaysNonNullFunctionOids`/`nonNullIffFirstArgumentNonNullFunctionOids` sweeps look up which
      * concrete [NULL_ARGUMENT_SWEEP_SIGNATURES_BY_NAME] entry to test for an OID computed live by
-     * [PgCatalogLoader] (the same way production does), rather than hardcoding an OID that would
-     * silently go stale across a PostgreSQL version bump.
+     * [PgCatalogLoader] (the same way production does), so the lookup follows a PostgreSQL
+     * version bump.
      */
     private fun resolveProcName(oid: Int): String =
       connection.prepareStatement("SELECT proname FROM pg_catalog.pg_proc WHERE oid = ?").use { preparedStatement ->
@@ -1064,8 +1055,8 @@ class SafeListSweepTest {
      * cannot-coerce type mismatch (`42846`) alike. A `SQLException` in this class is not evidence
      * the underlying function/cast/operator is total; the call never got far enough to say
      * anything about that. Every other class (a data exception, an out-of-range value, a
-     * feature-not-supported unit, ...) means the call did reach the function's body and it chose
-     * to raise rather than return — which is evidence of total-ness, so it counts as a pass (see
+     * feature-not-supported unit, ...) means the call did reach the function's body and it
+     * raised an error — which is evidence of total-ness, so it counts as a pass (see
      * [checkTotal]) even though it is not positive coverage (see [CoverageTracker]).
      */
     private fun isNotEvaluatedSqlState(sqlState: String?): Boolean = sqlState != null && sqlState.take(2) == "42"

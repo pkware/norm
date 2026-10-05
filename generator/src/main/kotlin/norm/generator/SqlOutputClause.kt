@@ -16,9 +16,9 @@ package norm.generator
  *   in `author.name`, or `My Table` in `"My Table".name`) — same logical-value convention as
  *   [columnName], and `null` for an unqualified reference or a computed expression.
  * @property isColumnNameQuoted Whether [columnName] came from a quoted source identifier — `false`
- *   when [columnName] is `null`. [columnName] no longer carries the quotes that would otherwise
+ *   when [columnName] is `null`. [columnName] carries no quotes that would otherwise
  *   signal whether PostgreSQL folds it (quoted: case preserved) or not (unquoted: folded to
- *   lowercase), so this flag is what a caller doing that folding must consult instead.
+ *   lowercase), so a caller doing that folding must consult this flag.
  * @property isTableNameQuoted Whether [tableName] came from a quoted source identifier — same
  *   convention as [isColumnNameQuoted], `false` when [tableName] is `null`.
  */
@@ -69,7 +69,7 @@ internal data class SelectItem(
  *   a single star item; or empty if the output clause can't be found (e.g. a `VALUES` list, a
  *   `TABLE` shorthand, or two separately parenthesized set-operation branches like `(SELECT a)
  *   UNION (SELECT b)`). Both consumers degrade safely for a missing item, falling back to
- *   `ResultSetMetaData.getColumnName` rather than reporting a wrong original name.
+ *   `ResultSetMetaData.getColumnName`, so no wrong original name is reported.
  */
 internal fun parseSelectItems(sql: String): List<SelectItem> = parseOutputItemsWithAlias(sql).map { it.selectItem }
 
@@ -224,7 +224,7 @@ private fun stripRedundantOuterParentheses(text: String): String {
  *
  * [position] is the index right after the `SELECT` keyword, still followed by whitespace: this
  * function skips that whitespace/comments first, then tries `ALL`/`DISTINCT` at the resulting
- * position. [skipOptionalKeyword]'s own word-boundary check is what keeps `ALL`/`DISTINCT` from
+ * position. [skipOptionalKeyword]'s own word-boundary check stops `ALL`/`DISTINCT` from
  * matching a longer identifier that merely starts with those letters (`all2`,
  * `distinctive_column`).
  *
@@ -277,7 +277,7 @@ private fun skipOptionalSetQuantifier(sql: String, position: Int): Int {
  *   when there is one but [parseAliasToken] finds nothing that legitimately looks like an alias
  *   right after it (a trailing comment, an unterminated quote, or a string literal where an alias
  *   should be); or as soon as a bare `)` with no matching `(` drives depth negative, in which case
- *   [item] is returned unsplit rather than risk a later `AS` misplaced by an unbalanced depth count.
+ *   [item] is returned unsplit, because an unbalanced depth count could misplace a later `AS`.
  */
 private fun extractAlias(item: String): Pair<String, String?> {
   var lastAsIndex = -1
@@ -316,7 +316,7 @@ private fun extractAlias(item: String): Pair<String, String?> {
  *   whitespace/comments to the end of [item], an unterminated quoted identifier, a character that
  *   can neither start a bare identifier nor open a quoted one (e.g. `AS 'x'`, not legal
  *   PostgreSQL), or anything other than trailing whitespace/comments following the token (`AS ux
- *   zz` is not legal PostgreSQL either, so this returns `null` rather than silently discarding
+ *   zz` is not legal PostgreSQL either, so this returns `null` and does not silently discard
  *   `zz`).
  */
 private fun parseAliasToken(item: String, start: Int): String? {
@@ -327,7 +327,7 @@ private fun parseAliasToken(item: String, start: Int): String? {
 
   // Nothing legitimate can follow a real alias inside an already comma-split, FROM-trimmed select
   // item -- only trailing whitespace/comments are tolerated; anything else means this wasn't a
-  // clean single alias token, so discard nothing and return null instead.
+  // clean single alias token, so discard nothing and return `null`.
   if (skipWhitespaceAndComments(item, tokenEnd) != item.length) return null
 
   return item.substring(tokenStart, tokenEnd)

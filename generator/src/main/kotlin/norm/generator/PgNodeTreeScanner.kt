@@ -42,14 +42,14 @@ internal class PgNodeTreeScanner {
    * `":args "`) — every caller passes it in that shape.
    *
    * "Depth 1" means directly inside the outermost `{...}` block, excluding any field nested
-   * inside a child `{...}` block — this is what prevents matching, for example, a nested
-   * `JOINEXPR`'s own `:quals` field when looking for the top-level `:quals` of a `FROMEXPR`.
+   * inside a child `{...}` block. That prevents matching, for example, a nested `JOINEXPR`'s own
+   * `:quals` field when looking for the top-level `:quals` of a `FROMEXPR`.
    *
    * At depth 1, items are walked one at a time: a token, a whole `{...}` block, or a whole
    * `(...)` list — never the interior of a `(...)` list, even though it sits directly inside the
    * outermost block, so a marker-shaped token inside a list is never mistaken for a label. A
    * token is a field label iff it starts with `:` and the item immediately before it is not
-   * itself a label; only a label consumes the item that follows it as its value. This is what
+   * itself a label; only a label consumes the item that follows it as its value. That rule
    * tells a real label apart from a value token that happens to start with `:` (e.g. a CTE or
    * column literally named `:something`, a quoted identifier preserved verbatim in the tree) or
    * merely end with the marker text (e.g. a value `x:resorigtbl` immediately before the real
@@ -164,7 +164,7 @@ internal class PgNodeTreeScanner {
     return text.substring(startIndex, index)
   }
 
-  /** @return the `{...}` value of [fieldName] (see [fieldAtDepthOne]), or `null` if the value is not a node */
+  /** @return the `{...}` value of [fieldName] (see [fieldAtDepthOne]), or `null` if the value is not a node. */
   internal fun blockAtDepthOne(text: String, fieldName: String): String? =
     (fieldAtDepthOne(text, fieldName) as? FieldValue.Block)?.content
 
@@ -176,7 +176,7 @@ internal class PgNodeTreeScanner {
     (fieldAtDepthOne(text, fieldName) as? FieldValue.ListContent)?.content?.takeUnless { it.isBlank() }
 
   /**
-   * Like [listAtDepthOne], but returns `""` rather than `null` for a blank list.
+   * Like [listAtDepthOne], but returns `""` for a blank list.
    *
    * @return the interior of [fieldName]'s `(...)` value, or `null` if the value is not a list
    */

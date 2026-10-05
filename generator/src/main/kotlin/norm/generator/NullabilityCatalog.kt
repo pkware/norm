@@ -8,7 +8,7 @@ import java.sql.Connection
  * query's result column nullable" — every fact is a lazy, cached read keyed by OID or
  * `(relid, attnum)`, computed once per instance and reused for its lifetime.
  *
- * @param connection An open JDBC connection to a PostgreSQL database with the schema applied.
+ * @property connection An open JDBC connection to a PostgreSQL database with the schema applied.
  */
 internal class NullabilityCatalog(private val connection: Connection) {
 
@@ -28,15 +28,14 @@ internal class NullabilityCatalog(private val connection: Connection) {
    *
    * Also covers operators, with no separate `pg_operator` lookup needed: [PgNodeExpression.OpExpr]
    * and [PgNodeExpression.ScalarArrayOpExpr] are keyed by `opfuncid`/`oprcode` — the operator's
-   * *implementing function* OID — which is itself a `pg_proc` row already captured by this single
+   * implementing function OID — which is itself a `pg_proc` row already captured by this single
    * query, unlike [neverNullForNonNullInputOids], which needs its own `pg_operator` query because it
-   * safe-lists specific (symbol, operand types) triples rather than a volatility flag every
-   * `pg_proc` row already carries.
+   * safe-lists specific (symbol, operand types) triples. Volatility is a flag every `pg_proc` row
+   * already carries.
    *
    * Backs [GroupingSetNullExtension]'s constant-folding check (`foldsToConst`, whose KDoc explains
-   * why IMMUTABLE and not STABLE). This mirrors PostgreSQL's own constant-folding rule rather than
-   * an empirically swept safe-list, so a user-defined `IMMUTABLE` function folds exactly like a
-   * built-in one and no `pg_catalog` restriction is needed.
+   * why IMMUTABLE and not STABLE). This mirrors PostgreSQL's own constant-folding rule, so a user-defined `IMMUTABLE`
+   * function folds exactly like a built-in one and no `pg_catalog` restriction is needed.
    */
   val immutableFunctionOids: Set<Int> by lazy(::loadImmutableFunctionOids)
 
@@ -54,13 +53,12 @@ internal class NullabilityCatalog(private val connection: Connection) {
   /**
    * OIDs of non-strict functions that are guaranteed to never return `null` for any combination of
    * argument values passed in the ordinary (non-`VARIADIC`) calling form, including when every
-   * argument is `null`. Currently `concat` only: `concat(NULL::text, NULL::text)` returns `''`
+   * argument is `null`. Contains only `concat`. `concat(NULL::text, NULL::text)` returns `''`
    * (empty string), never `null`.
    *
    * The `VARIADIC` calling form (`concat(VARIADIC arr)`) is a different case this list's claim does
-   * not cover: it passes the array argument itself as one value rather than exploding it into
-   * elements, and `concat(VARIADIC arr)` is `null` when `arr` itself is `null` (PostgreSQL 16-18).
-   * [PgNodeExpression.FuncExpr.isVariadic] distinguishes the two forms; neither
+   * not cover: it passes the array argument itself as one value, and `concat(VARIADIC arr)` is `null` when `arr` itself
+   * is `null` (PostgreSQL 16-18). [PgNodeExpression.FuncExpr.isVariadic] distinguishes the two forms; neither
    * [NodeTreeNullabilityAnalyzer.isNonNull] nor [GroupingSetNullExtension.isSafeFromGroupingSetNullExtension]
    * trusts this list for a `VARIADIC` call.
    *
@@ -84,8 +82,8 @@ internal class NullabilityCatalog(private val connection: Connection) {
 
   /**
    * OIDs of functions that are non-null if and only if their first argument is non-null, regardless
-   * of any other argument's nullability, in the ordinary (non-`VARIADIC`) calling form. Currently
-   * `concat_ws` only: `concat_ws(',', NULL, NULL)` returns `','`-joined empty string (`''`,
+   * of any other argument's nullability, in the ordinary (non-`VARIADIC`) calling form.
+   * Contains only `concat_ws`. `concat_ws(',', NULL, NULL)` returns `','`-joined empty string (`''`,
    * non-null) but `concat_ws(NULL, 'x', 'y')` returns `null` — the separator (first argument) alone
    * determines whether the whole call can be `null`.
    *
@@ -135,20 +133,18 @@ internal class NullabilityCatalog(private val connection: Connection) {
    * `substring(text, int, int)` is total but `substring(text FROM pattern)` is not, and both
    * would share the same two-argument-count shape if only argument count were checked — this is
    * why the match is on the full ordered list of argument type names (via `pg_type.typname`), not
-   * just arity. `substring` itself is simply left off the list entirely rather than enumerated,
-   * since its regex overloads are non-total.
+   * just arity. `substring` itself is left off the list entirely, since its regex overloads are non-total.
    *
    * Casts are safe-listed by (source type, target type) pair — see
-   * [NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES] — rather than a class-wide blanket over every
-   * `pg_cast.castfunc` in `pg_catalog`. A blanket was
-   * tried first and is false: `('null'::jsonb)::int4` (and every other `jsonb` → numeric/`boolean`
-   * cast) returns `null` on well-typed, non-null input with no error, because the cast function
-   * special-cases the JSON literal `null` rather than raising "cannot convert". A sweep of every
+   * [NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES]. A class-wide blanket over every
+   * `pg_cast.castfunc` in `pg_catalog` does not hold: `('null'::jsonb)::int4` (and every other `jsonb` →
+   * numeric/`boolean` cast) returns `null` on well-typed, non-null input with no error, because the cast function
+   * special-cases the JSON literal `null`, so no "cannot convert" error is raised. A sweep of every
    * `jsonb`-targeting numeric/`boolean` cast confirmed this for all seven overloads (`int2`, `int4`,
    * `int8`, `numeric`, `float4`, `float8`, `bool`); none of the seven appear in
    * [NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES]. The same sweep also found `timestamp`/`timestamptz` →
    * `time`/`timetz` silently returns `null` for the infinite (`'infinity'`/`'-infinity'`) input,
-   * rather than erroring the way `'infinity'::interval::time` does — so those three pairs are
+   * where `'infinity'::interval::time` errors — so those three pairs are
    * excluded too. Every other pair the sweep checked (see [SafeListSweepTest] for the corpus and the
    * full case count) proved total, including on `NaN`, `Infinity`, `-Infinity`, min/max integer
    * values, and empty strings.
@@ -177,10 +173,7 @@ internal class NullabilityCatalog(private val connection: Connection) {
    * operator), mirroring `pg_operator.oprleft`/`oprright` themselves being `0` (no operand) for a
    * unary operator — e.g. unary (prefix) `-` (negation), `+`, and `~` (bitwise complement) are all
    * prefix-only overloads of symbols that are also binary elsewhere in this same list (binary `-`
-   * is subtraction, binary `~` is regex match); they needed adding here alongside the binary
-   * overloads because the earlier symbol-only blanket rule this list replaced made every overload —
-   * unary and binary alike — safe together, and losing the unary overloads would have been an
-   * unintended narrowing.
+   * is subtraction, binary `~` is regex match); they are listed alongside the binary overloads.
    *
    * Omitting a signature from this set only widens the result to nullable — it never narrows a
    * truly nullable expression to non-null — so when in doubt about whether a specific signature is
@@ -304,8 +297,8 @@ internal class NullabilityCatalog(private val connection: Connection) {
   private fun loadAggregateInitialValues(): Map<Int, Boolean> = buildMap {
     connection.createStatement().use { stmt ->
       // An aggregate is non-null for empty groups only when it has a non-null initial transition value
-      // AND no final function. Aggregates with a finalfunc (AVG, STDDEV, etc.) can return null even
-      // with a non-null agginitval because the finalfunc may produce null (e.g., AVG divides by zero
+      // and no final function. Aggregates with a finalfunc (AVG, STDDEV, etc.) can return `null` even
+      // with a non-null agginitval because the finalfunc may produce `null` (e.g., AVG divides by zero
       // count).
       stmt.executeQuery(
         "SELECT aggfnoid::integer, (agginitval IS NOT NULL AND aggfinalfn = 0) AS has_initial_value FROM pg_catalog.pg_aggregate",

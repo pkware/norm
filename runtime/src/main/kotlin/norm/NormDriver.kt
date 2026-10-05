@@ -56,8 +56,8 @@ public class NormDriver(private val connectionProvider: ConnectionProvider) {
    * Executes a query that returns exactly 1 row.
    *
    * @param sql to execute.
-   * @param rowReader Expression to extract a [RowType] from the [ResultSet].
-   * @param queryBinder Expression to populate and prepare the [PreparedStatement]. `null` if no changes need to be made
+   * @property rowReader Expression to extract a [RowType] from the [ResultSet].
+   * @property queryBinder Expression to populate and prepare the [PreparedStatement]. `null` if no changes need to be made
    * to the [PreparedStatement], such as when not providing query arguments.
    * @param RowType Type to return.
    * @return A single [RowType].
@@ -86,8 +86,8 @@ public class NormDriver(private val connectionProvider: ConnectionProvider) {
    * This function _does not_ execute the query.
    *
    * @param sql to execute.
-   * @param rowReader Expression to extract a [RowType] from the [ResultSet].
-   * @param queryBinder Expression to populate and prepare the [PreparedStatement].
+   * @property rowReader Expression to extract a [RowType] from the [ResultSet].
+   * @property queryBinder Expression to populate and prepare the [PreparedStatement].
    * @param RowType Type to return.
    * @return the deferred execution of the [sql] query.
    *
@@ -103,7 +103,7 @@ public class NormDriver(private val connectionProvider: ConnectionProvider) {
    * Executes a SQL statement, returning the number of modified rows.
    *
    * @param sql to execute.
-   * @param queryBinder Expression to populate and prepare the [PreparedStatement].
+   * @property queryBinder Expression to populate and prepare the [PreparedStatement].
    * @return The number of rows updated.
    *
    * @throws SQLException if a database access error occurs.
@@ -165,7 +165,7 @@ public class NormDriver(private val connectionProvider: ConnectionProvider) {
    * Queries that are intended for dynamic use should define only the `SELECT` clause.
    *
    * @param sql to execute.
-   * @param rowReader Expression to extract a [RowType] from the [ResultSet].
+   * @property rowReader Expression to extract a [RowType] from the [ResultSet].
    * @param RowType Type to return.
    * @return the deferred execution of the [sql] query.
    */
@@ -191,8 +191,8 @@ public class NormDriver(private val connectionProvider: ConnectionProvider) {
 
   /**
    * @param sql to execute.
-   * @param rowReader Expression to extract a [RowType] from the [ResultSet].
-   * @param queryBinder Expression to populate and prepare the [PreparedStatement].
+   * @property rowReader Expression to extract a [RowType] from the [ResultSet].
+   * @property queryBinder Expression to populate and prepare the [PreparedStatement].
    * @param RowType Type to return.
    */
   private inner class JdbcMany<RowType>(

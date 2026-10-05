@@ -12,7 +12,7 @@ import com.squareup.kotlinpoet.TypeSpec
 /**
  * [WireCodec] for Postgres enum types.
  *
- * Enum types require `setObject(index, value, Types.OTHER)` rather than `setString(index, value)`.
+ * Enum types require `setObject(index, value, Types.OTHER)`.
  * The Postgres JDBC driver rejects `VARCHAR` bindings for enum columns in prepared statements;
  * `Types.OTHER` bypasses driver-side type enforcement and lets Postgres coerce the string. This is
  * the same codec instance the `json`/`jsonb` rows of [POSTGRES_BASE_TYPES] use, so the binding for
@@ -31,19 +31,19 @@ private val ENUM_CODEC: WireCodec = POSTGRES_BASE_TYPES.getValue("json").codec
  * knowing how to resolve column types, and both operations use the same catalog
  * and query metadata.
  *
- * @param packageName to use for generated types.
- * @param catalog Postgres catalog to use when resolving projection information.
- * @param typeMappings User-configured type/column overrides. Type-level overrides take precedence
+ * @property packageName to use for generated types.
+ * @property catalog Postgres catalog to use when resolving projection information.
+ * @property typeMappings User-configured type/column overrides. Type-level overrides take precedence
  *   over auto-generated enums/domains; column-level overrides take precedence over everything.
  *   Duplicate entries are ignored.
- * @param reservedWords The connected PostgreSQL server's reserved keywords, from
+ * @property reservedWords The connected PostgreSQL server's reserved keywords, from
  *   [JdbcAnalyzer.fetchReservedWords] — consulted by [quoteSqlIdentifierIfNeeded] when rendering a
  *   `` `table.column` `` source reference, so a relation or column named after a reserved word
- *   (`order`, `user`) is quoted rather than emitted as text PostgreSQL rejects with a syntax error.
+ *   (`order`, `user`) is quoted, since PostgreSQL rejects it unquoted with a syntax error.
  *   Defaults to `emptySet()` for callers (mostly tests building an in-memory [Catalog]
  *   with no live connection) whose fixtures never name anything after a reserved word;
  *   [generateCode] — the real production entry point — always supplies
- *   [JdbcAnalyzer.fetchReservedWords]'s live result explicitly instead of relying on this default.
+ *   [JdbcAnalyzer.fetchReservedWords]'s live result explicitly.
  * @throws IllegalStateException if two unequal [typeMappings] target the same Postgres type or column.
  *   Also thrown if two of them generate the same adapter property name.
  */
@@ -223,7 +223,7 @@ internal class TypeRepository(
     val mapperArguments = mutableListOf<CodeBlock>()
     val primaryConstructor = FunSpec.constructorBuilder()
 
-    // null indicates a secondary constructor won't be needed.
+    // `null` indicates a secondary constructor won't be needed.
     val secondaryConstructor = if (queryResults.any { it.embedTable != null }) FunSpec.constructorBuilder() else null
     val secondaryToPrimaryConstructorInputs = mutableListOf<CodeBlock>()
 
@@ -480,13 +480,13 @@ internal class TypeRepository(
    * array type (`CREATE DOMAIN int_set AS int[]`), which arrives here as a `baseType` like
    * `"_int4"`. That is supported for a scalar column of such a domain (`int_set`) — [codec]
    * resolves to an [ArrayWireCodec] and [AdaptedTypeSqlMappable] handles it exactly like any other
-   * adapted type, with the value class wrapping `List<Int?>` rather than `Array<Int?>` (see
-   * [domainKotlinPropertyType]'s KDoc for why). Two shapes still fail fast, each with a diagnostic
+   * adapted type, with the value class wrapping `List<Int?>` (see
+   * [domainKotlinPropertyType]'s KDoc for why not `Array<Int?>`). Two shapes still fail fast, each with a diagnostic
    * naming the domain, its base type, and the reason:
-   * - an *array column* of an array-based domain (`int_set[]`, `isArray == true` here): decoding a
+   * - an array column of an array-based domain (`int_set[]`, `isArray == true` here): decoding a
    *   `getArray` of `int[]` values as though each were a scalar element has no defined behavior,
    *   and is rejected before [codec] is even resolved.
-   * - a *scalar* domain whose array base type [resolveWireCodec] itself cannot resolve: `_oid`
+   * - a scalar domain whose array base type [resolveWireCodec] itself cannot resolve: `_oid`
    *   (excluded explicitly — see [resolveWireCodec]'s KDoc), an array of an enum (`_mood`), or an
    *   array of a domain (`_email`) — each unsupported for the reason [unsupportedDomainBaseTypeMessage]
    *   names.
@@ -534,8 +534,7 @@ internal class TypeRepository(
   /**
    * Builds the diagnostic message for [tryResolveDomainType] when [resolveWireCodec] cannot
    * resolve [Domain.baseType], naming the domain, the base type, and the specific reason —
-   * distinguishing `_oid`, an array of an enum, and an array of a domain, rather than a single
-   * generic "unsupported base type" message that would not explain any of them.
+   * distinguishing `_oid`, an array of an enum, and an array of a domain.
    */
   private fun unsupportedDomainBaseTypeMessage(domain: Domain): String {
     if (!domain.baseType.startsWith("_")) {
@@ -563,9 +562,8 @@ internal class TypeRepository(
    * Maps a Postgres type name to its base [SqlMappable], or `null` if not recognized.
    *
    * [typeName] may carry a `pg_catalog.` qualification (e.g. `pg_catalog.int4`); it is stripped
-   * once here rather than duplicated per literal in [POSTGRES_BASE_TYPES], so every entry in that
-   * map accepts both the qualified and unqualified spelling without needing its own branch for
-   * each.
+   * once here, so every entry in [POSTGRES_BASE_TYPES] accepts both the qualified and unqualified spelling without
+   * needing its own branch for each.
    */
   private fun resolveBaseType(typeName: String, notNull: Boolean): SqlMappable? =
     POSTGRES_BASE_TYPES[typeName.removePrefix("pg_catalog.")]?.let { ScalarSqlMappable(it.codec, notNull) }

@@ -21,7 +21,7 @@ import java.time.ZoneOffset
 import java.util.UUID
 
 /**
- * E2E tests for plain (adapterless) array parameter binding and element reads (#190, #192).
+ * E2E tests for plain (adapterless) array parameter binding and element reads.
  *
  * Every test writes through generated code and reads back through generated code. Golden files
  * cannot catch these defects: the generated code compiles cleanly and fails only at execution.
@@ -275,7 +275,7 @@ class PlainArrayE2ETest : PostgresTestBase() {
     @Test
     fun `jsonb array elements are parsed as jsonb, not stored verbatim`() {
       // Postgres normalizes jsonb whitespace: {"n":1} -> {"n": 1}. That normalization is itself the
-      // evidence the element was parsed as jsonb rather than bound as character varying.
+      // evidence the element was parsed as jsonb.
       val updated = queries.updateOtherArrays(
         arrayOf(true, null, false),
         arrayOf(true),
@@ -379,7 +379,7 @@ class PlainArrayE2ETest : PostgresTestBase() {
     @Test
     fun `oid array elements round-trip, including the unsigned oid boundary value and a null element`() {
       // 4_294_967_295 (2^32 - 1) is the maximum unsigned 32-bit oid value. It exceeds Int.MAX_VALUE,
-      // so this pins Long as the element type: getInt on this value throws in pgjdbc (#196).
+      // so this pins Long as the element type: getInt on this value throws in pgjdbc.
       val updated = queries.updateOidArray(
         arrayOf(1L, null, 4_294_967_295L),
         arrayOf(2L, 3L),

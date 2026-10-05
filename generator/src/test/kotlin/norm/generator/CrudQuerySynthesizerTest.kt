@@ -507,9 +507,8 @@ class CrudQuerySynthesizerTest {
 
   @Test
   fun `a column name containing a backtick generates SQL against the real column, not a folded one`() {
-    // A prior fix rewrote Column.name's backtick to an apostrophe before this synthesizer ever saw
-    // it, so generated SQL referenced a column ("a'b") that does not exist. Column.name must stay
-    // the real database identifier here.
+    // Column.name stays the real database identifier, so the generated SQL references the column
+    // "a`b" and not a rewritten name.
     val table = table(
       "bt",
       column("id", "int4", notNull = true, isPrimaryKey = true, isAutoIncrement = true),
@@ -522,8 +521,6 @@ class CrudQuerySynthesizerTest {
 
     assertThat(insert.sql).isEqualTo("""INSERT INTO bt ("a`b") VALUES (?) RETURNING id""")
   }
-
-  // --- Helpers ---
 
   /**
    * Returns a quoting function that only quotes identifiers in [words], leaving everything else

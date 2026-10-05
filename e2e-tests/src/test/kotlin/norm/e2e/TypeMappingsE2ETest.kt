@@ -38,7 +38,7 @@ import java.time.LocalDate
  *   type-level override (`date[]` → [CalendarDate]).
  *
  * The generated [PostgresQueries] constructor requires user adapters without defaults; they
- * are provided here directly rather than through a DI container.
+ * are provided here directly.
  */
 class TypeMappingsE2ETest : PostgresTestBase() {
 

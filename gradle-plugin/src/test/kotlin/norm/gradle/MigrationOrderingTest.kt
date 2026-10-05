@@ -161,9 +161,8 @@ class MigrationOrderingTest {
 
     @Test
     fun `a plain file that a later migration depends on keeps its lexical position`() {
-      // Regression case: the old two-bucket rule moved every versioned file ahead of every plain file,
-      // which reordered "Base.sql" (creating `author`) after "V1__add_email.sql" (altering `author`)
-      // whenever "Base.sql" happened to sort lexically before all versioned files.
+      // "Base.sql" (creating `author`) stays ahead of "V1__add_email.sql" (altering `author`) when
+      // it sorts lexically before all versioned files.
       val files = listOf(file("Base.sql"), file("V1__x.sql"), file("V10__x.sql"), file("V2__x.sql"))
 
       val result = orderFiles(files)
@@ -194,7 +193,7 @@ class MigrationOrderingTest {
     fun `a lowercase plain file sorts after versioned migrations and is applied last`() {
       // "base.sql" is lowercase, so its first character ('b', 0x62) sorts after the uppercase
       // "V" (0x56) of every versioned migration. The minimal-permutation rule preserves a plain
-      // file's lexical position rather than moving it earlier, so this file runs last, not first.
+      // file's lexical position, so this file runs last, not first.
       val files = listOf(file("base.sql"), file("V1__x.sql"))
 
       val result = orderFiles(files)
@@ -279,11 +278,9 @@ class MigrationOrderingTest {
 
     @Test
     fun `a repeatable migration in an earlier directory entry still runs after a later entry's versioned migration`() {
-      // Regression case: per-entry ordering appended a directory's own repeatable migrations right after
-      // that directory's own versioned migrations, before the next declared `schemas` entry was even
-      // considered — so a repeatable migration in the first of two directories ran before a versioned
-      // migration declared in the second, contradicting Flyway, which always applies every repeatable
-      // migration after every versioned migration, across every location.
+      // A repeatable migration in the first of two directories runs after a versioned migration
+      // declared in the second, matching Flyway, which applies every repeatable migration after every
+      // versioned migration, across every location.
       val firstDirectory = SchemaSource.Directory(listOf(file("R__author_view.sql")))
       val secondDirectory = SchemaSource.Directory(listOf(file("V1__create_author.sql")))
 

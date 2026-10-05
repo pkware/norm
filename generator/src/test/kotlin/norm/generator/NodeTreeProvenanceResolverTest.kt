@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * Live-database pins for [NodeTreeProvenanceResolver]: every shape it resolves a
  * [NodeTreeColumnProvenance] for, and every shape the "correct or silent" invariant requires it to
- * return `null` for instead of guessing.
+ * decline with `null`.
  *
  * Each test builds the same node tree production analysis uses — a temporary, zero-argument
  * `BEGIN ATOMIC ... END` SQL-standard function's `prosqlbody` (see
@@ -132,10 +132,8 @@ class NodeTreeProvenanceResolverTest {
 
     @Test
     fun `a chain of three plain CTEs resolves through every hop back to the one that computed the value`() {
-      // The resolver used to grow its scope stack by one frame per hop, never per lexical nesting
-      // level, so by the third hop `:ctelevelsup 1` (which every hop here carries, since none of
-      // these CTEs nests its own WITH) indexed a frame that no longer held the top-level list at
-      // all, and this returned no provenance whatsoever.
+      // None of these CTEs nests its own WITH, so every hop carries `:ctelevelsup 1`. The scope
+      // stack follows lexical nesting, not hops, so each hop still finds the top-level list.
       val provenance = provenanceFor(
         "CREATE TABLE t (d TEXT)",
         "WITH c1 AS (SELECT UPPER(d) AS d FROM t), c2 AS (SELECT d FROM c1), c3 AS (SELECT d FROM c2) " +
@@ -180,20 +178,20 @@ class NodeTreeProvenanceResolverTest {
   @Nested
   inner class NestedCteShadowing {
 
-    // A resolver-level test asserting on [NodeTreeColumnProvenance] alone cannot distinguish the bug
-    // from a fix here. [CteHop] records only a CTE's name and its own `:ctelevelsup`, never which
-    // `:ctequery` block that hop actually landed on, and in this exact shape both the wrongly-scoped
-    // inner "c" and the correctly-scoped outer "c" happen to yield the identical (name, ctelevelsup,
-    // bodyPosition) tuple despite reading completely different `:ctequery` bodies. Only reading the
-    // actual text at that position observes the divergence -- see
+    // A resolver-level test asserting on [NodeTreeColumnProvenance] alone cannot distinguish the
+    // wrongly-scoped CTE from the correct one here. [CteHop] records only a CTE's name and its own
+    // `:ctelevelsup`, never which `:ctequery` block that hop actually landed on, and in this exact
+    // shape both the wrongly-scoped inner "c" and the correctly-scoped outer "c" happen to yield
+    // the identical (name, ctelevelsup, bodyPosition) tuple despite reading completely different
+    // `:ctequery` bodies. Only reading the actual text at that position observes the divergence -- see
     // NodeTreeProvenanceExpressionTest.NestedCteShadowing's own test for this exact shape, which
     // asserts the emitted expression is `UPPER(name)`, never `LOWER(description)`.
 
     @Test
     fun `a nested WITH that shadows an outer CTE name resolves against the INNER, correctly-scoped body`() {
-      // Before the resolver tracked a scope stack, a flat, outermost-only CTE map resolved "c"
-      // against the outer definition (UPPER(name)) even when the reference was written from inside
-      // "d"'s own body, which declares its own, shadowing "c" (LOWER(description)).
+      // The reference to "c" is written from inside "d"'s own body, which declares its own,
+      // shadowing "c" (LOWER(description)), so it resolves to that inner definition and not the
+      // outer one (UPPER(name)).
       val provenance = provenanceFor(
         "CREATE TABLE parent (name TEXT, description TEXT)",
         "WITH c AS (SELECT UPPER(name) AS ux FROM parent), " +
@@ -226,7 +224,7 @@ class NodeTreeProvenanceResolverTest {
 
     @Test
     fun `a nested WITH with no name collision at all still resolves through both levels`() {
-      // Non-adversarial control: proves the scope-stack fix supports genuine multi-level CTE nesting,
+      // Non-adversarial control: proves the scope stack supports genuine multi-level CTE nesting,
       // not merely "decline whenever names collide".
       val provenance = provenanceFor(
         "CREATE TABLE t (y TEXT)",

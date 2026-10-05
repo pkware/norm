@@ -1,6 +1,7 @@
 package norm.e2e
 
 import norm.ConnectionProvider
+import norm.NormDriver
 import norm.TransactionalConnectionProvider
 import org.intellij.lang.annotations.Language
 import org.junit.jupiter.api.AutoClose
@@ -70,12 +71,11 @@ abstract class PostgresTestBase {
    * Drops every object left over from the previous test so [schemaFile] can be reapplied onto a
    * clean `public` schema, regardless of which tables/views/types/domains it declares.
    *
-   * Dropping and recreating the whole `public` schema, rather than hand-listing each scenario's own
-   * `DROP TABLE IF EXISTS ...` statements, is what keeps this working as scenario schema files grow:
-   * a table added to a shared fixture (e.g. `test-scenarios/crud_generation/schema.sql`) used to need
-   * a matching edit in every subclass override that pointed at it, and a MISSED one left the new
-   * table behind from the previous test, so the next `schemaFile()` reapplication's own
-   * `CREATE TABLE` failed with "relation already exists" (#238). A subclass only needs to override
+   * Dropping and recreating the whole `public` schema keeps this working as scenario schema files grow.
+   * A table added to a shared fixture (e.g. `test-scenarios/crud_generation/schema.sql`) needs no
+   * matching `DROP TABLE IF EXISTS ...` statement in any subclass override, and a leftover table cannot
+   * make the next `schemaFile()` reapplication's own `CREATE TABLE` fail with "relation already exists".
+   * A subclass only needs to override
    * this when its scenario needs something [schemaFile]'s own reapplication can't recreate on its
    * own (e.g. seed data outside the schema file, or a role/extension outside `public`).
    */
@@ -133,14 +133,14 @@ abstract class PostgresTestBase {
    * Simple DataSource implementation that returns a single connection.
    * Good enough for single-threaded tests. Not suitable for production.
    *
-   * Returns a [NonClosingConnectionWrapper] so that [norm.NormDriver]'s `connection.use { }` calls
+   * Returns a [NonClosingConnectionWrapper] so that [NormDriver]'s `connection.use { }` calls
    * do not actually close the underlying JDBC connection. Connection lifecycle is managed by the
    * [setupDatabase] / [cleanDatabase] cycle instead.
    */
   /**
    * Wraps a [Connection] and makes [close] a no-op.
    *
-   * [norm.NormDriver] calls `connection.use { }` after each query, which would close the
+   * [NormDriver] calls `connection.use { }` after each query, which would close the
    * underlying JDBC connection and break subsequent queries in the same test. This wrapper
    * intercepts [close] so the connection stays open for the full `@BeforeEach`–`@AfterEach`
    * lifecycle managed by [setupDatabase].

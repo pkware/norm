@@ -18,22 +18,12 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Live-database pins for [resolveNodeTreeProvenanceExpression] — Route D's text-extraction and
- * cross-validation half, given a [NodeTreeColumnProvenance] [NodeTreeProvenanceResolver] already
- * resolved (see [NodeTreeProvenanceResolverTest] for that half).
+ * Live-database pins for [resolveNodeTreeProvenanceExpression], which extracts and cross-validates
+ * the text for a [NodeTreeColumnProvenance] from [NodeTreeProvenanceResolver]. The resolver itself
+ * is tested in [NodeTreeProvenanceResolverTest].
  *
- * Ports the shape corpus from the deleted `SqlCteOutputExpressionTest` (the retired text-only
- * whitelist's own test suite): a shape the whitelist resolved must resolve to the
- * same string here; a shape it declined that Route D now resolves correctly gets its expectation
- * updated (each such update is called out below, and was independently confirmed against
- * `verify-pg18` before being written); a shape that must stay `null` (an ambiguous body, an
- * unverifiable auto-generated alias, a niladic keyword reference, ...) still does. A handful of the
- * original shapes described SQL PostgreSQL itself rejects outright (an alias that is a string
- * literal, a second bare word trailing a completed alias, a DML statement targeting a CTE's own
- * name as if it were a real relation, an unquoted qualifier that cannot address a differently-cased
- * quoted CTE name, ...) — those can never reach this function from a query Norm's own JDBC analysis
- * step would have accepted in the first place, so they are simply dropped rather than ported; no
- * `@Test` for any of them exists anywhere in this file.
+ * Ambiguous bodies and unverifiable auto-generated aliases stay `null`. SQL that PostgreSQL rejects
+ * has no test here, because JDBC analysis fails before this function runs.
  */
 @Testcontainers
 class NodeTreeProvenanceExpressionTest {
@@ -94,8 +84,8 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `a CTE body wrapped in redundant parentheses still resolves`() {
-      // `parseOutputItemsWithAlias` previously found no top-level SELECT once the sliced body text
-      // started with an extra, unmatched "(", since that put the whole rest of the text at paren
+      // `parseOutputItemsWithAlias` must find the top-level SELECT even when the sliced body text
+      // starts with an extra, unmatched "(", which puts the whole rest of the text at paren
       // depth one.
       val ddl = "CREATE TABLE parent (id INT, name TEXT)"
       val sql = """
@@ -147,13 +137,13 @@ class NodeTreeProvenanceExpressionTest {
   @Nested
   inner class WhitelistPreconditionsRouteDNoLongerNeeds {
 
-    // These shapes were previously null only because the retired text-only whitelist required
-    // "exactly one declared CTE" and "the main query's FROM is exactly that CTE's bare name" as
-    // proxies for "this reference can only mean the CTE" -- proxies needed because pure text has no
-    // other way to rule out a same-named schema table or an ambiguous multi-source FROM. Route D
-    // needs neither proxy: it starts from the outer query's own parsed Var, which PostgreSQL has
-    // already resolved unambiguously by the time the node tree exists. Each expectation below was
-    // confirmed against verify-pg18 before being written.
+    // These shapes resolve without the preconditions "exactly one declared CTE" and "the main
+    // query's FROM is exactly that CTE's bare name". Text-only matching needs both as proxies for
+    // "this reference can only mean the CTE", since pure text has no other way to rule out a
+    // same-named schema table or an ambiguous multi-source FROM. Node-tree resolution starts from
+    // the outer query's parsed Var, which PostgreSQL has already resolved, so it needs neither
+    // proxy. Each expectation below was confirmed against
+    // verify-pg18 before being written.
 
     @Test
     fun `a second, unreferenced sibling CTE no longer blocks resolution of the one actually used`() {
@@ -197,7 +187,7 @@ class NodeTreeProvenanceExpressionTest {
       // be decided from text alone. The item's complete, uncut text ("LOWER(name) ux") is a legal
       // select-list item but not a legal standalone expression: `SELECT (LOWER(name) ux)` is a
       // syntax error, since the parentheses force expression context and the bare trailing "ux" is
-      // then an unexpected second token. Declining here is the fix.
+      // then an unexpected second token. Declining here is correct.
       val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
       val sql = """
         WITH a AS (SELECT LOWER(name) ux FROM parent)
@@ -209,10 +199,9 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `a syntactically WITH RECURSIVE CTE that never actually self-references resolves normally`() {
-      // PostgreSQL's own ":cterecursive" flag is false here -- a CTE declared under WITH RECURSIVE
-      // with no self-reference in its body genuinely runs once, exactly like an ordinary CTE. The
-      // retired whitelist bailed on the SQL text alone ("WITH RECURSIVE" present anywhere), overly
-      // conservative for this shape; Route D reads the authoritative flag instead.
+      // PostgreSQL's own ":cterecursive" flag is `false` here -- a CTE declared under WITH RECURSIVE
+      // with no self-reference in its body genuinely runs once, exactly like an ordinary CTE.
+      // Node-tree resolution reads that flag, so the "WITH RECURSIVE" text alone does not block resolution.
       val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
       val sql = """
         WITH RECURSIVE a AS (
@@ -247,10 +236,9 @@ class NodeTreeProvenanceExpressionTest {
     @Test
     fun `a bare column's own implicit alias no longer fuses into the next item, killing the whole body`() {
       // "description dx" (a bare column immediately followed by its own implicit alias, no AS)
-      // used to fuse into one unverifiable segment once stripCommentsAndWhitespace deleted the
-      // separating space, so this position had no verifiable name -- failing the all-positions
-      // cross-validation gate for the whole body and silencing "ux"'s own provenance too, even
-      // though its alias was fine.
+      // keeps a verifiable name for its position after stripCommentsAndWhitespace deletes the
+      // separating space. The all-positions cross-validation gate therefore passes, and "ux" keeps
+      // its own provenance.
       val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
       val sql = """
         WITH a AS (SELECT description dx, UPPER(name) AS ux FROM parent)
@@ -265,7 +253,7 @@ class NodeTreeProvenanceExpressionTest {
   inner class OverLengthIdentifierTruncation {
 
     // Aliases and CTE names reach these comparisons as raw text, still quoted, so they are
-    // truncated after folding rather than when parsed.
+    // truncated after folding.
 
     @Test
     fun `an over-length implicit alias on a sibling item no longer blocks resolution of the position being read`() {
@@ -301,7 +289,7 @@ class NodeTreeProvenanceExpressionTest {
       // Site NodeTreeProvenanceExpression.kt:140 (AliasMatchKind.EXPLICIT_ALIAS). verifiedItem must
       // truncate the raw, over-length alias before fold-comparing it against the node tree's own
       // server-truncated :resname, or a computed expression named with an over-length "AS alias"
-      // never verifies and resolves to null instead of its real expression.
+      // never verifies and resolves to `null`.
       val overLongAlias = "v".repeat(70)
       val ddl = "CREATE TABLE parent (id INT, name TEXT)"
       val sql = """
@@ -609,7 +597,7 @@ class NodeTreeProvenanceExpressionTest {
       // nothing -- matchedItem.selectItem.columnName is non-null for "description AS
       // description_upper" because parseColumnReference runs on the alias-stripped expression
       // "description". For the implicit-alias spelling below, extractAlias finds no top-level AS at
-      // all, so selectItem.columnName is null for the full unsplit text "description dx", even
+      // all, so selectItem.columnName is `null` for the full unsplit text "description dx", even
       // though the item is the same kind of unchanged pass-through once its trailing alias token is
       // split off. The two spellings must agree.
       val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
@@ -638,7 +626,7 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `a chain of three plain CTEs resolves the ORIGINAL computed expression, not nothing`() {
-      // Previously resolved to nothing from the third hop on -- see
+      // Resolution must continue past the third hop -- see
       // NodeTreeProvenanceResolverTest.ChainedCtes for why.
       val ddl = "CREATE TABLE t (d TEXT)"
       val sql = """
@@ -682,8 +670,8 @@ class NodeTreeProvenanceExpressionTest {
       // With the row ('alpha', 'zeta') this query actually returns "ALPHA" (UPPER(name), from the
       // outer "c") -- never LOWER(description) from "e"'s own inner, shadowing "c", which "e"'s body
       // does not even read from ("e" selects from "d", a plain pass-through of the outer "c"). See
-      // NodeTreeProvenanceResolverTest.NestedCteShadowing for the full explanation of the scope bug
-      // this reproduces.
+      // NodeTreeProvenanceResolverTest.NestedCteShadowing for the full explanation of the scope shadowing
+      // this exercises.
       val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
       val sql = """
         WITH c AS (SELECT id, UPPER(name) AS ux FROM parent),
@@ -731,8 +719,8 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `a nested WITH with no name collision resolves through both levels to the real expression`() {
-      // Non-adversarial control, proving the fix is a genuine scope-aware resolution rather than a
-      // blanket refusal whenever a nested WITH is present at all.
+      // Non-adversarial control, proving a nested WITH alone does not block
+      // resolution.
       val ddl = "CREATE TABLE t (y TEXT)"
       val sql = """
         WITH d AS (WITH e AS (SELECT LOWER(y) AS uy FROM t) SELECT uy FROM e)
@@ -923,9 +911,8 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `a CTE name with an escaped embedded double-quote resolves by its real, unescaped name`() {
-      // parseSingleCteDefinition's quoted-name scan previously stopped at the first '"', truncating
-      // rawName to `"He"` -- fold-comparing that against the node tree's real ctename `He"llo` never
-      // matched, so this resolved to nothing.
+      // parseSingleCteDefinition's quoted-name scan keeps the whole token `"He""llo"`, so rawName
+      // fold-matches the node tree's real ctename `He"llo` and the expression resolves.
       val ddl = "CREATE TABLE t (a TEXT, b TEXT)"
       val sql = """
         WITH "He""llo" AS (SELECT UPPER(a) AS ux FROM t)
@@ -1029,7 +1016,7 @@ class NodeTreeProvenanceExpressionTest {
           attempted++
           assertThat(expression).isNull()
         }
-        // Every word PostgreSQL's own grammar allows bare was attempted (and asserted null above);
+        // Every word PostgreSQL's own grammar allows bare was attempted (and asserted `null` above);
         // none was skipped that should not have been, and none was silently attempted despite being
         // unparseable.
         assertThat(attempted).isEqualTo(expectedReachableWords.size)
@@ -1046,7 +1033,7 @@ class NodeTreeProvenanceExpressionTest {
       // substituted SQL (a real '?' is not valid standalone PostgreSQL syntax, so the temp probe
       // function cannot be created from the original text directly) -- exactly as
       // ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody does in production. The
-      // original text, question mark intact, is what must come back.
+      // original text, question mark intact, must come back.
       val ddl = "CREATE TABLE parent (description TEXT)"
       val substitutedForNodeTree = """
         WITH c AS (SELECT UPPER(description) || '' AS d FROM parent)

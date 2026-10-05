@@ -177,7 +177,7 @@ class NodeTreeNullabilityAnalyzerTest {
 
     @Test
     fun `ON EMPTY DEFAULT with a null default expression is nullable`() {
-      // DEFAULT null::jsonb ON EMPTY is legal PostgreSQL — the behavior code alone must not be
+      // `DEFAULT null::jsonb ON EMPTY` is legal PostgreSQL — the behavior code alone must not be
       // trusted; its own expression's nullability still has to be checked.
       val expression = jsonQuery(
         onEmpty = PgNodeExpression.JSON_BEHAVIOR_DEFAULT,
@@ -189,7 +189,7 @@ class NodeTreeNullabilityAnalyzerTest {
 
     @Test
     fun `an unrecognized ON EMPTY behavior code defaults to nullable, the safe direction`() {
-      // This is the deny-list bug: a hypothetical future JsonBehaviorType Postgres has not added
+      // A hypothetical future JsonBehaviorType Postgres has not added
       // yet (modeled here as an arbitrary out-of-range code) must not be treated as non-null
       // merely because it is not JSON_BEHAVIOR_NULL. ON ERROR is pinned to the safe ERROR code so
       // this test isolates the ON EMPTY allow-list check specifically.
@@ -266,9 +266,9 @@ class NodeTreeNullabilityAnalyzerTest {
 
     @Test
     fun `a JSON_SERIALIZE-shaped node with an empty argument list is nullable, not vacuously non-null`() {
-      // Without the arguments.isNotEmpty() guard, `arguments.all(recurse)` is vacuously true over an
-      // empty list — the same unsound shape as the original `JsonConstructorExpr -> true` bug. A
-      // malformed `:args` parses down to an empty list rather than throwing, so this is reachable.
+      // `arguments.all(recurse)` is vacuously `true` over an empty list, so the analyzer checks
+      // arguments.isNotEmpty() first. A malformed `:args` parses down to an empty list without
+      // throwing, so this is reachable.
       val expression = PgNodeExpression.JsonConstructorExpr(
         type = PgNodeExpression.JSON_CONSTRUCTOR_TYPE_SERIALIZE,
         arguments = emptyList(),
@@ -414,7 +414,7 @@ class NodeTreeNullabilityAnalyzerTest {
       // A Var with levelsUp greater than 0 indexes an enclosing query's range table (see
       // PgNodeExpression.Var.levelsUp's own KDoc) — this block's isSourceColumnNotNull says
       // nothing trustworthy about it, so it must stay nullable regardless of what that callback
-      // returns. This guard is what makes the ANY_SUBLINK subquery-column-nullability leg sound
+      // returns. This guard keeps the ANY_SUBLINK subquery-column-nullability leg sound
       // for a correlated subselect target list, e.g. `id IN (SELECT t.a FROM w)`.
       val expression = PgNodeExpression.Var(varno = 1, varattno = 1, nullingRelations = emptySet(), levelsUp = 1)
       val result = analyzer(isSourceColumnNotNull = { _, _ -> true }).isNonNull(expression)

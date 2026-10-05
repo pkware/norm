@@ -141,7 +141,7 @@ private fun TypeSpec.Builder.addBatchWithReturnOverloads(query: SqlStatement) {
   val convenienceFunction = batchFunction.toBuilder().apply {
     parameters.removeLast() // batchSize
     parameters.removeLast() // mapper
-    // Remove the T type variable — the concrete type is now inferred from the mapper reference below.
+    // Remove the T type variable — the concrete type is inferred from the mapper reference below.
     typeVariables.removeLast()
     returns(LIST.parameterizedBy(concreteReturnType))
     addBatchWithReturnKdoc(query, "Uses a batch size of %L.\n\n", BATCH_SIZE)
@@ -184,8 +184,8 @@ private fun FunSpec.Builder.addBatchWithReturnKdoc(
 /**
  * Adds dynamic query interface methods for the given SQL statement.
  *
- * Dynamic queries return [Query] instead of [Many], allowing callers to append SQL fragments
- * and bind parameters at runtime.
+ * Dynamic queries return [Query], allowing callers to append SQL fragments and bind parameters at
+ * runtime.
  */
 private fun TypeSpec.Builder.addDynamicInterfaceMethods(query: SqlStatement) {
   val dynamicName = "${query.name}Dynamically"
@@ -232,18 +232,16 @@ private fun TypeSpec.Builder.addDynamicInterfaceMethods(query: SqlStatement) {
  */
 private fun FunSpec.Builder.addStandardKdoc(query: SqlStatement, extraFormat: String? = null, vararg extraArgs: Any) {
   if (query.comments.isNotEmpty()) {
-    // query.comments is passed as a "%L" argument rather than interpolated into the format string
-    // itself -- a literal "%" in the comment would otherwise be read as a KotlinPoet format
-    // specifier and throw building the KDoc.
+    // A "%L" argument keeps any "%" in query.comments from being parsed as a format specifier.
     addKdoc("%L\n\n", query.comments.joinToString("\n", transform = String::trim))
   }
   // TypeRepository.addClassKdoc declines its own "sql" fenced block for this identical query text via
   // the same containsUnescapableBlockCommentDelimiter guard, so the two KDoc blocks never disagree
   // about whether the query can be rendered faithfully.
   if (!containsUnescapableBlockCommentDelimiter(query.sql)) {
-    // Sized to markdownFenceDelimiter(query.sql) -- one backtick longer than any run already in the
-    // query -- rather than a fixed 3-backtick fence, so a query containing its own line of 3+
-    // backticks can never be mistaken for this fence's own closing line.
+    // Sized to markdownFenceDelimiter(query.sql), one backtick longer than any run already in the
+    // query, so a query containing its own line of 3+ backticks cannot be mistaken for this fence's
+    // closing line.
     val fence = markdownFenceDelimiter(query.sql)
     addKdoc("%Lsql\n%L\n%L\n\n", fence, query.sql, fence)
   }
@@ -292,7 +290,7 @@ private fun FunSpec.Builder.addBatchKdoc(query: SqlStatement, extraFormat: Strin
  *
  * Using this is more readable than using an inline lamda at each call site, and lets the JIT inline sooner.
  *
- * Not to be confused with [norm.ColumnValue] ([COLUMN_VALUE_CLASS_NAME]) — that's the public runtime
+ * Not to be confused with `norm.ColumnValue` ([COLUMN_VALUE_CLASS_NAME]) — that's the public runtime
  * type wrapping an overridable-default column's parameter; this is an internal mapper-reference helper.
  */
 private val INPUT_VALUE_REFERENCE = MemberName(RUNTIME_PACKAGE, "inputValue").reference()
@@ -300,7 +298,7 @@ private val INPUT_VALUE_REFERENCE = MemberName(RUNTIME_PACKAGE, "inputValue").re
 /**
  * Default batch size to use.
  *
- * The value was chosen somewhat arbitrarily, and does not currently have any requirements.
+ * The value is arbitrary; no requirement constrains it.
  */
 private const val BATCH_SIZE = 100
 

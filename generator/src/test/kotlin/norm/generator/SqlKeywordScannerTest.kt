@@ -13,7 +13,7 @@ import org.junit.jupiter.params.provider.MethodSource
 
 /**
  * One [findTopLevelKeyword] input: [sql] and the [keyword] to search for. [expected] is a function
- * of the (already-evaluated) [sql] string rather than a plain `Int` so a case can assert either a
+ * of the (already-evaluated) [sql] string, so a case can assert either a
  * fixed `-1` or a position computed from [sql] itself (e.g. `sql.indexOf("FROM a")`) without
  * duplicating the substring being searched for.
  */
@@ -82,10 +82,8 @@ class SqlKeywordScannerTest {
 
     @Test
     fun `splits correctly around a column name containing two dollar signs`() {
-      // Before the dollar-quote fix, the "$" between "b" and "c" was misread as opening a
-      // "$b$"-tagged dollar-quote, swallowing everything after it (including the real commas) as
-      // unterminated string content — yielding one item instead of three. "a$b$c" is an ordinary
-      // PostgreSQL identifier.
+      // The "$" between "b" and "c" must not open a "$b$"-tagged dollar-quote, so the real commas
+      // still split the list into three items. "a$b$c" is an ordinary PostgreSQL identifier.
       val result = splitAtTopLevel("a\$b\$c, id, name", ',')
       assertThat(result).containsExactly("a\$b\$c", " id", " name")
     }
@@ -109,7 +107,7 @@ class SqlKeywordScannerTest {
     @Test
     fun `does not bail when an unmatched closing parenthesis drives depth negative before a real delimiter`() {
       // A stray ")" before any "(" dips depth below zero; splitAtTopLevel has no floor and keeps
-      // scanning rather than bailing, so a later "(" bringing depth back to exactly 0 makes the
+      // scanning, so a later "(" bringing depth back to exactly 0 makes the
       // delimiter after it split normally.
       val result = splitAtTopLevel(") x (y, z", ',')
       assertThat(result).containsExactly(") x (y", " z")
@@ -187,9 +185,8 @@ class SqlKeywordScannerTest {
         keyword = "WHEN",
         expected = { -1 },
       ),
-      // Before the word-boundary fix, "_" did not count as an identifier character, so the
-      // character after "FROM" in "valid_from" ("_" is not letterOrDigit) was wrongly treated as
-      // a valid word boundary, matching "FROM" inside the column name itself.
+      // "_" counts as an identifier character, so the character after "FROM" in "valid_from" is
+      // not a word boundary and "FROM" inside the column name does not match.
       KeywordScanCase(
         description = "does not match FROM inside the identifier valid_from",
         sql = "UPDATE t SET valid_from = 'x' FROM a",
@@ -203,7 +200,7 @@ class SqlKeywordScannerTest {
         expected = { it.indexOf("FROM a") },
       ),
       // "data_set" as a table name ends in "_set" — the character before "set" is "_", which
-      // must count as an identifier character so the real "SET" keyword afterward is what's found.
+      // must count as an identifier character so the real "SET" keyword afterward is the one found.
       KeywordScanCase(
         description = "does not match SET inside the identifier data_set",
         sql = "UPDATE data_set SET x = 1",
@@ -288,8 +285,7 @@ class SqlKeywordScannerTest {
     fun `a dollar-quoted string immediately before the keyword does not block the match`() {
       // The dollar-quote "$$x$$" ends right where "FROM" begins, with no separator between them
       // in the original text -- unlike the mid-identifier case above, PostgreSQL itself lexes this
-      // as two separate tokens (the string, then the keyword), so this is a real match, not a
-      // false one.
+      // as two separate tokens (the string, then the keyword), so this is a real match.
       val sql = "SELECT \$\$x\$\$FROM t"
       val result = findTopLevelKeyword(sql, "FROM")
       assertThat(result).isEqualTo(sql.indexOf("FROM"))
@@ -361,7 +357,7 @@ class SqlKeywordScannerTest {
 
     @Test
     fun `a standalone non-breaking space before a returning-shaped word is not split off as a separator`() {
-      // Kotlin's Char.isWhitespace() is true for U+00A0 (no-break space), but PostgreSQL's lexer
+      // Kotlin's Char.isWhitespace() is `true` for U+00A0 (no-break space), but PostgreSQL's lexer
       // does not treat it as whitespace at all -- it's an ordinary (>= 0x80) identifier
       // character. If the whitespace branch were checked before the identifier branch, the
       // U+00A0 would be consumed as a plain separator, leaving "returning" to stand alone right
@@ -373,9 +369,7 @@ class SqlKeywordScannerTest {
 
     @Test
     fun `still finds the real keyword when it is not preceded by AS`() {
-      // Not new behavior — the AS-preceded-alias exclusion predates this branch's >= 0x80
-      // boundary work. Kept as a regression guard that a real RETURNING clause with no AS before
-      // it still matches.
+      // A real RETURNING clause with no AS before it matches.
       val sql = "DELETE FROM t WHERE id = 1 RETURNING id"
       val result = findTopLevelReturningKeyword(sql)
       assertThat(result).isEqualTo(sql.indexOf("RETURNING id"))
@@ -383,9 +377,7 @@ class SqlKeywordScannerTest {
 
     @Test
     fun `does not match an AS-preceded column alias`() {
-      // Not new behavior — same as above, the AS-preceded exclusion predates this branch's
-      // >= 0x80 boundary work. Kept as a regression guard against that exclusion becoming overly
-      // broad or narrow.
+      // A column alias preceded by AS is excluded.
       val sql = "SELECT email AS returning, x FROM t"
       val result = findTopLevelReturningKeyword(sql)
       assertThat(result).isEqualTo(-1)
@@ -435,8 +427,7 @@ class SqlKeywordScannerTest {
 
     @Test
     fun `a FROM inside EXTRACT's own parentheses is not mistaken for the clause boundary`() {
-      // Ordinary depth tracking already handles this -- included as a regression guard that the
-      // new DISTINCT-preceded exclusion did not accidentally widen matching in the other direction.
+      // Ordinary depth tracking handles this, and the DISTINCT-preceded exclusion does not affect it.
       val sql = "SELECT EXTRACT(DAY FROM ts) FROM tbl"
       val result = findTopLevelFromClauseKeyword(sql, 0)
       assertThat(result).isEqualTo(sql.indexOf("FROM tbl"))
@@ -554,8 +545,8 @@ class SqlKeywordScannerTest {
     fun `a string literal between DISTINCT and FROM resets state, unlike a comment`() {
       // A comment separates words the way whitespace does (see the comment case above), but any
       // other skipped token -- here a single-quoted string literal -- clears the
-      // DISTINCT-preceded state entirely, so the FROM right after it is no longer excluded and
-      // matches immediately, rather than the later, second FROM.
+      // DISTINCT-preceded state entirely, so the FROM right after it is not excluded and
+      // matches immediately, ahead of the later, second FROM.
       val sql = "SELECT a IS DISTINCT'x'FROM b FROM t"
       val result = findTopLevelFromClauseKeyword(sql, 0)
       assertThat(result).isEqualTo(sql.indexOf("FROM b"))
@@ -577,7 +568,7 @@ class SqlKeywordScannerTest {
       // Unlike splitAtTopLevel, findMatchingCloseParenthesis tracks only "(" / ")" -- a stray "]"
       // with no matching "[" has no effect at all, so the real closing parenthesis after it is
       // still found. A version that (wrongly) treated "]" the same as ")" would close early, right
-      // at the "]" itself, instead of here.
+      // at the "]" itself.
       val text = "(a] b)"
       val result = findMatchingCloseParenthesis(text, 0)
       assertThat(result).isEqualTo(text.length - 1)
@@ -625,9 +616,8 @@ class SqlKeywordScannerTest {
 
     @Test
     fun `still consumes a real keyword followed by ordinary whitespace`() {
-      // Not new behavior — a positive control confirming a real keyword followed by plain
-      // whitespace still advances past it. Kept as a regression guard against the non-ASCII
-      // boundary check above becoming overly broad and rejecting this too.
+      // A positive control: a real keyword followed by plain whitespace is consumed, so the
+      // non-ASCII boundary check above does not reject it.
       val sql = "OUTER JOIN b"
       assertThat(skipOptionalKeyword(sql, 0, "OUTER")).isEqualTo(sql.indexOf("JOIN"))
     }

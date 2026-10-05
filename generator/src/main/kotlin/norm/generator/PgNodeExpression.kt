@@ -11,7 +11,7 @@ internal sealed interface PgNodeExpression {
   /**
    * @property levelsUp `0` when this `Var` resolves in the current query level. A value greater
    *   than `0` means it is an outer reference from a correlated or LATERAL subquery, and [varno]
-   *   refers to an enclosing query's range table rather than the current block's, so it must not
+   *   refers to an enclosing query's range table, so it must not
    *   be interpreted against the current block.
    * @property returningType `0` for an ordinary `Var` (including every `Var` on PostgreSQL versions
    *   older than 18, which never emit `:varreturningtype` at all). `1` means this `Var` reads the
@@ -74,17 +74,17 @@ internal sealed interface PgNodeExpression {
    * @property outerOperand The parsed first argument of the sublink's `:testexpr` (e.g. `a` in `a =
    *   ANY (...)`), `null` when `:testexpr` is absent — `EXISTS`/`EXPR`/`MULTIEXPR`/`ARRAY`/`CTE`
    *   sublinks emit none — or when it has no single-argument `:args` list this parser can read, which
-   *   is true of every multi-column row-comparison form (the `BOOLEXPR` shape has no top-level
+   *   holds for every multi-column row-comparison form (the `BOOLEXPR` shape has no top-level
    *   `:args`; the `ROWCOMPAREEXPR` shape uses `:largs`/`:rargs` and parses to [Unknown] anyway).
    *   Extracted regardless of `subLinkType` — see [PgNodeExpressionParser]'s `parseSubLink`.
    * @property subselectBlock The raw `{QUERY ...}` text of the sublink's `:subselect`, verbatim,
    *   `null` when absent (malformed input, or a node-tree shape this parser does not model). Used
    *   by [NodeTreeNullabilityAnalyzer] to recursively analyze an `ANY_SUBLINK`'s (`IN`/`= ANY`) or
    *   `ALL_SUBLINK`'s (`x op ALL (...)`) subquery body for the "exactly one non-null output column"
-   *   leg of its nullability rule — see that class's `SubLink` branch. Deliberately kept as raw text
-   *   rather than a parsed [PgNodeExpression] (that type only models scalar expressions, never a
-   *   whole query block), so analyzing it requires re-entering [PgNodeTreeParser]/
-   *   `ColumnNullabilityAnalyzer`, not this class's own `when` dispatch.
+   *   leg of its nullability rule — see that class's `SubLink` branch. Kept as raw text because
+   *   [PgNodeExpression] only models scalar expressions, never a whole query block, so analyzing it
+   *   requires re-entering [PgNodeTreeParser]/`ColumnNullabilityAnalyzer`, not this class's own
+   *   `when` dispatch.
    * @property testExpressionOperatorOid The `:opfuncid` of the sublink's `:testexpr` when that
    *   `:testexpr` is a single top-level `OPEXPR` (`a = ANY (...)`, `a IN (...)`, `a <> ALL (...)`),
    *   `null` otherwise. Used alongside [outerOperand] by [NodeTreeNullabilityAnalyzer] to confirm the
@@ -160,8 +160,8 @@ internal sealed interface PgNodeExpression {
    * @property function The parsed `:func` node — `null` (from `:func <>`) for every type except
    *   `OBJECTAGG`/`ARRAYAGG`, where it holds the [Aggref] (or [WindowFunc], when `OVER` is used) that
    *   computes the aggregated JSON value. [NodeTreeNullabilityAnalyzer.isNonNull] recurses into this
-   *   for those two types rather than [arguments], whose emptiness would make an
-   *   `arguments.all { ... }` rule vacuously `true`.
+   *   for those two types because [arguments] is empty and `arguments.all { ... }` is vacuously
+   *   `true` over an empty list.
    */
   data class JsonConstructorExpr(
     val type: Int,
@@ -387,7 +387,7 @@ internal data class NodeTreeCteDefinition(val name: String, val queryBlock: Stri
  *   referring back to itself (from `:self_reference`). `false` for every ordinary CTE reference —
  *   this is only ever `true` inside a `WITH RECURSIVE` CTE's own recursive query term. Defaults to
  *   `false` since only [RangeTableEntry.Cte] (built by [PgNodeTreeParser.parseRangeTableEntries])
- *   currently reads it; [cteReferences]'s callers never did.
+ *   reads it; [cteReferences]'s callers do not.
  */
 internal data class NodeTreeCteReference(val name: String, val ctelevelsup: Int, val selfReference: Boolean = false)
 
@@ -396,8 +396,8 @@ internal data class NodeTreeCteReference(val name: String, val ctelevelsup: Int,
  * [baseRelations] ([Relation] only), [subqueryBlocks] ([Subquery] only), and [cteReferences] ([Cte]
  * only), which each derive exactly one kind and silently skip every entry of any other kind.
  * [NodeTreeProvenanceResolver] walks an arbitrary `Var`'s `varno` and must be able to see an
- * unrecognized or not-yet-modeled kind ([Other]) so it can bail rather than misinterpret that varno
- * as one of the recognized kinds.
+ * unrecognized or not-yet-modeled kind ([Other]) so it can bail on a varno that is not one of
+ * the recognized kinds.
  *
  * Built by [PgNodeTreeParser.parseRangeTableEntries].
  */
@@ -406,7 +406,7 @@ internal sealed interface RangeTableEntry {
   /** `rtekind 0`: an ordinary base table or view. */
   data class Relation(val relid: Int) : RangeTableEntry
 
-  /** `rtekind 1`: a derived table (a subquery in `FROM`), NOT a CTE. */
+  /** `rtekind 1`: a derived table (a subquery in `FROM`), not a CTE. */
   data class Subquery(val queryBlock: String) : RangeTableEntry
 
   /** `rtekind 6`: a reference to a CTE declared by a `WITH` clause. */
@@ -418,12 +418,11 @@ internal sealed interface RangeTableEntry {
    * @property joinAliasVars One parsed expression per join output column, in order — 1-based
    *   `varattno - 1` indexes into this list. An ordinary (non-merged) column's entry is a bare
    *   [PgNodeExpression.Var] pointing at whichever side produced it; a `USING`/`NATURAL`-merged
-   *   column's entry is a [PgNodeExpression.CoalesceExpr] of the two sides' Vars. That distinction
-   *   is exactly what [NodeTreeProvenanceResolver.resolveVar] relies on: it casts an entry `as?
-   *   Var` and bails (`return null`) when it is anything else — a `CoalesceExpr` under an outer
-   *   join, whose honest provenance is not one side's expression alone — so the type-specific
-   *   `jointype`/`joinmergedcols`/`joinleftcols`/`joinrightcols` fields PostgreSQL also serializes
-   *   here are never needed to make that call and are not parsed into this class at all.
+   *   column's entry is a [PgNodeExpression.CoalesceExpr] of the two sides' Vars.
+   *   [NodeTreeProvenanceResolver.resolveVar] casts an entry `as? Var` and returns `null` for
+   *   anything else, such as a merged `CoalesceExpr`. PostgreSQL also serializes
+   *   `jointype`/`joinmergedcols`/`joinleftcols`/`joinrightcols` here; this class does not parse
+   *   them.
    */
   data class Join(val joinAliasVars: List<PgNodeExpression>) : RangeTableEntry
 
@@ -462,7 +461,7 @@ internal fun Map<Int, RangeTableEntry>.cteReferences(): Map<Int, NodeTreeCteRefe
 /**
  * The GROUP RTE's `varno` to its `:groupexprs` list, fully parsed — see [RangeTableEntry.Group].
  * Unlike [groupRteMap], a grouping key that is not a bare `Var` (e.g. `lower(a)`, a literal, or a
- * `Var` carrying outer-join `:varnullingrels`) is preserved here rather than reduced to nothing.
+ * `Var` carrying outer-join `:varnullingrels`) is preserved here.
  */
 internal fun Map<Int, RangeTableEntry>.groupExpressions(parser: PgNodeTreeParser): Map<Int, List<PgNodeExpression>> =
   mapNotNull { (varno, entry) ->

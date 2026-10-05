@@ -126,8 +126,8 @@ class GroupRteSubstitutionTest {
   @Test
   fun `a Var buried inside a JsonConstructorExpr's function is substituted`() {
     // JSON_OBJECTAGG/JSON_ARRAYAGG put the underlying aggregate in `function`, not `arguments` (see
-    // JsonConstructorExpr.function's KDoc) — this is the one child mapChildren now reaches that the
-    // hand-written `when` this function used to have never touched.
+    // JsonConstructorExpr.function's KDoc), so mapChildren must reach `function` to substitute the
+    // Var.
     val groupRteVar = PgNodeExpression.Var(varno = 2, varattno = 1, nullingRelations = emptySet())
     val resolvedVar = PgNodeExpression.Var(varno = 1, varattno = 2, nullingRelations = emptySet())
     val windowFunc = PgNodeExpression.WindowFunc(windowFunctionOid = 3125, arguments = listOf(groupRteVar))

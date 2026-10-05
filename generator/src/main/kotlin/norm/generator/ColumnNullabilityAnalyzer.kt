@@ -6,12 +6,11 @@ import java.sql.SQLException
 
 /**
  * Recursion budget for [ColumnNullabilityAnalyzer.subLinkSubqueryColumnNotNull]: how many levels
- * of NESTED `ANY_SUBLINK`/`ALL_SUBLINK` (a `SubLink` whose own subselect contains another
+ * of nested `ANY_SUBLINK`/`ALL_SUBLINK` (a `SubLink` whose own subselect contains another
  * `SubLink`) are resolved before defaulting to nullable.
  *
  * Deliberately small: a chain of four nested `= ANY (...)` sublinks that is semantically NOT NULL
- * end-to-end is reported nullable at this budget, pinning that the specific value `3`, not merely
- * its presence, is what is enforced.
+ * end-to-end is reported nullable at this budget, which pins the specific value `3`.
  */
 private const val SUBLINK_ANALYSIS_DEPTH_BUDGET = 3
 
@@ -38,9 +37,8 @@ internal const val VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET = 50
  * correct.
  *
  * Also carries [originalColumnName] — the real source column name, resolved from the outer target
- * entry's own `:resorigtbl`/`:resorigcol` rather than whatever alias the select item's text happens
- * to spell. `null` when those fields are `0` (no single source column) or the OID/attnum pair isn't
- * in the catalog map — the caller must fall back to its ordinary column-name resolution, never
+ * entry's own `:resorigtbl`/`:resorigcol`. `null` when those fields are `0` (no single source column) or the OID/attnum
+ * pair isn't in the catalog map — the caller must fall back to its ordinary column-name resolution, never
  * guess.
  */
 internal data class ColumnAnalysis(
@@ -70,7 +68,7 @@ private fun isProvenByQuals(
  * so all four call shapes share exactly one fallback chain.
  *
  * [qualProvenVars] and [groupRteMap] are computed empty, so their branches below never fire, when
- * the query block has GROUPING SETS/CUBE/ROLLUP (which null-extends a grouping key AFTER `WHERE`
+ * the query block has GROUPING SETS/CUBE/ROLLUP (which null-extends a grouping key after `WHERE`
  * has already filtered rows) or is itself an `INSERT`/`UPDATE`/`DELETE`/`MERGE` (whose own `WHERE`
  * clause can test a column value its `SET` clause, or a `MERGE` action, is about to overwrite).
  *
@@ -86,7 +84,7 @@ private fun isProvenByQuals(
  *   whichever scope encloses the query block, never its own nested `WITH` clause. Empty for the
  *   outermost statement, which has no enclosing scope to point past.
  * @property cteReferences varno to CTE reference, for a `Var` whose range-table entry is a CTE
- *   rather than a base table or subquery.
+ *   (not a base table or subquery).
  * @property subqueryColumnNotNull `(varno, varattno)` to `true` for a `FROM`-clause subquery RTE
  *   column already proven non-null by recursively analyzing that subquery's own target list.
  * @property mergeAbsentVarnos varno to whether that relation can be entirely absent for some
@@ -172,7 +170,7 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
    *
    * A statement with no result columns at all (an `INSERT`/`UPDATE`/`DELETE`/`MERGE` without
    * `RETURNING`) fails PostgreSQL's `RETURNS SETOF record` check on function creation — there is
-   * nothing to probe, and the resulting [SQLException] is caught here rather than propagated.
+   * nothing to probe, and the resulting [SQLException] is caught here.
    *
    * Provenance piggybacks the same round trip: each column's expression text is extracted and
    * cross-validated from [sql] — the original, un-substituted query text, never [substitutedSql] —
@@ -180,7 +178,7 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
    *
    * @param sql the SQL query or DML statement to analyze; any `?` parameter placeholder is
    *   replaced with a typed non-null sentinel literal internally only for building the probe
-   *   function — [sql] itself, `?` intact, is what provenance expression text is extracted from
+   *   function. Provenance expression text is extracted from [sql] itself, `?` intact.
    * @return one [ColumnAnalysis] per result column in `SELECT`/`RETURNING` order, or `null` if
    *   [sql] has no result columns to probe or the probe itself failed for any reason — the caller
    *   must treat `null` as "this path has no answer", never as "zero columns."
@@ -201,10 +199,10 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
         } ?: return null
         // '?' in sql, not substitutedSql: a sentinel-substituted CONST is byte-identical to a
         // hand-written literal once embedded in the SQL text — the parsed tree retains no memory
-        // of which one it was. trustAssignedExpressions=false whenever the original sql had any
-        // parameter blocks the :targetList-to-:returningList substitution for the whole statement,
-        // not just the specific assignment a parameter feeds, since there is no structural way from
-        // here to tell which assignment(s) it was.
+        // of which one it was. `trustAssignedExpressions` is `false` whenever the original sql had
+        // any parameter. That blocks the :targetList-to-:returningList substitution for the whole
+        // statement, not just the specific assignment a parameter feeds, since there is no structural
+        // way from here to tell which assignment(s) it was.
         val nullability = analyzeNodeTree(
           nodeTree,
           sql = substitutedSql,
@@ -225,16 +223,15 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
   }
 
   /**
-   * Resolves each result column's REAL source column name from [PgNodeTreeParser.resultProjection]'s
+   * Resolves each result column's source column name from [PgNodeTreeParser.resultProjection]'s
    * entries for [nodeTree] — the same projection [analyzeNodeTree] reads for nullability, so the two
    * stay index-aligned.
    *
    * Each entry's own `:resorigtbl`/`:resorigcol` — [TargetEntry.originalTableOid] and
    * [TargetEntry.originalColumnNumber] — name the column PostgreSQL itself traced this result
-   * column back to, walking through a CTE or subquery reference rather than stopping at the
-   * immediate select item's own alias: `WITH c AS (SELECT id AS parent_id FROM parent) SELECT
-   * parent_id FROM c`'s outer target entry carries `:resorigtbl`/`:resorigcol` for `parent.id`, not
-   * the CTE's own `parent_id` alias.
+   * column back to, walking through a CTE or subquery reference: `WITH c AS (SELECT id AS parent_id
+   * FROM parent) SELECT parent_id FROM c`'s outer target entry carries `:resorigtbl`/`:resorigcol`
+   * for `parent.id`, not the CTE's own `parent_id` alias.
    *
    * @return one entry per result column: the resolved column name, or `null` when
    *   [TargetEntry.originalTableOid]/[TargetEntry.originalColumnNumber] is `0` (no single source
@@ -276,10 +273,9 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
       )
     // A non-zero :resultRelation means this is an INSERT/UPDATE/DELETE/MERGE, not a SELECT. Its
     // :targetList holds the value expressions being written to each explicitly-assigned column of
-    // the target relation (keyed by :resno = the column's attribute number), which is exactly what
-    // a :returningList Var referencing that same (resultRelationVarno, attno) pair actually reads
-    // back — not the column's general catalog constraint, which says nothing about what this
-    // statement is about to write.
+    // the target relation (keyed by :resno = the column's attribute number). A :returningList Var
+    // referencing that same (resultRelationVarno, attno) pair reads back that value. The column's
+    // general catalog constraint says nothing about what this statement is about to write.
     val targetListByResno = if (scope.resultRelationVarno == 0 || !trustAssignedExpressions) {
       // !trustAssignedExpressions means the original sql (before sentinel substitution) contained a
       // `?` parameter placeholder somewhere. A sentinel-substituted CONST is byte-identical, in the
@@ -291,8 +287,8 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
       emptyMap()
     } else {
       // rangeTable[resultRelationVarno] is only present for an ordinary base-table target (rtekind
-      // 0) — never null for a real INSERT/UPDATE/DELETE/MERGE — but defensively treated as
-      // "substitution unsafe" rather than trusting an assignment against an unidentified target.
+      // 0) and is never `null` for a real INSERT/UPDATE/DELETE/MERGE. A missing entry is
+      // defensively treated as "substitution unsafe".
       val targetRelid = scope.rangeTable[scope.resultRelationVarno]
       if (targetRelid != null && isSubstitutionSafeForRelation(connection, targetRelid)) {
         nodeTreeParser.parseTargetList(nodeTree).associate { it.resultNumber to it.expression }
@@ -311,10 +307,10 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
       // (resultRelationVarno, resno) with the assigned expression's own nullability — evaluated by
       // the plain analyzer, deliberately not this substituting one, so a self-referencing
       // assignment (`SET note = note || 'x'`) reads note's old (plain, un-substituted) value for
-      // that inner reference rather than looping back into its own substitution forever. A column
+      // that inner reference and cannot loop back into its own substitution. A column
       // the statement never assigns (no entry in targetListByResno) falls through to the identical
-      // plain catalog/qual/subquery/CTE resolution [analyzer] itself uses, which is exactly correct
-      // for that column's pass-through (unmodified) value.
+      // plain catalog/qual/subquery/CTE resolution [analyzer] itself uses, which is correct for
+      // that column's pass-through (unmodified) value.
       val returningAnalyzer =
         buildAnalyzer(
           hasGroupingSets = false,
@@ -354,9 +350,8 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
 
   /**
    * Resolves [relid]'s per-column nullability by fully evaluating its view definition's own node
-   * tree (`pg_rewrite`'s `_RETURN` rule), rather than inheriting a same-named source column's
-   * constraint: `SELECT NULLIF(v, 'x') AS v FROM u` is nullable regardless of whether `u.v` is
-   * `NOT NULL`.
+   * tree (`pg_rewrite`'s `_RETURN` rule). `SELECT NULLIF(v, 'x') AS v FROM u` is nullable regardless of whether `u.v`
+   * is `NOT NULL`.
    *
    * @return one nullable flag per user-visible column (`attnum > 0 AND NOT attisdropped`), index `i`
    *   corresponding to attnum `i + 1`, or `null` when [relid] is not a view or materialized view at all
@@ -421,8 +416,7 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
 
   /**
    * Evaluates [nodeTree] — a view's own `pg_rewrite.ev_action` `_RETURN` rule text — through the same
-   * [analyzeNodeTree] machinery an ordinary query uses, rather than widening [analyzeNodeTree]'s
-   * visibility for this one caller. A view's defining query is always a plain `SELECT` with no `?`
+   * [analyzeNodeTree] machinery an ordinary query uses. A view's defining query is always a plain `SELECT` with no `?`
    * placeholders, so [analyzeNodeTree]'s `trustAssignedExpressions`/`mergeAbsentVarnos` defaults
    * apply.
    */
@@ -643,8 +637,7 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
         val result = branchAnalyzer.extractColumnNullability(branchBlock)
         // An empty result means this branch's own nullability could not be determined at all — not
         // "this branch has zero columns" (impossible; every branch of a set operation has the same
-        // column count). Flagging it forces every column nullable below instead of silently
-        // dropping it and letting the other branches' answer stand as if it contributed nothing.
+        // column count). Flagging it forces every column nullable below.
         if (result.isNotEmpty()) branchResults.add(result) else anyBranchUnanalyzable = true
       }
       val columnCount = branchResults.maxOf { it.size }
@@ -665,10 +658,8 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
    *
    * `:ctelevelsup 0` means [queryBlock] declares that CTE reference's own CTE, possibly shadowing a
    * sibling of the same name one level up, so it resolves from [enclosingCtes]'s own-scope
-   * counterpart — the freshly-resolved [QueryBlockScope.ownCtes] — rather than [enclosingCtes]
-   * itself; anything greater resolves from [enclosingCtes]. Without this split a local shadowing
-   * `WITH` would resolve against the wrong sibling body — an unsound answer, not merely a widened
-   * one.
+   * counterpart — the freshly-resolved [QueryBlockScope.ownCtes]; anything greater resolves from [enclosingCtes].
+   * This split keeps a local shadowing `WITH` from resolving against the outer sibling's body.
    *
    * @param enclosingCtes CTE bodies visible via `:ctelevelsup` greater than `0` relative to
    *   [queryBlock] — declared in whichever scope encloses it, never [queryBlock]'s own nested `WITH`

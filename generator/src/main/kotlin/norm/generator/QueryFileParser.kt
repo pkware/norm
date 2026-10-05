@@ -3,25 +3,26 @@ package norm.generator
 /**
  * A query parsed from a SQL file.
  *
- * @param name Developer-assigned name from the `-- name:` annotation.
- * @param command How the query should be executed. See [Command].
- * @param sql The SQL text, with `?` positional parameters. If the original SQL used `:name`-style named
+ * @property name Developer-assigned name from the `-- name:` annotation.
+ * @property command How the query should be executed. See [Command].
+ * @property sql The SQL text, with `?` positional parameters. If the original SQL used `:name`-style named
  *   parameters, they have been converted to `?` form.
- * @param comments Comment lines preceding the query annotation, used for KDoc generation.
- * @param namedParameters Map from 1-based positional parameter number to the developer-chosen name. Empty when the
+ * @property comments Comment lines preceding the query annotation, used for KDoc generation.
+ * @property namedParameters Map from 1-based positional parameter number to the developer-chosen name. Empty when the
  *   query uses `?` positional parameters directly.
- * @param sourceLine 1-based line number of the `-- name:` annotation in the source file. `0` if unknown
+ * @property sourceLine 1-based line number of the `-- name:` annotation in the source file. `0` if unknown
  *   (for example, for synthesized CRUD queries).
- * @param sourceFile Path to the SQL file this query was parsed from. Empty string if unknown (for example,
+ * @property sourceFile Path to the SQL file this query was parsed from. Empty string if unknown (for example,
  *   for synthesized CRUD queries).
- * @param isSynthesizedInsert `true` if this is a CRUD-generated INSERT query (from [CrudQuerySynthesizer.synthesizeInsert]),
+ * @property isSynthesizedInsert `true` if this is a CRUD-generated INSERT query (from
+ * [CrudQuerySynthesizer.synthesizeInsert]),
  *   `false` for all other queries including hand-written and other synthesized CRUD queries.
- * @param overridableDefaultParameterPositions The 1-based positions (within [sql]'s `?` placeholders)
+ * @property overridableDefaultParameterPositions The 1-based positions (within [sql]'s `?` placeholders)
  *   that [CrudQuerySynthesizer.synthesizeInsert] marked as bound to a column with a server-side
  *   `DEFAULT` the caller may override. Empty for every query except a CRUD-synthesized INSERT that
  *   has at least one such column — in particular, always empty for hand-written queries, since only
  *   [CrudQuerySynthesizer] populates this.
- * @param batchSql [sql] with its `RETURNING` clause removed, for a CRUD-synthesized INSERT that has
+ * @property batchSql [sql] with its `RETURNING` clause removed, for a CRUD-synthesized INSERT that has
  *   one. `null` for every other query, including a synthesized INSERT with no `RETURNING` clause and
  *   every hand-written query — only [CrudQuerySynthesizer.synthesizeInsert] populates this.
  */
@@ -52,7 +53,7 @@ public data class ParsedQuery(
  *
  * ## Named Parameters
  *
- * Queries may use `:paramName` named parameters instead of `?` positional parameters:
+ * Queries may use `:paramName` named parameters, which are converted to `?` positional parameters:
  * ```sql
  * -- name: updateUser :exec
  * UPDATE users SET name = :name, age = :age WHERE id = :id;
@@ -192,7 +193,7 @@ public object QueryFileParser {
    *
    * Scans the SQL one lexical token at a time via [skipLexicalToken], so a `:name`-shaped run
    * inside a string literal, quoted identifier, dollar-quoted string, or comment is copied through
-   * verbatim rather than converted. Outside those tokens:
+   * verbatim. Outside those tokens:
    * - `::` cast operators (e.g., `value::integer`) are passed through unconverted.
    * - A `:` immediately followed by an ASCII `[A-Za-z_]` character (see [isNamedParameterStartCharacter])
    *   is a named parameter and becomes `?`; the name itself continues through

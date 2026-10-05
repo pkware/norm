@@ -29,9 +29,7 @@ internal fun buildEnumTypeSpec(enumDefinition: Enum, packageName: String): TypeS
   val enumClassName = enumClassName(enumDefinition, packageName)
 
   val enumBuilder = TypeSpec.enumBuilder(enumClassName)
-    // Passed as a "%L" argument rather than interpolated into the format string itself -- a
-    // literal "%" in the comment would otherwise be read as a KotlinPoet format specifier and
-    // throw building the KDoc.
+    // Passed as a "%L" argument so KotlinPoet treats a "%" in the comment as text.
     .apply { if (enumDefinition.comment.isNotEmpty()) addKdoc("%L\n\n", enumDefinition.comment) }
     .addKdoc("@property databaseValue The representation of this enum in Postgres.")
     .primaryConstructor(

@@ -13,7 +13,7 @@ import java.sql.SQLException
  * instead, and per-query nullability analysis on the composed [ColumnNullabilityAnalyzer] — see
  * each class's own KDoc for why its concern is split out from this one.
  *
- * @param connection An open JDBC connection to a PostgreSQL database with the schema applied.
+ * @property connection An open JDBC connection to a PostgreSQL database with the schema applied.
  */
 internal class PgCatalogLoader(private val connection: Connection) {
 
@@ -71,10 +71,9 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * [JdbcAnalyzer]'s catalog construction.
    *
    * A thin name-resolution adapter over [ColumnNullabilityAnalyzer.isColumnNotNull], the single
-   * relid-keyed source of truth for column nullability, base table and view alike. Unlike the
-   * `pg_depend` name-join this replaces, a view column's answer comes from fully evaluating the
-   * view's own defining query rather than from tracing a same-named source column and inheriting
-   * its constraint. This function does no computation of its own.
+   * relid-keyed source of truth for column nullability, base table and view alike. A view
+   * column's answer comes from fully evaluating the view's own defining query. This function does no
+   * computation of its own.
    *
    * @param schemaName The schema to check.
    * @return A set of `"viewName.columnName"` strings for view/matview columns that are non-nullable.
@@ -268,8 +267,8 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * PostgreSQL allows stacking domains (`CREATE DOMAIN work_email AS email`, itself a domain over
    * `text`), so
    * [`pg_type.typbasetype`](https://www.postgresql.org/docs/current/catalog-pg-type.html) may
-   * point at another domain rather than a terminal type. The query below walks that chain with a
-   * recursive CTE so [Domain.baseType] is always the terminal *non-domain* `typname` — `text` for
+   * point at another domain. The query below walks that chain with a
+   * recursive CTE so [Domain.baseType] is always the terminal non-domain `typname` — `text` for
    * both `email` and `work_email` above — matching what every consumer of [Domain.baseType] already
    * assumes. The recursion only filters `nspname` on the outermost domain (the anchor); an
    * intermediate or base domain living in a different schema still resolves correctly.

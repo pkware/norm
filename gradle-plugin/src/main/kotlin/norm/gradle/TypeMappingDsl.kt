@@ -45,7 +45,7 @@ public class TypeMappingDsl {
     /**
      * Specifies the Kotlin type that the Postgres type or column should map to.
      *
-     * @param kotlinType Fully-qualified Kotlin class name (e.g., `"com.example.JsonData"`).
+     * @property kotlinType Fully-qualified Kotlin class name (e.g., `"com.example.JsonData"`).
      */
     public infix fun mapTo(kotlinType: String): TypeMappingWithKotlinType = TypeMappingWithKotlinType(this, kotlinType)
   }
@@ -60,7 +60,7 @@ public class TypeMappingDsl {
     /**
      * Specifies the adapter class that converts between the Postgres wire type and the Kotlin type.
      *
-     * @param adapterType Fully-qualified Kotlin class name of the [ColumnAdapter][norm.ColumnAdapter]
+     * @param adapterType Fully-qualified Kotlin class name of the `norm.ColumnAdapter`
      *   implementation (e.g., `"com.example.JsonDataAdapter"`).
      */
     public infix fun using(adapterType: String) {

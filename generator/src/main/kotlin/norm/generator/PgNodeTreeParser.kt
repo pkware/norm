@@ -244,7 +244,7 @@ internal class PgNodeTreeParser {
    * Parses the `:returningList` from a DML node tree into [TargetEntry] items.
    *
    * DML statements (INSERT/UPDATE/DELETE) with a RETURNING clause store their output columns in
-   * `:returningList` rather than `:targetList`. This method extracts those entries using the same
+   * `:returningList`; a `SELECT` uses `:targetList`. This method extracts those entries using the same
    * parsing logic as [parseTargetList].
    *
    * @param nodeTreeText the raw `pg_rewrite.ev_action` text or a bare `{QUERY ...}` block
@@ -315,7 +315,7 @@ internal class PgNodeTreeParser {
    * `true` when [nodeTreeText]'s outermost `MERGE` statement declares at least one `WHEN ... THEN
    * DELETE` action — i.e. at least one `{MERGEACTION ...}` block in `:mergeActionList` whose own
    * `:commandType` is `4` (`DELETE`, same enum as [parseCommandType]'s top-level use, but scoped
-   * here to each individual action rather than the outermost statement).
+   * here to each individual action).
    *
    * A `MERGE` with no `DELETE` action anywhere — only `UPDATE`/`INSERT` actions — always leaves a
    * written or freshly-inserted row behind for `RETURNING` to see, so its `NEW` reference is exactly
