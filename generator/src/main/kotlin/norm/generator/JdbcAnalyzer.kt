@@ -22,6 +22,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
 
   private val catalogLoader = PgCatalogLoader(connection)
   private val parameterInferrer = SqlParameterInferrer(catalogLoader.functionOverloads)
+  private val parameterNullabilityProbe = ParameterNullabilityProbe(connection)
   private val reservedWords: Set<String> by lazy {
     buildSet {
       connection.createStatement().use { statement ->
@@ -76,20 +77,24 @@ public class JdbcAnalyzer(private val connection: Connection) {
     val resultColumns: List<Column>
     val parameters: List<Parameter>
 
-    val inferredParameters = parameterInferrer.inferParameterInfo(parsedQuery.sql)
-    // Named parameters from the query file take priority over inferred names
-    val inferredNames = inferredParameters.mapValues { it.value.name } + parsedQuery.namedParameters
-    val notNullByParameter = parameterInferrer.resolveParameterNotNull(inferredParameters, catalog)
-
     if (isCallStatement) {
       // CALL statements don't return result sets and may not support getMetaData()
       resultColumns = emptyList()
       parameters = analyzeCallParameters(parsedQuery.sql, jdbcSql, catalog)
     } else {
       connection.prepareStatement(jdbcSql).use { ps ->
-        resultColumns = buildResultColumns(ps.metaData, catalog, parsedQuery.sql)
-        parameters =
-          buildParameters(ps.parameterMetaData, inferredNames, notNullByParameter, inferredParameters, catalog)
+        // Describing the statement makes PostgreSQL parse it, so one it rejects fails here before the probe runs.
+        val resultMetaData = ps.metaData
+        val parameterMetaData = ps.parameterMetaData
+        val classifiedParameters = parameterNullabilityProbe.classify(parsedQuery.sql, parsedQuery.name)
+        val inferredParameters = parameterInferrer.inferParameterInfo(parsedQuery.sql, classifiedParameters)
+        // Named parameters from the query file take priority over inferred names
+        val inferredNames =
+          inferredParameters.mapNotNull { (number, parameter) -> parameter.name?.let { number to it } }
+            .toMap() + parsedQuery.namedParameters
+        val notNullByParameter = parameterInferrer.resolveParameterNotNull(inferredParameters, catalog)
+        resultColumns = buildResultColumns(resultMetaData, catalog, parsedQuery.sql)
+        parameters = buildParameters(parameterMetaData, inferredNames, notNullByParameter, inferredParameters, catalog)
       }
     }
 
@@ -275,31 +280,20 @@ public class JdbcAnalyzer(private val connection: Connection) {
     for (i in 1..pmd.parameterCount) {
       val (jdbcTypeName, isArray) = resolveTypeName(pmd.getParameterTypeName(i))
 
-      val inferred = inferredParameters[i]
-      val tableName = inferred?.tableName
-      val columnName = inferred?.columnName ?: inferred?.name
-
-      // Look up the catalog column once for type name and comment resolution.
-      val catalogColumn = if (tableName != null && columnName != null) {
-        catalog.findColumn(tableName, columnName)
-      } else {
-        null
+      // The identity selects the column override and the domain type. Only the column's own value has one.
+      // The catalog must also hold the column, so a system column or a relation outside the catalog has none.
+      val identity = inferredParameters[i]?.identity
+      val identityTable = identity?.let { catalog.findTable(it.table, it.schema) }
+      val catalogColumn = identity?.let { reference ->
+        identityTable?.columns?.firstOrNull { it.name == reference.column }
       }
+      val table = identityTable.takeIf { catalogColumn != null }
 
       // JDBC's getParameterTypeName() returns the base Postgres type for domain columns (e.g., "text"
       // for a column of domain "email"), losing domain information. When the inferred parameter maps to a known
       // catalog column, use the catalog column's type name instead — it was populated via
       // DatabaseMetaData.getColumns() which preserves the domain name (e.g., "email").
       val typeName = catalogColumn?.type?.name ?: jdbcTypeName
-
-      // When a function wraps the parameter (e.g., crypt(?, gen_salt('bf'))), the column comment describes
-      // the stored value, not the caller's input. Skip the comment in that case.
-      val isInsideFunctionCall = inferred?.columnName != null && inferred.columnName != inferred.name
-      val comment = if (!isInsideFunctionCall && catalogColumn != null) {
-        catalogColumn.comment
-      } else {
-        ""
-      }
 
       parameters.add(
         Parameter(
@@ -309,10 +303,10 @@ public class JdbcAnalyzer(private val connection: Connection) {
             notNull = notNullByParameter[i] ?: true,
             isArray = isArray,
             arrayDims = if (isArray) 1 else 0,
-            comment = comment,
+            comment = catalogColumn?.comment.orEmpty(),
             type = Identifier(name = typeName),
-            table = tableName?.let { resolveTableIdentifier(it, catalog) },
-            originalName = columnName.orEmpty(),
+            table = table?.rel,
+            originalName = identity?.column.takeIf { table != null }.orEmpty(),
           ),
         ),
       )

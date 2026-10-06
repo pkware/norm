@@ -27,50 +27,47 @@ internal fun buildViewSqlWithSentinels(connection: Connection, sql: String): Str
 }
 
 /**
- * Runs the `prosqlbody` probe's full lifecycle: creates a temporary, zero-argument SQL-standard
- * function (`BEGIN ATOMIC ... END`) whose body is [substitutedSql], reads back its parsed query
- * tree from `pg_proc.prosqlbody`, passes that text to [block], then drops the function again.
+ * Compiles [body] into a temporary SQL-standard function (`BEGIN ATOMIC ... END`) with the given [signature].
+ * Passes the function's parsed query tree from `pg_proc.prosqlbody` to [block] and drops the function afterwards.
  *
- * The probe function takes ZERO arguments: a real `$n` parameter would appear as a `PARAM` node in
- * the parsed tree, silently widening every parameter-touching column to nullable. [substitutedSql]
- * must therefore already have every `?` parameter placeholder replaced with a typed literal (see
- * [buildViewSqlWithSentinels]) before it reaches this function.
+ * The `DROP FUNCTION` runs whether reading `prosqlbody` or [block] throws. A failed creation leaves nothing to
+ * drop, and [onRejectedCreate] decides its outcome. If `pg_proc` has no row for the new function, an
+ * [IllegalStateException] propagates to the caller.
  *
- * A statement with no result columns at all (an `INSERT`/`UPDATE`/`DELETE`/`MERGE` without
- * `RETURNING`) fails PostgreSQL's `RETURNS SETOF record` check on function creation. That
- * [SQLException], and the `IllegalStateException` a failed [kotlin.check] throws when no
- * `pg_proc` row is found for the freshly-created function, both propagate to the caller
- * uncaught — there is no recovery this function can attempt for either. Once the function has been
- * created, the `DROP FUNCTION` runs whether reading `prosqlbody` or [block] throws; a failed
- * creation leaves nothing to drop.
- *
- * @param substitutedSql the probe function's body text; must contain no `?` placeholder
+ * @param body the probe function's body text.
+ * @param signature the argument types of the probe function, as `CREATE FUNCTION` accepts them.
+ * @param returns the `RETURNS` clause of the probe function.
+ * @param onRejectedCreate receives the [SQLException] of a rejected `CREATE FUNCTION` and returns this function's
+ *   result instead of calling [block]. It rethrows by default.
  * @param block receives the probe function's parsed `prosqlbody` text and returns this function's
  *   own result
- * @return whatever [block] returns
+ * @return whatever [block] or [onRejectedCreate] returns
  */
 internal inline fun <T> withProsqlbodyNodeTree(
   connection: Connection,
-  substitutedSql: String,
+  body: String,
+  signature: String = "",
+  returns: String = "SETOF record",
+  onRejectedCreate: (SQLException) -> T = { throw it },
   block: (String) -> T,
 ): T {
   val functionName = "norm_nullability_${UUID.randomUUID().toString().replace("-", "")}"
-  connection.createStatement().use { statement ->
-    statement.execute(
-      "CREATE FUNCTION pg_temp.$functionName() RETURNS SETOF record LANGUAGE sql " +
-        // The newline before "; END" is required, not style: substitutedSql can legitimately
-        // end in a trailing `--` line comment, which extends to end of line; without a newline
-        // separating it from "; END", the comment swallows the terminator too.
-        "BEGIN ATOMIC $substitutedSql\n; END",
-    )
+  try {
+    connection.createStatement().use { statement ->
+      statement.execute(
+        "CREATE FUNCTION pg_temp.$functionName($signature) RETURNS $returns LANGUAGE sql " +
+          // The newline before "; END" keeps a trailing `--` comment in the body from swallowing the terminator.
+          "BEGIN ATOMIC $body\n; END",
+      )
+    }
+  } catch (rejection: SQLException) {
+    return onRejectedCreate(rejection)
   }
   try {
     val nodeTree = connection.createStatement().use { statement ->
       statement.executeQuery(
         "SELECT prosqlbody::text FROM pg_proc " +
-          // "pg_temp" is a per-session ALIAS, not a literal schema name: 'pg_temp'::regnamespace
-          // fails with `ERROR: schema "pg_temp" does not exist`. pg_my_temp_schema() returns the
-          // current session's actual temp schema OID directly.
+          // `pg_temp` is a per-session alias, so the temporary schema is addressed by `pg_my_temp_schema()`.
           "WHERE proname = '$functionName' AND pronamespace = pg_my_temp_schema()",
       ).use { resultSet ->
         check(resultSet.next()) { "No pg_proc row found for probe function $functionName" }
@@ -80,7 +77,7 @@ internal inline fun <T> withProsqlbodyNodeTree(
     return block(nodeTree)
   } finally {
     connection.createStatement().use { statement ->
-      statement.execute("DROP FUNCTION IF EXISTS pg_temp.$functionName()")
+      statement.execute("DROP FUNCTION IF EXISTS pg_temp.$functionName($signature)")
     }
   }
 }

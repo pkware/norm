@@ -48,6 +48,24 @@ class SqlPlaceholdersTest {
     }
 
     @Test
+    fun `a doubled question mark is one literal question mark and not a placeholder`() {
+      val result = replaceParameterPlaceholders("SELECT j ?? 'k' FROM t WHERE a = ? AND id = ?") { "\$${it + 1}" }
+      assertThat(result).isEqualTo("SELECT j ? 'k' FROM t WHERE a = \$1 AND id = \$2")
+    }
+
+    @Test
+    fun `a tripled question mark is a literal question mark followed by a placeholder`() {
+      val result = replaceParameterPlaceholders("SELECT j ??? 1") { "\$${it + 1}" }
+      assertThat(result).isEqualTo("SELECT j ?\$1 1")
+    }
+
+    @Test
+    fun `a doubled question mark inside a string literal or comment is left alone`() {
+      val sql = "SELECT '??' /* ?? */ -- ??\n, ?"
+      assertThat(replaceParameterPlaceholders(sql) { "\$${it + 1}" }).isEqualTo("SELECT '??' /* ?? */ -- ??\n, \$1")
+    }
+
+    @Test
     fun `no placeholders returns unchanged`() {
       val sql = "SELECT * FROM department"
       val result = replaceParameterPlaceholders(sql) { "NULL" }
@@ -145,6 +163,18 @@ class SqlPlaceholdersTest {
       val sql = "SELECT * FROM t -- why?\nWHERE id = ?"
       val result = placeholderPositions(sql)
       assertThat(result.toList()).isEqualTo(listOf(sql.lastIndexOf('?')))
+    }
+
+    @Test
+    fun `excludes both question marks of a doubled question mark`() {
+      val sql = "SELECT j ?? 'k' FROM t WHERE id = ?"
+      assertThat(placeholderPositions(sql).toList()).isEqualTo(listOf(sql.lastIndexOf('?')))
+    }
+
+    @Test
+    fun `counts the third question mark of a tripled question mark`() {
+      val sql = "SELECT j ??? 1"
+      assertThat(placeholderPositions(sql).toList()).isEqualTo(listOf(sql.lastIndexOf('?')))
     }
 
     @Test

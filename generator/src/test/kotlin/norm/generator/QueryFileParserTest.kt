@@ -445,6 +445,30 @@ class QueryFileParserTest {
   }
 
   @Test
+  fun `a doubled question mark is pgjdbc's escape and does not trip the mixed-style guard`() {
+    val content = """
+      -- name: findByKey :many
+      SELECT * FROM document WHERE data ?? 'key' AND id = :id;
+    """.trimIndent()
+
+    val result = QueryFileParser.parse(content)
+
+    assertThat(result[0].sql).isEqualTo("SELECT * FROM document WHERE data ?? 'key' AND id = ?")
+    assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "id"))
+  }
+
+  @Test
+  fun `a doubled question mark next to a positional placeholder still counts that placeholder as positional`() {
+    val content = """
+      -- name: findByKey :many
+      SELECT * FROM document WHERE data ?? 'key' AND id = ? AND title = :title;
+    """.trimIndent()
+
+    assertFailure { QueryFileParser.parse(content) }
+      .messageContains("mix")
+  }
+
+  @Test
   fun `genuinely mixed named and positional parameters still throw`() {
     val content = """
       -- name: findByPattern :many

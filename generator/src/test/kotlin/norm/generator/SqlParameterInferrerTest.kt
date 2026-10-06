@@ -4,15 +4,13 @@ import assertk.assertThat
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
-import assertk.assertions.isNull
 import assertk.assertions.isTrue
-import assertk.assertions.key
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
 class SqlParameterInferrerTest {
 
-  /** Fake overloads matching pgcrypto and common functions. */
+  /** Fake overloads. The argument names of `crypt` and `gen_salt` are illustrative, because pgcrypto declares none. */
   private val functionOverloads = mapOf(
     "crypt" to listOf(FunctionOverload(listOf("password", "salt"), isStrict = true)),
     "gen_salt" to listOf(FunctionOverload(listOf("type"), isStrict = true)),
@@ -27,137 +25,14 @@ class SqlParameterInferrerTest {
 
   private val inferrer = SqlParameterInferrer(functionOverloads)
 
-  @Nested
-  inner class InsertInference {
-    @Test
-    fun `infers column names from INSERT`() {
-      val result = inferrer.inferParameterInfo("INSERT INTO users(name, email) VALUES (?, ?)")
-      assertThat(
-        result,
-      ).key(1).isEqualTo(InferredParameter("name", "users", inheritsNullability = true, columnName = "name"))
-      assertThat(
-        result,
-      ).key(2).isEqualTo(InferredParameter("email", "users", inheritsNullability = true, columnName = "email"))
-    }
-
-    @Test
-    fun `INSERT parameters inherit nullability`() {
-      val result = inferrer.inferParameterInfo("INSERT INTO users(name) VALUES (?)")
-      assertThat(result.getValue(1).inheritsNullability).isTrue()
-    }
-
-    @Test
-    fun `un-doubles an embedded double quote in a quoted INSERT column name`() {
-      // A column literally named a"b is spelled "a""b" in SQL, per PostgreSQL's own quoted-identifier
-      // escape rule (the embedded "" is one literal " character) -- unquoteIdentifier must
-      // un-escape the doubled internal quote back to the one character the real column is named.
-      val result = inferrer.inferParameterInfo("""INSERT INTO t("a""b") VALUES (?)""")
-
-      assertThat(result.getValue(1)).isEqualTo(
-        InferredParameter("a\"b", "t", inheritsNullability = true, columnName = "a\"b"),
-      )
-    }
-
-    @Test
-    fun `function arg names override INSERT column names but preserve columnName for nullability`() {
-      val result = inferrer.inferParameterInfo(
-        "INSERT INTO user_credentials(username, password_hash) VALUES (?, crypt(?, gen_salt('bf')))",
-      )
-      assertThat(result.getValue(1).name).isEqualTo("username")
-      assertThat(result.getValue(1).columnName).isEqualTo("username")
-      // ? inside crypt() — gets the pg_proc formal name "password", but columnName stays as "password_hash"
-      assertThat(result.getValue(2).name).isEqualTo("password")
-      assertThat(result.getValue(2).columnName).isEqualTo("password_hash")
-    }
-
-    @Test
-    fun `INSERT with nested function calls maps all params to correct columns`() {
-      val result = inferrer.inferParameterInfo(
-        "INSERT INTO user_credentials(username, password_hash, nullable_password_hash) " +
-          "VALUES (?, crypt(?, gen_salt('bf')), crypt(?, gen_salt('bf')))",
-      )
-      // All three params should be found
-      assertThat(result.getValue(1).name).isEqualTo("username")
-      assertThat(result.getValue(1).columnName).isEqualTo("username")
-      // First crypt() maps to password_hash column
-      assertThat(result.getValue(2).name).isEqualTo("password")
-      assertThat(result.getValue(2).columnName).isEqualTo("password_hash")
-      // Second crypt() maps to nullable_password_hash column
-      assertThat(result.getValue(3).name).isEqualTo("password")
-      assertThat(result.getValue(3).columnName).isEqualTo("nullable_password_hash")
-    }
-
-    @Test
-    fun `an over-length INSERT column name is truncated to 63 bytes`() {
-      // catalog.findColumn matches columnName by exact == against a server-truncated name.
-      val overLongColumn = "d".repeat(70)
-      val result = inferrer.inferParameterInfo("INSERT INTO users($overLongColumn) VALUES (?)")
-      assertThat(result.getValue(1).columnName).isEqualTo("d".repeat(63))
-    }
-
-    @Test
-    fun `an over-length INSERT table name is truncated to 63 bytes`() {
-      val overLongTable = "e".repeat(70)
-      val result = inferrer.inferParameterInfo("INSERT INTO $overLongTable(name) VALUES (?)")
-      assertThat(result.getValue(1).tableName).isEqualTo("e".repeat(63))
-    }
-  }
-
-  @Nested
-  inner class UpdateInference {
-    @Test
-    fun `SET parameters inherit nullability`() {
-      val result = inferrer.inferParameterInfo("UPDATE users SET name = ? WHERE id = ?")
-      assertThat(result.getValue(1).inheritsNullability).isTrue()
-      assertThat(result.getValue(1).tableName).isEqualTo("users")
-    }
-
-    @Test
-    fun `WHERE parameters do not inherit nullability`() {
-      val result = inferrer.inferParameterInfo("UPDATE users SET name = ? WHERE id = ?")
-      assertThat(result.getValue(2).inheritsNullability).isFalse()
-    }
-
-    @Test
-    fun `SET parameters inherit nullability in multi-line UPDATE`() {
-      val sql = "UPDATE users\nSET\n  name = ?,\n  bio = ?\nWHERE id = ?"
-      val result = inferrer.inferParameterInfo(sql)
-      assertThat(result.getValue(1).inheritsNullability).isTrue()
-      assertThat(result.getValue(2).inheritsNullability).isTrue()
-      assertThat(result.getValue(3).inheritsNullability).isFalse()
-    }
-
-    @Test
-    fun `SET parameters inherit nullability with no WHERE clause`() {
-      val result = inferrer.inferParameterInfo("UPDATE users SET bio = ?")
-      assertThat(result.getValue(1).inheritsNullability).isTrue()
-    }
-
-    @Test
-    fun `infers column names from SET and WHERE`() {
-      val result = inferrer.inferParameterInfo("UPDATE users SET email = ?, name = ? WHERE id = ?")
-      assertThat(result.getValue(1).name).isEqualTo("email")
-      assertThat(result.getValue(2).name).isEqualTo("name")
-      assertThat(result.getValue(3).name).isEqualTo("id")
-    }
-  }
-
-  @Nested
-  inner class DeleteInference {
-    @Test
-    fun `infers table and column from DELETE WHERE`() {
-      val result = inferrer.inferParameterInfo("DELETE FROM users WHERE id = ?")
-      assertThat(result.getValue(1).name).isEqualTo("id")
-      assertThat(result.getValue(1).tableName).isEqualTo("users")
-      assertThat(result.getValue(1).inheritsNullability).isFalse()
-    }
-  }
+  private fun infer(sql: String, classified: Map<Int, InferredParameter> = emptyMap()) =
+    inferrer.inferParameterInfo(sql, classified)
 
   @Nested
   inner class FunctionArgInference {
     @Test
     fun `infers formal argument names from pg_proc`() {
-      val result = inferrer.inferParameterInfo(
+      val result = infer(
         "INSERT INTO users(password_hash) VALUES (crypt(?, gen_salt('bf')))",
       )
       // crypt has formal names ["password", "salt"], so first ? → "password"
@@ -167,14 +42,14 @@ class SqlParameterInferrerTest {
     @Test
     fun `falls back to funcName_paramN when pg_proc has no arg names`() {
       // digest has no named args (emptyList())
-      val result = inferrer.inferParameterInfo("SELECT digest(?, ?) AS hash")
+      val result = infer("SELECT digest(?, ?) AS hash")
       assertThat(result.getValue(1).name).isEqualTo("digest_param1")
       assertThat(result.getValue(2).name).isEqualTo("digest_param2")
     }
 
     @Test
     fun `repeated function calls get numeric suffix`() {
-      val result = inferrer.inferParameterInfo(
+      val result = infer(
         "SELECT digest(?, ?) AS h1, digest(?, ?) AS h2",
       )
       assertThat(result.getValue(1).name).isEqualTo("digest_param1")
@@ -185,7 +60,7 @@ class SqlParameterInferrerTest {
 
     @Test
     fun `nested function calls resolve innermost first`() {
-      val result = inferrer.inferParameterInfo(
+      val result = infer(
         "SELECT encode(digest(?, ?), ?) AS encoded_hash",
       )
       // First two ? are in digest() (innermost match wins)
@@ -197,7 +72,7 @@ class SqlParameterInferrerTest {
 
     @Test
     fun `unknown function does not contribute names`() {
-      val result = inferrer.inferParameterInfo("SELECT unknown_func(?, ?) AS result")
+      val result = infer("SELECT unknown_func(?, ?) AS result")
       assertThat(result).isEmpty()
     }
 
@@ -211,7 +86,7 @@ class SqlParameterInferrerTest {
       // regexp_replace(string, pattern, replacement) is regexp_replace's real 3-argument
       // signature, so the first ? is "string" here for the same reason the first ? in
       // crypt(?, gen_salt('bf')) is "password" above.
-      val result = inferrer.inferParameterInfo(
+      val result = infer(
         """SELECT id FROM p WHERE name = regexp_replace(?, '\(', '')""",
       )
       assertThat(result.getValue(1).name).isEqualTo("string")
@@ -219,38 +94,43 @@ class SqlParameterInferrerTest {
   }
 
   @Nested
-  inner class SelectInference {
+  inner class ClassifiedParametersFromTheProbe {
+    private val usersName = ColumnReference("public", "users", "name")
+
     @Test
-    fun `SELECT with WHERE infers column name`() {
-      val result = inferrer.inferParameterInfo("SELECT * FROM users WHERE id = ?")
-      assertThat(result.getValue(1).name).isEqualTo("id")
-      assertThat(result.getValue(1).inheritsNullability).isFalse()
+    fun `a parameter without a function call is returned as the probe classified it`() {
+      val classified = mapOf(1 to InferredParameter("bio", ParameterNullability.NonNull))
+
+      assertThat(infer("SELECT * FROM users WHERE bio = ?", classified)).isEqualTo(classified)
     }
 
     @Test
-    fun `SELECT without table has null tableName`() {
-      val result = inferrer.inferParameterInfo("SELECT upper(?) AS result")
-      assertThat(result.getValue(1).tableName).isNull()
+    fun `a function argument name replaces the column name but keeps the nullability and identity`() {
+      val classified = mapOf(1 to InferredParameter("name", ParameterNullability.Inherit(usersName), usersName))
+
+      assertThat(infer("UPDATE users SET name = upper(?)", classified).getValue(1)).isEqualTo(
+        InferredParameter("str", ParameterNullability.Inherit(usersName), usersName),
+      )
     }
 
     @Test
-    fun `un-doubles an embedded double quote in a quoted WHERE column name`() {
-      // The quoted branch of COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED spans a doubled internal quote,
-      // so `"a""b" = ?` matches as one identifier. The WHERE path does not set `columnName`
-      // separately. It reuses `name` for both the parameter's display name and its catalog lookup
-      // key (via `inferred?.columnName ?: inferred?.name` in JdbcAnalyzer.buildParameters), so
-      // `name` carries the un-doubled column name.
-      val result = inferrer.inferParameterInfo("""SELECT id FROM q WHERE "a""b" = ?""")
-      assertThat(result.getValue(1).name).isEqualTo("a\"b")
+    fun `a function argument name beats a column name from a comparison`() {
+      val classified = mapOf(1 to InferredParameter("name", ParameterNullability.NonNull))
+
+      assertThat(infer("SELECT * FROM users WHERE name = upper(?)", classified).getValue(1))
+        .isEqualTo(InferredParameter("str", ParameterNullability.NonNull))
     }
 
     @Test
-    fun `un-doubles an embedded double quote in a quoted WHERE column name for a second column`() {
-      // Distinct doubled-quote identifiers in the same clause must each resolve to their own real
-      // column name.
-      val result = inferrer.inferParameterInfo("""SELECT id FROM q WHERE "a""b" = ? AND "c""b" = ?""")
-      assertThat(result.getValue(1).name).isEqualTo("a\"b")
-      assertThat(result.getValue(2).name).isEqualTo("c\"b")
+    fun `a function argument name for a parameter the probe did not classify has no opinion on null`() {
+      assertThat(infer("SELECT digest(?, ?)")).isEqualTo(
+        mapOf(1 to InferredParameter("digest_param1", null), 2 to InferredParameter("digest_param2", null)),
+      )
+    }
+
+    @Test
+    fun `a parameter the probe did not classify and no function names is absent`() {
+      assertThat(infer("UPDATE users SET name = ? WHERE id = ?")).isEmpty()
     }
   }
 
@@ -275,48 +155,60 @@ class SqlParameterInferrerTest {
       ),
     )
 
+    private fun inherit(column: String, table: String = "users") =
+      InferredParameter(column, ParameterNullability.Inherit(ColumnReference("public", table, column)))
+
     @Test
     fun `WHERE parameter is always non-nullable`() {
-      val inferredParams = mapOf(1 to InferredParameter("id", "users", inheritsNullability = false))
+      val inferredParams = mapOf(1 to InferredParameter("id", ParameterNullability.NonNull))
       val result = inferrer.resolveParameterNotNull(inferredParams, catalog)
       assertThat(result.getValue(1)).isTrue() // notNull = true
     }
 
     @Test
+    fun `a parameter that accepts null is nullable`() {
+      val result = inferrer.resolveParameterNotNull(
+        mapOf(1 to InferredParameter("id", ParameterNullability.Nullable)),
+        catalog,
+      )
+      assertThat(result.getValue(1)).isFalse()
+    }
+
+    @Test
+    fun `a parameter with no opinion on null is non-nullable`() {
+      val result = inferrer.resolveParameterNotNull(mapOf(1 to InferredParameter("id", null)), catalog)
+      assertThat(result.getValue(1)).isTrue()
+    }
+
+    @Test
     fun `INSERT parameter for NOT NULL column is non-nullable`() {
-      val inferredParams = mapOf(1 to InferredParameter("name", "users", inheritsNullability = true))
-      val result = inferrer.resolveParameterNotNull(inferredParams, catalog)
+      val result = inferrer.resolveParameterNotNull(mapOf(1 to inherit("name")), catalog)
       assertThat(result.getValue(1)).isTrue()
     }
 
     @Test
     fun `INSERT parameter for nullable column is nullable`() {
-      val inferredParams = mapOf(1 to InferredParameter("bio", "users", inheritsNullability = true))
-      val result = inferrer.resolveParameterNotNull(inferredParams, catalog)
+      val result = inferrer.resolveParameterNotNull(mapOf(1 to inherit("bio")), catalog)
       assertThat(result.getValue(1)).isFalse() // notNull = false → parameter is nullable
     }
 
     @Test
     fun `column not found in catalog defaults to non-nullable`() {
-      val inferredParams = mapOf(1 to InferredParameter("unknown_col", "users", inheritsNullability = true))
-      val result = inferrer.resolveParameterNotNull(inferredParams, catalog)
+      val result = inferrer.resolveParameterNotNull(mapOf(1 to inherit("unknown_col")), catalog)
       assertThat(result.getValue(1)).isTrue()
     }
 
     @Test
     fun `table not found in catalog defaults to non-nullable`() {
-      val inferredParams = mapOf(1 to InferredParameter("col", "nonexistent", inheritsNullability = true))
-      val result = inferrer.resolveParameterNotNull(inferredParams, catalog)
+      val result = inferrer.resolveParameterNotNull(mapOf(1 to inherit("col", "nonexistent")), catalog)
       assertThat(result.getValue(1)).isTrue()
     }
 
     @Test
-    fun `columnName is used for catalog lookup instead of display name`() {
-      // Simulates INSERT into nullable column where function arg name replaces column name
-      val inferredParams = mapOf(
-        1 to InferredParameter("password", "users", inheritsNullability = true, columnName = "bio"),
-      )
-      val result = inferrer.resolveParameterNotNull(inferredParams, catalog)
+    fun `the inherited column is used for the catalog lookup instead of the display name`() {
+      val parameter =
+        InferredParameter("password", ParameterNullability.Inherit(ColumnReference("public", "users", "bio")))
+      val result = inferrer.resolveParameterNotNull(mapOf(1 to parameter), catalog)
       // bio is nullable, so the parameter should be nullable
       assertThat(result.getValue(1)).isFalse()
     }
@@ -357,45 +249,15 @@ class SqlParameterInferrerTest {
   @Nested
   inner class LiteralQuestionMarksAreNotPlaceholders {
     @Test
-    fun `does not count a question mark inside a string literal as a placeholder`() {
-      // A raw scan for every "?" character treats the one inside 'ok?' as the first placeholder,
-      // shifting the real placeholder's number down by one. placeholderPositions only counts a "?"
-      // that skipLexicalToken does not swallow, so the one real placeholder here is parameter 1.
-      val result = inferrer.inferParameterInfo("SELECT * FROM notes WHERE note = 'ok?' AND id = ?")
-      assertThat(result.getValue(1).name).isEqualTo("id")
-    }
-  }
-
-  @Nested
-  inner class NonPlaceholderQuestionMarksDoNotCorruptOtherMatches {
-    @Test
-    fun `a comparison-shaped fragment inside a string literal is not attributed to a real parameter`() {
-      // COLUMN_COMPARES_PARAM scans raw text, so "x = ?" inside the string literal 'x = ?' still
-      // matches as if "x" were a real column compared against a placeholder. Once placeholderPositions
-      // excludes the "?" inside the literal, that spurious match's paramNumberAt lookup returns `null`
-      // and is skipped, leaving only the real "id = ?" comparison.
-      val result = inferrer.inferParameterInfo("SELECT * FROM notes WHERE note = 'x = ?' AND id = ?")
-      assertThat(result.size).isEqualTo(1)
-      assertThat(result.getValue(1).name).isEqualTo("id")
-    }
-
-    @Test
-    fun `a question mark inside a VALUES expression's own string literal is not attributed to its column`() {
-      val result = inferrer.inferParameterInfo("INSERT INTO notes(a, b) VALUES ('?', ?)")
-      assertThat(result.size).isEqualTo(1)
-      assertThat(result.getValue(1).columnName).isEqualTo("b")
-    }
-
-    @Test
     fun `a question mark inside a function argument's string literal is not counted as its placeholder`() {
-      val result = inferrer.inferParameterInfo("SELECT concat('?', ?)")
+      val result = infer("SELECT concat('?', ?)")
       assertThat(result.size).isEqualTo(1)
       assertThat(result.getValue(1).name).isEqualTo("concat_param2")
     }
 
     @Test
     fun `a question mark inside a function argument's string literal does not spuriously name a second parameter`() {
-      val result = inferrer.inferParameterInfo("SELECT crypt(?, '?')")
+      val result = infer("SELECT crypt(?, '?')")
       assertThat(result.size).isEqualTo(1)
       assertThat(result.getValue(1).name).isEqualTo("password")
     }
@@ -405,115 +267,10 @@ class SqlParameterInferrerTest {
       // digest('?') has no real placeholder in its argument list, so it must not be counted as a
       // call at all -- otherwise the second, real digest(?, ?) call is wrongly numbered as the
       // second call and its parameters get the "digest2_" suffix.
-      val result = inferrer.inferParameterInfo("SELECT digest('?'), digest(?, ?)")
+      val result = infer("SELECT digest('?'), digest(?, ?)")
       assertThat(result.size).isEqualTo(2)
       assertThat(result.getValue(1).name).isEqualTo("digest_param1")
       assertThat(result.getValue(2).name).isEqualTo("digest_param2")
-    }
-  }
-
-  @Nested
-  inner class WhereBoundaryIgnoresLiteralsAndComments {
-    @Test
-    fun `a WHERE keyword inside a string literal before the real SET clause does not truncate the SET clause`() {
-      val result = inferrer.inferParameterInfo(
-        "UPDATE t SET note = 'find WHERE it fits', col = ? WHERE id = ?",
-      )
-      assertThat(result.getValue(1).inheritsNullability).isTrue()
-      assertThat(result.getValue(2).inheritsNullability).isFalse()
-    }
-
-    @Test
-    fun `a WHERE keyword inside a line comment before the real SET clause does not truncate the SET clause`() {
-      val result = inferrer.inferParameterInfo(
-        "UPDATE t SET -- WHERE fake\n col = ? WHERE id = ?",
-      )
-      assertThat(result.getValue(1).inheritsNullability).isTrue()
-      assertThat(result.getValue(2).inheritsNullability).isFalse()
-    }
-
-    @Test
-    fun `a WHERE inside a subquery preceding the outer WHERE still classifies both parameters as non-inheriting`() {
-      // A whole-word, lexer-aware WHERE search finds the first WHERE regardless of parenthesis
-      // depth, not only at depth 0.
-      val result = inferrer.inferParameterInfo(
-        "SELECT (SELECT x FROM u WHERE u.id = ?) FROM t WHERE t.id = ?",
-      )
-      assertThat(result.getValue(1).inheritsNullability).isFalse()
-      assertThat(result.getValue(2).inheritsNullability).isFalse()
-    }
-  }
-
-  @Nested
-  inner class ValuesLocatedAsKeyword {
-    @Test
-    fun `a VALUES keyword inside a block comment is not mistaken for the real VALUES clause`() {
-      val result = inferrer.inferParameterInfo("INSERT INTO t(a) /* VALUES (b) */ VALUES (?)")
-      assertThat(result.getValue(1).columnName).isEqualTo("a")
-    }
-
-    @Test
-    fun `a block comment between VALUES and its opening parenthesis is skipped, not treated as the boundary`() {
-      // A "(" character inside the comment "/* ( */" is not a real parenthesis. A raw
-      // sql.indexOf('(', ...) still lands on it, and findMatchingCloseParenthesis then never
-      // reaches depth 0 (the real "(?)" incorrectly opens a second, unmatched level) -- silently
-      // dropping the whole VALUES-to-column mapping.
-      val result = inferrer.inferParameterInfo("INSERT INTO t(a) VALUES /* ( */ (?)")
-      assertThat(result.getValue(1)).isEqualTo(
-        InferredParameter("a", "t", inheritsNullability = true, columnName = "a"),
-      )
-    }
-
-    @Test
-    fun `a line comment between VALUES and its opening parenthesis is skipped, not treated as the boundary`() {
-      val result = inferrer.inferParameterInfo("INSERT INTO t(a) VALUES -- (\n (?)")
-      assertThat(result.getValue(1)).isEqualTo(
-        InferredParameter("a", "t", inheritsNullability = true, columnName = "a"),
-      )
-    }
-  }
-
-  @Nested
-  inner class InsertColumnListIsLexerAware {
-    @Test
-    fun `splits a quoted INSERT column list containing an embedded comma and close parenthesis`() {
-      val result = inferrer.inferParameterInfo("""INSERT INTO t("a,b", "c)d") VALUES (?, ?)""")
-      assertThat(result.getValue(1).columnName).isEqualTo("a,b")
-      assertThat(result.getValue(2).columnName).isEqualTo("c)d")
-    }
-  }
-
-  @Nested
-  inner class FoldsUnquotedIdentifiers {
-    @Test
-    fun `an unquoted mixed-case INSERT column and table fold to their PostgreSQL logical names`() {
-      val result = inferrer.inferParameterInfo("INSERT INTO Users(Bio) VALUES (?)")
-      assertThat(result.getValue(1)).isEqualTo(
-        InferredParameter("bio", "users", inheritsNullability = true, columnName = "bio"),
-      )
-    }
-
-    @Test
-    fun `an unquoted mixed-case UPDATE SET column and table fold to their PostgreSQL logical names`() {
-      val result = inferrer.inferParameterInfo("UPDATE Users SET Bio = ?")
-      assertThat(result.getValue(1)).isEqualTo(
-        InferredParameter("bio", "users", inheritsNullability = true),
-      )
-    }
-  }
-
-  @Nested
-  inner class IdentifierShapeMatchesSqlIdentifiers {
-    @Test
-    fun `infers a column name containing a dollar sign`() {
-      val result = inferrer.inferParameterInfo("SELECT * FROM t WHERE my\$col = ?")
-      assertThat(result.getValue(1).name).isEqualTo("my\$col")
-    }
-
-    @Test
-    fun `infers a table name containing a non-ASCII identifier character`() {
-      val result = inferrer.inferParameterInfo("UPDATE t€ SET a = ?")
-      assertThat(result.getValue(1).tableName).isEqualTo("t€")
     }
   }
 }

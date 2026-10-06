@@ -69,6 +69,46 @@ public interface Queries : Transactable {
   public fun getAuthorByName(name: String): Author = getAuthorByName(name, ::Author)
 
   /**
+   * Tests that pgjdbc's `??` escape for the jsonb `?` operator is not counted as a parameter placeholder.
+   *
+   * ```sql
+   * SELECT id, title FROM document WHERE metadata ?? 'key' AND id >= ? AND id < ?
+   * ```
+   */
+  public fun <T : Any> findDocumentByKeyInRange(
+    id: Int,
+    id2: Int,
+    mapper: (id: Int, title: String) -> T,
+  ): Many<T>
+
+  /**
+   * Tests that pgjdbc's `??` escape for the jsonb `?` operator is not counted as a parameter placeholder.
+   *
+   * ```sql
+   * SELECT id, title FROM document WHERE metadata ?? 'key' AND id >= ? AND id < ?
+   * ```
+   */
+  public fun findDocumentByKeyInRange(id: Int, id2: Int): Many<FindDocumentByKeyInRange> = findDocumentByKeyInRange(id, id2, ::FindDocumentByKeyInRange)
+
+  /**
+   * ```sql
+   * SELECT id FROM document WHERE metadata ?? ? AND title = ?
+   * ```
+   */
+  public fun <T : Any> findDocumentByKeyAndTitle(
+    key: String,
+    title: String,
+    mapper: (id: Int) -> T,
+  ): Many<T>
+
+  /**
+   * ```sql
+   * SELECT id FROM document WHERE metadata ?? ? AND title = ?
+   * ```
+   */
+  public fun findDocumentByKeyAndTitle(key: String, title: String): Many<Int> = findDocumentByKeyAndTitle(key, title, ::inputValue)
+
+  /**
    * ```sql
    * INSERT INTO audit_log (message, logged_at) VALUES (?, ?) RETURNING logged_at
    * ```

@@ -438,4 +438,14 @@ internal class SqlTokenCursor(
     position++
     return SqlSpan.Char(index)
   }
+
+  /** The next [SqlSpan] that is not whitespace or a comment, or `null` once [text] is exhausted. */
+  fun advanceSignificant(): SqlSpan? {
+    while (true) {
+      val span = advance() ?: return null
+      val isFiller = (span is SqlSpan.Opaque && span.isComment) ||
+        (span is SqlSpan.Char && text[span.index].isWhitespace())
+      if (!isFiller) return span
+    }
+  }
 }

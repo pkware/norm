@@ -29,21 +29,27 @@ public data class Catalog(val schemas: List<Schema> = emptyList()) {
 
   /**
    * Finds a [Table] by its unqualified name, or `null` if not found.
+   *
+   * When [schemaName] is not `null`, only the schema of that name is searched.
    */
-  internal fun findTable(tableName: String): Table? = schemas.asSequence()
+  internal fun findTable(tableName: String, schemaName: String? = null): Table? = schemas.asSequence()
+    .filter { schemaName == null || it.name == schemaName }
     .flatMap(Schema::tables)
     .firstOrNull { it.rel.name == tableName }
 
   /**
    * Finds a [Column] by table and column name, or `null` if not found.
    *
-   * When [tableName] is `null`, searches all tables and returns the first match.
+   * When [tableName] is `null`, searches all tables and returns the first match. When [schemaName] is not `null`,
+   * only the schema of that name is searched.
    */
-  internal fun findColumn(tableName: String?, columnName: String): Column? = schemas.asSequence()
-    .flatMap(Schema::tables)
-    .filter { tableName == null || it.rel.name == tableName }
-    .flatMap(Table::columns)
-    .firstOrNull { it.name == columnName }
+  internal fun findColumn(tableName: String?, columnName: String, schemaName: String? = null): Column? =
+    schemas.asSequence()
+      .filter { schemaName == null || it.name == schemaName }
+      .flatMap(Schema::tables)
+      .filter { tableName == null || it.rel.name == tableName }
+      .flatMap(Table::columns)
+      .firstOrNull { it.name == columnName }
 }
 
 /**
