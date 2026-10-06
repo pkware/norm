@@ -2,6 +2,7 @@ package norm.e2e.micronaut
 
 import assertk.assertThat
 import assertk.assertions.isEqualTo
+import assertk.assertions.isFalse
 import assertk.assertions.isGreaterThan
 import example.PostgresQueries
 import io.micronaut.data.connection.ConnectionOperations
@@ -9,6 +10,7 @@ import io.micronaut.data.connection.support.ConnectionCustomizer
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest
 import jakarta.inject.Inject
 import norm.ConnectionProvider
+import norm.NormDriver
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import java.sql.Connection
@@ -104,5 +106,25 @@ class NormMicronautConnectionCustomizerTest {
 
       assertThat(borrowedPid).isEqualTo(transactionPid)
     }
+
+    @Test
+    fun `streamed query runs on the transaction-bound connection and leaves it open`() {
+      val transactionConnection = connectionOperations.findConnectionStatus().get().connection
+      val transactionPid = backendPid(transactionConnection)
+
+      val streamedPids = NormDriver(connectionProvider).queryMany("SELECT pg_backend_pid()", { getInt(1) })
+        .stream().use { stream -> stream.toList() }
+
+      assertThat(streamedPids).isEqualTo(listOf(transactionPid))
+      assertThat(transactionConnection.isClosed).isFalse()
+    }
+
+    private fun backendPid(connection: Connection): Int =
+      connection.prepareStatement("SELECT pg_backend_pid()").use { statement ->
+        statement.executeQuery().use { resultSet ->
+          resultSet.next()
+          resultSet.getInt(1)
+        }
+      }
   }
 }
