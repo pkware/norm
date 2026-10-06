@@ -205,6 +205,7 @@ public object QueryFileParser {
    * Every `?` encountered outside a lexical token — meaning it was written directly into the SQL,
    * not produced by this conversion — is counted so the mixed-style guard below can tell a
    * genuine positional `?` apart from one merely sitting inside a string literal like `'really?'`.
+   * A `??` is pgjdbc's escape for a literal `?`, as in [placeholderPositions], and is not counted.
    *
    * @return A pair of (converted SQL, position-to-name map). If the SQL has no named parameters,
    *   returns the original SQL with an empty map.
@@ -225,7 +226,11 @@ public object QueryFileParser {
         continue
       }
       val character = sql[index]
-      if (character == ':' && index + 1 < sql.length && sql[index + 1] == ':') {
+      if (isEscapedQuestionMark(sql, index)) {
+        // pgjdbc's `??` escape is one literal `?`, not a positional placeholder.
+        result.append("??")
+        index += 2
+      } else if (character == ':' && index + 1 < sql.length && sql[index + 1] == ':') {
         // Double colon (cast) — pass through both characters
         result.append("::")
         index += 2

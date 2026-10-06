@@ -227,7 +227,7 @@ internal fun mergeAbsentVarnos(
   rangeTable: Map<Int, Int>,
   @Language("PostgreSQL") sql: String,
 ): MergeAbsence {
-  if (nodeTreeParser.parseCommandType(nodeTree) != PgNodeTreeParser.COMMAND_TYPE_MERGE) {
+  if (nodeTreeParser.parseCommandType(nodeTree) != CommandType.MERGE) {
     return MergeAbsence.NotApplicable
   }
   val targetVarno = nodeTreeParser.parseResultRelation(nodeTree)

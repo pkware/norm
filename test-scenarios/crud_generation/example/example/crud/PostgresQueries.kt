@@ -75,6 +75,57 @@ public class PostgresQueries(
     }
   }
 
+  private fun <T : Any, Return> findDocumentByKeyInRange(
+    id: Int,
+    id2: Int,
+    mapper: (id: Int, title: String) -> T,
+    processor: ManyProcessor<T, Return>,
+  ): Return {
+    val sql = "SELECT id, title FROM document WHERE metadata ?? 'key' AND id >= ? AND id < ?"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+        getString(2),
+      )
+    }
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setInt(1, id)
+      setInt(2, id2)
+    }
+    return processor.invoke(sql, rowReader, queryBinder)
+  }
+
+  override fun <T : Any> findDocumentByKeyInRange(
+    id: Int,
+    id2: Int,
+    mapper: (id: Int, title: String) -> T,
+  ): Many<T> = findDocumentByKeyInRange(id, id2, mapper, driver::queryMany)
+
+  private fun <T : Any, Return> findDocumentByKeyAndTitle(
+    key: String,
+    title: String,
+    mapper: (id: Int) -> T,
+    processor: ManyProcessor<T, Return>,
+  ): Return {
+    val sql = "SELECT id FROM document WHERE metadata ?? ? AND title = ?"
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getInt(1),
+      )
+    }
+    val queryBinder: (PreparedStatement.() -> Unit)? = {
+      setString(1, key)
+      setString(2, title)
+    }
+    return processor.invoke(sql, rowReader, queryBinder)
+  }
+
+  override fun <T : Any> findDocumentByKeyAndTitle(
+    key: String,
+    title: String,
+    mapper: (id: Int) -> T,
+  ): Many<T> = findDocumentByKeyAndTitle(key, title, mapper, driver::queryMany)
+
   @Throws(SQLException::class)
   override fun <T : Any> insertAuditLog(
     message: String,

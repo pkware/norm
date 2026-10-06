@@ -277,7 +277,7 @@ public class PostgresQueries(
   ): Many<T> = updatePreferences(preferences, id, mapper, driver::queryMany)
 
   private fun <T : Any, Return> duplicateUserReturningAliasedPreferences(
-    p1: Int,
+    id: Int,
     mapper: (id: Int, duplicated_preferences: UserPreferences) -> T,
     processor: ManyProcessor<T, Return>,
   ): Return {
@@ -293,12 +293,12 @@ public class PostgresQueries(
       )
     }
     val queryBinder: (PreparedStatement.() -> Unit)? = {
-      setInt(1, p1)
+      setInt(1, id)
     }
     return processor.invoke(sql, rowReader, queryBinder)
   }
 
-  override fun <T : Any> duplicateUserReturningAliasedPreferences(p1: Int, mapper: (id: Int, duplicated_preferences: UserPreferences) -> T): Many<T> = duplicateUserReturningAliasedPreferences(p1, mapper, driver::queryMany)
+  override fun <T : Any> duplicateUserReturningAliasedPreferences(id: Int, mapper: (id: Int, duplicated_preferences: UserPreferences) -> T): Many<T> = duplicateUserReturningAliasedPreferences(id, mapper, driver::queryMany)
 
   @Throws(SQLException::class)
   override fun <T : Any> getScheduleById(id: Int, mapper: (

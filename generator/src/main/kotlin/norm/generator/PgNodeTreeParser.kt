@@ -329,7 +329,7 @@ internal class PgNodeTreeParser {
     val mergeActionListContent = scanner.rawListAtDepthOne(nodeTreeText, ":mergeActionList")
       ?: return false
     return scanner.splitBraceBlocks(mergeActionListContent).any { actionBlock ->
-      scanner.extractIntField(actionBlock, ":commandType") == COMMAND_TYPE_DELETE
+      scanner.extractIntField(actionBlock, ":commandType") == CommandType.DELETE
     }
   }
 
@@ -384,10 +384,6 @@ internal class PgNodeTreeParser {
     scanner.splitBraceBlocks(targetListContent).filter { it.startsWith("{TARGETENTRY") }
 
   companion object {
-    /** `:commandType` values — see [parseCommandType]'s KDoc. */
-    const val COMMAND_TYPE_DELETE: Int = 4
-    const val COMMAND_TYPE_MERGE: Int = 5
-
     private val integerListPattern = Regex("""\(i((?:\s+-?\d+)+)\s*\)""")
   }
 }

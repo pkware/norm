@@ -7,8 +7,7 @@ import java.sql.SQLException
 /**
  * Loads schema metadata from PostgreSQL's system catalogs via JDBC.
  *
- * Provides a lazy-loaded cache of [functionOverloads] computed once per instance, plus
- * on-demand queries for enums, domains, column comments, and stored procedures. Function
+ * Provides on-demand queries for enums, domains, column comments, and stored procedures. Function
  * strictness, safe-list, and column-nullability facts live on the composed [NullabilityCatalog]
  * instead, and per-query nullability analysis on the composed [ColumnNullabilityAnalyzer] — see
  * each class's own KDoc for why its concern is split out from this one.
@@ -26,45 +25,6 @@ internal class PgCatalogLoader(private val connection: Connection) {
   init {
     checkPostgresVersion()
   }
-
-  /**
-   * Maps function names to their overload metadata from `pg_proc`.
-   *
-   * Used to infer parameter names and result nullability for queries that pass parameters to
-   * function calls. Functions may be overloaded, so we store a list of overloads per function
-   * name, matched by argument count at inference time.
-   *
-   * Loaded lazily on first use and cached for the lifetime of this loader.
-   */
-  val functionOverloads: Map<String, List<FunctionOverload>> by lazy(::loadFunctionOverloads)
-
-  private fun loadFunctionOverloads(): Map<String, List<FunctionOverload>> =
-    buildMap<String, MutableList<FunctionOverload>> {
-      connection.createStatement().use { stmt ->
-        stmt.executeQuery(
-          """
-      SELECT p.proname, p.proargnames, p.pronargs, p.proisstrict
-      FROM pg_catalog.pg_proc p
-      JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-      WHERE p.prokind IN ('f', 'p')
-        AND p.pronargs > 0
-          """.trimIndent(),
-        ).use { rs ->
-          while (rs.next()) {
-            val name = rs.getString("proname")
-            val argNamesArray = rs.getArray("proargnames")
-            val argNames = if (argNamesArray != null) {
-              @Suppress("UNCHECKED_CAST")
-              (argNamesArray.array as Array<String>).toList()
-            } else {
-              emptyList()
-            }
-            val isStrict = rs.getBoolean("proisstrict")
-            computeIfAbsent(name) { mutableListOf() }.add(FunctionOverload(argNames, isStrict))
-          }
-        }
-      }
-    }
 
   /**
    * Returns NOT NULL column information for views and materialized views in [schemaName], for
@@ -465,17 +425,3 @@ internal data class SafeCastSignature(val sourceTypeName: String, val targetType
  *   operator has no right operand (a left-unary / postfix operator, `pg_operator.oprright = 0`).
  */
 internal data class SafeOperatorSignature(val symbol: String, val leftTypeName: String?, val rightTypeName: String?)
-
-/**
- * Metadata about a PostgreSQL function overload from `pg_proc`.
- *
- * Functions may be overloaded (same name, different argument counts), so [PgCatalogLoader] stores
- * a list of overloads per function name, matched by argument count at inference time.
- *
- * @property argNames The formal argument names. Empty when the function has no named arguments
- *   (common for C-implemented extension functions like pgcrypto's `digest`). The caller uses the
- *   function name itself as a fallback in that case.
- * @property isStrict Whether the function returns `null` when any argument is `null` (`STRICT` /
- *   `RETURNS NULL ON NULL INPUT`). When `true`, a call with all non-null arguments is non-null.
- */
-internal data class FunctionOverload(val argNames: List<String>, val isStrict: Boolean)
