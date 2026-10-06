@@ -11,7 +11,8 @@ package norm.generator
  * strict function whose result nullability depends on every argument being non-null.
  *
  * A `?` inside a string literal, `E''` escape string, quoted identifier, dollar-quoted string, line
- * comment, or block comment is left alone.
+ * comment, or block comment is left alone. Outside those, pgjdbc reads `??` as one literal `?`, the escape for
+ * the `jsonb` operators. It is emitted as a single `?` and is not a placeholder.
  *
  * @param sql The SQL text with `?` parameter placeholders.
  * @param replacement Given a placeholder's 0-based parameter index, returns the SQL text to substitute for it.
@@ -29,6 +30,11 @@ internal fun replaceParameterPlaceholders(sql: String, replacement: (parameterIn
       index = afterToken
       continue
     }
+    if (isEscapedQuestionMark(sql, index)) {
+      result.append('?')
+      index += 2
+      continue
+    }
     if (sql[index] == '?') result.append(replacement(parameterIndex++)) else result.append(sql[index])
     index++
   }
@@ -40,7 +46,7 @@ internal fun replaceParameterPlaceholders(sql: String, replacement: (parameterIn
  * placeholder -- the same walk [replaceParameterPlaceholders] uses, so the two functions agree on
  * what counts as a placeholder. A `?` inside a string literal, `E''` escape string, quoted
  * identifier, dollar-quoted string, line comment, or block comment is not a placeholder and is
- * excluded.
+ * excluded, as are both `?` of pgjdbc's `??` escape.
  *
  * @return The placeholder positions, in ascending order.
  */
@@ -53,11 +59,19 @@ internal fun placeholderPositions(sql: String): IntArray {
       index = afterToken
       continue
     }
+    if (isEscapedQuestionMark(sql, index)) {
+      index += 2
+      continue
+    }
     if (sql[index] == '?') positions.add(index)
     index++
   }
   return positions.toIntArray()
 }
+
+/** Tells whether the `?` at [index] opens pgjdbc's `??` escape for a literal `?`. */
+internal fun isEscapedQuestionMark(sql: String, index: Int): Boolean =
+  sql[index] == '?' && index + 1 < sql.length && sql[index + 1] == '?'
 
 /**
  * Returns a non-null SQL literal expression for the given PostgreSQL type name.

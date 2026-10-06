@@ -277,7 +277,7 @@ public interface Queries : Transactable {
    * RETURNING id, preferences AS duplicated_preferences
    * ```
    */
-  public fun <T : Any> duplicateUserReturningAliasedPreferences(p1: Int, mapper: (id: Int, duplicated_preferences: UserPreferences) -> T): Many<T>
+  public fun <T : Any> duplicateUserReturningAliasedPreferences(id: Int, mapper: (id: Int, duplicated_preferences: UserPreferences) -> T): Many<T>
 
   /**
    * Duplicates a user's row, returning the new row's id and preferences under an alias.
@@ -288,7 +288,7 @@ public interface Queries : Transactable {
    * RETURNING id, preferences AS duplicated_preferences
    * ```
    */
-  public fun duplicateUserReturningAliasedPreferences(p1: Int): Many<DuplicateUserReturningAliasedPreferences> = duplicateUserReturningAliasedPreferences(p1, ::DuplicateUserReturningAliasedPreferences)
+  public fun duplicateUserReturningAliasedPreferences(id: Int): Many<DuplicateUserReturningAliasedPreferences> = duplicateUserReturningAliasedPreferences(id, ::DuplicateUserReturningAliasedPreferences)
 
   /**
    * ```sql
