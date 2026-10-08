@@ -1,5 +1,63 @@
 # Changelog
 
+## [1.0.0](https://github.com/pkware/norm/compare/v0.6.0...v1.0.0) (2026-10-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* configurations with colliding adapter names or conflicting mappings now fail generation with an IllegalStateException instead of generating code that uses one of the mappings for both.
+* norm.vendor.org.springframework.jdbc.core.namedparam.NamedParameterUtils and norm.vendor.org.springframework.jdbc.core.namedparam.ParsedSql are no longer public.
+* the public `TypeMapping(postgresType, table, column, kotlinType, adapterType)` constructor and the `isColumnLevel`/`isTypeLevel` properties are removed. Use `TypeMapping.ByType(postgresType, kotlinType, adapterType)` or `TypeMapping.ByColumn(table, column, kotlinType, adapterType)`.
+* `norm.decodeArray` is removed. Regenerate code with this version of the generator.
+* Overrides cannot declare default values, so TransactionalConnectionProvider no longer has the static transaction$default and transactionWithResult$default methods. Kotlin callers compiled against 0.6.0 that omit readOnly fail with NoSuchMethodError until recompiled. Source is unaffected.
+
+### Features
+
+* implement Transactable on TransactionalConnectionProvider ([c9ebfe9](https://github.com/pkware/norm/commit/c9ebfe9e7044871bde5ab0c08526e99a7a35ca47))
+* map xid, xid8, tid, and cid to Kotlin String ([4709ac6](https://github.com/pkware/norm/commit/4709ac6d81e0f59e270e9f033cc1333177f5c594)), closes [#304](https://github.com/pkware/norm/issues/304)
+* support domains over array types ([3b0ac63](https://github.com/pkware/norm/commit/3b0ac63f60b6b0f69abd592709febe760ee71724))
+
+
+### Bug Fixes
+
+* **deps:** update dependency com.diffplug.spotless:spotless-plugin-gradle to v8.10.3 ([dfe4fed](https://github.com/pkware/norm/commit/dfe4fed1dc6c632383f9cbd6e84d2103028872ad))
+* **deps:** update dependency gradle-plugin to v2.4.21 ([009248a](https://github.com/pkware/norm/commit/009248a92bdea286539fb67c2ccdb54c69f9c24e))
+* **deps:** update dependency io.micronaut:micronaut-inject to v5.2.15 ([2b25fe4](https://github.com/pkware/norm/commit/2b25fe49e35c6be444eee32764f35a3d2a6547c1))
+* **deps:** update dependency io.micronaut:micronaut-inject to v5.2.3 ([71a99c2](https://github.com/pkware/norm/commit/71a99c26f010b0fbc85f1bd0d906e0e44f84ba9d))
+* **deps:** update dependency io.micronaut:micronaut-runtime to v5.2.7 ([191fd73](https://github.com/pkware/norm/commit/191fd730766165655a67d3e4c6feede2872829d1))
+* **deps:** update dependency io.micronaut.data:micronaut-data-processor to v5.2.1 ([686e829](https://github.com/pkware/norm/commit/686e829b13e2d891d7b97afa06dc2d0ec78e3ea9))
+* **deps:** update dependency io.micronaut.sql:micronaut-jdbc-hikari to v7.1.3 ([aae9db7](https://github.com/pkware/norm/commit/aae9db7954ac38d2081d66a9ed9b914c968dba01))
+* **deps:** update dependency io.micronaut.sql:micronaut-jdbc-hikari to v7.2.0 ([555e618](https://github.com/pkware/norm/commit/555e6184d76f518e24b1c7fc93d3a94a06222b8e))
+* **deps:** update dependency io.micronaut.test:micronaut-test-junit5 to v5.2.0 ([86431f0](https://github.com/pkware/norm/commit/86431f0bf84ec07f32335a6d7cd990680399eb81))
+* **deps:** update dependency org.mockito:mockito-junit-jupiter to v5.24.0 ([b5719e8](https://github.com/pkware/norm/commit/b5719e817456e460f769d4591921c68a1b6ece84))
+* **deps:** update dependency org.mockito.kotlin:mockito-kotlin to v6.4.0 ([a31d067](https://github.com/pkware/norm/commit/a31d067ce290eb34a7f364952ab3d91c922a37bb))
+* **deps:** update dependency org.postgresql:postgresql to v42.7.14 ([c3fde10](https://github.com/pkware/norm/commit/c3fde1084f04a486002bfc2e7c162696b7de1deb))
+* **deps:** update micronaut to v5.2.10 ([af82e94](https://github.com/pkware/norm/commit/af82e9415c219a4d7c51ce04f420abbef5349912))
+* **deps:** update micronaut to v5.2.11 ([589bab6](https://github.com/pkware/norm/commit/589bab6944977cfa1fc72cfc13c31feb26c258f9))
+* **deps:** update micronaut to v5.2.13 ([68efe6c](https://github.com/pkware/norm/commit/68efe6cb49b4aa164dcb3941eabe1858b7171ae7))
+* **deps:** update micronaut to v5.2.14 ([9be9c4e](https://github.com/pkware/norm/commit/9be9c4e15a2443f86e561828cdbe4647ed431c21))
+* **deps:** update micronaut to v5.2.4 ([a3020a5](https://github.com/pkware/norm/commit/a3020a5fcbd25d92d3edf799cfd7532508da647c))
+* **deps:** update micronaut to v5.2.5 ([8c85a6d](https://github.com/pkware/norm/commit/8c85a6dbd6b32b7e1b34a144ebf7cce2e85a2b8f))
+* **deps:** update micronaut to v5.2.6 ([e3ed8b9](https://github.com/pkware/norm/commit/e3ed8b963a505d3a9d9db1b055fdac0f127a2036))
+* **deps:** update micronaut to v5.2.9 ([d2c1075](https://github.com/pkware/norm/commit/d2c1075e6e61465311b44ee3dc6e460e18ff10bc))
+* **deps:** update micronautdata to v5.1.5 ([fbe3074](https://github.com/pkware/norm/commit/fbe307455a33693e522243129db8d1d4c0f04cbd))
+* **deps:** update micronautdata to v5.2.0 ([cd22299](https://github.com/pkware/norm/commit/cd222997c01c2330c0d45e60da01a0686dab53bf))
+* **deps:** update micronautdata to v5.2.2 ([6aed56e](https://github.com/pkware/norm/commit/6aed56eb4f2e85847e284880c6c5ea77ff5619ca))
+* fail generation when user-configured adapters collide instead of silently merging them ([4c31e4b](https://github.com/pkware/norm/commit/4c31e4b09c3f71991608365ab0e83212ca43e57d))
+* find RETURNING/FROM clause keywords only in keyword position ([57a9849](https://github.com/pkware/norm/commit/57a9849e5bccaeade0b35206b3da0725135f58ca)), closes [#331](https://github.com/pkware/norm/issues/331)
+* fold unquoted identifiers in parameter inference and CTE-name resolution ([dfc22f8](https://github.com/pkware/norm/commit/dfc22f80ff49d6e802aa6755f4fcc86a83e44889))
+* hide vendored Spring named-parameter classes and bind expanded iterables ([2730cc2](https://github.com/pkware/norm/commit/2730cc2fb7cff131ca4cbfb5fd5c38aa01eb01e8)), closes [#353](https://github.com/pkware/norm/issues/353)
+* keep Micronaut borrowed connections open outside a connection scope ([6043a9a](https://github.com/pkware/norm/commit/6043a9afc309483c1dd0a7e3b9eb43f1e9bcfc78)), closes [#417](https://github.com/pkware/norm/issues/417)
+* make TypeMapping a sealed type with type and column variants ([8f2bb61](https://github.com/pkware/norm/commit/8f2bb61b6931470d2a8d8ae18021ffea946b1371))
+* number parameters only at real placeholders in SqlParameterInferrer ([9f62c19](https://github.com/pkware/norm/commit/9f62c19523be6a00077b0056370e66a582ff474f)), closes [#329](https://github.com/pkware/norm/issues/329)
+* propagate poison out of nested transactions and drop unread Transaction fields ([fe3c4ec](https://github.com/pkware/norm/commit/fe3c4ec3a82bcd37e578eae72778dea5b1ce13e0)), closes [#348](https://github.com/pkware/norm/issues/348)
+* read adapted array elements through the base type's codec ([ec6ffb3](https://github.com/pkware/norm/commit/ec6ffb31e39c2a44d63891085b94bdffb2430c49)), closes [#351](https://github.com/pkware/norm/issues/351)
+* resolve stacked domain chains during catalog introspection ([fcf6a88](https://github.com/pkware/norm/commit/fcf6a88582266c8e1393d6d82bb5da6034abd79d)), closes [#305](https://github.com/pkware/norm/issues/305)
+* skip comments between VALUES and its opening parenthesis ([9501978](https://github.com/pkware/norm/commit/9501978f299420fe26e22d7d93f00b69fbdd7d41))
+* stop JdbcMany.stream() leaking and double-releasing the borrowed connection ([3e03a3c](https://github.com/pkware/norm/commit/3e03a3cb4b5e4412519842acbaa180c643cea551))
+* stop matching a colon-leading identifier value as a pg_node_tree field label ([c96f2b3](https://github.com/pkware/norm/commit/c96f2b3e6c2b6d348805eee4ef2426c0be0e872a))
+* treat only ASCII digits as numeric-literal starts before a dot ([717e7f7](https://github.com/pkware/norm/commit/717e7f705fa9f8661aba9c71eaa8781714806f71))
+
 ## [0.6.0](https://github.com/pkware/norm/compare/v0.5.0...v0.6.0) (2026-09-15)
 
 
