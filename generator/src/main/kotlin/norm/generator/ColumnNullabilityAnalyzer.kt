@@ -164,9 +164,9 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
    * data-modifying statement, not a SQL-standard function body.
    *
    * [sql]'s own `?` placeholders are replaced with typed non-null sentinel literals, via
-   * [buildViewSqlWithSentinels], before [withProsqlbodyNodeTree] ever builds the probe function
-   * from them — see that function's own KDoc for why the probe function itself must take zero
-   * arguments.
+   * [buildViewSqlWithSentinels], before [withProsqlbodyNodeTree] builds the probe function from them.
+   * The probe function takes zero arguments. A real `$n` parameter would appear as a `PARAM` node
+   * and widen every column it touches to nullable.
    *
    * A statement with no result columns at all (an `INSERT`/`UPDATE`/`DELETE`/`MERGE` without
    * `RETURNING`) fails PostgreSQL's `RETURNS SETOF record` check on function creation — there is

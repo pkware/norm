@@ -1,10 +1,8 @@
 package norm.generator
 
 /**
- * Infers parameter names and nullability from SQL patterns.
- *
- * Applies multiple strategies to map `?` positional parameters to descriptive names and
- * determine their nullability based on SQL context (INSERT vs WHERE clauses, function arguments).
+ * Merges the formal argument names of the function calls in the SQL text into what [ParameterNullabilityProbe]
+ * inferred about each parameter.
  *
  * @property functionOverloads Metadata about PostgreSQL functions from `pg_proc`, used to resolve
  *   formal argument names for parameters passed to function calls.
@@ -12,177 +10,45 @@ package norm.generator
 internal class SqlParameterInferrer(private val functionOverloads: Map<String, List<FunctionOverload>>) {
 
   /**
-   * Infers parameter names and context from SQL by parsing common SQL patterns.
+   * Adds function argument names to the parameters of [sql] that [ParameterNullabilityProbe] classified.
    *
-   * Applies multiple strategies in priority order:
-   * 1. **Function argument names** — `func(?)` resolved via `pg_proc` (e.g., `digest(?, ?)` → `data`, `type`)
-   * 2. **INSERT column names** — `INSERT INTO t(col) VALUES (?)` (only for params not inside function calls)
-   * 3. **SET/WHERE column names** — `SET col = ?` or `WHERE col = ?`
+   * A function argument name describes what the caller should provide, so it replaces the column name of a parameter.
+   * For example, `UPDATE t SET note = regexp_replace(?, 'a', 'b')` names the `?` `string`, from the signature of
+   * `regexp_replace`.
    *
-   * Function names take priority because they describe what the caller should provide.
-   * For example, `INSERT INTO t(password_hash) VALUES (crypt(?, gen_salt('bf')))` names the first `?`
-   * as `data` (from `crypt`'s signature), where the target column is `password_hash`.
-   *
-   * @return A map from 1-based parameter number to inferred parameter info.
+   * @param classified The parameters of [sql] that the probe named or implied something about, keyed by 1-based
+   *   parameter number.
+   * @return A map from 1-based parameter number to inferred parameter info. A parameter absent from it has no name
+   *   and no opinion on `null`.
    */
-  fun inferParameterInfo(sql: String): Map<Int, InferredParameter> {
-    val paramIndex = ParamIndex(sql)
-    val params = mutableMapOf<Int, InferredParameter>()
-
-    // First pass: resolve function argument names for parameters inside function calls.
-    // These take highest priority because they describe what the caller should provide.
-    val funcNames = inferFunctionArgNames(sql, paramIndex)
-
-    // INSERT INTO table(col1, col2) VALUES (?, func(?), ...)
-    val insertMatch = INSERT_INTO.find(sql)
-    val insertColumnListEnd = insertMatch?.let { findMatchingCloseParenthesis(sql, it.range.last) }?.takeIf { it >= 0 }
-    if (insertMatch != null && insertColumnListEnd != null) {
-      val tableName = tableSimpleName(insertMatch.groupValues[1])
-      // The column list spans to its matching ")" via findMatchingCloseParenthesis (not the first
-      // ")" encountered) and is split with splitAtTopLevel, so a quoted column name containing its
-      // own ")" or "," (e.g. "c)d") is not mistaken for a list boundary.
-      val columnListText = sql.substring(insertMatch.range.last + 1, insertColumnListEnd)
-      val columns = splitAtTopLevel(columnListText, ',').map { logicalIdentifier(it.trim()) }
-      val valueExpressions = extractValuesExpressions(sql)
-      if (valueExpressions != null) {
-        val (expressions, contentStart) = valueExpressions
-        // Map each top-level VALUES expression to its corresponding INSERT column.
-        // splitAtTopLevel respects parenthesis depth, so `crypt(?, gen_salt('bf'))` stays
-        // as one expression correctly mapped to its target column.
-        var exprOffset = contentStart
-        for ((colIndex, expr) in expressions.withIndex()) {
-          if (colIndex >= columns.size) break
-          val columnName = columns[colIndex]
-          for (charIdx in expr.indices) {
-            if (expr[charIdx] == '?') {
-              // A "?" this raw char scan finds may sit inside a string literal within the same
-              // expression (e.g. VALUES ('?', ?)), where it is not a real placeholder; skip it.
-              val paramNum = paramIndex.paramNumberAt(exprOffset + charIdx) ?: continue
-              val displayName = funcNames[paramNum] ?: columnName
-              params[paramNum] =
-                InferredParameter(displayName, tableName, inheritsNullability = true, columnName = columnName)
-            }
-          }
-          exprOffset += expr.length + 1 // +1 for comma
-        }
-      }
-      // Add any function-inferred params not in the INSERT (shouldn't happen, but be safe)
-      for ((paramNum, name) in funcNames) {
-        if (paramNum !in params) {
-          params[paramNum] = InferredParameter(name, tableName, inheritsNullability = true)
-        }
-      }
-      return params
+  fun inferParameterInfo(sql: String, classified: Map<Int, InferredParameter>): Map<Int, InferredParameter> {
+    val functionNames = inferFunctionArgNames(sql, ParamIndex(sql))
+    if (functionNames.isEmpty()) return classified
+    val inferred = classified.toMutableMap()
+    for ((number, name) in functionNames) {
+      inferred[number] = (classified[number] ?: InferredParameter(null, null)).copy(name = name)
     }
-
-    // For UPDATE/DELETE/SELECT, split on WHERE to distinguish SET from WHERE contexts
-    val tableName = UPDATE_TABLE.find(sql)?.groupValues?.get(1)?.let(::tableSimpleName)
-      ?: DELETE_FROM.find(sql)?.groupValues?.get(1)?.let(::tableSimpleName)
-      ?: FROM_TABLE.find(sql)?.groupValues?.get(1)?.let(::tableSimpleName)
-    // Any depth, not just the top level: in `SELECT (SELECT x FROM u WHERE u.id = ?) FROM t WHERE t.id = ?`
-    // a top-level search would put `u.id = ?` before the split, in the SET branch, where it would
-    // inherit the column's nullability even though it is a comparison.
-    val whereIndex = findKeyword(sql, "WHERE")
-
-    // COALESCE pattern: SET col = coalesce(?, fallback) — always nullable regardless of column constraint.
-    // Scoped to the SET clause (before WHERE) so it doesn't affect WHERE conditions.
-    val setEndIndex = if (whereIndex > 0) whereIndex else sql.length
-    val setClauseForCoalesce = sql.substring(0, setEndIndex)
-    for (match in COLUMN_EQUALS_COALESCE_PARAM.findAll(setClauseForCoalesce)) {
-      val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::logicalIdentifier)
-      val colName = logicalIdentifier(match.groupValues[2])
-      // This regex scans raw text, so it can match a "col = coalesce(?"-shaped fragment sitting
-      // inside a string literal or comment; skip anything whose "?" isn't a real placeholder.
-      val paramNum = paramIndex.paramNumberAt(match.range.last) ?: continue
-      if (paramNum !in params) {
-        params[paramNum] =
-          InferredParameter(colName, qualifiedTable ?: tableName, inheritsNullability = false, alwaysNullable = true)
-      }
-    }
-
-    if (whereIndex > 0) {
-      // SET col = ? (before WHERE — inherits nullability)
-      val setClause = sql.substring(0, whereIndex)
-      for (match in COLUMN_COMPARES_PARAM.findAll(setClause)) {
-        val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::logicalIdentifier)
-        val colName = logicalIdentifier(match.groupValues[2])
-        // This regex scans raw text, so a "?" it matches on may be text inside a string literal or
-        // comment; skip anything that isn't a real placeholder.
-        val paramNum = paramIndex.paramNumberAt(match.range.last) ?: continue
-        if (paramNum !in params) {
-          params[paramNum] =
-            InferredParameter(funcNames[paramNum] ?: colName, qualifiedTable ?: tableName, inheritsNullability = true)
-        }
-      }
-
-      // WHERE col <op> ? (after WHERE — does NOT inherit nullability)
-      val whereClause = sql.substring(whereIndex)
-      for (match in COLUMN_COMPARES_PARAM.findAll(whereClause)) {
-        val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::logicalIdentifier)
-        val colName = logicalIdentifier(match.groupValues[2])
-        val paramNum = paramIndex.paramNumberAt(whereIndex + match.range.last) ?: continue
-        if (paramNum !in params) {
-          params[paramNum] =
-            InferredParameter(funcNames[paramNum] ?: colName, qualifiedTable ?: tableName, inheritsNullability = false)
-        }
-      }
-    } else {
-      // No WHERE clause.
-      // For UPDATE statements, all col = ? patterns are SET assignments that inherit nullability from
-      // the target column's schema definition.
-      // For other statements (SELECT, DELETE), col = ? patterns are comparisons. A `null` argument
-      // never matches, so they do not inherit nullability.
-      val setParametersInheritNullability = UPDATE_TABLE.containsMatchIn(sql)
-      for (match in COLUMN_COMPARES_PARAM.findAll(sql)) {
-        val qualifiedTable = match.groupValues[1].ifEmpty { null }?.let(::logicalIdentifier)
-        val colName = logicalIdentifier(match.groupValues[2])
-        val paramNum = paramIndex.paramNumberAt(match.range.last) ?: continue
-        if (paramNum !in params) {
-          params[paramNum] =
-            InferredParameter(
-              funcNames[paramNum] ?: colName,
-              qualifiedTable ?: tableName,
-              inheritsNullability = setParametersInheritNullability,
-            )
-        }
-      }
-    }
-
-    // Add any function-inferred params not matched by other patterns
-    for ((paramNum, name) in funcNames) {
-      if (paramNum !in params) {
-        params[paramNum] = InferredParameter(name, tableName, inheritsNullability = false)
-      }
-    }
-
-    return params
+    return inferred
   }
 
   /**
    * Determines which parameters are non-nullable by looking up inferred column names in the catalog.
    *
-   * For parameters in INSERT or SET context ([InferredParameter.inheritsNullability] = `true`),
-   * the result mirrors the target column's `NOT NULL` constraint. For WHERE parameters,
-   * the result is always `true` (non-nullable) since `col = NULL` never matches a row in SQL.
+   * A parameter written to a column ([ParameterNullability.Inherit]) is non-nullable when the column is `NOT NULL`.
+   * A parameter in a condition is non-nullable, since `col = NULL` never matches a row in SQL. A parameter without an
+   * opinion on `null` is non-nullable.
    *
    * @return A map from 1-based parameter number to whether the parameter is non-nullable (`true` = `NOT NULL`).
    */
-  fun resolveParameterNotNull(inferredParams: Map<Int, InferredParameter>, catalog: Catalog): Map<Int, Boolean> {
-    val notNullMap = mutableMapOf<Int, Boolean>()
-    for ((paramNum, inferred) in inferredParams) {
-      if (inferred.alwaysNullable) {
-        notNullMap[paramNum] = false
-        continue
+  fun resolveParameterNotNull(inferredParams: Map<Int, InferredParameter>, catalog: Catalog): Map<Int, Boolean> =
+    inferredParams.mapValues { (_, inferred) ->
+      when (val nullability = inferred.nullability) {
+        ParameterNullability.Nullable -> false
+        ParameterNullability.NonNull, null -> true
+        is ParameterNullability.Inherit ->
+          nullability.column.let { catalog.findColumn(it.table, it.column, it.schema) }?.notNull ?: true
       }
-      if (!inferred.inheritsNullability) {
-        notNullMap[paramNum] = true
-        continue
-      }
-      val column = findColumnInCatalog(inferred.columnName ?: inferred.name, inferred.tableName, catalog)
-      notNullMap[paramNum] = column?.notNull ?: true
     }
-    return notNullMap
-  }
 
   /**
    * Infers parameter names from function calls by looking up formal argument names in `pg_proc`.
@@ -313,77 +179,6 @@ internal class SqlParameterInferrer(private val functionOverloads: Map<String, L
     }
     return result
   }
-
-  /**
-   * Finds a column definition in the catalog by name, optionally scoped to a specific table.
-   */
-  private fun findColumnInCatalog(columnName: String, tableName: String?, catalog: Catalog): Column? =
-    catalog.findColumn(tableName, columnName)
-
-  /**
-   * Extracts the top-level comma-separated expressions from a `VALUES (...)` clause,
-   * correctly handling nested parentheses (e.g., `crypt(?, gen_salt('bf'))`).
-   *
-   * @return A pair of (expressions, contentStartIndex) where `contentStartIndex` is the char
-   *   position in [sql] of the first character inside the VALUES parentheses, or `null` if no
-   *   VALUES clause is found or its keyword isn't followed by a real opening parenthesis.
-   */
-  private fun extractValuesExpressions(sql: String): Pair<List<String>, Int>? {
-    val valuesIdx = findKeyword(sql, "VALUES")
-    if (valuesIdx < 0) return null
-    // A "(" this function is looking for must be the real opening parenthesis of the VALUES list,
-    // not one that merely appears, character-for-character, inside a comment separating VALUES
-    // from it (e.g. "VALUES /* ( */ (?)"); skipWhitespaceAndComments advances past any such comment
-    // first, so only a real "(" satisfies the check below.
-    val openParenthesis = skipWhitespaceAndComments(sql, valuesIdx + "VALUES".length)
-    if (openParenthesis >= sql.length || sql[openParenthesis] != '(') return null
-    val closeParenthesis = findMatchingCloseParenthesis(sql, openParenthesis)
-    if (closeParenthesis < 0) return null
-
-    val content = sql.substring(openParenthesis + 1, closeParenthesis)
-    return splitAtTopLevel(content, ',') to (openParenthesis + 1)
-  }
-
-  private companion object {
-    // Matches a possibly schema-qualified table name: `table`, `"table"`, or `"schema"."table"`,
-    // using SqlIdentifiers.kt's own identifier shape (a bare `\w+` excludes both `$` and any `>= 0x80`
-    // character, both legal in an unquoted PostgreSQL identifier after its first character).
-    private const val QUALIFIED_TABLE =
-      """($COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED(?:\.$COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED)?)"""
-
-    private val INSERT_INTO =
-      Regex("""INSERT\s+INTO\s+$QUALIFIED_TABLE\s*\(""", RegexOption.IGNORE_CASE)
-    private val UPDATE_TABLE = Regex("""UPDATE\s+$QUALIFIED_TABLE\s""", RegexOption.IGNORE_CASE)
-    private val DELETE_FROM = Regex("""DELETE\s+FROM\s+$QUALIFIED_TABLE""", RegexOption.IGNORE_CASE)
-    private val FROM_TABLE = Regex("""\bFROM\s+$QUALIFIED_TABLE""", RegexOption.IGNORE_CASE)
-
-    private val COLUMN_COMPARES_PARAM =
-      Regex(
-        """(?:($COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED)\.)?($COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED)""" +
-          """\s*(?:=|<>|!=|>=|<=|>|<|LIKE|ILIKE)\s*\?""",
-        RegexOption.IGNORE_CASE,
-      )
-
-    /**
-     * Matches `col = coalesce(?, ...)` — a column assignment where COALESCE wraps the parameter.
-     * The `?` is the first argument, meaning `null` = "use the fallback expression".
-     * Group 1: optional table qualifier, Group 2: column name.
-     */
-    private val COLUMN_EQUALS_COALESCE_PARAM =
-      Regex(
-        """(?:($COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED)\.)?($COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED)""" +
-          """\s*=\s*coalesce\(\s*\?""",
-        RegexOption.IGNORE_CASE,
-      )
-
-    /**
-     * Extracts the simple (unqualified) table name from a possibly schema-qualified SQL table
-     * reference like `"schema"."tablename"` or `"tablename"`, as PostgreSQL's logical identifier
-     * value ([logicalIdentifier]).
-     */
-    // Logical, not raw: catalog.findColumn compares against names the server already folded and truncated.
-    private fun tableSimpleName(qualifiedName: String): String = logicalIdentifier(qualifiedName.split('.').last())
-  }
 }
 
 /**
@@ -468,28 +263,3 @@ private data class FunctionCall(val name: String, val args: List<ArgExpression>)
  * @property paramPositions Global char indices of `?` placeholders within this argument.
  */
 private data class ArgExpression(val text: String, val paramPositions: List<Int>)
-
-/**
- * Information inferred about a query parameter from SQL context.
- *
- * @property name The parameter name for generated code. May come from a function's formal argument
- *   name (e.g., `password` from `crypt`'s signature) or from the target column name.
- * @property tableName The table name, if determinable from the SQL. `null` when the SQL has no
- *   table context (e.g., pure function calls).
- * @property inheritsNullability Whether this parameter's nullability should match the column's.
- *   `true` for INSERT/SET contexts where `null` is a valid value to write;
- *   `false` for WHERE contexts where comparing with `null` requires `IS NULL` instead.
- * @property columnName The column name used for nullability lookup in the catalog. When a parameter
- *   appears inside a function call in an INSERT VALUES clause, [name] may be the function's formal
- *   argument name while [columnName] is the INSERT target column. `null` defaults to using [name].
- * @property alwaysNullable When `true`, the parameter is unconditionally nullable regardless of the
- *   target column's `NOT NULL` constraint. Used for `COALESCE(?, fallback)` patterns in SET clauses,
- *   where `null` means "keep the current value".
- */
-internal data class InferredParameter(
-  val name: String,
-  val tableName: String?,
-  val inheritsNullability: Boolean,
-  val columnName: String? = null,
-  val alwaysNullable: Boolean = false,
-)
