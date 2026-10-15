@@ -62,3 +62,15 @@ SELECT id, "user" FROM "order" WHERE id = ?;
 -- Returns the book with the given id, provided its title is exactly `'ok?'`.
 -- name: getBookByTitleContainingQuestionMark :one
 SELECT id, title FROM book WHERE title = 'ok?' AND id = ?;
+
+-- Runs an anonymous block whose body has a semicolon at a line end inside a dollar-quoted string.
+-- name: runAnonymousBlock :exec
+DO $$
+BEGIN
+  PERFORM 1;
+END
+$$;
+
+-- Creates a function whose SQL-standard body contains a semicolon before its END.
+-- name: createAtomicFunction :exec
+CREATE FUNCTION atomic_one() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; END;
