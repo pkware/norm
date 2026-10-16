@@ -47,9 +47,26 @@ public data class ParsedQuery(
  * SELECT ...;
  * ```
  *
- * Each query is delimited by a `-- name:` annotation line. Comment lines immediately preceding
- * the annotation are captured as documentation. The SQL body continues until the next annotation
- * or end of file.
+ * Each query starts at a `-- name:` annotation line. Comment lines immediately preceding
+ * the annotation are captured as documentation.
+ *
+ * The body ends at the first top-level `;` followed by only whitespace and comments up to a line break. A
+ * block comment can carry that line break onto a later line. Top level
+ * excludes string literals, quoted identifiers, dollar-quoted strings, comments, and parentheses. It also
+ * excludes the `BEGIN ... END` part of a `CREATE FUNCTION` or `CREATE PROCEDURE`.
+ *
+ * A body with no such `;` ends before the final `;` of the first `--` comment that ends in one.
+ * A body with neither ends at the next annotation line or end of file.
+ *
+ * A string, quoted identifier, dollar-quoted string, or block comment that never closes makes the body end
+ * at the first line ending in `;`, or at the next annotation line.
+ *
+ * Text between queries is read one line at a time. A line of SQL after the first query is an error.
+ * Blank lines and comments are not SQL. A line holding only `;` characters and a trailing comment is not SQL
+ * either. Lines inside a block comment and lines containing `/*` or `*/` are exempt. Block comments nest,
+ * as in PostgreSQL. An annotation inside a block comment that opens on a line after the body turns the error
+ * off for the rest of the file. So does a body ending in a token that never closes. A block comment opening on
+ * the terminator's line belongs to that line, so annotations inside it are ignored.
  *
  * ## Named Parameters
  *
@@ -78,94 +95,292 @@ public object QueryFileParser {
    *   Empty string if the source path is unknown.
    * @return Parsed queries in the order they appear in the file.
    * @throws IllegalArgumentException if a `-- name:` annotation has an invalid format, names a
-   *   command that doesn't match any [Command]'s SQL form (for example `:foo`), or if a query
-   *   mixes named and positional parameter styles.
+   *   command that doesn't match any [Command]'s SQL form (for example `:foo`), if a query
+   *   mixes named and positional parameter styles, or if a line of SQL between queries lies outside
+   *   every block comment, as described above.
    */
   public fun parse(content: String, sourceFile: String = ""): List<ParsedQuery> {
-    val lines = content.lines()
+    val source = SourceText(content.lines())
     val queries = mutableListOf<ParsedQuery>()
-
-    // Accumulate comment lines that precede the next annotation
     val pendingComments = mutableListOf<String>()
-    var currentName: String? = null
-    var currentCommand: String? = null
-    var currentComments = listOf<String>()
-    var currentSourceLine = 0
-    val currentSqlLines = mutableListOf<String>()
+    var previous: QueryHeader? = null
+    var blockCommentDepth = 0
+    var isStrayTextAllowed = false
+    var lineIndex = 0
 
-    // Once the SQL body ends (line ending with `;`), we switch back to accumulating
-    // pending comments for the next annotation.
-    var sqlBodyComplete = false
-
-    for ((lineIndex, line) in lines.withIndex()) {
-      val trimmed = line.trim()
-      val match = NAME_ANNOTATION.matchEntire(trimmed)
-      if (match != null) {
-        // Flush previous query if one exists
-        if (currentName != null) {
-          queries.add(
-            buildQuery(currentName, currentCommand!!, currentSqlLines, currentComments, currentSourceLine, sourceFile),
-          )
-          currentSqlLines.clear()
-        }
-
-        // Start new query
-        currentName = match.groupValues[1]
-        currentCommand = match.groupValues[2]
-        currentComments = pendingComments.toList()
-        currentSourceLine = lineIndex + 1
+    while (lineIndex < source.lines.size) {
+      val trimmed = source.lines[lineIndex].trim()
+      val annotation = NAME_ANNOTATION.matchEntire(trimmed)
+      if (annotation != null) {
+        val header = QueryHeader(
+          name = annotation.groupValues[1],
+          command = annotation.groupValues[2],
+          comments = pendingComments.toList(),
+          sourceLine = lineIndex + 1,
+        )
         pendingComments.clear()
-        sqlBodyComplete = false
-      } else if (currentName == null || sqlBodyComplete) {
-        // Before any annotation, or between queries — accumulate comments
-        if (trimmed.startsWith("--")) {
-          pendingComments.add(extractCommentText(trimmed))
-        } else if (trimmed.isNotBlank()) {
-          // Non-comment, non-blank line — reset pending comments
-          pendingComments.clear()
-        }
-      } else {
-        // Inside a query body
-        currentSqlLines.add(line)
-        if (trimmed.endsWith(";")) {
-          sqlBodyComplete = true
+        if (blockCommentDepth > 0) isStrayTextAllowed = true
+        val bodyStart = source.lineStart(lineIndex + 1)
+        val end = findBodyEnd(source, lineIndex)
+        queries.add(buildQuery(header, source.text.substring(bodyStart, end.bodyEnd), sourceFile))
+        previous = header
+        if (end.endsInOpenToken) isStrayTextAllowed = true
+        lineIndex = end.nextLine
+        continue
+      }
+
+      val depthBefore = blockCommentDepth
+      blockCommentDepth = blockCommentDepthAfter(source.lines[lineIndex], blockCommentDepth)
+      if (trimmed.startsWith("--")) {
+        pendingComments.add(extractCommentText(trimmed))
+      } else if (trimmed.isNotEmpty()) {
+        pendingComments.clear()
+        val mayBeComment = depthBefore > 0 || "/*" in trimmed || "*/" in trimmed
+        if (previous != null && !mayBeComment && !isStrayTextAllowed && !isSemicolonsAndComment(trimmed)) {
+          throw IllegalArgumentException(unexpectedTextMessage(previous, lineIndex + 1, trimmed))
         }
       }
-    }
-
-    // Flush last query
-    if (currentName != null) {
-      queries.add(
-        buildQuery(currentName, currentCommand!!, currentSqlLines, currentComments, currentSourceLine, sourceFile),
-      )
+      lineIndex++
     }
 
     return queries
   }
 
-  private fun buildQuery(
-    name: String,
-    command: String,
-    sqlLines: List<String>,
-    comments: List<String>,
-    sourceLine: Int,
-    sourceFile: String,
-  ): ParsedQuery {
-    val rawSql = sqlLines
-      .joinToString("\n")
-      .trim()
-      .removeSuffix(";")
-      .trim()
+  /**
+   * Returns the PostgreSQL block-comment nesting depth after [line], starting from [depth]. A `--` comment
+   * outside a block comment hides the rest of the line.
+   */
+  private fun blockCommentDepthAfter(line: String, depth: Int): Int {
+    var current = depth
+    var index = 0
+    while (index < line.length) {
+      if (current == 0 && line.startsWith("--", index)) break
+      if (line.startsWith("/*", index)) {
+        current++
+        index += 2
+      } else if (current > 0 && line.startsWith("*/", index)) {
+        current--
+        index += 2
+      } else {
+        index++
+      }
+    }
+    return current
+  }
 
-    val (sql, namedParameters) = convertNamedParameters(rawSql)
+  private fun isSemicolonsAndComment(trimmed: String): Boolean {
+    val rest = trimmed.trimStart { it == ';' || it.isWhitespace() }
+    return rest.isEmpty() || rest.startsWith("--")
+  }
+
+  private fun unexpectedTextMessage(previous: QueryHeader, lineNumber: Int, text: String): String =
+    "Query '${previous.name}' at line ${previous.sourceLine} is followed by text on line $lineNumber " +
+      "that is neither a comment nor a '-- name:' annotation: '$text'. End each query with a single ';'."
+
+  /**
+   * Finds where the body of the query annotated on [annotationLine] ends, following the rules in the
+   * [QueryFileParser] KDoc. A token that never closes hands the decision to [findBodyEndByLines].
+   */
+  private fun findBodyEnd(source: SourceText, annotationLine: Int): BodyEnd {
+    val cursor = SqlTokenCursor(source.text, source.lineStart(annotationLine + 1))
+    val scan = BodyScan(source, annotationLine)
+    while (true) {
+      val span = cursor.advance() ?: break
+      val end = scan.accept(span)
+      if (end != null) return end
+    }
+    return scan.endAtCommentCutOr(BodyEnd(source.text.length, source.lines.size))
+  }
+
+  private class BodyScan(private val source: SourceText, private val annotationLine: Int) {
+    private val text = source.text
+    private val tracker = RoutineBodyTracker()
+    private var commentCut = -1
+
+    /** Returns where the body ends if [span] ends it, or `null` if the body continues. */
+    fun accept(span: SqlSpan): BodyEnd? = when (span) {
+      is SqlSpan.Word -> {
+        tracker.onWord(text.substring(span.from, span.to))
+        null
+      }
+      is SqlSpan.Char -> acceptCharacter(span.index)
+      is SqlSpan.Opaque -> {
+        tracker.onOpaque(span.isComment)
+        if (span.isComment && text[span.from] == '-') acceptLineComment(span) else acceptToken(span)
+      }
+    }
+
+    fun endAtCommentCutOr(fallback: BodyEnd): BodyEnd =
+      if (commentCut >= 0) BodyEnd(commentCut, source.lineIndexOf(commentCut) + 1) else fallback
+
+    private fun acceptCharacter(index: Int): BodyEnd? {
+      if (!tracker.onCharacter(text[index])) return null
+      val lineEnd = endOfTrailingComments(text, index + 1) ?: return null
+      return BodyEnd(index, source.lineIndexOf(lineEnd) + 1)
+    }
+
+    private fun acceptToken(span: SqlSpan.Opaque): BodyEnd? = if (isUnterminated(text, span.from, span.to)) {
+      findBodyEndByLines(source, annotationLine).copy(endsInOpenToken = true)
+    } else {
+      null
+    }
+
+    private fun acceptLineComment(span: SqlSpan.Opaque): BodyEnd? {
+      val comment = text.substring(span.from, span.to).trimEnd()
+      val lineIndex = source.lineIndexOf(span.from)
+      val startsLine = text.substring(source.lineStart(lineIndex), span.from).isBlank()
+      if (startsLine && NAME_ANNOTATION.matches(comment.trim())) {
+        return endAtCommentCutOr(BodyEnd(source.lineStart(lineIndex), lineIndex))
+      }
+      if (commentCut < 0 && comment.endsWith(";")) commentCut = span.from + comment.length - 1
+      return null
+    }
+  }
+
+  /**
+   * Ends a body at the first line whose trimmed text ends in `;`, dropping that `;`, or before the
+   * next annotation line.
+   */
+  private fun findBodyEndByLines(source: SourceText, annotationLine: Int): BodyEnd {
+    for (lineIndex in annotationLine + 1 until source.lines.size) {
+      val line = source.lines[lineIndex]
+      if (NAME_ANNOTATION.matches(line.trim())) return BodyEnd(source.lineStart(lineIndex), lineIndex)
+      if (line.trim().endsWith(";")) {
+        return BodyEnd(source.lineStart(lineIndex) + line.trimEnd().length - 1, lineIndex + 1)
+      }
+    }
+    return BodyEnd(source.text.length, source.lines.size)
+  }
+
+  /**
+   * Skips whitespace and closed comments from [start] and returns the index of the next line break or end
+   * of [text]. A block comment can carry the scan onto later lines. Returns `null` if anything else comes
+   * first.
+   */
+  private fun endOfTrailingComments(text: String, start: Int): Int? {
+    var index = start
+    while (index < text.length && text[index] != '\n') {
+      if (text.startsWith("--", index)) return text.indexOf('\n', index).takeIf { it >= 0 } ?: text.length
+      if (text.startsWith("/*", index)) {
+        val afterComment = skipBlockComment(text, index)
+        if (isUnterminated(text, index, afterComment)) return null
+        index = afterComment
+      } else if (text[index].isWhitespace()) {
+        index++
+      } else {
+        return null
+      }
+    }
+    return index
+  }
+
+  /**
+   * Returns `true` if the string, quoted identifier, dollar quote, or block comment that [skipLexicalToken]
+   * reads from [from] to [to] runs to the end of [text] without closing. Appending a line break moves the end
+   * of such a token and leaves a closed one in place.
+   */
+  private fun isUnterminated(text: String, from: Int, to: Int): Boolean =
+    to == text.length && skipLexicalToken(text + "\n", from) != to
+
+  private data class BodyEnd(val bodyEnd: Int, val nextLine: Int, val endsInOpenToken: Boolean = false)
+
+  private class SourceText(val lines: List<String>) {
+    val text: String = lines.joinToString("\n")
+    private val lineStarts = IntArray(lines.size)
+
+    init {
+      var offset = 0
+      for ((index, line) in lines.withIndex()) {
+        lineStarts[index] = offset
+        offset += line.length + 1
+      }
+    }
+
+    fun lineStart(lineIndex: Int): Int = if (lineIndex < lines.size) lineStarts[lineIndex] else text.length
+
+    fun lineIndexOf(offset: Int): Int {
+      val found = lineStarts.binarySearch(offset)
+      return if (found >= 0) found else -found - 2
+    }
+  }
+
+  /**
+   * Follows `BEGIN ... END` nesting in a `CREATE [OR REPLACE] FUNCTION|PROCEDURE` statement, so a `;`
+   * inside a SQL-standard function body (`BEGIN ATOMIC ... END`) does not end the query.
+   *
+   * The statement's first four identifiers decide whether it is a routine definition, as in
+   * `psqlscan_track_identifier` in PostgreSQL's `psqlscan.l`. Identifiers inside parentheses are ignored.
+   * `BEGIN` opens a nesting level only when `ATOMIC` follows it, matching the `opt_routine_body` rule in
+   * `gram.y`. A bare `begin` can name a function or a table.
+   * `END` closes a level. `CASE` counts as `BEGIN ATOMIC` only inside an open level.
+   */
+  private class RoutineBodyTracker {
+    private val initialIdentifiers = CharArray(INITIAL_IDENTIFIER_COUNT)
+    private var identifierCount = 0
+    private var parenthesisDepth = 0
+    private var beginDepth = 0
+    private var isAfterBegin = false
+
+    /** Returns `true` if [character] is a `;` outside parentheses and `BEGIN ... END` levels. */
+    fun onCharacter(character: Char): Boolean {
+      if (!character.isWhitespace()) isAfterBegin = false
+      if (character == '(') {
+        parenthesisDepth++
+      } else if (character == ')' && parenthesisDepth > 0) {
+        parenthesisDepth--
+      }
+      return character == ';' && parenthesisDepth == 0 && beginDepth == 0
+    }
+
+    /**
+     * Records a string, quoted identifier, dollar quote, or comment. Only a comment may sit between `BEGIN`
+     * and `ATOMIC`.
+     */
+    fun onOpaque(isComment: Boolean) {
+      if (!isComment) isAfterBegin = false
+    }
+
+    fun onWord(word: String) {
+      val followsBegin = isAfterBegin
+      isAfterBegin = false
+      if (parenthesisDepth != 0 || !isIdentifierStartChar(word[0])) return
+      if (identifierCount < INITIAL_IDENTIFIER_COUNT) {
+        if (word.lowercase() in INITIAL_KEYWORDS) initialIdentifiers[identifierCount] = word[0].lowercaseChar()
+        identifierCount++
+      }
+      if (!isRoutineDefinition()) return
+      when (word.lowercase()) {
+        "begin" -> isAfterBegin = true
+        "atomic" -> if (followsBegin) beginDepth++
+        "case" -> if (beginDepth >= 1) beginDepth++
+        "end" -> if (beginDepth > 0) beginDepth--
+      }
+    }
+
+    private fun isRoutineDefinition(): Boolean {
+      val (first, second, third, fourth) = initialIdentifiers
+      return first == 'c' &&
+        (second == 'f' || second == 'p' || (second == 'o' && third == 'r' && (fourth == 'f' || fourth == 'p')))
+    }
+
+    private companion object {
+      const val INITIAL_IDENTIFIER_COUNT = 4
+      val INITIAL_KEYWORDS = setOf("create", "function", "procedure", "or", "replace")
+    }
+  }
+
+  private class QueryHeader(val name: String, val command: String, val comments: List<String>, val sourceLine: Int)
+
+  private fun buildQuery(header: QueryHeader, body: String, sourceFile: String): ParsedQuery {
+    val (sql, namedParameters) = convertNamedParameters(body.trim())
 
     return ParsedQuery(
-      name = name,
-      command = resolveCommand(name, command, sourceLine),
+      name = header.name,
+      command = resolveCommand(header.name, header.command, header.sourceLine),
       sql = sql,
-      comments = comments,
+      comments = header.comments,
       namedParameters = namedParameters,
-      sourceLine = sourceLine,
+      sourceLine = header.sourceLine,
       sourceFile = sourceFile,
     )
   }

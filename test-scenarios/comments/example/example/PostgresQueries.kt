@@ -399,4 +399,22 @@ public class PostgresQueries(
       setInt(1, id)
     }
   }
+
+  @Throws(SQLException::class)
+  override fun runAnonymousBlock() {
+    val sql = """
+        |DO ${'$'}${'$'}
+        |BEGIN
+        |  PERFORM 1;
+        |END
+        |${'$'}${'$'}
+        """.trimMargin()
+    driver.execute(sql, PreparedStatement::execute)
+  }
+
+  @Throws(SQLException::class)
+  override fun createAtomicFunction() {
+    val sql = "CREATE FUNCTION atomic_one() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; END"
+    driver.execute(sql, PreparedStatement::execute)
+  }
 }
