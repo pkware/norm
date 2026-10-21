@@ -11,6 +11,9 @@ dependencies {
   testImplementation(libs.bundles.testcontainers)
   testImplementation(libs.postgresql)
   testImplementation(libs.commonmark)
+  testImplementation(libs.chicory.runtime)
+  testImplementation(libs.chicory.wasi)
+  testImplementation(libs.gson)
 }
 
 kotlin {

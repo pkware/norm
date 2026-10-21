@@ -1,0 +1,152 @@
+diff --git a/cparser18/include/postgres/pg_config.h b/ctx18/internal/cparser/include/postgres/pg_config.h
+index e0b2f30..3ceac4b 100644
+--- a/cparser18/include/postgres/pg_config.h
++++ b/ctx18/internal/cparser/include/postgres/pg_config.h
+@@ -432,7 +432,7 @@
+ /* #undef HAVE_SYNC_FILE_RANGE */
+ 
+ /* Define to 1 if you have the syslog interface. */
+-#define HAVE_SYSLOG 1
++// #define HAVE_SYSLOG 1
+ 
+ /* Define to 1 if you have the <sys/epoll.h> header file. */
+ /* #undef HAVE_SYS_EPOLL_H */
+diff --git a/cparser18/include/postgres/pgstat.h b/ctx18/internal/cparser/include/postgres/pgstat.h
+index 1f61cec..b361899 100644
+--- a/cparser18/include/postgres/pgstat.h
++++ b/ctx18/internal/cparser/include/postgres/pgstat.h
+@@ -13,11 +13,14 @@
+ 
+ #include "access/transam.h"		/* for FullTransactionId */
+ #include "datatype/timestamp.h"
++#include "miscadmin.h"
+ #include "portability/instr_time.h"
+ #include "postmaster/pgarch.h"	/* for MAX_XFN_CHARS */
+ #include "replication/conflict.h"
+ #include "utils/backend_progress.h" /* for backward compatibility */	/* IWYU pragma: export */
++#ifndef __wasi__
+ #include "utils/backend_status.h"	/* for backward compatibility */	/* IWYU pragma: export */
++#endif
+ #include "utils/pgstat_kind.h"
+ #include "utils/relcache.h"
+ #include "utils/wait_event.h"	/* for backward compatibility */	/* IWYU pragma: export */
+diff --git a/cparser18/src_backend_tcop_postgres.c b/ctx18/internal/cparser/src_backend_tcop_postgres.c
+index 5b484ac..7a4654d 100644
+--- a/cparser18/src_backend_tcop_postgres.c
++++ b/ctx18/internal/cparser/src_backend_tcop_postgres.c
+@@ -25,6 +25,22 @@
+  *-------------------------------------------------------------------------
+  */
+ 
++#ifdef __wasi__
++
++#include "postgres.h"
++
++#include "tcop/dest.h"
++
++__thread const char *debug_query_string;
++__thread CommandDest whereToSendOutput = DestDebug;
++
++void
++ProcessInterrupts(void)
++{
++}
++
++#else
++
+ #include "postgres.h"
+ 
+ #include <fcntl.h>
+@@ -710,3 +726,4 @@ ProcessInterrupts(void)
+  * Disable statement timeout, if active.
+  */
+ 
++#endif
+diff --git a/cparser18/src_backend_utils_error_assert.c b/ctx18/internal/cparser/src_backend_utils_error_assert.c
+index 7749f8e..3ef4997 100644
+--- a/cparser18/src_backend_utils_error_assert.c
++++ b/ctx18/internal/cparser/src_backend_utils_error_assert.c
+@@ -25,6 +25,16 @@
+ #include <execinfo.h>
+ #endif
+ 
++static int
++exception_pid(void)
++{
++#ifdef __wasi__
++	return 1;
++#else
++	return (int) getpid();
++#endif
++}
++
+ /*
+  * ExceptionalCondition - Handles the failure of an Assert()
+  *
+@@ -41,10 +51,10 @@ ExceptionalCondition(const char *conditionName,
+ 	if (!PointerIsValid(conditionName)
+ 		|| !PointerIsValid(fileName))
+ 		write_stderr("TRAP: ExceptionalCondition: bad arguments in PID %d\n",
+-					 (int) getpid());
++					 exception_pid());
+ 	else
+ 		write_stderr("TRAP: failed Assert(\"%s\"), File: \"%s\", Line: %d, PID: %d\n",
+-					 conditionName, fileName, lineNumber, (int) getpid());
++					 conditionName, fileName, lineNumber, exception_pid());
+ 
+ 	/* Usually this shouldn't be needed, but make sure the msg went out */
+ 	fflush(stderr);
+diff --git a/cparser18/src_backend_utils_error_elog.c b/ctx18/internal/cparser/src_backend_utils_error_elog.c
+index adfa868..5918e17 100644
+--- a/cparser18/src_backend_utils_error_elog.c
++++ b/ctx18/internal/cparser/src_backend_utils_error_elog.c
+@@ -122,8 +122,6 @@
+ #endif
+ 
+ #include "access/xact.h"
+-#include "common/ip.h"
+-#include "libpq/libpq.h"
+ #include "libpq/pqformat.h"
+ #include "mb/pg_wchar.h"
+ #include "miscadmin.h"
+diff --git a/cparser18/src_backend_utils_init_globals.c b/ctx18/internal/cparser/src_backend_utils_init_globals.c
+index 7031192..ca0152b 100644
+--- a/cparser18/src_backend_utils_init_globals.c
++++ b/ctx18/internal/cparser/src_backend_utils_init_globals.c
+@@ -29,8 +29,6 @@
+ #include "postgres.h"
+ 
+ #include "common/file_perm.h"
+-#include "libpq/libpq-be.h"
+-#include "libpq/pqcomm.h"
+ #include "miscadmin.h"
+ #include "postmaster/postmaster.h"
+ #include "storage/procnumber.h"
+diff --git a/cparser18/src_backend_utils_misc_guc_tables.c b/ctx18/internal/cparser/src_backend_utils_misc_guc_tables.c
+index e54e595..ad875fd 100644
+--- a/cparser18/src_backend_utils_misc_guc_tables.c
++++ b/ctx18/internal/cparser/src_backend_utils_misc_guc_tables.c
+@@ -26,6 +26,16 @@
+  *
+  *--------------------------------------------------------------------
+  */
++#ifdef __wasi__
++
++#include "postgres.h"
++
++__thread bool		check_function_bodies = true;
++__thread int			log_min_messages = WARNING;
++__thread char	   *backtrace_functions;
++
++#else
++
+ #include "postgres.h"
+ 
+ #ifdef HAVE_COPYFILE_H
+@@ -523,5 +533,4 @@ StaticAssertDecl(lengthof(config_type_names) == (PGC_ENUM + 1),
+ #else
+ #endif
+ 
+-
+-
++#endif
