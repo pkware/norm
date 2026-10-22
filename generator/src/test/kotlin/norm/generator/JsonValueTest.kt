@@ -177,6 +177,37 @@ class JsonValueTest {
     }
 
     @Test
+    fun `intField returns the integer value when the key is present with an integer scalar`() {
+      val jsonObject = JsonValue.JsonObject(mapOf("location" to JsonValue.JsonScalar("-12")))
+      assertThat(jsonObject.intField("location")).isEqualTo(-12)
+    }
+
+    @Test
+    fun `intField returns null when the key is absent`() {
+      assertThat(JsonValue.JsonObject(emptyMap()).intField("location")).isNull()
+    }
+
+    @Test
+    fun `intField returns null when the scalar is not an integer`() {
+      val jsonObject = JsonValue.JsonObject(
+        mapOf(
+          "fraction" to JsonValue.JsonScalar("1.5"),
+          "flag" to JsonValue.JsonScalar("true"),
+          "overflow" to JsonValue.JsonScalar("2147483648"),
+        ),
+      )
+      assertThat(jsonObject.intField("fraction")).isNull()
+      assertThat(jsonObject.intField("flag")).isNull()
+      assertThat(jsonObject.intField("overflow")).isNull()
+    }
+
+    @Test
+    fun `intField returns null when the key's value is a string holding digits`() {
+      val jsonObject = JsonValue.JsonObject(mapOf("location" to JsonValue.JsonString("7")))
+      assertThat(jsonObject.intField("location")).isNull()
+    }
+
+    @Test
     fun `objectField returns the object value when the key is present with an object value`() {
       val nested = JsonValue.JsonObject(mapOf("inner" to JsonValue.JsonString("x")))
       val jsonObject = JsonValue.JsonObject(mapOf("child" to nested))

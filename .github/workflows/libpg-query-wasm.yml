@@ -1,0 +1,46 @@
+name: Rebuild libpg_query WASI module
+
+on:
+  pull_request:
+    paths:
+      - 'buildtools/libpg_query-wasm/**'
+      - 'generator/src/main/resources/libpg_query.wasm'
+      - 'generator/src/main/resources/libpg_query_location_fields.txt'
+      - '.github/workflows/libpg-query-wasm.yml'
+  push:
+    branches: [ main, release/* ]
+    paths:
+      - 'buildtools/libpg_query-wasm/**'
+      - 'generator/src/main/resources/libpg_query.wasm'
+      - 'generator/src/main/resources/libpg_query_location_fields.txt'
+      - '.github/workflows/libpg-query-wasm.yml'
+  schedule:
+    - cron: '17 5 * * 1'
+
+permissions: {}
+
+jobs:
+  rebuild:
+    name: Rebuild and compare
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build module
+        run: >
+          docker build --platform=linux/amd64
+          --output type=local,dest=build/libpg_query-wasm
+          buildtools/libpg_query-wasm
+
+      - name: Compare with the committed files
+        run: |
+          sha256sum build/libpg_query-wasm/libpg_query.wasm generator/src/main/resources/libpg_query.wasm
+          cmp build/libpg_query-wasm/libpg_query.wasm generator/src/main/resources/libpg_query.wasm
+          cmp build/libpg_query-wasm/libpg_query_location_fields.txt generator/src/main/resources/libpg_query_location_fields.txt

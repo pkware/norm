@@ -1,0 +1,51 @@
+--- a/include/postgres/utils/elog.h
++++ b/include/postgres/utils/elog.h
+@@ -384,13 +384,13 @@
+  */
+ #define PG_TRY(...)  \
+ 	do { \
+-		sigjmp_buf *_save_exception_stack##__VA_ARGS__ = PG_exception_stack; \
++		jmp_buf *_save_exception_stack##__VA_ARGS__ = PG_exception_stack; \
+ 		ErrorContextCallback *_save_context_stack##__VA_ARGS__ = error_context_stack; \
+-		sigjmp_buf _local_sigjmp_buf##__VA_ARGS__; \
++		jmp_buf _local_jmp_buf##__VA_ARGS__; \
+ 		bool _do_rethrow##__VA_ARGS__ = false; \
+-		if (sigsetjmp(_local_sigjmp_buf##__VA_ARGS__, 0) == 0) \
++		if (setjmp(_local_jmp_buf##__VA_ARGS__) == 0) \
+ 		{ \
+-			PG_exception_stack = &_local_sigjmp_buf##__VA_ARGS__
++			PG_exception_stack = &_local_jmp_buf##__VA_ARGS__
+ 
+ #define PG_CATCH(...)	\
+ 		} \
+@@ -418,7 +418,7 @@
+ #define PG_RE_THROW()  \
+ 	pg_re_throw()
+ 
+-extern PGDLLIMPORT __thread sigjmp_buf *PG_exception_stack;
++extern PGDLLIMPORT __thread jmp_buf *PG_exception_stack;
+ 
+ 
+ /* Stuff that error handlers might want to use */
+--- a/src_backend_utils_error_elog.c
++++ b/src_backend_utils_error_elog.c
+@@ -1663,7 +1663,7 @@
+ {
+ 	/* If possible, throw the error to the next outer setjmp handler */
+ 	if (PG_exception_stack != NULL)
+-		siglongjmp(*PG_exception_stack, 1);
++		longjmp(*PG_exception_stack, 1);
+ 	else
+ 	{
+ 		/*
+--- a/src_port_strerror.c
++++ b/src_port_strerror.c
+@@ -160,8 +160,6 @@
+ 			return "EFAULT";
+ 		case EFBIG:
+ 			return "EFBIG";
+-		case EHOSTDOWN:
+-			return "EHOSTDOWN";
+ 		case EHOSTUNREACH:
+ 			return "EHOSTUNREACH";
+ 		case EIDRM:
