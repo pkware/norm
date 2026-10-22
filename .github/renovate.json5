@@ -3,5 +3,13 @@
   "extends": [
     "config:recommended"
   ],
-  "semanticCommits": "enabled"
+  "semanticCommits": "enabled",
+  "packageRules": [
+    {
+      // setup-java resolves a bare major to the latest release, so only major bumps need a PR.
+      "matchDatasources": ["java-version"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "enabled": false
+    }
+  ]
 }
