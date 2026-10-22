@@ -1,17 +1,11 @@
 package norm.generator
 
 /**
- * A minimal, generic JSON value model and parser.
+ * A generic JSON value model and parser.
  *
- * PostgreSQL's `EXPLAIN (FORMAT JSON)` output is the only JSON this generator ever reads. JSON's
- * grammar is small, deterministic, and unambiguous — unlike SQL, which is why the codebase's own
- * "no hand-rolled SQL text scanning" concern does not apply here: this is a real, complete parser
- * for the format, not an ad-hoc scanner for specific field names inside SQL text.
- *
- * Only the value shapes this generator's own EXPLAIN consumers need are modeled: objects
- * (`Map<String, JsonValue>`), arrays, strings, and everything else (numbers, booleans, `null`)
- * folded into a single [JsonScalar] carrying its raw source text, since none of today's callers
- * need numeric or boolean values as anything other than "not an object or array".
+ * Reads PostgreSQL's `EXPLAIN (FORMAT JSON)` output and libpg_query parse trees. Objects map to
+ * `Map<String, JsonValue>`, arrays to lists and strings to [JsonString]. Numbers, booleans and `null`
+ * share [JsonScalar], which keeps their raw source text.
  */
 internal sealed interface JsonValue {
   data class JsonObject(val fields: Map<String, JsonValue>) : JsonValue {
@@ -21,6 +15,12 @@ internal sealed interface JsonValue {
      * not a JSON string.
      */
     fun stringField(key: String): String? = (fields[key] as? JsonString)?.value
+
+    /**
+     * The `Int` value of [key], or `null` when [key] is absent from [fields] or its value is not a JSON
+     * number written as a 32-bit integer.
+     */
+    fun intField(key: String): Int? = (fields[key] as? JsonScalar)?.intValue()
 
     /**
      * The [JsonObject] value of [key], or `null` when [key] is absent from [fields] or its value
@@ -39,7 +39,11 @@ internal sealed interface JsonValue {
 
   data class JsonArray(val items: List<JsonValue>) : JsonValue
   data class JsonString(val value: String) : JsonValue
-  data class JsonScalar(val rawText: String) : JsonValue
+  data class JsonScalar(val rawText: String) : JsonValue {
+
+    /** The value as an `Int`, or `null` when [rawText] is not a JSON number written as a 32-bit integer. */
+    fun intValue(): Int? = rawText.toIntOrNull()
+  }
 
   companion object {
     /**

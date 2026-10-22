@@ -82,6 +82,9 @@ tasks.shadowJar {
   relocate("com.fasterxml.jackson", "com.pkware.norm.shaded.com.fasterxml.jackson")
   relocate("org.apache.commons", "com.pkware.norm.shaded.org.apache.commons")
   relocate("org.rnorth", "com.pkware.norm.shaded.org.rnorth")
+  // Chicory runs libpg_query inside the plugin, and a Chicory from another Gradle plugin on the same
+  // buildscript classpath would otherwise supply a different version of its classes.
+  relocate("com.dylibso.chicory", "com.pkware.norm.shaded.com.dylibso.chicory")
   // Rename META-INF/services files based on relocation rules so that ServiceLoader using the
   // relocated interface class (e.g., DockerClientProviderStrategy) can find its implementations.
   // Without this, the services file stays at its original name and ServiceLoader gets zero results.
@@ -109,6 +112,9 @@ tasks.test {
   useJUnitPlatform {
     excludeTags("generateGoldenFiles")
   }
+  systemProperty("norm.test.kotlinVersion", libs.versions.kotlin.get())
+  systemProperty("norm.test.micronautVersion", libs.versions.micronaut.get())
+  systemProperty("norm.test.micronautPluginVersion", libs.plugins.micronaut.library.get().version.requiredVersion)
 }
 
 tasks.register<Test>("generateGoldenFiles") {

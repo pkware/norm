@@ -5,6 +5,8 @@ plugins {
 }
 
 dependencies {
+  implementation(libs.chicory.runtime)
+  implementation(libs.chicory.wasi)
   implementation(libs.kotlinPoet)
 
   testImplementation(libs.bundles.mockito)
