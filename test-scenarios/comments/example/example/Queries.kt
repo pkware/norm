@@ -516,4 +516,28 @@ public interface Queries : Transactable {
    */
   @Throws(SQLException::class)
   public fun getBookByTitleContainingQuestionMark(id: Int): GetBookByTitleContainingQuestionMark = getBookByTitleContainingQuestionMark(id, ::GetBookByTitleContainingQuestionMark)
+
+  /**
+   * Runs an anonymous block whose body has a semicolon at a line end inside a dollar-quoted string.
+   *
+   * ```sql
+   * DO $$
+   * BEGIN
+   *   PERFORM 1;
+   * END
+   * $$
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun runAnonymousBlock()
+
+  /**
+   * Creates a function whose SQL-standard body contains a semicolon before its END.
+   *
+   * ```sql
+   * CREATE FUNCTION atomic_one() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; END
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun createAtomicFunction()
 }
