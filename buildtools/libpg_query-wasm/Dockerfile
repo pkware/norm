@@ -59,6 +59,7 @@ RUN $CC -o libpg_query-noopt.wasm $LDFLAGS \
   -Wl,--export=pg_query_free_scan_result \
   -Wl,--export=pg_query_split_with_scanner \
   -Wl,--export=pg_query_split_with_parser \
+  -Wl,--export=pg_query_free_split_result \
   -Wl,--export=pg_query_normalize \
   -Wl,--export=pg_query_free_normalize_result \
   -Wl,--export=pg_query_fingerprint \

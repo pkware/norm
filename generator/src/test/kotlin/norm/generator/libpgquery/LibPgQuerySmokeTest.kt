@@ -89,9 +89,13 @@ class LibPgQuerySmokeTest {
   inner class Exports {
 
     @Test
-    fun `exports both split entry points`() {
+    fun `exports both split entry points and the split result release`() {
       val exportedFunctions = exports().filter { it.exportType() == ExternalType.FUNCTION }.map { it.name() }
-      assertThat(exportedFunctions).containsAtLeast("pg_query_split_with_scanner", "pg_query_split_with_parser")
+      assertThat(exportedFunctions).containsAtLeast(
+        "pg_query_split_with_scanner",
+        "pg_query_split_with_parser",
+        "pg_query_free_split_result",
+      )
     }
 
     @Test

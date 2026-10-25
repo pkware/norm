@@ -1,0 +1,327 @@
+# Regress statements that PostgreSQL rejects with an error. Fields, separated by tabs: <major>/<file>, statement
+# ordinal, first line of the statement, expected/<file>.out:<line> of the error. See the README of this directory.
+16/aggregates.sql	327	select p, percentile_cont(p order by p) within group (order by x)  -- error	expected/aggregates.out:2276
+16/alter_table.sql	61	ALTER INDEX attmp_idx ALTER COLUMN 0 SET STATISTICS 1000	expected/alter_table.out:100
+16/alter_table.sql	584	alter table atacc1 SET WITH OIDS	expected/alter_table.out:1426
+16/collate.icu.utf8.sql	115	SELECT CAST('42' AS text COLLATE "C")	expected/collate.icu.utf8.out:782
+16/collate.linux.utf8.sql	126	SELECT CAST('42' AS text COLLATE "C")	expected/collate.linux.utf8.out:837
+16/collate.sql	80	SELECT CAST('42' AS text COLLATE "C")	expected/collate.out:518
+16/collate.windows.win1252.sql	94	SELECT CAST('42' AS text COLLATE "C")	expected/collate.windows.win1252.out:655
+16/constraints.sql	15	CREATE TABLE error_tbl (i int DEFAULT (100, ))	expected/constraints.out:51
+16/constraints.sql	16	CREATE TABLE error_tbl (b1 bool DEFAULT 1 IN (1, 2))	expected/constraints.out:58
+16/copy2.sql	39	COPY x TO stdout WHERE a = 1	expected/copy2.out:119
+16/copyselect.sql	19	copy (select * from test1) from stdin	expected/copyselect.out:52
+16/copyselect.sql	20	copy (select * from test1) (t,id) to stdout	expected/copyselect.out:59
+16/create_am.sql	36	SELECT INTO tableam_tblselectinto_heap2 USING heap2 FROM tableam_tbl_heap2	expected/create_am.out:158
+16/create_am.sql	37	CREATE VIEW tableam_view_heap2 USING heap2 AS SELECT * FROM tableam_tbl_heap2	expected/create_am.out:163
+16/create_am.sql	38	CREATE SEQUENCE tableam_seq_heap2 USING heap2	expected/create_am.out:168
+16/create_am.sql	89	CREATE TABLE i_am_a_failure() USING "";	expected/create_am.out:372
+16/create_index.sql	3	CREATE INDEX IF NOT EXISTS ON onek USING btree(unique1 int4_ops)	expected/create_index.out:14
+16/create_operator.sql	11	CREATE OPERATOR => (	expected/create_operator.out:46
+16/create_operator.sql	14	SELECT 10 !=-	expected/create_operator.out:64
+16/create_table.sql	33	CREATE TABLE withoid() WITH OIDS	expected/create_table.out:85
+16/create_table.sql	78	CREATE TABLE partitioned (	expected/create_table.out:161
+16/create_table.sql	136	CREATE TABLE fail_part PARTITION OF list_parted FOR VALUES IN ()	expected/create_table.out:468
+16/domain.sql	169	update dposintatable set (f1[2])[1] = array[98]	expected/domain.out:582
+16/errors.sql	5	select distinct from pg_database	expected/errors.out:35
+16/errors.sql	11	delete from	expected/errors.out:62
+16/errors.sql	13	drop table	expected/errors.out:74
+16/errors.sql	15	alter table rename	expected/errors.out:85
+16/errors.sql	28	drop index	expected/errors.out:139
+16/errors.sql	29	drop index 314159	expected/errors.out:144
+16/errors.sql	31	drop aggregate	expected/errors.out:154
+16/errors.sql	32	drop aggregate newcnt1	expected/errors.out:159
+16/errors.sql	33	drop aggregate 314159 (int)	expected/errors.out:164
+16/errors.sql	37	drop function ()	expected/errors.out:180
+16/errors.sql	38	drop function 314159()	expected/errors.out:185
+16/errors.sql	40	drop type	expected/errors.out:195
+16/errors.sql	41	drop type 314159	expected/errors.out:200
+16/errors.sql	43	drop operator	expected/errors.out:210
+16/errors.sql	44	drop operator equals	expected/errors.out:215
+16/errors.sql	45	drop operator ===	expected/errors.out:220
+16/errors.sql	46	drop operator int4, int4	expected/errors.out:225
+16/errors.sql	47	drop operator (int4, int4)	expected/errors.out:230
+16/errors.sql	48	drop operator === ()	expected/errors.out:235
+16/errors.sql	49	drop operator === (int4)	expected/errors.out:240
+16/errors.sql	51	drop operator = (nonesuch)	expected/errors.out:249
+16/errors.sql	52	drop operator = ( , int4)	expected/errors.out:255
+16/errors.sql	55	drop operator = (int4, )	expected/errors.out:266
+16/errors.sql	56	drop rule	expected/errors.out:273
+16/errors.sql	57	drop rule 314159	expected/errors.out:278
+16/errors.sql	59	drop tuple rule nonesuch	expected/errors.out:286
+16/errors.sql	60	drop instance rule nonesuch on noplace	expected/errors.out:290
+16/errors.sql	61	drop rewrite rule nonesuch	expected/errors.out:294
+16/errors.sql	73	CREATE foo	expected/errors.out:330
+16/errors.sql	74	CREATE TABLE	expected/errors.out:334
+16/errors.sql	75	CREATE TABLE	expected/errors.out:339
+16/errors.sql	76	INSERT INTO foo VALUES(123) foo	expected/errors.out:343
+16/errors.sql	77	INSERT INTO 123	expected/errors.out:348
+16/errors.sql	78	INSERT INTO foo	expected/errors.out:354
+16/errors.sql	79	CREATE TABLE foo	expected/errors.out:362
+16/errors.sql	80	CREATE TABLE foo(id INT4 UNIQUE NOT NULL, id2 TEXT NOT NULL PRIMARY KEY, id3 INTEGER NOT NUL,	expected/errors.out:368
+16/errors.sql	81	CREATE TABLE foo(	expected/errors.out:374
+16/errors.sql	82	CREATE TABLE foo(id INT4 UNIQUE NOT NULL, id2 TEXT NOT NULL PRIMARY KEY, id3 INTEGER NOT NUL, id4 INT4 UNIQUE NOT NULL, id5 TEXT UNIQUE NOT NULL)	expected/errors.out:379
+16/errors.sql	83	CREATE	expected/errors.out:396
+16/errors.sql	84	CREATE	expected/errors.out:406
+16/errors.sql	85	CREATE	expected/errors.out:419
+16/errors.sql	86	CREATE	expected/errors.out:445
+16/event_trigger.sql	17	create event trigger regress_event_trigger2 on ddl_command_start	expected/event_trigger.out:39
+16/foreign_data.sql	39	ALTER FOREIGN DATA WRAPPER foo	expected/foreign_data.out:119
+16/foreign_data.sql	113	ALTER SERVER s0	expected/foreign_data.out:406
+16/foreign_data.sql	202	CREATE FOREIGN TABLE ft1 ()	expected/foreign_data.out:702
+16/foreign_key.sql	228	CREATE TABLE FKTABLE (tid int, id int, foo int, FOREIGN KEY (tid, foo) REFERENCES PKTABLE ON UPDATE SET NULL (foo))	expected/foreign_key.out:767
+16/foreign_key.sql	425	ALTER TABLE fktable ALTER CONSTRAINT fktable_fk_fkey NOT DEFERRABLE INITIALLY DEFERRED	expected/foreign_key.out:1284
+16/foreign_key.sql	427	ALTER TABLE fktable ALTER CONSTRAINT fktable_fk_fkey NOT VALID	expected/foreign_key.out:1290
+16/generated.sql	21	CREATE TABLE gtest_err_8 (a int PRIMARY KEY, b int GENERATED BY DEFAULT AS (a * 2) STORED)	expected/generated.out:101
+16/limit.sql	73	SELECT  thousand	expected/limit.out:626
+16/limit.sql	74	SELECT ''::text AS two, unique1, unique2, stringu1	expected/limit.out:631
+16/merge.sql	21	MERGE INTO target t RANDOMWORD	expected/merge.out:63
+16/merge.sql	22	MERGE INTO target t	expected/merge.out:72
+16/merge.sql	23	MERGE INTO target t	expected/merge.out:81
+16/merge.sql	24	MERGE INTO target t	expected/merge.out:90
+16/merge.sql	25	MERGE INTO target t	expected/merge.out:99
+16/merge.sql	26	MERGE INTO target t	expected/merge.out:108
+16/merge.sql	27	MERGE INTO target t	expected/merge.out:117
+16/namespace.sql	26	CREATE SCHEMA IF NOT EXISTS test_ns_schema_renamed -- fail, disallowed	expected/namespace.out:102
+16/numerology.sql	28	SELECT 123abc;	expected/numerology.out:174
+16/numerology.sql	29	SELECT 0x0o;	expected/numerology.out:178
+16/numerology.sql	30	SELECT 0.a;	expected/numerology.out:182
+16/numerology.sql	31	SELECT 0.0a;	expected/numerology.out:186
+16/numerology.sql	32	SELECT .0a;	expected/numerology.out:190
+16/numerology.sql	33	SELECT 0.0e1a;	expected/numerology.out:194
+16/numerology.sql	34	SELECT 0.0e;	expected/numerology.out:198
+16/numerology.sql	35	SELECT 0.0e+a;	expected/numerology.out:202
+16/numerology.sql	37	SELECT 0b;	expected/numerology.out:210
+16/numerology.sql	38	SELECT 1b;	expected/numerology.out:214
+16/numerology.sql	39	SELECT 0b0x;	expected/numerology.out:218
+16/numerology.sql	40	SELECT 0o;	expected/numerology.out:222
+16/numerology.sql	41	SELECT 1o;	expected/numerology.out:226
+16/numerology.sql	42	SELECT 0o0x;	expected/numerology.out:230
+16/numerology.sql	43	SELECT 0x;	expected/numerology.out:234
+16/numerology.sql	44	SELECT 1x;	expected/numerology.out:238
+16/numerology.sql	45	SELECT 0x0y;	expected/numerology.out:242
+16/numerology.sql	57	SELECT 100_;	expected/numerology.out:317
+16/numerology.sql	58	SELECT 100__000;	expected/numerology.out:321
+16/numerology.sql	59	SELECT _1_000.5	expected/numerology.out:325
+16/numerology.sql	60	SELECT 1_000_.5;	expected/numerology.out:329
+16/numerology.sql	61	SELECT 1_000._5;	expected/numerology.out:333
+16/numerology.sql	62	SELECT 1_000.5_;	expected/numerology.out:337
+16/numerology.sql	63	SELECT 1_000.5e_1;	expected/numerology.out:341
+16/publication.sql	44	CREATE PUBLICATION testpub_parsertst FOR TABLE pub_test.testpub_nopk, CURRENT_SCHEMA	expected/publication.out:137
+16/publication.sql	45	CREATE PUBLICATION testpub_parsertst FOR TABLES IN SCHEMA foo, test.foo	expected/publication.out:141
+16/publication.sql	111	CREATE PUBLICATION testpub_syntax3 FOR TABLES IN SCHEMA testpub_rf_schema1 WHERE (a = 123)	expected/publication.out:403
+16/publication.sql	112	CREATE PUBLICATION testpub_syntax3 FOR TABLES IN SCHEMA testpub_rf_schema1, testpub_rf_schema1 WHERE (a = 123)	expected/publication.out:407
+16/publication.sql	503	CREATE PUBLICATION testpub_forschema1 FOR CURRENT_SCHEMA	expected/publication.out:1350
+16/publication.sql	504	CREATE PUBLICATION testpub_forschema1 FOR TABLE CURRENT_SCHEMA	expected/publication.out:1356
+16/publication.sql	521	ALTER PUBLICATION testpub1_forschema ADD TABLES IN SCHEMA foo (a, b)	expected/publication.out:1513
+16/publication.sql	522	ALTER PUBLICATION testpub1_forschema ADD TABLES IN SCHEMA foo, bar (a, b)	expected/publication.out:1517
+16/publication.sql	562	CREATE PUBLICATION testpub_error FOR pub_test2.tbl1	expected/publication.out:1629
+16/rowsecurity.sql	37	CREATE POLICY p1 ON document AS UGLY	expected/rowsecurity.out:82
+16/sqljson.sql	9	SELECT JSON_OBJECT(RETURNING text FORMAT JSON ENCODING INVALID_ENCODING)	expected/sqljson.out:49
+16/sqljson.sql	62	SELECT JSON_ARRAY(RETURNING text FORMAT JSON ENCODING INVALID_ENCODING)	expected/sqljson.out:332
+16/stats_ext.sql	3	CREATE STATISTICS tst	expected/stats_ext.out:30
+16/stats_ext.sql	4	CREATE STATISTICS tst ON a, b	expected/stats_ext.out:34
+16/stats_ext.sql	5	CREATE STATISTICS tst FROM sometab	expected/stats_ext.out:38
+16/stats_ext.sql	25	CREATE STATISTICS tst ON y + z FROM ext_stats_test	expected/stats_ext.out:82
+16/stats_ext.sql	26	CREATE STATISTICS tst ON (x, y) FROM ext_stats_test	expected/stats_ext.out:86
+16/strings.sql	2	SELECT 'first line'	expected/strings.out:21
+16/strings.sql	9	SELECT U&'wrong: \\061'	expected/strings.out:57
+16/strings.sql	10	SELECT U&'wrong: \\+0061'	expected/strings.out:62
+16/strings.sql	11	SELECT U&'wrong: +0061' UESCAPE +	expected/strings.out:67
+16/strings.sql	12	SELECT U&'wrong: +0061' UESCAPE '+'	expected/strings.out:71
+16/strings.sql	13	SELECT U&'wrong: \\db99'	expected/strings.out:75
+16/strings.sql	14	SELECT U&'wrong: \\db99xy'	expected/strings.out:79
+16/strings.sql	15	SELECT U&'wrong: \\db99\\\\'	expected/strings.out:83
+16/strings.sql	16	SELECT U&'wrong: \\db99\\0061'	expected/strings.out:87
+16/strings.sql	17	SELECT U&'wrong: \\+00db99\\+000061'	expected/strings.out:91
+16/strings.sql	18	SELECT U&'wrong: \\+2FFFFF'	expected/strings.out:95
+16/strings.sql	21	SELECT E'wrong: \\u061';	expected/strings.out:112
+16/strings.sql	22	SELECT E'wrong: \\U0061';	expected/strings.out:117
+16/strings.sql	23	SELECT E'wrong: \\udb99';	expected/strings.out:122
+16/strings.sql	24	SELECT E'wrong: \\udb99xy';	expected/strings.out:126
+16/strings.sql	25	SELECT E'wrong: \\udb99\\\\';	expected/strings.out:130
+16/strings.sql	26	SELECT E'wrong: \\udb99\\u0061';	expected/strings.out:134
+16/strings.sql	27	SELECT E'wrong: \\U0000db99\\U00000061';	expected/strings.out:138
+16/strings.sql	28	SELECT E'wrong: \\U002FFFFF';	expected/strings.out:142
+16/strings.sql	34	SELECT U&'wrong: \\061'	expected/strings.out:168
+16/strings.sql	35	SELECT U&'wrong: \\+0061'	expected/strings.out:173
+16/strings.sql	36	SELECT U&'wrong: +0061' UESCAPE '+'	expected/strings.out:178
+16/subscription.sql	6	CREATE SUBSCRIPTION regress_testsub CONNECTION 'foo'	expected/subscription.out:11
+16/subscription.sql	7	CREATE SUBSCRIPTION regress_testsub PUBLICATION foo	expected/subscription.out:16
+16/tablesample.sql	51	SELECT q.* FROM (SELECT * FROM test_tablesample) as q TABLESAMPLE BERNOULLI (5)	expected/tablesample.out:313
+16/triggers.sql	182	CREATE TRIGGER error_upd_and_col BEFORE UPDATE OR UPDATE OF a ON main_table	expected/triggers.out:696
+16/triggers.sql	184	CREATE TRIGGER error_ins_a BEFORE INSERT OF a ON main_table	expected/triggers.out:704
+16/triggers.sql	1042	alter trigger a on only grandparent rename to b	expected/triggers.out:3746
+16/vacuum.sql	170	ANALYZE (nonexistent-arg) does_not_exist	expected/vacuum.out:298
+16/window.sql	233	SELECT * FROM rank() OVER (ORDER BY random())	expected/window.out:3362
+16/window.sql	237	SELECT rank() OVER (PARTITION BY four, ORDER BY ten) FROM tenk1	expected/window.out:3378
+16/with.sql	295	create table foo (with baz)	expected/with.out:3649
+16/with.sql	296	create table foo (with ordinality)	expected/with.out:3653
+16/xml.sql	223	SELECT * FROM XMLTABLE (ROW () PASSING null COLUMNS v1 timestamp __pg__is_not_null 1) AS f (v1)	expected/xml.out:1389
+17/aggregates.sql	327	select p, percentile_cont(p order by p) within group (order by x)  -- error	expected/aggregates.out:2276
+17/alter_table.sql	61	ALTER INDEX attmp_idx ALTER COLUMN 0 SET STATISTICS 1000	expected/alter_table.out:100
+17/alter_table.sql	584	alter table atacc1 SET WITH OIDS	expected/alter_table.out:1448
+17/collate.icu.utf8.sql	115	SELECT CAST('42' AS text COLLATE "C")	expected/collate.icu.utf8.out:782
+17/collate.linux.utf8.sql	126	SELECT CAST('42' AS text COLLATE "C")	expected/collate.linux.utf8.out:837
+17/collate.sql	80	SELECT CAST('42' AS text COLLATE "C")	expected/collate.out:518
+17/collate.windows.win1252.sql	94	SELECT CAST('42' AS text COLLATE "C")	expected/collate.windows.win1252.out:655
+17/constraints.sql	15	CREATE TABLE error_tbl (i int DEFAULT (100, ))	expected/constraints.out:51
+17/constraints.sql	16	CREATE TABLE error_tbl (b1 bool DEFAULT 1 IN (1, 2))	expected/constraints.out:58
+17/copy2.sql	51	COPY x TO stdout WHERE a = 1	expected/copy2.out:153
+17/copyselect.sql	19	copy (select * from test1) from stdin	expected/copyselect.out:52
+17/copyselect.sql	20	copy (select * from test1) (t,id) to stdout	expected/copyselect.out:59
+17/create_am.sql	36	SELECT INTO tableam_tblselectinto_heap2 USING heap2 FROM tableam_tbl_heap2	expected/create_am.out:158
+17/create_am.sql	37	CREATE VIEW tableam_view_heap2 USING heap2 AS SELECT * FROM tableam_tbl_heap2	expected/create_am.out:163
+17/create_am.sql	38	CREATE SEQUENCE tableam_seq_heap2 USING heap2	expected/create_am.out:168
+17/create_am.sql	137	CREATE TABLE i_am_a_failure() USING "";	expected/create_am.out:555
+17/create_index.sql	3	CREATE INDEX IF NOT EXISTS ON onek USING btree(unique1 int4_ops)	expected/create_index.out:14
+17/create_operator.sql	11	CREATE OPERATOR => (	expected/create_operator.out:46
+17/create_operator.sql	14	SELECT 10 !=-	expected/create_operator.out:64
+17/create_table.sql	33	CREATE TABLE withoid() WITH OIDS	expected/create_table.out:85
+17/create_table.sql	77	CREATE TABLE partitioned (	expected/create_table.out:161
+17/create_table.sql	135	CREATE TABLE fail_part PARTITION OF list_parted FOR VALUES IN ()	expected/create_table.out:460
+17/domain.sql	169	update dposintatable set (f1[2])[1] = array[98]	expected/domain.out:582
+17/errors.sql	5	select distinct from pg_database	expected/errors.out:35
+17/errors.sql	11	delete from	expected/errors.out:62
+17/errors.sql	13	drop table	expected/errors.out:74
+17/errors.sql	15	alter table rename	expected/errors.out:85
+17/errors.sql	28	drop index	expected/errors.out:139
+17/errors.sql	29	drop index 314159	expected/errors.out:144
+17/errors.sql	31	drop aggregate	expected/errors.out:154
+17/errors.sql	32	drop aggregate newcnt1	expected/errors.out:159
+17/errors.sql	33	drop aggregate 314159 (int)	expected/errors.out:164
+17/errors.sql	37	drop function ()	expected/errors.out:180
+17/errors.sql	38	drop function 314159()	expected/errors.out:185
+17/errors.sql	40	drop type	expected/errors.out:195
+17/errors.sql	41	drop type 314159	expected/errors.out:200
+17/errors.sql	43	drop operator	expected/errors.out:210
+17/errors.sql	44	drop operator equals	expected/errors.out:215
+17/errors.sql	45	drop operator ===	expected/errors.out:220
+17/errors.sql	46	drop operator int4, int4	expected/errors.out:225
+17/errors.sql	47	drop operator (int4, int4)	expected/errors.out:230
+17/errors.sql	48	drop operator === ()	expected/errors.out:235
+17/errors.sql	49	drop operator === (int4)	expected/errors.out:240
+17/errors.sql	51	drop operator = (nonesuch)	expected/errors.out:249
+17/errors.sql	52	drop operator = ( , int4)	expected/errors.out:255
+17/errors.sql	55	drop operator = (int4, )	expected/errors.out:266
+17/errors.sql	56	drop rule	expected/errors.out:273
+17/errors.sql	57	drop rule 314159	expected/errors.out:278
+17/errors.sql	59	drop tuple rule nonesuch	expected/errors.out:286
+17/errors.sql	60	drop instance rule nonesuch on noplace	expected/errors.out:290
+17/errors.sql	61	drop rewrite rule nonesuch	expected/errors.out:294
+17/errors.sql	73	CREATE foo	expected/errors.out:330
+17/errors.sql	74	CREATE TABLE	expected/errors.out:334
+17/errors.sql	75	CREATE TABLE	expected/errors.out:339
+17/errors.sql	76	INSERT INTO foo VALUES(123) foo	expected/errors.out:343
+17/errors.sql	77	INSERT INTO 123	expected/errors.out:348
+17/errors.sql	78	INSERT INTO foo	expected/errors.out:354
+17/errors.sql	79	CREATE TABLE foo	expected/errors.out:362
+17/errors.sql	80	CREATE TABLE foo(id INT4 UNIQUE NOT NULL, id2 TEXT NOT NULL PRIMARY KEY, id3 INTEGER NOT NUL,	expected/errors.out:368
+17/errors.sql	81	CREATE TABLE foo(	expected/errors.out:374
+17/errors.sql	82	CREATE TABLE foo(id INT4 UNIQUE NOT NULL, id2 TEXT NOT NULL PRIMARY KEY, id3 INTEGER NOT NUL, id4 INT4 UNIQUE NOT NULL, id5 TEXT UNIQUE NOT NULL)	expected/errors.out:379
+17/errors.sql	83	CREATE	expected/errors.out:396
+17/errors.sql	84	CREATE	expected/errors.out:406
+17/errors.sql	85	CREATE	expected/errors.out:419
+17/errors.sql	86	CREATE	expected/errors.out:445
+17/event_trigger.sql	17	create event trigger regress_event_trigger2 on ddl_command_start	expected/event_trigger.out:39
+17/foreign_data.sql	39	ALTER FOREIGN DATA WRAPPER foo	expected/foreign_data.out:119
+17/foreign_data.sql	113	ALTER SERVER s0	expected/foreign_data.out:406
+17/foreign_data.sql	202	CREATE FOREIGN TABLE ft1 ()	expected/foreign_data.out:702
+17/foreign_key.sql	228	CREATE TABLE FKTABLE (tid int, id int, foo int, FOREIGN KEY (tid, foo) REFERENCES PKTABLE ON UPDATE SET NULL (foo))	expected/foreign_key.out:767
+17/foreign_key.sql	425	ALTER TABLE fktable ALTER CONSTRAINT fktable_fk_fkey NOT DEFERRABLE INITIALLY DEFERRED	expected/foreign_key.out:1284
+17/foreign_key.sql	427	ALTER TABLE fktable ALTER CONSTRAINT fktable_fk_fkey NOT VALID	expected/foreign_key.out:1290
+17/generated.sql	21	CREATE TABLE gtest_err_8 (a int PRIMARY KEY, b int GENERATED BY DEFAULT AS (a * 2) STORED)	expected/generated.out:101
+17/limit.sql	73	SELECT  thousand	expected/limit.out:626
+17/limit.sql	74	SELECT ''::text AS two, unique1, unique2, stringu1	expected/limit.out:631
+17/merge.sql	21	MERGE INTO target t RANDOMWORD	expected/merge.out:63
+17/merge.sql	22	MERGE INTO target t	expected/merge.out:72
+17/merge.sql	23	MERGE INTO target t	expected/merge.out:81
+17/merge.sql	24	MERGE INTO target t	expected/merge.out:90
+17/merge.sql	25	MERGE INTO target t	expected/merge.out:99
+17/merge.sql	26	MERGE INTO target t	expected/merge.out:108
+17/merge.sql	27	MERGE INTO target t	expected/merge.out:117
+17/merge.sql	28	MERGE INTO target t	expected/merge.out:126
+17/merge.sql	29	MERGE INTO target t	expected/merge.out:135
+17/namespace.sql	26	CREATE SCHEMA IF NOT EXISTS test_ns_schema_renamed -- fail, disallowed	expected/namespace.out:102
+17/numerology.sql	28	SELECT 123abc;	expected/numerology.out:174
+17/numerology.sql	29	SELECT 0x0o;	expected/numerology.out:178
+17/numerology.sql	30	SELECT 0.a;	expected/numerology.out:182
+17/numerology.sql	31	SELECT 0.0a;	expected/numerology.out:186
+17/numerology.sql	32	SELECT .0a;	expected/numerology.out:190
+17/numerology.sql	33	SELECT 0.0e1a;	expected/numerology.out:194
+17/numerology.sql	34	SELECT 0.0e;	expected/numerology.out:198
+17/numerology.sql	35	SELECT 0.0e+a;	expected/numerology.out:202
+17/numerology.sql	37	SELECT 0b;	expected/numerology.out:210
+17/numerology.sql	38	SELECT 1b;	expected/numerology.out:214
+17/numerology.sql	39	SELECT 0b0x;	expected/numerology.out:218
+17/numerology.sql	40	SELECT 0o;	expected/numerology.out:222
+17/numerology.sql	41	SELECT 1o;	expected/numerology.out:226
+17/numerology.sql	42	SELECT 0o0x;	expected/numerology.out:230
+17/numerology.sql	43	SELECT 0x;	expected/numerology.out:234
+17/numerology.sql	44	SELECT 1x;	expected/numerology.out:238
+17/numerology.sql	45	SELECT 0x0y;	expected/numerology.out:242
+17/numerology.sql	57	SELECT 100_;	expected/numerology.out:317
+17/numerology.sql	58	SELECT 100__000;	expected/numerology.out:321
+17/numerology.sql	59	SELECT _1_000.5	expected/numerology.out:325
+17/numerology.sql	60	SELECT 1_000_.5;	expected/numerology.out:329
+17/numerology.sql	61	SELECT 1_000._5;	expected/numerology.out:333
+17/numerology.sql	62	SELECT 1_000.5_;	expected/numerology.out:337
+17/numerology.sql	63	SELECT 1_000.5e_1;	expected/numerology.out:341
+17/publication.sql	44	CREATE PUBLICATION testpub_parsertst FOR TABLE pub_test.testpub_nopk, CURRENT_SCHEMA	expected/publication.out:137
+17/publication.sql	45	CREATE PUBLICATION testpub_parsertst FOR TABLES IN SCHEMA foo, test.foo	expected/publication.out:141
+17/publication.sql	111	CREATE PUBLICATION testpub_syntax3 FOR TABLES IN SCHEMA testpub_rf_schema1 WHERE (a = 123)	expected/publication.out:403
+17/publication.sql	112	CREATE PUBLICATION testpub_syntax3 FOR TABLES IN SCHEMA testpub_rf_schema1, testpub_rf_schema1 WHERE (a = 123)	expected/publication.out:407
+17/publication.sql	509	CREATE PUBLICATION testpub_forschema1 FOR CURRENT_SCHEMA	expected/publication.out:1360
+17/publication.sql	510	CREATE PUBLICATION testpub_forschema1 FOR TABLE CURRENT_SCHEMA	expected/publication.out:1366
+17/publication.sql	527	ALTER PUBLICATION testpub1_forschema ADD TABLES IN SCHEMA foo (a, b)	expected/publication.out:1523
+17/publication.sql	528	ALTER PUBLICATION testpub1_forschema ADD TABLES IN SCHEMA foo, bar (a, b)	expected/publication.out:1527
+17/publication.sql	568	CREATE PUBLICATION testpub_error FOR pub_test2.tbl1	expected/publication.out:1639
+17/rowsecurity.sql	37	CREATE POLICY p1 ON document AS UGLY	expected/rowsecurity.out:82
+17/sqljson.sql	1	SELECT JSON()	expected/sqljson.out:3
+17/sqljson.sql	23	SELECT JSON_SCALAR()	expected/sqljson.out:131
+17/sqljson.sql	38	SELECT JSON_SERIALIZE()	expected/sqljson.out:222
+17/sqljson.sql	58	SELECT JSON_OBJECT(RETURNING text FORMAT JSON ENCODING INVALID_ENCODING)	expected/sqljson.out:339
+17/sqljson.sql	118	SELECT JSON_ARRAY(RETURNING text FORMAT JSON ENCODING INVALID_ENCODING)	expected/sqljson.out:634
+17/sqljson_jsontable.sql	1	SELECT JSON_TABLE('[]', '$')	expected/sqljson_jsontable.out:4
+17/sqljson_jsontable.sql	7	SELECT * FROM JSON_TABLE(NULL, '$' COLUMNS ())	expected/sqljson_jsontable.out:32
+17/sqljson_jsontable.sql	88	SELECT * FROM JSON_TABLE(jsonb '{"a": 123}', '$' || '.' || 'a' COLUMNS (foo int))	expected/sqljson_jsontable.out:723
+17/sqljson_jsontable.sql	110	SELECT * FROM JSON_TABLE(jsonb '1', '$' COLUMNS (a int exists empty object on empty))	expected/sqljson_jsontable.out:1126
+17/stats_ext.sql	3	CREATE STATISTICS tst	expected/stats_ext.out:30
+17/stats_ext.sql	4	CREATE STATISTICS tst ON a, b	expected/stats_ext.out:34
+17/stats_ext.sql	5	CREATE STATISTICS tst FROM sometab	expected/stats_ext.out:38
+17/stats_ext.sql	26	CREATE STATISTICS tst ON y + z FROM ext_stats_test	expected/stats_ext.out:84
+17/stats_ext.sql	27	CREATE STATISTICS tst ON (x, y) FROM ext_stats_test	expected/stats_ext.out:88
+17/strings.sql	2	SELECT 'first line'	expected/strings.out:21
+17/strings.sql	9	SELECT U&'wrong: \\061'	expected/strings.out:57
+17/strings.sql	10	SELECT U&'wrong: \\+0061'	expected/strings.out:62
+17/strings.sql	11	SELECT U&'wrong: +0061' UESCAPE +	expected/strings.out:67
+17/strings.sql	12	SELECT U&'wrong: +0061' UESCAPE '+'	expected/strings.out:71
+17/strings.sql	13	SELECT U&'wrong: \\db99'	expected/strings.out:75
+17/strings.sql	14	SELECT U&'wrong: \\db99xy'	expected/strings.out:79
+17/strings.sql	15	SELECT U&'wrong: \\db99\\\\'	expected/strings.out:83
+17/strings.sql	16	SELECT U&'wrong: \\db99\\0061'	expected/strings.out:87
+17/strings.sql	17	SELECT U&'wrong: \\+00db99\\+000061'	expected/strings.out:91
+17/strings.sql	18	SELECT U&'wrong: \\+2FFFFF'	expected/strings.out:95
+17/strings.sql	21	SELECT E'wrong: \\u061';	expected/strings.out:112
+17/strings.sql	22	SELECT E'wrong: \\U0061';	expected/strings.out:117
+17/strings.sql	23	SELECT E'wrong: \\udb99';	expected/strings.out:122
+17/strings.sql	24	SELECT E'wrong: \\udb99xy';	expected/strings.out:126
+17/strings.sql	25	SELECT E'wrong: \\udb99\\\\';	expected/strings.out:130
+17/strings.sql	26	SELECT E'wrong: \\udb99\\u0061';	expected/strings.out:134
+17/strings.sql	27	SELECT E'wrong: \\U0000db99\\U00000061';	expected/strings.out:138
+17/strings.sql	28	SELECT E'wrong: \\U002FFFFF';	expected/strings.out:142
+17/strings.sql	34	SELECT U&'wrong: \\061'	expected/strings.out:168
+17/strings.sql	35	SELECT U&'wrong: \\+0061'	expected/strings.out:173
+17/strings.sql	36	SELECT U&'wrong: +0061' UESCAPE '+'	expected/strings.out:178
+17/subscription.sql	6	CREATE SUBSCRIPTION regress_testsub CONNECTION 'foo'	expected/subscription.out:11
+17/subscription.sql	7	CREATE SUBSCRIPTION regress_testsub PUBLICATION foo	expected/subscription.out:16
+17/tablesample.sql	51	SELECT q.* FROM (SELECT * FROM test_tablesample) as q TABLESAMPLE BERNOULLI (5)	expected/tablesample.out:313
+17/triggers.sql	182	CREATE TRIGGER error_upd_and_col BEFORE UPDATE OR UPDATE OF a ON main_table	expected/triggers.out:696
+17/triggers.sql	184	CREATE TRIGGER error_ins_a BEFORE INSERT OF a ON main_table	expected/triggers.out:704
+17/triggers.sql	1042	alter trigger a on only grandparent rename to b	expected/triggers.out:3746
+17/vacuum.sql	180	ANALYZE (nonexistent-arg) does_not_exist	expected/vacuum.out:310
+17/window.sql	258	SELECT * FROM rank() OVER (ORDER BY random())	expected/window.out:3739
+17/window.sql	262	SELECT rank() OVER (PARTITION BY four, ORDER BY ten) FROM tenk1	expected/window.out:3755
+17/with.sql	299	create table foo (with baz)	expected/with.out:3712
+17/with.sql	300	create table foo (with ordinality)	expected/with.out:3716
+17/xml.sql	223	SELECT * FROM XMLTABLE (ROW () PASSING null COLUMNS v1 timestamp __pg__is_not_null 1) AS f (v1)	expected/xml.out:1389
