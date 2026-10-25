@@ -305,7 +305,7 @@ class SourceReferenceLiveVerificationTest {
     // sqlc.embed() is not yet supported by the JDBC analyzer -- these scenarios' golden files were
     // never produced by a real analysis run in the first place. Matches GenerateCodeTest's own
     // exclusion.
-    private val EMBED_SCENARIOS =
+    internal val EMBED_SCENARIOS =
       setOf("basic_embeds", "complex_embed_mixing", "consecutive_embeds", "nested_joins_embeds")
 
     @JvmStatic

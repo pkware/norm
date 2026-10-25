@@ -1,0 +1,1196 @@
+16/advisory_lock.sql	P4	1	SELECT oid AS datoid FROM pg_database WHERE datname = current_database() \\gset
+16/advisory_lock.sql	P3	3	SELECT locktype, classid, objid, objsubid, mode, granted
+16/advisory_lock.sql	P3	5	SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND database = :datoid
+16/advisory_lock.sql	P3	8	SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND database = :datoid
+16/advisory_lock.sql	P3	11	SELECT locktype, classid, objid, objsubid, mode, granted
+16/advisory_lock.sql	P3	14	SELECT locktype, classid, objid, objsubid, mode, granted
+16/advisory_lock.sql	P3	16	SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND database = :datoid
+16/advisory_lock.sql	P3	19	SELECT locktype, classid, objid, objsubid, mode, granted
+16/advisory_lock.sql	P3	22	SELECT locktype, classid, objid, objsubid, mode, granted
+16/advisory_lock.sql	P3	24	SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND database = :datoid
+16/advisory_lock.sql	P3	27	SELECT locktype, classid, objid, objsubid, mode, granted
+16/advisory_lock.sql	P3	29	SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND database = :datoid
+16/advisory_lock.sql	P3	31	SELECT locktype, classid, objid, objsubid, mode, granted
+16/advisory_lock.sql	P3	33	SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND database = :datoid
+16/advisory_lock.sql	P3	35	SELECT locktype, classid, objid, objsubid, mode, granted
+16/advisory_lock.sql	P3	37	SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND database = :datoid
+16/aggregates.sql	P2	240-243	COPY bitwise_test FROM STDIN NULL 'null'
+16/aggregates.sql	P2	314-317	COPY bool_test FROM STDIN NULL 'null'
+16/aggregates.sql	P3	3	COPY aggtest FROM :'filename'
+16/alter_generic.sql	P3	1	CREATE FUNCTION test_opclass_options_func(internal)
+16/alter_table.sql	P2	1141-1142	copy attest from stdin
+16/alter_table.sql	P2	1145-1146	copy attest from stdin
+16/alter_table.sql	P2	1149-1149	copy attest(a) from stdin
+16/alter_table.sql	P2	1151-1151	copy attest("........pg.dropped.1........") from stdin
+16/alter_table.sql	P2	1153-1154	copy attest(b,c) from stdin
+16/arrays.sql	P3	3	COPY array_op_test FROM :'filename'
+16/arrays.sql	P3	42	SELECT ('{{{1},{2},{3}},{{4},{5},{6}}}'::int[])[1][NULL:1][1]
+16/arrays.sql	P3	43	SELECT ('{{{1},{2},{3}},{{4},{5},{6}}}'::int[])[1][1:NULL][1]
+16/arrays.sql	P3	45	UPDATE arrtest
+16/arrays.sql	P3	46	UPDATE arrtest
+16/bit.sql	P2	73-83	COPY varbit_table FROM stdin
+16/bit.sql	P2	97-107	COPY bit_table FROM stdin
+16/btree_index.sql	P3	5	COPY bt_i4_heap FROM :'filename'
+16/btree_index.sql	P3	6	COPY bt_name_heap FROM :'filename'
+16/btree_index.sql	P3	7	COPY bt_txt_heap FROM :'filename'
+16/btree_index.sql	P3	8	COPY bt_f8_heap FROM :'filename'
+16/collate.icu.utf8.sql	P5	9-9	\\if :skip_test
+16/collate.icu.utf8.sql	P4	1	/*
+16/collate.icu.utf8.sql	P3	186	SELECT current_database() AS datname \\gset
+16/collate.linux.utf8.sql	P5	11-11	\\if :skip_test
+16/collate.linux.utf8.sql	P4	1	/*
+16/collate.linux.utf8.sql	P3	182	SELECT current_database() AS datname \\gset
+16/collate.windows.win1252.sql	P5	12-12	\\if :skip_test
+16/collate.windows.win1252.sql	P4	1	/*
+16/collate.windows.win1252.sql	P3	150	SELECT current_database() AS datname \\gset
+16/compression_pglz.sql	P3	1	CREATE FUNCTION test_pglz_compress(bytea)
+16/compression_pglz.sql	P3	2	CREATE FUNCTION test_pglz_decompress(bytea, int4, bool)
+16/constraints.sql	P3	103	COPY COPY_TBL FROM :'filename'
+16/constraints.sql	P3	105	COPY COPY_TBL FROM :'filename'
+16/conversion.sql	P3	1	CREATE FUNCTION test_enc_setup() RETURNS void
+16/conversion.sql	P3	3	CREATE FUNCTION test_enc_conversion(bytea, name, name, bool, validlen OUT int, result OUT bytea)
+16/copy.sql	P2	50-53	copy copytest3 from stdin csv header
+16/copy.sql	P2	62-65	copy copytest4 from stdin (header)
+16/copy.sql	P2	128-130	copy parted_copytest from stdin
+16/copy.sql	P2	186-189	-- Generate COPY FROM report with PIPE.
+16/copy.sql	P2	212-212	copy header_copytest from stdin with (header wrong_choice)
+16/copy.sql	P2	215-217	-- works
+16/copy.sql	P2	219-221	copy header_copytest (c, a, b) from stdin with (header match)
+16/copy.sql	P2	223-225	copy header_copytest from stdin with (header match, format csv)
+16/copy.sql	P2	228-230	-- errors
+16/copy.sql	P2	232-234	copy header_copytest from stdin with (header match)
+16/copy.sql	P2	236-238	copy header_copytest from stdin with (header match)
+16/copy.sql	P2	240-242	copy header_copytest from stdin with (header match)
+16/copy.sql	P2	244-246	copy header_copytest from stdin with (header match)
+16/copy.sql	P2	253-255	-- works
+16/copy.sql	P2	257-259	copy header_copytest (a, c) from stdin with (header match)
+16/copy.sql	P2	262-264	-- errors
+16/copy.sql	P2	266-268	copy header_copytest (a, c) from stdin with (header match)
+16/copy.sql	P2	279-279	-- normal COPY should work
+16/copy.sql	P2	282-282	-- error if the column is excluded
+16/copy.sql	P2	285-285	-- error if the DEFAULT option is given
+16/copy.sql	P3	6	copy copytest to :'filename' csv
+16/copy.sql	P3	8	copy copytest2 from :'filename' csv
+16/copy.sql	P3	11	copy copytest to :'filename' csv quote '''' escape E'\\\\'
+16/copy.sql	P3	12	copy copytest2 from :'filename' csv quote '''' escape E'\\\\'
+16/copy.sql	P3	28	copy (select * from parted_copytest order by a) to :'filename'
+16/copy.sql	P3	30	copy parted_copytest from :'filename'
+16/copy.sql	P3	33	copy parted_copytest from :'filename' (freeze)
+16/copy.sql	P3	39	copy parted_copytest from :'filename'
+16/copy.sql	P3	53	copy tab_progress_reporting from :'filename'
+16/copy.sql	P3	86	COPY parted_si(id, data) FROM :'filename'
+16/copy2.sql	P2	30-32	COPY x (a, b, c, d, e) from stdin
+16/copy2.sql	P2	35-36	COPY x (b, d) from stdin
+16/copy2.sql	P2	39-43	COPY x (b, d) from stdin
+16/copy2.sql	P2	46-51	COPY x (a, b, c, d, e) from stdin
+16/copy2.sql	P2	55-55	-- non-existent column in column list: should fail
+16/copy2.sql	P2	59-59	-- redundant options
+16/copy2.sql	P2	61-61	COPY x from stdin (freeze off, freeze on)
+16/copy2.sql	P2	63-63	COPY x from stdin (delimiter ',', delimiter ',')
+16/copy2.sql	P2	65-65	COPY x from stdin (null ' ', null ' ')
+16/copy2.sql	P2	67-67	COPY x from stdin (header off, header on)
+16/copy2.sql	P2	69-69	COPY x from stdin (quote ':', quote ':')
+16/copy2.sql	P2	71-71	COPY x from stdin (escape ':', escape ':')
+16/copy2.sql	P2	73-73	COPY x from stdin (force_quote (a), force_quote *)
+16/copy2.sql	P2	75-75	COPY x from stdin (force_not_null (a), force_not_null (b))
+16/copy2.sql	P2	77-77	COPY x from stdin (force_null (a), force_null (b))
+16/copy2.sql	P2	79-79	COPY x from stdin (convert_selectively (a), convert_selectively (b))
+16/copy2.sql	P2	81-81	COPY x from stdin (encoding 'sql_ascii', encoding 'sql_ascii')
+16/copy2.sql	P2	85-85	-- incorrect options
+16/copy2.sql	P2	87-87	COPY x from stdin (format BINARY, null 'x')
+16/copy2.sql	P2	89-89	COPY x from stdin (format TEXT, force_quote(a))
+16/copy2.sql	P2	91-91	COPY x from stdin (format CSV, force_quote(a))
+16/copy2.sql	P2	93-93	COPY x from stdin (format TEXT, force_not_null(a))
+16/copy2.sql	P2	96-96	COPY x from stdin (format TEXT, force_null(a))
+16/copy2.sql	P2	101-101	-- too many columns in column list: should fail
+16/copy2.sql	P2	105-106	-- missing data: should fail
+16/copy2.sql	P2	108-109	COPY x from stdin
+16/copy2.sql	P2	111-112	COPY x from stdin
+16/copy2.sql	P2	116-117	-- extra data: should fail
+16/copy2.sql	P2	121-124	-- various COPY options: delimiters, oids, NULL string, encoding
+16/copy2.sql	P2	127-128	COPY x from stdin WITH DELIMITER AS ';' NULL AS ''
+16/copy2.sql	P2	131-140	COPY x from stdin WITH DELIMITER AS ':' NULL AS E'\\\\X' ENCODING 'sql_ascii'
+16/copy2.sql	P2	144-147	COPY x from stdin WHERE a = 50004
+16/copy2.sql	P2	150-155	COPY x from stdin WHERE a > 60003
+16/copy2.sql	P2	158-158	COPY x from stdin WHERE f > 60003
+16/copy2.sql	P2	161-161	COPY x from stdin WHERE a = max(x.b)
+16/copy2.sql	P2	164-164	COPY x from stdin WHERE a IN (SELECT 1 FROM x)
+16/copy2.sql	P2	167-167	COPY x from stdin WHERE a IN (generate_series(1,5))
+16/copy2.sql	P2	170-170	COPY x from stdin WHERE a = row_number() over(b)
+16/copy2.sql	P2	212-215	COPY testnl FROM stdin CSV
+16/copy2.sql	P2	221-225	COPY testeoc FROM stdin CSV
+16/copy2.sql	P2	237-239	COPY testnull FROM stdin WITH NULL AS E'\\\\0'
+16/copy2.sql	P2	246-248	COPY vistest FROM stdin CSV
+16/copy2.sql	P2	254-256	COPY vistest FROM stdin CSV
+16/copy2.sql	P2	261-263	COPY vistest FROM stdin CSV
+16/copy2.sql	P2	271-273	COPY vistest FROM stdin CSV FREEZE
+16/copy2.sql	P2	278-280	COPY vistest FROM stdin CSV FREEZE
+16/copy2.sql	P2	288-290	COPY vistest FROM stdin CSV FREEZE
+16/copy2.sql	P2	295-297	COPY vistest FROM stdin CSV FREEZE
+16/copy2.sql	P2	302-304	COPY vistest FROM stdin CSV FREEZE
+16/copy2.sql	P2	312-314	COPY vistest FROM stdin CSV FREEZE
+16/copy2.sql	P2	329-331	COPY vistest FROM stdin CSV FREEZE
+16/copy2.sql	P2	347-348	COPY forcetest (a, b, c) FROM STDIN WITH (FORMAT csv, FORCE_NOT_NULL(b), FORCE_NULL(c))
+16/copy2.sql	P2	354-355	COPY forcetest (a, b, c, d) FROM STDIN WITH (FORMAT csv, FORCE_NOT_NULL(c,d), FORCE_NULL(c,d))
+16/copy2.sql	P2	361-362	COPY forcetest (a, b, c) FROM STDIN WITH (FORMAT csv, FORCE_NULL(b), FORCE_NOT_NULL(c))
+16/copy2.sql	P2	367-367	COPY forcetest (d, e) FROM STDIN WITH (FORMAT csv, FORCE_NOT_NULL(b))
+16/copy2.sql	P2	372-372	COPY forcetest (d, e) FROM STDIN WITH (FORMAT csv, FORCE_NULL(b))
+16/copy2.sql	P2	386-388	copy check_con_tbl from stdin
+16/copy2.sql	P2	390-391	copy check_con_tbl from stdin
+16/copy2.sql	P2	400-404	COPY rls_t1 (a, b, c) from stdin
+16/copy2.sql	P2	459-460	COPY instead_of_insert_tbl_view FROM stdin
+16/copy2.sql	P2	473-474	COPY instead_of_insert_tbl_view FROM stdin
+16/copy2.sql	P2	488-489	COPY instead_of_insert_tbl_view_2 FROM stdin
+16/copy2.sql	P2	521-523	-- if DEFAULT is not specified, then the marker will be regular data
+16/copy2.sql	P2	530-532	copy copy_default from stdin with (format csv)
+16/copy2.sql	P2	540-540	-- DEFAULT cannot be used in binary mode
+16/copy2.sql	P2	544-544	-- DEFAULT cannot be new line nor carriage return
+16/copy2.sql	P2	546-546	copy copy_default from stdin with (default E'\\r')
+16/copy2.sql	P2	550-550	-- DELIMITER cannot appear in DEFAULT spec
+16/copy2.sql	P2	554-554	-- CSV quote cannot appear in DEFAULT spec
+16/copy2.sql	P2	558-558	-- NULL and DEFAULT spec must be different
+16/copy2.sql	P2	562-564	-- cannot use DEFAULT marker in column that has no DEFAULT value
+16/copy2.sql	P2	567-569	copy copy_default from stdin with (format csv, default '\\D')
+16/copy2.sql	P2	573-576	-- The DEFAULT marker must be unquoted and unescaped or it's not recognized
+16/copy2.sql	P2	583-586	copy copy_default from stdin with (format csv, default '\\D')
+16/copy2.sql	P2	594-597	-- successful usage of DEFAULT option in COPY
+16/copy2.sql	P2	604-607	copy copy_default from stdin with (format csv, default '\\D')
+16/copyselect.sql	P2	92-93	copy test3 from stdin
+16/copyselect.sql	P2	94-95	copy test3 from stdin
+16/copyselect.sql	P4	28	copy (select 1) to stdout\\
+16/copyselect.sql	P4	30	select 1/0\\
+16/copyselect.sql	P4	32	copy (select 1) to stdout\\
+16/copyselect.sql	P4	33	copy (select 2) to stdout\\
+16/copyselect.sql	P4	34	select 3\\
+16/copyselect.sql	P4	37	select 0\\
+16/copyselect.sql	P4	38	copy test3 from stdin\\
+16/copyselect.sql	P4	39	copy test3 from stdin\\
+16/create_function_c.sql	P3	1	LOAD :'regresslib'
+16/create_function_c.sql	P3	3	CREATE FUNCTION test1 (int) RETURNS int LANGUAGE C
+16/create_function_c.sql	P3	4	SELECT regexp_replace(:'LAST_ERROR_MESSAGE', 'file ".*"', 'file "..."')
+16/create_index.sql	P3	29	COPY slow_emp4000 FROM :'filename'
+16/create_index.sql	P3	120	COPY array_index_op_test FROM :'filename'
+16/create_index.sql	P3	559	SELECT pg_my_temp_schema()::regnamespace as temp_schema_name \\gset
+16/create_type.sql	P3	1	CREATE FUNCTION widget_in(cstring)
+16/create_type.sql	P3	2	CREATE FUNCTION widget_out(widget)
+16/create_type.sql	P3	3	CREATE FUNCTION int44in(cstring)
+16/create_type.sql	P3	4	CREATE FUNCTION int44out(city_budget)
+16/create_type.sql	P3	62	CREATE FUNCTION pt_in_widget(point, widget)
+16/create_view.sql	P2	73-77	COPY viewtest_tbl FROM stdin
+16/create_view.sql	P3	1	CREATE FUNCTION interpt_pp(path, path)
+16/create_view.sql	P3	3	COPY real_city FROM :'filename'
+16/domain.sql	P2	48-49	-- Test copy
+16/domain.sql	P2	52-53	COPY basictest (testvarchar) FROM stdin
+16/domain.sql	P2	112-114	COPY domarrtest FROM stdin
+16/domain.sql	P2	117-118	COPY domarrtest FROM stdin
+16/domain.sql	P2	343-344	-- Test copy
+16/domain.sql	P2	347-348	COPY nulltest FROM stdin
+16/domain.sql	P2	352-355	-- Last row is bad
+16/domain.sql	P2	402-403	-- Test defaults with copy
+16/encoding.sql	P5	3-3	\\if :skip_test
+16/encoding.sql	P3	1	/* skip test if not UTF8 server encoding */
+16/encoding.sql	P3	2	CREATE FUNCTION test_text_to_bytea(text) RETURNS bytea
+16/encoding.sql	P3	3	CREATE FUNCTION test_mblen_func(text, text, text, int) RETURNS int
+16/encoding.sql	P3	4	CREATE FUNCTION test_text_to_wchars(text, text) RETURNS int[]
+16/encoding.sql	P3	5	CREATE FUNCTION test_wchars_to_text(text, int[]) RETURNS text
+16/encoding.sql	P3	6	CREATE FUNCTION test_valid_server_encoding(text) RETURNS boolean
+16/enum.sql	P2	134-136	COPY enumtest FROM stdin
+16/euc_kr.sql	P5	5-5	\\if :skip_test
+16/euc_kr.sql	P4	1	SELECT getdatabaseencoding() NOT IN ('EUC_KR', 'UTF8') AS skip_test \\gset
+16/foreign_data.sql	P3	1	CREATE FUNCTION test_fdw_handler()
+16/generated.sql	P2	196-198	COPY gtest1 FROM stdin
+16/generated.sql	P2	201-201	COPY gtest1 (a, b) FROM stdin
+16/generated.sql	P2	204-204	COPY gtest1 FROM stdin WHERE b <> 10
+16/generated.sql	P2	207-207	COPY gtest1 FROM stdin WHERE gtest1 IS NULL
+16/generated.sql	P2	219-221	COPY gtest3 FROM stdin
+16/generated.sql	P2	224-224	COPY gtest3 (a, b) FROM stdin
+16/groupingsets.sql	P2	16-25	copy gstest2 from stdin
+16/groupingsets.sql	P2	29-31	copy gstest3 from stdin
+16/hash_index.sql	P3	5	COPY hash_i4_heap FROM :'filename'
+16/hash_index.sql	P3	6	COPY hash_name_heap FROM :'filename'
+16/hash_index.sql	P3	7	COPY hash_txt_heap FROM :'filename'
+16/hash_index.sql	P3	8	COPY hash_f8_heap FROM :'filename'
+16/identity.sql	P2	134-136	COPY itest9 FROM stdin
+16/identity.sql	P2	139-141	COPY itest9 (b, c) FROM stdin
+16/indirect_toast.sql	P3	1	CREATE FUNCTION make_tuple_indirect (record)
+16/infinite_recurse.sql	P5	18-18	\\if :skip_test
+16/infinite_recurse.sql	P4	2	SELECT version() ~ 'powerpc64[^,]*-linux-gnu'
+16/insert.sql	P2	629-631	copy donothingbrtrig_test from stdout
+16/interval.sql	P2	110-118	COPY INTERVAL_MULDIV_TBL FROM STDIN
+16/json_encoding.sql	P5	9-9	\\if :skip_test
+16/json_encoding.sql	P4	1	SELECT getdatabaseencoding() NOT IN ('UTF8', 'SQL_ASCII')
+16/jsonb.sql	P3	2	COPY testjsonb FROM :'filename'
+16/jsonb.sql	P3	871	select ('{"a": 1}'::jsonb)['a':'b']
+16/jsonpath_encoding.sql	P5	9-9	\\if :skip_test
+16/jsonpath_encoding.sql	P4	1	SELECT getdatabaseencoding() NOT IN ('UTF8', 'SQL_ASCII')
+16/largeobject.sql	P3	17	COMMENT ON LARGE OBJECT :newloid IS 'I Wandered Lonely as a Cloud'
+16/largeobject.sql	P3	32	DO :'dobody'
+16/largeobject.sql	P3	64	INSERT INTO lotest_stash_values (loid) SELECT lo_import(:'filename')
+16/largeobject.sql	P3	77	SELECT lo_export(loid, :'filename') FROM lotest_stash_values
+16/largeobject.sql	P3	78	SELECT pageno, data FROM pg_largeobject WHERE loid = (SELECT loid from lotest_stash_values)
+16/largeobject.sql	P3	81	SELECT lo_from_bytea(0, lo_get(:newloid_1)) AS newloid_2
+16/largeobject.sql	P3	82	SELECT fipshash(lo_get(:newloid_1)) = fipshash(lo_get(:newloid_2))
+16/largeobject.sql	P3	83	SELECT lo_get(:newloid_1, 0, 20)
+16/largeobject.sql	P3	84	SELECT lo_get(:newloid_1, 10, 20)
+16/largeobject.sql	P3	85	SELECT lo_put(:newloid_1, 5, decode('afafafaf', 'hex'))
+16/largeobject.sql	P3	86	SELECT lo_get(:newloid_1, 0, 20)
+16/largeobject.sql	P3	87	SELECT lo_put(:newloid_1, 4294967310, 'foo')
+16/largeobject.sql	P3	88	SELECT lo_get(:newloid_1)
+16/largeobject.sql	P3	89	SELECT lo_get(:newloid_1, 4294967294, 100)
+16/largeobject.sql	P3	92	SELECT lo_get(:newloid)
+16/largeobject.sql	P3	112	SELECT lo_import(:'filename')
+16/lock.sql	P3	130	CREATE FUNCTION test_atomic_ops()
+16/misc.sql	P3	1	CREATE FUNCTION overpaid(emp)
+16/misc.sql	P3	2	CREATE FUNCTION reverse_name(name)
+16/misc.sql	P3	9	COPY onek TO :'filename'
+16/misc.sql	P3	11	COPY onek_copy FROM :'filename'
+16/misc.sql	P3	14	COPY BINARY stud_emp TO :'filename'
+16/misc.sql	P3	16	COPY BINARY stud_emp_copy FROM :'filename'
+16/misc_functions.sql	P3	23	CREATE FUNCTION test_canonicalize_path(text)
+16/misc_functions.sql	P3	62	select (w).size = :segsize as ok
+16/misc_functions.sql	P3	95	CREATE FUNCTION test_support_func(internal)
+16/mvcc.sql	P4	8	SELECT pg_relation_size('clean_aborted_self_key') AS clean_aborted_self_key_before \\gset
+16/mvcc.sql	P3	9	SELECT :clean_aborted_self_key_before AS size_before, pg_relation_size('clean_aborted_self_key') size_after
+16/numeric.sql	P2	880-899	COPY width_bucket_test (operand_num) FROM stdin
+16/plpgsql.sql	P2	1863-1866	copy rc_test from stdin
+16/prepared_xacts.sql	P5	2-2	\\if :skip_test
+16/prepared_xacts.sql	P4	1	SELECT current_setting('max_prepared_transactions')::integer < 2 AS skip_test \\gset
+16/privileges.sql	P2	250-250	COPY atest2 FROM stdin
+16/privileges.sql	P2	294-294	COPY atest2 FROM stdin
+16/privileges.sql	P2	302-303	COPY atest2 FROM stdin
+16/privileges.sql	P2	538-538	COPY atest5 FROM stdin
+16/privileges.sql	P2	540-541	COPY atest5 (two) FROM stdin
+16/psql.sql	P2	1430-1438	COPY psql_comics FROM STDIN
+16/psql.sql	P2	1512-1516	\\copy no_such_table from stdin
+16/psql.sql	P5	869-870	not okay;
+16/psql.sql	P5	881-881	(bogus
+16/psql.sql	P5	947-947	\\if invalid boolean expression
+16/psql.sql	P5	995-1052	:try_to_quit
+16/psql.sql	P5	1061-1061	end
+16/psql.sql	P5	1070-1070	\\if :{?i}
+16/psql.sql	P5	1076-1076	\\if :{?no_such_variable}
+16/psql.sql	P4	1	SELECT 1 as one, 2 as two \\g
+16/psql.sql	P4	2	SELECT 3 as three, 4 as four \\gx
+16/psql.sql	P4	3	SELECT 1 as one, 2 as two \\g
+16/psql.sql	P4	4	SELECT 3 as three, 4 as four \\gx
+16/psql.sql	P4	5	SELECT 1 as one, 2 as two \\g (format=csv csv_fieldsep='\\t')
+16/psql.sql	P4	6	SELECT 1 as one, 2 as two \\gx (title='foo bar')
+16/psql.sql	P4	7	SELECT 1 \\bind \\g
+16/psql.sql	P4	8	SELECT 2 \\bind \\g
+16/psql.sql	P3	9	select 97 as "EOF", 'ok' as _foo \\gset IGNORE
+16/psql.sql	P4	11	EXECUTE test \\gdesc
+16/psql.sql	P4	13	SELECT 3 AS x, 'Hello', 4 AS y, true AS "dirty\\name" \\gdesc \\g
+16/psql_crosstab.sql	P4	4	SELECT v, to_char(d, 'Mon') AS "month name", EXTRACT(month FROM d) AS num,
+16/psql_crosstab.sql	P4	7	SELECT * FROM ctv_data \\crosstabview
+16/psql_crosstab.sql	P4	8	SELECT * FROM ctv_data \\crosstabview
+16/reloptions.sql	P3	42	SELECT reltoastrelid as toast_oid
+16/reloptions.sql	P3	44	SELECT reloptions FROM pg_class WHERE oid = :toast_oid
+16/reloptions.sql	P3	46	SELECT reloptions FROM pg_class WHERE oid = :toast_oid
+16/rowsecurity.sql	P2	240-244	COPY t1 FROM stdin WITH
+16/rowsecurity.sql	P2	250-254	COPY t2 FROM stdin
+16/rowsecurity.sql	P2	261-264	COPY t3(id, a,b,c) FROM stdin
+16/rowsecurity.sql	P2	1618-1622	COPY copy_t FROM STDIN
+16/rowsecurity.sql	P2	1625-1629	COPY copy_t FROM STDIN
+16/rowsecurity.sql	P2	1635-1635	COPY copy_t FROM STDIN
+16/rowsecurity.sql	P2	1638-1638	COPY copy_t FROM STDIN
+16/rowsecurity.sql	P2	1644-1648	COPY copy_t FROM STDIN
+16/rowsecurity.sql	P2	1654-1654	COPY copy_t FROM STDIN
+16/rowsecurity.sql	P2	1657-1657	COPY copy_t FROM STDIN
+16/rules.sql	P3	69	** Remember the delete rule on rtest_v1: It says
+16/sqljson.sql	P3	15	SELECT JSON_OBJECT('foo': NULL::int FORMAT JSON)
+16/sqljson.sql	P3	16	SELECT JSON_OBJECT('foo': NULL::int FORMAT JSON ENCODING UTF8)
+16/sqljson.sql	P3	17	SELECT JSON_OBJECT('foo': NULL::json FORMAT JSON)
+16/sqljson.sql	P3	18	SELECT JSON_OBJECT('foo': NULL::json FORMAT JSON ENCODING UTF8)
+16/sqljson.sql	P3	19	SELECT JSON_OBJECT('foo': NULL::jsonb FORMAT JSON)
+16/sqljson.sql	P3	20	SELECT JSON_OBJECT('foo': NULL::jsonb FORMAT JSON ENCODING UTF8)
+16/sqljson.sql	P3	21	SELECT JSON_OBJECT(NULL: 1)
+16/sqljson.sql	P3	22	SELECT JSON_OBJECT('a': 2 + 3)
+16/sqljson.sql	P3	26	SELECT JSON_OBJECT('a': 2::text)
+16/sqljson.sql	P3	28	SELECT JSON_OBJECT(1::text: 2)
+16/sqljson.sql	P3	30	SELECT JSON_OBJECT(json '[1]': 123)
+16/sqljson.sql	P3	32	SELECT JSON_OBJECT(
+16/sqljson.sql	P3	33	SELECT JSON_OBJECT(
+16/sqljson.sql	P3	34	/*
+16/sqljson.sql	P3	35	SELECT JSON_OBJECT('a': '123', 'b': JSON_OBJECT('a': 111, 'b': 'aaa' RETURNING jsonb))
+16/sqljson.sql	P3	36	SELECT JSON_OBJECT('a': JSON_OBJECT('b': 1 RETURNING text))
+16/sqljson.sql	P3	37	SELECT JSON_OBJECT('a': JSON_OBJECT('b': 1 RETURNING text) FORMAT JSON)
+16/sqljson.sql	P3	38	SELECT JSON_OBJECT('a': JSON_OBJECT('b': 1 RETURNING bytea))
+16/sqljson.sql	P3	39	SELECT JSON_OBJECT('a': JSON_OBJECT('b': 1 RETURNING bytea) FORMAT JSON)
+16/sqljson.sql	P3	40	SELECT JSON_OBJECT('a': '1', 'b': NULL, 'c': 2)
+16/sqljson.sql	P3	41	SELECT JSON_OBJECT('a': '1', 'b': NULL, 'c': 2 NULL ON NULL)
+16/sqljson.sql	P3	42	SELECT JSON_OBJECT('a': '1', 'b': NULL, 'c': 2 ABSENT ON NULL)
+16/sqljson.sql	P3	43	SELECT JSON_OBJECT(1: 1, '2': NULL, '3': 1, repeat('x', 1000): 1, 2: repeat('a', 100) WITH UNIQUE)
+16/sqljson.sql	P3	44	SELECT JSON_OBJECT(1: 1, '1': NULL WITH UNIQUE)
+16/sqljson.sql	P3	45	SELECT JSON_OBJECT(1: 1, '1': NULL ABSENT ON NULL WITH UNIQUE)
+16/sqljson.sql	P3	46	SELECT JSON_OBJECT(1: 1, '1': NULL NULL ON NULL WITH UNIQUE RETURNING jsonb)
+16/sqljson.sql	P3	47	SELECT JSON_OBJECT(1: 1, '1': NULL ABSENT ON NULL WITH UNIQUE RETURNING jsonb)
+16/sqljson.sql	P3	48	SELECT JSON_OBJECT(1: 1, '2': NULL, '1': 1 NULL ON NULL WITH UNIQUE)
+16/sqljson.sql	P3	49	SELECT JSON_OBJECT(1: 1, '2': NULL, '1': 1 ABSENT ON NULL WITH UNIQUE)
+16/sqljson.sql	P3	50	SELECT JSON_OBJECT(1: 1, '2': NULL, '1': 1 ABSENT ON NULL WITHOUT UNIQUE)
+16/sqljson.sql	P3	51	SELECT JSON_OBJECT(1: 1, '2': NULL, '1': 1 ABSENT ON NULL WITH UNIQUE RETURNING jsonb)
+16/sqljson.sql	P3	52	SELECT JSON_OBJECT(1: 1, '2': NULL, '1': 1 ABSENT ON NULL WITHOUT UNIQUE RETURNING jsonb)
+16/sqljson.sql	P3	53	SELECT JSON_OBJECT(1: 1, '2': NULL, '3': 1, 4: NULL, '5': 'a' ABSENT ON NULL WITH UNIQUE RETURNING jsonb)
+16/sqljson.sql	P3	95	SELECT\tJSON_OBJECTAGG('key': 1) IS NULL,
+16/sqljson.sql	P3	96	SELECT JSON_OBJECTAGG(NULL: 1)
+16/sqljson.sql	P3	97	SELECT JSON_OBJECTAGG(NULL: 1 RETURNING jsonb)
+16/sqljson.sql	P3	98	SELECT
+16/sqljson.sql	P3	99	SELECT
+16/sqljson.sql	P3	100	SELECT JSON_OBJECTAGG(k: v WITH UNIQUE KEYS)
+16/sqljson.sql	P3	101	SELECT JSON_OBJECTAGG(k: v ABSENT ON NULL WITH UNIQUE KEYS)
+16/sqljson.sql	P3	102	SELECT JSON_OBJECTAGG(k: v ABSENT ON NULL WITH UNIQUE KEYS)
+16/sqljson.sql	P3	103	SELECT JSON_OBJECTAGG(k: v WITH UNIQUE KEYS RETURNING jsonb)
+16/sqljson.sql	P3	104	SELECT JSON_OBJECTAGG(k: v ABSENT ON NULL WITH UNIQUE KEYS RETURNING jsonb)
+16/sqljson.sql	P3	112	EXPLAIN (VERBOSE, COSTS OFF)
+16/sqljson.sql	P3	113	EXPLAIN (VERBOSE, COSTS OFF)
+16/sqljson.sql	P3	114	CREATE VIEW json_objectagg_view AS
+16/sqljson.sql	P3	150	EXPLAIN (VERBOSE, COSTS OFF) SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': volatile_one() RETURNING text) FORMAT JSON)
+16/sqljson.sql	P3	151	SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': volatile_one() RETURNING text) FORMAT JSON)
+16/sqljson.sql	P3	152	EXPLAIN (VERBOSE, COSTS OFF) SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': stable_one() RETURNING text) FORMAT JSON)
+16/sqljson.sql	P3	153	SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': stable_one() RETURNING text) FORMAT JSON)
+16/sqljson.sql	P3	154	EXPLAIN (VERBOSE, COSTS OFF) SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': 1 RETURNING text) FORMAT JSON)
+16/sqljson.sql	P3	155	SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': 1 RETURNING text) FORMAT JSON)
+16/sqljson.sql	P3	157	EXPLAIN (VERBOSE, COSTS OFF)
+16/sqljson.sql	P3	158	SELECT i % 2 AS g,
+16/stats.sql	P5	412-412	\\if :{?description_before}
+16/stats.sql	P5	413-413	COMMENT ON DATABASE :"datname" IS :'description_before';
+16/stats.sql	P4	6	SELECT oid AS dboid from pg_database where datname = current_database() \\gset
+16/stats.sql	P4	67	SELECT 'stats_test_func1()'::regprocedure::oid AS stats_test_func1_oid \\gset
+16/stats.sql	P4	68	SELECT 'stats_test_func2()'::regprocedure::oid AS stats_test_func2_oid \\gset
+16/stats.sql	P3	70	SELECT pg_stat_get_function_calls(:stats_test_func1_oid)
+16/stats.sql	P3	71	SELECT pg_stat_get_xact_function_calls(:stats_test_func1_oid)
+16/stats.sql	P3	73	SELECT pg_stat_get_xact_function_calls(:stats_test_func1_oid)
+16/stats.sql	P3	75	SELECT pg_stat_get_xact_function_calls(:stats_test_func1_oid)
+16/stats.sql	P3	76	SELECT pg_stat_get_function_calls(:stats_test_func1_oid)
+16/stats.sql	P3	83	SELECT pg_stat_get_xact_function_calls(:stats_test_func2_oid)
+16/stats.sql	P3	90	SELECT funcname, calls FROM pg_stat_user_functions WHERE funcid = :stats_test_func1_oid
+16/stats.sql	P3	91	SELECT funcname, calls FROM pg_stat_user_functions WHERE funcid = :stats_test_func2_oid
+16/stats.sql	P3	93	SELECT funcname, calls FROM pg_stat_user_functions WHERE funcid = :stats_test_func1_oid
+16/stats.sql	P3	95	SELECT funcname, calls FROM pg_stat_user_functions WHERE funcid = :stats_test_func1_oid
+16/stats.sql	P3	96	SELECT pg_stat_get_function_calls(:stats_test_func1_oid)
+16/stats.sql	P3	98	SELECT funcname, calls FROM pg_stat_user_functions WHERE funcid = :stats_test_func1_oid
+16/stats.sql	P3	99	SELECT pg_stat_get_function_calls(:stats_test_func1_oid)
+16/stats.sql	P3	103	SELECT funcname, calls FROM pg_stat_user_functions WHERE funcid = :stats_test_func1_oid
+16/stats.sql	P3	104	SELECT pg_stat_get_function_calls(:stats_test_func1_oid)
+16/stats.sql	P3	112	SELECT funcname, calls FROM pg_stat_user_functions WHERE funcid = :stats_test_func2_oid
+16/stats.sql	P3	113	SELECT pg_stat_get_function_calls(:stats_test_func2_oid)
+16/stats.sql	P4	116	SELECT 'drop_stats_test'::regclass::oid AS drop_stats_test_oid \\gset
+16/stats.sql	P4	118	SELECT 'drop_stats_test_xact'::regclass::oid AS drop_stats_test_xact_oid \\gset
+16/stats.sql	P4	120	SELECT 'drop_stats_test_subxact'::regclass::oid AS drop_stats_test_subxact_oid \\gset
+16/stats.sql	P3	121	SELECT pg_stat_get_live_tuples(:drop_stats_test_oid)
+16/stats.sql	P3	123	SELECT pg_stat_get_live_tuples(:drop_stats_test_oid)
+16/stats.sql	P3	124	SELECT pg_stat_get_xact_tuples_inserted(:drop_stats_test_oid)
+16/stats.sql	P3	125	SELECT pg_stat_get_live_tuples(:drop_stats_test_xact_oid)
+16/stats.sql	P3	126	SELECT pg_stat_get_tuples_inserted(:drop_stats_test_xact_oid)
+16/stats.sql	P3	127	SELECT pg_stat_get_xact_tuples_inserted(:drop_stats_test_xact_oid)
+16/stats.sql	P3	130	SELECT pg_stat_get_xact_tuples_inserted(:drop_stats_test_xact_oid)
+16/stats.sql	P3	132	SELECT pg_stat_get_xact_tuples_inserted(:drop_stats_test_xact_oid)
+16/stats.sql	P3	135	SELECT pg_stat_get_live_tuples(:drop_stats_test_xact_oid)
+16/stats.sql	P3	136	SELECT pg_stat_get_tuples_inserted(:drop_stats_test_xact_oid)
+16/stats.sql	P3	137	SELECT pg_stat_get_live_tuples(:drop_stats_test_xact_oid)
+16/stats.sql	P3	138	SELECT pg_stat_get_tuples_inserted(:drop_stats_test_xact_oid)
+16/stats.sql	P3	141	SELECT pg_stat_get_xact_tuples_inserted(:drop_stats_test_xact_oid)
+16/stats.sql	P3	143	SELECT pg_stat_get_xact_tuples_inserted(:drop_stats_test_xact_oid)
+16/stats.sql	P3	146	SELECT pg_stat_get_live_tuples(:drop_stats_test_xact_oid)
+16/stats.sql	P3	147	SELECT pg_stat_get_tuples_inserted(:drop_stats_test_xact_oid)
+16/stats.sql	P3	148	SELECT pg_stat_get_live_tuples(:drop_stats_test_subxact_oid)
+16/stats.sql	P3	153	SELECT pg_stat_get_xact_tuples_inserted(:drop_stats_test_subxact_oid)
+16/stats.sql	P3	157	SELECT pg_stat_get_xact_tuples_inserted(:drop_stats_test_subxact_oid)
+16/stats.sql	P3	160	SELECT pg_stat_get_live_tuples(:drop_stats_test_subxact_oid)
+16/stats.sql	P3	161	SELECT pg_stat_get_live_tuples(:drop_stats_test_subxact_oid)
+16/stats.sql	P3	168	SELECT pg_stat_get_live_tuples(:drop_stats_test_subxact_oid)
+16/stats.sql	P3	169	SELECT pg_stat_get_live_tuples(:drop_stats_test_subxact_oid)
+16/stats.sql	P3	176	SELECT pg_stat_get_live_tuples(:drop_stats_test_subxact_oid)
+16/stats.sql	P4	198	SELECT last_seq_scan AS test_last_seq, last_idx_scan AS test_last_idx
+16/stats.sql	P3	207	SELECT seq_scan, :'test_last_seq' < last_seq_scan AS seq_ok, idx_scan, :'test_last_idx' = last_idx_scan AS idx_ok
+16/stats.sql	P4	208	SELECT last_seq_scan AS test_last_seq, last_idx_scan AS test_last_idx
+16/stats.sql	P3	217	SELECT seq_scan, :'test_last_seq' = last_seq_scan AS seq_ok, idx_scan, :'test_last_idx' < last_idx_scan AS idx_ok
+16/stats.sql	P4	218	SELECT last_seq_scan AS test_last_seq, last_idx_scan AS test_last_idx
+16/stats.sql	P3	227	SELECT seq_scan, :'test_last_seq' = last_seq_scan AS seq_ok, idx_scan, :'test_last_idx' < last_idx_scan AS idx_ok
+16/stats.sql	P4	228	SELECT shobj_description(d.oid, 'pg_database') as description_before
+16/stats.sql	P3	229	SELECT current_database() as datname \\gset
+16/stats.sql	P4	235	SELECT stats_reset AS shared_db_reset_before
+16/stats.sql	P3	236	SELECT stats_reset > :'shared_db_reset_before'::timestamptz AS has_updated
+16/stats.sql	P3	237	COMMENT ON DATABASE :"datname" IS NULL
+16/stats.sql	P4	238	SELECT sessions AS db_stat_sessions FROM pg_stat_database WHERE datname = (SELECT current_database()) \\gset
+16/stats.sql	P3	239	SELECT sessions > :db_stat_sessions FROM pg_stat_database WHERE datname = (SELECT current_database())
+16/stats.sql	P4	240	SELECT checkpoints_req AS rqst_ckpts_before FROM pg_stat_bgwriter \\gset
+16/stats.sql	P3	244	SELECT checkpoints_req > :rqst_ckpts_before FROM pg_stat_bgwriter
+16/stats.sql	P3	245	SELECT wal_bytes > :wal_bytes_before FROM pg_stat_wal
+16/stats.sql	P4	247	SELECT stats_reset AS slru_commit_ts_reset_ts FROM pg_stat_slru WHERE name = 'CommitTs' \\gset
+16/stats.sql	P3	248	SELECT stats_reset > :'slru_commit_ts_reset_ts'::timestamptz FROM pg_stat_slru WHERE name = 'CommitTs'
+16/stats.sql	P4	249	SELECT stats_reset AS slru_commit_ts_reset_ts FROM pg_stat_slru WHERE name = 'CommitTs' \\gset
+16/stats.sql	P3	250	SELECT stats_reset > :'slru_commit_ts_reset_ts'::timestamptz FROM pg_stat_slru WHERE name = 'CommitTs'
+16/stats.sql	P3	251	SELECT stats_reset > :'slru_notify_reset_ts'::timestamptz FROM pg_stat_slru WHERE name = 'Notify'
+16/stats.sql	P4	252	SELECT stats_reset AS archiver_reset_ts FROM pg_stat_archiver \\gset
+16/stats.sql	P3	253	SELECT stats_reset > :'archiver_reset_ts'::timestamptz FROM pg_stat_archiver
+16/stats.sql	P4	254	SELECT stats_reset AS archiver_reset_ts FROM pg_stat_archiver \\gset
+16/stats.sql	P3	255	SELECT stats_reset > :'bgwriter_reset_ts'::timestamptz FROM pg_stat_bgwriter
+16/stats.sql	P4	256	SELECT stats_reset AS bgwriter_reset_ts FROM pg_stat_bgwriter \\gset
+16/stats.sql	P3	257	SELECT stats_reset > :'wal_reset_ts'::timestamptz FROM pg_stat_wal
+16/stats.sql	P4	258	SELECT stats_reset AS wal_reset_ts FROM pg_stat_wal \\gset
+16/stats.sql	P3	259	SELECT stats_reset = :'archiver_reset_ts'::timestamptz FROM pg_stat_archiver
+16/stats.sql	P3	260	SELECT stats_reset = :'bgwriter_reset_ts'::timestamptz FROM pg_stat_bgwriter
+16/stats.sql	P3	261	SELECT stats_reset = :'wal_reset_ts'::timestamptz FROM pg_stat_wal
+16/stats.sql	P4	263	SELECT stats_reset AS db_reset_ts FROM pg_stat_database WHERE datname = (SELECT current_database()) \\gset
+16/stats.sql	P3	264	SELECT stats_reset > :'db_reset_ts'::timestamptz FROM pg_stat_database WHERE datname = (SELECT current_database())
+16/stats.sql	P3	288	SELECT pg_stat_have_stats('database', :dboid, 1)
+16/stats.sql	P3	289	SELECT pg_stat_have_stats('database', :dboid, 0)
+16/stats.sql	P4	292	SELECT 'stats_test_idx1'::regclass::oid AS stats_test_idx1_oid \\gset
+16/stats.sql	P3	294	SELECT pg_stat_have_stats('relation', :dboid, :stats_test_idx1_oid)
+16/stats.sql	P3	295	SELECT pg_stat_have_stats('relation', :dboid, :stats_test_idx1_oid)
+16/stats.sql	P3	297	SELECT pg_stat_have_stats('relation', :dboid, :stats_test_idx1_oid)
+16/stats.sql	P4	300	SELECT 'stats_test_idx1'::regclass::oid AS stats_test_idx1_oid \\gset
+16/stats.sql	P3	301	SELECT pg_stat_have_stats('relation', :dboid, :stats_test_idx1_oid)
+16/stats.sql	P3	303	SELECT pg_stat_have_stats('relation', :dboid, :stats_test_idx1_oid)
+16/stats.sql	P4	305	SELECT 'stats_test_idx1'::regclass::oid AS stats_test_idx1_oid \\gset
+16/stats.sql	P3	306	SELECT pg_stat_have_stats('relation', :dboid, :stats_test_idx1_oid)
+16/stats.sql	P3	308	SELECT pg_stat_have_stats('relation', :dboid, :stats_test_idx1_oid)
+16/stats.sql	P3	309	SELECT 'stats_test_idx1'::regclass::oid AS stats_test_idx1_oid \\gset
+16/stats.sql	P3	311	SELECT pg_stat_have_stats('relation', :dboid, :stats_test_idx1_oid)
+16/stats.sql	P3	314	SELECT pg_stat_have_stats('relation', :dboid, :stats_test_idx1_oid)
+16/stats.sql	P4	318	SELECT sum(extends) AS io_sum_shared_before_extends
+16/stats.sql	P3	321	SELECT sum(extends) AS io_sum_shared_after_extends
+16/stats.sql	P3	324	SELECT sum(writes) AS writes, sum(fsyncs) AS fsyncs
+16/stats.sql	P3	325	SELECT current_setting('fsync') = 'off'
+16/stats.sql	P4	326	SELECT sum(reads) AS io_sum_shared_before_reads
+16/stats.sql	P3	331	SELECT sum(reads) AS io_sum_shared_after_reads
+16/stats.sql	P4	332	SELECT sum(hits) AS io_sum_shared_before_hits
+16/stats.sql	P3	341	SELECT sum(hits) AS io_sum_shared_after_hits
+16/stats.sql	P4	345	SELECT sum(extends) AS extends, sum(evictions) AS evictions, sum(writes) AS writes
+16/stats.sql	P4	347	SELECT sum(reads) AS io_sum_local_before_reads
+16/stats.sql	P3	349	SELECT sum(evictions) AS evictions,
+16/stats.sql	P3	352	SELECT sum(writes) AS io_sum_local_new_tblspc_writes
+16/stats.sql	P4	355	SELECT sum(reuses) AS reuses, sum(reads) AS reads, sum(evictions) AS evictions
+16/stats.sql	P3	360	SELECT sum(reuses) AS reuses, sum(reads) AS reads, sum(evictions) AS evictions
+16/stats.sql	P3	361	SELECT (:io_sum_vac_strategy_after_reuses + :io_sum_vac_strategy_after_evictions) >
+16/stats.sql	P4	363	SELECT sum(extends) AS io_sum_bulkwrite_strategy_extends_before
+16/stats.sql	P3	365	SELECT sum(extends) AS io_sum_bulkwrite_strategy_extends_after
+16/stats.sql	P4	367	SELECT sum(evictions) + sum(reuses) + sum(extends) + sum(fsyncs) + sum(reads) + sum(writes) + sum(writebacks) + sum(hits) AS io_stats_pre_reset
+16/stats.sql	P3	368	SELECT sum(evictions) + sum(reuses) + sum(extends) + sum(fsyncs) + sum(reads) + sum(writes) + sum(writebacks) + sum(hits) AS io_stats_post_reset
+16/strings.sql	P4	407	select 'a\\\\bcd' as f1, 'a\\\\b\\'cd' as f2, 'a\\\\b\\'''cd' as f3, 'abcd\\\\'   as f4, 'ab\\\\\\'cd' as f5, '\\\\\\\\' as f6;
+16/subscription.sql	P4	19	SELECT stats_reset as prev_stats_reset FROM pg_stat_subscription_stats WHERE subname = 'regress_testsub' \\gset
+16/subscription.sql	P3	20	SELECT :'prev_stats_reset' < stats_reset FROM pg_stat_subscription_stats WHERE subname = 'regress_testsub'
+16/tablespace.sql	P4	33	SELECT relfilenode as main_filenode FROM pg_class
+16/tablespace.sql	P3	42	SELECT relfilenode = :main_filenode AS main_same FROM pg_class
+16/tablespace.sql	P3	43	SELECT relfilenode = :toast_filenode as toast_same FROM pg_class
+16/test_setup.sql	P3	29	COPY onek FROM :'filename'
+16/test_setup.sql	P3	34	COPY tenk1 FROM :'filename'
+16/test_setup.sql	P3	39	COPY person FROM :'filename'
+16/test_setup.sql	P3	42	COPY emp FROM :'filename'
+16/test_setup.sql	P3	45	COPY student FROM :'filename'
+16/test_setup.sql	P3	48	COPY stud_emp FROM :'filename'
+16/test_setup.sql	P3	51	COPY road FROM :'filename'
+16/test_setup.sql	P3	62	CREATE FUNCTION binary_coercible(oid, oid)
+16/test_setup.sql	P3	63	CREATE FUNCTION ttdummy ()
+16/test_setup.sql	P3	64	CREATE FUNCTION get_columns_length(oid[])
+16/transactions.sql	P4	378	SELECT 1\\
+16/transactions.sql	P4	379	SELECT 2\\
+16/transactions.sql	P4	381	insert into i_table values(1)\\
+16/transactions.sql	P4	383	insert into i_table values(2)\\
+16/transactions.sql	P4	384	select * from i_table\\
+16/transactions.sql	P4	388	begin\\
+16/transactions.sql	P4	389	insert into i_table values(3)\\
+16/transactions.sql	P4	392	begin\\
+16/transactions.sql	P4	393	insert into i_table values(4)\\
+16/transactions.sql	P4	396	select 1\\
+16/transactions.sql	P4	397	begin\\
+16/transactions.sql	P4	400	select 1\\
+16/transactions.sql	P4	401	begin\\
+16/transactions.sql	P4	404	insert into i_table values(7)\\
+16/transactions.sql	P4	405	commit\\
+16/transactions.sql	P4	406	insert into i_table values(8)\\
+16/transactions.sql	P4	408	insert into i_table values(9)\\
+16/transactions.sql	P4	409	rollback\\
+16/transactions.sql	P4	413	SELECT 1\\
+16/transactions.sql	P4	415	SELECT 1\\
+16/transactions.sql	P4	416	COMMIT\\
+16/transactions.sql	P4	418	SELECT 1\\
+16/transactions.sql	P4	420	SELECT 1\\
+16/transactions.sql	P4	421	COMMIT\\
+16/transactions.sql	P4	423	ROLLBACK TO SAVEPOINT sp\\
+16/transactions.sql	P4	425	SELECT 2\\
+16/transactions.sql	P4	426	RELEASE SAVEPOINT sp\\
+16/transactions.sql	P4	428	SELECT 1\\
+16/transactions.sql	P4	429	BEGIN\\
+16/transactions.sql	P4	430	SAVEPOINT sp\\
+16/transactions.sql	P4	431	ROLLBACK TO SAVEPOINT sp\\
+16/transactions.sql	P4	433	SET TRANSACTION READ ONLY\\
+16/transactions.sql	P4	436	SET TRANSACTION READ ONLY\\
+16/transactions.sql	P4	440	INSERT INTO trans_abc VALUES (7)\\
+16/transactions.sql	P4	441	COMMIT\\
+16/transactions.sql	P4	442	INSERT INTO trans_abc VALUES (8)\\
+16/transactions.sql	P4	444	INSERT INTO trans_abc VALUES (9)\\
+16/transactions.sql	P4	445	ROLLBACK\\
+16/transactions.sql	P4	446	INSERT INTO trans_abc VALUES (10)\\
+16/transactions.sql	P4	448	INSERT INTO trans_abc VALUES (11)\\
+16/transactions.sql	P4	449	COMMIT AND CHAIN\\
+16/transactions.sql	P4	450	INSERT INTO trans_abc VALUES (12)\\
+16/transactions.sql	P4	452	INSERT INTO trans_abc VALUES (13)\\
+16/transactions.sql	P4	453	ROLLBACK AND CHAIN\\
+16/transactions.sql	P4	454	INSERT INTO trans_abc VALUES (14)\\
+16/transactions.sql	P4	456	START TRANSACTION ISOLATION LEVEL REPEATABLE READ\\
+16/transactions.sql	P4	457	INSERT INTO trans_abc VALUES (15)\\
+16/transactions.sql	P4	461	START TRANSACTION ISOLATION LEVEL REPEATABLE READ\\
+16/transactions.sql	P4	462	INSERT INTO trans_abc VALUES (16)\\
+16/transactions.sql	P4	467	START TRANSACTION ISOLATION LEVEL REPEATABLE READ\\
+16/transactions.sql	P4	468	INSERT INTO trans_abc VALUES (17)\\
+16/transactions.sql	P4	469	COMMIT\\
+16/transactions.sql	P4	470	INSERT INTO trans_abc VALUES (18)\\
+16/transactions.sql	P4	473	START TRANSACTION ISOLATION LEVEL REPEATABLE READ\\
+16/transactions.sql	P4	474	INSERT INTO trans_abc VALUES (19)\\
+16/transactions.sql	P4	475	ROLLBACK\\
+16/transactions.sql	P4	476	INSERT INTO trans_abc VALUES (20)\\
+16/triggers.sql	P2	297-302	COPY main_table (a,b) FROM stdin
+16/triggers.sql	P2	343-345	-- COPY should fire per-row and per-statement INSERT triggers
+16/triggers.sql	P2	373-375	COPY main_table FROM stdin
+16/triggers.sql	P2	1559-1561	-- insert via copy on the parent
+16/triggers.sql	P2	1565-1566	-- insert via copy on the first partition
+16/triggers.sql	P2	2108-2111	-- copy into parent sees parent-format tuples
+16/triggers.sql	P2	2134-2137	-- copy into parent sees tuples collected from children even if there
+16/triggers.sql	P2	2159-2162	-- copy, parent trigger sees post-modification parent-format tuple
+16/triggers.sql	P2	2325-2328	-- copy into parent sees parent-format tuples (no rerouting, so these
+16/triggers.sql	P2	2334-2335	copy parent (a, b) from stdin
+16/triggers.sql	P3	1	CREATE FUNCTION autoinc ()
+16/triggers.sql	P3	2	CREATE FUNCTION check_primary_key ()
+16/triggers.sql	P3	3	CREATE FUNCTION check_foreign_key ()
+16/triggers.sql	P3	4	CREATE FUNCTION trigger_return_old ()
+16/triggers.sql	P3	5	CREATE FUNCTION set_ttdummy (int4)
+16/tsearch.sql	P2	662-668	\\copy test_tsquery from stdin
+16/tsearch.sql	P3	8	COPY test_tsvector FROM :'filename'
+16/tuplesort.sql	P3	101	SELECT $$
+16/tuplesort.sql	P3	103	EXPLAIN (COSTS OFF) :qry
+16/txid.sql	P3	26	SELECT txid_current() \\gset
+16/txid.sql	P4	29	SELECT txid_current() AS committed \\gset
+16/txid.sql	P4	31	SELECT txid_current() AS rolledback \\gset
+16/txid.sql	P3	33	SELECT txid_current() AS inprogress \\gset
+16/txid.sql	P3	34	SELECT txid_status(:rolledback) AS rolledback
+16/txid.sql	P3	35	SELECT txid_status(:inprogress) AS inprogress
+16/txid.sql	P3	42	SELECT test_future_xid_status(:inprogress + 10000)
+16/unicode.sql	P5	2-2	\\if :skip_test
+16/unicode.sql	P4	1	SELECT getdatabaseencoding() <> 'UTF8' AS skip_test \\gset
+16/vacuum.sql	P4	199	SELECT relfilenode AS main_filenode FROM pg_class
+16/vacuum.sql	P3	200	SELECT relfilenode = :main_filenode AS is_same_main_filenode
+16/vacuum.sql	P3	201	SELECT t.relfilenode = :toast_filenode AS is_same_toast_filenode
+16/xid.sql	P3	63	SELECT pg_current_xact_id() \\gset
+16/xid.sql	P4	66	SELECT pg_current_xact_id() AS committed \\gset
+16/xid.sql	P4	68	SELECT pg_current_xact_id() AS rolledback \\gset
+16/xid.sql	P3	70	SELECT pg_current_xact_id() AS inprogress \\gset
+16/xid.sql	P3	71	SELECT pg_xact_status(:rolledback::text::xid8) AS rolledback
+16/xid.sql	P3	72	SELECT pg_xact_status(:inprogress::text::xid8) AS inprogress
+16/xid.sql	P3	79	SELECT test_future_xid_status((:inprogress + 10000)::text::xid8)
+16/xml.sql	P5	13-13	\\if :skip_test
+16/xml.sql	P4	5	SELECT count(*) = 0 AS skip_test FROM xmltest \\gset
+17/advisory_lock.sql	P4	1	SELECT oid AS datoid FROM pg_database WHERE datname = current_database() \\gset
+17/advisory_lock.sql	P3	3	SELECT locktype, classid, objid, objsubid, mode, granted
+17/advisory_lock.sql	P3	5	SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND database = :datoid
+17/advisory_lock.sql	P3	8	SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND database = :datoid
+17/advisory_lock.sql	P3	11	SELECT locktype, classid, objid, objsubid, mode, granted
+17/advisory_lock.sql	P3	14	SELECT locktype, classid, objid, objsubid, mode, granted
+17/advisory_lock.sql	P3	16	SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND database = :datoid
+17/advisory_lock.sql	P3	19	SELECT locktype, classid, objid, objsubid, mode, granted
+17/advisory_lock.sql	P3	22	SELECT locktype, classid, objid, objsubid, mode, granted
+17/advisory_lock.sql	P3	24	SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND database = :datoid
+17/advisory_lock.sql	P3	27	SELECT locktype, classid, objid, objsubid, mode, granted
+17/advisory_lock.sql	P3	29	SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND database = :datoid
+17/advisory_lock.sql	P3	31	SELECT locktype, classid, objid, objsubid, mode, granted
+17/advisory_lock.sql	P3	33	SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND database = :datoid
+17/advisory_lock.sql	P3	35	SELECT locktype, classid, objid, objsubid, mode, granted
+17/advisory_lock.sql	P3	37	SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND database = :datoid
+17/aggregates.sql	P2	240-243	COPY bitwise_test FROM STDIN NULL 'null'
+17/aggregates.sql	P2	314-317	COPY bool_test FROM STDIN NULL 'null'
+17/aggregates.sql	P3	3	COPY aggtest FROM :'filename'
+17/alter_generic.sql	P3	1	CREATE FUNCTION test_opclass_options_func(internal)
+17/alter_table.sql	P2	1144-1145	copy attest from stdin
+17/alter_table.sql	P2	1148-1149	copy attest from stdin
+17/alter_table.sql	P2	1152-1152	copy attest(a) from stdin
+17/alter_table.sql	P2	1154-1154	copy attest("........pg.dropped.1........") from stdin
+17/alter_table.sql	P2	1156-1157	copy attest(b,c) from stdin
+17/arrays.sql	P3	3	COPY array_op_test FROM :'filename'
+17/arrays.sql	P3	42	SELECT ('{{{1},{2},{3}},{{4},{5},{6}}}'::int[])[1][NULL:1][1]
+17/arrays.sql	P3	43	SELECT ('{{{1},{2},{3}},{{4},{5},{6}}}'::int[])[1][1:NULL][1]
+17/arrays.sql	P3	45	UPDATE arrtest
+17/arrays.sql	P3	46	UPDATE arrtest
+17/bit.sql	P2	73-83	COPY varbit_table FROM stdin
+17/bit.sql	P2	97-107	COPY bit_table FROM stdin
+17/btree_index.sql	P3	5	COPY bt_i4_heap FROM :'filename'
+17/btree_index.sql	P3	6	COPY bt_name_heap FROM :'filename'
+17/btree_index.sql	P3	7	COPY bt_txt_heap FROM :'filename'
+17/btree_index.sql	P3	8	COPY bt_f8_heap FROM :'filename'
+17/collate.icu.utf8.sql	P5	9-9	\\if :skip_test
+17/collate.icu.utf8.sql	P4	1	/*
+17/collate.icu.utf8.sql	P3	186	SELECT current_database() AS datname \\gset
+17/collate.linux.utf8.sql	P5	11-11	\\if :skip_test
+17/collate.linux.utf8.sql	P4	1	/*
+17/collate.linux.utf8.sql	P3	182	SELECT current_database() AS datname \\gset
+17/collate.utf8.sql	P5	8-8	\\if :skip_test
+17/collate.utf8.sql	P4	1	/*
+17/collate.windows.win1252.sql	P5	12-12	\\if :skip_test
+17/collate.windows.win1252.sql	P4	1	/*
+17/collate.windows.win1252.sql	P3	150	SELECT current_database() AS datname \\gset
+17/compression_pglz.sql	P3	1	CREATE FUNCTION test_pglz_compress(bytea)
+17/compression_pglz.sql	P3	2	CREATE FUNCTION test_pglz_decompress(bytea, int4, bool)
+17/constraints.sql	P3	103	COPY COPY_TBL FROM :'filename'
+17/constraints.sql	P3	105	COPY COPY_TBL FROM :'filename'
+17/conversion.sql	P3	1	CREATE FUNCTION test_enc_setup() RETURNS void
+17/conversion.sql	P3	3	CREATE FUNCTION test_enc_conversion(bytea, name, name, bool, validlen OUT int, result OUT bytea)
+17/copy.sql	P2	50-53	copy copytest3 from stdin csv header
+17/copy.sql	P2	62-65	copy copytest4 from stdin (header)
+17/copy.sql	P2	128-130	copy parted_copytest from stdin
+17/copy.sql	P2	186-189	-- Generate COPY FROM report with PIPE.
+17/copy.sql	P2	212-212	copy header_copytest from stdin with (header wrong_choice)
+17/copy.sql	P2	215-217	-- works
+17/copy.sql	P2	219-221	copy header_copytest (c, a, b) from stdin with (header match)
+17/copy.sql	P2	223-225	copy header_copytest from stdin with (header match, format csv)
+17/copy.sql	P2	228-230	-- errors
+17/copy.sql	P2	232-234	copy header_copytest from stdin with (header match)
+17/copy.sql	P2	236-238	copy header_copytest from stdin with (header match)
+17/copy.sql	P2	240-242	copy header_copytest from stdin with (header match)
+17/copy.sql	P2	244-246	copy header_copytest from stdin with (header match)
+17/copy.sql	P2	253-255	-- works
+17/copy.sql	P2	257-259	copy header_copytest (a, c) from stdin with (header match)
+17/copy.sql	P2	262-264	-- errors
+17/copy.sql	P2	266-268	copy header_copytest (a, c) from stdin with (header match)
+17/copy.sql	P2	279-279	-- normal COPY should work
+17/copy.sql	P2	282-282	-- error if the column is excluded
+17/copy.sql	P2	285-285	-- error if the DEFAULT option is given
+17/copy.sql	P3	6	copy copytest to :'filename' csv
+17/copy.sql	P3	8	copy copytest2 from :'filename' csv
+17/copy.sql	P3	11	copy copytest to :'filename' csv quote '''' escape E'\\\\'
+17/copy.sql	P3	12	copy copytest2 from :'filename' csv quote '''' escape E'\\\\'
+17/copy.sql	P3	28	copy (select * from parted_copytest order by a) to :'filename'
+17/copy.sql	P3	30	copy parted_copytest from :'filename'
+17/copy.sql	P3	33	copy parted_copytest from :'filename' (freeze)
+17/copy.sql	P3	39	copy parted_copytest from :'filename'
+17/copy.sql	P3	53	copy tab_progress_reporting from :'filename'
+17/copy.sql	P3	86	COPY parted_si(id, data) FROM :'filename'
+17/copy2.sql	P2	30-32	COPY x (a, b, c, d, e) from stdin
+17/copy2.sql	P2	35-36	COPY x (b, d) from stdin
+17/copy2.sql	P2	39-43	COPY x (b, d) from stdin
+17/copy2.sql	P2	46-51	COPY x (a, b, c, d, e) from stdin
+17/copy2.sql	P2	55-55	-- non-existent column in column list: should fail
+17/copy2.sql	P2	59-59	-- redundant options
+17/copy2.sql	P2	61-61	COPY x from stdin (freeze off, freeze on)
+17/copy2.sql	P2	63-63	COPY x from stdin (delimiter ',', delimiter ',')
+17/copy2.sql	P2	65-65	COPY x from stdin (null ' ', null ' ')
+17/copy2.sql	P2	67-67	COPY x from stdin (header off, header on)
+17/copy2.sql	P2	69-69	COPY x from stdin (quote ':', quote ':')
+17/copy2.sql	P2	71-71	COPY x from stdin (escape ':', escape ':')
+17/copy2.sql	P2	73-73	COPY x from stdin (force_quote (a), force_quote *)
+17/copy2.sql	P2	75-75	COPY x from stdin (force_not_null (a), force_not_null (b))
+17/copy2.sql	P2	77-77	COPY x from stdin (force_null (a), force_null (b))
+17/copy2.sql	P2	79-79	COPY x from stdin (convert_selectively (a), convert_selectively (b))
+17/copy2.sql	P2	81-81	COPY x from stdin (encoding 'sql_ascii', encoding 'sql_ascii')
+17/copy2.sql	P2	83-83	COPY x from stdin (on_error ignore, on_error ignore)
+17/copy2.sql	P2	85-85	COPY x from stdin (log_verbosity default, log_verbosity verbose)
+17/copy2.sql	P2	89-89	-- incorrect options
+17/copy2.sql	P2	91-91	COPY x from stdin (format BINARY, null 'x')
+17/copy2.sql	P2	93-93	COPY x from stdin (format BINARY, on_error ignore)
+17/copy2.sql	P2	95-95	COPY x from stdin (on_error unsupported)
+17/copy2.sql	P2	97-97	COPY x from stdin (format TEXT, force_quote(a))
+17/copy2.sql	P2	99-99	COPY x from stdin (format TEXT, force_quote *)
+17/copy2.sql	P2	101-101	COPY x from stdin (format CSV, force_quote(a))
+17/copy2.sql	P2	103-103	COPY x from stdin (format CSV, force_quote *)
+17/copy2.sql	P2	105-105	COPY x from stdin (format TEXT, force_not_null(a))
+17/copy2.sql	P2	107-107	COPY x from stdin (format TEXT, force_not_null *)
+17/copy2.sql	P2	111-111	COPY x from stdin (format TEXT, force_null(a))
+17/copy2.sql	P2	113-113	COPY x from stdin (format TEXT, force_null *)
+17/copy2.sql	P2	118-118	COPY x from stdin (log_verbosity unsupported)
+17/copy2.sql	P2	122-122	-- too many columns in column list: should fail
+17/copy2.sql	P2	126-127	-- missing data: should fail
+17/copy2.sql	P2	129-130	COPY x from stdin
+17/copy2.sql	P2	132-133	COPY x from stdin
+17/copy2.sql	P2	137-138	-- extra data: should fail
+17/copy2.sql	P2	142-145	-- various COPY options: delimiters, oids, NULL string, encoding
+17/copy2.sql	P2	148-149	COPY x from stdin WITH DELIMITER AS ';' NULL AS ''
+17/copy2.sql	P2	152-161	COPY x from stdin WITH DELIMITER AS ':' NULL AS E'\\\\X' ENCODING 'sql_ascii'
+17/copy2.sql	P2	165-168	COPY x from stdin WHERE a = 50004
+17/copy2.sql	P2	171-176	COPY x from stdin WHERE a > 60003
+17/copy2.sql	P2	179-179	COPY x from stdin WHERE f > 60003
+17/copy2.sql	P2	182-182	COPY x from stdin WHERE a = max(x.b)
+17/copy2.sql	P2	185-185	COPY x from stdin WHERE a IN (SELECT 1 FROM x)
+17/copy2.sql	P2	188-188	COPY x from stdin WHERE a IN (generate_series(1,5))
+17/copy2.sql	P2	191-191	COPY x from stdin WHERE a = row_number() over(b)
+17/copy2.sql	P2	233-236	COPY testnl FROM stdin CSV
+17/copy2.sql	P2	242-246	COPY testeoc FROM stdin CSV
+17/copy2.sql	P2	258-260	COPY testnull FROM stdin WITH NULL AS E'\\\\0'
+17/copy2.sql	P2	267-269	COPY vistest FROM stdin CSV
+17/copy2.sql	P2	275-277	COPY vistest FROM stdin CSV
+17/copy2.sql	P2	282-284	COPY vistest FROM stdin CSV
+17/copy2.sql	P2	292-294	COPY vistest FROM stdin CSV FREEZE
+17/copy2.sql	P2	299-301	COPY vistest FROM stdin CSV FREEZE
+17/copy2.sql	P2	309-311	COPY vistest FROM stdin CSV FREEZE
+17/copy2.sql	P2	316-318	COPY vistest FROM stdin CSV FREEZE
+17/copy2.sql	P2	323-325	COPY vistest FROM stdin CSV FREEZE
+17/copy2.sql	P2	333-335	COPY vistest FROM stdin CSV FREEZE
+17/copy2.sql	P2	350-352	COPY vistest FROM stdin CSV FREEZE
+17/copy2.sql	P2	368-369	COPY forcetest (a, b, c) FROM STDIN WITH (FORMAT csv, FORCE_NOT_NULL(b), FORCE_NULL(c))
+17/copy2.sql	P2	375-376	COPY forcetest (a, b, c, d) FROM STDIN WITH (FORMAT csv, FORCE_NOT_NULL(c,d), FORCE_NULL(c,d))
+17/copy2.sql	P2	382-383	COPY forcetest (a, b, c) FROM STDIN WITH (FORMAT csv, FORCE_NULL(b), FORCE_NOT_NULL(c))
+17/copy2.sql	P2	388-388	COPY forcetest (d, e) FROM STDIN WITH (FORMAT csv, FORCE_NOT_NULL(b))
+17/copy2.sql	P2	393-393	COPY forcetest (d, e) FROM STDIN WITH (FORMAT csv, FORCE_NULL(b))
+17/copy2.sql	P2	398-399	COPY forcetest (a, b, c) FROM STDIN WITH (FORMAT csv, FORCE_NOT_NULL *, FORCE_NULL *)
+17/copy2.sql	P2	405-406	COPY forcetest (a, b, c) FROM STDIN WITH (FORMAT csv, FORCE_NOT_NULL *)
+17/copy2.sql	P2	412-413	COPY forcetest (a, b, c) FROM STDIN WITH (FORMAT csv, FORCE_NULL *)
+17/copy2.sql	P2	419-419	COPY forcetest (a, b, c) FROM STDIN WITH (FORMAT csv, FORCE_NOT_NULL *, FORCE_NOT_NULL(b))
+17/copy2.sql	P2	424-424	COPY forcetest (a, b, c) FROM STDIN WITH (FORMAT csv, FORCE_NULL *, FORCE_NULL(b))
+17/copy2.sql	P2	439-441	copy check_con_tbl from stdin
+17/copy2.sql	P2	443-444	copy check_con_tbl from stdin
+17/copy2.sql	P2	453-457	COPY rls_t1 (a, b, c) from stdin
+17/copy2.sql	P2	512-513	COPY instead_of_insert_tbl_view FROM stdin
+17/copy2.sql	P2	526-527	COPY instead_of_insert_tbl_view FROM stdin
+17/copy2.sql	P2	541-542	COPY instead_of_insert_tbl_view_2 FROM stdin
+17/copy2.sql	P2	550-556	COPY check_ign_err FROM STDIN WITH (on_error stop)
+17/copy2.sql	P2	562-571	-- want context for notices
+17/copy2.sql	P2	577-579	COPY check_ign_err2 FROM STDIN WITH (on_error ignore, log_verbosity verbose)
+17/copy2.sql	P2	591-592	COPY hard_err FROM STDIN WITH (on_error ignore)
+17/copy2.sql	P2	596-597	-- test missing data: should fail
+17/copy2.sql	P2	601-602	-- test extra data: should fail
+17/copy2.sql	P2	635-637	-- if DEFAULT is not specified, then the marker will be regular data
+17/copy2.sql	P2	644-646	copy copy_default from stdin with (format csv)
+17/copy2.sql	P2	654-654	-- DEFAULT cannot be used in binary mode
+17/copy2.sql	P2	658-658	-- DEFAULT cannot be new line nor carriage return
+17/copy2.sql	P2	660-660	copy copy_default from stdin with (default E'\\r')
+17/copy2.sql	P2	664-664	-- DELIMITER cannot appear in DEFAULT spec
+17/copy2.sql	P2	668-668	-- CSV quote cannot appear in DEFAULT spec
+17/copy2.sql	P2	672-672	-- NULL and DEFAULT spec must be different
+17/copy2.sql	P2	676-678	-- cannot use DEFAULT marker in column that has no DEFAULT value
+17/copy2.sql	P2	681-683	copy copy_default from stdin with (format csv, default '\\D')
+17/copy2.sql	P2	687-690	-- The DEFAULT marker must be unquoted and unescaped or it's not recognized
+17/copy2.sql	P2	697-700	copy copy_default from stdin with (format csv, default '\\D')
+17/copy2.sql	P2	708-711	-- successful usage of DEFAULT option in COPY
+17/copy2.sql	P2	718-721	copy copy_default from stdin with (format csv, default '\\D')
+17/copyselect.sql	P2	92-93	copy test3 from stdin
+17/copyselect.sql	P2	94-95	copy test3 from stdin
+17/copyselect.sql	P4	28	copy (select 1) to stdout\\
+17/copyselect.sql	P4	30	select 1/0\\
+17/copyselect.sql	P4	32	copy (select 1) to stdout\\
+17/copyselect.sql	P4	33	copy (select 2) to stdout\\
+17/copyselect.sql	P4	34	select 3\\
+17/copyselect.sql	P4	37	select 0\\
+17/copyselect.sql	P4	38	copy test3 from stdin\\
+17/copyselect.sql	P4	39	copy test3 from stdin\\
+17/create_function_c.sql	P3	1	LOAD :'regresslib'
+17/create_function_c.sql	P3	3	CREATE FUNCTION test1 (int) RETURNS int LANGUAGE C
+17/create_function_c.sql	P3	4	SELECT regexp_replace(:'LAST_ERROR_MESSAGE', 'file ".*"', 'file "..."')
+17/create_index.sql	P3	29	COPY slow_emp4000 FROM :'filename'
+17/create_index.sql	P3	120	COPY array_index_op_test FROM :'filename'
+17/create_index.sql	P3	578	SELECT pg_my_temp_schema()::regnamespace as temp_schema_name \\gset
+17/create_type.sql	P3	1	CREATE FUNCTION widget_in(cstring)
+17/create_type.sql	P3	2	CREATE FUNCTION widget_out(widget)
+17/create_type.sql	P3	3	CREATE FUNCTION int44in(cstring)
+17/create_type.sql	P3	4	CREATE FUNCTION int44out(city_budget)
+17/create_type.sql	P3	62	CREATE FUNCTION pt_in_widget(point, widget)
+17/create_view.sql	P2	73-77	COPY viewtest_tbl FROM stdin
+17/create_view.sql	P3	1	CREATE FUNCTION interpt_pp(path, path)
+17/create_view.sql	P3	3	COPY real_city FROM :'filename'
+17/domain.sql	P2	48-49	-- Test copy
+17/domain.sql	P2	52-53	COPY basictest (testvarchar) FROM stdin
+17/domain.sql	P2	112-114	COPY domarrtest FROM stdin
+17/domain.sql	P2	117-118	COPY domarrtest FROM stdin
+17/domain.sql	P2	343-344	-- Test copy
+17/domain.sql	P2	347-348	COPY nulltest FROM stdin
+17/domain.sql	P2	352-355	-- Last row is bad
+17/domain.sql	P2	402-403	-- Test defaults with copy
+17/encoding.sql	P5	3-3	\\if :skip_test
+17/encoding.sql	P3	1	/* skip test if not UTF8 server encoding */
+17/encoding.sql	P3	2	CREATE FUNCTION test_text_to_bytea(text) RETURNS bytea
+17/encoding.sql	P3	3	CREATE FUNCTION test_mblen_func(text, text, text, int) RETURNS int
+17/encoding.sql	P3	4	CREATE FUNCTION test_text_to_wchars(text, text) RETURNS int[]
+17/encoding.sql	P3	5	CREATE FUNCTION test_wchars_to_text(text, int[]) RETURNS text
+17/encoding.sql	P3	6	CREATE FUNCTION test_valid_server_encoding(text) RETURNS boolean
+17/enum.sql	P2	134-136	COPY enumtest FROM stdin
+17/euc_kr.sql	P5	5-5	\\if :skip_test
+17/euc_kr.sql	P4	1	SELECT getdatabaseencoding() NOT IN ('EUC_KR', 'UTF8') AS skip_test \\gset
+17/event_trigger_login.sql	P3	8	SELECT dathasloginevt FROM pg_database WHERE datname= :'DBNAME'
+17/foreign_data.sql	P3	1	CREATE FUNCTION test_fdw_handler()
+17/generated.sql	P2	196-198	COPY gtest1 FROM stdin
+17/generated.sql	P2	201-201	COPY gtest1 (a, b) FROM stdin
+17/generated.sql	P2	204-204	COPY gtest1 FROM stdin WHERE b <> 10
+17/generated.sql	P2	207-207	COPY gtest1 FROM stdin WHERE gtest1 IS NULL
+17/generated.sql	P2	219-221	COPY gtest3 FROM stdin
+17/generated.sql	P2	224-224	COPY gtest3 (a, b) FROM stdin
+17/groupingsets.sql	P2	16-25	copy gstest2 from stdin
+17/groupingsets.sql	P2	29-31	copy gstest3 from stdin
+17/hash_index.sql	P3	5	COPY hash_i4_heap FROM :'filename'
+17/hash_index.sql	P3	6	COPY hash_name_heap FROM :'filename'
+17/hash_index.sql	P3	7	COPY hash_txt_heap FROM :'filename'
+17/hash_index.sql	P3	8	COPY hash_f8_heap FROM :'filename'
+17/identity.sql	P2	134-136	COPY itest9 FROM stdin
+17/identity.sql	P2	139-141	COPY itest9 (b, c) FROM stdin
+17/indirect_toast.sql	P3	1	CREATE FUNCTION make_tuple_indirect (record)
+17/infinite_recurse.sql	P5	18-18	\\if :skip_test
+17/infinite_recurse.sql	P4	2	SELECT version() ~ 'powerpc64[^,]*-linux-gnu'
+17/insert.sql	P2	629-631	copy donothingbrtrig_test from stdout
+17/interval.sql	P2	128-136	COPY INTERVAL_MULDIV_TBL FROM STDIN
+17/json_encoding.sql	P5	9-9	\\if :skip_test
+17/json_encoding.sql	P4	1	SELECT getdatabaseencoding() NOT IN ('UTF8', 'SQL_ASCII')
+17/jsonb.sql	P3	2	COPY testjsonb FROM :'filename'
+17/jsonb.sql	P3	900	select ('{"a": 1}'::jsonb)['a':'b']
+17/jsonpath_encoding.sql	P5	9-9	\\if :skip_test
+17/jsonpath_encoding.sql	P4	1	SELECT getdatabaseencoding() NOT IN ('UTF8', 'SQL_ASCII')
+17/largeobject.sql	P3	17	COMMENT ON LARGE OBJECT :newloid IS 'I Wandered Lonely as a Cloud'
+17/largeobject.sql	P3	32	DO :'dobody'
+17/largeobject.sql	P3	64	INSERT INTO lotest_stash_values (loid) SELECT lo_import(:'filename')
+17/largeobject.sql	P3	77	SELECT lo_export(loid, :'filename') FROM lotest_stash_values
+17/largeobject.sql	P3	78	SELECT pageno, data FROM pg_largeobject WHERE loid = (SELECT loid from lotest_stash_values)
+17/largeobject.sql	P3	81	SELECT lo_from_bytea(0, lo_get(:newloid_1)) AS newloid_2
+17/largeobject.sql	P3	82	SELECT fipshash(lo_get(:newloid_1)) = fipshash(lo_get(:newloid_2))
+17/largeobject.sql	P3	83	SELECT lo_get(:newloid_1, 0, 20)
+17/largeobject.sql	P3	84	SELECT lo_get(:newloid_1, 10, 20)
+17/largeobject.sql	P3	85	SELECT lo_put(:newloid_1, 5, decode('afafafaf', 'hex'))
+17/largeobject.sql	P3	86	SELECT lo_get(:newloid_1, 0, 20)
+17/largeobject.sql	P3	87	SELECT lo_put(:newloid_1, 4294967310, 'foo')
+17/largeobject.sql	P3	88	SELECT lo_get(:newloid_1)
+17/largeobject.sql	P3	89	SELECT lo_get(:newloid_1, 4294967294, 100)
+17/largeobject.sql	P3	92	SELECT lo_get(:newloid)
+17/largeobject.sql	P3	112	SELECT lo_import(:'filename')
+17/lock.sql	P3	130	CREATE FUNCTION test_atomic_ops()
+17/misc.sql	P3	1	CREATE FUNCTION overpaid(emp)
+17/misc.sql	P3	2	CREATE FUNCTION reverse_name(name)
+17/misc.sql	P3	9	COPY onek TO :'filename'
+17/misc.sql	P3	11	COPY onek_copy FROM :'filename'
+17/misc.sql	P3	14	COPY BINARY stud_emp TO :'filename'
+17/misc.sql	P3	16	COPY BINARY stud_emp_copy FROM :'filename'
+17/misc_functions.sql	P3	23	CREATE FUNCTION test_canonicalize_path(text)
+17/misc_functions.sql	P3	62	select (w).size = :segsize as ok
+17/misc_functions.sql	P3	95	CREATE FUNCTION test_support_func(internal)
+17/misc_functions.sql	P3	110	SELECT segment_number, file_offset
+17/misc_functions.sql	P3	111	SELECT segment_number, file_offset
+17/misc_functions.sql	P3	112	SELECT segment_number, file_offset = :segment_size - 1
+17/misc_functions.sql	P3	121	SELECT pg_column_toast_chunk_id(a) IS NULL,
+17/mvcc.sql	P4	8	SELECT pg_relation_size('clean_aborted_self_key') AS clean_aborted_self_key_before \\gset
+17/mvcc.sql	P3	9	SELECT :clean_aborted_self_key_before AS size_before, pg_relation_size('clean_aborted_self_key') size_after
+17/numeric.sql	P2	880-899	COPY width_bucket_test (operand_num) FROM stdin
+17/plpgsql.sql	P2	1863-1866	copy rc_test from stdin
+17/prepared_xacts.sql	P5	2-2	\\if :skip_test
+17/prepared_xacts.sql	P4	1	SELECT current_setting('max_prepared_transactions')::integer < 2 AS skip_test \\gset
+17/privileges.sql	P2	250-250	COPY atest2 FROM stdin
+17/privileges.sql	P2	294-294	COPY atest2 FROM stdin
+17/privileges.sql	P2	302-303	COPY atest2 FROM stdin
+17/privileges.sql	P2	538-538	COPY atest5 FROM stdin
+17/privileges.sql	P2	540-541	COPY atest5 (two) FROM stdin
+17/psql.sql	P2	1438-1446	COPY psql_comics FROM STDIN
+17/psql.sql	P2	1520-1524	\\copy no_such_table from stdin
+17/psql.sql	P5	873-874	not okay;
+17/psql.sql	P5	885-885	(bogus
+17/psql.sql	P5	951-951	\\if invalid boolean expression
+17/psql.sql	P5	999-1057	:try_to_quit
+17/psql.sql	P5	1066-1066	end
+17/psql.sql	P5	1075-1075	\\if :{?i}
+17/psql.sql	P5	1081-1081	\\if :{?no_such_variable}
+17/psql.sql	P4	1	SELECT 1 as one, 2 as two \\g
+17/psql.sql	P4	2	SELECT 3 as three, 4 as four \\gx
+17/psql.sql	P4	3	SELECT 1 as one, 2 as two \\g
+17/psql.sql	P4	4	SELECT 3 as three, 4 as four \\gx
+17/psql.sql	P4	5	SELECT 1 as one, 2 as two \\g (format=csv csv_fieldsep='\\t')
+17/psql.sql	P4	6	SELECT 1 as one, 2 as two \\gx (title='foo bar')
+17/psql.sql	P4	7	SELECT 1 \\bind \\g
+17/psql.sql	P4	8	SELECT 2 \\bind \\g
+17/psql.sql	P3	9	select 97 as "EOF", 'ok' as _foo \\gset IGNORE
+17/psql.sql	P4	11	EXECUTE test \\gdesc
+17/psql.sql	P4	13	SELECT 3 AS x, 'Hello', 4 AS y, true AS "dirty\\name" \\gdesc \\g
+17/psql_crosstab.sql	P4	4	SELECT v, to_char(d, 'Mon') AS "month name", EXTRACT(month FROM d) AS num,
+17/psql_crosstab.sql	P4	7	SELECT * FROM ctv_data \\crosstabview
+17/psql_crosstab.sql	P4	8	SELECT * FROM ctv_data \\crosstabview
+17/reloptions.sql	P3	45	SELECT reltoastrelid as toast_oid
+17/reloptions.sql	P3	47	SELECT reloptions FROM pg_class WHERE oid = :toast_oid
+17/reloptions.sql	P3	49	SELECT reloptions FROM pg_class WHERE oid = :toast_oid
+17/rowsecurity.sql	P2	240-244	COPY t1 FROM stdin WITH
+17/rowsecurity.sql	P2	250-254	COPY t2 FROM stdin
+17/rowsecurity.sql	P2	261-264	COPY t3(id, a,b,c) FROM stdin
+17/rowsecurity.sql	P2	1639-1643	COPY copy_t FROM STDIN
+17/rowsecurity.sql	P2	1646-1650	COPY copy_t FROM STDIN
+17/rowsecurity.sql	P2	1656-1656	COPY copy_t FROM STDIN
+17/rowsecurity.sql	P2	1659-1659	COPY copy_t FROM STDIN
+17/rowsecurity.sql	P2	1665-1669	COPY copy_t FROM STDIN
+17/rowsecurity.sql	P2	1675-1675	COPY copy_t FROM STDIN
+17/rowsecurity.sql	P2	1678-1678	COPY copy_t FROM STDIN
+17/rules.sql	P3	69	** Remember the delete rule on rtest_v1: It says
+17/sqljson.sql	P3	64	SELECT JSON_OBJECT('foo': NULL::int FORMAT JSON)
+17/sqljson.sql	P3	65	SELECT JSON_OBJECT('foo': NULL::int FORMAT JSON ENCODING UTF8)
+17/sqljson.sql	P3	66	SELECT JSON_OBJECT('foo': NULL::json FORMAT JSON)
+17/sqljson.sql	P3	67	SELECT JSON_OBJECT('foo': NULL::json FORMAT JSON ENCODING UTF8)
+17/sqljson.sql	P3	68	SELECT JSON_OBJECT('foo': NULL::jsonb FORMAT JSON)
+17/sqljson.sql	P3	69	SELECT JSON_OBJECT('foo': NULL::jsonb FORMAT JSON ENCODING UTF8)
+17/sqljson.sql	P3	70	SELECT JSON_OBJECT(NULL: 1)
+17/sqljson.sql	P3	71	SELECT JSON_OBJECT('a': 2 + 3)
+17/sqljson.sql	P3	75	SELECT JSON_OBJECT('a': 2::text)
+17/sqljson.sql	P3	77	SELECT JSON_OBJECT(1::text: 2)
+17/sqljson.sql	P3	79	SELECT JSON_OBJECT(json '[1]': 123)
+17/sqljson.sql	P3	81	SELECT JSON_OBJECT(
+17/sqljson.sql	P3	82	SELECT JSON_OBJECT(
+17/sqljson.sql	P3	83	/*
+17/sqljson.sql	P3	84	SELECT JSON_OBJECT('a': '123', 'b': JSON_OBJECT('a': 111, 'b': 'aaa' RETURNING jsonb))
+17/sqljson.sql	P3	85	SELECT JSON_OBJECT('a': JSON_OBJECT('b': 1 RETURNING text))
+17/sqljson.sql	P3	86	SELECT JSON_OBJECT('a': JSON_OBJECT('b': 1 RETURNING text) FORMAT JSON)
+17/sqljson.sql	P3	87	SELECT JSON_OBJECT('a': JSON_OBJECT('b': 1 RETURNING bytea))
+17/sqljson.sql	P3	88	SELECT JSON_OBJECT('a': JSON_OBJECT('b': 1 RETURNING bytea) FORMAT JSON)
+17/sqljson.sql	P3	89	SELECT JSON_OBJECT('a': '1', 'b': NULL, 'c': 2)
+17/sqljson.sql	P3	90	SELECT JSON_OBJECT('a': '1', 'b': NULL, 'c': 2 NULL ON NULL)
+17/sqljson.sql	P3	91	SELECT JSON_OBJECT('a': '1', 'b': NULL, 'c': 2 ABSENT ON NULL)
+17/sqljson.sql	P3	92	SELECT JSON_OBJECT(1: 1, '2': NULL, '3': 1, repeat('x', 1000): 1, 2: repeat('a', 100) WITH UNIQUE)
+17/sqljson.sql	P3	93	SELECT JSON_OBJECT(1: 1, '1': NULL WITH UNIQUE)
+17/sqljson.sql	P3	94	SELECT JSON_OBJECT(1: 1, '1': NULL ABSENT ON NULL WITH UNIQUE)
+17/sqljson.sql	P3	95	SELECT JSON_OBJECT(1: 1, '1': NULL NULL ON NULL WITH UNIQUE RETURNING jsonb)
+17/sqljson.sql	P3	96	SELECT JSON_OBJECT(1: 1, '1': NULL ABSENT ON NULL WITH UNIQUE RETURNING jsonb)
+17/sqljson.sql	P3	97	SELECT JSON_OBJECT(1: 1, '2': NULL, '1': 1 NULL ON NULL WITH UNIQUE)
+17/sqljson.sql	P3	98	SELECT JSON_OBJECT(1: 1, '2': NULL, '1': 1 ABSENT ON NULL WITH UNIQUE)
+17/sqljson.sql	P3	99	SELECT JSON_OBJECT(1: 1, '2': NULL, '1': 1 ABSENT ON NULL WITHOUT UNIQUE)
+17/sqljson.sql	P3	100	SELECT JSON_OBJECT(1: 1, '2': NULL, '1': 1 ABSENT ON NULL WITH UNIQUE RETURNING jsonb)
+17/sqljson.sql	P3	101	SELECT JSON_OBJECT(1: 1, '2': NULL, '1': 1 ABSENT ON NULL WITHOUT UNIQUE RETURNING jsonb)
+17/sqljson.sql	P3	102	SELECT JSON_OBJECT(1: 1, '2': NULL, '3': 1, 4: NULL, '5': 'a' ABSENT ON NULL WITH UNIQUE RETURNING jsonb)
+17/sqljson.sql	P3	106	SELECT JSON_OBJECT('happy'::mood: '123'::jsonb)
+17/sqljson.sql	P3	151	SELECT\tJSON_OBJECTAGG('key': 1) IS NULL,
+17/sqljson.sql	P3	152	SELECT JSON_OBJECTAGG(NULL: 1)
+17/sqljson.sql	P3	153	SELECT JSON_OBJECTAGG(NULL: 1 RETURNING jsonb)
+17/sqljson.sql	P3	154	SELECT
+17/sqljson.sql	P3	155	SELECT
+17/sqljson.sql	P3	156	SELECT JSON_OBJECTAGG(k: v WITH UNIQUE KEYS)
+17/sqljson.sql	P3	157	SELECT JSON_OBJECTAGG(k: v ABSENT ON NULL WITH UNIQUE KEYS)
+17/sqljson.sql	P3	158	SELECT JSON_OBJECTAGG(k: v ABSENT ON NULL WITH UNIQUE KEYS)
+17/sqljson.sql	P3	159	SELECT JSON_OBJECTAGG(k: v WITH UNIQUE KEYS RETURNING jsonb)
+17/sqljson.sql	P3	160	SELECT JSON_OBJECTAGG(k: v ABSENT ON NULL WITH UNIQUE KEYS RETURNING jsonb)
+17/sqljson.sql	P3	161	SELECT JSON_OBJECTAGG(k: v ABSENT ON NULL WITH UNIQUE KEYS RETURNING jsonb)
+17/sqljson.sql	P3	174	EXPLAIN (VERBOSE, COSTS OFF)
+17/sqljson.sql	P3	175	EXPLAIN (VERBOSE, COSTS OFF)
+17/sqljson.sql	P3	176	CREATE VIEW json_objectagg_view AS
+17/sqljson.sql	P3	212	SELECT JSON_OBJECT('a': JSON_OBJECT('b': 1 RETURNING varchar(2)))
+17/sqljson.sql	P3	215	SELECT JSON_OBJECTAGG(i: ('111' || i)::bytea FORMAT JSON WITH UNIQUE RETURNING varchar(2)) FROM generate_series(1, 1) i
+17/sqljson.sql	P3	221	EXPLAIN (VERBOSE, COSTS OFF) SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': volatile_one() RETURNING text) FORMAT JSON)
+17/sqljson.sql	P3	222	SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': volatile_one() RETURNING text) FORMAT JSON)
+17/sqljson.sql	P3	223	EXPLAIN (VERBOSE, COSTS OFF) SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': stable_one() RETURNING text) FORMAT JSON)
+17/sqljson.sql	P3	224	SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': stable_one() RETURNING text) FORMAT JSON)
+17/sqljson.sql	P3	225	EXPLAIN (VERBOSE, COSTS OFF) SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': 1 RETURNING text) FORMAT JSON)
+17/sqljson.sql	P3	226	SELECT JSON_OBJECT('a': JSON_OBJECTAGG('b': 1 RETURNING text) FORMAT JSON)
+17/sqljson.sql	P3	228	EXPLAIN (VERBOSE, COSTS OFF)
+17/sqljson.sql	P3	229	SELECT i % 2 AS g,
+17/stats.sql	P5	412-412	\\if :{?description_before}
+17/stats.sql	P5	413-413	COMMENT ON DATABASE :"datname" IS :'description_before';
+17/stats.sql	P4	6	SELECT oid AS dboid from pg_database where datname = current_database() \\gset
+17/stats.sql	P4	67	SELECT 'stats_test_func1()'::regprocedure::oid AS stats_test_func1_oid \\gset
+17/stats.sql	P4	68	SELECT 'stats_test_func2()'::regprocedure::oid AS stats_test_func2_oid \\gset
+17/stats.sql	P3	70	SELECT pg_stat_get_function_calls(:stats_test_func1_oid)
+17/stats.sql	P3	71	SELECT pg_stat_get_xact_function_calls(:stats_test_func1_oid)
+17/stats.sql	P3	73	SELECT pg_stat_get_xact_function_calls(:stats_test_func1_oid)
+17/stats.sql	P3	75	SELECT pg_stat_get_xact_function_calls(:stats_test_func1_oid)
+17/stats.sql	P3	76	SELECT pg_stat_get_function_calls(:stats_test_func1_oid)
+17/stats.sql	P3	83	SELECT pg_stat_get_xact_function_calls(:stats_test_func2_oid)
+17/stats.sql	P3	90	SELECT funcname, calls FROM pg_stat_user_functions WHERE funcid = :stats_test_func1_oid
+17/stats.sql	P3	91	SELECT funcname, calls FROM pg_stat_user_functions WHERE funcid = :stats_test_func2_oid
+17/stats.sql	P3	93	SELECT funcname, calls FROM pg_stat_user_functions WHERE funcid = :stats_test_func1_oid
+17/stats.sql	P3	95	SELECT funcname, calls FROM pg_stat_user_functions WHERE funcid = :stats_test_func1_oid
+17/stats.sql	P3	96	SELECT pg_stat_get_function_calls(:stats_test_func1_oid)
+17/stats.sql	P3	98	SELECT funcname, calls FROM pg_stat_user_functions WHERE funcid = :stats_test_func1_oid
+17/stats.sql	P3	99	SELECT pg_stat_get_function_calls(:stats_test_func1_oid)
+17/stats.sql	P3	103	SELECT funcname, calls FROM pg_stat_user_functions WHERE funcid = :stats_test_func1_oid
+17/stats.sql	P3	104	SELECT pg_stat_get_function_calls(:stats_test_func1_oid)
+17/stats.sql	P3	112	SELECT funcname, calls FROM pg_stat_user_functions WHERE funcid = :stats_test_func2_oid
+17/stats.sql	P3	113	SELECT pg_stat_get_function_calls(:stats_test_func2_oid)
+17/stats.sql	P4	116	SELECT 'drop_stats_test'::regclass::oid AS drop_stats_test_oid \\gset
+17/stats.sql	P4	118	SELECT 'drop_stats_test_xact'::regclass::oid AS drop_stats_test_xact_oid \\gset
+17/stats.sql	P4	120	SELECT 'drop_stats_test_subxact'::regclass::oid AS drop_stats_test_subxact_oid \\gset
+17/stats.sql	P3	121	SELECT pg_stat_get_live_tuples(:drop_stats_test_oid)
+17/stats.sql	P3	123	SELECT pg_stat_get_live_tuples(:drop_stats_test_oid)
+17/stats.sql	P3	124	SELECT pg_stat_get_xact_tuples_inserted(:drop_stats_test_oid)
+17/stats.sql	P3	125	SELECT pg_stat_get_live_tuples(:drop_stats_test_xact_oid)
+17/stats.sql	P3	126	SELECT pg_stat_get_tuples_inserted(:drop_stats_test_xact_oid)
+17/stats.sql	P3	127	SELECT pg_stat_get_xact_tuples_inserted(:drop_stats_test_xact_oid)
+17/stats.sql	P3	130	SELECT pg_stat_get_xact_tuples_inserted(:drop_stats_test_xact_oid)
+17/stats.sql	P3	132	SELECT pg_stat_get_xact_tuples_inserted(:drop_stats_test_xact_oid)
+17/stats.sql	P3	135	SELECT pg_stat_get_live_tuples(:drop_stats_test_xact_oid)
+17/stats.sql	P3	136	SELECT pg_stat_get_tuples_inserted(:drop_stats_test_xact_oid)
+17/stats.sql	P3	137	SELECT pg_stat_get_live_tuples(:drop_stats_test_xact_oid)
+17/stats.sql	P3	138	SELECT pg_stat_get_tuples_inserted(:drop_stats_test_xact_oid)
+17/stats.sql	P3	141	SELECT pg_stat_get_xact_tuples_inserted(:drop_stats_test_xact_oid)
+17/stats.sql	P3	143	SELECT pg_stat_get_xact_tuples_inserted(:drop_stats_test_xact_oid)
+17/stats.sql	P3	146	SELECT pg_stat_get_live_tuples(:drop_stats_test_xact_oid)
+17/stats.sql	P3	147	SELECT pg_stat_get_tuples_inserted(:drop_stats_test_xact_oid)
+17/stats.sql	P3	148	SELECT pg_stat_get_live_tuples(:drop_stats_test_subxact_oid)
+17/stats.sql	P3	153	SELECT pg_stat_get_xact_tuples_inserted(:drop_stats_test_subxact_oid)
+17/stats.sql	P3	157	SELECT pg_stat_get_xact_tuples_inserted(:drop_stats_test_subxact_oid)
+17/stats.sql	P3	160	SELECT pg_stat_get_live_tuples(:drop_stats_test_subxact_oid)
+17/stats.sql	P3	161	SELECT pg_stat_get_live_tuples(:drop_stats_test_subxact_oid)
+17/stats.sql	P3	168	SELECT pg_stat_get_live_tuples(:drop_stats_test_subxact_oid)
+17/stats.sql	P3	169	SELECT pg_stat_get_live_tuples(:drop_stats_test_subxact_oid)
+17/stats.sql	P3	176	SELECT pg_stat_get_live_tuples(:drop_stats_test_subxact_oid)
+17/stats.sql	P4	198	SELECT last_seq_scan AS test_last_seq, last_idx_scan AS test_last_idx
+17/stats.sql	P3	207	SELECT seq_scan, :'test_last_seq' < last_seq_scan AS seq_ok, idx_scan, :'test_last_idx' = last_idx_scan AS idx_ok
+17/stats.sql	P4	208	SELECT last_seq_scan AS test_last_seq, last_idx_scan AS test_last_idx
+17/stats.sql	P3	217	SELECT seq_scan, :'test_last_seq' = last_seq_scan AS seq_ok, idx_scan, :'test_last_idx' < last_idx_scan AS idx_ok
+17/stats.sql	P4	218	SELECT last_seq_scan AS test_last_seq, last_idx_scan AS test_last_idx
+17/stats.sql	P3	227	SELECT seq_scan, :'test_last_seq' = last_seq_scan AS seq_ok, idx_scan, :'test_last_idx' < last_idx_scan AS idx_ok
+17/stats.sql	P4	228	SELECT shobj_description(d.oid, 'pg_database') as description_before
+17/stats.sql	P3	229	SELECT current_database() as datname \\gset
+17/stats.sql	P4	235	SELECT stats_reset AS shared_db_reset_before
+17/stats.sql	P3	236	SELECT stats_reset > :'shared_db_reset_before'::timestamptz AS has_updated
+17/stats.sql	P3	237	COMMENT ON DATABASE :"datname" IS NULL
+17/stats.sql	P4	238	SELECT sessions AS db_stat_sessions FROM pg_stat_database WHERE datname = (SELECT current_database()) \\gset
+17/stats.sql	P3	239	SELECT sessions > :db_stat_sessions FROM pg_stat_database WHERE datname = (SELECT current_database())
+17/stats.sql	P4	240	SELECT num_requested AS rqst_ckpts_before FROM pg_stat_checkpointer \\gset
+17/stats.sql	P3	244	SELECT num_requested > :rqst_ckpts_before FROM pg_stat_checkpointer
+17/stats.sql	P3	245	SELECT wal_bytes > :wal_bytes_before FROM pg_stat_wal
+17/stats.sql	P4	247	SELECT stats_reset AS slru_commit_ts_reset_ts FROM pg_stat_slru WHERE name = 'commit_timestamp' \\gset
+17/stats.sql	P3	248	SELECT stats_reset > :'slru_commit_ts_reset_ts'::timestamptz FROM pg_stat_slru WHERE name = 'commit_timestamp'
+17/stats.sql	P4	249	SELECT stats_reset AS slru_commit_ts_reset_ts FROM pg_stat_slru WHERE name = 'commit_timestamp' \\gset
+17/stats.sql	P3	250	SELECT stats_reset > :'slru_commit_ts_reset_ts'::timestamptz FROM pg_stat_slru WHERE name = 'commit_timestamp'
+17/stats.sql	P3	251	SELECT stats_reset > :'slru_notify_reset_ts'::timestamptz FROM pg_stat_slru WHERE name = 'notify'
+17/stats.sql	P4	252	SELECT stats_reset AS archiver_reset_ts FROM pg_stat_archiver \\gset
+17/stats.sql	P3	253	SELECT stats_reset > :'archiver_reset_ts'::timestamptz FROM pg_stat_archiver
+17/stats.sql	P4	254	SELECT stats_reset AS bgwriter_reset_ts FROM pg_stat_bgwriter \\gset
+17/stats.sql	P3	255	SELECT stats_reset > :'bgwriter_reset_ts'::timestamptz FROM pg_stat_bgwriter
+17/stats.sql	P4	256	SELECT stats_reset AS checkpointer_reset_ts FROM pg_stat_checkpointer \\gset
+17/stats.sql	P3	257	SELECT stats_reset > :'checkpointer_reset_ts'::timestamptz FROM pg_stat_checkpointer
+17/stats.sql	P4	258	SELECT stats_reset AS recovery_prefetch_reset_ts FROM pg_stat_recovery_prefetch \\gset
+17/stats.sql	P3	259	SELECT stats_reset > :'recovery_prefetch_reset_ts'::timestamptz FROM pg_stat_recovery_prefetch
+17/stats.sql	P4	260	SELECT max(stats_reset) AS slru_reset_ts FROM pg_stat_slru \\gset
+17/stats.sql	P3	261	SELECT max(stats_reset) > :'slru_reset_ts'::timestamptz FROM pg_stat_slru
+17/stats.sql	P4	262	SELECT stats_reset AS wal_reset_ts FROM pg_stat_wal \\gset
+17/stats.sql	P3	263	SELECT stats_reset > :'wal_reset_ts'::timestamptz FROM pg_stat_wal
+17/stats.sql	P4	266	SELECT stats_reset AS db_reset_ts FROM pg_stat_database WHERE datname = (SELECT current_database()) \\gset
+17/stats.sql	P3	267	SELECT stats_reset > :'db_reset_ts'::timestamptz FROM pg_stat_database WHERE datname = (SELECT current_database())
+17/stats.sql	P3	291	SELECT pg_stat_have_stats('database', :dboid, 1)
+17/stats.sql	P3	292	SELECT pg_stat_have_stats('database', :dboid, 0)
+17/stats.sql	P4	295	SELECT 'stats_test_idx1'::regclass::oid AS stats_test_idx1_oid \\gset
+17/stats.sql	P3	297	SELECT pg_stat_have_stats('relation', :dboid, :stats_test_idx1_oid)
+17/stats.sql	P3	298	SELECT pg_stat_have_stats('relation', :dboid, :stats_test_idx1_oid)
+17/stats.sql	P3	300	SELECT pg_stat_have_stats('relation', :dboid, :stats_test_idx1_oid)
+17/stats.sql	P4	303	SELECT 'stats_test_idx1'::regclass::oid AS stats_test_idx1_oid \\gset
+17/stats.sql	P3	304	SELECT pg_stat_have_stats('relation', :dboid, :stats_test_idx1_oid)
+17/stats.sql	P3	306	SELECT pg_stat_have_stats('relation', :dboid, :stats_test_idx1_oid)
+17/stats.sql	P4	308	SELECT 'stats_test_idx1'::regclass::oid AS stats_test_idx1_oid \\gset
+17/stats.sql	P3	309	SELECT pg_stat_have_stats('relation', :dboid, :stats_test_idx1_oid)
+17/stats.sql	P3	311	SELECT pg_stat_have_stats('relation', :dboid, :stats_test_idx1_oid)
+17/stats.sql	P3	312	SELECT 'stats_test_idx1'::regclass::oid AS stats_test_idx1_oid \\gset
+17/stats.sql	P3	314	SELECT pg_stat_have_stats('relation', :dboid, :stats_test_idx1_oid)
+17/stats.sql	P3	317	SELECT pg_stat_have_stats('relation', :dboid, :stats_test_idx1_oid)
+17/stats.sql	P4	321	SELECT sum(extends) AS io_sum_shared_before_extends
+17/stats.sql	P3	324	SELECT sum(extends) AS io_sum_shared_after_extends
+17/stats.sql	P3	327	SELECT sum(writes) AS writes, sum(fsyncs) AS fsyncs
+17/stats.sql	P3	328	SELECT current_setting('fsync') = 'off'
+17/stats.sql	P4	329	SELECT sum(reads) AS io_sum_shared_before_reads
+17/stats.sql	P3	334	SELECT sum(reads) AS io_sum_shared_after_reads
+17/stats.sql	P4	335	SELECT sum(hits) AS io_sum_shared_before_hits
+17/stats.sql	P3	344	SELECT sum(hits) AS io_sum_shared_after_hits
+17/stats.sql	P4	348	SELECT sum(extends) AS extends, sum(evictions) AS evictions, sum(writes) AS writes
+17/stats.sql	P4	350	SELECT sum(reads) AS io_sum_local_before_reads
+17/stats.sql	P3	352	SELECT sum(evictions) AS evictions,
+17/stats.sql	P3	355	SELECT sum(writes) AS io_sum_local_new_tblspc_writes
+17/stats.sql	P4	358	SELECT sum(reuses) AS reuses, sum(reads) AS reads, sum(evictions) AS evictions
+17/stats.sql	P3	363	SELECT sum(reuses) AS reuses, sum(reads) AS reads, sum(evictions) AS evictions
+17/stats.sql	P3	364	SELECT (:io_sum_vac_strategy_after_reuses + :io_sum_vac_strategy_after_evictions) >
+17/stats.sql	P4	366	SELECT sum(extends) AS io_sum_bulkwrite_strategy_extends_before
+17/stats.sql	P3	368	SELECT sum(extends) AS io_sum_bulkwrite_strategy_extends_after
+17/stats.sql	P4	370	SELECT sum(evictions) + sum(reuses) + sum(extends) + sum(fsyncs) + sum(reads) + sum(writes) + sum(writebacks) + sum(hits) AS io_stats_pre_reset
+17/stats.sql	P3	371	SELECT sum(evictions) + sum(reuses) + sum(extends) + sum(fsyncs) + sum(reads) + sum(writes) + sum(writebacks) + sum(hits) AS io_stats_post_reset
+17/strings.sql	P4	417	select 'a\\\\bcd' as f1, 'a\\\\b\\'cd' as f2, 'a\\\\b\\'''cd' as f3, 'abcd\\\\'   as f4, 'ab\\\\\\'cd' as f5, '\\\\\\\\' as f6;
+17/subscription.sql	P4	19	SELECT stats_reset as prev_stats_reset FROM pg_stat_subscription_stats WHERE subname = 'regress_testsub' \\gset
+17/subscription.sql	P3	20	SELECT :'prev_stats_reset' < stats_reset FROM pg_stat_subscription_stats WHERE subname = 'regress_testsub'
+17/tablespace.sql	P4	33	SELECT relfilenode as main_filenode FROM pg_class
+17/tablespace.sql	P3	42	SELECT relfilenode = :main_filenode AS main_same FROM pg_class
+17/tablespace.sql	P3	43	SELECT relfilenode = :toast_filenode as toast_same FROM pg_class
+17/test_setup.sql	P3	29	COPY onek FROM :'filename'
+17/test_setup.sql	P3	34	COPY tenk1 FROM :'filename'
+17/test_setup.sql	P3	39	COPY person FROM :'filename'
+17/test_setup.sql	P3	42	COPY emp FROM :'filename'
+17/test_setup.sql	P3	45	COPY student FROM :'filename'
+17/test_setup.sql	P3	48	COPY stud_emp FROM :'filename'
+17/test_setup.sql	P3	51	COPY road FROM :'filename'
+17/test_setup.sql	P3	62	CREATE FUNCTION binary_coercible(oid, oid)
+17/test_setup.sql	P3	63	CREATE FUNCTION ttdummy ()
+17/transactions.sql	P4	378	SELECT 1\\
+17/transactions.sql	P4	379	SELECT 2\\
+17/transactions.sql	P4	381	insert into i_table values(1)\\
+17/transactions.sql	P4	383	insert into i_table values(2)\\
+17/transactions.sql	P4	384	select * from i_table\\
+17/transactions.sql	P4	388	begin\\
+17/transactions.sql	P4	389	insert into i_table values(3)\\
+17/transactions.sql	P4	392	begin\\
+17/transactions.sql	P4	393	insert into i_table values(4)\\
+17/transactions.sql	P4	396	select 1\\
+17/transactions.sql	P4	397	begin\\
+17/transactions.sql	P4	400	select 1\\
+17/transactions.sql	P4	401	begin\\
+17/transactions.sql	P4	404	insert into i_table values(7)\\
+17/transactions.sql	P4	405	commit\\
+17/transactions.sql	P4	406	insert into i_table values(8)\\
+17/transactions.sql	P4	408	insert into i_table values(9)\\
+17/transactions.sql	P4	409	rollback\\
+17/transactions.sql	P4	413	SELECT 1\\
+17/transactions.sql	P4	415	SELECT 1\\
+17/transactions.sql	P4	416	COMMIT\\
+17/transactions.sql	P4	418	SELECT 1\\
+17/transactions.sql	P4	420	SELECT 1\\
+17/transactions.sql	P4	421	COMMIT\\
+17/transactions.sql	P4	423	ROLLBACK TO SAVEPOINT sp\\
+17/transactions.sql	P4	425	SELECT 2\\
+17/transactions.sql	P4	426	RELEASE SAVEPOINT sp\\
+17/transactions.sql	P4	428	SELECT 1\\
+17/transactions.sql	P4	429	BEGIN\\
+17/transactions.sql	P4	430	SAVEPOINT sp\\
+17/transactions.sql	P4	431	ROLLBACK TO SAVEPOINT sp\\
+17/transactions.sql	P4	433	SET TRANSACTION READ ONLY\\
+17/transactions.sql	P4	436	SET TRANSACTION READ ONLY\\
+17/transactions.sql	P4	440	INSERT INTO trans_abc VALUES (7)\\
+17/transactions.sql	P4	441	COMMIT\\
+17/transactions.sql	P4	442	INSERT INTO trans_abc VALUES (8)\\
+17/transactions.sql	P4	444	INSERT INTO trans_abc VALUES (9)\\
+17/transactions.sql	P4	445	ROLLBACK\\
+17/transactions.sql	P4	446	INSERT INTO trans_abc VALUES (10)\\
+17/transactions.sql	P4	448	INSERT INTO trans_abc VALUES (11)\\
+17/transactions.sql	P4	449	COMMIT AND CHAIN\\
+17/transactions.sql	P4	450	INSERT INTO trans_abc VALUES (12)\\
+17/transactions.sql	P4	452	INSERT INTO trans_abc VALUES (13)\\
+17/transactions.sql	P4	453	ROLLBACK AND CHAIN\\
+17/transactions.sql	P4	454	INSERT INTO trans_abc VALUES (14)\\
+17/transactions.sql	P4	456	START TRANSACTION ISOLATION LEVEL REPEATABLE READ\\
+17/transactions.sql	P4	457	INSERT INTO trans_abc VALUES (15)\\
+17/transactions.sql	P4	461	START TRANSACTION ISOLATION LEVEL REPEATABLE READ\\
+17/transactions.sql	P4	462	INSERT INTO trans_abc VALUES (16)\\
+17/transactions.sql	P4	467	START TRANSACTION ISOLATION LEVEL REPEATABLE READ\\
+17/transactions.sql	P4	468	INSERT INTO trans_abc VALUES (17)\\
+17/transactions.sql	P4	469	COMMIT\\
+17/transactions.sql	P4	470	INSERT INTO trans_abc VALUES (18)\\
+17/transactions.sql	P4	473	START TRANSACTION ISOLATION LEVEL REPEATABLE READ\\
+17/transactions.sql	P4	474	INSERT INTO trans_abc VALUES (19)\\
+17/transactions.sql	P4	475	ROLLBACK\\
+17/transactions.sql	P4	476	INSERT INTO trans_abc VALUES (20)\\
+17/triggers.sql	P2	297-302	COPY main_table (a,b) FROM stdin
+17/triggers.sql	P2	343-345	-- COPY should fire per-row and per-statement INSERT triggers
+17/triggers.sql	P2	373-375	COPY main_table FROM stdin
+17/triggers.sql	P2	1559-1561	-- insert via copy on the parent
+17/triggers.sql	P2	1565-1566	-- insert via copy on the first partition
+17/triggers.sql	P2	2108-2111	-- copy into parent sees parent-format tuples
+17/triggers.sql	P2	2134-2137	-- copy into parent sees tuples collected from children even if there
+17/triggers.sql	P2	2159-2162	-- copy, parent trigger sees post-modification parent-format tuple
+17/triggers.sql	P2	2325-2328	-- copy into parent sees parent-format tuples (no rerouting, so these
+17/triggers.sql	P2	2334-2335	copy parent (a, b) from stdin
+17/triggers.sql	P3	1	CREATE FUNCTION autoinc ()
+17/triggers.sql	P3	2	CREATE FUNCTION check_primary_key ()
+17/triggers.sql	P3	3	CREATE FUNCTION check_foreign_key ()
+17/triggers.sql	P3	4	CREATE FUNCTION trigger_return_old ()
+17/triggers.sql	P3	5	CREATE FUNCTION set_ttdummy (int4)
+17/tsearch.sql	P2	662-668	\\copy test_tsquery from stdin
+17/tsearch.sql	P3	8	COPY test_tsvector FROM :'filename'
+17/tuplesort.sql	P3	102	SELECT $$
+17/tuplesort.sql	P3	104	EXPLAIN (COSTS OFF) :qry
+17/txid.sql	P3	26	SELECT txid_current() \\gset
+17/txid.sql	P4	29	SELECT txid_current() AS committed \\gset
+17/txid.sql	P4	31	SELECT txid_current() AS rolledback \\gset
+17/txid.sql	P3	33	SELECT txid_current() AS inprogress \\gset
+17/txid.sql	P3	34	SELECT txid_status(:rolledback) AS rolledback
+17/txid.sql	P3	35	SELECT txid_status(:inprogress) AS inprogress
+17/txid.sql	P3	42	SELECT test_future_xid_status(:inprogress + 10000)
+17/unicode.sql	P5	2-2	\\if :skip_test
+17/unicode.sql	P4	1	SELECT getdatabaseencoding() <> 'UTF8' AS skip_test \\gset
+17/vacuum.sql	P4	209	SELECT relfilenode AS main_filenode FROM pg_class
+17/vacuum.sql	P3	210	SELECT relfilenode = :main_filenode AS is_same_main_filenode
+17/vacuum.sql	P3	211	SELECT t.relfilenode = :toast_filenode AS is_same_toast_filenode
+17/xid.sql	P3	63	SELECT pg_current_xact_id() \\gset
+17/xid.sql	P4	66	SELECT pg_current_xact_id() AS committed \\gset
+17/xid.sql	P4	68	SELECT pg_current_xact_id() AS rolledback \\gset
+17/xid.sql	P3	70	SELECT pg_current_xact_id() AS inprogress \\gset
+17/xid.sql	P3	71	SELECT pg_xact_status(:rolledback::text::xid8) AS rolledback
+17/xid.sql	P3	72	SELECT pg_xact_status(:inprogress::text::xid8) AS inprogress
+17/xid.sql	P3	79	SELECT test_future_xid_status((:inprogress + 10000)::text::xid8)
+17/xml.sql	P5	13-13	\\if :skip_test
+17/xml.sql	P4	5	SELECT count(*) = 0 AS skip_test FROM xmltest \\gset

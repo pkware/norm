@@ -57,6 +57,33 @@ internal sealed class LibPgQueryEntry<T : Any>(
     }
   }
 
+  /**
+   * `PgQuerySplitResult`: `stmts` at 0, `n_stmts` at 4, `stderr_buffer` at 8 and `error` at 12. `stmts` points to an
+   * array of `PgQuerySplitStmt*`, each holding `stmt_location` at 0 and `stmt_len` at 4. Reads the UTF-8 byte
+   * location and length of every statement as consecutive pairs.
+   *
+   * @param function exported name of the splitter that fills in the struct.
+   */
+  sealed class Split(function: String) : LibPgQueryEntry<IntArray>(function, "pg_query_free_split_result", 16, 12) {
+    override fun read(instance: Instance, result: Int): IntArray {
+      val memory = instance.memory()
+      val statements = memory.readInt(result)
+      return IntArray(memory.readInt(result + 4) * 2).also { pairs ->
+        for (index in pairs.indices step 2) {
+          val statement = memory.readInt(statements + index * 2)
+          pairs[index] = memory.readInt(statement)
+          pairs[index + 1] = memory.readInt(statement + 4)
+        }
+      }
+    }
+  }
+
+  /** Splits with the lexer alone. */
+  object SPLIT : Split("pg_query_split_with_scanner")
+
+  /** Splits with the grammar, which fails on text that does not parse. */
+  object SplitWithParser : Split("pg_query_split_with_parser")
+
   private companion object {
     /** Byte offset of `PgQueryError.cursorpos`, after `message`, `funcname`, `filename` and `lineno`. */
     const val CURSOR_OFFSET = 16

@@ -55,6 +55,35 @@ internal object LibPgQuery {
   }
 
   /**
+   * Splits [sql] into statements at top-level `;`, using only the lexer, so text that does not parse is accepted.
+   * Text holding no keyword, such as `;` or `1;`, yields no statement.
+   *
+   * @throws LibPgQueryException if the lexer rejects [sql], for example on an unterminated quoted identifier.
+   * @throws IllegalArgumentException if [sql] contains a NUL character.
+   */
+  fun split(sql: String): List<SplitStatement> = split(LibPgQueryEntry.SPLIT, sql)
+
+  /**
+   * Splits [sql] into statements with PostgreSQL's grammar. Unlike [split], it keeps a `BEGIN ATOMIC` function body
+   * with its `;` as one statement.
+   *
+   * @throws LibPgQueryException if the grammar rejects [sql].
+   * @throws IllegalArgumentException if [sql] contains a NUL character.
+   */
+  fun splitWithParser(sql: String): List<SplitStatement> = split(LibPgQueryEntry.SplitWithParser, sql)
+
+  private fun split(entry: LibPgQueryEntry.Split, sql: String): List<SplitStatement> {
+    val input = Utf8Input(sql)
+    val pairs = invoke(entry, input)
+    return (pairs.indices step 2).map { index ->
+      SplitStatement(
+        input.indexOfByteOffset(pairs[index]),
+        input.indexOfByteOffset(pairs[index] + pairs[index + 1]),
+      )
+    }
+  }
+
+  /**
    * Calls [entry] on [input] and returns what the entry reads from its result struct.
    *
    * Wasm memory is released only when the instance stays in use, which is on success and on a [LibPgQueryException].
