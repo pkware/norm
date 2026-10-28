@@ -86,7 +86,9 @@ internal object PgRegress {
 
   private val preparedByMajor = ConcurrentHashMap<String, List<RegressFile>>()
 
-  fun sqlFiles(major: String): List<Path> = directory(major, "sql").listDirectoryEntries("*.sql").sorted()
+  // `Path` ordering ignores case on Windows, which would reorder the skip list.
+  fun sqlFiles(major: String): List<Path> =
+    directory(major, "sql").listDirectoryEntries("*.sql").sortedBy { it.fileName.toString() }
 
   /** The prepared files of [major], computed once per run. */
   fun files(major: String): List<RegressFile> =
