@@ -72,7 +72,7 @@ internal object LibPgQuery {
    */
   fun splitWithParser(sql: String): List<SplitStatement> = split(LibPgQueryEntry.SplitWithParser, sql)
 
-  private fun split(entry: LibPgQueryEntry.Split, sql: String): List<SplitStatement> {
+  private fun split(entry: LibPgQueryEntry.SplitResult, sql: String): List<SplitStatement> {
     val input = Utf8Input(sql)
     val pairs = invoke(entry, input)
     return (pairs.indices step 2).map { index ->
