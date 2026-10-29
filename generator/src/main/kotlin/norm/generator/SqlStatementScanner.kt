@@ -1,64 +1,92 @@
 package norm.generator
 
+import norm.generator.libpgquery.LibPgQuery
+import norm.generator.libpgquery.LibPgQueryException
+import norm.generator.libpgquery.ParseTreeNames
+import norm.generator.libpgquery.SplitStatement
+import norm.generator.libpgquery.TokenNumber
+
 /**
- * Splits [sql] at each `;` outside literals, comments, and parentheses, as the JDBC driver does, and drops the parts
- * that hold nothing but whitespace and comments.
+ * Splits [sql] at each top-level `;` with PostgreSQL's splitter and returns each statement with its text in [sql].
+ * A part with no keyword, such as `1`, yields no statement, and neither does text with unbalanced parentheses, such as
+ * `SELECT 1); SELECT ?`. A `BEGIN ATOMIC` function body stays whole, as the JDBC driver keeps it.
  *
- * @return the parts in order, each with the text it had in [sql].
+ * Text that the lexer rejects, such as an unterminated string, is one part.
+ *
+ * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
 internal fun splitStatements(sql: String): List<String> {
-  val statements = mutableListOf<String>()
-  val cursor = SqlTokenCursor(sql, 0)
-  var start = 0
-  var hasContent = false
-  while (true) {
-    val span = cursor.advanceSignificant()
-    val isSeparator = span is SqlSpan.Char && sql[span.index] == ';' && cursor.depth == 0
-    if (span == null || isSeparator) {
-      if (hasContent) statements += sql.substring(start, span?.index ?: sql.length)
-      if (span == null) return statements
-      start = span.index + 1
-      hasContent = false
-    } else {
-      hasContent = true
+  val spans = try {
+    splitStatementSpans(sql)
+  } catch (_: LibPgQueryException) {
+    return listOf(sql)
+  }
+  return spans.map { sql.substring(it.start, it.end) }
+}
+
+/**
+ * Splits [sql] at top-level `;` with PostgreSQL's lexer. When that finds several statements, the parser splits the
+ * text again, which keeps a `BEGIN ATOMIC` body as one statement. The lexer's statements stand when the parser rejects
+ * the text. Each statement starts where the lexer's statement containing its first token starts, which keeps the
+ * whitespace and comments before it.
+ *
+ * @param rewriteForParser turns [sql] into text of the same length that the parser accepts. The default replaces `?`
+ *   placeholders.
+ * @return the statements, with the offsets of [sql].
+ * @throws LibPgQueryException if the lexer rejects [sql].
+ * @throws IllegalArgumentException if [sql] contains a NUL character.
+ */
+internal fun splitStatementSpans(
+  sql: String,
+  rewriteForParser: (String) -> String = ::replaceParameterPlaceholdersKeepingOffsets,
+): List<SplitStatement> {
+  val spans = LibPgQuery.split(sql)
+  if (spans.size < 2) return spans
+  return try {
+    LibPgQuery.splitWithParser(rewriteForParser(sql)).map { statement ->
+      SplitStatement(spans.lastOrNull { it.start <= statement.start }?.start ?: statement.start, statement.end)
     }
+  } catch (_: LibPgQueryException) {
+    spans
   }
 }
 
 /**
- * Returns the index where the statement that a leading `EXPLAIN` wraps starts, or `0` when [sql] does not start with
- * `EXPLAIN`.
+ * Returns the index where the statement that a leading `EXPLAIN` wraps begins, or `0` when [sql] does not start with
+ * `EXPLAIN` or PostgreSQL rejects it. Only whitespace and comments lie between the index and the wrapped statement.
  *
- * After `EXPLAIN`, `ExplainStmt` in `gram.y` takes the legacy words `ANALYZE` or `ANALYSE` and `VERBOSE`, or one
- * parenthesized option list. A `(` followed by `(`, `SELECT`, `VALUES`, `TABLE`, or `WITH` opens the wrapped query,
- * because no option has one of those names. The options hold no placeholder, so the parameter numbers of the wrapped
- * statement are those of [sql].
+ * The parse tree of [sql] gives the number of options. Each legacy word, `ANALYZE` or `VERBOSE`, is one token and one
+ * option. A parenthesized option list ends at its first `)`, because no option value holds a parenthesis. The index
+ * is the position of a `(` that follows `EXPLAIN` when there are no options, and otherwise the end of the last token
+ * that `EXPLAIN` consumes.
+ *
+ * The options hold no placeholder, so the parameter numbers of the wrapped statement are those of [sql].
+ *
+ * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
 internal fun explainedStatementStart(sql: String): Int {
-  val cursor = SqlTokenCursor(sql, 0)
-  val explain = cursor.advanceSignificant()
-  if (explain?.word(sql) != "EXPLAIN") return 0
-  var end = (explain as SqlSpan.Word).to
-  val next = cursor.advanceSignificant() ?: return end
-  if (next is SqlSpan.Char && sql[next.index] == '(') {
-    var span = cursor.advanceSignificant() ?: return sql.length
-    val startsQuery = (span is SqlSpan.Char && sql[span.index] == '(') || span.word(sql) in QUERY_KEYWORDS
-    if (startsQuery) return next.index
-    var depth = 1
-    while (true) {
-      if (span is SqlSpan.Char && sql[span.index] == '(') depth++
-      if (span is SqlSpan.Char && sql[span.index] == ')') depth--
-      if (depth == 0) return (span as SqlSpan.Char).index + 1
-      span = cursor.advanceSignificant() ?: return sql.length
-    }
+  val tree = try {
+    LibPgQuery.parse(replaceParameterPlaceholdersKeepingOffsets(sql))
+  } catch (_: LibPgQueryException) {
+    return 0
   }
-  var word = next
-  if (word.word(sql) in ANALYZE_KEYWORDS) {
-    end = (word as SqlSpan.Word).to
-    word = cursor.advanceSignificant() ?: return end
+  val explain = tree.objectArrayField(ParseTreeNames.STATEMENTS)
+    .firstOrNull()
+    ?.objectField(ParseTreeNames.STATEMENT)
+    ?.objectField(ParseTreeNames.EXPLAIN_STATEMENT) ?: return 0
+  val optionCount = explain.objectArrayField(ParseTreeNames.EXPLAIN_OPTIONS).size
+  val tokens = scanLeadingTokens(sql).filter {
+    it.token != TokenNumber.LINE_COMMENT && it.token != TokenNumber.BLOCK_COMMENT
   }
-  if (word.word(sql) == "VERBOSE") end = (word as SqlSpan.Word).to
-  return end
+  val explainIndex = tokens.indexOfFirst { it.token != TokenNumber.SEMICOLON }
+  if (explainIndex < 0) return 0
+  val next = tokens.getOrNull(explainIndex + 1)
+  return when {
+    next?.token == TokenNumber.OPEN_PARENTHESIS && optionCount == 0 -> next.start
+    next?.token == TokenNumber.OPEN_PARENTHESIS ->
+      tokens.firstOrNull { it.token == TokenNumber.CLOSE_PARENTHESIS }?.end ?: 0
+    else -> tokens.getOrNull(explainIndex + optionCount)?.end ?: 0
+  }
 }
 
 /**
@@ -138,15 +166,6 @@ private fun isUnreserved(word: SqlSpan.Word, sql: String, reservedWords: Set<Str
 private fun SqlSpan.word(sql: String): String? = (this as? SqlSpan.Word)?.let {
   sql.substring(it.from, it.to).uppercase()
 }
-
-private val ANALYZE_KEYWORDS = setOf("ANALYZE", "ANALYSE")
-
-/**
- * Lists the words after `EXPLAIN (` that open a query. `utility_option_name` in `gram.y` takes a `NonReservedWord`,
- * `analyze_keyword`, or `FORMAT_LA`, which excludes the reserved `SELECT`, `TABLE`, and `WITH`. It takes the
- * column-name keyword `VALUES`, but no `EXPLAIN` option has that name.
- */
-private val QUERY_KEYWORDS = setOf("SELECT", "VALUES", "TABLE", "WITH")
 
 /** Lists the words that start a statement SQL `PREPARE` accepts, including `WITH`, which starts a query. */
 private val PREPARABLE_KEYWORDS = setOf("SELECT", "VALUES", "TABLE", "WITH", "INSERT", "UPDATE", "DELETE", "MERGE")

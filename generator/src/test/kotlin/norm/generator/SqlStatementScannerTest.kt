@@ -51,6 +51,36 @@ class SqlStatementScannerTest {
       assertThat(splitStatements(" -- note\n /* x */ ")).isEmpty()
       assertThat(splitStatements("")).isEmpty()
     }
+
+    @Test
+    fun `the semicolons of a BEGIN ATOMIC body do not split`() {
+      val sql = "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT ?; SELECT 2; END"
+
+      assertThat(splitStatements(sql)).containsExactly(sql)
+      assertThat(splitStatements("$sql; SELECT 3")).containsExactly(sql, " SELECT 3")
+    }
+
+    @Test
+    fun `a parser split that fails keeps the scanner's parts`() {
+      assertThat(splitStatements("SELECT 1; FROM x y; SELECT 2")).containsExactly("SELECT 1", " FROM x y", " SELECT 2")
+    }
+
+    @Test
+    fun `text the lexer rejects is one part`() {
+      assertThat(splitStatements("SELECT \"unterminated; SELECT 2")).containsExactly("SELECT \"unterminated; SELECT 2")
+    }
+
+    @Test
+    fun `text with unbalanced parentheses is no statement`() {
+      assertThat(splitStatements("SELECT 1); SELECT ?")).isEmpty()
+      assertThat(splitStatements("(SELECT 1")).isEmpty()
+    }
+
+    @Test
+    fun `text with no keyword is no statement`() {
+      assertThat(splitStatements("1")).isEmpty()
+      assertThat(splitStatements("1; 2")).isEmpty()
+    }
   }
 
   @Nested
@@ -74,10 +104,18 @@ class SqlStatementScannerTest {
         "EXPLAIN (ANALYZE, FORMAT JSON) UPDATE t SET a = ?",
         "/* c */ EXPLAIN -- c\n (ANALYZE true, SETTINGS true, FORMAT 'json') UPDATE t SET a = ?",
         "EXPLAIN (ANALYZE) UPDATE t SET a = ?",
+        "EXPLAIN /* x */ ANALYZE -- y\n VERBOSE UPDATE t SET a = ?",
+        "EXPLAIN (ANALYZE /* ) */, -- )\n FORMAT JSON) UPDATE t SET a = ?",
       ],
     )
     fun `the legacy words and an option list are skipped`(sql: String) {
       assertThat(wrapped(sql)).isEqualTo("UPDATE t SET a = ?")
+    }
+
+    @Test
+    fun `a comment after the last token of EXPLAIN stays with the wrapped statement`() {
+      assertThat(wrapped("EXPLAIN ANALYZE /* x */ -- y\n UPDATE t SET a = ?"))
+        .isEqualTo("/* x */ -- y\n UPDATE t SET a = ?")
     }
 
     @ParameterizedTest(name = "{0}")
@@ -90,7 +128,7 @@ class SqlStatementScannerTest {
         "EXPLAIN (WITH w AS (SELECT 1) SELECT * FROM w)",
       ],
     )
-    fun `a parenthesis followed by a query keyword or another parenthesis opens the wrapped query`(sql: String) {
+    fun `a parenthesized query is the wrapped statement`(sql: String) {
       assertThat(wrapped(sql)).isEqualTo(sql.removePrefix("EXPLAIN").trim())
     }
 
@@ -98,13 +136,15 @@ class SqlStatementScannerTest {
     fun `a query after an option list or the legacy words is the wrapped statement`() {
       assertThat(wrapped("EXPLAIN (ANALYZE) (SELECT 1)")).isEqualTo("(SELECT 1)")
       assertThat(wrapped("EXPLAIN ANALYZE (SELECT 1)")).isEqualTo("(SELECT 1)")
+      assertThat(wrapped("EXPLAIN (ANALYZE, FORMAT JSON) SELECT a FROM t WHERE a = ?"))
+        .isEqualTo("SELECT a FROM t WHERE a = ?")
     }
 
     @Test
-    fun `a keyword that ends the text leaves nothing wrapped`() {
-      assertThat(wrapped("EXPLAIN")).isEqualTo("")
-      assertThat(wrapped("EXPLAIN ANALYZE")).isEqualTo("")
-      assertThat(wrapped("EXPLAIN (ANALYZE")).isEqualTo("")
+    fun `text that PostgreSQL rejects starts at zero`() {
+      assertThat(explainedStatementStart("EXPLAIN")).isEqualTo(0)
+      assertThat(explainedStatementStart("EXPLAIN ANALYZE")).isEqualTo(0)
+      assertThat(explainedStatementStart("EXPLAIN (ANALYZE")).isEqualTo(0)
     }
   }
 

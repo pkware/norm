@@ -62,3 +62,9 @@ SELECT id, "user" FROM "order" WHERE id = ?;
 -- Returns the book with the given id, provided its title is exactly `'ok?'`.
 -- name: getBookByTitleContainingQuestionMark :one
 SELECT id, title FROM book WHERE title = 'ok?' AND id = ?;
+
+-- Returns a text literal whose dollar quote holds a semicolon at the end of a line.
+-- name: getDollarQuotedLiteral :one
+SELECT $$first;
+second;
+third$$ AS value;

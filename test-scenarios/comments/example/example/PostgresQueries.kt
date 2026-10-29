@@ -399,4 +399,19 @@ public class PostgresQueries(
       setInt(1, id)
     }
   }
+
+  @Throws(SQLException::class)
+  override fun <T : Any> getDollarQuotedLiteral(mapper: (`value`: String) -> T): T {
+    val sql = """
+        |SELECT ${'$'}${'$'}first;
+        |second;
+        |third${'$'}${'$'} AS value
+        """.trimMargin()
+    val rowReader: ResultSet.() -> T = {
+      mapper(
+        getString(1),
+      )
+    }
+    return driver.queryOne(sql, rowReader)
+  }
 }
