@@ -70,5 +70,6 @@ internal object ScannerCorpus {
   private fun issueEntries(): List<CorpusEntry> =
     KEYWORD_ISSUE_INPUTS.mapIndexed { index, text -> CorpusEntry("issue-331#${index + 1}", text) } +
       QUERY_BODY_ISSUE_INPUTS.mapIndexed { index, text -> CorpusEntry("issue-419#${index + 1}", text) } +
+      GLUED_ISSUE_INPUTS.mapIndexed { index, text -> CorpusEntry("issue-glued#${index + 1}", text) } +
       CorpusEntry("issue-459", BLOCK_COMMENT_ISSUE_INPUT)
 }

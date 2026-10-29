@@ -21,8 +21,8 @@ internal fun resolveComputedExpressions(sql: String, columns: List<Column>): Lis
       selectItem != null &&
       selectItem.columnName == null &&
       !hasSetOperation &&
-      !isStarItem(selectItem.expression)
-    val expression = if (isComputed) collapseCosmeticWhitespace(stripComments(selectItem.expression)) else null
+      !selectItem.isStar
+    val expression = if (isComputed) selectItem.normalizedExpression else null
     column.copy(computedExpression = expression)
   }
 }

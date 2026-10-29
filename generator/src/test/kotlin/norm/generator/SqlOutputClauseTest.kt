@@ -14,7 +14,7 @@ import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 
-/** One SQL input that must still trip [isStarItem]'s star guard, dropping to an empty list. */
+/** One SQL input that must still trip the star guard of [SelectItem.isStar], dropping to an empty list. */
 internal data class StarGuardCase(val description: String, val sql: String) {
   override fun toString() = description
 }
@@ -22,6 +22,49 @@ internal data class StarGuardCase(val description: String, val sql: String) {
 /** One SQL input that must not trip the star guard, resolving to [expected] instead. */
 internal data class NotStarGuardCase(val description: String, val sql: String, val expected: List<SelectItem>) {
   override fun toString() = description
+}
+
+/**
+ * One item of an expected select list.
+ *
+ * @property expression the full expression text.
+ * @property alias the alias as written, or `null`.
+ * @property isAliasExplicit whether the alias follows `AS`.
+ */
+internal data class ExpectedItem(
+  val expression: String,
+  val alias: String? = null,
+  val isAliasExplicit: Boolean = false,
+)
+
+/** One SQL input whose items are exactly [expected], including where each item's expression ends. */
+internal data class ItemExtentCase(val sql: String, val expected: List<ExpectedItem>) {
+  constructor(sql: String, vararg expected: ExpectedItem) : this(sql, expected.toList())
+
+  override fun toString() = sql.replace("\n", "\\n")
+}
+
+/**
+ * A select list item written with no whitespace between it and the text around it. The input is
+ * [prefix] + [expression] + [suffix]; its comma form puts `id,` before the expression.
+ *
+ * @property alias the alias that [suffix] starts with, if any.
+ * @property isStar whether the item is a star, which drops every item after it.
+ */
+internal data class GluedShape(
+  val prefix: String,
+  val expression: String,
+  val suffix: String,
+  val alias: String? = null,
+  val isAliasExplicit: Boolean = false,
+  val isStar: Boolean = false,
+) {
+  val sql: String get() = prefix + expression + suffix
+  val commaSql: String get() = "$prefix id,$expression$suffix"
+  val expected: List<ExpectedItem> get() = listOf(ExpectedItem(expression, alias, isAliasExplicit))
+  val commaExpected: List<ExpectedItem> get() = listOf(ExpectedItem("id")) + if (isStar) emptyList() else expected
+
+  override fun toString() = sql.replace("\n", "\\n")
 }
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -96,44 +139,26 @@ class SqlOutputClauseTest {
     fun `RETURNING star`() {
       val result = parseSelectItems("DELETE FROM t RETURNING *")
       assertThat(result).containsExactly(
-        SelectItem("*", null, null),
+        SelectItem("*", null, null, isStar = true),
       )
     }
 
     @Test
-    fun `extractAlias bails on an unmatched closing parenthesis instead of splitting off a wrong alias`() {
-      // ") (bogus AS alias" has a stray ")" before any "(" — depth dips negative. Without a floor,
-      // the subsequent "(" brings depth back to exactly 0, so the later "AS" is (wrongly) treated
-      // as a top-level alias boundary, splitting into expression=") (bogus", alias="alias". Bailing
-      // at the first negative dip instead returns the whole item unsplit, with no alias stripped —
-      // an honest "could not parse this" over a confidently wrong split.
+    fun `an unmatched closing parenthesis in a RETURNING item is rejected by PostgreSQL, so there are no items`() {
       val result = parseSelectItems("UPDATE t SET x = 1 RETURNING id, ) (bogus AS alias")
-      assertThat(result).containsExactly(
-        SelectItem("id", "id", null),
-        SelectItem(") (bogus AS alias", null, null),
-      )
+      assertThat(result).isEmpty()
     }
 
     @Test
-    fun `extractAlias does not track square brackets, so an unmatched one does not block AS detection`() {
-      // extractAlias only tracks "(" / ")" -- the unmatched "[" before "AS" has no effect on its
-      // depth counter, so "AS" is still found at (what extractAlias sees as) depth 0 and the alias
-      // is split off normally. A version that also tracked "[" / "]" would see depth 1 at "AS" and
-      // return the item unsplit instead.
+    fun `an unmatched square bracket in a RETURNING item is rejected by PostgreSQL, so there are no items`() {
       val result = parseSelectItems("UPDATE t SET x = 1 RETURNING id, a[b AS c")
-      assertThat(result).containsExactly(
-        SelectItem("id", "id", null),
-        SelectItem("a[b", null, null),
-      )
+      assertThat(result).isEmpty()
     }
 
     @Test
-    fun `RETURNING WITH OLD-NEW alias prologue is stripped before the first item`() {
-      // PostgreSQL 18's `RETURNING WITH (OLD AS o, NEW AS n) o.x, n.x` — confirmed to return
-      // 2 columns. Without stripping the prologue, the first item's expression becomes
-      // "WITH (OLD AS o, NEW AS n) o.x", which parseColumnReference cannot make sense of
-      // (columnName/tableName `null`), and that unparsed text would be embedded verbatim in
-      // generated KDoc.
+    fun `RETURNING WITH OLD-NEW alias prologue is not part of the first item`() {
+      // PostgreSQL 18's `RETURNING WITH (OLD AS o, NEW AS n) o.x, n.x` returns 2 columns. The prologue is not
+      // part of the first item, which is the column reference `o.x`.
       val result = parseSelectItems("UPDATE t SET x = 1 RETURNING WITH (OLD AS o, NEW AS n) o.x, n.x")
       assertThat(result).containsExactly(
         SelectItem("o.x", "x", "o"),
@@ -168,11 +193,10 @@ class SqlOutputClauseTest {
 
     @Test
     fun `SELECT star`() {
-      // A lone star has nothing after it to shift, so the star-truncation guard leaves it exactly
-      // as parseColumnReference handles it.
+      // A lone star has nothing after it to shift, so the star-truncation guard leaves it alone.
       val result = parseSelectItems("SELECT * FROM users")
       assertThat(result).containsExactly(
-        SelectItem("*", null, null),
+        SelectItem("*", null, null, isStar = true),
       )
     }
 
@@ -298,9 +322,8 @@ class SqlOutputClauseTest {
     fun `an AS returning alias inside a DML statement's own source SELECT is not mistaken for the RETURNING keyword`() {
       // Confirmed against a real PostgreSQL 18.4 container: "INSERT INTO users (email,
       // preferences) SELECT email AS returning, preferences FROM users RETURNING id, email,
-      // preferences" returns exactly 3 columns (id, email, preferences). A plain
-      // findTopLevelKeyword search returns the first "returning"-shaped match, which is this
-      // alias, not the real clause — mis-locating the RETURNING list entirely.
+      // preferences" returns exactly 3 columns (id, email, preferences). The `returning` alias belongs to
+      // the first item of the source SELECT.
       val result = parseSelectItems(
         "INSERT INTO users (email, preferences) SELECT email AS returning, preferences " +
           "FROM users RETURNING id, email, preferences",
@@ -314,9 +337,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `an AS returning alias in the RETURNING list itself is not mistaken for an earlier real keyword`() {
-      // The symmetric case a naive "last match wins" rule would break: here the alias follows the
-      // real keyword, so findTopLevelReturningKeyword must still return the first RETURNING (not
-      // AS-preceded), not skip past it looking for a later one.
+      // The alias follows the real RETURNING keyword here, so the list still comes from that clause.
       val result = parseSelectItems("UPDATE t SET x = 1 RETURNING id AS returning")
       assertThat(result).containsExactly(
         SelectItem("id", "id", null),
@@ -396,8 +417,7 @@ class SqlOutputClauseTest {
       // users(id,email,age,preferences€) VALUES (1,'e',2,'p') RETURNING preferences€, email"
       // returns columns named exactly "preferences€" and "email" -- "preferences€" is a legal
       // unquoted PostgreSQL column name (the lexer admits any byte >= 0x80 inside an unquoted
-      // identifier). COLUMN_REFERENCE admits the trailing "€", so matchEntire consumes all of
-      // "preferences€" and columnName is "preferences€".
+      // identifier).
       val result = parseSelectItems("UPDATE t SET x = 1 RETURNING preferences€, email")
       assertThat(result).containsExactly(
         SelectItem("preferences€", "preferences€", null),
@@ -411,9 +431,7 @@ class SqlOutputClauseTest {
       // units are >= 0x80, so PostgreSQL's own lexer admits it in an unquoted identifier the same
       // as any other >= 0x80 byte (confirmed against PostgreSQL 18.4: "CREATE TABLE astral(id int,
       // x𝐀y text)" -- U+1D400 MATHEMATICAL BOLD CAPITAL A -- succeeds, and "SELECT
-      // x𝐀y FROM astral" resolves it unquoted). COLUMN_REFERENCE's ">= 0x80" range is
-      // written as a code-point range ("\\x{80}-\\x{10FFFF}") so it matches the whole surrogate
-      // pair as one code point and needs no repetition to cover each UTF-16 half.
+      // x𝐀y FROM astral" resolves it unquoted).
       val result = parseSelectItems("SELECT x𝐀y, id FROM astral")
       assertThat(result).containsExactly(
         SelectItem("x𝐀y", "x𝐀y", null),
@@ -424,26 +442,20 @@ class SqlOutputClauseTest {
     @Test
     fun `a digit-leading fragment abutting a non-ASCII character is not mistaken for a column reference`() {
       // Confirmed on PostgreSQL 18.4, "SELECT 2€" is rejected outright ("trailing junk after
-      // numeric literal"), so "2€" is not an identifier PostgreSQL would ever lex. COLUMN_REFERENCE
-      // admits ">= 0x80" characters in its continuation class, but COLUMN_REFERENCE_IDENTIFIER_START's
-      // narrower leading-character class excludes digits. "2€" therefore does not match as a whole
-      // identifier, and columnName is `null`.
+      // numeric literal"), so "2€" is not an identifier PostgreSQL would ever lex and the whole
+      // statement yields no items.
       val result = parseSelectItems("SELECT 2€, email FROM users")
-      assertThat(result).containsExactly(
-        SelectItem("2€", null, null),
-        SelectItem("email", "email", null),
-      )
+      assertThat(result).isEmpty()
     }
 
     @Test
     fun `an AS keyword directly abutting a closing parenthesis is recognized as an alias boundary`() {
       // Confirmed on PostgreSQL 18.4: "SELECT (1)AS b" returns column "b" -- "AS" here abuts
       // the closing ")" with no whitespace at all, yet is still the real keyword, because ")" is
-      // not an identifier character. extractAlias recognizes this "AS" and strips the alias, so the
-      // expression is "(age)" (asserted below via extractAlias's effect on the expression field).
+      // not an identifier character. The parenthesized "age" is still the column reference "age".
       val result = parseSelectItems("SELECT (age)AS b FROM users")
       assertThat(result).containsExactly(
-        SelectItem("(age)", null, null),
+        SelectItem("(age)", "age", null),
       )
     }
 
@@ -455,7 +467,7 @@ class SqlOutputClauseTest {
       // keyword is recognized and the alias is split off.
       val result = parseSelectItems("SELECT (age)AS\"b\" FROM users")
       assertThat(result).containsExactly(
-        SelectItem("(age)", null, null),
+        SelectItem("(age)", "age", null),
       )
     }
 
@@ -463,11 +475,10 @@ class SqlOutputClauseTest {
     fun `an identifier ending in the letters AS is not mistaken for the AS keyword`() {
       // Confirmed on PostgreSQL 18.4: "CREATE TABLE d1(dataAS text)" then "SELECT 1 dataAS"
       // returns column "dataas" -- "dataAS" lexes as one identifier, never as "data" followed by
-      // the keyword "AS". extractAlias's isIdentifierChar-based boundary check rejects the "AS"
-      // inside "dataAS" as a keyword occurrence.
-      val result = parseSelectItems("SELECT dataAS b FROM users")
+      // the keyword "AS". The item is the column "dataas" with the implicit alias "b".
+      val result = parseOutputItemsWithAlias("SELECT dataAS b FROM users")
       assertThat(result).containsExactly(
-        SelectItem("dataAS b", null, null),
+        OutputItemWithAlias(SelectItem("dataAS", "dataas", null), "b", isAliasExplicit = false),
       )
     }
 
@@ -475,11 +486,10 @@ class SqlOutputClauseTest {
     fun `an AS keyword fused with a following non-ASCII character is not an alias boundary`() {
       // Confirmed on PostgreSQL 18.4: "SELECT 1 AS€b" returns column "as€b" -- "AS€b" lexes as
       // one implicit-alias identifier (€ is a legal identifier-continuation character), never as
-      // the keyword "AS" followed by "€b". extractAlias's isIdentifierChar-based boundary check
-      // rejects this "AS" because "€" is an identifier character.
-      val result = parseSelectItems("SELECT age AS€b FROM users")
+      // the keyword "AS" followed by "€b".
+      val result = parseOutputItemsWithAlias("SELECT age AS€b FROM users")
       assertThat(result).containsExactly(
-        SelectItem("age AS€b", null, null),
+        OutputItemWithAlias(SelectItem("age", "age", null), "AS€b", isAliasExplicit = false),
       )
     }
 
@@ -488,10 +498,9 @@ class SqlOutputClauseTest {
       // Confirmed on PostgreSQL 18.4: "SELECT age x€AS b FROM users" is a syntax error --
       // "x€AS" lexes as one implicit-alias identifier (the same reasoning as the "AS€b" case
       // above, from the other side), leaving a stray extra token "b" with nothing to attach to.
-      // Regression guard for the widened rule, same as the case above.
-      val result = parseSelectItems("SELECT age x€AS FROM users")
+      val result = parseOutputItemsWithAlias("SELECT age x€AS FROM users")
       assertThat(result).containsExactly(
-        SelectItem("age x€AS", null, null),
+        OutputItemWithAlias(SelectItem("age", "age", null), "x€AS", isAliasExplicit = false),
       )
     }
 
@@ -551,8 +560,8 @@ class SqlOutputClauseTest {
 
     @Test
     fun `a parenthesized main query following a CTE clause still resolves`() {
-      // stripRedundantOuterParentheses peels the one pair wrapping the whole main query before
-      // the depth-0 search runs, so this resolves exactly like the unparenthesized form.
+      // The one pair wrapping the whole main query does not change its select list, so this resolves
+      // like the unparenthesized form.
       val result = parseSelectItems("WITH c AS (SELECT 1 AS a) (SELECT a FROM c)")
       assertThat(result).containsExactly(SelectItem("a", "a", null))
     }
@@ -565,10 +574,10 @@ class SqlOutputClauseTest {
     }
 
     @Test
-    fun `parenthesized UNION branches with no WITH clause yield no items`() {
-      // Same accepted fail-safe as above, UNION form: HEAD resolved this to [a] as well.
+    fun `parenthesized UNION branches with no WITH clause yield the first branch's items`() {
+      // PostgreSQL names the result column after the first branch.
       val result = parseSelectItems("(SELECT a FROM x) UNION (SELECT b FROM y)")
-      assertThat(result).isEmpty()
+      assertThat(result).containsExactly(SelectItem("a", "a", null))
     }
 
     @Test
@@ -587,9 +596,8 @@ class SqlOutputClauseTest {
 
     @Test
     fun `a body wrapped in one redundant pair of parentheses still finds the top-level SELECT`() {
-      // A CTE body like `(SELECT ...)` slices to exactly this text. The extra, unmatched leading
-      // "(" puts the whole rest of the text at paren depth one, so the redundant pair must be
-      // stripped for findTopLevelKeyword to find "SELECT" at depth zero.
+      // A CTE body like `(SELECT ...)` slices to this text. The wrapping pair does not change
+      // its select list.
       val result = parseSelectItems("(SELECT id, UPPER(name) AS name_upper FROM parent)")
       assertThat(result).containsExactly(
         SelectItem("id", "id", null),
@@ -604,12 +612,10 @@ class SqlOutputClauseTest {
     }
 
     @Test
-    fun `two separately parenthesized set-operation branches are NOT treated as one redundant wrapping`() {
-      // The first "(" here does not wrap the entire text -- its own matching ")" is followed by
-      // " UNION (...)", not the end of the string -- so stripping must decline, since peeling it
-      // off misreads only the first branch as the whole body.
+    fun `two separately parenthesized set-operation branches yield the first branch's items`() {
+      // The first branch alone names the result column.
       val result = parseSelectItems("(SELECT id FROM parent) UNION (SELECT id FROM child)")
-      assertThat(result).isEmpty()
+      assertThat(result).containsExactly(SelectItem("id", "id", null))
     }
 
     @Nested
@@ -646,9 +652,9 @@ class SqlOutputClauseTest {
           sql = "SELECT tgt . *, id AS ident FROM tgt",
         ),
         // Confirmed on PostgreSQL 18: "SELECT t.* AS whatever, 7 AS id FROM t" returns
-        // 3 columns (a, b, id) for a two-column "t". The guard checks the alias-stripped
-        // expression, so the star's own "AS whatever" alias does not hide it. The guard drops the
-        // later "id" item with the rest of the list, because t's expansion shifts its position.
+        // 3 columns (a, b, id) for a two-column "t". The star's own "AS whatever" alias does not hide it,
+        // and the guard drops the later "id" item with the rest of the list, because t's expansion shifts
+        // its position.
         StarGuardCase(
           description = "an aliased star still triggers the star guard",
           sql = "SELECT t.* AS whatever, 7 AS id FROM t",
@@ -658,9 +664,8 @@ class SqlOutputClauseTest {
           sql = "UPDATE t SET x = 1 RETURNING t.* AS whatever, 7 AS id",
         ),
         // Confirmed on PostgreSQL 18.4: valid syntax, returns every column of "tgt". The comment
-        // sits outside the parentheses, on the far side of the closing ")", yet isStarItem reduces
-        // "(tgt.*) -- c" to "tgt.*" and the guard fires, so a later item is not shifted onto the
-        // wrong ResultSetMetaData column.
+        // sits outside the parentheses, on the far side of the closing ")", and the item is still a star,
+        // so a later item is not shifted onto the wrong ResultSetMetaData column.
         StarGuardCase(
           description = "a trailing line comment outside a wrapping parenthesis still triggers the star guard",
           sql = "SELECT (tgt.*) -- c\n, id AS ident FROM tgt",
@@ -670,7 +675,7 @@ class SqlOutputClauseTest {
           description = "a trailing block comment outside a wrapping parenthesis still triggers the star guard",
           sql = "SELECT (tgt.*) /*c*/, id AS ident FROM tgt",
         ),
-        // Confirmed on PostgreSQL 18.4: valid syntax. isStarItem recognizes "tgt./*c*/ *" although
+        // Confirmed on PostgreSQL 18.4: valid syntax. "tgt./*c*/ *" is a star although
         // a comment sits between the dot and the star.
         StarGuardCase(
           description = "a comment between the dot and the star still triggers the star guard",
@@ -679,9 +684,7 @@ class SqlOutputClauseTest {
         // An implicit alias (no "AS") is valid PostgreSQL syntax on a star ("u.* whatever" —
         // identical in meaning to "u.* AS whatever"; "u" aliases "users" to make the star
         // unambiguous). "SELECT u.* whatever, preferences FROM users u" returns every column of
-        // "users" plus a trailing "preferences" item. "u.* whatever" as a whole does not end in
-        // ".*", so isStarItem recognizes the star through candidate 2 (the expression minus its
-        // trailing whitespace-separated token). The guard then drops "preferences". Its result
+        // "users" plus a trailing "preferences" item. The guard drops "preferences", whose result
         // position depends on how many columns "users" has.
         StarGuardCase(
           description = "an implicit alias on a star still triggers the star guard",
@@ -699,10 +702,7 @@ class SqlOutputClauseTest {
           sql = """SELECT u.* "My Col", preferences FROM users u""",
         ),
         // "u.* whatever -- c" is valid PostgreSQL syntax (an implicit alias on a star, with a
-        // trailing comment). stripCommentsAndWhitespace removes both the whitespace and the comment
-        // outright, normalizing this to "u.*whatever" — the same shape as the zero-separator case,
-        // which isStarItem's structural check already recognizes as a star (qualifier "u.", implicit
-        // alias "whatever").
+        // trailing comment) and is a star like the zero-separator case below.
         StarGuardCase(
           description = "an implicit alias followed by a line comment still triggers the star guard",
           sql = "SELECT u.* whatever -- c\n, preferences FROM users u",
@@ -715,10 +715,7 @@ class SqlOutputClauseTest {
         // Confirmed against a real PostgreSQL 18.4 container: "SELECT
         // u.*/*c*/whatever, preferences FROM users u" returns 5 columns against a 4-column "users"
         // (the star's own expansion plus "preferences") — the comment is just as much a
-        // non-separator as no separator at all. isStarItem's structural check finds the star, its
-        // qualifier ("u."), and its implicit alias ("whatever") purely by walking identifier/quote
-        // structure once stripCommentsAndWhitespace has removed the comment outright, so no
-        // whitespace boundary is needed.
+        // non-separator as no separator at all.
         StarGuardCase(
           description =
           "a comment abutting an implicit alias with no surrounding whitespace now triggers the star guard",
@@ -726,9 +723,7 @@ class SqlOutputClauseTest {
         ),
         // Confirmed against a real PostgreSQL 18 container:
         // "SELECT t.*-- c\nwhatever, id FROM t" against a 3-column "t" is valid and returns 4 real
-        // columns (t's own 3 plus "id") — a star. The structural check finds the trailing token
-        // without a whitespace boundary, which a line comment's own terminating newline (consumed
-        // as part of the comment token) never leaves behind.
+        // columns (t's own 3 plus "id") — a star with an implicit alias.
         StarGuardCase(
           description = "a line comment abutting an implicit alias now triggers the star guard",
           sql = "SELECT t.*-- c\nwhatever, id FROM t",
@@ -740,11 +735,7 @@ class SqlOutputClauseTest {
           description = "a zero-separator implicit alias abutting a star now triggers the star guard",
           sql = "SELECT u.*whatever, preferences FROM users u",
         ),
-        // Regression guard: the double-quoted identifier "my*table" (a table literally named that)
-        // contains a "*" character that is not the star item's own "*" token. isStarItem's alias
-        // search recognizes the whole quoted identifier as one lexical segment (via skipLexicalToken)
-        // when walking forward, so it is never mistaken for two separate tokens split around the
-        // internal "*", and the star immediately after the qualifying "." is found correctly.
+        // The double-quoted identifier "my*table" (a table literally named that) contains a "*" character.
         // Confirmed against a real PostgreSQL 18.4 container: `SELECT "my*table".*z, c FROM
         // "my*table"` is valid and returns 3 columns (the star's own 2 plus "c"), implicit alias "z"
         // ignored.
@@ -760,9 +751,7 @@ class SqlOutputClauseTest {
         ),
         // Confirmed against a real PostgreSQL 18.4 container: "SELECT DISTINCT ON (a) t.*, a FROM t"
         // returns 3 columns (t's own 2 plus "a") against a 2-column "t" — a star, with no implicit
-        // alias here. parseSelectItems' skipOptionalSetQuantifier strips "DISTINCT ON (a) " before
-        // isStarItem ever sees the item text, so isStarItem is handed the plain "t.*" — ending in the
-        // literal ".*" — needing no special understanding of DISTINCT ON at all.
+        // alias here.
         StarGuardCase(
           description = "a DISTINCT ON prefix before a qualified star still triggers the star guard",
           sql = "SELECT DISTINCT ON (a) t.*, a FROM t",
@@ -789,28 +778,18 @@ class SqlOutputClauseTest {
         ),
         // Confirmed against a real PostgreSQL 18.4 container: `SELECT U&"my*table".*, c FROM
         // "my*table"` returns 3 columns (the star's own 2 plus "c") -- the "U&" Unicode-escape prefix
-        // on the quoted identifier is ordinary PostgreSQL syntax, not something this guard needs to
-        // understand specially: the item's full text ends in ".*" directly (the quoted identifier
-        // itself is copied through verbatim by stripCommentsAndWhitespace), matching the plain
-        // suffix check.
+        // on the quoted identifier is ordinary PostgreSQL syntax.
         StarGuardCase(
           description = "a Unicode-escape quoted identifier qualifying a star still triggers the star guard",
           sql = """SELECT U&"my*table".*, c FROM "my*table"""",
         ),
-        // Unlike the no-alias form above, "(t).*x" does not end in the literal ".*" (it ends in
-        // "x"), so path 1 fails and this only reaches path 2: isStarItem finds "x" as the trailing
-        // alias segment, leaving the prefix "(t).*" — which does end in ".*", with a qualifier
-        // "(t)." whose character immediately before the final "." is ")", not an identifier
-        // character at all, so isStarQualifierAcceptable accepts it (an empty identifier run before
-        // the dot is always accepted — see its KDoc).
+        // "(t).*x" is a composite expansion followed directly by the implicit alias "x".
         StarGuardCase(
           description = "an implicit alias on a parenthesized composite expansion still triggers the star guard",
           sql = "SELECT (t).*x, a FROM t",
         ),
-        // Same as the no-alias DISTINCT ON case above: skipOptionalSetQuantifier strips
-        // "DISTINCT ON (a) " before isStarItem ever runs, so isStarItem is handed the plain "t.*x" —
-        // the same ordinary qualified-star-with-implicit-alias shape as "u.*whatever", needing no
-        // special understanding of DISTINCT ON.
+        // Same as the no-alias DISTINCT ON case above, with the ordinary qualified-star-with-implicit-alias
+        // shape of "u.*whatever".
         StarGuardCase(
           description = "an implicit alias on a DISTINCT ON qualified star still triggers the star guard",
           sql = "SELECT DISTINCT ON (a) t.*x, a FROM t",
@@ -822,10 +801,7 @@ class SqlOutputClauseTest {
         // Confirmed against a real PostgreSQL 18.4 container: "SELECT (t.*::t).* whatever, a FROM t"
         // returns 3 columns (t's own 2 plus "a") against a 2-column "t". The qualifier "(t.*::t)."
         // contains its own star (inside the cast expression, a leftover "t.*" that Postgres accepts
-        // as an argument to the composite cast) — isStarItem's alias search is not misled by it: it
-        // finds "whatever" as the trailing segment regardless of how many "*" characters sit earlier
-        // in the text, since it walks forward tracking only the last segment, never searching for a
-        // "*" character directly at all.
+        // as an argument to the composite cast).
         StarGuardCase(
           description =
           "a star qualifier that itself contains a star via a parenthesized cast still triggers the star guard",
@@ -833,9 +809,7 @@ class SqlOutputClauseTest {
         ),
         // Confirmed against a real PostgreSQL 18.4 container: "SELECT (ARRAY[t.*])[1].* whatever, a
         // FROM t" returns 3 columns (t's own 2 plus "a"). The qualifier "(ARRAY[t.*])[1]." contains
-        // its own star inside the ARRAY literal, harmless to the alias search (see the cast case
-        // above); the array-subscript close "]" immediately before the qualifier's final "." is not
-        // an identifier character, so isStarQualifierAcceptable accepts the (empty) run before it.
+        // its own star inside the ARRAY literal.
         StarGuardCase(
           description =
           "a star qualifier that itself contains a star via an ARRAY subscript still triggers the star guard",
@@ -860,16 +834,13 @@ class SqlOutputClauseTest {
         ),
         // "(u.*)whatever" parenthesizes only "u.*", not the trailing alias. Confirmed against a real PostgreSQL 18.4
         // container: "SELECT (u.*) whatever, preferences FROM users u" returns 5 columns against a
-        // 4-column "users" (the star's own expansion plus "preferences"). isStarItem's alias search
-        // finds "whatever" as the trailing segment, leaving the prefix "(u.*)", which unwraps to
-        // "u.*" and matches the plain suffix check.
+        // 4-column "users" (the star's own expansion plus "preferences").
         StarGuardCase(
           description = "a star wrapped only up to its implicit alias still triggers the star guard",
           sql = "SELECT (u.*) whatever, preferences FROM users u",
         ),
         // Confirmed against a real PostgreSQL 18.4 container: "SELECT ((t.*)) x, a FROM t" returns 3
-        // columns (t's own 2 plus "a") against a 2-column "t". unwrapWrappingParentheses strips both
-        // layers of the prefix "((t.*))" in two passes, down to "t.*".
+        // columns (t's own 2 plus "a") against a 2-column "t".
         StarGuardCase(
           description = "a doubly-wrapped star with an implicit alias still triggers the star guard",
           sql = "SELECT ((t.*)) x, a FROM t",
@@ -904,27 +875,20 @@ class SqlOutputClauseTest {
         ),
         // Confirmed against a real PostgreSQL 18.4 container: `SELECT U&"!0074" UESCAPE '!'.* x, a
         // FROM t` returns 3 columns (t's own 2 plus "a"). Here the UESCAPE-extended Unicode-escape
-        // identifier is the qualifier, not the alias — its closing "'" (from the escape-character
-        // string) sits immediately before the star's qualifying ".", which is not an identifier
-        // character, so isStarQualifierAcceptable accepts the (empty) run before it.
+        // identifier is the qualifier, not the alias.
         StarGuardCase(
           description = "a Unicode-escape qualifier with a UESCAPE clause still triggers the star guard",
           sql = """SELECT U&"!0074" UESCAPE '!'.* x, a FROM t""",
         ),
         // Confirmed against a real PostgreSQL 18.4 container: "SELECT ALL t.* x, a FROM t" returns 3
-        // columns (t's own 2 plus "a"). parseSelectItems' skipOptionalSetQuantifier strips "ALL "
-        // before splitting the clause into items, so isStarItem is handed the plain "t.* x" — never
-        // seeing the quantifier fused onto it.
+        // columns (t's own 2 plus "a"). The ALL quantifier is not part of the item.
         StarGuardCase(
           description =
           "an ALL quantifier before a qualified star with an implicit alias still triggers the star guard",
           sql = "SELECT ALL t.* x, a FROM t",
         ),
         // Confirmed against a real PostgreSQL 18.4 container: "SELECT all2.* a, p FROM all2" returns 3
-        // columns (all2's own 2 plus "p") against a real table named "all2". skipOptionalKeyword's own
-        // word-boundary check stops "ALL" from matching the first 3 letters of "all2" — the
-        // character immediately after ("2") is still an identifier character, so it isn't a real
-        // standalone "ALL" keyword — leaving "all2.* a" as the untouched item text.
+        // columns (all2's own 2 plus "p") against a real table named "all2". "all2" is the table name.
         StarGuardCase(
           description =
           "a star on a table whose name starts with the letters of the ALL quantifier still triggers the star guard",
@@ -986,10 +950,8 @@ class SqlOutputClauseTest {
           description = "a zero-separator NFD alias still triggers the star guard",
           sql = "SELECT t.*cafe\u0301, a FROM t",
         ),
-        // isStarQualifierAcceptable tests for an ASCII digit, not Char.isDigit(), which is
-        // Unicode-aware and also matches non-ASCII digits (Unicode category Nd). PostgreSQL numeric
-        // literals use ASCII digits exclusively, so a non-ASCII digit starting a qualifier's run
-        // can only be an identifier's first character, never a numeral. The table
+        // PostgreSQL numeric literals use ASCII digits exclusively, so a non-ASCII digit starting a
+        // qualifier can only be an identifier's first character. The table
         // here is literally named \u0663 (ARABIC-INDIC DIGIT THREE), written as a Kotlin unicode
         // escape. Confirmed against a real PostgreSQL 18.4 container with a real table named \u0663:
         // "SELECT \u0663.* x, a FROM \u0663" returns 3 columns (\u0663's own 2 plus "a").
@@ -1005,11 +967,8 @@ class SqlOutputClauseTest {
           "a zero-separator alias on a qualifier starting with a non-ASCII digit still triggers the star guard",
           sql = "SELECT \u0663.*x, a FROM \u0663",
         ),
-        // isStarQualifierAcceptable scans the run before the qualifying "." with isIdentifierChar
-        // (shared with matchTrailingAliasSegment), which runs past "\u20AC" (the Euro sign, >= 0x80
-        // but neither a letter nor a digit). Scanning backward from the ASCII digit "9" therefore
-        // finds the run "x\u20AC9", which is letter-led and correctly acceptable. The table alias here is "x",
-        // "\u20AC", "9", written as Kotlin unicode escapes. Confirmed against a real PostgreSQL 18.4
+        // The table alias here is "x", "\u20AC" (the Euro sign, >= 0x80 but neither a letter nor a digit),
+        // "9", written as Kotlin unicode escapes. Confirmed against a real PostgreSQL 18.4
         // container: "SELECT x\u20AC9.* w, preferences FROM users x\u20AC9" returns 5 columns
         // against a 4-column "users".
         StarGuardCase(
@@ -1036,33 +995,19 @@ class SqlOutputClauseTest {
           description = "a qualifier written in NFD followed by an ASCII digit still triggers the star guard",
           sql = "SELECT cafe\u03012.* w, a FROM t cafe\u03012",
         ),
-        // Regression guard for the fail-safe answer, grounded in OriginalAdjacency:
-        // "x€ E'a\'b'" (a real space between "€" and the
-        // standalone "E") strips to "x€E'a\'b'", and skipSingleQuotedString's standalone-E lookback
-        // gates its "was € really continuing an identifier into E" check on whether € and E were
-        // adjacent in the original text -- they were not (the character stripping removed there was
-        // a real separator) -- so E is correctly recognized as standalone regardless of what
-        // character stripping happened to fuse in front of it (see that function's own KDoc). With E
-        // correctly standalone, the whole "E'a\'b'" is scanned as one backslash-escaped string, so
-        // isStarItem correctly reaches and recognizes the trailing ".* y" — this item is star-shaped,
-        // and parseSelectItems drops it and everything after it, giving the fail-safe emptyList()
+        // "x€ E'a\'b'" has a real space between "€" and the
+        // standalone "E", so the whole "E'a\'b'" is one backslash-escaped string and the item ends in the
+        // star ".* y". parseSelectItems drops it and everything after it, giving the fail-safe emptyList()
         // this test asserts.
-        //
-        // Recognizing "E" as standalone here depends on the structural fact that "€" is not
-        // adjacent to "E" in the original query.
         StarGuardCase(
           description =
           "a typed-literal call with a standalone E before a backslash-quote does not manufacture a star item",
           sql = "SELECT (f(x€ E'a\\'b')).* y, id FROM t",
         ),
-        // "1 - -1" (two independently-lexed "-" tokens, genuinely separated by a space) strips to
-        // "1--1", which skipLexicalToken would otherwise read as a "--" line comment that was never
-        // in the query — skipLineComment then jumps to the end of the stripped text, so no segment
-        // ends exactly at text.length, findTrailingImplicitAliasStart returns `null`, and isStarItem
-        // answers `false` — the dangerous direction (a later item silently shifts onto the wrong
-        // ResultSetMetaData column). Confirmed against a real PostgreSQL 18.4 container: this query
-        // returns 4 columns (f1, f2, id, name) against a 2-column "t" — the star and everything
-        // before it must be dropped, since two items come after it.
+        // "1 - -1" has two "-" tokens genuinely separated by a space and is not a comment. Confirmed
+        // against a real PostgreSQL 18.4 container: this query returns 4 columns (f1, f2, id, name)
+        // against a 2-column "t" — the star and everything before it must be dropped, since two items
+        // come after it.
         StarGuardCase(
           description =
           "a negative literal subtraction inside a ROW composite star qualifier does not manufacture a --comment",
@@ -1092,22 +1037,14 @@ class SqlOutputClauseTest {
         ),
         // "xq E'...'" ("xq" — a domain over text — used as a type name in PostgreSQL's own
         // "typename Sconst" typed-literal form, genuinely separated from the following E-string by a
-        // space) strips to "xqE'...'". Without gating the standalone-E lookback on original
-        // adjacency, the "q" immediately before "E" would look like it continues "xq" into the "E",
-        // wrongly denying the escape string its backslash-escape processing and letting the
-        // backslash-quote inside it terminate the string early, garbling everything scanned after.
-        // Confirmed against a real PostgreSQL 18.4 container: this query returns 3 columns (f1, f2,
+        // space). Confirmed against a real PostgreSQL 18.4 container: this query returns 3 columns (f1, f2,
         // id) — f(xq) returns a 2-column composite.
         StarGuardCase(
           description = "a space-separated E-string typed literal is not fused into a standalone-E escape string",
           sql = "SELECT (f(xq E'a\\'b')).* y, id FROM t",
         ),
-        // "xq \$q\$...\$q\$" strips to "xq\$q\$...\$q\$" — without gating the dollar-quote identifier
-        // lookback on original adjacency, the "q" immediately before "$" would look like it
-        // continues the "xq" identifier (PostgreSQL allows "$" inside an unquoted identifier), so the
-        // "$" would never be recognized as opening a dollar-quoted string at all, and its body —
-        // including the "'" it contains — would be scanned as ordinary SQL. Confirmed against a real
-        // PostgreSQL 18.4 container: this query returns 3 columns (f1, f2, id).
+        // "xq $q$...$q$" is a typed literal with a dollar-quoted string, separated from the type name by a
+        // space. Confirmed against a real PostgreSQL 18.4 container: this query returns 3 columns (f1, f2, id).
         StarGuardCase(
           description = "a space-separated dollar-quoted typed literal is not fused into the identifier before it",
           sql = "SELECT (f(xq \$q\$a'b\$q\$)).* y, id FROM t",
@@ -1137,17 +1074,6 @@ class SqlOutputClauseTest {
             SelectItem("id", "id", null),
           ),
         ),
-        // Regression guard: a looser normalizer that strips all whitespace (needed to recognize
-        // "tgt . *") must not also start recognizing "count( * )" as a star merely because it
-        // contains the character "*" once whitespace is gone ("count(*)") — the trailing ")"
-        // still rules it out. This is only true because "count(*)" does not also look like a
-        // wrapping parenthesis around a star: isStarItem's parenthesis-stripping loop only strips a
-        // pair that wraps the entire remaining text (checked via findMatchingCloseParenthesis, not
-        // merely the first/last characters), and "count(*)" does not start with "(" at all — its
-        // first character is "c", and the real "(" is the 6th character (index 5) — so the loop's
-        // own startsWith("(") check never fires and the trailing ")" is decisive. (A genuine wrapping
-        // case like "(tgt.*)" normalizes to itself first — still ending in ")" — and only becomes a
-        // recognized star after the stripping loop removes that wrapping pair, leaving "tgt.*".)
         NotStarGuardCase(
           description = "count star is not mistaken for the star guard even with internal whitespace",
           sql = "SELECT count( * ) AS total, id FROM t",
@@ -1156,9 +1082,6 @@ class SqlOutputClauseTest {
             SelectItem("id", "id", null),
           ),
         ),
-        // Regression guard: "t.*::text" ends in neither "*" nor ".*" after normalization (it ends
-        // in "text"), so it must keep its current classification as a computed expression, not a
-        // star, regardless of how aggressively comments/whitespace are stripped elsewhere in it.
         NotStarGuardCase(
           description = "a cast on a star-shaped expression is not mistaken for the star guard",
           sql = "SELECT t.*::text AS whatever, id FROM t",
@@ -1167,19 +1090,14 @@ class SqlOutputClauseTest {
             SelectItem("id", "id", null),
           ),
         ),
-        // The shape most likely to be broken by a looser implicit-alias check: candidate 2 for
-        // "count(*) total" is "count(*)", which still does not end in ".*" (it ends in ")"), so
-        // this must NOT be treated as a star.
         NotStarGuardCase(
           description = "count star with an implicit alias is not mistaken for the star guard",
           sql = "SELECT count(*) total, id FROM t",
           expected = listOf(
-            SelectItem("count(*) total", null, null),
+            SelectItem("count(*)", null, null),
             SelectItem("id", "id", null),
           ),
         ),
-        // "t.*::text" has no top-level whitespace, so candidate 1 and candidate 2 are identical —
-        // classification is not affected by the implicit-alias check.
         NotStarGuardCase(
           description = "a cast on a star with no whitespace is unaffected by the implicit-alias check",
           sql = "SELECT t.*::text, id FROM t",
@@ -1188,11 +1106,6 @@ class SqlOutputClauseTest {
             SelectItem("id", "id", null),
           ),
         ),
-        // Regression guard: stripCommentsAndWhitespace removes the comment outright, with nothing
-        // put in its place, so "t.*/*c*/::text" normalizes to "t.*::text" — not "t.* ::text" or
-        // anything else with a boundary in it. isStarItem's alias search finds "text" as the trailing
-        // segment (a valid identifier), leaving the prefix "t.*::" — which does not end in the
-        // literal ".*" (it ends in "::"), so this is correctly rejected as not a star.
         NotStarGuardCase(
           description = "a cast on a star with a comment immediately before it is not mistaken for the star guard",
           sql = "SELECT t.*/*c*/::text, a FROM t",
@@ -1202,9 +1115,7 @@ class SqlOutputClauseTest {
           ),
         ),
         // On PostgreSQL 18, "SELECT t.* ::text, a FROM t" is valid and returns 2 columns (t, a),
-        // with no star expansion. stripCommentsAndWhitespace removes all whitespace, so this
-        // normalizes to the same "t.*::text" as the comment-abutting case above, and is rejected
-        // the same way (prefix "t.*::" does not end in ".*").
+        // with no star expansion.
         NotStarGuardCase(
           description = "a whitespace-separated cast on a star is not mistaken for an implicit alias",
           sql = "SELECT t.* ::text, a FROM t",
@@ -1223,11 +1134,8 @@ class SqlOutputClauseTest {
             SelectItem("a", "a", null),
           ),
         ),
-        // On PostgreSQL 18, "SELECT t.*-- c\n::text, a FROM t" is valid and returns 2 columns
-        // (t, a), with no star expansion. skipLineComment consumes the whole "-- c\n" span
-        // (including its terminating newline) as one opaque token, so none of the three candidates
-        // ever finds a top-level whitespace boundary to strip a trailing token here; "::" stays
-        // attached to "t.*" regardless.
+        // On PostgreSQL 18, "SELECT t.*-- c\n::text, a FROM t" is valid and returns 2 columns (t, a),
+        // with no star expansion. The "::" stays attached to "t.*".
         NotStarGuardCase(
           description = "a line comment between a star and its cast is not mistaken for an implicit alias",
           sql = "SELECT t.*-- c\n::text, a FROM t",
@@ -1243,7 +1151,7 @@ class SqlOutputClauseTest {
           description = "an implicit alias followed by a comment with no following item is unaffected by truncation",
           sql = "SELECT u.* whatever -- c\nFROM users u",
           expected = listOf(
-            SelectItem("u.* whatever -- c", null, null),
+            SelectItem("u.*", null, null, isStar = true),
           ),
         ),
         // Regression guard: PostgreSQL identifiers cannot start with a digit, so "2." is not a valid
@@ -1254,7 +1162,7 @@ class SqlOutputClauseTest {
           description = "a digit-leading qualifier before a star is arithmetic, not a star",
           sql = "SELECT 2.*3 lbl, a FROM t",
           expected = listOf(
-            SelectItem("2.*3 lbl", null, null),
+            SelectItem("2.*3", null, null),
             SelectItem("a", "a", null),
           ),
         ),
@@ -1266,44 +1174,33 @@ class SqlOutputClauseTest {
             SelectItem("a", "a", null),
           ),
         ),
-        // Negative guard confirming isStarQualifierAcceptable's digit-leading rejection still fires
-        // regardless of whether an implicit alias follows the star: "2." is rejected because the
-        // identifier-character run immediately before its final "." is "2", and that run's first
-        // character is a digit. On PostgreSQL 18.4, "SELECT 2.*a lbl, a FROM t" is valid arithmetic
-        // ("2 * a AS lbl"), returning 2 columns.
+        // On PostgreSQL 18.4, "SELECT 2.*a lbl, a FROM t" is valid arithmetic ("2 * a AS lbl"),
+        // returning 2 columns.
         NotStarGuardCase(
           description = "a digit-leading qualifier before a star with an implicit alias remains arithmetic, not a star",
           sql = "SELECT 2.*a lbl, a FROM t",
           expected = listOf(
-            SelectItem("2.*a lbl", null, null),
+            SelectItem("2.*a", null, null),
             SelectItem("a", "a", null),
           ),
         ),
-        // Negative guard confirming the alias-first design did not break the ordinary case where an
-        // earlier part of the expression contains a star ("count(*)"). On PostgreSQL 18.4,
-        // "SELECT count(*) * 2 tot, (SELECT 1) AS id FROM t" returns 2 columns (tot, id) --
-        // isStarItem finds "tot" as the trailing alias segment, leaving the prefix "count(*)*2",
-        // which does not end in the literal ".*" (it ends in "*2"), so this is correctly rejected
-        // without needing to reason about the "*" inside "count(*)" at all.
+        // On PostgreSQL 18.4, "SELECT count(*) * 2 tot, (SELECT 1) AS id FROM t" returns 2 columns
+        // (tot, id).
         NotStarGuardCase(
           description = "an aggregate star multiplied by a constant is not mistaken for the star guard",
           sql = "SELECT count(*) * 2 tot, (SELECT 1) AS id FROM t",
           expected = listOf(
-            SelectItem("count(*) * 2 tot", null, null),
+            SelectItem("count(*) * 2", null, null),
             SelectItem("(SELECT 1)", null, null),
           ),
         ),
-        // Negative guard for the point where skipOptionalSetQuantifier matters most: after
-        // isStarItem's own whitespace-stripping, "ALL 2.*a" and a genuine star on a table named
-        // "all2" would normalize identically ("all2.*a") if the quantifier were stripped inside
-        // isStarItem itself. parseSelectItems strips it beforehand, using the still-whitespace-
-        // intact clause text. On PostgreSQL 18.4, "SELECT ALL 2.*a lbl, b FROM t" is valid
-        // arithmetic ("ALL 2 * a AS lbl"), returning 2 columns.
+        // On PostgreSQL 18.4, "SELECT ALL 2.*a lbl, b FROM t" is valid arithmetic ("ALL 2 * a AS lbl"),
+        // returning 2 columns.
         NotStarGuardCase(
           description = "an ALL quantifier fused with a digit-leading qualifier is still arithmetic, not a star",
           sql = "SELECT ALL 2.*a lbl, b FROM t",
           expected = listOf(
-            SelectItem("2.*a lbl", null, null),
+            SelectItem("2.*a", null, null),
             SelectItem("b", "b", null),
           ),
         ),
@@ -1311,19 +1208,16 @@ class SqlOutputClauseTest {
         // DISTINCT with no ON (...) clause. The first item's expression/columnName must be the bare
         // "a", with no quantifier text glued onto it ("DISTINCTa").
         NotStarGuardCase(
-          description = "a DISTINCT quantifier with no ON clause is stripped from the first item",
+          description = "a DISTINCT quantifier with no ON clause is not part of the first item",
           sql = "SELECT DISTINCT a, b FROM t",
           expected = listOf(
             SelectItem("a", "a", null),
             SelectItem("b", "b", null),
           ),
         ),
-        // Pins that isStarQualifierAcceptable rejects an ASCII-digit-led qualifier run ("2")
-        // regardless of what the trailing alias is made of (here an "x" followed by a COMBINING
-        // ACUTE ACCENT, \u0301, written as a Kotlin unicode escape). A non-ASCII digit like
-        // "\u0663" starting the qualifier's own run, which the shared isIdentifierChar predicate
-        // runs past, is a different shape; see the "\u0663" tests below for that. Checked against
-        // PostgreSQL 18.4 with a temp table (this identifier isn't a real
+        // The digit-led qualifier "2" makes this multiplication regardless of what the trailing alias is
+        // made of (here an "x" followed by a COMBINING ACUTE ACCENT, \u0301, written as a Kotlin unicode
+        // escape). Checked against PostgreSQL 18.4 with a temp table (this identifier isn't a real
         // column anywhere, so a plain SELECT against "t" can't execute to confirm a row, only a
         // parse): a column named by this exact identifier plus "SELECT 2.*<that identifier> lbl, a
         // FROM temp_check" returns 2 columns (lbl, a) -- ordinary arithmetic, not a star, matching
@@ -1333,7 +1227,7 @@ class SqlOutputClauseTest {
           "a digit-leading qualifier before a star with an NFD implicit alias remains arithmetic, not a star",
           sql = "SELECT 2.*x\u0301 lbl, a FROM t",
           expected = listOf(
-            SelectItem("2.*x\u0301 lbl", null, null),
+            SelectItem("2.*x\u0301", null, null),
             SelectItem("a", "a", null),
           ),
         ),
@@ -1341,7 +1235,7 @@ class SqlOutputClauseTest {
           description = "a multiplication expression with a trailing line comment is not mistaken for the star guard",
           sql = "SELECT a * b -- c\n, id FROM t",
           expected = listOf(
-            SelectItem("a * b -- c", null, null),
+            SelectItem("a * b", null, null),
             SelectItem("id", "id", null),
           ),
         ),
@@ -1350,7 +1244,7 @@ class SqlOutputClauseTest {
           "a multiplication expression with an implicit alias and internal block comment is not mistaken as a star",
           sql = "SELECT 2 * x /*c*/ total, id FROM t",
           expected = listOf(
-            SelectItem("2 * x /*c*/ total", null, null),
+            SelectItem("2 * x", null, null),
             SelectItem("id", "id", null),
           ),
         ),
@@ -1359,7 +1253,7 @@ class SqlOutputClauseTest {
           "a function-call multiplication expression with a trailing line comment is not mistaken for the star guard",
           sql = "SELECT sum(x) * 2 -- c\n, id FROM t",
           expected = listOf(
-            SelectItem("sum(x) * 2 -- c", null, null),
+            SelectItem("sum(x) * 2", null, null),
             SelectItem("id", "id", null),
           ),
         ),
@@ -1367,7 +1261,7 @@ class SqlOutputClauseTest {
           description = "a cast on a star with a trailing line comment is not mistaken for the star guard",
           sql = "SELECT t.*::text -- c\n, id FROM t",
           expected = listOf(
-            SelectItem("t.*::text -- c", null, null),
+            SelectItem("t.*::text", null, null),
             SelectItem("id", "id", null),
           ),
         ),
@@ -1376,7 +1270,7 @@ class SqlOutputClauseTest {
           "count star with an implicit alias and a trailing line comment is not mistaken for the star guard",
           sql = "SELECT count(*) total -- c\n, id FROM t",
           expected = listOf(
-            SelectItem("count(*) total -- c", null, null),
+            SelectItem("count(*)", null, null),
             SelectItem("id", "id", null),
           ),
         ),
@@ -1393,7 +1287,7 @@ class SqlOutputClauseTest {
           description = "a parenthesized cast with an implicit alias is not mistaken for the star guard",
           sql = "SELECT (a*b)::int lbl, id FROM t",
           expected = listOf(
-            SelectItem("(a*b)::int lbl", null, null),
+            SelectItem("(a*b)::int", null, null),
             SelectItem("id", "id", null),
           ),
         ),
@@ -1401,7 +1295,7 @@ class SqlOutputClauseTest {
           description = "a string literal containing a star with an implicit alias is not mistaken for the star guard",
           sql = "SELECT 'lit *' foo, id FROM t",
           expected = listOf(
-            SelectItem("'lit *' foo", null, null),
+            SelectItem("'lit *'", null, null),
             SelectItem("id", "id", null),
           ),
         ),
@@ -1410,7 +1304,7 @@ class SqlOutputClauseTest {
           "an array-indexed multiplication expression with an implicit alias is not mistaken for the star guard",
           sql = "SELECT arr[1] * 2 tot, id FROM t",
           expected = listOf(
-            SelectItem("arr[1] * 2 tot", null, null),
+            SelectItem("arr[1] * 2", null, null),
             SelectItem("id", "id", null),
           ),
         ),
@@ -1418,38 +1312,28 @@ class SqlOutputClauseTest {
           description = "a lone star with no implicit alias is unaffected by the implicit-alias check",
           sql = "SELECT * FROM t",
           expected = listOf(
-            SelectItem("*", null, null),
+            SelectItem("*", null, null, isStar = true),
           ),
         ),
         NotStarGuardCase(
           description = "a lone qualified star with no implicit alias is unaffected by the implicit-alias check",
           sql = "SELECT t.* FROM t",
           expected = listOf(
-            SelectItem("t.*", null, null),
+            SelectItem("t.*", null, null, isStar = true),
           ),
         ),
-        // "preferences prefs" is a real implicit alias (no "AS"), but neither candidate 1
-        // ("preferences prefs") nor candidate 2 ("preferences") is star-shaped, so the guard does
-        // not fire and both items survive. columnName is `null` for the first item specifically
-        // because parseColumnReference's own regex requires the entire (unstripped) expression to
-        // match a bare or qualified identifier -- "preferences prefs" contains a space, so the whole
-        // match fails, not because this function mistakes it for something else. This is a lost
-        // name (parseColumnReference simply cannot see past the implicit alias it wasn't taught to
-        // strip), not a wrong one: the resulting `emptyList()`-style fallback in JdbcAnalyzer
-        // degrades to metadata, exactly as documented on parseSelectItems for any expression this
-        // function cannot resolve.
+        // "preferences prefs" is a real implicit alias (no "AS") on the column reference
+        // "preferences", so the first item keeps its column name and the guard does not fire.
         NotStarGuardCase(
           description =
-          "an implicit alias on a non-star column is not mistaken for the star guard, but loses its column name",
+          "an implicit alias on a non-star column is not mistaken for the star guard and keeps its column name",
           sql = "SELECT preferences prefs, id FROM t",
           expected = listOf(
-            SelectItem("preferences prefs", null, null),
+            SelectItem("preferences", "preferences", null),
             SelectItem("id", "id", null),
           ),
         ),
-        // columnName is `null` for the bare literal "5" and never "5" itself: PostgreSQL would never lex a
-        // digit-leading token as an identifier (it's a numeric literal), so COLUMN_REFERENCE's
-        // leading-character restriction correctly rejects it — see COLUMN_REFERENCE's own KDoc.
+        // columnName is `null` for the bare literal "5": it is a numeric literal, not a column reference.
         NotStarGuardCase(
           description = "WITH clause main query with no FROM clause",
           sql = "WITH c AS (SELECT 1) SELECT 5, 'x'",
@@ -1545,15 +1429,11 @@ class SqlOutputClauseTest {
     }
 
     @Test
-    fun `an empty quoted identifier yields no column name, not an empty string`() {
+    fun `an empty quoted identifier is rejected by PostgreSQL, so there are no items`() {
       // PostgreSQL rejects a zero-length delimited identifier outright ("SELECT """" FROM t" is a
-      // syntax error), so this is unreachable from a query PostgreSQL itself accepted -- but an
-      // empty non-`null` columnName would make JdbcAnalyzer.buildResultColumns' originalName fall to
-      // "" with no fallback to ResultSetMetaData.getColumnName, so this must still degrade to
-      // `null`.
-      val result = parseSelectItems("SELECT \"\" FROM c").single()
-      assertThat(result.columnName).isNull()
-      assertThat(result.tableName).isNull()
+      // syntax error).
+      val result = parseSelectItems("SELECT \"\" FROM c")
+      assertThat(result).isEmpty()
     }
   }
 
@@ -1583,7 +1463,7 @@ class SqlOutputClauseTest {
     }
 
     @Test
-    fun `parseAliasToken's alias is RAW, not truncated -- an over-length quoted alias still ends in its quote`() {
+    fun `an over-length quoted alias is raw, not truncated, and still ends in its quote`() {
       // Truncating text that still carries its quotes would count those bytes and could drop the
       // closing one. The alias stays raw here and is truncated after folding instead.
       val overLongName = "a".repeat(70)
@@ -1610,21 +1490,176 @@ class SqlOutputClauseTest {
     }
 
     @Test
-    fun `an alias token starting with a digit is rejected`() {
-      val result = parseOutputItemsWithAlias("SELECT x AS 1x FROM t").single()
-      assertThat(result.alias).isNull()
+    fun `an alias token starting with a digit is rejected by PostgreSQL, so there are no items`() {
+      assertThat(parseOutputItemsWithAlias("SELECT x AS 1x FROM t")).isEmpty()
     }
 
     @Test
-    fun `an unterminated quoted alias yields no alias`() {
-      val result = parseOutputItemsWithAlias("SELECT x AS \"abc FROM t").single()
-      assertThat(result.alias).isNull()
+    fun `an unterminated quoted alias is rejected by PostgreSQL, so there are no items`() {
+      assertThat(parseOutputItemsWithAlias("SELECT x AS \"abc FROM t")).isEmpty()
     }
 
     @Test
-    fun `trailing text after the alias token yields no alias`() {
-      val result = parseOutputItemsWithAlias("SELECT x AS ux zz FROM t").single()
-      assertThat(result.alias).isNull()
+    fun `trailing text after the alias token is rejected by PostgreSQL, so there are no items`() {
+      assertThat(parseOutputItemsWithAlias("SELECT x AS ux zz FROM t")).isEmpty()
+    }
+  }
+
+  @Nested
+  @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+  internal inner class ItemExtent {
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("cases")
+    fun `each item keeps its whole expression and its alias`(testCase: ItemExtentCase) {
+      val items = parseOutputItemsWithAlias(testCase.sql).map {
+        ExpectedItem(it.selectItem.expression, it.alias, it.isAliasExplicit)
+      }
+      assertThat(items).isEqualTo(testCase.expected)
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("gluedShapes")
+    fun `an item with no whitespace around it keeps its whole expression`(shape: GluedShape) {
+      assertThat(extents(shape.sql)).isEqualTo(shape.expected)
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("gluedShapes")
+    fun `the same item after a comma gives the same result`(shape: GluedShape) {
+      assertThat(extents(shape.commaSql)).isEqualTo(shape.commaExpected)
+    }
+
+    private fun extents(sql: String): List<ExpectedItem> = parseOutputItemsWithAlias(sql).map {
+      ExpectedItem(it.selectItem.expression, it.alias, it.isAliasExplicit)
+    }
+
+    fun gluedShapes(): List<GluedShape> = listOf(
+      GluedShape("SELECT", "(a + b)", " AS total FROM t", "total", true),
+      GluedShape("SELECT DISTINCT", "(a)", " FROM t"),
+      GluedShape("UPDATE t SET a = 1 RETURNING", "(a + 1)", ""),
+      GluedShape("SELECT", "\"a\"", " FROM t"),
+      GluedShape("SELECT", "'x'", " FROM t"),
+      GluedShape("SELECT", "-a", " FROM t"),
+      GluedShape("SELECT", "*", "FROM t", isStar = true),
+      GluedShape("SELECT", "(a)", "FROM t"),
+      GluedShape("SELECT", "'x'", "FROM t"),
+      GluedShape("SELECT", "\"a\"", "FROM t"),
+      GluedShape("SELECT ", "a.*", "FROM t", isStar = true),
+      GluedShape("UPDATE t SET a = 1 RETURNING", "*", "", isStar = true),
+      GluedShape("SELECT DISTINCT ON (a)", "b", " FROM t"),
+      GluedShape("SELECT ALL", "(a)", " FROM t"),
+      GluedShape("SELECT", "(a)", " FROM t; SELECT 2"),
+      GluedShape("(SELECT", "(a)", " FROM t)"),
+      GluedShape("SELECT", "(a)", " UNION SELECT b"),
+    )
+
+    fun cases(): List<ItemExtentCase> {
+      val withoutTimeZone = "now()::timestamp without time zone"
+      return listOf(
+        ItemExtentCase("SELECT id, $withoutTimeZone FROM t", ExpectedItem("id"), ExpectedItem(withoutTimeZone)),
+        ItemExtentCase("SELECT $withoutTimeZone, id FROM t", ExpectedItem(withoutTimeZone), ExpectedItem("id")),
+        ItemExtentCase(
+          "SELECT id, now()::time without time zone FROM t",
+          ExpectedItem("id"),
+          ExpectedItem("now()::time without time zone"),
+        ),
+        ItemExtentCase(
+          "SELECT now()::time without time zone, id FROM t",
+          ExpectedItem("now()::time without time zone"),
+          ExpectedItem("id"),
+        ),
+        ItemExtentCase(
+          "SELECT id, x::timestamp(3) without time zone FROM t",
+          ExpectedItem("id"),
+          ExpectedItem("x::timestamp(3) without time zone"),
+        ),
+        ItemExtentCase(
+          "SELECT x::timestamp(3) without time zone, id FROM t",
+          ExpectedItem("x::timestamp(3) without time zone"),
+          ExpectedItem("id"),
+        ),
+        ItemExtentCase("SELECT $withoutTimeZone AS x FROM t", ExpectedItem(withoutTimeZone, "x", true)),
+        ItemExtentCase("SELECT $withoutTimeZone x FROM t", ExpectedItem(withoutTimeZone, "x", false)),
+        ItemExtentCase("UPDATE t SET a = 1 RETURNING $withoutTimeZone", ExpectedItem(withoutTimeZone)),
+        ItemExtentCase("UPDATE t SET a = 1 RETURNING $withoutTimeZone AS x", ExpectedItem(withoutTimeZone, "x", true)),
+        ItemExtentCase("UPDATE t SET a = 1 RETURNING $withoutTimeZone x", ExpectedItem(withoutTimeZone, "x", false)),
+        ItemExtentCase(
+          "SELECT id, U&'abc' UESCAPE '!' FROM t",
+          ExpectedItem("id"),
+          ExpectedItem("U&'abc' UESCAPE '!'"),
+        ),
+        ItemExtentCase(
+          "SELECT U&'abc' UESCAPE '!', id FROM t",
+          ExpectedItem("U&'abc' UESCAPE '!'"),
+          ExpectedItem("id"),
+        ),
+        ItemExtentCase("SELECT U&'abc' UESCAPE '!' AS y FROM t", ExpectedItem("U&'abc' UESCAPE '!'", "y", true)),
+        ItemExtentCase("SELECT U&'abc' UESCAPE '!' y FROM t", ExpectedItem("U&'abc' UESCAPE '!'", "y", false)),
+        ItemExtentCase(
+          "SELECT id, x::double precision FROM t",
+          ExpectedItem("id"),
+          ExpectedItem("x::double precision"),
+        ),
+        ItemExtentCase(
+          "SELECT id, x::character varying(10) FROM t",
+          ExpectedItem("id"),
+          ExpectedItem("x::character varying(10)"),
+        ),
+        ItemExtentCase(
+          "SELECT id, x::interval day to second FROM t",
+          ExpectedItem("id"),
+          ExpectedItem("x::interval day to second"),
+        ),
+        ItemExtentCase("SELECT id, x::int ARRAY[3] FROM t", ExpectedItem("id"), ExpectedItem("x::int ARRAY[3]")),
+        ItemExtentCase("SELECT id, x::text[] FROM t", ExpectedItem("id"), ExpectedItem("x::text[]")),
+        ItemExtentCase(
+          "SELECT id, x LIKE 'a' ESCAPE '!' FROM t",
+          ExpectedItem("id"),
+          ExpectedItem("x LIKE 'a' ESCAPE '!'"),
+        ),
+        ItemExtentCase(
+          "SELECT id, ts AT TIME ZONE tz FROM t",
+          ExpectedItem("id"),
+          ExpectedItem("ts AT TIME ZONE tz"),
+        ),
+        ItemExtentCase(
+          "SELECT id, ts AT TIME ZONE tz z FROM t",
+          ExpectedItem("id"),
+          ExpectedItem("ts AT TIME ZONE tz", "z", false),
+        ),
+        ItemExtentCase("SELECT id, a + b c FROM t", ExpectedItem("id"), ExpectedItem("a + b", "c", false)),
+        ItemExtentCase(
+          "SELECT id, x IS DISTINCT FROM y FROM t",
+          ExpectedItem("id"),
+          ExpectedItem("x IS DISTINCT FROM y"),
+        ),
+        ItemExtentCase("SELECT id, x IS DISTINCT FROM y", ExpectedItem("id"), ExpectedItem("x IS DISTINCT FROM y")),
+        ItemExtentCase(
+          "SELECT id, count(*) FILTER (WHERE x) FROM t",
+          ExpectedItem("id"),
+          ExpectedItem("count(*) FILTER (WHERE x)"),
+        ),
+        ItemExtentCase(
+          "SELECT id, sum(x) OVER (ORDER BY y) FROM t",
+          ExpectedItem("id"),
+          ExpectedItem("sum(x) OVER (ORDER BY y)"),
+        ),
+        ItemExtentCase("SELECT id, a \"b\" FROM t", ExpectedItem("id"), ExpectedItem("a", "\"b\"", false)),
+        ItemExtentCase("SELECT id, a;", ExpectedItem("id"), ExpectedItem("a")),
+        ItemExtentCase("(SELECT a) UNION (SELECT b)", ExpectedItem("a")),
+        ItemExtentCase("SELECT id, a --c\nFROM t", ExpectedItem("id"), ExpectedItem("a")),
+        ItemExtentCase("SELECT id, a /*c*/ FROM t", ExpectedItem("id"), ExpectedItem("a")),
+        ItemExtentCase("SELECT a FROM t FOR UPDATE", ExpectedItem("a")),
+        ItemExtentCase("SELECT a FROM t WINDOW w AS (ORDER BY a)", ExpectedItem("a")),
+        ItemExtentCase("SELECT a INTO x FROM t", ExpectedItem("a")),
+        ItemExtentCase("SELECT *", ExpectedItem("*")),
+        ItemExtentCase("SELECT t.* x FROM t", ExpectedItem("t.*", "x", false)),
+        ItemExtentCase("SELECT interval\n'1 day' FROM t", ExpectedItem("interval\n'1 day'")),
+        ItemExtentCase("SELECT timestamp '2020-01-01' FROM t", ExpectedItem("timestamp '2020-01-01'")),
+        ItemExtentCase("SELECT a, ?", ExpectedItem("a"), ExpectedItem("?")),
+        ItemExtentCase("SELECT a, b; SELECT c, d", ExpectedItem("a"), ExpectedItem("b")),
+      )
     }
   }
 }

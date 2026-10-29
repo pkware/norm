@@ -139,8 +139,7 @@ class SqlLexerTest {
       // strips (the separator is plain whitespace, which stripCommentsAndWhitespace removes the
       // same as a comment) to "E'a''\'", where the fused "''" reads as a doubled-quote escape and
       // the "\" that follows reads as escaping the final "'" -- overrunning to the end of the
-      // text, which would defeat findTrailingImplicitAliasStart's "last segment must end exactly
-      // at text.length" anchor in the dangerous direction (see isStarItem's KDoc).
+      // text.
       //
       // Not achievable as valid SQL end to end, so this is a defensive gate, not a repro of a
       // reachable bug: on PostgreSQL 18.4, it only

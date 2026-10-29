@@ -69,10 +69,9 @@ class TypeRepositoryTest {
 
     @Test
     fun `a bare numeric literal select item gets a source-reference KDoc line, not silence`() {
-      // COLUMN_REFERENCE's leading character is restricted to a legal identifier start (no digit,
-      // no "$"), so parseSelectItems("SELECT 5") does not resolve the literal "5" as a column named
-      // "5". columnName is `null`, computedExpression is "5", and sourceReference() renders "`5`"
-      // (see COLUMN_REFERENCE's own KDoc).
+      // "5" is a numeric literal, so parseSelectItems("SELECT 5") does not resolve it as a column
+      // named "5". columnName is `null`, computedExpression is "5", and sourceReference() renders
+      // "`5`".
       val repository = TypeRepository("test", Catalog())
       val literalColumn = Column(name = "column1", notNull = true, type = Identifier(name = "int4"))
 
@@ -108,12 +107,9 @@ class TypeRepositoryTest {
     }
 
     @Test
-    fun `an implicitly aliased top-level computed expression emits its complete text, alias included`() {
-      // Whether a trailing bare word is an alias or the expression's own last operand cannot be
-      // decided from text alone without a grammar (`SELECT a IS NOT NULL` would truncate to the
-      // unparseable `a IS NOT`, `SELECT INTERVAL '1' DAY` would truncate to `INTERVAL '1'`, which
-      // evaluates to a different value). So the top-level path never guesses: an item with no
-      // explicit `AS` is embedded in its entire, exactly-as-written form, alias or operand included.
+    fun `an implicitly aliased top-level computed expression emits its text without the alias`() {
+      // The parse tree says which trailing word is the alias, and PostgreSQL labels the column with it,
+      // so the alias is not part of the expression.
       val countColumn = Column(name = "c", notNull = true, type = Identifier(name = "int8"))
       val maxColumn = Column(name = "m", notNull = false, type = Identifier(name = "text"))
 
@@ -126,8 +122,26 @@ class TypeRepositoryTest {
       )
 
       val kdoc = repository.requiredTypes.first().kdoc.toString()
-      assertThat(kdoc).contains("@property c (`count(*) c`)")
-      assertThat(kdoc).contains("@property m (`max(name) m`)")
+      assertThat(kdoc).contains("@property c (`count(*)`)")
+      assertThat(kdoc).contains("@property m (`max(name)`)")
+    }
+
+    @Test
+    fun `a trailing word that is an operand and not an alias stays in the expression`() {
+      val nullColumn = Column(name = "?column?", notNull = true, type = Identifier(name = "bool"))
+      val intervalColumn = Column(name = "interval", notNull = true, type = Identifier(name = "text"))
+
+      val repository = TypeRepository("test", Catalog())
+      val queryText = "SELECT a IS NOT NULL, INTERVAL '1' DAY FROM t"
+      repository.buildTypeProjectionForQuery(
+        "operands",
+        resolveComputedExpressions(queryText, listOf(nullColumn, intervalColumn)),
+        queryText,
+      )
+
+      val kdoc = repository.requiredTypes.first().kdoc.toString()
+      assertThat(kdoc).contains("(`a IS NOT NULL`)")
+      assertThat(kdoc).contains("(`INTERVAL '1' DAY`)")
     }
   }
 
@@ -267,9 +281,9 @@ class TypeRepositoryTest {
 
     @Test
     fun `a comment inside a top-level computed expression is stripped, not embedded verbatim`() {
-      // resolveComputedExpressions must not emit selectItem.expression raw,
-      // applying neither stripComments nor collapseCosmeticWhitespace -- unlike the CTE path
-      // (resolveNodeTreeProvenanceExpression), which applies both. A developer who read the KDoc
+      // resolveComputedExpressions must not emit selectItem.expression raw, but
+      // selectItem.normalizedExpression, as the CTE path (resolveNodeTreeProvenanceExpression)
+      // does. A developer who read the KDoc
       // and pasted the rendered text back into psql would get "a + -- note\n  b", where the line
       // comment swallows the rest of its own line -- including the "b" operand -- so PostgreSQL
       // rejects it with "syntax error at end of input".

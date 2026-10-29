@@ -5,14 +5,12 @@ import norm.generator.QueryFileParser
 import norm.generator.alignSelectItems
 import norm.generator.explainedStatementStart
 import norm.generator.hasTopLevelSetOperation
-import norm.generator.isStarItem
 import norm.generator.parseCteClause
 import norm.generator.parseOutputItemsWithAlias
 import norm.generator.parseSelectItems
 import norm.generator.placeholderPositions
 import norm.generator.replaceParameterPlaceholders
 import norm.generator.splitStatements
-import norm.generator.splitTrailingImplicitAlias
 
 /**
  * Renders what each hand-written scanner function returns, or throws, for every [CorpusEntry].
@@ -49,8 +47,6 @@ internal object ScannerBaseline {
     record("splitStatements") { splitStatements(text) }
     record("explainedStatementStart") { explainedStatementStart(text) }
     record("parseCteClause") { parseCteClause(text) }
-    record("isStarItem(text)") { isStarItem(text) }
-    record("splitTrailingImplicitAlias(text)") { splitTrailingImplicitAlias(text) }
     val items = runCatching { parseOutputItemsWithAlias(text) }
     items.fold(
       onSuccess = { renderItems(it) },
@@ -60,9 +56,9 @@ internal object ScannerBaseline {
 
   private fun StringBuilder.renderItems(items: List<OutputItemWithAlias>) {
     for ((index, item) in items.withIndex()) {
-      val expression = item.selectItem.expression
-      record("isStarItem(item[$index])") { isStarItem(expression) }
-      record("splitTrailingImplicitAlias(item[$index])") { splitTrailingImplicitAlias(expression) }
+      record("isStar(item[$index])") { item.selectItem.isStar }
+      record("alias(item[$index])") { item.alias }
+      record("isAliasExplicit(item[$index])") { item.isAliasExplicit }
     }
   }
 

@@ -458,8 +458,8 @@ class NodeTreeProvenanceExpressionTest {
     @Test
     fun `two literal spaces inside a quoted identifier are never collapsed to one`() {
       // Collapsing "My  Col" to "My Col" names a different, nonexistent column, which PostgreSQL
-      // rejects outright ("column \"My Col\" does not exist"). collapseCosmeticWhitespace must be
-      // lexer-aware, never a blind regex collapse.
+      // rejects outright ("column \"My Col\" does not exist"). The normalized expression keeps the
+      // spacing inside a quoted identifier.
       val ddl = """CREATE TABLE t (id INT NOT NULL, "My  Col" TEXT NOT NULL)"""
       val sql = """
         WITH c AS (SELECT id, UPPER("My  Col") AS u FROM t)
@@ -593,13 +593,11 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `a matched body item that is a bare column with an implicit alias also resolves to nothing`() {
-      // The explicit-AS form of this exact pass-through (the test right above) already resolved to
+      // The explicit-AS form of this exact pass-through (the test right above) resolves to
       // nothing -- matchedItem.selectItem.columnName is non-null for "description AS
-      // description_upper" because parseColumnReference runs on the alias-stripped expression
-      // "description". For the implicit-alias spelling below, extractAlias finds no top-level AS at
-      // all, so selectItem.columnName is `null` for the full unsplit text "description dx", even
-      // though the item is the same kind of unchanged pass-through once its trailing alias token is
-      // split off. The two spellings must agree.
+      // description_upper". The implicit-alias spelling below is the same kind of unchanged
+      // pass-through, so selectItem.columnName is non-null for "description dx" as well. The two
+      // spellings must agree.
       val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
       val sql = """
         WITH a AS (SELECT description dx FROM parent)

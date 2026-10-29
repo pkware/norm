@@ -6635,7 +6635,7 @@ class QueryAnalysisTest {
     }
 
     @Test
-    fun `star with whitespace around the dot is recognized by isStarItem and forces every column`() {
+    fun `star with whitespace around the dot is recognized as a star and forces every column`() {
       assumeTrue(pgVersion.substringBefore('.').toInt() >= 18, "RETURNING OLD requires PostgreSQL 18+")
       // Whitespace around the qualifying dot in "tgt . *" is ordinary SQL syntax PostgreSQL's
       // own parser accepts and expands the same way as "tgt.*", regardless of spacing. On real

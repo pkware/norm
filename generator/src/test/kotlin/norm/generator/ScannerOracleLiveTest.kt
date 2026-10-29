@@ -2,6 +2,7 @@ package norm.generator
 
 import assertk.assertThat
 import assertk.assertions.isEqualTo
+import norm.generator.baseline.GLUED_ISSUE_INPUTS
 import norm.generator.baseline.ScannerCorpus
 import norm.generator.libpgquery.LibPgQuery
 import norm.generator.libpgquery.LibPgQueryException
@@ -49,7 +50,8 @@ internal data class KnownOracleDisagreement(val issue: Int, val disagreement: Or
 /**
  * Compares the hand-written scanner functions with a live server on every query of every scenario except the embed
  * scenarios: parameter counts from the JDBC driver and from `PREPARE`, and the result column count and labels from
- * the driver.
+ * the driver. Each statement is also rebuilt with every item's expression in parentheses, which the server must
+ * describe exactly as the original, so an expression that ends early or late is caught.
  *
  * [KNOWN_DISAGREEMENTS] lists the disagreements that exist. The test requires the observed set to equal it, so
  * fixing a disagreement fails the test until its entry is removed.
@@ -78,6 +80,26 @@ class ScannerOracleLiveTest {
   }
 
   @Test
+  fun `parenthesized items agree with the live server on every literal and issue entry`() {
+    resetPublicSchema()
+    connection.createStatement().use { it.execute(LITERAL_SCHEMA) }
+    val observed = ScannerCorpus.load()
+      .filterNot { it.key.startsWith("test-scenarios") || '\u0000' in it.text }
+      .mapNotNull { entry -> parenthesizedItemsDisagreement(entry.key, entry.text) }
+    assertThat(observed).isEqualTo(emptyList())
+  }
+
+  @Test
+  fun `the glued select lists are accepted by the server and yield items`() {
+    resetPublicSchema()
+    connection.createStatement().use { it.execute(LITERAL_SCHEMA) }
+    val withoutItems = GLUED_ISSUE_INPUTS.filter { sql ->
+      describe(sql) == "rejected" || parseOutputItemsWithAlias(sql).isEmpty()
+    }
+    assertThat(withoutItems).isEqualTo(emptyList())
+  }
+
+  @Test
   fun `a known disagreement names a scenario that is checked`() {
     val checked = scenarios().map { ScannerCorpus.scenarioKey(it.directory) }.toSet()
     assertThat(KNOWN_DISAGREEMENTS.map { it.disagreement.scenario }.filter { it !in checked }).isEqualTo(emptyList())
@@ -101,7 +123,53 @@ class ScannerOracleLiveTest {
       compare("rewrittenSqlParses", "true", parsesAfterRewrite(sql))
       statement.metaData?.let { compareColumns(sql, it, ::compare) }
     }
+    parenthesizedItemsDisagreement(scenario, sql, query)?.let { found += it }
     return found
+  }
+
+  private fun parenthesizedItemsDisagreement(scope: String, sql: String, query: String = ""): OracleDisagreement? {
+    val rewritten = parenthesizeItems(sql) ?: return null
+    val original = describe(sql)
+    val parenthesized = describe(rewritten)
+    if (original == parenthesized) return null
+    return OracleDisagreement(scope, query, "parenthesizedItems", original, "$parenthesized for: $rewritten")
+  }
+
+  /** Whether the server accepts [sql] and, when it returns rows, each column's label and type name. */
+  private fun describe(sql: String): String = try {
+    connection.prepareStatement(sql).use { statement ->
+      val metaData = statement.metaData
+      if (metaData == null) {
+        "no result set"
+      } else {
+        (1..metaData.columnCount).joinToString { "${metaData.getColumnLabel(it)}:${metaData.getColumnTypeName(it)}" }
+      }
+    }
+  } catch (_: SQLException) {
+    "rejected"
+  } catch (_: ArrayIndexOutOfBoundsException) {
+    // pgjdbc fails this way when the text has a `$n` parameter the driver did not count.
+    "rejected"
+  }
+
+  /**
+   * [sql] with each item's expression in parentheses and its alias kept, or `null` when there is nothing to rewrite:
+   * no items, or a star item.
+   */
+  private fun parenthesizeItems(sql: String): String? {
+    val items = parseOutputItemsWithAlias(sql)
+    if (items.isEmpty() || items.any { it.selectItem.isStar }) return null
+    val statement = parseOrNull(replaceParameterPlaceholdersKeepingOffsets(sql))?.let(::findOutputStatement)
+    val starts = statement?.targets?.map { it.intField("location") } ?: return null
+    if (starts.size != items.size || starts.any { it == null }) return null
+    val result = StringBuilder()
+    var copiedUpTo = 0
+    for ((index, item) in items.withIndex()) {
+      val start = starts[index]!!
+      result.append(sql, copiedUpTo, start).append('(').append(item.selectItem.expression).append(')')
+      copiedUpTo = start + item.selectItem.expression.length
+    }
+    return result.append(sql, copiedUpTo, sql.length).toString()
   }
 
   private fun parsesAfterRewrite(sql: String): String = try {
@@ -147,7 +215,7 @@ class ScannerOracleLiveTest {
 
   private fun compareColumns(sql: String, metaData: java.sql.ResultSetMetaData, compare: (String, Any?, Any?) -> Unit) {
     val items = parseOutputItemsWithAlias(sql)
-    if (items.isNotEmpty() && items.none { isStarItem(it.selectItem.expression) }) {
+    if (items.isNotEmpty() && items.none { it.selectItem.isStar }) {
       compare("columnCount", metaData.columnCount, items.size)
     }
     if (alignSelectItems(sql, metaData.columnCount).isEmpty()) return
@@ -157,11 +225,8 @@ class ScannerOracleLiveTest {
     }
   }
 
-  private fun expectedLabel(item: OutputItemWithAlias): String? {
-    item.alias?.let { return logicalIdentifier(it) }
-    splitTrailingImplicitAlias(item.selectItem.expression)?.let { return logicalIdentifier(it.alias) }
-    return item.selectItem.columnName
-  }
+  private fun expectedLabel(item: OutputItemWithAlias): String? =
+    item.alias?.let(::logicalIdentifier) ?: item.selectItem.columnName
 
   private fun resetPublicSchema() {
     connection.createStatement().use {
@@ -177,6 +242,12 @@ class ScannerOracleLiveTest {
   }
 
   companion object {
+    private const val LITERAL_SCHEMA = """
+      CREATE TABLE t (id int, a int, b int, c int, x text, y text, ts timestamptz, tz text, name text, description text);
+      CREATE TABLE s (id int, "from" int, "is" int, "returning" int, a int, b int);
+      CREATE TABLE users (id int, email text, age int, preferences text);
+    """
+
     @JvmField
     @Container
     val container: PostgreSQLContainer<*> = testPostgresContainer("norm_scanner_oracle_test")

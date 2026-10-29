@@ -6,6 +6,17 @@ private const val STATEMENT_LENGTH_FIELD = "stmt_len"
 private const val STATEMENT_LOCATION_FIELD = "stmt_location"
 
 /**
+ * The names of the fields that hold a location in the parse tree, read from `libpg_query_location_fields.txt`. The
+ * list holds the `ParseLoc` fields of the pinned libpg_query's `srcdata/struct_defs.json`, `stmt_location` and
+ * `stmt_len`.
+ */
+internal val locationFieldNames: Set<String> by lazy {
+  openResource("/libpg_query_location_fields.txt").use { stream ->
+    stream.bufferedReader().readLines().filter { it.isNotBlank() }.toSet()
+  }
+}
+
+/**
  * Rewrites the UTF-8 byte offsets in a libpg_query parse tree to `String` indexes.
  *
  * An integer-valued field is a byte offset when its name is in [locationFields], whichever node holds it.

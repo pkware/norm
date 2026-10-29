@@ -18,11 +18,7 @@ internal fun openResource(name: String): InputStream =
  * call fails for a reason other than a [LibPgQueryException].
  */
 internal object LibPgQuery {
-  private val parseTreeOffsets: ParseTreeOffsets by lazy {
-    openResource("/libpg_query_location_fields.txt").use { stream ->
-      ParseTreeOffsets(stream.bufferedReader().readLines().filter { it.isNotBlank() }.toSet())
-    }
-  }
+  private val parseTreeOffsets: ParseTreeOffsets by lazy { ParseTreeOffsets(locationFieldNames) }
 
   private val instance = RecoverableInstance(::newInstance)
 

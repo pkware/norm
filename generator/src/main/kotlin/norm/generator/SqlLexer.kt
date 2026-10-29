@@ -1,41 +1,6 @@
 package norm.generator
 
 /**
- * Removes every `--` line comment and `/* */` block comment from [text], replacing each with a
- * single space, so two tokens a comment used to separate (e.g. `d\n-- only the active ones\nWHERE`,
- * where [skipLineComment] consumes the comment's own trailing newline along with its text) can't
- * fuse into one run once the comment text is gone.
- * Preserves whitespace, string literals, quoted identifiers, and dollar-quoted strings verbatim.
- */
-internal fun stripComments(text: String): String {
-  val builder = StringBuilder(text.length)
-  var i = 0
-  while (i < text.length) {
-    when {
-      text[i] == '-' && i + 1 < text.length && text[i + 1] == '-' -> {
-        i = skipLineComment(text, i)
-        builder.append(' ')
-      }
-      text[i] == '/' && i + 1 < text.length && text[i + 1] == '*' -> {
-        i = skipBlockComment(text, i)
-        builder.append(' ')
-      }
-      else -> {
-        val afterToken = skipLexicalToken(text, i)
-        if (afterToken != i) {
-          builder.append(text, i, afterToken)
-          i = afterToken
-        } else {
-          builder.append(text[i])
-          i++
-        }
-      }
-    }
-  }
-  return builder.toString()
-}
-
-/**
  * True if [character] can appear inside an unquoted PostgreSQL identifier, at any position after
  * the first: a letter, digit, underscore, dollar sign, or any character whose code is `>= 0x80`.
  *
@@ -318,47 +283,6 @@ private fun skipDollarQuotedString(sql: String, position: Int, adjacency: Origin
   val closingTag = "$" + tag + "$"
   val closeIndex = sql.indexOf(closingTag, openingTagEnd)
   return if (closeIndex < 0) sql.length else closeIndex + closingTag.length
-}
-
-/**
- * Collapses the cosmetic whitespace [stripComments]' own single-space substitution can leave behind
- * in an expression about to be embedded verbatim in generated KDoc — a comment directly after an
- * opening parenthesis or before a closing one (`UPPER(/* x */a)` strips to `UPPER( a)`) reads oddly
- * there. Applied only where an expression is resolved for KDoc, never inside [stripComments] itself.
- *
- * Collapses whitespace outside a single-quoted literal, a dollar-quoted string, a quoted identifier,
- * or a comment to a single space, then removes a single such space immediately after `(` or before
- * `)` — never semantically significant in SQL.
- *
- * Walks every span verbatim via [skipLexicalToken], so a quoted identifier's internal spacing
- * (`"My  Col"` and `"My Col"` are different column names) and a string literal's contents
- * (`'( x )'`) are preserved.
- */
-internal fun collapseCosmeticWhitespace(text: String): String {
-  val trimmed = text.trim()
-  val builder = StringBuilder(trimmed.length)
-  var i = 0
-  while (i < trimmed.length) {
-    val afterToken = skipLexicalToken(trimmed, i)
-    if (afterToken != i) {
-      builder.append(trimmed, i, afterToken)
-      i = afterToken
-      continue
-    }
-    val character = trimmed[i]
-    if (!character.isWhitespace()) {
-      builder.append(character)
-      i++
-      continue
-    }
-    var afterWhitespace = i
-    while (afterWhitespace < trimmed.length && trimmed[afterWhitespace].isWhitespace()) afterWhitespace++
-    val precededByOpenParenthesis = builder.isNotEmpty() && builder.last() == '('
-    val followedByCloseParenthesis = afterWhitespace < trimmed.length && trimmed[afterWhitespace] == ')'
-    if (!precededByOpenParenthesis && !followedByCloseParenthesis) builder.append(' ')
-    i = afterWhitespace
-  }
-  return builder.toString()
 }
 
 /** One lexical unit [SqlTokenCursor.advance] returns. */
