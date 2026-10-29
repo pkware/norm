@@ -13,6 +13,7 @@ import kotlin.jvm.Throws
 import norm.Many
 import norm.Query
 import norm.Transactable
+import norm.inputValue
 
 public interface Queries : Transactable {
   /**
@@ -516,4 +517,28 @@ public interface Queries : Transactable {
    */
   @Throws(SQLException::class)
   public fun getBookByTitleContainingQuestionMark(id: Int): GetBookByTitleContainingQuestionMark = getBookByTitleContainingQuestionMark(id, ::GetBookByTitleContainingQuestionMark)
+
+  /**
+   * Returns a text literal whose dollar quote holds a semicolon at the end of a line.
+   *
+   * ```sql
+   * SELECT $$first;
+   * second;
+   * third$$ AS value
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun <T : Any> getDollarQuotedLiteral(mapper: (`value`: String) -> T): T
+
+  /**
+   * Returns a text literal whose dollar quote holds a semicolon at the end of a line.
+   *
+   * ```sql
+   * SELECT $$first;
+   * second;
+   * third$$ AS value
+   * ```
+   */
+  @Throws(SQLException::class)
+  public fun getDollarQuotedLiteral(): String = getDollarQuotedLiteral(::inputValue)
 }

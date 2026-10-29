@@ -1596,7 +1596,9 @@ class ParameterNullabilityProbeTest {
       strings = ["SELECT", "VALUES", "TABLE", "WITH", "INSERT", "UPDATE", "DELETE", "MERGE", "select", "(SELECT"],
     )
     fun `a failed PREPARE throws when the first significant token starts a preparable statement`(opening: String) {
-      assertFailure { failingProbe.classify("/* note */ -- more\n $opening 1 WHERE ? = 1") }
+      val closing = if (opening.startsWith("(")) ")" else ""
+
+      assertFailure { failingProbe.classify("/* note */ -- more\n $opening 1 WHERE ? = 1$closing") }
         .isInstanceOf<IllegalStateException>()
     }
 

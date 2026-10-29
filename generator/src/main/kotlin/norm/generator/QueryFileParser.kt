@@ -1,6 +1,8 @@
 package norm.generator
 
 import norm.generator.libpgquery.KeywordKind
+import norm.generator.libpgquery.LibPgQuery
+import norm.generator.libpgquery.LibPgQueryException
 import norm.generator.libpgquery.ScanToken
 import norm.generator.libpgquery.TokenNumber
 
@@ -51,9 +53,18 @@ public data class ParsedQuery(
  * SELECT ...;
  * ```
  *
- * Each query is delimited by a `-- name:` annotation line. Comment lines immediately preceding
- * the annotation are captured as documentation. The SQL body continues until the next annotation
- * or end of file.
+ * The file is scanned with PostgreSQL's lexer. An annotation is a `--` comment that is the first token on its line
+ * and matches `-- name: <name> :<command>`. The same text inside a string, a quoted identifier, a dollar quote, or a
+ * block comment is not an annotation.
+ *
+ * A query's SQL starts on the line after its annotation. Its terminator is the first `;` that ends a statement
+ * and has no token after it on its line except comments and further `;`. When several `;` follow each other, the last
+ * one is the terminator. The SQL ends at the terminator and excludes it. Without a terminator, the SQL runs to the next
+ * annotation or the end of the file, minus one trailing `;`.
+ *
+ * After the terminator, a `--` comment that starts its own line is a doc comment of the next query. A block comment or
+ * a `;` discards the doc comments before it. Any other token is an error. A token made only of whitespace characters,
+ * such as a non-breaking space, counts as whitespace.
  *
  * ## Named Parameters
  *
@@ -72,6 +83,8 @@ public data class ParsedQuery(
  */
 public object QueryFileParser {
 
+  private const val LEXER_WHITESPACE = " \t\n\r\u000C\u000B"
+
   private val NAME_ANNOTATION = Regex("""^--\s*name:\s*(\S+)\s+:(\S+)\s*$""")
 
   /**
@@ -81,95 +94,208 @@ public object QueryFileParser {
    * @param sourceFile Path to the SQL file being parsed, stored on each [ParsedQuery] for diagnostics.
    *   Empty string if the source path is unknown.
    * @return Parsed queries in the order they appear in the file.
-   * @throws IllegalArgumentException if a `-- name:` annotation has an invalid format, names a
-   *   command that doesn't match any [Command]'s SQL form (for example `:foo`), or if a query
-   *   mixes named and positional parameter styles, or if a query's SQL contains a NUL character.
+   * @throws IllegalArgumentException if a `-- name:` annotation names a command that doesn't match any
+   *   [Command]'s SQL form (for example `:foo`), if a query mixes named and positional parameter styles, if the file
+   *   contains a NUL character or text that PostgreSQL's lexer rejects, such as an unterminated string, or if a
+   *   token other than a comment or `;` follows a query's terminating `;`. The message names the line and, when the
+   *   text belongs to one, the query.
    */
   public fun parse(content: String, sourceFile: String = ""): List<ParsedQuery> {
-    val lines = content.lines()
-    val queries = mutableListOf<ParsedQuery>()
-
-    // Accumulate comment lines that precede the next annotation
+    val text = content.lines().joinToString("\n")
+    val lines = LineIndex(text)
+    val tokens = scanFile(text, lines)
+    val annotations = findAnnotations(text, tokens, lines)
     val pendingComments = mutableListOf<String>()
-    var currentName: String? = null
-    var currentCommand: String? = null
-    var currentComments = listOf<String>()
-    var currentSourceLine = 0
-    val currentSqlLines = mutableListOf<String>()
+    val preambleEnd = annotations.firstOrNull()?.start ?: text.length
+    collectComments(text, tokens.filter { it.start < preambleEnd }, pendingComments) { pendingComments.clear() }
 
-    // Once the SQL body ends (line ending with `;`), we switch back to accumulating
-    // pending comments for the next annotation.
-    var sqlBodyComplete = false
-
-    for ((lineIndex, line) in lines.withIndex()) {
-      val trimmed = line.trim()
-      val match = NAME_ANNOTATION.matchEntire(trimmed)
-      if (match != null) {
-        // Flush previous query if one exists
-        if (currentName != null) {
-          queries.add(
-            buildQuery(currentName, currentCommand!!, currentSqlLines, currentComments, currentSourceLine, sourceFile),
-          )
-          currentSqlLines.clear()
-        }
-
-        // Start new query
-        currentName = match.groupValues[1]
-        currentCommand = match.groupValues[2]
-        currentComments = pendingComments.toList()
-        currentSourceLine = lineIndex + 1
-        pendingComments.clear()
-        sqlBodyComplete = false
-      } else if (currentName == null || sqlBodyComplete) {
-        // Before any annotation, or between queries — accumulate comments
-        if (trimmed.startsWith("--")) {
-          pendingComments.add(extractCommentText(trimmed))
-        } else if (trimmed.isNotBlank()) {
-          // Non-comment, non-blank line — reset pending comments
-          pendingComments.clear()
-        }
+    return annotations.mapIndexed { index, annotation ->
+      val bodyStart = text.indexOf('\n', annotation.end).let { if (it < 0) text.length else it + 1 }
+      val bodyEnd = annotations.getOrNull(index + 1)?.let { text.lastIndexOf('\n', it.start - 1) + 1 } ?: text.length
+      val bodyTokens = tokens.filter { it.start in bodyStart until bodyEnd }
+      val comments = pendingComments.toList()
+      pendingComments.clear()
+      val terminator = findTerminator(text, lines, bodyStart, bodyEnd, bodyTokens)
+      val rawSql = if (terminator == null) {
+        text.substring(bodyStart, bodyEnd).trim().removeSuffix(";").trim()
       } else {
-        // Inside a query body
-        currentSqlLines.add(line)
-        if (trimmed.endsWith(";")) {
-          sqlBodyComplete = true
+        collectComments(text, bodyTokens.filter { it.start > terminator }, pendingComments) { token ->
+          throw IllegalArgumentException(
+            "Query '${annotation.name}' at line ${annotation.line} has SQL on line ${lines.lineOf(token.start)} " +
+              "after the ';' that ends it. Start a new query with a '-- name:' annotation.",
+          )
         }
+        text.substring(bodyStart, terminator).trim()
       }
+      buildQuery(annotation, rawSql, comments, sourceFile)
     }
-
-    // Flush last query
-    if (currentName != null) {
-      queries.add(
-        buildQuery(currentName, currentCommand!!, currentSqlLines, currentComments, currentSourceLine, sourceFile),
-      )
-    }
-
-    return queries
   }
 
+  private class QueryAnnotation(val name: String, val command: String, val line: Int, val start: Int, val end: Int)
+
+  private class LineIndex(text: String) {
+    private val newlines = text.indices.filter { text[it] == '\n' }.toIntArray()
+
+    /** Returns the 1-based line that holds [index]. */
+    fun lineOf(index: Int): Int {
+      val found = newlines.binarySearch(index)
+      return 1 + if (found >= 0) found else -found - 1
+    }
+  }
+
+  /**
+   * Scans [text] with PostgreSQL's lexer.
+   *
+   * @throws IllegalArgumentException if [text] contains a NUL character or the lexer rejects it. The message names the
+   *   line and the query.
+   */
+  private fun scanFile(text: String, lines: LineIndex): List<ScanToken> {
+    val nulIndex = text.indexOf('\u0000')
+    require(nulIndex < 0) {
+      "${locate(text, lines, nulIndex)} contains a NUL character on line ${lines.lineOf(nulIndex)}."
+    }
+    return try {
+      LibPgQuery.scan(text)
+    } catch (exception: LibPgQueryException) {
+      val cursorIndex = exception.cursorIndex?.takeIf { it in text.indices }
+      val where = if (cursorIndex == null) "The query file" else locate(text, lines, cursorIndex)
+      val line = cursorIndex?.let { lines.lineOf(it).toString() } ?: "unknown"
+      throw IllegalArgumentException(
+        "$where holds text that PostgreSQL's lexer rejects on line $line: ${exception.message}.",
+        exception,
+      )
+    }
+  }
+
+  /** Names the query whose annotation is the last one before [index], or the text before the first annotation. */
+  private fun locate(text: String, lines: LineIndex, index: Int): String {
+    val annotation = findAnnotations(text, scanLeadingTokens(text.substring(0, index)), lines).lastOrNull()
+    return if (annotation == null) {
+      "The text before the first annotation"
+    } else {
+      "Query '${annotation.name}' at line ${annotation.line}"
+    }
+  }
+
+  private fun findAnnotations(text: String, tokens: List<ScanToken>, lines: LineIndex): List<QueryAnnotation> =
+    tokens.mapNotNull { token ->
+      if (token.token != TokenNumber.LINE_COMMENT || !startsLine(text, token)) return@mapNotNull null
+      val match = NAME_ANNOTATION.matchEntire(text.substring(token.start, token.end).trim()) ?: return@mapNotNull null
+      QueryAnnotation(match.groupValues[1], match.groupValues[2], lines.lineOf(token.start), token.start, token.end)
+    }
+
+  private fun startsLine(text: String, token: ScanToken): Boolean {
+    val lineStart = text.lastIndexOf('\n', token.start - 1) + 1
+    return (lineStart until token.start).all { text[it].isWhitespace() }
+  }
+
+  /**
+   * Returns the index of the `;` that ends a query whose body is `text[bodyStart, bodyEnd)`, or `null` when the body
+   * has none.
+   *
+   * The terminator is the first `;` that ends a statement and has no token after it on its line except comments and
+   * further `;`. When several `;` follow each other, the last one is the terminator. Statements come from
+   * [splitStatementSpans], with each named parameter shown to the parser as `0`.
+   */
+  private fun findTerminator(
+    text: String,
+    lines: LineIndex,
+    bodyStart: Int,
+    bodyEnd: Int,
+    tokens: List<ScanToken>,
+  ): Int? {
+    val body = text.substring(bodyStart, bodyEnd)
+    val statements = try {
+      splitStatementSpans(withLexerWhitespace(body), ::rewriteForParser)
+    } catch (_: LibPgQueryException) {
+      splitStatementSpans(body, ::rewriteForParser)
+    }
+    for (statement in statements) {
+      val end = bodyStart + statement.end
+      if (end >= bodyEnd || text[end] != ';') continue
+      val line = lines.lineOf(end)
+      val following = tokens.filter { it.start > end && !it.isComment() && !it.isBlank(text) }
+      val repeated = following.takeWhile { it.token == TokenNumber.SEMICOLON && lines.lineOf(it.start) == line }
+      val next = following.getOrNull(repeated.size)
+      if (next == null || lines.lineOf(next.start) > line) return repeated.lastOrNull()?.start ?: end
+    }
+    return null
+  }
+
+  /**
+   * Returns [sql] with each character that Kotlin counts as whitespace and PostgreSQL's lexer does not, such as a
+   * non-breaking space, replaced by a space. PostgreSQL reads such a character as part of an identifier, which
+   * would hide the keyword that starts a statement.
+   *
+   * Returns [sql] itself when the replacement would change a token other than an identifier, as when a non-breaking
+   * space sits inside the tag of a dollar quote.
+   */
+  private fun withLexerWhitespace(sql: String): String {
+    val replaced = String(CharArray(sql.length) { if (isOutsideLexerWhitespace(sql[it])) ' ' else sql[it] })
+    if (replaced == sql) return sql
+    val replacedTokens = scanLeadingTokens(replaced).toSet()
+    val keepsTokens = scanLeadingTokens(sql).filter { it.token != TokenNumber.IDENTIFIER }.all { it in replacedTokens }
+    return if (keepsTokens) replaced else sql
+  }
+
+  private fun isOutsideLexerWhitespace(character: Char): Boolean =
+    character.isWhitespace() && character !in LEXER_WHITESPACE
+
+  /** Returns [sql] with each placeholder and named parameter replaced by `0` and spaces, keeping every offset. */
+  private fun rewriteForParser(sql: String): String {
+    val characters = replaceParameterPlaceholdersKeepingOffsets(sql).toCharArray()
+    val tokens = scanLeadingTokens(sql)
+    for ((index, token) in tokens.withIndex()) {
+      if (token.token != TokenNumber.COLON) continue
+      val name = tokens.getOrNull(index + 1)?.takeIf { it.start == token.end && isParameterName(sql, it) } ?: continue
+      characters.fill(' ', token.start, name.end)
+      characters[token.start] = '0'
+    }
+    return String(characters)
+  }
+
+  /**
+   * Walks the tokens after a query's `;` or before the first annotation. Each `--` comment that starts its line is
+   * added to [pendingComments], and a block comment or `;` clears them. Whitespace tokens are skipped, and
+   * [onOtherToken] receives the rest.
+   */
+  private fun collectComments(
+    text: String,
+    tokens: List<ScanToken>,
+    pendingComments: MutableList<String>,
+    onOtherToken: (ScanToken) -> Unit,
+  ) {
+    for (token in tokens) {
+      when (token.token) {
+        TokenNumber.LINE_COMMENT ->
+          if (startsLine(text, token)) pendingComments.add(extractCommentText(text.substring(token.start, token.end)))
+        TokenNumber.BLOCK_COMMENT, TokenNumber.SEMICOLON -> pendingComments.clear()
+        else -> if (!token.isBlank(text)) onOtherToken(token)
+      }
+    }
+  }
+
+  /** Tells whether this is an identifier token made only of whitespace characters, such as a non-breaking space. */
+  private fun ScanToken.isBlank(text: String): Boolean =
+    token == TokenNumber.IDENTIFIER && (start until end).all { text[it].isWhitespace() }
+
+  private fun ScanToken.isComment(): Boolean = token == TokenNumber.LINE_COMMENT || token == TokenNumber.BLOCK_COMMENT
+
   private fun buildQuery(
-    name: String,
-    command: String,
-    sqlLines: List<String>,
+    annotation: QueryAnnotation,
+    rawSql: String,
     comments: List<String>,
-    sourceLine: Int,
     sourceFile: String,
   ): ParsedQuery {
-    val rawSql = sqlLines
-      .joinToString("\n")
-      .trim()
-      .removeSuffix(";")
-      .trim()
-
-    val (sql, namedParameters) = convertNamedParameters(rawSql, scanQuery(name, rawSql, sourceLine))
+    val (sql, namedParameters) = convertNamedParameters(rawSql, scanLeadingTokens(rawSql))
 
     return ParsedQuery(
-      name = name,
-      command = resolveCommand(name, command, sourceLine),
+      name = annotation.name,
+      command = resolveCommand(annotation.name, annotation.command, annotation.line),
       sql = sql,
       comments = comments,
       namedParameters = namedParameters,
-      sourceLine = sourceLine,
+      sourceLine = annotation.line,
       sourceFile = sourceFile,
     )
   }
@@ -239,17 +365,6 @@ public object QueryFileParser {
 
   private fun isParameterName(sql: String, token: ScanToken): Boolean =
     (token.token == TokenNumber.IDENTIFIER || token.keywordKind != KeywordKind.NONE) && sql[token.start] != '"'
-
-  /**
-   * Splits [sql] into lexer tokens for [convertNamedParameters].
-   *
-   * @throws IllegalArgumentException if [sql] contains a NUL character, naming the query at [sourceLine].
-   */
-  private fun scanQuery(name: String, sql: String, sourceLine: Int): List<ScanToken> = try {
-    scanLeadingTokens(sql)
-  } catch (exception: IllegalArgumentException) {
-    throw IllegalArgumentException("Query '$name' at line $sourceLine contains a NUL character.", exception)
-  }
 
   private fun extractCommentText(commentLine: String): String = commentLine.removePrefix("--").trim()
 }

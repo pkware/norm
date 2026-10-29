@@ -13,6 +13,9 @@ internal object ParseTreeNames {
   /** `RawStmt.stmt`: the node of one statement, which holds a single field named after its node type. */
   const val STATEMENT = "stmt"
 
+  /** `ExplainStmt.options`: the `DefElem` nodes of the legacy words `ANALYZE` and `VERBOSE` or of the option list. */
+  const val EXPLAIN_OPTIONS = "options"
+
   /** `SelectStmt`: a `SELECT`, `VALUES` or `TABLE` statement, or a set operation over those. */
   const val SELECT_STATEMENT = "SelectStmt"
 

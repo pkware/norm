@@ -3,13 +3,17 @@ package norm.generator
 import assertk.assertFailure
 import assertk.assertThat
 import assertk.assertions.containsExactly
+import assertk.assertions.endsWith
 import assertk.assertions.hasSize
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isInstanceOf
 import assertk.assertions.messageContains
+import norm.generator.baseline.BLOCK_COMMENT_ISSUE_INPUT
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 
 class QueryFileParserTest {
 
@@ -652,6 +656,605 @@ class QueryFileParserTest {
       val exception = assertFailure { QueryFileParser.parse(content) }
       exception.isInstanceOf(IllegalArgumentException::class)
       exception.messageContains(":ONE")
+    }
+  }
+
+  @Nested
+  inner class BodyTermination {
+
+    private fun parseWithFollowingQuery(firstBody: String, lineEnding: String = "\n"): List<ParsedQuery> {
+      val content = "-- name: first :one\n$firstBody\n\n-- Doc for second.\n-- name: second :many\nSELECT 2;\n"
+      val result = QueryFileParser.parse(content.replace("\n", lineEnding))
+      val secondAnnotationLine = content.lines().indexOfFirst { it.startsWith("-- name: second") } + 1
+      assertThat(result).hasSize(2)
+      assertThat(result[1].name).isEqualTo("second")
+      assertThat(result[1].comments).containsExactly("Doc for second.")
+      assertThat(result[1].sourceLine).isEqualTo(secondAnnotationLine)
+      assertThat(result[1].sql).isEqualTo("SELECT 2")
+      return result
+    }
+
+    @Test
+    fun `semicolon at a line end inside a dollar-quoted DO block does not end the body`() {
+      val result = parseWithFollowingQuery("DO $$ BEGIN PERFORM 1;\nEND $$;")
+
+      assertThat(result[0].sql).isEqualTo("DO $$ BEGIN PERFORM 1;\nEND $$")
+    }
+
+    @Test
+    fun `semicolon at a line end inside a string literal does not end the body`() {
+      val result = parseWithFollowingQuery("SELECT 'a;\nb' AS v;")
+
+      assertThat(result[0].sql).isEqualTo("SELECT 'a;\nb' AS v")
+    }
+
+    @Test
+    fun `semicolon at a line end inside a block comment does not end the body`() {
+      val result = parseWithFollowingQuery("SELECT 1 /* note;\nmore */ AS v;")
+
+      assertThat(result[0].sql).isEqualTo("SELECT 1 /* note;\nmore */ AS v")
+    }
+
+    @Test
+    fun `semicolon after an escaped quote inside an escape string does not end the body`() {
+      val result = parseWithFollowingQuery("SELECT E'\\';\n' AS v;")
+
+      assertThat(result[0].sql).isEqualTo("SELECT E'\\';\n' AS v")
+    }
+
+    @Test
+    fun `semicolon at a line end inside a quoted identifier does not end the body`() {
+      val result = parseWithFollowingQuery("SELECT 1 AS \"a;\nb\";")
+
+      assertThat(result[0].sql).isEqualTo("SELECT 1 AS \"a;\nb\"")
+    }
+
+    @Test
+    fun `semicolon at a line end inside a nested block comment does not end the body`() {
+      val result = parseWithFollowingQuery("SELECT 1 /* outer /* inner; */ still;\n*/ AS v;")
+
+      assertThat(result[0].sql).isEqualTo("SELECT 1 /* outer /* inner; */ still;\n*/ AS v")
+    }
+
+    @Test
+    fun `line comment ending in a semicolon does not end the body`() {
+      val result = parseWithFollowingQuery("SELECT 1\n-- trailing;\n;")
+
+      assertThat(result[0].sql).isEqualTo("SELECT 1\n-- trailing;")
+    }
+
+    @Test
+    fun `semicolon at a line end inside a tagged dollar quote does not end the body`() {
+      val result = parseWithFollowingQuery("SELECT ${'$'}tag${'$'}a;\nb${'$'}tag${'$'} AS v;")
+
+      assertThat(result[0].sql).isEqualTo("SELECT ${'$'}tag${'$'}a;\nb${'$'}tag${'$'} AS v")
+    }
+
+    @Test
+    fun `line comment after the terminator is not part of the sql or the next query's comments`() {
+      val result = parseWithFollowingQuery("SELECT 1; -- note")
+
+      assertThat(result[0].sql).isEqualTo("SELECT 1")
+    }
+
+    @Test
+    fun `block comment after the terminator is not part of the sql`() {
+      val result = parseWithFollowingQuery("SELECT 1; /* note */")
+
+      assertThat(result[0].sql).isEqualTo("SELECT 1")
+    }
+
+    @Test
+    fun `second statement on the terminator line stays in the body`() {
+      val result = QueryFileParser.parse("-- name: first :one\nSELECT 1; SELECT 2;")
+
+      assertThat(result).hasSize(1)
+      assertThat(result[0].sql).isEqualTo("SELECT 1; SELECT 2")
+    }
+
+    @Test
+    fun `second statement on a later line throws naming the query and its annotation line`() {
+      val content = "-- name: first :one\nSELECT 1;\nSELECT 2;\n-- name: b :one\nSELECT 3;"
+
+      val exception = assertFailure { QueryFileParser.parse(content) }
+
+      exception.isInstanceOf(IllegalArgumentException::class)
+      exception.messageContains("first")
+      exception.messageContains("line 1")
+      exception.messageContains("line 3")
+    }
+
+    @Test
+    fun `annotation inside an open dollar quote is body text`() {
+      val content = "-- name: first :exec\nDO $$\n-- name: b :one\nSELECT 1;\n$$;"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result).hasSize(1)
+      assertThat(result[0].sql).isEqualTo("DO $$\n-- name: b :one\nSELECT 1;\n$$")
+    }
+
+    @Test
+    fun `annotation after an unterminated body starts the next query`() {
+      val content = "-- name: first :one\nSELECT 1\n\n-- name: second :one\nSELECT 2;"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result.map { it.name }).containsExactly("first", "second")
+      assertThat(result[0].sql).isEqualTo("SELECT 1")
+      assertThat(result[1].sql).isEqualTo("SELECT 2")
+      assertThat(result[1].sourceLine).isEqualTo(4)
+    }
+
+    @Test
+    fun `crlf line endings yield newline-joined sql with correct comments and source lines`() {
+      val result = parseWithFollowingQuery("SELECT 'a;\nb' AS v;", lineEnding = "\r\n")
+
+      assertThat(result[0].sql).isEqualTo("SELECT 'a;\nb' AS v")
+    }
+
+    @Test
+    fun `BEGIN ATOMIC body with semicolons at line ends is one query ending at END`() {
+      val result =
+        parseWithFollowingQuery(
+          "CREATE FUNCTION f() RETURNS int LANGUAGE sql\nBEGIN ATOMIC\n  SELECT 1;\n  SELECT 2;\nEND;",
+        )
+
+      assertThat(result[0].sql)
+        .isEqualTo("CREATE FUNCTION f() RETURNS int LANGUAGE sql\nBEGIN ATOMIC\n  SELECT 1;\n  SELECT 2;\nEND")
+    }
+
+    @Test
+    fun `a doubled semicolon leaves one semicolon in the sql`() {
+      val result = parseWithFollowingQuery("SELECT 1;;")
+
+      assertThat(result[0].sql).isEqualTo("SELECT 1;")
+    }
+
+    @Test
+    fun `a CREATE RULE with a semicolon inside parentheses is one statement`() {
+      val oneLine = "CREATE RULE r AS ON INSERT TO t DO ALSO (INSERT INTO log VALUES (1); INSERT INTO log VALUES (2))"
+      val multiLine = "CREATE RULE r AS ON INSERT TO t DO ALSO (\n  INSERT INTO log VALUES (1);\n" +
+        "  INSERT INTO log VALUES (2))"
+
+      assertThat(parseWithFollowingQuery("$oneLine;")[0].sql).isEqualTo(oneLine)
+      assertThat(parseWithFollowingQuery("$multiLine;")[0].sql).isEqualTo(multiLine)
+    }
+
+    @Test
+    fun `the sql keeps comments inside the statement`() {
+      val content = "-- name: a :one\n-- inner\nSELECT 1;"
+
+      assertThat(QueryFileParser.parse(content)[0].sql).isEqualTo("-- inner\nSELECT 1")
+    }
+
+    @Test
+    fun `a line comment that starts after SQL on its line is not an annotation`() {
+      val content = "-- name: a :one\nSELECT 1 -- name: b :one\n;"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result.map { it.name }).containsExactly("a")
+      assertThat(result[0].sql).isEqualTo("SELECT 1 -- name: b :one")
+    }
+
+    @Test
+    fun `an annotation may omit the space after the dashes`() {
+      val result = QueryFileParser.parse("--name:x :one\nSELECT 1;")
+
+      assertThat(result.map { it.name }).containsExactly("x")
+    }
+
+    @Test
+    fun `an indented annotation starts a query on its own line`() {
+      val result = QueryFileParser.parse("-- name: a :one\nSELECT 1;\n  -- name: b :one\nSELECT 2;")
+
+      assertThat(result.map { it.name }).containsExactly("a", "b")
+      assertThat(result[1].sourceLine).isEqualTo(3)
+    }
+
+    @ParameterizedTest(name = "U+{0}")
+    @ValueSource(strings = ["00A0", "2003"])
+    fun `a body line indented with a Unicode space ends at its terminator`(codePoint: String) {
+      val space = codePoint.toInt(radix = 16).toChar()
+      val content = "-- name: a :one\n${space}SELECT 1;\n\n-- Doc.\n-- name: b :one\nSELECT 2;"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result.map { it.name }).containsExactly("a", "b")
+      assertThat(result[0].sql).isEqualTo("SELECT 1")
+      assertThat(result[1].comments).containsExactly("Doc.")
+      assertThat(result[1].sourceLine).isEqualTo(5)
+    }
+
+    @Test
+    fun `a non-breaking space inside a body stays in the sql`() {
+      val result = QueryFileParser.parse("-- name: a :one\nSELECT\u00A01;\n")
+
+      assertThat(result.single().sql).isEqualTo("SELECT\u00A01")
+    }
+
+    @Test
+    fun `a non-breaking space that hides a dollar quote from the lexer does not break the split`() {
+      val content = "-- name: a :one\nSELECT 1 AS a\u00A0$$;\n\n-- Doc.\n-- name: b :one\nSELECT 2;"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result.map { it.name }).containsExactly("a", "b")
+      assertThat(result[0].sql).isEqualTo("SELECT 1 AS a\u00A0$$")
+      assertThat(result[1].comments).containsExactly("Doc.")
+      assertThat(result[1].sourceLine).isEqualTo(5)
+    }
+
+    @Test
+    fun `a non-breaking space between dollar signs does not break the split`() {
+      val space = '\u00A0'
+      val body = "SELECT ${'$'}$space${'$'}a;\nb${'$'}$space${'$'} AS v"
+
+      val result = QueryFileParser.parse("-- name: a :one\n$body;")
+
+      assertThat(result.single().sql).isEqualTo(body)
+    }
+
+    @Test
+    fun `a BEGIN ATOMIC body with named parameters stays one query`() {
+      val content =
+        "-- name: first :exec\nCREATE FUNCTION f() RETURNS int LANGUAGE sql\nBEGIN ATOMIC\n  SELECT :one;\n" +
+          "  SELECT :two;\nEND;\n"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result).hasSize(1)
+      assertThat(result[0].sql)
+        .isEqualTo("CREATE FUNCTION f() RETURNS int LANGUAGE sql\nBEGIN ATOMIC\n  SELECT ?;\n  SELECT ?;\nEND")
+      assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "one", 2 to "two"))
+    }
+
+    @Test
+    fun `a BEGIN ATOMIC body with positional placeholders stays one query`() {
+      val content =
+        "-- name: first :exec\nCREATE PROCEDURE p(a int) LANGUAGE sql\nBEGIN ATOMIC\n  SELECT 1 WHERE 1 = ?;\n" +
+          "  SELECT 2;\nEND;\n"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result).hasSize(1)
+      assertThat(result[0].sql).endsWith("SELECT 2;\nEND")
+    }
+  }
+
+  @Nested
+  inner class FunctionBodies {
+
+    private fun parseWithFollowingQuery(firstBody: String): List<ParsedQuery> {
+      val content = "-- name: first :exec\n$firstBody\n\n-- Doc for second.\n-- name: second :one\nSELECT 2;\n"
+      val result = QueryFileParser.parse(content)
+      assertThat(result.map { it.name }).containsExactly("first", "second")
+      assertThat(result[1].comments).containsExactly("Doc for second.")
+      assertThat(result[1].sql).isEqualTo("SELECT 2")
+      assertThat(result[1].sourceLine).isEqualTo(content.lines().indexOfFirst { it.startsWith("-- name: second") } + 1)
+      return result
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(
+      strings = [
+        "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; END",
+        "create function f() returns int language sql\nbegin atomic\n  select 1;\n  select 2;\nend",
+        "CREATE OR REPLACE PROCEDURE p() LANGUAGE sql\nBEGIN ATOMIC\n  DELETE FROM t;\n  DELETE FROM u;\nEND",
+        "CREATE FUNCTION f() RETURNS int LANGUAGE sql\nBEGIN ATOMIC\n  SELECT CASE WHEN true THEN 1 ELSE 2 END;\n" +
+          "  SELECT 3;\nEND",
+        "CREATE FUNCTION g(begin int) RETURNS int AS 'select 1' LANGUAGE sql",
+        "CREATE FUNCTION f() RETURNS int AS \$\$ BEGIN RETURN 1; END; \$\$ LANGUAGE plpgsql",
+        "CREATE FUNCTION begin() RETURNS int LANGUAGE sql AS 'SELECT 1'",
+        "CREATE FUNCTION f() RETURNS SETOF begin LANGUAGE sql AS \$\$ SELECT * FROM begin \$\$",
+        "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT begin FROM t; END",
+        "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN /* note */ -- more\n ATOMIC SELECT 1; SELECT 2; END",
+      ],
+    )
+    fun `a function or procedure definition is one query that ends at its final semicolon`(body: String) {
+      val result = parseWithFollowingQuery("$body;")
+
+      assertThat(result[0].sql).isEqualTo(body)
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(
+      strings = [
+        "SELECT CASE WHEN true THEN 1 END",
+        "SELECT begin, \"end\" FROM t",
+        "CREATE TABLE t (begin int, \"end\" int)",
+      ],
+    )
+    fun `a statement that merely uses BEGIN or END words ends at its semicolon`(body: String) {
+      val result = parseWithFollowingQuery("$body;")
+
+      assertThat(result[0].sql).isEqualTo(body)
+    }
+
+    @Test
+    fun `annotation after a BEGIN ATOMIC body that never closes starts the next query`() {
+      val content = "-- name: first :exec\nCREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1;\n\n" +
+        "-- name: second :one\nSELECT 2;"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result.map { it.name }).containsExactly("first", "second")
+      assertThat(result[1].sql).isEqualTo("SELECT 2")
+    }
+  }
+
+  @Nested
+  inner class BetweenQueries {
+
+    @Test
+    fun `an annotation inside a block comment between queries is part of the comment`() {
+      val result = QueryFileParser.parse(BLOCK_COMMENT_ISSUE_INPUT)
+
+      assertThat(result.map { it.name }).containsExactly("first", "c")
+      assertThat(result.map { it.sql }).containsExactly("SELECT 1", "SELECT 3")
+      assertThat(result[1].sourceLine).isEqualTo(9)
+      assertThat(result[1].comments).isEmpty()
+    }
+
+    @Test
+    fun `a doc comment inside a block comment between queries is not a comment of the next query`() {
+      val content = "-- name: a :one\nSELECT 1;\n/*\n-- doc\n*/\n-- name: b :one\nSELECT 2;"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result[1].comments).isEmpty()
+      assertThat(result[1].sourceLine).isEqualTo(6)
+    }
+
+    @Test
+    fun `a doc comment after a block comment between queries is kept`() {
+      val content = "-- name: a :one\nSELECT 1;\n/*\nfoo\n*/\n-- Doc.\n-- name: b :one\nSELECT 2;"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result.map { it.sql }).containsExactly("SELECT 1", "SELECT 2")
+      assertThat(result[1].comments).containsExactly("Doc.")
+      assertThat(result[1].sourceLine).isEqualTo(7)
+    }
+
+    @Test
+    fun `a block comment holding SQL between queries hides it`() {
+      val content =
+        "-- name: a :one\nSELECT 1;\n\n/*\nSELECT x /* old note */\nFROM y;\n*/\n-- name: b :one\nSELECT 2;\n"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result.map { it.name }).containsExactly("a", "b")
+      assertThat(result.map { it.sql }).containsExactly("SELECT 1", "SELECT 2")
+      assertThat(result[1].sourceLine).isEqualTo(8)
+    }
+
+    @Test
+    fun `a block comment closed at the end of the file is accepted`() {
+      val result = QueryFileParser.parse("-- name: a :one\nSELECT 1;\n/* /* */ */")
+
+      assertThat(result.map { it.name }).containsExactly("a")
+    }
+
+    @Test
+    fun `a block comment between queries clears the doc comments before it`() {
+      val content = "-- name: a :one\nSELECT 1;\n-- doc\n/* x */\n-- name: b :one\nSELECT 2;"
+
+      assertThat(QueryFileParser.parse(content)[1].comments).isEmpty()
+    }
+
+    @Test
+    fun `doc comments after the terminator with blank lines between them are kept`() {
+      val content = "-- name: a :one\nSELECT 1;\n\n-- First.\n\n-- Second.\n-- name: b :one\nSELECT 2;"
+
+      assertThat(QueryFileParser.parse(content)[1].comments).containsExactly("First.", "Second.")
+    }
+
+    @Test
+    fun `a doc comment line in an unterminated body stays in that body`() {
+      val content = "-- name: a :one\nSELECT 1\n-- doc\n-- name: b :one\nSELECT 2;"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result.map { it.name }).containsExactly("a", "b")
+      assertThat(result[0].sql).isEqualTo("SELECT 1\n-- doc")
+      assertThat(result[1].comments).isEmpty()
+      assertThat(result[1].sourceLine).isEqualTo(4)
+    }
+
+    @Test
+    fun `a line holding only a semicolon between queries is accepted`() {
+      val content = "-- name: a :one\nSELECT 1;\n;\n-- name: b :one\nSELECT 2;"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result.map { it.sql }).containsExactly("SELECT 1", "SELECT 2")
+      assertThat(result[1].sourceLine).isEqualTo(4)
+    }
+
+    @Test
+    fun `a line holding a semicolon and a comment between queries is accepted`() {
+      val content = "-- name: a :one\nSELECT 1;\n; -- nothing\n\n-- Doc b.\n-- name: b :one\nSELECT 2;"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result.map { it.sql }).containsExactly("SELECT 1", "SELECT 2")
+      assertThat(result[1].comments).containsExactly("Doc b.")
+      assertThat(result[1].sourceLine).isEqualTo(6)
+    }
+
+    @Test
+    fun `lines holding only semicolons between queries are accepted`() {
+      val content = "-- name: a :one\nSELECT 1;\n;;\n ; ;\n-- name: b :one\nSELECT 2;"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result.map { it.sql }).containsExactly("SELECT 1", "SELECT 2")
+      assertThat(result[1].comments).isEmpty()
+    }
+
+    @Test
+    fun `a semicolon line clears the doc comments before it`() {
+      val content = "-- name: a :one\nSELECT 1;\n-- doc\n;\n-- name: b :one\nSELECT 2;"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result.map { it.name }).containsExactly("a", "b")
+      assertThat(result[1].comments).isEmpty()
+    }
+
+    @Test
+    fun `a statement after a block comment that starts on the terminator line throws`() {
+      val content = "-- name: a :one\nSELECT 1; /* x\n */ SELECT 2;"
+
+      val exception = assertFailure { QueryFileParser.parse(content) }
+
+      exception.isInstanceOf(IllegalArgumentException::class)
+      exception.messageContains("'a'")
+      exception.messageContains("line 1")
+    }
+
+    @Test
+    fun `SQL between queries throws naming the query`() {
+      val content = "-- name: a :one\nSELECT 1;\n\nstray words\n-- name: b :one\nSELECT 2;"
+
+      val exception = assertFailure { QueryFileParser.parse(content) }
+
+      exception.isInstanceOf(IllegalArgumentException::class)
+      exception.messageContains("'a'")
+      exception.messageContains("line 1")
+      exception.messageContains("line 4")
+    }
+
+    @Test
+    fun `block comments before the first annotation are accepted and clear earlier doc comments`() {
+      val content = "-- stale\n/* Generated */\n-- Doc.\n-- name: a :one\nSELECT 1;"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result.map { it.name }).containsExactly("a")
+      assertThat(result[0].comments).containsExactly("Doc.")
+      assertThat(result[0].sourceLine).isEqualTo(4)
+    }
+
+    @Test
+    fun `SQL before the first annotation clears earlier doc comments and does not throw`() {
+      val result = QueryFileParser.parse("-- stale\nGenerated by hand\n-- name: a :one\nSELECT 1;")
+
+      assertThat(result[0].comments).isEmpty()
+      assertThat(result[0].sql).isEqualTo("SELECT 1")
+    }
+
+    @Test
+    fun `a non-breaking space after the terminator is whitespace`() {
+      val content = "-- name: a :one\nSELECT 1;\u00A0\n-- Doc b.\n-- name: b :one\nSELECT 2;"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result.map { it.name }).containsExactly("a", "b")
+      assertThat(result[0].sql).isEqualTo("SELECT 1")
+      assertThat(result[1].comments).containsExactly("Doc b.")
+      assertThat(result[1].sourceLine).isEqualTo(4)
+    }
+
+    @Test
+    fun `an annotation and a doc comment indented with a non-breaking space are recognized`() {
+      val content = "-- name: a :one\nSELECT 1;\n\u00A0-- Doc.\n\u00A0-- name: b :one\nSELECT 2;"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result.map { it.name }).containsExactly("a", "b")
+      assertThat(result[1].comments).containsExactly("Doc.")
+      assertThat(result[1].sourceLine).isEqualTo(4)
+    }
+
+    @Test
+    fun `a first annotation indented with a non-breaking space is recognized`() {
+      val content = "\u00A0-- Doc.\n\u00A0-- name: a :one\nSELECT 1;"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result.map { it.name }).containsExactly("a")
+      assertThat(result[0].comments).containsExactly("Doc.")
+      assertThat(result[0].sourceLine).isEqualTo(2)
+    }
+
+    @Test
+    fun `a non-breaking space before the first annotation does not clear the doc comments`() {
+      val result = QueryFileParser.parse("-- Doc.\n\u00A0\n-- name: a :one\nSELECT 1;")
+
+      assertThat(result[0].comments).containsExactly("Doc.")
+    }
+
+    @Test
+    fun `a semicolon before the first annotation is accepted`() {
+      val result = QueryFileParser.parse(";\n-- name: a :one\nSELECT 1;")
+
+      assertThat(result.map { it.name }).containsExactly("a")
+    }
+  }
+
+  @Nested
+  inner class LexerErrors {
+
+    @Test
+    fun `an unterminated quoted identifier in a body names the query and the line`() {
+      val content = "-- name: a :one\nSELECT 1;\n\n-- name: broken :one\nSELECT \"oops;\n"
+
+      val exception = assertFailure { QueryFileParser.parse(content) }
+
+      exception.isInstanceOf(IllegalArgumentException::class)
+      exception.messageContains("broken")
+      exception.messageContains("line 4")
+      exception.messageContains("line 5")
+    }
+
+    @Test
+    fun `an unterminated string after the terminator names the query and the line`() {
+      val exception =
+        assertFailure { QueryFileParser.parse("-- name: a :one\nSELECT 1;\n'oops\n-- name: b :one\nSELECT 2;") }
+
+      exception.isInstanceOf(IllegalArgumentException::class)
+      exception.messageContains("'a'")
+      exception.messageContains("line 3")
+    }
+
+    @Test
+    fun `an unterminated block comment between queries names the query and the line`() {
+      val exception =
+        assertFailure { QueryFileParser.parse("-- name: a :one\nSELECT 1;\n/* oops\n-- name: b :one\nSELECT 2;") }
+
+      exception.isInstanceOf(IllegalArgumentException::class)
+      exception.messageContains("'a'")
+      exception.messageContains("line 3")
+    }
+
+    @Test
+    fun `an unterminated string before the first annotation throws naming the line`() {
+      val exception = assertFailure { QueryFileParser.parse("-- note\n'oops\n-- name: a :one\nSELECT 1;") }
+
+      exception.isInstanceOf(IllegalArgumentException::class)
+      exception.messageContains("before the first annotation")
+      exception.messageContains("line 2")
+    }
+
+    @Test
+    fun `an unterminated dollar quote in a file with no annotation throws`() {
+      val exception = assertFailure { QueryFileParser.parse("${'$'}${'$'} oops") }
+
+      exception.isInstanceOf(IllegalArgumentException::class)
+      exception.messageContains("before the first annotation")
+    }
+
+    @Test
+    fun `a NUL character before the first annotation throws naming the line`() {
+      val exception = assertFailure { QueryFileParser.parse("-- note\n\u0000\n-- name: a :one\nSELECT 1;") }
+
+      exception.isInstanceOf(IllegalArgumentException::class)
+      exception.messageContains("before the first annotation")
+      exception.messageContains("NUL")
+      exception.messageContains("line 2")
     }
   }
 }
