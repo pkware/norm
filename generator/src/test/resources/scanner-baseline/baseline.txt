@@ -1090,7 +1090,7 @@ alignSelectItems(columnCount = parseSelectItems.size + 1): []
 hasTopLevelSetOperation: false
 placeholderPositions: []
 replaceParameterPlaceholders: -- name: findByPattern :many\nSELECT ${'$'}${'$'}:notaparam${'$'}${'$'} FROM users WHERE id = :id;
-QueryFileParser.parse: [ParsedQuery(name=findByPattern, command=:many, sql=SELECT ${'$'}${'$'}?${'$'}${'$'} FROM users WHERE id = ?, comments=[], namedParameters={1=notaparam, 2=id}, sourceLine=1, sourceFile=, isSynthesizedInsert=false, overridableDefaultParameterPositions=[], batchSql=null)]
+QueryFileParser.parse: [ParsedQuery(name=findByPattern, command=:many, sql=SELECT ${'$'}${'$'}?{'$'}${'$'} FROM users WHERE id = ?, comments=[], namedParameters={1=notaparam$, 2=id}, sourceLine=1, sourceFile=, isSynthesizedInsert=false, overridableDefaultParameterPositions=[], batchSql=null)]
 splitStatements: [-- name: findByPattern :many\nSELECT ${'$'}${'$'}:notaparam${'$'}${'$'} FROM users WHERE id = :id]
 explainedStatementStart: 0
 parseCteClause: null
@@ -1388,7 +1388,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== QueryFileParserTest.kt:502
+=== QueryFileParserTest.kt:497
 text: -- name: findByPattern :many\nSELECT * FROM users WHERE note = E'it\\'s :x' AND id = :id;
 parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -1405,7 +1405,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): true
 splitTrailingImplicitAlias(item[0]): null
-=== QueryFileParserTest.kt:509
+=== QueryFileParserTest.kt:504
 text: SELECT * FROM users WHERE note = E'it\\'s :x' AND id = ?
 parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -1422,7 +1422,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): true
 splitTrailingImplicitAlias(item[0]): null
-=== QueryFileParserTest.kt:510
+=== QueryFileParserTest.kt:505
 text: id
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -1437,84 +1437,120 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== QueryFileParserTest.kt:518
-text: -- name: getAll :many\nSELECT * FROM users;\n\n-- name: foo :bogus\nSELECT 1;
+=== QueryFileParserTest.kt:510
+text: -- name: findByPattern :many\nSELECT * FROM users -- :notaparam\nWHERE id = :id;
 parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
 alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 alignSelectItems(columnCount = parseSelectItems.size + 1): []
 hasTopLevelSetOperation: false
 placeholderPositions: []
-replaceParameterPlaceholders: -- name: getAll :many\nSELECT * FROM users;\n\n-- name: foo :bogus\nSELECT 1;
-QueryFileParser.parse: java.lang.IllegalArgumentException: Query 'foo' at line 4 has an unrecognized command annotation ':bogus'.
-splitStatements: [-- name: getAll :many\nSELECT * FROM users, \n\n-- name: foo :bogus\nSELECT 1]
+replaceParameterPlaceholders: -- name: findByPattern :many\nSELECT * FROM users -- :notaparam\nWHERE id = :id;
+QueryFileParser.parse: [ParsedQuery(name=findByPattern, command=:many, sql=SELECT * FROM users -- :notaparam\nWHERE id = ?, comments=[], namedParameters={1=id}, sourceLine=1, sourceFile=, isSynthesizedInsert=false, overridableDefaultParameterPositions=[], batchSql=null)]
+splitStatements: [-- name: findByPattern :many\nSELECT * FROM users -- :notaparam\nWHERE id = :id]
 explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): true
 splitTrailingImplicitAlias(item[0]): null
-=== QueryFileParserTest.kt:528
-text: foo
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
+=== QueryFileParserTest.kt:518
+text: SELECT * FROM users -- :notaparam\nWHERE id = ?
+parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 alignSelectItems(columnCount = parseSelectItems.size + 1): []
 hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: foo
+placeholderPositions: [45]
+replaceParameterPlaceholders: SELECT * FROM users -- :notaparam\nWHERE id = $1
 QueryFileParser.parse: []
-splitStatements: [foo]
+splitStatements: [SELECT * FROM users -- :notaparam\nWHERE id = ?]
 explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== QueryFileParserTest.kt:529
-text: :bogus
+isStarItem(item[0]): true
+splitTrailingImplicitAlias(item[0]): null
+=== QueryFileParserTest.kt:519
+text: id
 parseSelectItems: []
 parseOutputItemsWithAlias: []
 alignSelectItems(columnCount = parseSelectItems.size): []
 alignSelectItems(columnCount = parseSelectItems.size + 1): []
 hasTopLevelSetOperation: false
 placeholderPositions: []
-replaceParameterPlaceholders: :bogus
+replaceParameterPlaceholders: id
 QueryFileParser.parse: []
-splitStatements: [:bogus]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=:, alias=bogus)
-=== QueryFileParserTest.kt:530
-text: line 4
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: line 4
-QueryFileParser.parse: []
-splitStatements: [line 4]
+splitStatements: [id]
 explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== QueryFileParserTest.kt:535
-text: -- name: getAll :ONE\nSELECT 1;
-parseSelectItems: [SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
-parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
-alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+=== QueryFileParserTest.kt:524
+text: -- name: findByPattern :many\nSELECT E':notaparam' FROM users WHERE id = :id;
+parseSelectItems: [SelectItem(expression=E':notaparam', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=E':notaparam', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=E':notaparam', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 alignSelectItems(columnCount = parseSelectItems.size + 1): []
 hasTopLevelSetOperation: false
 placeholderPositions: []
-replaceParameterPlaceholders: -- name: getAll :ONE\nSELECT 1;
-QueryFileParser.parse: java.lang.IllegalArgumentException: Query 'getAll' at line 1 has an unrecognized command annotation ':ONE'.
-splitStatements: [-- name: getAll :ONE\nSELECT 1]
+replaceParameterPlaceholders: -- name: findByPattern :many\nSELECT E':notaparam' FROM users WHERE id = :id;
+QueryFileParser.parse: [ParsedQuery(name=findByPattern, command=:many, sql=SELECT E':notaparam' FROM users WHERE id = ?, comments=[], namedParameters={1=id}, sourceLine=1, sourceFile=, isSynthesizedInsert=false, overridableDefaultParameterPositions=[], batchSql=null)]
+splitStatements: [-- name: findByPattern :many\nSELECT E':notaparam' FROM users WHERE id = :id]
 explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+=== QueryFileParserTest.kt:531
+text: SELECT E':notaparam' FROM users WHERE id = ?
+parseSelectItems: [SelectItem(expression=E':notaparam', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=E':notaparam', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=E':notaparam', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [43]
+replaceParameterPlaceholders: SELECT E':notaparam' FROM users WHERE id = $1
+QueryFileParser.parse: []
+splitStatements: [SELECT E':notaparam' FROM users WHERE id = ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+=== QueryFileParserTest.kt:532
+text: id
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: id
+QueryFileParser.parse: []
+splitStatements: [id]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== QueryFileParserTest.kt:537
+text: -- name: findById :one\nSELECT * FROM users WHERE id=:id;
+parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: -- name: findById :one\nSELECT * FROM users WHERE id=:id;
+QueryFileParser.parse: [ParsedQuery(name=findById, command=:one, sql=SELECT * FROM users WHERE id=?, comments=[], namedParameters={1=id}, sourceLine=1, sourceFile=, isSynthesizedInsert=false, overridableDefaultParameterPositions=[], batchSql=null)]
+splitStatements: [-- name: findById :one\nSELECT * FROM users WHERE id=:id]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): true
 splitTrailingImplicitAlias(item[0]): null
 === QueryFileParserTest.kt:54
 text: -- Execrows without parameters.\n-- name: deleteAll :execrows\nDELETE FROM type;
@@ -1531,21 +1567,347 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== QueryFileParserTest.kt:542
-text: :ONE
+=== QueryFileParserTest.kt:544
+text: SELECT * FROM users WHERE id=?
+parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [29]
+replaceParameterPlaceholders: SELECT * FROM users WHERE id=$1
+QueryFileParser.parse: []
+splitStatements: [SELECT * FROM users WHERE id=?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): true
+splitTrailingImplicitAlias(item[0]): null
+=== QueryFileParserTest.kt:545
+text: id
 parseSelectItems: []
 parseOutputItemsWithAlias: []
 alignSelectItems(columnCount = parseSelectItems.size): []
 alignSelectItems(columnCount = parseSelectItems.size + 1): []
 hasTopLevelSetOperation: false
 placeholderPositions: []
-replaceParameterPlaceholders: :ONE
+replaceParameterPlaceholders: id
 QueryFileParser.parse: []
-splitStatements: [:ONE]
+splitStatements: [id]
 explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
-splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=:, alias=ONE)
+splitTrailingImplicitAlias(text): null
+=== QueryFileParserTest.kt:550
+text: -- name: assign :one\nSELECT a := :value;
+parseSelectItems: [SelectItem(expression=a := :value, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=a := :value, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=a := :value, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: -- name: assign :one\nSELECT a := :value;
+QueryFileParser.parse: [ParsedQuery(name=assign, command=:one, sql=SELECT a := ?, comments=[], namedParameters={1=value}, sourceLine=1, sourceFile=, isSynthesizedInsert=false, overridableDefaultParameterPositions=[], batchSql=null)]
+splitStatements: [-- name: assign :one\nSELECT a := :value]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): ItemAndImplicitAlias(expression=a := :, alias=value)
+=== QueryFileParserTest.kt:557
+text: SELECT a := ?
+parseSelectItems: [SelectItem(expression=a := ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=a := ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=a := ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [12]
+replaceParameterPlaceholders: SELECT a := $1
+QueryFileParser.parse: []
+splitStatements: [SELECT a := ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+=== QueryFileParserTest.kt:558
+text: value
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: value
+QueryFileParser.parse: []
+splitStatements: [value]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== QueryFileParserTest.kt:563
+text: -- name: listUsers :many\nSELECT * FROM users WHERE age > :from AND x < :select;
+parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: -- name: listUsers :many\nSELECT * FROM users WHERE age > :from AND x < :select;
+QueryFileParser.parse: [ParsedQuery(name=listUsers, command=:many, sql=SELECT * FROM users WHERE age > ? AND x < ?, comments=[], namedParameters={1=from, 2=select}, sourceLine=1, sourceFile=, isSynthesizedInsert=false, overridableDefaultParameterPositions=[], batchSql=null)]
+splitStatements: [-- name: listUsers :many\nSELECT * FROM users WHERE age > :from AND x < :select]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): true
+splitTrailingImplicitAlias(item[0]): null
+=== QueryFileParserTest.kt:570
+text: SELECT * FROM users WHERE age > ? AND x < ?
+parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [32, 42]
+replaceParameterPlaceholders: SELECT * FROM users WHERE age > $1 AND x < $2
+QueryFileParser.parse: []
+splitStatements: [SELECT * FROM users WHERE age > ? AND x < ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): true
+splitTrailingImplicitAlias(item[0]): null
+=== QueryFileParserTest.kt:571
+text: from
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: from
+QueryFileParser.parse: []
+splitStatements: [from]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== QueryFileParserTest.kt:571#2
+text: select
+parseSelectItems: [SelectItem(expression=, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: select
+QueryFileParser.parse: []
+splitStatements: [select]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+=== QueryFileParserTest.kt:576
+text: -- name: listUsers :many\nSELECT * FROM users WHERE a = :größe AND b = :ab${'$'}c;
+parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: -- name: listUsers :many\nSELECT * FROM users WHERE a = :größe AND b = :ab${'$'}c;
+QueryFileParser.parse: [ParsedQuery(name=listUsers, command=:many, sql=SELECT * FROM users WHERE a = ? AND b = ?{'$'}c, comments=[], namedParameters={1=größe, 2=ab$}, sourceLine=1, sourceFile=, isSynthesizedInsert=false, overridableDefaultParameterPositions=[], batchSql=null)]
+splitStatements: [-- name: listUsers :many\nSELECT * FROM users WHERE a = :größe AND b = :ab${'$'}c]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): true
+splitTrailingImplicitAlias(item[0]): null
+=== QueryFileParserTest.kt:583
+text: SELECT * FROM users WHERE a = ? AND b = ?
+parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [30, 40]
+replaceParameterPlaceholders: SELECT * FROM users WHERE a = $1 AND b = $2
+QueryFileParser.parse: []
+splitStatements: [SELECT * FROM users WHERE a = ? AND b = ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): true
+splitTrailingImplicitAlias(item[0]): null
+=== QueryFileParserTest.kt:584
+text: größe
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: größe
+QueryFileParser.parse: []
+splitStatements: [größe]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== QueryFileParserTest.kt:584#2
+text: ab${'$'}c
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: ab${'$'}c
+QueryFileParser.parse: []
+splitStatements: [ab${'$'}c]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=ab${'$'}, alias=c)
+=== QueryFileParserTest.kt:589
+text: -- name: listUsers :many\nSELECT * FROM users WHERE a = :"q";
+parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: -- name: listUsers :many\nSELECT * FROM users WHERE a = :"q";
+QueryFileParser.parse: [ParsedQuery(name=listUsers, command=:many, sql=SELECT * FROM users WHERE a = :"q", comments=[], namedParameters={}, sourceLine=1, sourceFile=, isSynthesizedInsert=false, overridableDefaultParameterPositions=[], batchSql=null)]
+splitStatements: [-- name: listUsers :many\nSELECT * FROM users WHERE a = :"q"]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): true
+splitTrailingImplicitAlias(item[0]): null
+=== QueryFileParserTest.kt:596
+text: SELECT * FROM users WHERE a = :"q"
+parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SELECT * FROM users WHERE a = :"q"
+QueryFileParser.parse: []
+splitStatements: [SELECT * FROM users WHERE a = :"q"]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=SELECT * FROM users WHERE a = :, alias="q")
+isStarItem(item[0]): true
+splitTrailingImplicitAlias(item[0]): null
+=== QueryFileParserTest.kt:602
+text: -- name: listUsers :many\nSELECT * FROM users WHERE a = :e'x';
+parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: -- name: listUsers :many\nSELECT * FROM users WHERE a = :e'x';
+QueryFileParser.parse: [ParsedQuery(name=listUsers, command=:many, sql=SELECT * FROM users WHERE a = :e'x', comments=[], namedParameters={}, sourceLine=1, sourceFile=, isSynthesizedInsert=false, overridableDefaultParameterPositions=[], batchSql=null)]
+splitStatements: [-- name: listUsers :many\nSELECT * FROM users WHERE a = :e'x']
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): true
+splitTrailingImplicitAlias(item[0]): null
+=== QueryFileParserTest.kt:609
+text: SELECT * FROM users WHERE a = :e'x'
+parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SELECT * FROM users WHERE a = :e'x'
+QueryFileParser.parse: []
+splitStatements: [SELECT * FROM users WHERE a = :e'x']
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): true
+splitTrailingImplicitAlias(item[0]): null
+=== QueryFileParserTest.kt:615
+text: -- name: getAll :many\nSELECT 1;\n\n-- name: broken :one\nSELECT 'a\u0000b' WHERE id = :id;
+parseSelectItems: [SelectItem(expression=1;\n\n-- name: broken :one\nSELECT 'a\u0000b' WHERE id = :id, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=1;\n\n-- name: broken :one\nSELECT 'a\u0000b' WHERE id = :id, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=1;\n\n-- name: broken :one\nSELECT 'a\u0000b' WHERE id = :id, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
+replaceParameterPlaceholders: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
+QueryFileParser.parse: java.lang.IllegalArgumentException: Query 'broken' at line 4 contains a NUL character.
+splitStatements: [-- name: getAll :many\nSELECT 1, \n\n-- name: broken :one\nSELECT 'a\u0000b' WHERE id = :id]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): ItemAndImplicitAlias(expression=1;\n\n-- name: broken :one\nSELECT 'a\u0000b' WHERE id = :, alias=id)
+=== QueryFileParserTest.kt:620
+text: broken
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: broken
+QueryFileParser.parse: []
+splitStatements: [broken]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== QueryFileParserTest.kt:621
+text: line 4
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: line 4
+QueryFileParser.parse: []
+splitStatements: [line 4]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== QueryFileParserTest.kt:622
+text: NUL
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: NUL
+QueryFileParser.parse: []
+splitStatements: [NUL]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
 === QueryFileParserTest.kt:63
 text: Execrows without parameters.
 parseSelectItems: []
@@ -1561,6 +1923,100 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
+=== QueryFileParserTest.kt:630
+text: -- name: getAll :many\nSELECT * FROM users;\n\n-- name: foo :bogus\nSELECT 1;
+parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: -- name: getAll :many\nSELECT * FROM users;\n\n-- name: foo :bogus\nSELECT 1;
+QueryFileParser.parse: java.lang.IllegalArgumentException: Query 'foo' at line 4 has an unrecognized command annotation ':bogus'.
+splitStatements: [-- name: getAll :many\nSELECT * FROM users, \n\n-- name: foo :bogus\nSELECT 1]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): true
+splitTrailingImplicitAlias(item[0]): null
+=== QueryFileParserTest.kt:640
+text: foo
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: foo
+QueryFileParser.parse: []
+splitStatements: [foo]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== QueryFileParserTest.kt:641
+text: :bogus
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: :bogus
+QueryFileParser.parse: []
+splitStatements: [:bogus]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=:, alias=bogus)
+=== QueryFileParserTest.kt:642
+text: line 4
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: line 4
+QueryFileParser.parse: []
+splitStatements: [line 4]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== QueryFileParserTest.kt:647
+text: -- name: getAll :ONE\nSELECT 1;
+parseSelectItems: [SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: -- name: getAll :ONE\nSELECT 1;
+QueryFileParser.parse: java.lang.IllegalArgumentException: Query 'getAll' at line 1 has an unrecognized command annotation ':ONE'.
+splitStatements: [-- name: getAll :ONE\nSELECT 1]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+=== QueryFileParserTest.kt:654
+text: :ONE
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: :ONE
+QueryFileParser.parse: []
+splitStatements: [:ONE]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=:, alias=ONE)
 === QueryFileParserTest.kt:68
 text: -- Query using pgcrypto for password hashing\n-- name: createUser :exec\nINSERT INTO user_credentials (username, password_hash)\nVALUES (?, crypt(?, gen_salt('bf')));
 parseSelectItems: []
@@ -10069,6 +10525,272 @@ parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=SELECT ٣.* x, a FROM, alias=٣)
 === SqlPlaceholdersTest.kt:102
+text: SELECT * FROM department
+parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SELECT * FROM department
+QueryFileParser.parse: []
+splitStatements: [SELECT * FROM department]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=SELECT * FROM, alias=department)
+isStarItem(item[0]): true
+splitTrailingImplicitAlias(item[0]): null
+=== SqlPlaceholdersTest.kt:103
+text: NULL
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: NULL
+QueryFileParser.parse: []
+splitStatements: [NULL]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== SqlPlaceholdersTest.kt:110
+text: SELECT '?
+parseSelectItems: [SelectItem(expression='?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression='?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression='?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SELECT '?
+QueryFileParser.parse: []
+splitStatements: [SELECT '?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+=== SqlPlaceholdersTest.kt:110#2
+text: NULL
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: NULL
+QueryFileParser.parse: []
+splitStatements: [NULL]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== SqlPlaceholdersTest.kt:111
+text: SELECT '?
+parseSelectItems: [SelectItem(expression='?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression='?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression='?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SELECT '?
+QueryFileParser.parse: []
+splitStatements: [SELECT '?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+=== SqlPlaceholdersTest.kt:116
+text: SELECT /* ?
+parseSelectItems: [SelectItem(expression=/* ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=/* ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=/* ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SELECT /* ?
+QueryFileParser.parse: []
+splitStatements: [SELECT /* ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+=== SqlPlaceholdersTest.kt:116#2
+text: NULL
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: NULL
+QueryFileParser.parse: []
+splitStatements: [NULL]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== SqlPlaceholdersTest.kt:117
+text: SELECT /* ?
+parseSelectItems: [SelectItem(expression=/* ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=/* ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=/* ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SELECT /* ?
+QueryFileParser.parse: []
+splitStatements: [SELECT /* ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+=== SqlPlaceholdersTest.kt:12
+text: SELECT '?', ?
+parseSelectItems: [SelectItem(expression='?', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression='?', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression='?', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [12]
+replaceParameterPlaceholders: SELECT '?', $1
+QueryFileParser.parse: []
+splitStatements: [SELECT '?', ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+isStarItem(item[1]): false
+splitTrailingImplicitAlias(item[1]): null
+=== SqlPlaceholdersTest.kt:122
+text: SELECT $$a ? b$$ WHERE id = ?
+parseSelectItems: [SelectItem(expression=$$a ? b$$ WHERE id = ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=$$a ? b$$ WHERE id = ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=$$a ? b$$ WHERE id = ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [28]
+replaceParameterPlaceholders: SELECT $$a ? b$$ WHERE id = $1
+QueryFileParser.parse: []
+splitStatements: [SELECT $$a ? b$$ WHERE id = ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+=== SqlPlaceholdersTest.kt:122#2
+text: NULL
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: NULL
+QueryFileParser.parse: []
+splitStatements: [NULL]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== SqlPlaceholdersTest.kt:123
+text: SELECT $$a ? b$$ WHERE id = NULL
+parseSelectItems: [SelectItem(expression=$$a ? b$$ WHERE id = NULL, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=$$a ? b$$ WHERE id = NULL, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=$$a ? b$$ WHERE id = NULL, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SELECT $$a ? b$$ WHERE id = NULL
+QueryFileParser.parse: []
+splitStatements: [SELECT $$a ? b$$ WHERE id = NULL]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=SELECT $$a ? b$$ WHERE id =, alias=NULL)
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): ItemAndImplicitAlias(expression=$$a ? b$$ WHERE id =, alias=NULL)
+=== SqlPlaceholdersTest.kt:128
+text: SELECT $tag$a ? b$tag$ WHERE id = ?
+parseSelectItems: [SelectItem(expression=$tag$a ? b$tag$ WHERE id = ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=$tag$a ? b$tag$ WHERE id = ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=$tag$a ? b$tag$ WHERE id = ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [34]
+replaceParameterPlaceholders: SELECT $tag$a ? b$tag$ WHERE id = $1
+QueryFileParser.parse: []
+splitStatements: [SELECT $tag$a ? b$tag$ WHERE id = ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+=== SqlPlaceholdersTest.kt:128#2
+text: NULL
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: NULL
+QueryFileParser.parse: []
+splitStatements: [NULL]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== SqlPlaceholdersTest.kt:129
+text: SELECT $tag$a ? b$tag$ WHERE id = NULL
+parseSelectItems: [SelectItem(expression=$tag$a ? b$tag$ WHERE id = NULL, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=$tag$a ? b$tag$ WHERE id = NULL, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=$tag$a ? b$tag$ WHERE id = NULL, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SELECT $tag$a ? b$tag$ WHERE id = NULL
+QueryFileParser.parse: []
+splitStatements: [SELECT $tag$a ? b$tag$ WHERE id = NULL]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=SELECT $tag$a ? b$tag$ WHERE id =, alias=NULL)
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): ItemAndImplicitAlias(expression=$tag$a ? b$tag$ WHERE id =, alias=NULL)
+=== SqlPlaceholdersTest.kt:13
+text: SELECT E'a\\'?', ?
+parseSelectItems: [SelectItem(expression=E'a\\'?', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=E'a\\'?', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=E'a\\'?', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [16]
+replaceParameterPlaceholders: SELECT E'a\\'?', $1
+QueryFileParser.parse: []
+splitStatements: [SELECT E'a\\'?', ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+isStarItem(item[1]): false
+splitTrailingImplicitAlias(item[1]): null
+=== SqlPlaceholdersTest.kt:134
 text: SELECT "quoted?identifier" WHERE id = ?
 parseSelectItems: [SelectItem(expression="quoted?identifier" WHERE id = ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression="quoted?identifier" WHERE id = ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10085,7 +10807,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): false
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:102#2
+=== SqlPlaceholdersTest.kt:134#2
 text: NULL
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -10100,7 +10822,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:103
+=== SqlPlaceholdersTest.kt:135
 text: SELECT "quoted?identifier" WHERE id = NULL
 parseSelectItems: [SelectItem(expression="quoted?identifier" WHERE id = NULL, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression="quoted?identifier" WHERE id = NULL, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10117,7 +10839,26 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=SELECT "quoted?identifier" WHERE id =, alias=NULL)
 isStarItem(item[0]): false
 splitTrailingImplicitAlias(item[0]): ItemAndImplicitAlias(expression="quoted?identifier" WHERE id =, alias=NULL)
-=== SqlPlaceholdersTest.kt:108
+=== SqlPlaceholdersTest.kt:14
+text: SELECT $$?$$, ?
+parseSelectItems: [SelectItem(expression=$$?$$, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=$$?$$, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=$$?$$, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [14]
+replaceParameterPlaceholders: SELECT $$?$$, $1
+QueryFileParser.parse: []
+splitStatements: [SELECT $$?$$, ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+isStarItem(item[1]): false
+splitTrailingImplicitAlias(item[1]): null
+=== SqlPlaceholdersTest.kt:140
 text: SELECT E'a\\'?b' WHERE id = ?
 parseSelectItems: [SelectItem(expression=E'a\\'?b' WHERE id = ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=E'a\\'?b' WHERE id = ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10134,7 +10875,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): false
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:108#2
+=== SqlPlaceholdersTest.kt:140#2
 text: NULL
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -10149,7 +10890,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:109
+=== SqlPlaceholdersTest.kt:141
 text: SELECT E'a\\'?b' WHERE id = NULL
 parseSelectItems: [SelectItem(expression=E'a\\'?b' WHERE id = NULL, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=E'a\\'?b' WHERE id = NULL, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10166,7 +10907,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=SELECT E'a\\'?b' WHERE id =, alias=NULL)
 isStarItem(item[0]): false
 splitTrailingImplicitAlias(item[0]): ItemAndImplicitAlias(expression=E'a\\'?b' WHERE id =, alias=NULL)
-=== SqlPlaceholdersTest.kt:119
+=== SqlPlaceholdersTest.kt:146
 text: SELECT /* a /* b */ c ? */ 1
 parseSelectItems: [SelectItem(expression=/* a /* b */ c ? */ 1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=/* a /* b */ c ? */ 1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10183,7 +10924,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): false
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:119#2
+=== SqlPlaceholdersTest.kt:146#2
 text: NULL
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -10198,7 +10939,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:120
+=== SqlPlaceholdersTest.kt:147
 text: SELECT /* a /* b */ c ? */ 1
 parseSelectItems: [SelectItem(expression=/* a /* b */ c ? */ 1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=/* a /* b */ c ? */ 1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10215,7 +10956,26 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): false
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:126
+=== SqlPlaceholdersTest.kt:15
+text: SELECT $tag$?$tag$, ?
+parseSelectItems: [SelectItem(expression=$tag$?$tag$, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=$tag$?$tag$, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=$tag$?$tag$, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [20]
+replaceParameterPlaceholders: SELECT $tag$?$tag$, $1
+QueryFileParser.parse: []
+splitStatements: [SELECT $tag$?$tag$, ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+isStarItem(item[1]): false
+splitTrailingImplicitAlias(item[1]): null
+=== SqlPlaceholdersTest.kt:153
 text: SELECT ?, ?, ?
 parseSelectItems: [SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10236,7 +10996,7 @@ isStarItem(item[1]): false
 splitTrailingImplicitAlias(item[1]): null
 isStarItem(item[2]): false
 splitTrailingImplicitAlias(item[2]): null
-=== SqlPlaceholdersTest.kt:128
+=== SqlPlaceholdersTest.kt:155
 text: $$index
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -10251,7 +11011,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:131
+=== SqlPlaceholdersTest.kt:158
 text: SELECT $0, $1, $2
 parseSelectItems: [SelectItem(expression=$0, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=$1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=$2, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=$0, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=$1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=$2, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10272,7 +11032,26 @@ isStarItem(item[1]): false
 splitTrailingImplicitAlias(item[1]): null
 isStarItem(item[2]): false
 splitTrailingImplicitAlias(item[2]): null
-=== SqlPlaceholdersTest.kt:136
+=== SqlPlaceholdersTest.kt:16
+text: SELECT "a?b", ?
+parseSelectItems: [SelectItem(expression="a?b", columnName=a?b, tableName=null, isColumnNameQuoted=true, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression="a?b", columnName=a?b, tableName=null, isColumnNameQuoted=true, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression="a?b", columnName=a?b, tableName=null, isColumnNameQuoted=true, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [14]
+replaceParameterPlaceholders: SELECT "a?b", $1
+QueryFileParser.parse: []
+splitStatements: [SELECT "a?b", ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+isStarItem(item[1]): false
+splitTrailingImplicitAlias(item[1]): null
+=== SqlPlaceholdersTest.kt:163
 text: 0::int4
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -10287,7 +11066,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=0::, alias=int4)
-=== SqlPlaceholdersTest.kt:137
+=== SqlPlaceholdersTest.kt:164
 text: SELECT digest(?, ?)
 parseSelectItems: [SelectItem(expression=digest(?, ?), columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=digest(?, ?), columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10304,7 +11083,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): false
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:138
+=== SqlPlaceholdersTest.kt:165
 text: NULL
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -10319,7 +11098,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:140
+=== SqlPlaceholdersTest.kt:167
 text: SELECT digest(0::int4, NULL)
 parseSelectItems: [SelectItem(expression=digest(0::int4, NULL), columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=digest(0::int4, NULL), columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10336,7 +11115,26 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): false
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:149
+=== SqlPlaceholdersTest.kt:17
+text: SELECT 1 -- ?\n, ?
+parseSelectItems: [SelectItem(expression=1 -- ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=1 -- ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=1 -- ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [16]
+replaceParameterPlaceholders: SELECT 1 -- ?\n, $1
+QueryFileParser.parse: []
+splitStatements: [SELECT 1 -- ?\n, ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+isStarItem(item[1]): false
+splitTrailingImplicitAlias(item[1]): null
+=== SqlPlaceholdersTest.kt:176
 text: SELECT a FROM t WHERE a = ? AND b = ?
 parseSelectItems: [SelectItem(expression=a, columnName=a, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=a, columnName=a, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10353,39 +11151,24 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): false
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:15
-text: SELECT * FROM t WHERE id = ?
-parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
-parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
-alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+=== SqlPlaceholdersTest.kt:18
+text: SELECT /* ? */ ?
+parseSelectItems: [SelectItem(expression=/* ? */ ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=/* ? */ ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=/* ? */ ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 alignSelectItems(columnCount = parseSelectItems.size + 1): []
 hasTopLevelSetOperation: false
-placeholderPositions: [27]
-replaceParameterPlaceholders: SELECT * FROM t WHERE id = $1
+placeholderPositions: [15]
+replaceParameterPlaceholders: SELECT /* ? */ $1
 QueryFileParser.parse: []
-splitStatements: [SELECT * FROM t WHERE id = ?]
+splitStatements: [SELECT /* ? */ ?]
 explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-isStarItem(item[0]): true
+isStarItem(item[0]): false
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:15#2
-text: NULL
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: NULL
-QueryFileParser.parse: []
-splitStatements: [NULL]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:156
+=== SqlPlaceholdersTest.kt:183
 text: SELECT * FROM t WHERE note = 'ok?' AND id = ?
 parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10402,24 +11185,24 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): true
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:16
-text: SELECT * FROM t WHERE id = NULL
-parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
-parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
-alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+=== SqlPlaceholdersTest.kt:19
+text: SELECT a =?
+parseSelectItems: [SelectItem(expression=a =?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=a =?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=a =?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 alignSelectItems(columnCount = parseSelectItems.size + 1): []
 hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: SELECT * FROM t WHERE id = NULL
+placeholderPositions: [10]
+replaceParameterPlaceholders: SELECT a =$1
 QueryFileParser.parse: []
-splitStatements: [SELECT * FROM t WHERE id = NULL]
+splitStatements: [SELECT a =?]
 explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
-splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=SELECT * FROM t WHERE id =, alias=NULL)
-isStarItem(item[0]): true
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:163
+=== SqlPlaceholdersTest.kt:190
 text: SELECT * FROM t -- why?\nWHERE id = ?
 parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10436,7 +11219,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): true
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:170
+=== SqlPlaceholdersTest.kt:197
 text: SELECT j ?? 'k' FROM t WHERE id = ?
 parseSelectItems: [SelectItem(expression=j ?? 'k', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=j ?? 'k', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10453,7 +11236,24 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): false
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:176
+=== SqlPlaceholdersTest.kt:20
+text: SELECT a >=?
+parseSelectItems: [SelectItem(expression=a >=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=a >=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=a >=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [11]
+replaceParameterPlaceholders: SELECT a >=$1
+QueryFileParser.parse: []
+splitStatements: [SELECT a >=?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+=== SqlPlaceholdersTest.kt:203
 text: SELECT j ??? 1
 parseSelectItems: [SelectItem(expression=j ??? 1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=j ??? 1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10470,7 +11270,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): false
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:182
+=== SqlPlaceholdersTest.kt:209
 text: SELECT * FROM t
 parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10487,7 +11287,747 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=SELECT * FROM, alias=t)
 isStarItem(item[0]): true
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:191
+=== SqlPlaceholdersTest.kt:21
+text: SELECT a =-?
+parseSelectItems: [SelectItem(expression=a =-?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=a =-?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=a =-?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [11]
+replaceParameterPlaceholders: SELECT a =-$1
+QueryFileParser.parse: []
+splitStatements: [SELECT a =-?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+=== SqlPlaceholdersTest.kt:217
+text: norm.generator.SqlPlaceholdersTestKt#trailingPlaceholderQueries
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: norm.generator.SqlPlaceholdersTestKt#trailingPlaceholderQueries
+QueryFileParser.parse: []
+splitStatements: [norm.generator.SqlPlaceholdersTestKt#trailingPlaceholderQueries]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=norm.generator.SqlPlaceholdersTestKt#, alias=trailingPlaceholderQueries)
+=== SqlPlaceholdersTest.kt:220
+text: $${it + 1}
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: $${it + 1}
+QueryFileParser.parse: []
+splitStatements: [$${it + 1}]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== SqlPlaceholdersTest.kt:220#2
+text: $1
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: $1
+QueryFileParser.parse: []
+splitStatements: [$1]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== SqlPlaceholdersTest.kt:224
+text: norm.generator.SqlPlaceholdersTestKt#unterminatedQueries
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: norm.generator.SqlPlaceholdersTestKt#unterminatedQueries
+QueryFileParser.parse: []
+splitStatements: [norm.generator.SqlPlaceholdersTestKt#unterminatedQueries]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=norm.generator.SqlPlaceholdersTestKt#, alias=unterminatedQueries)
+=== SqlPlaceholdersTest.kt:227
+text: $${it + 1}
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: $${it + 1}
+QueryFileParser.parse: []
+splitStatements: [$${it + 1}]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== SqlPlaceholdersTest.kt:228
+text: SELECT $1
+parseSelectItems: [SelectItem(expression=$1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=$1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=$1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SELECT $1
+QueryFileParser.parse: []
+splitStatements: [SELECT $1]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+=== SqlPlaceholdersTest.kt:228#2
+text: SELECT ?
+parseSelectItems: [SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [7]
+replaceParameterPlaceholders: SELECT $1
+QueryFileParser.parse: []
+splitStatements: [SELECT ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+=== SqlPlaceholdersTest.kt:233
+text: SELECT ?, 1a, ?
+parseSelectItems: [SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=1a, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=1a, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=1a, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [7]
+replaceParameterPlaceholders: SELECT $1, 1a, ?
+QueryFileParser.parse: []
+splitStatements: [SELECT ?, 1a, ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+isStarItem(item[1]): false
+splitTrailingImplicitAlias(item[1]): ItemAndImplicitAlias(expression=1, alias=a)
+isStarItem(item[2]): false
+splitTrailingImplicitAlias(item[2]): null
+=== SqlPlaceholdersTest.kt:235
+text: $${it + 1}
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: $${it + 1}
+QueryFileParser.parse: []
+splitStatements: [$${it + 1}]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== SqlPlaceholdersTest.kt:235#2
+text: SELECT $1, 1a, ?
+parseSelectItems: [SelectItem(expression=$1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=1a, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=$1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=1a, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=$1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=1a, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SELECT $1, 1a, ?
+QueryFileParser.parse: []
+splitStatements: [SELECT $1, 1a, ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+isStarItem(item[1]): false
+splitTrailingImplicitAlias(item[1]): ItemAndImplicitAlias(expression=1, alias=a)
+isStarItem(item[2]): false
+splitTrailingImplicitAlias(item[2]): null
+=== SqlPlaceholdersTest.kt:240
+text: SELECT j =?? 'k' AND j ??| 'k' AND j ??= 'k' AND id = ?
+parseSelectItems: [SelectItem(expression=j =?? 'k' AND j ??| 'k' AND j ??= 'k' AND id = ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=j =?? 'k' AND j ??| 'k' AND j ??= 'k' AND id = ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=j =?? 'k' AND j ??| 'k' AND j ??= 'k' AND id = ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [54]
+replaceParameterPlaceholders: SELECT j =? 'k' AND j ?| 'k' AND j ?= 'k' AND id = $1
+QueryFileParser.parse: []
+splitStatements: [SELECT j =?? 'k' AND j ??| 'k' AND j ??= 'k' AND id = ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+=== SqlPlaceholdersTest.kt:242
+text: $${it + 1}
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: $${it + 1}
+QueryFileParser.parse: []
+splitStatements: [$${it + 1}]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== SqlPlaceholdersTest.kt:243
+text: SELECT j =? 'k' AND j ?| 'k' AND j ?= 'k' AND id = $1
+parseSelectItems: [SelectItem(expression=j =? 'k' AND j ?| 'k' AND j ?= 'k' AND id = $1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=j =? 'k' AND j ?| 'k' AND j ?= 'k' AND id = $1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=j =? 'k' AND j ?| 'k' AND j ?= 'k' AND id = $1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [10, 22, 35]
+replaceParameterPlaceholders: SELECT j =$1 'k' AND j $2| 'k' AND j $3= 'k' AND id = $1
+QueryFileParser.parse: []
+splitStatements: [SELECT j =? 'k' AND j ?| 'k' AND j ?= 'k' AND id = $1]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+=== SqlPlaceholdersTest.kt:248
+text: SELECT ?--c\n, ??--c
+parseSelectItems: [SelectItem(expression=?--c, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=??--c, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=?--c, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=??--c, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=?--c, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=??--c, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [7]
+replaceParameterPlaceholders: SELECT $1--c\n, ?--c
+QueryFileParser.parse: []
+splitStatements: [SELECT ?--c\n, ??--c]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+isStarItem(item[1]): false
+splitTrailingImplicitAlias(item[1]): null
+=== SqlPlaceholdersTest.kt:25
+text: SELECT ?, '?
+parseSelectItems: [SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression='?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression='?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression='?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [7]
+replaceParameterPlaceholders: SELECT $1, '?
+QueryFileParser.parse: []
+splitStatements: [SELECT ?, '?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+isStarItem(item[1]): false
+splitTrailingImplicitAlias(item[1]): null
+=== SqlPlaceholdersTest.kt:250
+text: $${it + 1}
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: $${it + 1}
+QueryFileParser.parse: []
+splitStatements: [$${it + 1}]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== SqlPlaceholdersTest.kt:250#2
+text: SELECT $1--c\n, ?--c
+parseSelectItems: [SelectItem(expression=$1--c, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?--c, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=$1--c, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=?--c, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=$1--c, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?--c, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [15]
+replaceParameterPlaceholders: SELECT $1--c\n, $1--c
+QueryFileParser.parse: []
+splitStatements: [SELECT $1--c\n, ?--c]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+isStarItem(item[1]): false
+splitTrailingImplicitAlias(item[1]): null
+=== SqlPlaceholdersTest.kt:258
+text: norm.generator.SqlPlaceholdersTestKt#allQueries
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: norm.generator.SqlPlaceholdersTestKt#allQueries
+QueryFileParser.parse: []
+splitStatements: [norm.generator.SqlPlaceholdersTestKt#allQueries]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=norm.generator.SqlPlaceholdersTestKt#, alias=allQueries)
+=== SqlPlaceholdersTest.kt:26
+text: SELECT ?, E'\\'?
+parseSelectItems: [SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=E'\\'?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=E'\\'?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=E'\\'?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [7]
+replaceParameterPlaceholders: SELECT $1, E'\\'?
+QueryFileParser.parse: []
+splitStatements: [SELECT ?, E'\\'?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+isStarItem(item[1]): false
+splitTrailingImplicitAlias(item[1]): null
+=== SqlPlaceholdersTest.kt:266
+text: norm.generator.SqlPlaceholdersTestKt#parseableQueries
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: norm.generator.SqlPlaceholdersTestKt#parseableQueries
+QueryFileParser.parse: []
+splitStatements: [norm.generator.SqlPlaceholdersTestKt#parseableQueries]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=norm.generator.SqlPlaceholdersTestKt#, alias=parseableQueries)
+=== SqlPlaceholdersTest.kt:27
+text: SELECT ?, $$?
+parseSelectItems: [SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=$$?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=$$?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=$$?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [7]
+replaceParameterPlaceholders: SELECT $1, $$?
+QueryFileParser.parse: []
+splitStatements: [SELECT ?, $$?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+isStarItem(item[1]): false
+splitTrailingImplicitAlias(item[1]): null
+=== SqlPlaceholdersTest.kt:273
+text: a =?? b
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: a =? b
+QueryFileParser.parse: []
+splitStatements: [a =?? b]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=a =??, alias=b)
+=== SqlPlaceholdersTest.kt:273#2
+text: a =?  b
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [3]
+replaceParameterPlaceholders: a =$1  b
+QueryFileParser.parse: []
+splitStatements: [a =?  b]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=a =?, alias=b)
+=== SqlPlaceholdersTest.kt:274
+text: a ??= b
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: a ?= b
+QueryFileParser.parse: []
+splitStatements: [a ??= b]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=a ??=, alias=b)
+=== SqlPlaceholdersTest.kt:274#2
+text: a ?=  b
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [2]
+replaceParameterPlaceholders: a $1=  b
+QueryFileParser.parse: []
+splitStatements: [a ?=  b]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=a ?=, alias=b)
+=== SqlPlaceholdersTest.kt:275
+text: a ??| b
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: a ?| b
+QueryFileParser.parse: []
+splitStatements: [a ??| b]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=a ??|, alias=b)
+=== SqlPlaceholdersTest.kt:275#2
+text: a ?|  b
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [2]
+replaceParameterPlaceholders: a $1|  b
+QueryFileParser.parse: []
+splitStatements: [a ?|  b]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=a ?|, alias=b)
+=== SqlPlaceholdersTest.kt:276
+text: a ??? b
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [4]
+replaceParameterPlaceholders: a ?$1 b
+QueryFileParser.parse: []
+splitStatements: [a ??? b]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=a ???, alias=b)
+=== SqlPlaceholdersTest.kt:276#2
+text: a ?0  b
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [2]
+replaceParameterPlaceholders: a $10  b
+QueryFileParser.parse: []
+splitStatements: [a ?0  b]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=a ?0, alias=b)
+=== SqlPlaceholdersTest.kt:277
+text: a =-? b
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [4]
+replaceParameterPlaceholders: a =-$1 b
+QueryFileParser.parse: []
+splitStatements: [a =-? b]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=a =-?, alias=b)
+=== SqlPlaceholdersTest.kt:277#2
+text: a =-0 b
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: a =-0 b
+QueryFileParser.parse: []
+splitStatements: [a =-0 b]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=a =-0, alias=b)
+=== SqlPlaceholdersTest.kt:28
+text: SELECT ?, $tag$?$$
+parseSelectItems: [SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=$tag$?$$, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=$tag$?$$, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=$tag$?$$, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [7]
+replaceParameterPlaceholders: SELECT $1, $tag$?$$
+QueryFileParser.parse: []
+splitStatements: [SELECT ?, $tag$?$$]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+isStarItem(item[1]): false
+splitTrailingImplicitAlias(item[1]): null
+=== SqlPlaceholdersTest.kt:282
+text: SELECT '??' /* ? */ -- ??\n, "a?", $$?$$, 1
+parseSelectItems: [SelectItem(expression='??' /* ? */ -- ??, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression="a?", columnName=a?, tableName=null, isColumnNameQuoted=true, isTableNameQuoted=false), SelectItem(expression=$$?$$, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression='??' /* ? */ -- ??, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression="a?", columnName=a?, tableName=null, isColumnNameQuoted=true, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=$$?$$, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression='??' /* ? */ -- ??, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression="a?", columnName=a?, tableName=null, isColumnNameQuoted=true, isTableNameQuoted=false), SelectItem(expression=$$?$$, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SELECT '??' /* ? */ -- ??\n, "a?", $$?$$, 1
+QueryFileParser.parse: []
+splitStatements: [SELECT '??' /* ? */ -- ??\n, "a?", $$?$$, 1]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+isStarItem(item[1]): false
+splitTrailingImplicitAlias(item[1]): null
+isStarItem(item[2]): false
+splitTrailingImplicitAlias(item[2]): null
+isStarItem(item[3]): false
+splitTrailingImplicitAlias(item[3]): null
+=== SqlPlaceholdersTest.kt:288
+text: SELECT ?, 1a, ?
+parseSelectItems: [SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=1a, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=1a, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=1a, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [7]
+replaceParameterPlaceholders: SELECT $1, 1a, ?
+QueryFileParser.parse: []
+splitStatements: [SELECT ?, 1a, ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+isStarItem(item[1]): false
+splitTrailingImplicitAlias(item[1]): ItemAndImplicitAlias(expression=1, alias=a)
+isStarItem(item[2]): false
+splitTrailingImplicitAlias(item[2]): null
+=== SqlPlaceholdersTest.kt:289
+text: SELECT 0, 1a, ?
+parseSelectItems: [SelectItem(expression=0, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=1a, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=0, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=1a, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=0, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=1a, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SELECT 0, 1a, ?
+QueryFileParser.parse: []
+splitStatements: [SELECT 0, 1a, ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+isStarItem(item[1]): false
+splitTrailingImplicitAlias(item[1]): ItemAndImplicitAlias(expression=1, alias=a)
+isStarItem(item[2]): false
+splitTrailingImplicitAlias(item[2]): null
+=== SqlPlaceholdersTest.kt:29
+text: SELECT ?, "?
+parseSelectItems: [SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression="?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression="?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression="?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [7]
+replaceParameterPlaceholders: SELECT $1, "?
+QueryFileParser.parse: []
+splitStatements: [SELECT ?, "?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+isStarItem(item[1]): false
+splitTrailingImplicitAlias(item[1]): null
+=== SqlPlaceholdersTest.kt:294
+text: SELECT j ?? 'k' AS flag, ? AS x, b FROM t
+parseSelectItems: [SelectItem(expression=j ?? 'k', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=b, columnName=b, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=j ?? 'k', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=flag), OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=x), OutputItemWithAlias(selectItem=SelectItem(expression=b, columnName=b, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=j ?? 'k', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=b, columnName=b, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [25]
+replaceParameterPlaceholders: SELECT j ? 'k' AS flag, $1 AS x, b FROM t
+QueryFileParser.parse: []
+splitStatements: [SELECT j ?? 'k' AS flag, ? AS x, b FROM t]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=SELECT j ?? 'k' AS flag, ? AS x, b FROM, alias=t)
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+isStarItem(item[1]): false
+splitTrailingImplicitAlias(item[1]): null
+isStarItem(item[2]): false
+splitTrailingImplicitAlias(item[2]): null
+=== SqlPlaceholdersTest.kt:297
+text: j ??
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: j ?
+QueryFileParser.parse: []
+splitStatements: [j ??]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== SqlPlaceholdersTest.kt:297#2
+text: ? AS x
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [0]
+replaceParameterPlaceholders: $1 AS x
+QueryFileParser.parse: []
+splitStatements: [? AS x]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=? AS, alias=x)
+=== SqlPlaceholdersTest.kt:297#3
+text: b FROM
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: b FROM
+QueryFileParser.parse: []
+splitStatements: [b FROM]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=b, alias=FROM)
+=== SqlPlaceholdersTest.kt:30
+text: SELECT ?, /* ?
+parseSelectItems: [SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=/* ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=/* ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=/* ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [7]
+replaceParameterPlaceholders: SELECT $1, /* ?
+QueryFileParser.parse: []
+splitStatements: [SELECT ?, /* ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+isStarItem(item[1]): false
+splitTrailingImplicitAlias(item[1]): null
+=== SqlPlaceholdersTest.kt:302
+text: ResTarget
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: ResTarget
+QueryFileParser.parse: []
+splitStatements: [ResTarget]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== SqlPlaceholdersTest.kt:303
+text: location
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: location
+QueryFileParser.parse: []
+splitStatements: [location]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== SqlPlaceholdersTest.kt:318
 text: int4
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -10502,7 +12042,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:191#2
+=== SqlPlaceholdersTest.kt:318#2
 text: 0::int4
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -10517,7 +12057,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=0::, alias=int4)
-=== SqlPlaceholdersTest.kt:192
+=== SqlPlaceholdersTest.kt:319
 text: int8
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -10532,7 +12072,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:192#2
+=== SqlPlaceholdersTest.kt:319#2
 text: 0::int8
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -10547,7 +12087,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=0::, alias=int8)
-=== SqlPlaceholdersTest.kt:197
+=== SqlPlaceholdersTest.kt:324
 text: text
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -10562,7 +12102,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:197#2
+=== SqlPlaceholdersTest.kt:324#2
 text: ''::text
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -10577,7 +12117,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=''::, alias=text)
-=== SqlPlaceholdersTest.kt:198
+=== SqlPlaceholdersTest.kt:325
 text: varchar
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -10592,7 +12132,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:198#2
+=== SqlPlaceholdersTest.kt:325#2
 text: ''::varchar
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -10607,7 +12147,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=''::, alias=varchar)
-=== SqlPlaceholdersTest.kt:203
+=== SqlPlaceholdersTest.kt:330
 text: bool
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -10622,7 +12162,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:203#2
+=== SqlPlaceholdersTest.kt:330#2
 text: false::bool
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -10637,7 +12177,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=false::, alias=bool)
-=== SqlPlaceholdersTest.kt:208
+=== SqlPlaceholdersTest.kt:335
 text: bytea
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -10652,7 +12192,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:208#2
+=== SqlPlaceholdersTest.kt:335#2
 text: '\\x00'::bytea
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -10667,7 +12207,323 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression='\\x00'::, alias=bytea)
-=== SqlPlaceholdersTest.kt:21
+=== SqlPlaceholdersTest.kt:34
+text: SELECT j ?? 'k', ?
+parseSelectItems: [SelectItem(expression=j ?? 'k', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=j ?? 'k', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=j ?? 'k', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [17]
+replaceParameterPlaceholders: SELECT j ? 'k', $1
+QueryFileParser.parse: []
+splitStatements: [SELECT j ?? 'k', ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+isStarItem(item[1]): false
+splitTrailingImplicitAlias(item[1]): null
+=== SqlPlaceholdersTest.kt:340
+text: _int4
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: _int4
+QueryFileParser.parse: []
+splitStatements: [_int4]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== SqlPlaceholdersTest.kt:340#2
+text: ARRAY[]::_int4
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: ARRAY[]::_int4
+QueryFileParser.parse: []
+splitStatements: [ARRAY[]::_int4]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=ARRAY[]::, alias=_int4)
+=== SqlPlaceholdersTest.kt:341
+text: _text
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: _text
+QueryFileParser.parse: []
+splitStatements: [_text]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== SqlPlaceholdersTest.kt:341#2
+text: ARRAY[]::_text
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: ARRAY[]::_text
+QueryFileParser.parse: []
+splitStatements: [ARRAY[]::_text]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=ARRAY[]::, alias=_text)
+=== SqlPlaceholdersTest.kt:346
+text: custom_type
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: custom_type
+QueryFileParser.parse: []
+splitStatements: [custom_type]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== SqlPlaceholdersTest.kt:346#2
+text: NULL::custom_type
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: NULL::custom_type
+QueryFileParser.parse: []
+splitStatements: [NULL::custom_type]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=NULL::, alias=custom_type)
+=== SqlPlaceholdersTest.kt:35
+text: SELECT j =?? 'k'
+parseSelectItems: [SelectItem(expression=j =?? 'k', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=j =?? 'k', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=j =?? 'k', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SELECT j =? 'k'
+QueryFileParser.parse: []
+splitStatements: [SELECT j =?? 'k']
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+=== SqlPlaceholdersTest.kt:351
+text: date
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: date
+QueryFileParser.parse: []
+splitStatements: [date]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== SqlPlaceholdersTest.kt:351#2
+text: '2000-01-01'::date
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: '2000-01-01'::date
+QueryFileParser.parse: []
+splitStatements: ['2000-01-01'::date]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression='2000-01-01'::, alias=date)
+=== SqlPlaceholdersTest.kt:352
+text: timestamp
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: timestamp
+QueryFileParser.parse: []
+splitStatements: [timestamp]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== SqlPlaceholdersTest.kt:352#2
+text: '2000-01-01'::timestamp
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: '2000-01-01'::timestamp
+QueryFileParser.parse: []
+splitStatements: ['2000-01-01'::timestamp]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression='2000-01-01'::, alias=timestamp)
+=== SqlPlaceholdersTest.kt:353
+text: uuid
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: uuid
+QueryFileParser.parse: []
+splitStatements: [uuid]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== SqlPlaceholdersTest.kt:353#2
+text: '00000000-0000-0000-0000-000000000000'::uuid
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: '00000000-0000-0000-0000-000000000000'::uuid
+QueryFileParser.parse: []
+splitStatements: ['00000000-0000-0000-0000-000000000000'::uuid]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression='00000000-0000-0000-0000-000000000000'::, alias=uuid)
+=== SqlPlaceholdersTest.kt:36
+text: SELECT j ??= 'k'
+parseSelectItems: [SelectItem(expression=j ??= 'k', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=j ??= 'k', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=j ??= 'k', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SELECT j ?= 'k'
+QueryFileParser.parse: []
+splitStatements: [SELECT j ??= 'k']
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+=== SqlPlaceholdersTest.kt:364
+text: SELECT j ???
+parseSelectItems: [SelectItem(expression=j ???, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=j ???, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=j ???, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [11]
+replaceParameterPlaceholders: SELECT j ?$1
+QueryFileParser.parse: []
+splitStatements: [SELECT j ???]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+=== SqlPlaceholdersTest.kt:37
+text: SELECT j ??| 'k'
+parseSelectItems: [SelectItem(expression=j ??| 'k', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=j ??| 'k', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=j ??| 'k', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SELECT j ?| 'k'
+QueryFileParser.parse: []
+splitStatements: [SELECT j ??| 'k']
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): false
+splitTrailingImplicitAlias(item[0]): null
+=== SqlPlaceholdersTest.kt:47
+text: SELECT * FROM t WHERE id = ?
+parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [27]
+replaceParameterPlaceholders: SELECT * FROM t WHERE id = $1
+QueryFileParser.parse: []
+splitStatements: [SELECT * FROM t WHERE id = ?]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+isStarItem(item[0]): true
+splitTrailingImplicitAlias(item[0]): null
+=== SqlPlaceholdersTest.kt:47#2
+text: NULL
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: NULL
+QueryFileParser.parse: []
+splitStatements: [NULL]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): null
+=== SqlPlaceholdersTest.kt:48
+text: SELECT * FROM t WHERE id = NULL
+parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SELECT * FROM t WHERE id = NULL
+QueryFileParser.parse: []
+splitStatements: [SELECT * FROM t WHERE id = NULL]
+explainedStatementStart: 0
+parseCteClause: null
+isStarItem(text): false
+splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=SELECT * FROM t WHERE id =, alias=NULL)
+isStarItem(item[0]): true
+splitTrailingImplicitAlias(item[0]): null
+=== SqlPlaceholdersTest.kt:53
 text: SELECT * FROM t WHERE a = ? AND b = ?
 parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10684,7 +12540,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): true
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:21#2
+=== SqlPlaceholdersTest.kt:53#2
 text: NULL
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -10699,97 +12555,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:213
-text: _int4
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: _int4
-QueryFileParser.parse: []
-splitStatements: [_int4]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:213#2
-text: ARRAY[]::_int4
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: ARRAY[]::_int4
-QueryFileParser.parse: []
-splitStatements: [ARRAY[]::_int4]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=ARRAY[]::, alias=_int4)
-=== SqlPlaceholdersTest.kt:214
-text: _text
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: _text
-QueryFileParser.parse: []
-splitStatements: [_text]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:214#2
-text: ARRAY[]::_text
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: ARRAY[]::_text
-QueryFileParser.parse: []
-splitStatements: [ARRAY[]::_text]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=ARRAY[]::, alias=_text)
-=== SqlPlaceholdersTest.kt:219
-text: custom_type
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: custom_type
-QueryFileParser.parse: []
-splitStatements: [custom_type]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:219#2
-text: NULL::custom_type
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: NULL::custom_type
-QueryFileParser.parse: []
-splitStatements: [NULL::custom_type]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=NULL::, alias=custom_type)
-=== SqlPlaceholdersTest.kt:22
+=== SqlPlaceholdersTest.kt:54
 text: SELECT * FROM t WHERE a = NULL AND b = NULL
 parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10806,97 +12572,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=SELECT * FROM t WHERE a = NULL AND b =, alias=NULL)
 isStarItem(item[0]): true
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:224
-text: date
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: date
-QueryFileParser.parse: []
-splitStatements: [date]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:224#2
-text: '2000-01-01'::date
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: '2000-01-01'::date
-QueryFileParser.parse: []
-splitStatements: ['2000-01-01'::date]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression='2000-01-01'::, alias=date)
-=== SqlPlaceholdersTest.kt:225
-text: timestamp
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: timestamp
-QueryFileParser.parse: []
-splitStatements: [timestamp]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:225#2
-text: '2000-01-01'::timestamp
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: '2000-01-01'::timestamp
-QueryFileParser.parse: []
-splitStatements: ['2000-01-01'::timestamp]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression='2000-01-01'::, alias=timestamp)
-=== SqlPlaceholdersTest.kt:226
-text: uuid
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: uuid
-QueryFileParser.parse: []
-splitStatements: [uuid]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:226#2
-text: '00000000-0000-0000-0000-000000000000'::uuid
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: '00000000-0000-0000-0000-000000000000'::uuid
-QueryFileParser.parse: []
-splitStatements: ['00000000-0000-0000-0000-000000000000'::uuid]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression='00000000-0000-0000-0000-000000000000'::, alias=uuid)
-=== SqlPlaceholdersTest.kt:27
+=== SqlPlaceholdersTest.kt:59
 text: SELECT * FROM t WHERE note = 'really?' AND id = ?
 parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10913,7 +12589,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): true
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:27#2
+=== SqlPlaceholdersTest.kt:59#2
 text: NULL
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -10928,7 +12604,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:28
+=== SqlPlaceholdersTest.kt:60
 text: SELECT * FROM t WHERE note = 'really?' AND id = NULL
 parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10945,7 +12621,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=SELECT * FROM t WHERE note = 'really?' AND id =, alias=NULL)
 isStarItem(item[0]): true
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:34
+=== SqlPlaceholdersTest.kt:66
 text: SELECT * FROM t WHERE note = 'it''s a ? mark' AND id = ?
 parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10962,7 +12638,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): true
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:34#2
+=== SqlPlaceholdersTest.kt:66#2
 text: NULL
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -10977,7 +12653,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:35
+=== SqlPlaceholdersTest.kt:67
 text: SELECT * FROM t WHERE note = 'it''s a ? mark' AND id = NULL
 parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -10994,7 +12670,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=SELECT * FROM t WHERE note = 'it''s a ? mark' AND id =, alias=NULL)
 isStarItem(item[0]): true
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:40
+=== SqlPlaceholdersTest.kt:72
 text: SELECT * FROM t -- why?\nWHERE id = ?
 parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -11011,7 +12687,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): true
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:40#2
+=== SqlPlaceholdersTest.kt:72#2
 text: NULL
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -11026,7 +12702,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:41
+=== SqlPlaceholdersTest.kt:73
 text: SELECT * FROM t -- why?\nWHERE id = NULL
 parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -11043,7 +12719,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=SELECT * FROM t -- why?\nWHERE id =, alias=NULL)
 isStarItem(item[0]): true
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:46
+=== SqlPlaceholdersTest.kt:78
 text: SELECT * FROM t /* what? */ WHERE id = ?
 parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -11060,7 +12736,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): true
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:46#2
+=== SqlPlaceholdersTest.kt:78#2
 text: NULL
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -11075,7 +12751,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:47
+=== SqlPlaceholdersTest.kt:79
 text: SELECT * FROM t /* what? */ WHERE id = NULL
 parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -11092,7 +12768,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=SELECT * FROM t /* what? */ WHERE id =, alias=NULL)
 isStarItem(item[0]): true
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:52
+=== SqlPlaceholdersTest.kt:84
 text: SELECT j ?? 'k' FROM t WHERE a = ? AND id = ?
 parseSelectItems: [SelectItem(expression=j ?? 'k', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=j ?? 'k', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -11109,7 +12785,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): false
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:52#2
+=== SqlPlaceholdersTest.kt:84#2
 text: $${it + 1}
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -11124,7 +12800,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:53
+=== SqlPlaceholdersTest.kt:85
 text: SELECT j ? 'k' FROM t WHERE a = $1 AND id = $2
 parseSelectItems: [SelectItem(expression=j ? 'k', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=j ? 'k', columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -11141,7 +12817,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): false
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:58
+=== SqlPlaceholdersTest.kt:90
 text: SELECT j ??? 1
 parseSelectItems: [SelectItem(expression=j ??? 1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=j ??? 1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -11158,7 +12834,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): false
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:58#2
+=== SqlPlaceholdersTest.kt:90#2
 text: $${it + 1}
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -11173,7 +12849,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:59
+=== SqlPlaceholdersTest.kt:91
 text: SELECT j ?$1 1
 parseSelectItems: [SelectItem(expression=j ?$1 1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=j ?$1 1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -11190,7 +12866,7 @@ isStarItem(text): false
 splitTrailingImplicitAlias(text): null
 isStarItem(item[0]): false
 splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:64
+=== SqlPlaceholdersTest.kt:96
 text: SELECT '??' /* ?? */ -- ??\n, ?
 parseSelectItems: [SelectItem(expression='??' /* ?? */ -- ??, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression='??' /* ?? */ -- ??, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -11209,7 +12885,7 @@ isStarItem(item[0]): false
 splitTrailingImplicitAlias(item[0]): null
 isStarItem(item[1]): false
 splitTrailingImplicitAlias(item[1]): null
-=== SqlPlaceholdersTest.kt:65
+=== SqlPlaceholdersTest.kt:97
 text: $${it + 1}
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -11224,7 +12900,7 @@ explainedStatementStart: 0
 parseCteClause: null
 isStarItem(text): false
 splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:65#2
+=== SqlPlaceholdersTest.kt:97#2
 text: SELECT '??' /* ?? */ -- ??\n, $1
 parseSelectItems: [SelectItem(expression='??' /* ?? */ -- ??, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), SelectItem(expression=$1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression='??' /* ?? */ -- ??, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null), OutputItemWithAlias(selectItem=SelectItem(expression=$1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
@@ -11243,234 +12919,6 @@ isStarItem(item[0]): false
 splitTrailingImplicitAlias(item[0]): null
 isStarItem(item[1]): false
 splitTrailingImplicitAlias(item[1]): null
-=== SqlPlaceholdersTest.kt:70
-text: SELECT * FROM department
-parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
-parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
-alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: SELECT * FROM department
-QueryFileParser.parse: []
-splitStatements: [SELECT * FROM department]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=SELECT * FROM, alias=department)
-isStarItem(item[0]): true
-splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:71
-text: NULL
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: NULL
-QueryFileParser.parse: []
-splitStatements: [NULL]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:78
-text: SELECT '?
-parseSelectItems: [SelectItem(expression='?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
-parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression='?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
-alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression='?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: SELECT '?
-QueryFileParser.parse: []
-splitStatements: [SELECT '?]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): null
-isStarItem(item[0]): false
-splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:78#2
-text: NULL
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: NULL
-QueryFileParser.parse: []
-splitStatements: [NULL]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:79
-text: SELECT '?
-parseSelectItems: [SelectItem(expression='?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
-parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression='?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
-alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression='?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: SELECT '?
-QueryFileParser.parse: []
-splitStatements: [SELECT '?]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): null
-isStarItem(item[0]): false
-splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:84
-text: SELECT /* ?
-parseSelectItems: [SelectItem(expression=/* ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
-parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=/* ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
-alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=/* ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: SELECT /* ?
-QueryFileParser.parse: []
-splitStatements: [SELECT /* ?]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): null
-isStarItem(item[0]): false
-splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:84#2
-text: NULL
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: NULL
-QueryFileParser.parse: []
-splitStatements: [NULL]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:85
-text: SELECT /* ?
-parseSelectItems: [SelectItem(expression=/* ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
-parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=/* ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
-alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=/* ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: SELECT /* ?
-QueryFileParser.parse: []
-splitStatements: [SELECT /* ?]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): null
-isStarItem(item[0]): false
-splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:90
-text: SELECT $$a ? b$$ WHERE id = ?
-parseSelectItems: [SelectItem(expression=$$a ? b$$ WHERE id = ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
-parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=$$a ? b$$ WHERE id = ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
-alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=$$a ? b$$ WHERE id = ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: [28]
-replaceParameterPlaceholders: SELECT $$a ? b$$ WHERE id = $1
-QueryFileParser.parse: []
-splitStatements: [SELECT $$a ? b$$ WHERE id = ?]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): null
-isStarItem(item[0]): false
-splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:90#2
-text: NULL
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: NULL
-QueryFileParser.parse: []
-splitStatements: [NULL]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:91
-text: SELECT $$a ? b$$ WHERE id = NULL
-parseSelectItems: [SelectItem(expression=$$a ? b$$ WHERE id = NULL, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
-parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=$$a ? b$$ WHERE id = NULL, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
-alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=$$a ? b$$ WHERE id = NULL, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: SELECT $$a ? b$$ WHERE id = NULL
-QueryFileParser.parse: []
-splitStatements: [SELECT $$a ? b$$ WHERE id = NULL]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=SELECT $$a ? b$$ WHERE id =, alias=NULL)
-isStarItem(item[0]): false
-splitTrailingImplicitAlias(item[0]): ItemAndImplicitAlias(expression=$$a ? b$$ WHERE id =, alias=NULL)
-=== SqlPlaceholdersTest.kt:96
-text: SELECT $tag$a ? b$tag$ WHERE id = ?
-parseSelectItems: [SelectItem(expression=$tag$a ? b$tag$ WHERE id = ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
-parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=$tag$a ? b$tag$ WHERE id = ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
-alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=$tag$a ? b$tag$ WHERE id = ?, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: [34]
-replaceParameterPlaceholders: SELECT $tag$a ? b$tag$ WHERE id = $1
-QueryFileParser.parse: []
-splitStatements: [SELECT $tag$a ? b$tag$ WHERE id = ?]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): null
-isStarItem(item[0]): false
-splitTrailingImplicitAlias(item[0]): null
-=== SqlPlaceholdersTest.kt:96#2
-text: NULL
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: NULL
-QueryFileParser.parse: []
-splitStatements: [NULL]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): null
-=== SqlPlaceholdersTest.kt:97
-text: SELECT $tag$a ? b$tag$ WHERE id = NULL
-parseSelectItems: [SelectItem(expression=$tag$a ? b$tag$ WHERE id = NULL, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
-parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=$tag$a ? b$tag$ WHERE id = NULL, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false), alias=null)]
-alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=$tag$a ? b$tag$ WHERE id = NULL, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false)]
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: SELECT $tag$a ? b$tag$ WHERE id = NULL
-QueryFileParser.parse: []
-splitStatements: [SELECT $tag$a ? b$tag$ WHERE id = NULL]
-explainedStatementStart: 0
-parseCteClause: null
-isStarItem(text): false
-splitTrailingImplicitAlias(text): ItemAndImplicitAlias(expression=SELECT $tag$a ? b$tag$ WHERE id =, alias=NULL)
-isStarItem(item[0]): false
-splitTrailingImplicitAlias(item[0]): ItemAndImplicitAlias(expression=$tag$a ? b$tag$ WHERE id =, alias=NULL)
 === SqlStarItemTest.kt:23
 text: description dx
 parseSelectItems: []

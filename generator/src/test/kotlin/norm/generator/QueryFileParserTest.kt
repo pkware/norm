@@ -494,11 +494,6 @@ class QueryFileParserTest {
 
   @Test
   fun `named-parameter-shaped text after a backslash-escaped quote in an E-string is not converted`() {
-    // The old findClosingQuote ended the literal at the backslash-escaped quote (it had no E-string
-    // awareness), so it would have read '\'' as the terminator and converted the ":x" that follows
-    // as a real named parameter. skipLexicalToken understands E'...' backslash escapes, so the
-    // whole literal -- ":x" included -- is skipped as one token. Accepted behavior change, matching
-    // PostgreSQL's own E'' semantics.
     val content = """
       -- name: findByPattern :many
       SELECT * FROM users WHERE note = E'it\'s :x' AND id = :id;
@@ -508,6 +503,123 @@ class QueryFileParserTest {
 
     assertThat(result[0].sql).isEqualTo("""SELECT * FROM users WHERE note = E'it\'s :x' AND id = ?""")
     assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "id"))
+  }
+
+  @Test
+  fun `named parameter inside a line comment is not converted`() {
+    val content = """
+      -- name: findByPattern :many
+      SELECT * FROM users -- :notaparam
+      WHERE id = :id;
+    """.trimIndent()
+
+    val result = QueryFileParser.parse(content)
+
+    assertThat(result[0].sql).isEqualTo("SELECT * FROM users -- :notaparam\nWHERE id = ?")
+    assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "id"))
+  }
+
+  @Test
+  fun `named parameter inside an E-string is not converted`() {
+    val content = """
+      -- name: findByPattern :many
+      SELECT E':notaparam' FROM users WHERE id = :id;
+    """.trimIndent()
+
+    val result = QueryFileParser.parse(content)
+
+    assertThat(result[0].sql).isEqualTo("SELECT E':notaparam' FROM users WHERE id = ?")
+    assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "id"))
+  }
+
+  @Test
+  fun `named parameter glued to an operator is converted`() {
+    val content = """
+      -- name: findById :one
+      SELECT * FROM users WHERE id=:id;
+    """.trimIndent()
+
+    val result = QueryFileParser.parse(content)
+
+    assertThat(result[0].sql).isEqualTo("SELECT * FROM users WHERE id=?")
+    assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "id"))
+  }
+
+  @Test
+  fun `colon equals is not a named parameter but the parameter after it is`() {
+    val content = """
+      -- name: assign :one
+      SELECT a := :value;
+    """.trimIndent()
+
+    val result = QueryFileParser.parse(content)
+
+    assertThat(result[0].sql).isEqualTo("SELECT a := ?")
+    assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "value"))
+  }
+
+  @Test
+  fun `a reserved word is a named parameter name`() {
+    val content = """
+      -- name: listUsers :many
+      SELECT * FROM users WHERE age > :from AND x < :select;
+    """.trimIndent()
+
+    val result = QueryFileParser.parse(content)
+
+    assertThat(result[0].sql).isEqualTo("SELECT * FROM users WHERE age > ? AND x < ?")
+    assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "from", 2 to "select"))
+  }
+
+  @Test
+  fun `a named parameter name may hold non-ASCII letters and a dollar sign`() {
+    val content = """
+      -- name: listUsers :many
+      SELECT * FROM users WHERE a = :größe AND b = :ab${'$'}c;
+    """.trimIndent()
+
+    val result = QueryFileParser.parse(content)
+
+    assertThat(result[0].sql).isEqualTo("SELECT * FROM users WHERE a = ? AND b = ?")
+    assertThat(result[0].namedParameters).isEqualTo(mapOf(1 to "größe", 2 to "ab${'$'}c"))
+  }
+
+  @Test
+  fun `a colon before a quoted identifier is not a named parameter`() {
+    val content = """
+      -- name: listUsers :many
+      SELECT * FROM users WHERE a = :"q";
+    """.trimIndent()
+
+    val result = QueryFileParser.parse(content)
+
+    assertThat(result[0].sql).isEqualTo("""SELECT * FROM users WHERE a = :"q"""")
+    assertThat(result[0].namedParameters).isEmpty()
+  }
+
+  @Test
+  fun `a colon before a string literal is not a named parameter`() {
+    val content = """
+      -- name: listUsers :many
+      SELECT * FROM users WHERE a = :e'x';
+    """.trimIndent()
+
+    val result = QueryFileParser.parse(content)
+
+    assertThat(result[0].sql).isEqualTo("SELECT * FROM users WHERE a = :e'x'")
+    assertThat(result[0].namedParameters).isEmpty()
+  }
+
+  @Test
+  fun `a NUL character names the query and the line`() {
+    val content = "-- name: getAll :many\nSELECT 1;\n\n-- name: broken :one\nSELECT 'a\u0000b' WHERE id = :id;"
+
+    val exception = assertFailure { QueryFileParser.parse(content) }
+
+    exception.isInstanceOf(IllegalArgumentException::class)
+    exception.messageContains("broken")
+    exception.messageContains("line 4")
+    exception.messageContains("NUL")
   }
 
   @Nested

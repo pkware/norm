@@ -2,8 +2,40 @@ package norm.generator
 
 import assertk.assertThat
 import assertk.assertions.isEqualTo
+import norm.generator.libpgquery.LibPgQuery
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.MethodSource
+
+private val TRAILING_PLACEHOLDER_QUERIES = listOf(
+  "SELECT '?', ?",
+  "SELECT E'a\\'?', ?",
+  "SELECT \$\$?\$\$, ?",
+  "SELECT \$tag\$?\$tag\$, ?",
+  "SELECT \"a?b\", ?",
+  "SELECT 1 -- ?\n, ?",
+  "SELECT /* ? */ ?",
+  "SELECT a =?",
+  "SELECT a >=?",
+  "SELECT a =-?",
+)
+
+private val UNTERMINATED_QUERIES = listOf(
+  "SELECT ?, '?",
+  "SELECT ?, E'\\'?",
+  "SELECT ?, \$\$?",
+  "SELECT ?, \$tag\$?\$\$",
+  "SELECT ?, \"?",
+  "SELECT ?, /* ?",
+)
+
+private val DOUBLED_QUESTION_MARK_QUERIES = listOf(
+  "SELECT j ?? 'k', ?",
+  "SELECT j =?? 'k'",
+  "SELECT j ??= 'k'",
+  "SELECT j ??| 'k'",
+)
 
 class SqlPlaceholdersTest {
 
@@ -111,11 +143,6 @@ class SqlPlaceholdersTest {
 
     @Test
     fun `question mark after the inner close of a nested block comment is left alone`() {
-      // The old hand-rolled scanner searched for the first "*/" from the opening "/*", so it read
-      // this comment as ending at the inner close and would have converted the "?" that follows.
-      // skipLexicalToken honors PostgreSQL's documented nesting-depth semantics instead, treating
-      // the whole span as a single comment that only ends at the "*/" bringing the depth back to
-      // zero -- this is an accepted behavior change, matching PostgreSQL's own nested comments.
       val result = replaceParameterPlaceholders("SELECT /* a /* b */ c ? */ 1") { "NULL" }
       assertThat(result).isEqualTo("SELECT /* a /* b */ c ? */ 1")
     }
@@ -184,6 +211,106 @@ class SqlPlaceholdersTest {
   }
 
   @Nested
+  inner class PlaceholderLocation {
+
+    @ParameterizedTest
+    @MethodSource("norm.generator.SqlPlaceholdersTestKt#trailingPlaceholderQueries")
+    fun `a trailing placeholder is found after a question mark that is not one`(sql: String) {
+      assertThat(placeholderPositions(sql).toList()).isEqualTo(listOf(sql.length - 1))
+      assertThat(replaceParameterPlaceholders(sql) { "\$${it + 1}" }).isEqualTo(sql.dropLast(1) + "\$1")
+    }
+
+    @ParameterizedTest
+    @MethodSource("norm.generator.SqlPlaceholdersTestKt#unterminatedQueries")
+    fun `a placeholder before an unterminated token is found and the token is left alone`(sql: String) {
+      assertThat(placeholderPositions(sql).toList()).isEqualTo(listOf(sql.indexOf('?')))
+      assertThat(replaceParameterPlaceholders(sql) { "\$${it + 1}" })
+        .isEqualTo("SELECT \$1" + sql.removePrefix("SELECT ?"))
+    }
+
+    @Test
+    fun `text after a lexer error is left alone`() {
+      val sql = "SELECT ?, 1a, ?"
+      assertThat(placeholderPositions(sql).toList()).isEqualTo(listOf(7))
+      assertThat(replaceParameterPlaceholders(sql) { "\$${it + 1}" }).isEqualTo("SELECT \$1, 1a, ?")
+    }
+
+    @Test
+    fun `a doubled question mark glued to operator characters is one literal question mark`() {
+      val sql = "SELECT j =?? 'k' AND j ??| 'k' AND j ??= 'k' AND id = ?"
+      assertThat(placeholderPositions(sql).toList()).isEqualTo(listOf(sql.lastIndexOf('?')))
+      assertThat(replaceParameterPlaceholders(sql) { "\$${it + 1}" })
+        .isEqualTo("SELECT j =? 'k' AND j ?| 'k' AND j ?= 'k' AND id = \$1")
+    }
+
+    @Test
+    fun `a question mark ahead of a comment is a placeholder`() {
+      val sql = "SELECT ?--c\n, ??--c"
+      assertThat(placeholderPositions(sql).toList()).isEqualTo(listOf(7))
+      assertThat(replaceParameterPlaceholders(sql) { "\$${it + 1}" }).isEqualTo("SELECT \$1--c\n, ?--c")
+    }
+  }
+
+  @Nested
+  inner class ReplaceParameterPlaceholdersKeepingOffsets {
+
+    @ParameterizedTest
+    @MethodSource("norm.generator.SqlPlaceholdersTestKt#allQueries")
+    fun `keeps the length and writes zero at each placeholder`(sql: String) {
+      val result = replaceParameterPlaceholdersKeepingOffsets(sql)
+      assertThat(result.length).isEqualTo(sql.length)
+      for (position in placeholderPositions(sql)) assertThat(result[position]).isEqualTo('0')
+    }
+
+    @ParameterizedTest
+    @MethodSource("norm.generator.SqlPlaceholdersTestKt#parseableQueries")
+    fun `result parses`(sql: String) {
+      LibPgQuery.parse(replaceParameterPlaceholdersKeepingOffsets(sql))
+    }
+
+    @Test
+    fun `an operator token shrinks by its doubled question marks and is padded with spaces`() {
+      assertThat(replaceParameterPlaceholdersKeepingOffsets("a =?? b")).isEqualTo("a =?  b")
+      assertThat(replaceParameterPlaceholdersKeepingOffsets("a ??= b")).isEqualTo("a ?=  b")
+      assertThat(replaceParameterPlaceholdersKeepingOffsets("a ??| b")).isEqualTo("a ?|  b")
+      assertThat(replaceParameterPlaceholdersKeepingOffsets("a ??? b")).isEqualTo("a ?0  b")
+      assertThat(replaceParameterPlaceholdersKeepingOffsets("a =-? b")).isEqualTo("a =-0 b")
+    }
+
+    @Test
+    fun `text outside operator tokens is unchanged`() {
+      val sql = "SELECT '??' /* ? */ -- ??\n, \"a?\", \$\$?\$\$, 1"
+      assertThat(replaceParameterPlaceholdersKeepingOffsets(sql)).isEqualTo(sql)
+    }
+
+    @Test
+    fun `text after a lexer error is unchanged`() {
+      val sql = "SELECT ?, 1a, ?"
+      assertThat(replaceParameterPlaceholdersKeepingOffsets(sql)).isEqualTo("SELECT 0, 1a, ?")
+    }
+
+    @Test
+    fun `select item locations match the original text`() {
+      val sql = "SELECT j ?? 'k' AS flag, ? AS x, b FROM t"
+      val tree = LibPgQuery.parse(replaceParameterPlaceholdersKeepingOffsets(sql))
+      assertThat(resultTargetLocations(tree))
+        .isEqualTo(listOf(sql.indexOf("j ??"), sql.indexOf("? AS x"), sql.indexOf("b FROM")))
+    }
+
+    private fun resultTargetLocations(value: JsonValue): List<Int> = when (value) {
+      is JsonValue.JsonObject -> value.fields.flatMap { (key, child) ->
+        if (key == "ResTarget" && child is JsonValue.JsonObject) {
+          listOfNotNull(child.intField("location"))
+        } else {
+          resultTargetLocations(child)
+        }
+      }
+      is JsonValue.JsonArray -> value.items.flatMap(::resultTargetLocations)
+      else -> emptyList()
+    }
+  }
+
+  @Nested
   inner class NonNullSentinel {
 
     @Test
@@ -227,3 +354,11 @@ class SqlPlaceholdersTest {
     }
   }
 }
+
+fun trailingPlaceholderQueries(): List<String> = TRAILING_PLACEHOLDER_QUERIES
+
+fun unterminatedQueries(): List<String> = UNTERMINATED_QUERIES
+
+fun allQueries(): List<String> = TRAILING_PLACEHOLDER_QUERIES + UNTERMINATED_QUERIES + DOUBLED_QUESTION_MARK_QUERIES
+
+fun parseableQueries(): List<String> = TRAILING_PLACEHOLDER_QUERIES + DOUBLED_QUESTION_MARK_QUERIES + "SELECT j ???"

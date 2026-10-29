@@ -1,10 +1,5 @@
 package norm.generator.libpgquery
 
-private const val BACKSLASH_TOKEN = 92
-private const val SEMICOLON_TOKEN = 59
-private const val SQL_COMMENT_TOKEN = 275
-private const val C_COMMENT_TOKEN = 276
-
 /** The psql commands that send the query buffer to the server, so the text before them is a statement. */
 private val QUERY_BUFFER_COMMANDS = setOf("g", "gx", "gset", "gexec", "gdesc")
 
@@ -143,7 +138,7 @@ internal data class PsqlLines(
     }
 
     private fun isOnlyComments(text: String): Boolean = try {
-      LibPgQuery.scan(text).all { it.token == SQL_COMMENT_TOKEN || it.token == C_COMMENT_TOKEN }
+      LibPgQuery.scan(text).all { it.token == TokenNumber.LINE_COMMENT || it.token == TokenNumber.BLOCK_COMMENT }
     } catch (_: LibPgQueryException) {
       false
     }
@@ -156,8 +151,8 @@ internal data class PsqlLines(
       for (position in 0 until tokens.size - 1) {
         val backslash = tokens[position]
         val semicolon = tokens[position + 1]
-        if (backslash.token == BACKSLASH_TOKEN &&
-          semicolon.token == SEMICOLON_TOKEN &&
+        if (backslash.token == TokenNumber.BACKSLASH &&
+          semicolon.token == TokenNumber.SEMICOLON &&
           semicolon.start == backslash.end
         ) {
           parts += text.substring(partStart, backslash.start)
