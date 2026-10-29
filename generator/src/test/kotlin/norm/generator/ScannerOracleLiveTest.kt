@@ -3,6 +3,8 @@ package norm.generator
 import assertk.assertThat
 import assertk.assertions.isEqualTo
 import norm.generator.baseline.ScannerCorpus
+import norm.generator.libpgquery.LibPgQuery
+import norm.generator.libpgquery.LibPgQueryException
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
@@ -96,9 +98,17 @@ class ScannerOracleLiveTest {
     connection.prepareStatement(sql).use { statement ->
       compare("parameterCount", statement.parameterMetaData.parameterCount, placeholderPositions(sql).size)
       comparePreparedParameters(sql, ::compare)
+      compare("rewrittenSqlParses", "true", parsesAfterRewrite(sql))
       statement.metaData?.let { compareColumns(sql, it, ::compare) }
     }
     return found
+  }
+
+  private fun parsesAfterRewrite(sql: String): String = try {
+    LibPgQuery.parse(replaceParameterPlaceholdersKeepingOffsets(sql))
+    "true"
+  } catch (exception: LibPgQueryException) {
+    "parse failed: ${exception.message}"
   }
 
   private fun comparePreparedParameters(sql: String, compare: (String, Any?, Any?) -> Unit) {

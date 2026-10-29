@@ -5,13 +5,12 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.name
 
-private const val BACKSLASH_TOKEN = 92
-private const val COLON_TOKEN = 58
+/** The tokens next to a `:` that make it a psql variable reference. */
 private val NAME_TOKENS = setOf(
-  258, // IDENT
-  259, // UIDENT
-  261, // SCONST
-  262, // USCONST
+  TokenNumber.IDENTIFIER,
+  TokenNumber.UNICODE_IDENTIFIER,
+  TokenNumber.STRING,
+  TokenNumber.UNICODE_STRING,
 )
 
 /** Why the sweep does not parse a statement of a regress file. */
@@ -182,13 +181,13 @@ internal object PgRegress {
     if (':' !in statement && '\\' !in statement) return null
     val tokens = LibPgQuery.scan(statement)
     if (isPsqlVariablePresent(tokens, statement)) return SweepSkip.PSQL_VARIABLE
-    if (tokens.any { it.token == BACKSLASH_TOKEN }) return SweepSkip.BACKSLASH
+    if (tokens.any { it.token == TokenNumber.BACKSLASH }) return SweepSkip.BACKSLASH
     return null
   }
 
   private fun isPsqlVariablePresent(tokens: List<ScanToken>, statement: String): Boolean =
     tokens.withIndex().any { (index, token) ->
-      token.token == COLON_TOKEN &&
+      token.token == TokenNumber.COLON &&
         statement.substring(token.start, token.end) == ":" &&
         (isNameBefore(tokens, index) || isNameAfter(tokens, index))
     }

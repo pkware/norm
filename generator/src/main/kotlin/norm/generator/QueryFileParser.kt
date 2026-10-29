@@ -1,5 +1,9 @@
 package norm.generator
 
+import norm.generator.libpgquery.KeywordKind
+import norm.generator.libpgquery.ScanToken
+import norm.generator.libpgquery.TokenNumber
+
 /**
  * A query parsed from a SQL file.
  *
@@ -79,7 +83,7 @@ public object QueryFileParser {
    * @return Parsed queries in the order they appear in the file.
    * @throws IllegalArgumentException if a `-- name:` annotation has an invalid format, names a
    *   command that doesn't match any [Command]'s SQL form (for example `:foo`), or if a query
-   *   mixes named and positional parameter styles.
+   *   mixes named and positional parameter styles, or if a query's SQL contains a NUL character.
    */
   public fun parse(content: String, sourceFile: String = ""): List<ParsedQuery> {
     val lines = content.lines()
@@ -157,7 +161,7 @@ public object QueryFileParser {
       .removeSuffix(";")
       .trim()
 
-    val (sql, namedParameters) = convertNamedParameters(rawSql)
+    val (sql, namedParameters) = convertNamedParameters(rawSql, scanQuery(name, rawSql, sourceLine))
 
     return ParsedQuery(
       name = name,
@@ -191,87 +195,61 @@ public object QueryFileParser {
   /**
    * Converts `:paramName` named parameters to `?` positional placeholders.
    *
-   * Scans the SQL one lexical token at a time via [skipLexicalToken], so a `:name`-shaped run
-   * inside a string literal, quoted identifier, dollar-quoted string, or comment is copied through
-   * verbatim. Outside those tokens:
-   * - `::` cast operators (e.g., `value::integer`) are passed through unconverted.
-   * - A `:` immediately followed by an ASCII `[A-Za-z_]` character (see [isNamedParameterStartCharacter])
-   *   is a named parameter and becomes `?`; the name itself continues through
-   *   [isNamedParameterCharacter].
+   * Finds parameters in the tokens of PostgreSQL's lexer, so a `:name`-shaped run inside a string literal,
+   * quoted identifier, dollar-quoted string, or comment is copied through verbatim, as is text from the point
+   * where the lexer rejects [sql] onward. A named parameter is a `:` token immediately followed by an identifier
+   * or keyword token that does not start with `"`; the name is that token's text. The `::` and `:=` operators
+   * are separate tokens and never start a parameter.
    *
    * Each occurrence of a named parameter produces its own `?` placeholder with its own 1-based
    * position number. The same name appearing multiple times creates multiple bind slots.
    *
-   * Every `?` encountered outside a lexical token — meaning it was written directly into the SQL,
-   * not produced by this conversion — is counted so the mixed-style guard below can tell a
-   * genuine positional `?` apart from one merely sitting inside a string literal like `'really?'`.
-   * A `??` is pgjdbc's escape for a literal `?`, as in [placeholderPositions], and is not counted.
+   * The positional `?` written directly into the SQL are counted with [placeholderPositions], so the
+   * mixed-style guard can tell a genuine positional `?` apart from one inside a string literal like
+   * `'really?'` or one half of pgjdbc's `??` escape.
    *
+   * @param tokens The lexer tokens of [sql], from [scanLeadingTokens].
    * @return A pair of (converted SQL, position-to-name map). If the SQL has no named parameters,
    *   returns the original SQL with an empty map.
    * @throws IllegalArgumentException if the query mixes `:name` and `?` parameter styles.
    */
-  private fun convertNamedParameters(sql: String): Pair<String, Map<Int, String>> {
+  private fun convertNamedParameters(sql: String, tokens: List<ScanToken>): Pair<String, Map<Int, String>> {
     val numberToName = mutableMapOf<Int, String>()
-    var nextNumber = 1
-    var positionalParameterCount = 0
     val result = StringBuilder()
-    var index = 0
+    var copiedUpTo = 0
 
-    while (index < sql.length) {
-      val afterToken = skipLexicalToken(sql, index)
-      if (afterToken != index) {
-        result.append(sql, index, afterToken)
-        index = afterToken
-        continue
-      }
-      val character = sql[index]
-      if (isEscapedQuestionMark(sql, index)) {
-        // pgjdbc's `??` escape is one literal `?`, not a positional placeholder.
-        result.append("??")
-        index += 2
-      } else if (character == ':' && index + 1 < sql.length && sql[index + 1] == ':') {
-        // Double colon (cast) — pass through both characters
-        result.append("::")
-        index += 2
-      } else if (character == ':' && index + 1 < sql.length && isNamedParameterStartCharacter(sql[index + 1])) {
-        // Named parameter — each occurrence gets its own ? placeholder
-        val nameStart = index + 1
-        var nameEnd = nameStart
-        while (nameEnd < sql.length && isNamedParameterCharacter(sql[nameEnd])) {
-          nameEnd++
-        }
-        val paramName = sql.substring(nameStart, nameEnd)
-        val position = nextNumber++
-        numberToName[position] = paramName
-        result.append('?')
-        index = nameEnd
-      } else {
-        if (character == '?') positionalParameterCount++
-        result.append(character)
-        index++
-      }
+    for ((index, token) in tokens.withIndex()) {
+      if (token.token != TokenNumber.COLON) continue
+      val name = tokens.getOrNull(index + 1)?.takeIf { it.start == token.end && isParameterName(sql, it) } ?: continue
+      result.append(sql, copiedUpTo, token.start).append('?')
+      copiedUpTo = name.end
+      numberToName[numberToName.size + 1] = sql.substring(name.start, name.end)
     }
 
     if (numberToName.isEmpty()) {
       return sql to emptyMap()
     }
 
-    // Check for mixed styles: named params found, but a genuine positional ? also appears outside
-    // any lexical token — a ? inside a string literal like 'really?' does not count (see
-    // positionalParameterCount's accumulation above).
-    require(positionalParameterCount == 0) {
+    require(placeholderPositions(sql).isEmpty()) {
       "Cannot mix named (:param) and positional (?) parameters in the same query"
     }
 
-    return result.toString() to numberToName
+    return result.append(sql, copiedUpTo, sql.length).toString() to numberToName
   }
 
-  private fun isNamedParameterStartCharacter(character: Char): Boolean =
-    character in 'a'..'z' || character in 'A'..'Z' || character == '_'
+  private fun isParameterName(sql: String, token: ScanToken): Boolean =
+    (token.token == TokenNumber.IDENTIFIER || token.keywordKind != KeywordKind.NONE) && sql[token.start] != '"'
 
-  private fun isNamedParameterCharacter(character: Char): Boolean =
-    isNamedParameterStartCharacter(character) || character in '0'..'9'
+  /**
+   * Splits [sql] into lexer tokens for [convertNamedParameters].
+   *
+   * @throws IllegalArgumentException if [sql] contains a NUL character, naming the query at [sourceLine].
+   */
+  private fun scanQuery(name: String, sql: String, sourceLine: Int): List<ScanToken> = try {
+    scanLeadingTokens(sql)
+  } catch (exception: IllegalArgumentException) {
+    throw IllegalArgumentException("Query '$name' at line $sourceLine contains a NUL character.", exception)
+  }
 
   private fun extractCommentText(commentLine: String): String = commentLine.removePrefix("--").trim()
 }

@@ -1,10 +1,57 @@
 package norm.generator.libpgquery
 
+/** Field number of `ScanResult.tokens` in libpg_query's `pg_query.proto`. */
 private const val SCAN_RESULT_TOKENS_FIELD = 2
+
+/** Field number of `ScanToken.start` in libpg_query's `pg_query.proto`. */
 private const val SCAN_TOKEN_START_FIELD = 1
+
+/** Field number of `ScanToken.end` in libpg_query's `pg_query.proto`. */
 private const val SCAN_TOKEN_END_FIELD = 2
+
+/** Field number of `ScanToken.token` in libpg_query's `pg_query.proto`. */
 private const val SCAN_TOKEN_TOKEN_FIELD = 4
+
+/** Field number of `ScanToken.keyword_kind` in libpg_query's `pg_query.proto`. */
 private const val SCAN_TOKEN_KEYWORD_KIND_FIELD = 5
+
+/**
+ * Values of libpg_query's `Token` enum, as found in [ScanToken.token].
+ *
+ * A single-character token's value is its character code. Every other value is the Bison token number that
+ * PostgreSQL's `gram.y` assigns, which `pg_query.proto` repeats.
+ */
+internal object TokenNumber {
+  /** The `:` character, which starts a named parameter or a psql variable. */
+  const val COLON = 58
+
+  /** The `;` character. */
+  const val SEMICOLON = 59
+
+  /** The `\` character, which starts a psql meta-command. */
+  const val BACKSLASH = 92
+
+  /** `IDENT`: an identifier that is not a keyword, quoted or not. */
+  const val IDENTIFIER = 258
+
+  /** `UIDENT`: a Unicode-escaped quoted identifier, `U&"..."`. */
+  const val UNICODE_IDENTIFIER = 259
+
+  /** `SCONST`: a string literal. */
+  const val STRING = 261
+
+  /** `USCONST`: a Unicode-escaped string literal, `U&'...'`. */
+  const val UNICODE_STRING = 262
+
+  /** `Op`: an operator made of operator characters, such as `=?` or `??`. */
+  const val OPERATOR = 265
+
+  /** `SQL_COMMENT`: a `--` comment. */
+  const val LINE_COMMENT = 275
+
+  /** `C_COMMENT`: a `/* */` comment. */
+  const val BLOCK_COMMENT = 276
+}
 
 /** libpg_query's `KeywordKind` enum, in the order of its protobuf values. */
 internal enum class KeywordKind {
