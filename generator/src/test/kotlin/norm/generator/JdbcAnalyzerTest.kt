@@ -1170,9 +1170,8 @@ class JdbcAnalyzerTest {
 
       // 1. Empty quoted identifier: real PostgreSQL rejects this outright ("zero-length delimited
       //    identifier"), and parse_ident agrees ("Quoted identifier must not be empty").
-      //    foldIdentifier has no such guard, but its own real caller,
-      //    parseColumnReference, already treats an empty logical value as no match at all (see
-      //    that function's own KDoc), so an empty result here never reaches a real comparison.
+      //    foldIdentifier has no such guard, but PostgreSQL's parser rejects such a token, so no
+      //    empty result reaches a comparison.
       assertThat(
         runCatching { liveParseIdent("\"\"") }.isFailure,
       ).isTrue()
@@ -1181,10 +1180,8 @@ class JdbcAnalyzerTest {
       // 2. A syntactically invalid unquoted identifier (leading digit, leading `$`): parse_ident
       //    rejects both outright. foldIdentifier does not validate identifier
       //    shape at all -- but neither input can ever reach it as a whole raw token in the first
-      //    place: every regex in this file that captures a raw identifier token
-      //    (COLUMN_REFERENCE_IDENTIFIER_START and its uses) already requires a legal start
-      //    character for the unquoted alternative, so a leading-digit or leading-`$` token is
-      //    never captured as an unquoted identifier to begin with.
+      //    place: PostgreSQL's lexer does not produce an identifier token that starts with a
+      //    digit or `$`.
       assertThat(foldIdentifier("2fn")).isEqualTo("2fn")
       assertThat(foldIdentifier("\$foo")).isEqualTo("\$foo")
 
@@ -1192,9 +1189,8 @@ class JdbcAnalyzerTest {
       //    all ("string is not a valid identifier"). isQuotedIdentifier also
       //    rejects it (it only recognizes a plain "..." token), so foldIdentifier would, if ever
       //    handed one, wrongly ASCII-fold the literal "U&..." text and leave the escape
-      //    unresolved -- but QUOTED_IDENTIFIER (the only pattern that ever captures a raw
-      //    table/column/alias/CTE-name token in this file) matches a plain quote only, so
-      //    foldIdentifier never actually receives a U&"..." token from any real call site.
+      //    unresolved. An alias token can be a U&"..." token, and the folded text then does not equal
+      //    any name the server reports, so the comparison it feeds declines.
       assertThat(runCatching { liveParseIdent("U&\"foo\"") }.isFailure).isTrue()
 
       // 4. NAMEDATALEN truncation: a real, overlong (>63-byte) identifier is silently truncated to

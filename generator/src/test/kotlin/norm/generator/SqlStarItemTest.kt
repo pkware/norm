@@ -1,7 +1,9 @@
 package norm.generator
 
 import assertk.assertThat
+import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
+import assertk.assertions.isFalse
 import assertk.assertions.isNull
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
@@ -9,75 +11,64 @@ import org.junit.jupiter.api.Test
 class SqlStarItemTest {
 
   @Nested
-  inner class SplitTrailingImplicitAlias {
+  inner class ImplicitAlias {
+
+    private fun item(selectList: String): OutputItemWithAlias =
+      parseOutputItemsWithAlias("SELECT $selectList FROM t").single()
 
     @Test
     fun `a bare column with an implicit alias splits into the column and its own alias`() {
-      // stripCommentsAndWhitespace deletes the separating space before this function ever runs, so
-      // without gating the identifier-continuation run on OriginalAdjacency, "description dx" strips
-      // to "descriptiondx" and reads as one fused segment spanning the whole text --
-      // findTrailingImplicitAliasStart's own "a segment spanning the entire text is not an alias"
-      // guard then refuses to report any split at all, so this position is left with no verifiable
-      // name and fails NodeTreeProvenanceExpression's all-positions cross-validation gate for the
-      // whole body, not merely this one position.
-      val result = splitTrailingImplicitAlias("description dx")
-      assertThat(result).isEqualTo(ItemAndImplicitAlias("description", "dx"))
+      val result = item("description dx")
+      assertThat(result.selectItem.expression).isEqualTo("description")
+      assertThat(result.selectItem.columnName).isEqualTo("description")
+      assertThat(result.alias).isEqualTo("dx")
+      assertThat(result.isAliasExplicit).isFalse()
     }
 
     @Test
-    fun `a computed expression with an implicit alias still splits correctly`() {
-      // Non-adversarial control: proves the adjacency gate did not regress the shape this function
-      // already supported, where a ")" already ends the expression's own run before the alias.
-      val result = splitTrailingImplicitAlias("UPPER(a) y")
-      assertThat(result).isEqualTo(ItemAndImplicitAlias("UPPER(a)", "y"))
+    fun `a computed expression with an implicit alias splits into the expression and its alias`() {
+      val result = item("UPPER(a) y")
+      assertThat(result.selectItem.expression).isEqualTo("UPPER(a)")
+      assertThat(result.alias).isEqualTo("y")
+      assertThat(result.isAliasExplicit).isFalse()
     }
 
     @Test
-    fun `a bare column with no alias at all has no trailing segment to split off`() {
-      val result = splitTrailingImplicitAlias("description")
-      assertThat(result).isNull()
+    fun `a bare column with no alias at all has no alias`() {
+      val result = item("description")
+      assertThat(result.alias).isNull()
+      assertThat(result.isAliasExplicit).isFalse()
     }
 
     @Test
-    fun `a dollar-quoted string's own opening dollar sign is not mistaken for an identifier boundary`() {
-      // Regression guard for the adjacency gate this generalizes: "$" still only breaks a run when
-      // it was not genuinely adjacent to the identifier character before it -- a real adjacency
-      // (never separated by whitespace/comment in the original text) must keep continuing the run
-      // exactly as before.
-      val result = splitTrailingImplicitAlias("a\$b dx")
-      assertThat(result).isEqualTo(ItemAndImplicitAlias("a\$b", "dx"))
+    fun `an identifier with a dollar sign is one token, not an alias boundary`() {
+      val result = item("a\$b dx")
+      assertThat(result.selectItem.expression).isEqualTo("a\$b")
+      assertThat(result.alias).isEqualTo("dx")
     }
 
     @Test
     fun `a doubled-quote escape inside an implicit quoted alias is not mistaken for its closing quote`() {
-      val result = splitTrailingImplicitAlias("description \"He\"\"llo\"")
-      assertThat(result).isEqualTo(ItemAndImplicitAlias("description", "\"He\"\"llo\""))
+      val result = item("description \"He\"\"llo\"")
+      assertThat(result.selectItem.expression).isEqualTo("description")
+      assertThat(result.alias).isEqualTo("\"He\"\"llo\"")
     }
 
     @Test
-    fun `two identifiers only adjacent after stripping are not fused into one alias segment`() {
-      // "col" and "a" and "b" are three separate words in the original text, but stripping the
-      // spaces between them makes "a" and "b" sit right next to each other in the stripped text.
-      // The unquoted identifier run must still stop after "a", not fuse it with "b" into "ab" -- so
-      // only "b" (the last segment reaching the end) is the implicit alias.
-      val result = splitTrailingImplicitAlias("col a b")
-      assertThat(result).isEqualTo(ItemAndImplicitAlias("col a", "b"))
+    fun `two bare words after a column are rejected by PostgreSQL, so there are no items`() {
+      assertThat(parseOutputItemsWithAlias("SELECT col a b FROM t")).isEmpty()
     }
 
     @Test
-    fun `two separately quoted identifiers separated only by a stripped whitespace are not fused into one token`() {
-      // Stripping the space between "a" and "b" leaves the stripped text "a""b" -- exactly what a
-      // single escaped quoted identifier looks like. findDoubleQuotedIdentifierEnd's own adjacency
-      // gate on the "" doubled-quote check keeps this from being misread as one fused token, so "a"
-      // and "b" stay two separate segments and only "b" is the implicit alias.
-      val result = splitTrailingImplicitAlias("description \"a\" \"b\"")
-      assertThat(result).isEqualTo(ItemAndImplicitAlias("description \"a\"", "\"b\""))
+    fun `two quoted identifiers after a column are rejected by PostgreSQL, so there are no items`() {
+      assertThat(parseOutputItemsWithAlias("SELECT description \"a\" \"b\" FROM t")).isEmpty()
     }
 
     @Test
-    fun `a Unicode-escape identifier as an implicit alias is still recognized as the trailing segment`() {
-      val result = splitTrailingImplicitAlias("description U&\"x\"")
-      assertThat(result).isEqualTo(ItemAndImplicitAlias("description", "U&\"x\""))
+    fun `a Unicode-escape identifier as an implicit alias is the alias`() {
+      val result = item("description U&\"x\"")
+      assertThat(result.selectItem.expression).isEqualTo("description")
+      assertThat(result.alias).isEqualTo("U&\"x\"")
     }
   }
 }

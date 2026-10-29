@@ -1,9 +1,23 @@
 package norm.generator
 
+import norm.generator.libpgquery.KeywordKind
+import norm.generator.libpgquery.ParseTreeNames
+import norm.generator.libpgquery.ScanToken
+import norm.generator.libpgquery.TokenNumber
+import norm.generator.libpgquery.locationFieldNames
+
+private const val AS_KEYWORD = "AS"
+private const val UNICODE_ESCAPE_KEYWORD = "UESCAPE"
+private const val NO_LOCATION = -1
+
+/** The literal that stands in for an item's expression while the end of the expression is searched. */
+private const val PROBE_CONSTANT = "1"
+
 /**
- * A parsed item from a SQL SELECT clause.
+ * A parsed item from a SQL SELECT or RETURNING list.
  *
- * @property expression The full SQL expression text (e.g. `COUNT(*)`, `author.name`, `book.title`).
+ * @property expression The item's source text from its first token to the end of its expression, without a trailing
+ *   `AS` or alias (e.g. `COUNT(*)`, `author.name`, `book.title`). Comments between its tokens are kept.
  * @property columnName The column's logical name for a simple column reference — `null` for a
  *   computed expression. For a quoted reference (`"My Col"`, `"He""llo"`), this is the identifier
  *   PostgreSQL itself resolves to: surrounding quotes removed and any doubled `""` escape
@@ -21,6 +35,8 @@ package norm.generator
  *   lowercase), so a caller doing that folding must consult this flag.
  * @property isTableNameQuoted Whether [tableName] came from a quoted source identifier — same
  *   convention as [isColumnNameQuoted], `false` when [tableName] is `null`.
+ * @property isStar Whether the item is `*`, `table.*`, or a composite expansion such as `(f(x)).*`. A star expands to
+ *   as many columns as the expanded relation or composite has. The text does not give that number.
  */
 internal data class SelectItem(
   val expression: String,
@@ -28,48 +44,58 @@ internal data class SelectItem(
   val tableName: String?,
   val isColumnNameQuoted: Boolean = false,
   val isTableNameQuoted: Boolean = false,
-)
+  val isStar: Boolean = false,
+) {
+
+  /**
+   * [expression] rebuilt from its non-comment tokens, for embedding in generated documentation.
+   *
+   * Tokens that touch in the source stay joined. Every other gap, whether whitespace or a comment, becomes one space,
+   * except after `(` and before `)`. The same holds between the quoted segments of one string literal, which
+   * PostgreSQL reads as a single token (see [joinStringContinuation]).
+   */
+  val normalizedExpression: String
+    get() {
+      val tokens = scanLeadingTokens(expression).filterNot(::isComment)
+      return buildString {
+        for ((index, token) in tokens.withIndex()) {
+          val previous = tokens.getOrNull(index - 1)
+          val hasGap = previous != null && token.start != previous.end
+          val isHugging = previous?.token == TokenNumber.OPEN_PARENTHESIS ||
+            token.token == TokenNumber.CLOSE_PARENTHESIS
+          if (hasGap && !isHugging) append(' ')
+          append(joinStringContinuation(expression.substring(token.start, token.end)))
+        }
+      }
+    }
+}
 
 /**
- * Parses the output clause of a SQL statement to extract individual items.
+ * Parses the output list of a SQL statement into individual items.
  *
- * Paired positionally against `java.sql.ResultSetMetaData` columns, so the search is restricted to
- * the statement's main query — after any leading `WITH` clause's CTEs — and `SELECT` is located
- * with [findTopLevelKeyword] (depth-0, lexically aware), so a nested `SELECT` or a keyword-like
- * substring inside a literal/comment is never mistaken for the real clause. `RETURNING` is located
- * with [findTopLevelReturningKeyword] instead, and is only searched for when the window's own
- * leading keyword is DML (`INSERT`/`UPDATE`/`DELETE`/`MERGE`), since `RETURNING` is not reserved
- * and is otherwise legal as a plain `SELECT`'s column alias.
+ * Paired positionally against `java.sql.ResultSetMetaData` columns. The list comes from the statement of [sql] that
+ * produces the result set: the first `SELECT`, `VALUES`, `TABLE`, set operation or data-modifying statement with
+ * `RETURNING`, as found in PostgreSQL's parse tree. Its `WITH` clause, nested `SELECT` and keyword-like text in
+ * literals and comments are therefore not mistaken for the list. A set operation yields the list of its leftmost
+ * branch.
  *
  * Handles:
  * - Simple columns: `title` → expression=`title`, columnName=`title`
  * - Qualified columns: `book.title` → expression=`book.title`, columnName=`title`, tableName=`book`
  * - Aliased columns: `author.name AS author_name` → expression=`author.name`, columnName=`name`, tableName=`author`
  * - Computed expressions: `COUNT(*) AS book_count` → expression=`COUNT(*)`, columnName=`null`
- * - Star projections: `*` → expression=`*`, columnName=`null`
+ * - Star projections: `*` → expression=`*`, columnName=`null`, isStar=`true`
  *
- * On the `SELECT` branch only (a `RETURNING` clause has no such quantifier), an optional leading
- * set quantifier — `ALL`, or `DISTINCT` optionally followed by `ON (...)` — is skipped via
- * [skipOptionalSetQuantifier] before the clause is split into items, so the first item's
- * `expression`/`columnName` reflect the bare column, not the quantifier glued onto it (`SELECT
- * DISTINCT x, id FROM t` → first item is `x`, not `DISTINCTx`). This must happen here, not inside
- * [isStarItem]: [isStarItem]'s own whitespace-stripping turns `ALL 2.*a` into `ALL2.*a` and a
- * genuine star on a table named `all2` into `all2.*a`, which differ only in the case of letters
- * an unquoted identifier reference folds anyway; only stripping the quantifier first, while
- * whitespace is still intact, tells them apart. `SELECT ALL 2.*a lbl, b FROM t` is valid
- * arithmetic (2 columns), distinct from `SELECT all2.* a, p FROM all2` (3 columns, a real star on
- * table `all2`).
+ * A star item expands to however many columns the starred relation has, shifting every later item onto the wrong
+ * metadata column. An item before a star is unaffected by that unknown width, so only the first star and everything
+ * after it is dropped. A lone star is left alone, and items at or after a star fall back to metadata unresolved.
  *
- * A star item (`*`/`table.*`, via [isStarItem]) expands to however many columns the starred
- * relation has, shifting every later item onto the wrong metadata column; an item before a star is
- * unaffected by that unknown width, so only the first star and everything after it is dropped — a
- * lone star is left alone, and items at/after a star fall back to metadata unresolved.
- *
- * @return Items strictly before the first star, if any; the full list if there is no star or it's
- *   a single star item; or empty if the output clause can't be found (e.g. a `VALUES` list, a
- *   `TABLE` shorthand, or two separately parenthesized set-operation branches like `(SELECT a)
- *   UNION (SELECT b)`). Both consumers degrade safely for a missing item, falling back to
- *   `ResultSetMetaData.getColumnName`, so no wrong original name is reported.
+ * @return Items strictly before the first star, if any; the full list if there is no star or it's a single star item.
+ *   Empty when [sql] has no output list in its text, as with `VALUES`, `TABLE` and `EXPLAIN`, when PostgreSQL's
+ *   grammar rejects [sql], or when the end of the last item's expression cannot be confirmed. Both consumers degrade
+ *   safely for a missing item, falling back to `ResultSetMetaData.getColumnName`, so no wrong original name is
+ *   reported.
+ * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
 internal fun parseSelectItems(sql: String): List<SelectItem> = parseOutputItemsWithAlias(sql).map { it.selectItem }
 
@@ -88,42 +114,19 @@ internal fun alignSelectItems(sql: String, columnCount: Int): List<SelectItem> {
 }
 
 /**
- * The single window both [hasTopLevelSetOperation] and [parseOutputItemsWithAlias] scan: [sql]'s
- * main query, after any leading `WITH` clause ([parseCteClause]'s
- * [ParsedCteClause.mainQueryStart]), with any redundant outer `(`...`)` pair stripped via
- * [stripRedundantOuterParentheses].
+ * Whether the statement of [sql] that produces the result set is a `UNION`, `INTERSECT` or `EXCEPT`.
  *
- * A guard and the parser it guards must see the same text: without sharing this function, a set
- * operation wrapped in one parenthesis pair (`(SELECT a UNION SELECT b)`) sits at paren depth one in
- * the raw text, invisible to a guard that skips the stripping step the parser applies.
+ * [parseSelectItems] then returns only the items of the leftmost branch. The other branches may compute the same
+ * result column differently, although the column takes its name from the first branch.
+ *
+ * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
-private fun mainQueryWindow(sql: String): String {
-  val mainQueryStart = parseCteClause(sql)?.mainQueryStart ?: 0
-  return stripRedundantOuterParentheses(sql.substring(mainQueryStart))
-}
+internal fun hasTopLevelSetOperation(sql: String): Boolean =
+  parseOrNull(replaceParameterPlaceholdersKeepingOffsets(sql))?.let(::findOutputStatement)?.isSetOperation ?: false
 
 /**
- * Whether [sql]'s main query ([mainQueryWindow]) contains a top-level `UNION`/`INTERSECT`/`EXCEPT`
- * keyword: this statement's own visible `SELECT`/`RETURNING` list is only one branch of a set
- * operation, so [parseSelectItems] parsed only that branch's items, never the other branch(es)'
- * own (possibly differently-computed) expressions for the same result column. A bare column
- * reference is unaffected: PostgreSQL itself names a set operation's whole result column after
- * branch 1 alone.
- *
- * All three keywords are PostgreSQL reserved words, so an unquoted occurrence can never be a
- * column/table identifier or alias.
- */
-internal fun hasTopLevelSetOperation(sql: String): Boolean {
-  val window = mainQueryWindow(sql)
-  return SET_OPERATION_KEYWORDS.any { keyword -> findTopLevelKeyword(window, keyword) >= 0 }
-}
-
-private val SET_OPERATION_KEYWORDS = listOf("UNION", "INTERSECT", "EXCEPT")
-
-/**
- * A single item from [parseOutputItemsWithAlias], pairing the [selectItem] parsed from the
- * item's expression (alias stripped, exactly what [parseSelectItems] itself exposes) with the
- * [alias] that was stripped off, if any.
+ * A single item from [parseOutputItemsWithAlias], pairing the [selectItem] with the alias that follows its
+ * expression, if any.
  *
  * Kept separate from [SelectItem] because [SelectItem.columnName] already carries a meaning for
  * simple column references — reusing it for an alias would conflate "this item is a bare column
@@ -133,266 +136,305 @@ private val SET_OPERATION_KEYWORDS = listOf("UNION", "INTERSECT", "EXCEPT")
  * alias).
  *
  * @property selectItem The parsed expression/columnName/tableName, alias already removed.
- * @property alias The alias text after `AS`, or `null` if the item has no alias.
+ * @property alias The alias exactly as written, quotes included, or `null` if the item has no alias. A Unicode-escaped
+ *   alias keeps its `UESCAPE` clause: `U&"d!0061t" UESCAPE '!'`.
+ * @property isAliasExplicit Whether [alias] follows an unquoted `AS`. `false` for an implicit alias (`UPPER(a) y`) and
+ *   when [alias] is `null`.
  */
-internal data class OutputItemWithAlias(val selectItem: SelectItem, val alias: String?)
+internal data class OutputItemWithAlias(val selectItem: SelectItem, val alias: String?, val isAliasExplicit: Boolean)
 
 /**
  * The shared parsing core behind both [parseSelectItems] and [resolveNodeTreeProvenanceExpression]
  * (which needs [OutputItemWithAlias.alias] to cross-validate a CTE body item's own name against
- * the node tree's authoritative `:resname`). Locates the same output clause [parseSelectItems]
- * documents finding — the window/`RETURNING`-gating/star-truncation rules there apply identically
- * here.
+ * the node tree's authoritative `:resname`). Finds the list [parseSelectItems] describes and
+ * applies the same star truncation.
+ *
+ * Each item starts at its parse tree node's location. An item ends at the token before the comma that precedes the
+ * next item. The last item's expression ends at the first token end where replacing the expression with a constant
+ * leaves the rest of the parse tree unchanged. The alias that the tree records for it is the next token, or the one
+ * after `AS`.
+ *
+ * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
 internal fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> {
-  val window = mainQueryWindow(sql)
+  val rewritten = replaceParameterPlaceholdersKeepingOffsets(sql)
+  val tree = parseOrNull(rewritten) ?: return emptyList()
+  val statement = findOutputStatement(tree) ?: return emptyList()
+  if (statement.targets.isEmpty()) return emptyList()
+  val tokens = scanLeadingTokens(sql).filterNot(::isComment)
+  val items = outputItems(sql, rewritten, tokens, tree, statement) ?: return emptyList()
 
-  val leadingKeywordStart = skipWhitespaceAndComments(window, 0)
-  val isDmlMainQuery = listOf("INSERT", "UPDATE", "DELETE", "MERGE").any { keyword ->
-    skipOptionalKeyword(window, leadingKeywordStart, keyword) != leadingKeywordStart
-  }
-
-  val returningIndex = if (isDmlMainQuery) findTopLevelReturningKeyword(window) else -1
-  val selectIndex = findTopLevelKeyword(window, "SELECT")
-
-  val afterKeyword: Int
-  val itemsStart: Int
-  val hasFromClause: Boolean
-  if (returningIndex >= 0) {
-    afterKeyword = returningIndex + "RETURNING".length
-    // PostgreSQL 18's `RETURNING WITH (OLD AS o, NEW AS n) o.x, n.x` prologue is not part of the
-    // first item's own expression; skip past it so itemsStart lands on the real first item.
-    itemsStart = parseOldNewAliasPrologue(window, afterKeyword)
-    // RETURNING clauses are terminal — no FROM keyword follows
-    hasFromClause = false
-  } else if (selectIndex >= 0) {
-    afterKeyword = selectIndex + "SELECT".length
-    itemsStart = skipOptionalSetQuantifier(window, afterKeyword)
-    hasFromClause = true
-  } else {
-    return emptyList()
-  }
-
-  val fromIndex = if (hasFromClause) findTopLevelFromClauseKeyword(window, afterKeyword) else -1
-  val rawClause = if (fromIndex >= 0) {
-    window.substring(itemsStart, fromIndex)
-  } else {
-    window.substring(itemsStart)
-  }
-
-  val items = splitAtTopLevel(rawClause.trim().trimEnd(';'), ',').map { raw ->
-    val item = raw.trim()
-    val (expression, alias) = extractAlias(item)
-    OutputItemWithAlias(parseColumnReference(expression), alias)
-  }
-
-  val firstStarIndex = items.indexOfFirst { isStarItem(it.selectItem.expression) }
+  val firstStarIndex = items.indexOfFirst { it.selectItem.isStar }
   return if (firstStarIndex < 0 || items.size == 1) items else items.take(firstStarIndex)
 }
 
-/**
- * Strips a redundant `(`...`)` pair wrapping [text]'s entire remaining content, repeatedly, as
- * long as one remains — `(SELECT ...)`, `((SELECT ...))`, etc.
- *
- * A CTE body (or a whole top-level query) may legally wrap its `SELECT`/`RETURNING`/DML statement
- * in one or more redundant parenthesis pairs. Without stripping them first, [findTopLevelKeyword]
- * never finds an unquoted `SELECT`/`RETURNING` at paren depth zero: the extra, unmatched leading
- * `(` puts the whole rest of the text at depth one instead, so [parseOutputItemsWithAlias] returns
- * no items at all for an otherwise-ordinary body.
- *
- * A pair only counts as wrapping the entire remaining text when the first non-whitespace/comment
- * character is `(` and its own matching close parenthesis is the last non-whitespace/comment
- * character in [text] — never merely "starts with ( and ends with )", which would also match two
- * separately parenthesized set-operation branches (`(SELECT a) UNION (SELECT b)`), where the first
- * `(`'s own match is nowhere near the end.
- */
-private fun stripRedundantOuterParentheses(text: String): String {
-  var current = text
-  while (true) {
-    val start = skipWhitespaceAndComments(current, 0)
-    if (start >= current.length || current[start] != '(') return current
-    val closeParenthesis = findMatchingCloseParenthesis(current, start)
-    if (closeParenthesis < 0) return current
-    if (skipWhitespaceAndComments(current, closeParenthesis + 1) != current.length) return current
-    current = current.substring(start + 1, closeParenthesis)
+private fun outputItems(
+  sql: String,
+  rewritten: String,
+  tokens: List<ScanToken>,
+  tree: JsonValue.JsonObject,
+  statement: OutputStatement,
+): List<OutputItemWithAlias>? {
+  val targets = statement.targets
+  val firstTokens = targets.map { target -> firstTokenIndex(tokens, target) ?: return null }
+  return targets.indices.map { index ->
+    val extent = if (index < targets.lastIndex) {
+      extentBeforeNextItem(sql, tokens, targets[index], firstTokens[index], firstTokens[index + 1])
+    } else {
+      extentOfFinalItem(sql, rewritten, tokens, tree, statement, firstTokens[index])
+    }
+    buildItem(sql, tokens, targets[index], extent ?: return null)
   }
 }
 
 /**
- * Skips an optional leading SQL set quantifier starting at or after [position] in [sql]: `ALL`, or
- * `DISTINCT` optionally followed by `ON (` ... `)`.
+ * The tokens of one item.
  *
- * [position] is the index right after the `SELECT` keyword, still followed by whitespace: this
- * function skips that whitespace/comments first, then tries `ALL`/`DISTINCT` at the resulting
- * position. [skipOptionalKeyword]'s own word-boundary check stops `ALL`/`DISTINCT` from
- * matching a longer identifier that merely starts with those letters (`all2`,
- * `distinctive_column`).
- *
- * @return The index immediately after the quantifier (and any trailing whitespace/comments), or
- *   [position] unchanged if there is no quantifier there.
+ * @property firstToken the first token of the expression.
+ * @property expressionLastToken the last token of the expression.
+ * @property aliasFirstToken the first token of the alias, or `null` when the item has none.
+ * @property isAliasExplicit whether the token before the alias is `AS`.
  */
-private fun skipOptionalSetQuantifier(sql: String, position: Int): Int {
-  val keywordStart = skipWhitespaceAndComments(sql, position)
+private class ItemExtent(
+  val firstToken: Int,
+  val expressionLastToken: Int,
+  val aliasFirstToken: Int?,
+  val isAliasExplicit: Boolean,
+)
 
-  val afterAll = skipOptionalKeyword(sql, keywordStart, "ALL")
-  if (afterAll != keywordStart) return afterAll
+private fun isComment(token: ScanToken): Boolean =
+  token.token == TokenNumber.LINE_COMMENT || token.token == TokenNumber.BLOCK_COMMENT
 
-  val afterDistinct = skipOptionalKeyword(sql, keywordStart, "DISTINCT")
-  if (afterDistinct == keywordStart) return position
+private fun firstTokenIndex(tokens: List<ScanToken>, target: JsonValue.JsonObject): Int? {
+  val location = target.intField(ParseTreeNames.LOCATION) ?: return null
+  if (location < 0) return null
+  return tokens.binarySearchBy(location) { it.start }.takeIf { it >= 0 }
+}
 
-  val afterOn = skipOptionalKeyword(sql, afterDistinct, "ON")
-  if (afterOn == afterDistinct) return afterDistinct
+/** An item that is not the last ends at the token before the comma, so its alias is the token or tokens at its end. */
+private fun extentBeforeNextItem(
+  sql: String,
+  tokens: List<ScanToken>,
+  target: JsonValue.JsonObject,
+  firstToken: Int,
+  nextFirstToken: Int,
+): ItemExtent? {
+  val commaIndex = nextFirstToken - 1
+  if (commaIndex - 1 < firstToken || tokens[commaIndex].token != TokenNumber.COMMA) return null
+  val lastToken = commaIndex - 1
+  if (target.stringField(ParseTreeNames.ALIAS) == null) return ItemExtent(firstToken, lastToken, null, false)
 
-  if (afterOn >= sql.length || sql[afterOn] != '(') return afterDistinct
-  val closeParenthesis = findMatchingCloseParenthesis(sql, afterOn)
-  if (closeParenthesis < 0) return afterDistinct
-  return skipWhitespaceAndComments(sql, closeParenthesis + 1)
+  val aliasFirstToken = aliasStartToken(sql, tokens, lastToken)
+  val isAliasExplicit = aliasFirstToken - 1 > firstToken && isKeyword(sql, tokens[aliasFirstToken - 1], AS_KEYWORD)
+  val expressionLastToken = if (isAliasExplicit) aliasFirstToken - 2 else aliasFirstToken - 1
+  if (expressionLastToken < firstToken) return null
+  return ItemExtent(firstToken, expressionLastToken, aliasFirstToken, isAliasExplicit)
 }
 
 /**
- * Splits a select item into its expression and alias parts.
+ * Finds where the expression of the final item ends.
  *
- * Handles `expression AS alias` patterns, respecting parentheses so that
- * `CAST(x AS text) AS my_col` correctly identifies `my_col` as the alias. Walks [item] via
- * [SqlTokenCursor], which skips string literals, quoted identifiers, dollar-quoted strings, and
- * comments, so an `AS`-like substring or an unbalanced paren inside one of those is not mistaken
- * for a real `AS` keyword or a real parenthesis.
+ * Each token end at the item's own nesting depth, from the token of its largest location on, is a candidate. The text
+ * from the item's start to the candidate is replaced by [PROBE_CONSTANT] between spaces. The candidate is the end when
+ * that text parses, the value of the last item is the constant, and the tree otherwise equals the original apart from
+ * locations.
  *
- * Tracks `(`/`)` only, not `[`/`]`: [extractAlias] only ever receives an item already split at the
- * top level ([splitAtTopLevel]), so any `[`/`]` pair it contains is already self-balanced and
- * cannot itself hold an unmatched `(`/`)`.
- *
- * A candidate `AS`/`as` only matches as a whole [SqlSpan.Word] — [isIdentifierChar], not
- * `Char.isWhitespace()`, decides where that word starts and ends, so PostgreSQL's `AS` keyword
- * only needs to not be fused into a longer identifier on either side, not to be surrounded by
- * literal whitespace. On PostgreSQL 18.4, `SELECT (1)AS b` returns column `b` — `AS` directly
- * abuts the closing `)` with no whitespace, and `)` is not an identifier character, so this is the
- * real keyword. Likewise `SELECT a AS"b", id FROM t` (columns `b`, `id`, with `a` as the first
- * column's source) recognizes `AS"b"` as the keyword since `"` is not an identifier character
- * either. Conversely `SELECT 1 AS$b` returns column `as$b`, a single implicit alias identifier —
- * `$` is an identifier-continuation character, so `AS$b` is one word, not the keyword `AS`
- * followed by `$b`.
- *
- * @return A pair of (expression, alias). `alias` is `null` when there is no `AS` keyword at all;
- *   when there is one but [parseAliasToken] finds nothing that legitimately looks like an alias
- *   right after it (a trailing comment, an unterminated quote, or a string literal where an alias
- *   should be); or as soon as a bare `)` with no matching `(` drives depth negative, in which case
- *   [item] is returned unsplit, because an unbalanced depth count could misplace a later `AS`.
+ * A candidate inside the expression, such as before `without time zone`, gives text that does not parse or gives the
+ * item another value. A candidate after the expression replaces tokens that the tree records, such as the alias or
+ * the `FROM` keyword, so the trees differ.
  */
-private fun extractAlias(item: String): Pair<String, String?> {
-  var lastAsIndex = -1
-  val cursor = SqlTokenCursor(item, 0)
-  while (true) {
-    val span = cursor.advance() ?: break
-    if (cursor.depth < 0) return item to null
-    if (span is SqlSpan.Word &&
-      cursor.depth == 0 &&
-      span.to - span.from == 2 &&
-      (item[span.from] == 'A' || item[span.from] == 'a') &&
-      (item[span.from + 1] == 'S' || item[span.from + 1] == 's')
-    ) {
-      lastAsIndex = span.from
+private fun extentOfFinalItem(
+  sql: String,
+  rewritten: String,
+  tokens: List<ScanToken>,
+  tree: JsonValue.JsonObject,
+  statement: OutputStatement,
+  firstToken: Int,
+): ItemExtent? {
+  val start = tokens[firstToken].start
+  val searchStart = searchStartIndex(tokens, statement.targets.last(), firstToken)
+  val expectedTree = withoutItemValueAndLocations(tree, start)
+  var depth = 0
+  for (index in firstToken until tokens.size) {
+    depth += nestingChange(tokens[index])
+    if (depth < 0) return null
+    if (depth != 0 || index < searchStart) continue
+    val end = tokens[index].end
+    val probe = rewritten.substring(0, start) + " $PROBE_CONSTANT " + rewritten.substring(end)
+    val probeTree = parseOrNull(probe) ?: continue
+    val isConstant = findOutputStatement(probeTree)?.targets?.lastOrNull()?.let { isConstantAt(it, start + 1) } == true
+    if (isConstant && withoutItemValueAndLocations(probeTree, start + 1) == expectedTree) {
+      return finalItemExtent(sql, tokens, statement.targets.last(), firstToken, index)
     }
   }
-  return if (lastAsIndex >= 0) {
-    item.substring(0, lastAsIndex).trim() to parseAliasToken(item, lastAsIndex + 2)
-  } else {
-    item to null
+  return null
+}
+
+/** The alias follows the expression, after `AS` when that is written, and spans three tokens when it has `UESCAPE`. */
+private fun finalItemExtent(
+  sql: String,
+  tokens: List<ScanToken>,
+  target: JsonValue.JsonObject,
+  firstToken: Int,
+  expressionLastToken: Int,
+): ItemExtent? {
+  if (target.stringField(ParseTreeNames.ALIAS) == null) return ItemExtent(firstToken, expressionLastToken, null, false)
+
+  val afterExpression = expressionLastToken + 1
+  if (afterExpression >= tokens.size) return null
+  val isAliasExplicit = isKeyword(sql, tokens[afterExpression], AS_KEYWORD)
+  val aliasFirstToken = if (isAliasExplicit) afterExpression + 1 else afterExpression
+  if (aliasFirstToken >= tokens.size) return null
+  return ItemExtent(firstToken, expressionLastToken, aliasFirstToken, isAliasExplicit)
+}
+
+private fun isConstantAt(target: JsonValue.JsonObject, location: Int): Boolean {
+  val value = target.objectField(ParseTreeNames.VALUE) ?: return false
+  val constant = value.objectField(ParseTreeNames.CONSTANT)
+  return value.fields.size == 1 && constant?.intField(ParseTreeNames.LOCATION) == location
+}
+
+/**
+ * [value] with the `val` of the item that starts at [location] replaced by `null` and every location field removed,
+ * so that trees of texts of different length compare equal when only that value differs.
+ */
+private fun withoutItemValueAndLocations(value: JsonValue, location: Int): JsonValue = when (value) {
+  is JsonValue.JsonObject -> {
+    val isItem = value.intField(ParseTreeNames.LOCATION) == location && value.fields.containsKey(ParseTreeNames.VALUE)
+    JsonValue.JsonObject(
+      value.fields.filterKeys { it !in locationFieldNames }.mapValues { (key, child) ->
+        if (isItem && key == ParseTreeNames.VALUE) {
+          JsonValue.JsonScalar("null")
+        } else {
+          withoutItemValueAndLocations(child, location)
+        }
+      },
+    )
   }
+  is JsonValue.JsonArray -> JsonValue.JsonArray(value.items.map { withoutItemValueAndLocations(it, location) })
+  else -> value
 }
 
-/**
- * Extracts exactly the alias token starting at or after [start] in [item] (the position right
- * after the `AS` keyword [extractAlias] already found) — a bare identifier or a double-quoted one,
- * discarding any leading/trailing whitespace or comments around it (`AS /* c */ ux -- note`).
- *
- * The quoted branch is escape-aware: a doubled `""` inside the alias (`AS "zz""q"`) is treated as
- * an escaped literal `"`, not the token's end. An escape-unaware scan would stop at the first `"`,
- * returning the truncated fragment `"zz`, which folds to the shorter name `zz`, wrongly colliding
- * with an unrelated `zz` elsewhere in the same body.
- *
- * @return The alias token — with its surrounding quotes and any internal `""` escape still
- *   attached when quoted — or `null` when there is no legitimate alias token: nothing but
- *   whitespace/comments to the end of [item], an unterminated quoted identifier, a character that
- *   can neither start a bare identifier nor open a quoted one (e.g. `AS 'x'`, not legal
- *   PostgreSQL), or anything other than trailing whitespace/comments following the token (`AS ux
- *   zz` is not legal PostgreSQL either, so this returns `null` and does not silently discard
- *   `zz`).
- */
-private fun parseAliasToken(item: String, start: Int): String? {
-  val tokenStart = skipWhitespaceAndComments(item, start)
-  if (tokenStart >= item.length) return null
-
-  val tokenEnd = readIdentifierToken(item, tokenStart) ?: return null
-
-  // Nothing legitimate can follow a real alias inside an already comma-split, FROM-trimmed select
-  // item -- only trailing whitespace/comments are tolerated; anything else means this wasn't a
-  // clean single alias token, so discard nothing and return `null`.
-  if (skipWhitespaceAndComments(item, tokenEnd) != item.length) return null
-
-  return item.substring(tokenStart, tokenEnd)
+private fun nestingChange(token: ScanToken): Int = when (token.token) {
+  TokenNumber.OPEN_PARENTHESIS, TokenNumber.OPEN_BRACKET -> 1
+  TokenNumber.CLOSE_PARENTHESIS, TokenNumber.CLOSE_BRACKET -> -1
+  else -> 0
 }
 
-/**
- * Parses a SQL expression into a [SelectItem], determining whether it's a simple column
- * reference (possibly qualified with a table name, either or both parts quoted or unquoted) or a
- * computed expression.
- *
- * A quoted position whose logical value comes out empty (`SELECT "" FROM t`) is treated as no
- * match at all (`columnName = null`/`tableName = null`), never an empty-string name: PostgreSQL
- * itself rejects a zero-length delimited identifier outright (`SELECT "" FROM t` is a syntax
- * error), so this shape can never actually reach here from an accepted query, but an empty
- * non-null name would still be a worse `null` than `null` itself.
- *
- * An unquoted column/table name is folded via [logicalIdentifier] — PostgreSQL's own
- * `downcase_identifier` behavior, ASCII `A`-`Z` only — so [SelectItem.columnName]/
- * [SelectItem.tableName] agree with what `ResultSetMetaData.getColumnName` reports for the same
- * reference. A quoted name is never folded — quoting is how PostgreSQL preserves a name's
- * original case against this default folding.
- */
-internal fun parseColumnReference(expression: String): SelectItem {
-  val trimmed = expression.trim()
-  // A simple column reference is one or two identifiers separated by a dot, with no parentheses or operators
-  val match = COLUMN_REFERENCE.matchEntire(trimmed)
-  val noMatch = SelectItem(expression = trimmed, columnName = null, tableName = null)
-  if (match == null) return noMatch
+/** The item cannot end before the token of the largest location inside it, so the search starts there. */
+private fun searchStartIndex(tokens: List<ScanToken>, target: JsonValue.JsonObject, firstToken: Int): Int {
+  val location = largestLocation(target)
+  val index = tokens.binarySearchBy(location, fromIndex = firstToken) { it.start }
+  return if (index >= 0) index else firstToken
+}
 
-  val rawTable = match.groups["table"]?.value
-  val rawColumn = match.groups["column"]!!.value
-  val tableIsQuoted = rawTable?.startsWith('"') == true
-  val columnIsQuoted = rawColumn.startsWith('"')
-  // Converted to PostgreSQL's logical identifier value so callers comparing these against
-  // server-reported names, such as catalog.findColumn, are comparing like with like.
-  val column = logicalIdentifier(rawColumn)
-  val table = rawTable?.let(::logicalIdentifier)
-  if (column.isEmpty() || table?.isEmpty() == true) return noMatch
+private fun largestLocation(value: JsonValue): Int = when (value) {
+  is JsonValue.JsonObject -> maxOf(
+    value.intField(ParseTreeNames.LOCATION) ?: NO_LOCATION,
+    value.fields.values.maxOfOrNull(::largestLocation) ?: NO_LOCATION,
+  )
+  is JsonValue.JsonArray -> value.items.maxOfOrNull(::largestLocation) ?: NO_LOCATION
+  else -> NO_LOCATION
+}
 
+private fun buildItem(
+  sql: String,
+  tokens: List<ScanToken>,
+  target: JsonValue.JsonObject,
+  extent: ItemExtent,
+): OutputItemWithAlias {
+  val expression = sql.substring(tokens[extent.firstToken].start, tokens[extent.expressionLastToken].end)
+  val expressionTokens = tokens.subList(extent.firstToken, extent.expressionLastToken + 1)
+  val selectItem = selectItem(sql, expressionTokens, expression, target)
+  val alias = extent.aliasFirstToken?.let { aliasFirst ->
+    val aliasLast = aliasLastToken(sql, tokens, aliasFirst)
+    sql.substring(tokens[aliasFirst].start, tokens[aliasLast].end)
+  }
+  return OutputItemWithAlias(selectItem, alias, extent.isAliasExplicit)
+}
+
+/** A Unicode-escaped alias spans `U&"..."`, `UESCAPE` and the escape string, which the lexer reports as three tokens. */
+private fun aliasLastToken(sql: String, tokens: List<ScanToken>, aliasFirstToken: Int): Int {
+  val hasEscapeClause = tokens[aliasFirstToken].token == TokenNumber.UNICODE_IDENTIFIER &&
+    aliasFirstToken + 2 < tokens.size &&
+    isKeyword(sql, tokens[aliasFirstToken + 1], UNICODE_ESCAPE_KEYWORD) &&
+    tokens[aliasFirstToken + 2].token == TokenNumber.STRING
+  return if (hasEscapeClause) aliasFirstToken + 2 else aliasFirstToken
+}
+
+/** The first token of the alias that ends at [lastToken], which is three tokens back for a `UESCAPE` alias. */
+private fun aliasStartToken(sql: String, tokens: List<ScanToken>, lastToken: Int): Int {
+  val isEscapeClause = lastToken >= 2 &&
+    tokens[lastToken].token == TokenNumber.STRING &&
+    isKeyword(sql, tokens[lastToken - 1], UNICODE_ESCAPE_KEYWORD) &&
+    tokens[lastToken - 2].token == TokenNumber.UNICODE_IDENTIFIER
+  return if (isEscapeClause) lastToken - 2 else lastToken
+}
+
+private fun isKeyword(sql: String, token: ScanToken, keyword: String): Boolean =
+  token.keywordKind != KeywordKind.NONE &&
+    token.end - token.start == keyword.length &&
+    sql.regionMatches(token.start, keyword, 0, keyword.length, ignoreCase = true)
+
+private fun selectItem(
+  sql: String,
+  expressionTokens: List<ScanToken>,
+  expression: String,
+  target: JsonValue.JsonObject,
+): SelectItem {
+  val value = target.objectField(ParseTreeNames.VALUE)
+  val isStar = value != null && isStar(value)
+  val names = value?.let(::columnReferenceNames)
+  if (names == null) return SelectItem(expression, columnName = null, tableName = null, isStar = isStar)
+
+  val nameTokens = identifierTokens(sql, expressionTokens)
+  val hasNameTokens = nameTokens.size == names.size
   return SelectItem(
-    expression = trimmed,
-    columnName = column,
-    tableName = table,
-    isColumnNameQuoted = columnIsQuoted,
-    isTableNameQuoted = tableIsQuoted,
+    expression = expression,
+    columnName = names.last(),
+    tableName = if (names.size == 2) names.first() else null,
+    isColumnNameQuoted = hasNameTokens && isQuotedToken(sql, nameTokens.last()),
+    isTableNameQuoted = hasNameTokens && names.size == 2 && isQuotedToken(sql, nameTokens.first()),
+    isStar = isStar,
   )
 }
 
-/**
- * Skips PostgreSQL 18's optional `RETURNING WITH (OLD AS alias, NEW AS alias) ...` prologue,
- * which declares a custom name for referring to the `OLD`/`NEW` pseudo-relations in the
- * `RETURNING` list that follows (e.g. `RETURNING WITH (OLD AS o, NEW AS n) o.name, n.name`).
- *
- * @param dml The data-modifying statement.
- * @param afterReturningKeyword The index in [dml] immediately after the `RETURNING` keyword.
- * @return The index where the actual `RETURNING` item list begins — after the prologue's closing
- *   `)`, or unchanged if there is none.
- */
-private fun parseOldNewAliasPrologue(dml: String, afterReturningKeyword: Int): Int {
-  val beforeWith = skipWhitespaceAndComments(dml, afterReturningKeyword)
-  val afterWith = skipOptionalKeyword(dml, beforeWith, "WITH")
-  if (afterWith == beforeWith || afterWith >= dml.length || dml[afterWith] != '(') {
-    return afterReturningKeyword
-  }
-  val closeParenthesis = findMatchingCloseParenthesis(dml, afterWith)
-  if (closeParenthesis < 0) return afterReturningKeyword
-  return closeParenthesis + 1
+private fun isStar(value: JsonValue.JsonObject): Boolean {
+  val columnFields = value.objectField(ParseTreeNames.COLUMN_REFERENCE)?.objectArrayField(ParseTreeNames.FIELDS)
+  if (columnFields != null) return columnFields.lastOrNull()?.objectField(ParseTreeNames.STAR) != null
+  val indirection = value.objectField(ParseTreeNames.INDIRECTION_NODE)?.objectArrayField(ParseTreeNames.INDIRECTION)
+  return indirection?.lastOrNull()?.objectField(ParseTreeNames.STAR) != null
 }
+
+/** The names of a one- or two-part column reference, or `null` for any other expression. */
+private fun columnReferenceNames(value: JsonValue.JsonObject): List<String>? {
+  val fields =
+    value.objectField(ParseTreeNames.COLUMN_REFERENCE)?.objectArrayField(ParseTreeNames.FIELDS) ?: return null
+  if (fields.size !in 1..2) return null
+  return fields.map { it.objectField(ParseTreeNames.STRING)?.stringField(ParseTreeNames.STRING_VALUE) ?: return null }
+}
+
+/** The tokens that spell identifiers, with a Unicode-escaped identifier and its `UESCAPE` clause as one token. */
+private fun identifierTokens(sql: String, tokens: List<ScanToken>): List<ScanToken> {
+  val identifiers = mutableListOf<ScanToken>()
+  var index = 0
+  while (index < tokens.size) {
+    val token = tokens[index]
+    index++
+    when (token.token) {
+      TokenNumber.OPEN_PARENTHESIS, TokenNumber.CLOSE_PARENTHESIS, TokenNumber.PERIOD -> Unit
+      TokenNumber.UNICODE_IDENTIFIER -> {
+        identifiers += token
+        val hasEscapeClause = index + 1 < tokens.size &&
+          isKeyword(sql, tokens[index], UNICODE_ESCAPE_KEYWORD) &&
+          tokens[index + 1].token == TokenNumber.STRING
+        if (hasEscapeClause) index += 2
+      }
+      else -> identifiers += token
+    }
+  }
+  return identifiers
+}
+
+private fun isQuotedToken(sql: String, token: ScanToken): Boolean =
+  token.token == TokenNumber.UNICODE_IDENTIFIER || sql[token.start] == '"'

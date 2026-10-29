@@ -86,71 +86,14 @@ internal fun readIdentifierToken(sql: String, position: Int, adjacency: Original
 }
 
 /**
- * The character class an unquoted PostgreSQL identifier's first character may be: a letter, `_`,
- * or any character whose code is `>= 0x80` — never a digit or `$`, which are legal only after the
- * first character.
- */
-internal const val COLUMN_REFERENCE_IDENTIFIER_START = """[\p{L}_\x{80}-\x{10FFFF}]"""
-
-/**
- * The character class an unquoted PostgreSQL identifier's characters after the first may be: a
- * Unicode letter (`\p{L}`), decimal digit (`\p{Nd}`), `_`, `$`, or any character whose code is
- * `>= 0x80`. The `>= 0x80` part is a code-point range, not a per-`Char` one, so a supplementary-
- * plane character written as a surrogate pair in a Kotlin `String` matches as the single code
- * point it represents, not as two separate units.
- */
-internal const val COLUMN_REFERENCE_IDENTIFIER_CONTINUATION = """[\p{L}\p{Nd}_$\x{80}-\x{10FFFF}]"""
-
-private const val COLUMN_REFERENCE_IDENTIFIER =
-  """$COLUMN_REFERENCE_IDENTIFIER_START$COLUMN_REFERENCE_IDENTIFIER_CONTINUATION*"""
-
-/**
- * Matches a double-quoted PostgreSQL identifier, quotes included: `"` followed by any number of a
- * non-`"` character or a doubled `""` (PostgreSQL's escape for a literal `"` inside the name),
- * followed by the closing `"`. Not unescaped by this pattern itself — that is
- * [unescapeQuotedIdentifier]'s job.
- */
-private const val QUOTED_IDENTIFIER = "\"(?:[^\"]|\"\")*\""
-
-/**
- * Matches either an unquoted [COLUMN_REFERENCE_IDENTIFIER] or a [QUOTED_IDENTIFIER] — the shape
- * [COLUMN_REFERENCE] uses for both its `table` and `column` positions, so either position can
- * independently be quoted or unquoted (`t.col`, `"t".col`, `t."col"`, `"t"."col"`).
- */
-internal const val COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED =
-  """(?:$COLUMN_REFERENCE_IDENTIFIER|$QUOTED_IDENTIFIER)"""
-
-/**
- * Matches `table.column` or just `column`, where `table`/`column` are each either an unquoted
- * PostgreSQL identifier ([COLUMN_REFERENCE_IDENTIFIER_START] followed by zero or more
- * [COLUMN_REFERENCE_IDENTIFIER_CONTINUATION] characters) or a double-quoted one
- * ([QUOTED_IDENTIFIER] — `"ux"`, `"My Col"`, `"He""llo"`), matched via
- * [COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED] for each position independently.
- *
- * The leading-character restriction on the unquoted alternative matters in the widening
- * direction: without it, a digit-led fragment such as `2€` — which PostgreSQL itself rejects
- * outright (`trailing junk after numeric literal`, on PostgreSQL 18.4) — would match as a whole
- * identifier once the continuation class widens to admit `€`, handing back a name PostgreSQL
- * would never resolve to. [parseColumnReference] returns `null` for anything that isn't a real
- * identifier.
- *
- * A matched group's captured text still includes its surrounding quotes (if any);
- * [parseColumnReference] turns that raw capture into the logical value via
- * [unescapeQuotedIdentifier].
- */
-internal val COLUMN_REFERENCE = Regex(
-  """(?:(?<table>$COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED)\.)?(?<column>$COLUMN_REFERENCE_IDENTIFIER_OR_QUOTED)""",
-)
-
-/**
- * Converts a raw double-quoted identifier token — including its surrounding quotes, exactly as
- * [QUOTED_IDENTIFIER] matches it — into PostgreSQL's logical identifier value: the surrounding
- * quotes removed, and each doubled `""` escape collapsed to the single literal `"` it represents.
+ * Converts a raw double-quoted identifier token — including its surrounding quotes — into
+ * PostgreSQL's logical identifier value: the surrounding quotes removed, and each doubled `""`
+ * escape collapsed to the single literal `"` it represents.
  * On PostgreSQL 18, `ResultSetMetaData.getColumnName` for `SELECT "He""llo" FROM (SELECT 1 AS
  * "He""llo") s` reports `He"llo` (no quotes, escape already collapsed) — exactly what this
  * function produces from the raw token `"He""llo"`.
  *
- * [rawQuotedToken] must be the exact matched text of a [QUOTED_IDENTIFIER] — starting and ending
+ * [rawQuotedToken] must be a double-quoted identifier exactly as written — starting and ending
  * with `"`, with at least those two characters present. Passing anything else is a caller bug,
  * not a value this function attempts to handle gracefully.
  */

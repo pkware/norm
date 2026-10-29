@@ -22,14 +22,32 @@ private const val SCAN_TOKEN_KEYWORD_KIND_FIELD = 5
  * PostgreSQL's `gram.y` assigns, which `pg_query.proto` repeats.
  */
 internal object TokenNumber {
+  /** The `(` character. */
+  const val OPEN_PARENTHESIS = 40
+
+  /** The `)` character. */
+  const val CLOSE_PARENTHESIS = 41
+
+  /** The `,` character. */
+  const val COMMA = 44
+
+  /** The `.` character. */
+  const val PERIOD = 46
+
   /** The `:` character, which starts a named parameter or a psql variable. */
   const val COLON = 58
 
   /** The `;` character. */
   const val SEMICOLON = 59
 
+  /** The `[` character. */
+  const val OPEN_BRACKET = 91
+
   /** The `\` character, which starts a psql meta-command. */
   const val BACKSLASH = 92
+
+  /** The `]` character. */
+  const val CLOSE_BRACKET = 93
 
   /** `IDENT`: an identifier that is not a keyword, quoted or not. */
   const val IDENTIFIER = 258

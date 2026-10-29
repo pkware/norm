@@ -13,6 +13,17 @@ internal val KEYWORD_ISSUE_INPUTS: List<String> = listOf(
   "SELECT ٣.from FROM ٣",
 )
 
+/** Select lists whose first item touches the keyword before it or the text after it, keyed `issue-glued#n`. */
+internal val GLUED_ISSUE_INPUTS: List<String> = listOf(
+  "SELECT(a + b) AS total FROM t",
+  "SELECT DISTINCT(a) FROM t",
+  "UPDATE t SET a = 1 RETURNING(a + 1)",
+  "SELECT\"a\" FROM t",
+  "SELECT'x' FROM t",
+  "SELECT-a FROM t",
+  "SELECT*FROM t",
+)
+
 private fun withFollowingQuery(firstBody: String, lineEnding: String = "\n"): String =
   "-- name: first :one\n$firstBody\n\n-- Doc for second.\n-- name: second :many\nSELECT 2;\n".replace("\n", lineEnding)
 

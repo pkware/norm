@@ -18,11 +18,7 @@ package norm.generator
  *   fold-matches, in order, with `:resname`s pairwise unique.
  * - [provenance]'s own item has a verifiable name: an explicit `AS x`, an implicit trailing alias
  *   token, or being itself a bare column reference (see [verifiedItem]).
- * - the matched item was not verified only via an implicit alias: whether a trailing bare word is an
- *   alias or a required operand cannot be decided from text alone (`ts AT TIME ZONE timezone`'s
- *   `:resname` is `timezone` whether or not `timezone` is really an alias), and the matched text is
- *   only ever legal as a select-list item, never as the standalone expression a `@property` source
- *   reference would render it in.
+ * - the matched item was not verified only via an implicit alias, which this function declines.
  * - the matched item is not a bare column pass-through (see [isBareColumnPassThrough]).
  *
  * @param sql The query's original SQL text (containing the developer's own `?` placeholders, if
@@ -32,9 +28,8 @@ package norm.generator
  * @param provenance Where [NodeTreeProvenanceResolver] found the expression; this function is only
  *   called when it is non-`null`.
  * @param parser The node-tree parser to use; defaults to a fresh, stateless instance.
- * @return The CTE body's expression text, [collapseCosmeticWhitespace]-normalized and with any
- *   comment [stripComments]-removed, exactly as the developer wrote it — or `null` if any check above
- *   fails.
+ * @return The CTE body's expression text as [SelectItem.normalizedExpression] builds it, without comments and with
+ *   cosmetic whitespace collapsed, otherwise as the developer wrote it — or `null` if any check above fails.
  */
 internal fun resolveNodeTreeProvenanceExpression(
   sql: String,
@@ -64,74 +59,53 @@ internal fun resolveNodeTreeProvenanceExpression(
   val matched = verifiedItems[provenance.bodyPosition - 1]
   if (matched.matchKind == AliasMatchKind.IMPLICIT_ALIAS) return null
 
-  return collapseCosmeticWhitespace(stripComments(matched.expression))
+  return matched.selectItem.normalizedExpression
 }
 
 /**
  * Whether [item] is nothing more than a bare column reference forwarded under a different name — an
- * explicit `AS` alias on a plain column, or the same shape spelled with an implicit alias
- * (`description dx`) — in which case there is nothing of [item]'s own to report as "the expression".
- *
- * A wrong guess from [splitTrailingImplicitAlias] here only makes this function more conservative
- * (reporting a pass-through that wasn't one) or less conservative (missing a real one, which then
- * falls through to [verifiedItem]'s own [AliasMatchKind.IMPLICIT_ALIAS] decline) — never a wrong
- * value emitted.
+ * alias, explicit or implicit (`description dx`), on a plain column — in which case there is nothing of
+ * [item]'s own to report as "the expression".
  */
-private fun isBareColumnPassThrough(item: OutputItemWithAlias): Boolean {
-  if (item.selectItem.columnName != null) return true
-  if (item.alias != null) return false
-  val implicitAliasStripped = splitTrailingImplicitAlias(item.selectItem.expression)?.expression ?: return false
-  return parseColumnReference(implicitAliasStripped).columnName != null
-}
+private fun isBareColumnPassThrough(item: OutputItemWithAlias): Boolean = item.selectItem.columnName != null
 
 /**
- * Which of PostgreSQL's three ways of naming a select-list item verified [VerifiedItem.expression]
- * against its `:resname`. [resolveNodeTreeProvenanceExpression] emits the expression as-is for
- * [EXPLICIT_ALIAS]/[BARE_COLUMN_REFERENCE] (the latter unreachable there in practice, since
- * [isBareColumnPassThrough] already declines a bare column reference first), but declines
- * [IMPLICIT_ALIAS] outright.
+ * Which of PostgreSQL's ways of naming a select-list item verified [VerifiedItem.selectItem] against its
+ * `:resname`. [resolveNodeTreeProvenanceExpression] emits the expression for [EXPLICIT_ALIAS] and
+ * [BARE_COLUMN_REFERENCE] (the latter unreachable there in practice, since [isBareColumnPassThrough]
+ * already declines a bare column reference first), but declines [IMPLICIT_ALIAS] outright.
  */
 private enum class AliasMatchKind { EXPLICIT_ALIAS, BARE_COLUMN_REFERENCE, IMPLICIT_ALIAS }
 
 /**
- * @property expression The item's complete, uncut text.
- * @property matchKind Which naming rule verified [expression] against its `:resname`.
+ * @property selectItem The item whose name was verified.
+ * @property matchKind Which naming rule verified [selectItem] against its `:resname`.
  */
-private data class VerifiedItem(val expression: String, val matchKind: AliasMatchKind)
+private data class VerifiedItem(val selectItem: SelectItem, val matchKind: AliasMatchKind)
 
 /**
- * [item]'s complete, uncut text paired with which rule verified its name against [resultName] (the
- * node tree's authoritative `:resname` for this position), or `null` if none did. Tried in
- * PostgreSQL's own precedence order for naming a select-list item:
+ * [item] paired with which rule verified its name against [resultName] (the node tree's authoritative
+ * `:resname` for this position), or `null` if none did. Tried in PostgreSQL's own precedence order for
+ * naming a select-list item:
  *
- * 1. An explicit `AS alias` — converted via [logicalIdentifier], since [OutputItemWithAlias.alias]
- *    still carries its own quotes, if any.
+ * 1. An alias — converted via [logicalIdentifier], since [OutputItemWithAlias.alias] still carries its
+ *    own quotes, if any. An implicit (no-`AS`) alias is verified the same way and reported as
+ *    [AliasMatchKind.IMPLICIT_ALIAS].
  * 2. A bare column reference with no alias at all — PostgreSQL exposes such an item under the
  *    column's own name.
- * 3. Neither of the above: the item's text may still end with an implicit (no-`AS`) alias token
- *    ([splitTrailingImplicitAlias]) fold-compared against [resultName]; the split-off expression half
- *    of its result is never read.
  */
 private fun verifiedItem(item: OutputItemWithAlias, resultName: String): VerifiedItem? {
   val alias = item.alias
   if (alias != null) {
     // resultName comes from the server and is already truncated. Folding before truncating: the
     // raw alias still carries its quotes, and those bytes are not part of the name.
-    return item.selectItem.expression.takeIf { logicalIdentifier(alias) == resultName }
-      ?.let { VerifiedItem(it, AliasMatchKind.EXPLICIT_ALIAS) }
+    val matchKind = if (item.isAliasExplicit) AliasMatchKind.EXPLICIT_ALIAS else AliasMatchKind.IMPLICIT_ALIAS
+    return VerifiedItem(item.selectItem, matchKind).takeIf { logicalIdentifier(alias) == resultName }
   }
 
-  val columnName = item.selectItem.columnName
-  if (columnName != null) {
-    // parseColumnReference already truncated columnName.
-    val folded = foldIdentifier(columnName, item.selectItem.isColumnNameQuoted)
-    return item.selectItem.expression.takeIf { folded == resultName }
-      ?.let { VerifiedItem(it, AliasMatchKind.BARE_COLUMN_REFERENCE) }
-  }
-
-  val implicitAlias = splitTrailingImplicitAlias(item.selectItem.expression)?.alias ?: return null
-  return item.selectItem.expression.takeIf { logicalIdentifier(implicitAlias) == resultName }
-    ?.let { VerifiedItem(it, AliasMatchKind.IMPLICIT_ALIAS) }
+  val columnName = item.selectItem.columnName ?: return null
+  val folded = foldIdentifier(columnName, item.selectItem.isColumnNameQuoted)
+  return VerifiedItem(item.selectItem, AliasMatchKind.BARE_COLUMN_REFERENCE).takeIf { folded == resultName }
 }
 
 /**
