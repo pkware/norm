@@ -32,7 +32,7 @@ testcontainers-junit = { module = "org.testcontainers:testcontainers-junit-jupit
 testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgresql", version.ref = "testcontainers" }
 
 [plugins]
-ksp = "com.google.devtools.ksp:2.3.12"
+ksp = "com.google.devtools.ksp:2.3.13"
 micronaut-library = "io.micronaut.library:5.0.2"
 norm = "com.pkware.norm:0.6.0"
 shadow = "com.gradleup.shadow:9.6.1"
