@@ -271,14 +271,41 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `an over-length CTE name still resolves through its truncated server-side ctename`() {
-      // Site NodeTreeProvenanceExpression.kt:207. scopedSqlCteDefinition must truncate the folded
-      // rawName before comparing it against hop.name (the node tree's own, already-truncated
-      // :ctename), or an over-length CTE name can never be found in scope at all.
+      // The text-side definition name must equal the node tree's already-truncated :ctename, or an
+      // over-length CTE name is not found in scope.
       val overLongCteName = "w".repeat(70)
       val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
       val sql = """
         WITH $overLongCteName AS (SELECT UPPER(description) AS description_upper FROM parent)
         SELECT description_upper FROM $overLongCteName
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql)).isEqualTo("UPPER(description)")
+    }
+
+    @Test
+    fun `an over-length multi-byte CTE name resolves through its server-truncated ctename`() {
+      val overLongCteName = "é".repeat(32)
+      val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
+      val sql = """
+        WITH $overLongCteName AS (SELECT UPPER(description) AS description_upper FROM parent)
+        SELECT description_upper FROM $overLongCteName
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql)).isEqualTo("UPPER(description)")
+    }
+
+    @Test
+    fun `a hop through over-length CTE names at two nesting levels resolves to the inner body`() {
+      val outerName = "w".repeat(70)
+      val innerName = "é".repeat(32)
+      val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
+      val sql = """
+        WITH $outerName AS (
+          WITH $innerName AS (SELECT UPPER(description) AS description_upper FROM parent)
+          SELECT description_upper FROM $innerName
+        )
+        SELECT description_upper FROM $outerName
       """.trimIndent()
 
       assertThat(resolvedExpression(ddl, sql)).isEqualTo("UPPER(description)")
@@ -909,8 +936,7 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `a CTE name with an escaped embedded double-quote resolves by its real, unescaped name`() {
-      // parseSingleCteDefinition's quoted-name scan keeps the whole token `"He""llo"`, so rawName
-      // fold-matches the node tree's real ctename `He"llo` and the expression resolves.
+      // The parser reports the name as `He"llo`, the same ctename the node tree holds.
       val ddl = "CREATE TABLE t (a TEXT, b TEXT)"
       val sql = """
         WITH "He""llo" AS (SELECT UPPER(a) AS ux FROM t)

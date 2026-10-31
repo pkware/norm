@@ -4392,10 +4392,9 @@ class QueryAnalysisTest {
 
     @Test
     fun `data-modifying CTE preceded by a sibling CTE containing a closing parenthesis in a literal`() {
-      // `SqlCteClause.parseCteClause` and `findMatchingCloseParenthesis` parse CTE boundaries only
-      // to resolve provenance text (`NodeTreeProvenanceExpression`). PostgreSQL parses the whole
-      // statement inside `BEGIN ATOMIC` (`ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody`)
-      // to answer nullability. With an "a" row and no matching "b" row, v is NULL.
+      // `SqlCteClause.parseCteClause` locates CTE bodies only to resolve provenance text
+      // (`NodeTreeProvenanceExpression`). PostgreSQL parses the whole statement inside `BEGIN ATOMIC`
+      // (`ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody`) to answer nullability. With an "a" row and no matching "b" row, v is NULL.
       val query = analyzeWithSchema(
         """
         CREATE TABLE t (id SERIAL NOT NULL, name TEXT);

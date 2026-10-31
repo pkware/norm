@@ -150,8 +150,7 @@ private fun scopedSqlCteDefinition(sql: String, hops: List<CteHop>): CteDefiniti
   var resolvedDefinition: CteDefinition? = null
   for (hop in hops) {
     val scope = scopeStack.frameAt(hop.ctelevelsup) ?: return null
-    // hop.name comes from the node tree and is already truncated; CteDefinition.name is already
-    // the logical, folded, truncated value, so a direct comparison is exact.
+    // Both names are the parser's `ctename`, so a direct comparison is exact.
     val definition = scope.filter { it.name == hop.name }.singleOrNull() ?: return null
     resolvedDefinition = definition
     val bodyOffset = definition.bodyOpenParenthesis + 1
