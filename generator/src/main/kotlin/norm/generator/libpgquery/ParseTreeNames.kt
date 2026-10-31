@@ -105,4 +105,28 @@ internal object ParseTreeNames {
 
   /** `A_Indirection.indirection`: the selections and subscripts applied to the expression. */
   const val INDIRECTION = "indirection"
+
+  /** `SelectStmt.intoClause`: the `INTO` clause of a `SELECT ... INTO`, absent when there is none. */
+  const val INTO_CLAUSE = "intoClause"
+
+  /** `IntoClause.rel`: the table that the `INTO` clause creates, a `RangeVar` with the fields below. */
+  const val INTO_RELATION = "rel"
+
+  /** `RangeVar.relname`: the table name in the form [STRING_VALUE] holds. */
+  const val RELATION_NAME = "relname"
+
+  /** `RangeVar.schemaname`: the schema part of a qualified table name, absent when unqualified. */
+  const val SCHEMA_NAME = "schemaname"
+
+  /** `RangeVar.catalogname`: the database part of a three-part table name, absent otherwise. */
+  const val CATALOG_NAME = "catalogname"
+
+  /** `CallStmt`: a `CALL` statement. */
+  const val CALL_STATEMENT = "CallStmt"
+
+  /** `CallStmt.funccall`: the `FuncCall` node of the procedure call. */
+  const val FUNCTION_CALL = "funccall"
+
+  /** `FuncCall.funcname`: the parts of the procedure name, one `String` node each. */
+  const val FUNCTION_NAME = "funcname"
 }

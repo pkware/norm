@@ -18,7 +18,7 @@ import java.util.UUID
  * belongs to no chunk, because no SQL function takes such an argument.
  *
  * A function body rejects `SELECT ... INTO`. When PostgreSQL rejects a function, the probe tries the statement
- * without each of its `INTO` clauses and keeps the first that compiles.
+ * without its `INTO` clause, which [withoutIntoClause] locates in the parse tree.
  *
  * The same trees name the parameters that a function call takes as arguments, as [FunctionArgumentNamer] describes.
  *
@@ -38,7 +38,6 @@ internal class ParameterNullabilityProbe(private val connection: Connection) {
 
   private val catalog = JdbcParameterCatalog(connection)
   private val classifier = ParameterNullabilityClassifier(catalog)
-  private val reservedWords: Set<String> by lazy { readReservedWords(connection) }
 
   /**
    * Classifies the placeholders of [sql], one statement at a time. The JDBC driver splits [sql] at each top-level `;`
@@ -91,9 +90,7 @@ internal class ParameterNullabilityProbe(private val connection: Connection) {
       val types = readParameterTypes(statementName)
       // The `INTO` clause names the new table and holds no parameter.
       return classifyChunks(sql, types, functionArgumentNamer)
-        ?: withoutEachIntoClause(sql, reservedWords).firstNotNullOfOrNull {
-          classifyChunks(it, types, functionArgumentNamer)
-        }
+        ?: withoutIntoClause(sql)?.let { classifyChunks(it, types, functionArgumentNamer) }
         ?: emptyMap()
     } finally {
       execute("DEALLOCATE $statementName")

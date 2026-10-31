@@ -64,28 +64,6 @@ internal fun isQuotedIdentifier(rawIdentifier: String): Boolean {
 }
 
 /**
- * Reads the identifier token starting exactly at [position] in [sql] — a double-quoted identifier
- * (via [findDoubleQuotedIdentifierEnd]) or an unquoted one ([isIdentifierStartChar] followed by a
- * run of [isIdentifierChar] characters) — with no leading whitespace skip of its own.
- *
- * @param adjacency See [OriginalAdjacency]'s KDoc. Gates both the quoted branch's `""` escape (via
- *   [findDoubleQuotedIdentifierEnd]) and every character the unquoted branch's run extends through,
- *   so a caller scanning a [StrippedText] never fuses two identifiers that were only made to look
- *   adjacent by stripping out the whitespace or comment between them.
- * @return The end-exclusive index of the token, or `null` when [position] is at or past
- *   `sql.length`, the character at [position] can neither open a quoted identifier nor start an
- *   unquoted one, or it opens a quoted identifier that is never closed.
- */
-internal fun readIdentifierToken(sql: String, position: Int, adjacency: OriginalAdjacency = ALL_ADJACENT): Int? {
-  if (position >= sql.length) return null
-  if (sql[position] == '"') return findDoubleQuotedIdentifierEnd(sql, position, adjacency)
-  if (!isIdentifierStartChar(sql[position])) return null
-  var end = position + 1
-  while (end < sql.length && isIdentifierChar(sql[end]) && adjacency.wereAdjacent(end - 1)) end++
-  return end
-}
-
-/**
  * Converts a raw double-quoted identifier token — including its surrounding quotes — into
  * PostgreSQL's logical identifier value: the surrounding quotes removed, and each doubled `""`
  * escape collapsed to the single literal `"` it represents.

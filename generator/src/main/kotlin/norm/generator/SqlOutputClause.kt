@@ -7,7 +7,7 @@ import norm.generator.libpgquery.TokenNumber
 import norm.generator.libpgquery.locationFieldNames
 
 private const val AS_KEYWORD = "AS"
-private const val UNICODE_ESCAPE_KEYWORD = "UESCAPE"
+internal const val UNICODE_ESCAPE_KEYWORD = "UESCAPE"
 private const val NO_LOCATION = -1
 
 /** The literal that stands in for an item's expression while the end of the expression is searched. */
@@ -371,7 +371,8 @@ private fun aliasStartToken(sql: String, tokens: List<ScanToken>, lastToken: Int
   return if (isEscapeClause) lastToken - 2 else lastToken
 }
 
-private fun isKeyword(sql: String, token: ScanToken, keyword: String): Boolean =
+/** Tells whether [token] is the keyword [keyword], in any letter case. */
+internal fun isKeyword(sql: String, token: ScanToken, keyword: String): Boolean =
   token.keywordKind != KeywordKind.NONE &&
     token.end - token.start == keyword.length &&
     sql.regionMatches(token.start, keyword, 0, keyword.length, ignoreCase = true)
