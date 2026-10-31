@@ -4,6 +4,8 @@ import assertk.assertThat
 import assertk.assertions.containsExactly
 import assertk.assertions.isEqualTo
 import assertk.assertions.isTrue
+import norm.generator.libpgquery.LibPgQuery
+import norm.generator.libpgquery.TokenNumber
 import org.commonmark.node.AbstractVisitor
 import org.commonmark.node.Code
 import org.commonmark.node.FencedCodeBlock
@@ -170,7 +172,7 @@ class SourceReferenceLiveVerificationTest {
       val withPrefix = scopeText.substring(0, cte.mainQueryStart)
       for (definition in cte.definitions) {
         val body = scopeText.substring(definition.bodyOpenParenthesis + 1, definition.bodyCloseParenthesis)
-        val fromIndex = findTopLevelFromClauseKeyword(body, 0)
+        val fromIndex = indexOfTopLevelFrom(body)
         if (fromIndex >= 0) {
           results.add(withPrefix to body.substring(fromIndex))
         }
@@ -179,6 +181,19 @@ class SourceReferenceLiveVerificationTest {
     }
     recurse(sql)
     return results
+  }
+
+  /** Returns the index of the first `FROM` keyword of [body] outside parentheses, or `-1` when there is none. */
+  private fun indexOfTopLevelFrom(body: String): Int {
+    var depth = 0
+    for (token in LibPgQuery.scan(body)) {
+      when {
+        token.token == TokenNumber.OPEN_PARENTHESIS -> depth++
+        token.token == TokenNumber.CLOSE_PARENTHESIS -> depth--
+        depth == 0 && isKeyword(body, token, "FROM") -> return token.start
+      }
+    }
+    return -1
   }
 
   /**

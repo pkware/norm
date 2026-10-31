@@ -977,8 +977,8 @@ class SqlOutputClauseTest {
           sql = "SELECT x\u20AC9.* w, preferences FROM users x\u20AC9",
         ),
         // Same regression guard as above, with a different >= 0x80-but-not-letter-or-digit character:
-        // "\u00B9" (SUPERSCRIPT ONE, Unicode category No -- number, other -- still not a letter or a
-        // digit per isIdentifierChar's isLetterOrDigit()). The table alias here is "x", "\u00B9",
+        // "\u00B9" (SUPERSCRIPT ONE, Unicode category No -- number, other -- neither a letter nor a
+        // digit to Character.isLetterOrDigit). The table alias here is "x", "\u00B9",
         // "9", written as Kotlin unicode escapes. Confirmed against a real PostgreSQL 18.4 container:
         // "SELECT x¹9.* w, a FROM t x¹9" returns 3 columns (t's own 2 plus "a").
         StarGuardCase(
@@ -1660,6 +1660,68 @@ class SqlOutputClauseTest {
         ItemExtentCase("SELECT a, ?", ExpectedItem("a"), ExpectedItem("?")),
         ItemExtentCase("SELECT a, b; SELECT c, d", ExpectedItem("a"), ExpectedItem("b")),
       )
+    }
+  }
+
+  @Nested
+  inner class ImplicitAlias {
+
+    private fun item(selectList: String): OutputItemWithAlias =
+      parseOutputItemsWithAlias("SELECT $selectList FROM t").single()
+
+    @Test
+    fun `a bare column with an implicit alias splits into the column and its own alias`() {
+      val result = item("description dx")
+      assertThat(result.selectItem.expression).isEqualTo("description")
+      assertThat(result.selectItem.columnName).isEqualTo("description")
+      assertThat(result.alias).isEqualTo("dx")
+      assertThat(result.isAliasExplicit).isFalse()
+    }
+
+    @Test
+    fun `a computed expression with an implicit alias splits into the expression and its alias`() {
+      val result = item("UPPER(a) y")
+      assertThat(result.selectItem.expression).isEqualTo("UPPER(a)")
+      assertThat(result.alias).isEqualTo("y")
+      assertThat(result.isAliasExplicit).isFalse()
+    }
+
+    @Test
+    fun `a bare column with no alias at all has no alias`() {
+      val result = item("description")
+      assertThat(result.alias).isNull()
+      assertThat(result.isAliasExplicit).isFalse()
+    }
+
+    @Test
+    fun `an identifier with a dollar sign is one token, not an alias boundary`() {
+      val result = item("a\$b dx")
+      assertThat(result.selectItem.expression).isEqualTo("a\$b")
+      assertThat(result.alias).isEqualTo("dx")
+    }
+
+    @Test
+    fun `a doubled-quote escape inside an implicit quoted alias is not mistaken for its closing quote`() {
+      val result = item("description \"He\"\"llo\"")
+      assertThat(result.selectItem.expression).isEqualTo("description")
+      assertThat(result.alias).isEqualTo("\"He\"\"llo\"")
+    }
+
+    @Test
+    fun `two bare words after a column are rejected by PostgreSQL, so there are no items`() {
+      assertThat(parseOutputItemsWithAlias("SELECT col a b FROM t")).isEmpty()
+    }
+
+    @Test
+    fun `two quoted identifiers after a column are rejected by PostgreSQL, so there are no items`() {
+      assertThat(parseOutputItemsWithAlias("SELECT description \"a\" \"b\" FROM t")).isEmpty()
+    }
+
+    @Test
+    fun `a Unicode-escape identifier as an implicit alias is the alias`() {
+      val result = item("description U&\"x\"")
+      assertThat(result.selectItem.expression).isEqualTo("description")
+      assertThat(result.alias).isEqualTo("U&\"x\"")
     }
   }
 }

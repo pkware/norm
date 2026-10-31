@@ -18,6 +18,8 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
@@ -250,10 +252,51 @@ class JdbcAnalyzerTest {
     assertThat(query.params[1].column!!.type.name).isEqualTo("text")
   }
 
+  @ParameterizedTest(name = "{0}")
+  @ValueSource(strings = ["call\nreset_type_table()", "/* c */ CALL reset_type_table()"])
+  fun `analyzeQuery recognizes a CALL by its parse tree`(sql: String) {
+    val catalog = analyzer.buildCatalog()
+    val parsed = ParsedQuery("resetTypes", Command.EXEC, sql, emptyList())
+
+    val query = analyzer.analyzeQuery(parsed, catalog)
+
+    assertThat(query.columns).isEmpty()
+    assertThat(query.params).isEmpty()
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @ValueSource(
+    strings = [
+      "call\nupdate_string_type(?, ?)",
+      "/* c */ CALL update_string_type(?, ?)",
+      "CALL \"update_string_type\"(?, ?)",
+      "CALL Update_String_Type(?, ?)",
+    ],
+  )
+  fun `analyzeQuery names the parameters of a CALL from pg_proc`(sql: String) {
+    val catalog = analyzer.buildCatalog()
+    val parsed = ParsedQuery("updateStringType", Command.EXEC, sql, emptyList())
+
+    val query = analyzer.analyzeQuery(parsed, catalog)
+
+    assertThat(query.params.map { it.column!!.name }).containsExactly("p_id", "p_new_value")
+  }
+
+  @Test
+  fun `analyzeQuery looks up a procedure whose quoted name holds a single quote`() {
+    val catalog = analyzer.buildCatalog()
+    val parsed = ParsedQuery("missing", Command.EXEC, "CALL \"it's\"()", emptyList())
+
+    val query = analyzer.analyzeQuery(parsed, catalog)
+
+    assertThat(query.columns).isEmpty()
+    assertThat(query.params).isEmpty()
+  }
+
   /**
-   * Schema qualification (`public.`) defeats `CALL_PROCEDURE_NAME`'s bare-identifier regex, so
-   * `analyzeCallParameters` falls back to `prepareStatement(...).parameterMetaData`. The
-   * `pg_proc` lookup is exercised by `analyzeQuery handles CALL with parameters`.
+   * A schema-qualified procedure name has two parts, so `analyzeCallParameters` skips the `pg_proc` lookup and
+   * falls back to `prepareStatement(...).parameterMetaData`. The lookup is exercised by
+   * `analyzeQuery handles CALL with parameters`.
    */
   @Test
   fun `analyzeQuery handles schema-qualified CALL with parameters via the prepareStatement fallback`() {

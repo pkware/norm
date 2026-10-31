@@ -66,7 +66,7 @@ private fun selectOutput(select: JsonValue.JsonObject): OutputStatement {
   return OutputStatement(targets, isSetOperation)
 }
 
-private fun leftmostLeaf(select: JsonValue.JsonObject): JsonValue.JsonObject? {
+internal fun leftmostLeaf(select: JsonValue.JsonObject): JsonValue.JsonObject? {
   var current = select
   while (isSetOperation(current)) current = current.objectField(ParseTreeNames.LEFT_BRANCH) ?: return null
   return current

@@ -1,5 +1,8 @@
 package norm.generator
 
+import norm.generator.libpgquery.LibPgQuery
+import norm.generator.libpgquery.LibPgQueryException
+import norm.generator.libpgquery.ParseTreeNames
 import java.sql.Connection
 import java.sql.DatabaseMetaData
 import java.sql.ResultSetMetaData
@@ -63,15 +66,15 @@ public class JdbcAnalyzer(private val connection: Connection) {
    */
   public fun analyzeQuery(parsedQuery: ParsedQuery, catalog: Catalog): Query {
     val jdbcSql = parsedQuery.sql
-    val isCallStatement = parsedQuery.sql.trimStart().startsWith("CALL ", ignoreCase = true)
+    val callStatement = findCallStatement(parsedQuery.sql)
 
     val resultColumns: List<Column>
     val parameters: List<Parameter>
 
-    if (isCallStatement) {
+    if (callStatement != null) {
       // CALL statements don't return result sets and may not support getMetaData()
       resultColumns = emptyList()
-      parameters = analyzeCallParameters(parsedQuery.sql, jdbcSql, catalog)
+      parameters = analyzeCallParameters(callStatement, jdbcSql, catalog)
     } else {
       connection.prepareStatement(jdbcSql).use { ps ->
         // Describing the statement makes PostgreSQL parse it, so one it rejects fails here before the probe runs.
@@ -305,10 +308,15 @@ public class JdbcAnalyzer(private val connection: Connection) {
    * Analyzes parameters for CALL statements by querying the pg_catalog for procedure argument types.
    *
    * Prefers `pg_proc` lookup for argument names since JDBC `ParameterMetaData` only provides types.
-   * Falls back to preparing the statement directly if the procedure isn't found in `pg_proc`.
+   * Falls back to preparing the statement directly if the procedure isn't found in `pg_proc` or its name has
+   * a schema part.
    */
-  private fun analyzeCallParameters(originalSql: String, jdbcSql: String, catalog: Catalog): List<Parameter> {
-    val procName = CALL_PROCEDURE_NAME.find(originalSql)?.groupValues?.get(1)
+  private fun analyzeCallParameters(
+    callStatement: JsonValue.JsonObject,
+    jdbcSql: String,
+    catalog: Catalog,
+  ): List<Parameter> {
+    val procName = procedureName(callStatement)
     if (procName != null) {
       val params = catalogLoader.lookupProcedureParameters(procName)
       if (params.isNotEmpty()) return params
@@ -372,11 +380,31 @@ public class JdbcAnalyzer(private val connection: Connection) {
     val reservedWords = fetchReservedWords()
     return { identifier -> quoteSqlIdentifierIfNeeded(identifier, reservedWords) }
   }
-
-  private companion object {
-    private val CALL_PROCEDURE_NAME = Regex("""CALL\s+(\w+)\s*\(""", RegexOption.IGNORE_CASE)
-  }
 }
+
+/**
+ * Returns the `CallStmt` node when the first statement of [sql] is a `CALL`, or `null` when it is another statement
+ * or PostgreSQL rejects [sql].
+ */
+private fun findCallStatement(sql: String): JsonValue.JsonObject? {
+  val tree = try {
+    LibPgQuery.parse(replaceParameterPlaceholdersKeepingOffsets(sql))
+  } catch (_: LibPgQueryException) {
+    return null
+  }
+  return tree.objectArrayField(ParseTreeNames.STATEMENTS)
+    .firstOrNull()
+    ?.objectField(ParseTreeNames.STATEMENT)
+    ?.objectField(ParseTreeNames.CALL_STATEMENT)
+}
+
+/** Returns the procedure name of [callStatement] as `pg_proc` stores it, or `null` when the name has a schema part. */
+private fun procedureName(callStatement: JsonValue.JsonObject): String? = callStatement
+  .objectField(ParseTreeNames.FUNCTION_CALL)
+  ?.objectArrayField(ParseTreeNames.FUNCTION_NAME)
+  ?.singleOrNull()
+  ?.objectField(ParseTreeNames.STRING)
+  ?.stringField(ParseTreeNames.STRING_VALUE)
 
 /** Reads the keywords that cannot name a table or column without quotes, lowercase, from `pg_get_keywords()`. */
 internal fun readReservedWords(connection: Connection): Set<String> = buildSet {

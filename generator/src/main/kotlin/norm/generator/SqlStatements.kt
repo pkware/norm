@@ -1,8 +1,10 @@
 package norm.generator
 
+import norm.generator.libpgquery.KeywordKind
 import norm.generator.libpgquery.LibPgQuery
 import norm.generator.libpgquery.LibPgQueryException
 import norm.generator.libpgquery.ParseTreeNames
+import norm.generator.libpgquery.ScanToken
 import norm.generator.libpgquery.SplitStatement
 import norm.generator.libpgquery.TokenNumber
 
@@ -90,82 +92,81 @@ internal fun explainedStatementStart(sql: String): Int {
 }
 
 /**
- * Tells whether the first significant token of [sql] opens a statement that SQL `PREPARE` accepts. SQL `PREPARE`
- * takes fewer statements than the protocol-level prepare of the JDBC driver, which also takes `EXPLAIN` and other
- * utility statements.
+ * Tells whether the first token of [sql] that is not a comment or `(` is the keyword that opens a statement SQL
+ * `PREPARE` accepts: `SELECT`, `VALUES`, `TABLE`, `WITH`, `INSERT`, `UPDATE`, `DELETE`, or `MERGE`. SQL `PREPARE` takes
+ * fewer statements than the protocol-level prepare of the JDBC driver, which also takes `EXPLAIN` and other utility
+ * statements.
+ *
+ * The answer comes from the lexer alone, so it does not depend on whether PostgreSQL parses the rest of [sql].
+ *
+ * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
 internal fun startsPreparableStatement(sql: String): Boolean {
-  val cursor = SqlTokenCursor(sql, 0)
-  while (true) {
-    when (val span = cursor.advanceSignificant() ?: return false) {
-      is SqlSpan.Word -> return sql.substring(span.from, span.to).uppercase() in PREPARABLE_KEYWORDS
-      is SqlSpan.Opaque -> return false
-      is SqlSpan.Char -> if (sql[span.index] != '(') return false
-    }
-  }
+  val first = significantTokens(sql).firstOrNull { it.token != TokenNumber.OPEN_PARENTHESIS } ?: return false
+  return PREPARABLE_KEYWORDS.any { isKeyword(sql, first, it) }
 }
 
 /**
- * Returns [sql] once without each `INTO` clause, in order.
+ * Removes the `INTO` clause of a `SELECT ... INTO` from [sql], from the `INTO` keyword through the table name. An
+ * `INSERT INTO` or `MERGE INTO` has no such clause. In a set operation the clause belongs to the leftmost `SELECT`.
  *
- * In a statement that `PREPARE` accepts, `gram.y` writes `INTO` after `INSERT`, after `MERGE`, or as the
- * `into_clause` of a `SELECT`. The word before `INTO` does not tell them apart, because `insert` and `merge` can name
- * a column. Removing the `INTO` of an `INSERT` or `MERGE` leaves SQL that PostgreSQL rejects.
+ * The parse tree gives the location of the table name and the number of its parts. The lexer tokens give the end of
+ * the name and the start of the clause. A `U&"..."` part ends with its `UESCAPE` string. Only keywords such as
+ * `TEMPORARY`, `UNLOGGED` or `TABLE` lie between `INTO` and the name.
  *
- * A clause ends with its table name. `OptTempTableName` puts the reserved word `TABLE` and unreserved option words
- * before the name. A name part is a word that is not reserved, a quoted identifier, or any word after a `.`. A
- * Unicode name `U&"..."` may carry `UESCAPE '...'`. Any other token ends the clause.
- *
- * @param reservedWords the lowercase keywords that cannot start a name, as `pg_get_keywords()` lists them.
+ * @return the text with the clause removed, or `null` when PostgreSQL rejects [sql] or [sql] has no clause.
+ * @throws IllegalArgumentException if [sql] contains a NUL character.
+ * @throws IllegalStateException if the tokens do not match the parse tree.
  */
-internal fun withoutEachIntoClause(sql: String, reservedWords: Set<String>): Sequence<String> = sequence {
-  val cursor = SqlTokenCursor(sql, 0)
-  while (true) {
-    val span = cursor.advanceSignificant() ?: break
-    if (span.word(sql) == "INTO") {
-      val start = (span as SqlSpan.Word).from
-      yield(sql.removeRange(start, intoClauseEnd(sql, SqlTokenCursor(sql, span.to), span.to, reservedWords)))
-    }
+internal fun withoutIntoClause(sql: String): String? {
+  val tree = try {
+    LibPgQuery.parse(replaceParameterPlaceholdersKeepingOffsets(sql))
+  } catch (_: LibPgQueryException) {
+    return null
   }
-}
-
-private fun intoClauseEnd(sql: String, cursor: SqlTokenCursor, intoEnd: Int, reservedWords: Set<String>): Int {
-  var end = intoEnd
-  var afterDot = false
-  var afterUescape = false
-  while (true) {
-    val span = cursor.advanceSignificant() ?: return end
-    val namePartEnd = when (span) {
-      is SqlSpan.Opaque -> span.to.takeIf { sql[span.from] == '"' || (afterUescape && sql[span.from] == '\'') }
-      is SqlSpan.Word -> span.to.takeIf {
-        afterDot ||
-          span.word(sql) == "TABLE" ||
-          isUnreserved(span, sql, reservedWords)
-      }
-      is SqlSpan.Char -> (span.index + 1).takeIf { opensUnicodeIdentifier(sql, span.index, end) }
-    }
-    when {
-      namePartEnd != null -> {
-        end = namePartEnd
-        afterDot = false
-        afterUescape = span.word(sql) == "UESCAPE"
-      }
-      span is SqlSpan.Char && sql[span.index] == '.' && !afterDot -> afterDot = true
-      else -> return end
-    }
+  val relation = tree.objectArrayField(ParseTreeNames.STATEMENTS)
+    .firstOrNull()
+    ?.objectField(ParseTreeNames.STATEMENT)
+    ?.objectField(ParseTreeNames.SELECT_STATEMENT)
+    ?.let(::leftmostLeaf)
+    ?.objectField(ParseTreeNames.INTO_CLAUSE)
+    ?.objectField(ParseTreeNames.INTO_RELATION) ?: return null
+  val tokens = significantTokens(sql)
+  val nameStart = tokens.indexOfFirst { it.start == relation.intField(ParseTreeNames.LOCATION) }
+  check(nameStart >= 0) { "No token starts the INTO table name" }
+  val partCount = INTO_NAME_PARTS.count { relation.stringField(it) != null }
+  var nameEnd = nameStart
+  repeat(partCount - 1) {
+    nameEnd = nameEndToken(sql, tokens, nameEnd)
+    check(tokens.getOrNull(nameEnd + 1)?.token == TokenNumber.PERIOD) { "No period follows a part of the INTO name" }
+    nameEnd += 2
   }
+  nameEnd = nameEndToken(sql, tokens, nameEnd)
+  var intoIndex = nameStart - 1
+  while (intoIndex >= 0 && !isKeyword(sql, tokens[intoIndex], INTO_KEYWORD)) {
+    check(tokens[intoIndex].keywordKind != KeywordKind.NONE) { "A non-keyword token precedes the INTO table name" }
+    intoIndex--
+  }
+  check(intoIndex >= 0) { "No INTO keyword precedes the INTO table name" }
+  return sql.removeRange(tokens[intoIndex].start, tokens[nameEnd].end)
 }
 
-/** Tells whether the `&` at [index] joins a `U` that ends at [wordEnd] to a quoted name, as in `U&"d\0061ta"`. */
-private fun opensUnicodeIdentifier(sql: String, index: Int, wordEnd: Int): Boolean =
-  sql[index] == '&' && wordEnd == index && sql[index - 1].uppercaseChar() == 'U' && sql.startsWith("\"", index + 1)
-
-private fun isUnreserved(word: SqlSpan.Word, sql: String, reservedWords: Set<String>): Boolean =
-  sql.substring(word.from, word.to).lowercase() !in reservedWords
-
-private fun SqlSpan.word(sql: String): String? = (this as? SqlSpan.Word)?.let {
-  sql.substring(it.from, it.to).uppercase()
+/** Returns the index of the last token of the name part at [index]. A `U&"..."` part ends with its `UESCAPE` string. */
+private fun nameEndToken(sql: String, tokens: List<ScanToken>, index: Int): Int {
+  val hasEscapeClause = tokens[index].token == TokenNumber.UNICODE_IDENTIFIER &&
+    tokens.getOrNull(index + 1)?.let { isKeyword(sql, it, UNICODE_ESCAPE_KEYWORD) } == true &&
+    tokens.getOrNull(index + 2)?.token == TokenNumber.STRING
+  return if (hasEscapeClause) index + 2 else index
 }
 
-/** Lists the words that start a statement SQL `PREPARE` accepts, including `WITH`, which starts a query. */
-private val PREPARABLE_KEYWORDS = setOf("SELECT", "VALUES", "TABLE", "WITH", "INSERT", "UPDATE", "DELETE", "MERGE")
+private fun significantTokens(sql: String): List<ScanToken> = scanLeadingTokens(sql).filter {
+  it.token != TokenNumber.LINE_COMMENT && it.token != TokenNumber.BLOCK_COMMENT
+}
+
+private const val INTO_KEYWORD = "INTO"
+
+private val INTO_NAME_PARTS =
+  listOf(ParseTreeNames.CATALOG_NAME, ParseTreeNames.SCHEMA_NAME, ParseTreeNames.RELATION_NAME)
+
+/** The keywords that open a statement SQL `PREPARE` accepts, including `WITH`, which opens a query. */
+private val PREPARABLE_KEYWORDS = listOf("SELECT", "VALUES", "TABLE", "WITH", "INSERT", "UPDATE", "DELETE", "MERGE")

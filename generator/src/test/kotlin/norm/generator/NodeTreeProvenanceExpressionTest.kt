@@ -235,10 +235,8 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `a bare column's own implicit alias no longer fuses into the next item, killing the whole body`() {
-      // "description dx" (a bare column immediately followed by its own implicit alias, no AS)
-      // keeps a verifiable name for its position after stripCommentsAndWhitespace deletes the
-      // separating space. The all-positions cross-validation gate therefore passes, and "ux" keeps
-      // its own provenance.
+      // "description dx" is a bare column followed by its own implicit alias, with no AS. The alias
+      // stays apart from the next item, so every position verifies and "ux" keeps its own provenance.
       val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
       val sql = """
         WITH a AS (SELECT description dx, UPPER(name) AS ux FROM parent)

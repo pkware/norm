@@ -351,19 +351,20 @@ internal class PgCatalogLoader(private val connection: Connection) {
    *   is not found in `pg_proc`.
    */
   fun lookupProcedureParameters(procName: String): List<Parameter> = buildList {
-    connection.createStatement().use { stmt ->
-      stmt.executeQuery(
-        """
-        SELECT p.proargnames, p.proargtypes, string_agg(t.typname, ',' ORDER BY ordinality) as type_names
-        FROM pg_catalog.pg_proc p
-        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-        CROSS JOIN LATERAL unnest(p.proargtypes) WITH ORDINALITY AS u(type_oid, ordinality)
-        JOIN pg_catalog.pg_type t ON t.oid = u.type_oid
-        WHERE p.proname = '$procName'
-          AND n.nspname = 'public'
-        GROUP BY p.proargnames, p.proargtypes
-        """.trimIndent(),
-      ).use { rs ->
+    connection.prepareStatement(
+      """
+      SELECT p.proargnames, p.proargtypes, string_agg(t.typname, ',' ORDER BY ordinality) as type_names
+      FROM pg_catalog.pg_proc p
+      JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+      CROSS JOIN LATERAL unnest(p.proargtypes) WITH ORDINALITY AS u(type_oid, ordinality)
+      JOIN pg_catalog.pg_type t ON t.oid = u.type_oid
+      WHERE p.proname = ?
+        AND n.nspname = 'public'
+      GROUP BY p.proargnames, p.proargtypes
+      """.trimIndent(),
+    ).use { statement ->
+      statement.setString(1, procName)
+      statement.executeQuery().use { rs ->
         if (rs.next()) {
           val typeNames = rs.getString("type_names").split(",")
           val argNamesArray = rs.getArray("proargnames")
