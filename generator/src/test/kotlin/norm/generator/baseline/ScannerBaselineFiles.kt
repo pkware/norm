@@ -10,4 +10,6 @@ internal object ScannerBaselineFiles {
   val sweepSkips: Path = Path("src/test/resources/pg-regress/sweep-skips.txt")
 
   const val BASELINE_RESOURCE = "/scanner-baseline/baseline.txt"
+
+  const val LITERAL_CORPUS_RESOURCE = "/scanner-baseline/literal-corpus.txt"
 }

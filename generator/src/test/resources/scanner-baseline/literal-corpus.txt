@@ -1,0 +1,2836 @@
+=== SqlOutputClauseTest.kt:44
+text: \n
+=== SqlOutputClauseTest.kt:44#2
+text: \\n
+=== SqlOutputClauseTest.kt:63
+text: $prefix id,$expression$suffix
+=== SqlOutputClauseTest.kt:65
+text: id
+=== SqlOutputClauseTest.kt:67
+text: \n
+=== SqlOutputClauseTest.kt:67#2
+text: \\n
+=== SqlOutputClauseTest.kt:78
+text: UPDATE t SET x = 1 RETURNING id, name
+=== SqlOutputClauseTest.kt:80
+text: id
+=== SqlOutputClauseTest.kt:80#2
+text: id
+=== SqlOutputClauseTest.kt:81
+text: name
+=== SqlOutputClauseTest.kt:81#2
+text: name
+=== SqlOutputClauseTest.kt:87
+text: UPDATE t SET x = 1 RETURNING tier, old.tier AS old_tier
+=== SqlOutputClauseTest.kt:89
+text: tier
+=== SqlOutputClauseTest.kt:89#2
+text: tier
+=== SqlOutputClauseTest.kt:90
+text: old.tier
+=== SqlOutputClauseTest.kt:90#2
+text: tier
+=== SqlOutputClauseTest.kt:90#3
+text: old
+=== SqlOutputClauseTest.kt:96
+text: INSERT INTO t(x) VALUES(1) RETURNING id, name
+=== SqlOutputClauseTest.kt:98
+text: id
+=== SqlOutputClauseTest.kt:98#2
+text: id
+=== SqlOutputClauseTest.kt:99
+text: name
+=== SqlOutputClauseTest.kt:99#2
+text: name
+=== SqlOutputClauseTest.kt:105
+text: DELETE FROM t WHERE id = 1 RETURNING id, name
+=== SqlOutputClauseTest.kt:107
+text: id
+=== SqlOutputClauseTest.kt:107#2
+text: id
+=== SqlOutputClauseTest.kt:108
+text: name
+=== SqlOutputClauseTest.kt:108#2
+text: name
+=== SqlOutputClauseTest.kt:114
+text: UPDATE t SET x = 1 RETURNING id, count(*) AS total
+=== SqlOutputClauseTest.kt:116
+text: id
+=== SqlOutputClauseTest.kt:116#2
+text: id
+=== SqlOutputClauseTest.kt:117
+text: count(*)
+=== SqlOutputClauseTest.kt:123
+text: UPDATE t SET x = 1 RETURNING id, name;
+=== SqlOutputClauseTest.kt:125
+text: id
+=== SqlOutputClauseTest.kt:125#2
+text: id
+=== SqlOutputClauseTest.kt:126
+text: name
+=== SqlOutputClauseTest.kt:126#2
+text: name
+=== SqlOutputClauseTest.kt:132
+text: UPDATE t SET x = 1 RETURNING CAST(tier AS text) AS tier_text
+=== SqlOutputClauseTest.kt:134
+text: CAST(tier AS text)
+=== SqlOutputClauseTest.kt:140
+text: DELETE FROM t RETURNING *
+=== SqlOutputClauseTest.kt:142
+text: *
+=== SqlOutputClauseTest.kt:148
+text: UPDATE t SET x = 1 RETURNING id, ) (bogus AS alias
+=== SqlOutputClauseTest.kt:154
+text: UPDATE t SET x = 1 RETURNING id, a[b AS c
+=== SqlOutputClauseTest.kt:162
+text: UPDATE t SET x = 1 RETURNING WITH (OLD AS o, NEW AS n) o.x, n.x
+=== SqlOutputClauseTest.kt:164
+text: o.x
+=== SqlOutputClauseTest.kt:164#2
+text: x
+=== SqlOutputClauseTest.kt:164#3
+text: o
+=== SqlOutputClauseTest.kt:165
+text: n.x
+=== SqlOutputClauseTest.kt:165#2
+text: x
+=== SqlOutputClauseTest.kt:165#3
+text: n
+=== SqlOutputClauseTest.kt:171
+text: SELECT id, name FROM users
+=== SqlOutputClauseTest.kt:173
+text: id
+=== SqlOutputClauseTest.kt:173#2
+text: id
+=== SqlOutputClauseTest.kt:174
+text: name
+=== SqlOutputClauseTest.kt:174#2
+text: name
+=== SqlOutputClauseTest.kt:180
+text: SELECT author.name AS author_name FROM author
+=== SqlOutputClauseTest.kt:182
+text: author.name
+=== SqlOutputClauseTest.kt:182#2
+text: name
+=== SqlOutputClauseTest.kt:182#3
+text: author
+=== SqlOutputClauseTest.kt:188
+text: SELECT COUNT(*) AS total FROM users
+=== SqlOutputClauseTest.kt:190
+text: COUNT(*)
+=== SqlOutputClauseTest.kt:197
+text: SELECT * FROM users
+=== SqlOutputClauseTest.kt:199
+text: *
+=== SqlOutputClauseTest.kt:205
+text: CALL my_proc()
+=== SqlOutputClauseTest.kt:211
+text: SELECT s.from FROM s
+=== SqlOutputClauseTest.kt:213
+text: s.from
+=== SqlOutputClauseTest.kt:213#2
+text: from
+=== SqlOutputClauseTest.kt:213#3
+text: s
+=== SqlOutputClauseTest.kt:219
+text: INSERT INTO t(a) SELECT s.returning FROM s RETURNING a
+=== SqlOutputClauseTest.kt:221
+text: a
+=== SqlOutputClauseTest.kt:221#2
+text: a
+=== SqlOutputClauseTest.kt:230
+text: WITH RECURSIVE new_parent AS (\n  INSERT INTO parent (name) SELECT label FROM parent_name RETURNING id, name\n),\nparent_name AS (\n  SELECT 'seeded'::TEXT AS label\n)\nSELECT id, name FROM new_parent
+=== SqlOutputClauseTest.kt:241
+text: id
+=== SqlOutputClauseTest.kt:241#2
+text: id
+=== SqlOutputClauseTest.kt:242
+text: name
+=== SqlOutputClauseTest.kt:242#2
+text: name
+=== SqlOutputClauseTest.kt:249
+text: WITH c AS (SELECT 1, 2, 3) SELECT id, name FROM main_table
+=== SqlOutputClauseTest.kt:252
+text: id
+=== SqlOutputClauseTest.kt:252#2
+text: id
+=== SqlOutputClauseTest.kt:253
+text: name
+=== SqlOutputClauseTest.kt:253#2
+text: name
+=== SqlOutputClauseTest.kt:259
+text: INSERT INTO t(a,b) SELECT x, y FROM s RETURNING id, a
+=== SqlOutputClauseTest.kt:261
+text: id
+=== SqlOutputClauseTest.kt:261#2
+text: id
+=== SqlOutputClauseTest.kt:262
+text: a
+=== SqlOutputClauseTest.kt:262#2
+text: a
+=== SqlOutputClauseTest.kt:268
+text: UPDATE t SET x = (SELECT max(y) FROM s) RETURNING id
+=== SqlOutputClauseTest.kt:270
+text: id
+=== SqlOutputClauseTest.kt:270#2
+text: id
+=== SqlOutputClauseTest.kt:276
+text: UPDATE t SET note = 'please SELECT this' RETURNING id
+=== SqlOutputClauseTest.kt:278
+text: id
+=== SqlOutputClauseTest.kt:278#2
+text: id
+=== SqlOutputClauseTest.kt:284
+text: UPDATE t /* SELECT me not */ SET x = 1 RETURNING id
+=== SqlOutputClauseTest.kt:286
+text: id
+=== SqlOutputClauseTest.kt:286#2
+text: id
+=== SqlOutputClauseTest.kt:298
+text: SELECT preferences AS returning FROM users
+=== SqlOutputClauseTest.kt:300
+text: preferences
+=== SqlOutputClauseTest.kt:300#2
+text: preferences
+=== SqlOutputClauseTest.kt:306
+text: SELECT id, preferences AS returning FROM users
+=== SqlOutputClauseTest.kt:308
+text: id
+=== SqlOutputClauseTest.kt:308#2
+text: id
+=== SqlOutputClauseTest.kt:309
+text: preferences
+=== SqlOutputClauseTest.kt:309#2
+text: preferences
+=== SqlOutputClauseTest.kt:315
+text: WITH c AS (SELECT 1) SELECT x AS returning FROM c
+=== SqlOutputClauseTest.kt:317
+text: x
+=== SqlOutputClauseTest.kt:317#2
+text: x
+=== SqlOutputClauseTest.kt:328
+text: INSERT INTO users (email, preferences) SELECT email AS returning, preferences 
+=== SqlOutputClauseTest.kt:329
+text: FROM users RETURNING id, email, preferences
+=== SqlOutputClauseTest.kt:332
+text: id
+=== SqlOutputClauseTest.kt:332#2
+text: id
+=== SqlOutputClauseTest.kt:333
+text: email
+=== SqlOutputClauseTest.kt:333#2
+text: email
+=== SqlOutputClauseTest.kt:334
+text: preferences
+=== SqlOutputClauseTest.kt:334#2
+text: preferences
+=== SqlOutputClauseTest.kt:341
+text: UPDATE t SET x = 1 RETURNING id AS returning
+=== SqlOutputClauseTest.kt:343
+text: id
+=== SqlOutputClauseTest.kt:343#2
+text: id
+=== SqlOutputClauseTest.kt:349
+text: INSERT INTO t (a) SELECT 1 AS returning RETURNING a, b
+=== SqlOutputClauseTest.kt:351
+text: a
+=== SqlOutputClauseTest.kt:351#2
+text: a
+=== SqlOutputClauseTest.kt:352
+text: b
+=== SqlOutputClauseTest.kt:352#2
+text: b
+=== SqlOutputClauseTest.kt:360
+text: INSERT INTO t (a) SELECT 1 AS/*c*/returning RETURNING a, b
+=== SqlOutputClauseTest.kt:362
+text: a
+=== SqlOutputClauseTest.kt:362#2
+text: a
+=== SqlOutputClauseTest.kt:363
+text: b
+=== SqlOutputClauseTest.kt:363#2
+text: b
+=== SqlOutputClauseTest.kt:371
+text: INSERT INTO t (a) SELECT 1 AS--x\nreturning RETURNING a, b
+=== SqlOutputClauseTest.kt:373
+text: a
+=== SqlOutputClauseTest.kt:373#2
+text: a
+=== SqlOutputClauseTest.kt:374
+text: b
+=== SqlOutputClauseTest.kt:374#2
+text: b
+=== SqlOutputClauseTest.kt:388
+text: INSERT INTO users (email, age, preferences) 
+=== SqlOutputClauseTest.kt:389
+text: SELECT returning€, age, preferences FROM src RETURNING id, email
+=== SqlOutputClauseTest.kt:392
+text: id
+=== SqlOutputClauseTest.kt:392#2
+text: id
+=== SqlOutputClauseTest.kt:393
+text: email
+=== SqlOutputClauseTest.kt:393#2
+text: email
+=== SqlOutputClauseTest.kt:405
+text: SELECT $€$x,$€$ AS lbl, age, email FROM users
+=== SqlOutputClauseTest.kt:407
+text: $€$x,$€$
+=== SqlOutputClauseTest.kt:408
+text: age
+=== SqlOutputClauseTest.kt:408#2
+text: age
+=== SqlOutputClauseTest.kt:409
+text: email
+=== SqlOutputClauseTest.kt:409#2
+text: email
+=== SqlOutputClauseTest.kt:421
+text: UPDATE t SET x = 1 RETURNING preferences€, email
+=== SqlOutputClauseTest.kt:423
+text: preferences€
+=== SqlOutputClauseTest.kt:423#2
+text: preferences€
+=== SqlOutputClauseTest.kt:424
+text: email
+=== SqlOutputClauseTest.kt:424#2
+text: email
+=== SqlOutputClauseTest.kt:435
+text: SELECT x𝐀y, id FROM astral
+=== SqlOutputClauseTest.kt:437
+text: x𝐀y
+=== SqlOutputClauseTest.kt:437#2
+text: x𝐀y
+=== SqlOutputClauseTest.kt:438
+text: id
+=== SqlOutputClauseTest.kt:438#2
+text: id
+=== SqlOutputClauseTest.kt:447
+text: SELECT 2€, email FROM users
+=== SqlOutputClauseTest.kt:456
+text: SELECT (age)AS b FROM users
+=== SqlOutputClauseTest.kt:458
+text: (age)
+=== SqlOutputClauseTest.kt:458#2
+text: age
+=== SqlOutputClauseTest.kt:468
+text: SELECT (age)AS"b" FROM users
+=== SqlOutputClauseTest.kt:470
+text: (age)
+=== SqlOutputClauseTest.kt:470#2
+text: age
+=== SqlOutputClauseTest.kt:479
+text: SELECT dataAS b FROM users
+=== SqlOutputClauseTest.kt:481
+text: dataAS
+=== SqlOutputClauseTest.kt:481#2
+text: dataas
+=== SqlOutputClauseTest.kt:481#3
+text: b
+=== SqlOutputClauseTest.kt:490
+text: SELECT age AS€b FROM users
+=== SqlOutputClauseTest.kt:492
+text: age
+=== SqlOutputClauseTest.kt:492#2
+text: age
+=== SqlOutputClauseTest.kt:492#3
+text: AS€b
+=== SqlOutputClauseTest.kt:501
+text: SELECT age x€AS FROM users
+=== SqlOutputClauseTest.kt:503
+text: age
+=== SqlOutputClauseTest.kt:503#2
+text: age
+=== SqlOutputClauseTest.kt:503#3
+text: x€AS
+=== SqlOutputClauseTest.kt:513
+text: SELECT x AS aſ FROM t
+=== SqlOutputClauseTest.kt:514
+text: aſ
+=== SqlOutputClauseTest.kt:524
+text: SELECT ID FROM t
+=== SqlOutputClauseTest.kt:526
+text: ID
+=== SqlOutputClauseTest.kt:526#2
+text: id
+=== SqlOutputClauseTest.kt:532
+text: SELECT T.ID FROM t
+=== SqlOutputClauseTest.kt:534
+text: T.ID
+=== SqlOutputClauseTest.kt:534#2
+text: id
+=== SqlOutputClauseTest.kt:534#3
+text: t
+=== SqlOutputClauseTest.kt:547
+text: SELECT Ü FROM t
+=== SqlOutputClauseTest.kt:549
+text: Ü
+=== SqlOutputClauseTest.kt:549#2
+text: Ü
+=== SqlOutputClauseTest.kt:555
+text: WITH "myCte" AS (SELECT 1 AS a) SELECT a FROM "myCte"
+=== SqlOutputClauseTest.kt:557
+text: a
+=== SqlOutputClauseTest.kt:557#2
+text: a
+=== SqlOutputClauseTest.kt:565
+text: WITH c AS (SELECT 1 AS a) (SELECT a FROM c)
+=== SqlOutputClauseTest.kt:566
+text: a
+=== SqlOutputClauseTest.kt:566#2
+text: a
+=== SqlOutputClauseTest.kt:572
+text: (SELECT a FROM x)
+=== SqlOutputClauseTest.kt:573
+text: a
+=== SqlOutputClauseTest.kt:573#2
+text: a
+=== SqlOutputClauseTest.kt:579
+text: (SELECT a FROM x) UNION (SELECT b FROM y)
+=== SqlOutputClauseTest.kt:580
+text: a
+=== SqlOutputClauseTest.kt:580#2
+text: a
+=== SqlOutputClauseTest.kt:586
+text: VALUES (1, 2)
+=== SqlOutputClauseTest.kt:593
+text: TABLE t
+=== SqlOutputClauseTest.kt:601
+text: (SELECT id, UPPER(name) AS name_upper FROM parent)
+=== SqlOutputClauseTest.kt:603
+text: id
+=== SqlOutputClauseTest.kt:603#2
+text: id
+=== SqlOutputClauseTest.kt:604
+text: UPPER(name)
+=== SqlOutputClauseTest.kt:610
+text: ((SELECT id FROM parent))
+=== SqlOutputClauseTest.kt:611
+text: id
+=== SqlOutputClauseTest.kt:611#2
+text: id
+=== SqlOutputClauseTest.kt:617
+text: (SELECT id FROM parent) UNION (SELECT id FROM child)
+=== SqlOutputClauseTest.kt:618
+text: id
+=== SqlOutputClauseTest.kt:618#2
+text: id
+=== SqlOutputClauseTest.kt:625
+text: {0}
+=== SqlOutputClauseTest.kt:626
+text: starGuardCases
+=== SqlOutputClauseTest.kt:633
+text: star alongside another item returns empty list to avoid shifting later items
+=== SqlOutputClauseTest.kt:634
+text: SELECT *, id FROM t
+=== SqlOutputClauseTest.kt:639
+text: parenthesized star as the first item drops the whole list
+=== SqlOutputClauseTest.kt:640
+text: SELECT (tgt.*), id AS ident FROM tgt
+=== SqlOutputClauseTest.kt:643
+text: star with a trailing block comment as the first item drops the whole list
+=== SqlOutputClauseTest.kt:644
+text: SELECT tgt.* /*c*/, id AS ident FROM tgt
+=== SqlOutputClauseTest.kt:647
+text: star with a trailing line comment as the first item drops the whole list
+=== SqlOutputClauseTest.kt:648
+text: SELECT tgt.* -- c\n, id AS ident FROM tgt
+=== SqlOutputClauseTest.kt:651
+text: star with whitespace around the qualifying dot as the first item drops the whole list
+=== SqlOutputClauseTest.kt:652
+text: SELECT tgt . *, id AS ident FROM tgt
+=== SqlOutputClauseTest.kt:659
+text: an aliased star still triggers the star guard
+=== SqlOutputClauseTest.kt:660
+text: SELECT t.* AS whatever, 7 AS id FROM t
+=== SqlOutputClauseTest.kt:663
+text: an aliased star in RETURNING still triggers the star guard
+=== SqlOutputClauseTest.kt:664
+text: UPDATE t SET x = 1 RETURNING t.* AS whatever, 7 AS id
+=== SqlOutputClauseTest.kt:670
+text: a trailing line comment outside a wrapping parenthesis still triggers the star guard
+=== SqlOutputClauseTest.kt:671
+text: SELECT (tgt.*) -- c\n, id AS ident FROM tgt
+=== SqlOutputClauseTest.kt:675
+text: a trailing block comment outside a wrapping parenthesis still triggers the star guard
+=== SqlOutputClauseTest.kt:676
+text: SELECT (tgt.*) /*c*/, id AS ident FROM tgt
+=== SqlOutputClauseTest.kt:681
+text: a comment between the dot and the star still triggers the star guard
+=== SqlOutputClauseTest.kt:682
+text: SELECT tgt./*c*/ *, id AS ident FROM tgt
+=== SqlOutputClauseTest.kt:690
+text: an implicit alias on a star still triggers the star guard
+=== SqlOutputClauseTest.kt:691
+text: SELECT u.* whatever, preferences FROM users u
+=== SqlOutputClauseTest.kt:694
+text: an explicit AS alias on a star keeps working alongside the implicit-alias check
+=== SqlOutputClauseTest.kt:695
+text: SELECT u.* AS whatever, preferences FROM users u
+=== SqlOutputClauseTest.kt:701
+text: a quoted implicit alias on a star still triggers the star guard
+=== SqlOutputClauseTest.kt:702
+text: SELECT u.* "My Col", preferences FROM users u
+=== SqlOutputClauseTest.kt:707
+text: an implicit alias followed by a line comment still triggers the star guard
+=== SqlOutputClauseTest.kt:708
+text: SELECT u.* whatever -- c\n, preferences FROM users u
+=== SqlOutputClauseTest.kt:712
+text: an implicit alias followed by a block comment still triggers the star guard
+=== SqlOutputClauseTest.kt:713
+text: SELECT u.* whatever /*c*/, preferences FROM users u
+=== SqlOutputClauseTest.kt:721
+text: a comment abutting an implicit alias with no surrounding whitespace now triggers the star guard
+=== SqlOutputClauseTest.kt:722
+text: SELECT u.*/*c*/whatever, preferences FROM users u
+=== SqlOutputClauseTest.kt:728
+text: a line comment abutting an implicit alias now triggers the star guard
+=== SqlOutputClauseTest.kt:729
+text: SELECT t.*-- c\nwhatever, id FROM t
+=== SqlOutputClauseTest.kt:735
+text: a zero-separator implicit alias abutting a star now triggers the star guard
+=== SqlOutputClauseTest.kt:736
+text: SELECT u.*whatever, preferences FROM users u
+=== SqlOutputClauseTest.kt:744
+text: a star qualified by a double-quoted identifier containing a literal star character is found lexically
+=== SqlOutputClauseTest.kt:745
+text: SELECT "my*table".*z, c FROM "my*table"
+=== SqlOutputClauseTest.kt:749
+text: a star qualified by a double-quoted identifier containing a literal star character, no alias
+=== SqlOutputClauseTest.kt:750
+text: SELECT "my*table".*, c FROM "my*table"
+=== SqlOutputClauseTest.kt:756
+text: a DISTINCT ON prefix before a qualified star still triggers the star guard
+=== SqlOutputClauseTest.kt:757
+text: SELECT DISTINCT ON (a) t.*, a FROM t
+=== SqlOutputClauseTest.kt:765
+text: a parenthesized composite expansion still triggers the star guard
+=== SqlOutputClauseTest.kt:766
+text: SELECT (t).*, a FROM t
+=== SqlOutputClauseTest.kt:772
+text: a parenthesized composite expansion of a function call still triggers the star guard
+=== SqlOutputClauseTest.kt:773
+text: SELECT (f2(1)).*, a FROM t
+=== SqlOutputClauseTest.kt:776
+text: a parenthesized composite expansion in RETURNING still triggers the star guard
+=== SqlOutputClauseTest.kt:777
+text: UPDATE t SET a = a RETURNING (t).*, a
+=== SqlOutputClauseTest.kt:783
+text: a Unicode-escape quoted identifier qualifying a star still triggers the star guard
+=== SqlOutputClauseTest.kt:784
+text: SELECT U&"my*table".*, c FROM "my*table"
+=== SqlOutputClauseTest.kt:788
+text: an implicit alias on a parenthesized composite expansion still triggers the star guard
+=== SqlOutputClauseTest.kt:789
+text: SELECT (t).*x, a FROM t
+=== SqlOutputClauseTest.kt:794
+text: an implicit alias on a DISTINCT ON qualified star still triggers the star guard
+=== SqlOutputClauseTest.kt:795
+text: SELECT DISTINCT ON (a) t.*x, a FROM t
+=== SqlOutputClauseTest.kt:798
+text: a Unicode-escape quoted identifier with an implicit alias still triggers the star guard
+=== SqlOutputClauseTest.kt:799
+text: SELECT U&"my*table".*z, c FROM "my*table"
+=== SqlOutputClauseTest.kt:807
+text: a star qualifier that itself contains a star via a parenthesized cast still triggers the star guard
+=== SqlOutputClauseTest.kt:808
+text: SELECT (t.*::t).* whatever, a FROM t
+=== SqlOutputClauseTest.kt:815
+text: a star qualifier that itself contains a star via an ARRAY subscript still triggers the star guard
+=== SqlOutputClauseTest.kt:816
+text: SELECT (ARRAY[t.*])[1].* whatever, a FROM t
+=== SqlOutputClauseTest.kt:823
+text: a star qualifier containing a star via multiplication inside a function call 
+=== SqlOutputClauseTest.kt:824
+text: still triggers the star guard
+=== SqlOutputClauseTest.kt:825
+text: SELECT (f(a*2)).* z, a FROM t
+=== SqlOutputClauseTest.kt:832
+text: a zero-separator implicit alias on a star qualifier containing its own star still triggers the star guard
+=== SqlOutputClauseTest.kt:833
+text: SELECT (ARRAY[t.*])[1].*whatever, a FROM t
+=== SqlOutputClauseTest.kt:839
+text: a star wrapped only up to its implicit alias still triggers the star guard
+=== SqlOutputClauseTest.kt:840
+text: SELECT (u.*) whatever, preferences FROM users u
+=== SqlOutputClauseTest.kt:845
+text: a doubly-wrapped star with an implicit alias still triggers the star guard
+=== SqlOutputClauseTest.kt:846
+text: SELECT ((t.*)) x, a FROM t
+=== SqlOutputClauseTest.kt:851
+text: a wrapped star with an implicit alias in RETURNING still triggers the star guard
+=== SqlOutputClauseTest.kt:852
+text: UPDATE t SET a = 1 RETURNING (t.*) x, a
+=== SqlOutputClauseTest.kt:864
+text: a Unicode-escape identifier as the implicit alias itself still triggers the star guard
+=== SqlOutputClauseTest.kt:865
+text: SELECT u.* U&"a", preferences FROM users u
+=== SqlOutputClauseTest.kt:873
+text: a Unicode-escape alias with a UESCAPE clause still triggers the star guard
+=== SqlOutputClauseTest.kt:874
+text: SELECT t.* U&"d!0061t" UESCAPE '!', a FROM t
+=== SqlOutputClauseTest.kt:880
+text: a Unicode-escape qualifier with a UESCAPE clause still triggers the star guard
+=== SqlOutputClauseTest.kt:881
+text: SELECT U&"!0074" UESCAPE '!'.* x, a FROM t
+=== SqlOutputClauseTest.kt:887
+text: an ALL quantifier before a qualified star with an implicit alias still triggers the star guard
+=== SqlOutputClauseTest.kt:888
+text: SELECT ALL t.* x, a FROM t
+=== SqlOutputClauseTest.kt:894
+text: a star on a table whose name starts with the letters of the ALL quantifier still triggers the star guard
+=== SqlOutputClauseTest.kt:895
+text: SELECT all2.* a, p FROM all2
+=== SqlOutputClauseTest.kt:907
+text: an implicit alias written in NFD with a combining mark still triggers the star guard
+=== SqlOutputClauseTest.kt:908
+text: SELECT u.* préfs, preferences FROM users u
+=== SqlOutputClauseTest.kt:915
+text: an implicit alias containing a currency symbol still triggers the star guard
+=== SqlOutputClauseTest.kt:916
+text: SELECT t.* €total, a FROM t
+=== SqlOutputClauseTest.kt:923
+text: an implicit alias that is a bare symbol still triggers the star guard
+=== SqlOutputClauseTest.kt:924
+text: SELECT t.* ©, a FROM t
+=== SqlOutputClauseTest.kt:933
+text: an implicit alias that is a supplementary-plane character still triggers the star guard
+=== SqlOutputClauseTest.kt:934
+text: SELECT u.* 🚀, preferences FROM users u
+=== SqlOutputClauseTest.kt:940
+text: an implicit alias containing a currency symbol in RETURNING still triggers the star guard
+=== SqlOutputClauseTest.kt:941
+text: UPDATE t SET a = 1 RETURNING t.* €total, a
+=== SqlOutputClauseTest.kt:950
+text: a zero-separator NFD alias still triggers the star guard
+=== SqlOutputClauseTest.kt:951
+text: SELECT t.*café, a FROM t
+=== SqlOutputClauseTest.kt:959
+text: a qualifier starting with a non-ASCII digit still triggers the star guard
+=== SqlOutputClauseTest.kt:960
+text: SELECT ٣.* x, a FROM ٣
+=== SqlOutputClauseTest.kt:967
+text: a zero-separator alias on a qualifier starting with a non-ASCII digit still triggers the star guard
+=== SqlOutputClauseTest.kt:968
+text: SELECT ٣.*x, a FROM ٣
+=== SqlOutputClauseTest.kt:976
+text: a qualifier containing a currency symbol followed by an ASCII digit still triggers the star guard
+=== SqlOutputClauseTest.kt:977
+text: SELECT x€9.* w, preferences FROM users x€9
+=== SqlOutputClauseTest.kt:986
+text: a qualifier containing a superscript digit followed by an ASCII digit still triggers the star guard
+=== SqlOutputClauseTest.kt:987
+text: SELECT x¹9.* w, a FROM t x¹9
+=== SqlOutputClauseTest.kt:995
+text: a qualifier written in NFD followed by an ASCII digit still triggers the star guard
+=== SqlOutputClauseTest.kt:996
+text: SELECT café2.* w, a FROM t café2
+=== SqlOutputClauseTest.kt:1004
+text: a typed-literal call with a standalone E before a backslash-quote does not manufacture a star item
+=== SqlOutputClauseTest.kt:1005
+text: SELECT (f(x€ E'a\\'b')).* y, id FROM t
+=== SqlOutputClauseTest.kt:1013
+text: a negative literal subtraction inside a ROW composite star qualifier does not manufacture a --comment
+=== SqlOutputClauseTest.kt:1014
+text: SELECT (ROW(1, 2 - -1)).* y, id, name FROM t
+=== SqlOutputClauseTest.kt:1021
+text: a negative literal subtraction inside a function-call star qualifier does not manufacture a --comment
+=== SqlOutputClauseTest.kt:1022
+text: SELECT (f(1 - -1)).* y, id FROM t
+=== SqlOutputClauseTest.kt:1027
+text: a negative literal subtraction inside a CAST star qualifier does not manufacture a --comment
+=== SqlOutputClauseTest.kt:1028
+text: SELECT (CAST(ROW(1 - -1, 2) AS pair)).* y, id FROM t
+=== SqlOutputClauseTest.kt:1035
+text: a negative literal subtraction inside an array-subscript star qualifier does not manufacture a --comment
+=== SqlOutputClauseTest.kt:1036
+text: SELECT (ARRAY[t])[1 - -1].* y, id FROM t
+=== SqlOutputClauseTest.kt:1043
+text: a space-separated E-string typed literal is not fused into a standalone-E escape string
+=== SqlOutputClauseTest.kt:1044
+text: SELECT (f(xq E'a\\'b')).* y, id FROM t
+=== SqlOutputClauseTest.kt:1049
+text: a space-separated dollar-quoted typed literal is not fused into the identifier before it
+=== SqlOutputClauseTest.kt:1050
+text: SELECT (f(xq $q$a'b$q$)).* y, id FROM t
+=== SqlOutputClauseTest.kt:1054
+text: {0}
+=== SqlOutputClauseTest.kt:1055
+text: notMistakenForStarGuardCases
+=== SqlOutputClauseTest.kt:1064
+text: items strictly before a later star are kept, not discarded
+=== SqlOutputClauseTest.kt:1065
+text: SELECT id AS ident, t.* FROM t
+=== SqlOutputClauseTest.kt:1067
+text: id
+=== SqlOutputClauseTest.kt:1067#2
+text: id
+=== SqlOutputClauseTest.kt:1071
+text: RETURNING items strictly before a later star are kept, not discarded
+=== SqlOutputClauseTest.kt:1072
+text: UPDATE t SET x = 1 RETURNING id AS ident, t.*
+=== SqlOutputClauseTest.kt:1074
+text: id
+=== SqlOutputClauseTest.kt:1074#2
+text: id
+=== SqlOutputClauseTest.kt:1078
+text: count star is not mistaken for the star guard even with internal whitespace
+=== SqlOutputClauseTest.kt:1079
+text: SELECT count( * ) AS total, id FROM t
+=== SqlOutputClauseTest.kt:1081
+text: count( * )
+=== SqlOutputClauseTest.kt:1082
+text: id
+=== SqlOutputClauseTest.kt:1082#2
+text: id
+=== SqlOutputClauseTest.kt:1086
+text: a cast on a star-shaped expression is not mistaken for the star guard
+=== SqlOutputClauseTest.kt:1087
+text: SELECT t.*::text AS whatever, id FROM t
+=== SqlOutputClauseTest.kt:1089
+text: t.*::text
+=== SqlOutputClauseTest.kt:1090
+text: id
+=== SqlOutputClauseTest.kt:1090#2
+text: id
+=== SqlOutputClauseTest.kt:1094
+text: count star with an implicit alias is not mistaken for the star guard
+=== SqlOutputClauseTest.kt:1095
+text: SELECT count(*) total, id FROM t
+=== SqlOutputClauseTest.kt:1097
+text: count(*)
+=== SqlOutputClauseTest.kt:1098
+text: id
+=== SqlOutputClauseTest.kt:1098#2
+text: id
+=== SqlOutputClauseTest.kt:1102
+text: a cast on a star with no whitespace is unaffected by the implicit-alias check
+=== SqlOutputClauseTest.kt:1103
+text: SELECT t.*::text, id FROM t
+=== SqlOutputClauseTest.kt:1105
+text: t.*::text
+=== SqlOutputClauseTest.kt:1106
+text: id
+=== SqlOutputClauseTest.kt:1106#2
+text: id
+=== SqlOutputClauseTest.kt:1110
+text: a cast on a star with a comment immediately before it is not mistaken for the star guard
+=== SqlOutputClauseTest.kt:1111
+text: SELECT t.*/*c*/::text, a FROM t
+=== SqlOutputClauseTest.kt:1113
+text: t.*/*c*/::text
+=== SqlOutputClauseTest.kt:1114
+text: a
+=== SqlOutputClauseTest.kt:1114#2
+text: a
+=== SqlOutputClauseTest.kt:1120
+text: a whitespace-separated cast on a star is not mistaken for an implicit alias
+=== SqlOutputClauseTest.kt:1121
+text: SELECT t.* ::text, a FROM t
+=== SqlOutputClauseTest.kt:1123
+text: t.* ::text
+=== SqlOutputClauseTest.kt:1124
+text: a
+=== SqlOutputClauseTest.kt:1124#2
+text: a
+=== SqlOutputClauseTest.kt:1130
+text: a whitespace-separated array cast on a star is not mistaken for an implicit alias
+=== SqlOutputClauseTest.kt:1131
+text: SELECT t.* ::integer[], a FROM t
+=== SqlOutputClauseTest.kt:1133
+text: t.* ::integer[]
+=== SqlOutputClauseTest.kt:1134
+text: a
+=== SqlOutputClauseTest.kt:1134#2
+text: a
+=== SqlOutputClauseTest.kt:1140
+text: a line comment between a star and its cast is not mistaken for an implicit alias
+=== SqlOutputClauseTest.kt:1141
+text: SELECT t.*-- c\n::text, a FROM t
+=== SqlOutputClauseTest.kt:1143
+text: t.*-- c\n::text
+=== SqlOutputClauseTest.kt:1144
+text: a
+=== SqlOutputClauseTest.kt:1144#2
+text: a
+=== SqlOutputClauseTest.kt:1151
+text: an implicit alias followed by a comment with no following item is unaffected by truncation
+=== SqlOutputClauseTest.kt:1152
+text: SELECT u.* whatever -- c\nFROM users u
+=== SqlOutputClauseTest.kt:1154
+text: u.*
+=== SqlOutputClauseTest.kt:1162
+text: a digit-leading qualifier before a star is arithmetic, not a star
+=== SqlOutputClauseTest.kt:1163
+text: SELECT 2.*3 lbl, a FROM t
+=== SqlOutputClauseTest.kt:1165
+text: 2.*3
+=== SqlOutputClauseTest.kt:1166
+text: a
+=== SqlOutputClauseTest.kt:1166#2
+text: a
+=== SqlOutputClauseTest.kt:1170
+text: a digit-leading qualifier before a star with explicit whitespace is arithmetic, not a star
+=== SqlOutputClauseTest.kt:1171
+text: SELECT 2. * 3 AS x, a FROM t
+=== SqlOutputClauseTest.kt:1173
+text: 2. * 3
+=== SqlOutputClauseTest.kt:1174
+text: a
+=== SqlOutputClauseTest.kt:1174#2
+text: a
+=== SqlOutputClauseTest.kt:1180
+text: a digit-leading qualifier before a star with an implicit alias remains arithmetic, not a star
+=== SqlOutputClauseTest.kt:1181
+text: SELECT 2.*a lbl, a FROM t
+=== SqlOutputClauseTest.kt:1183
+text: 2.*a
+=== SqlOutputClauseTest.kt:1184
+text: a
+=== SqlOutputClauseTest.kt:1184#2
+text: a
+=== SqlOutputClauseTest.kt:1190
+text: an aggregate star multiplied by a constant is not mistaken for the star guard
+=== SqlOutputClauseTest.kt:1191
+text: SELECT count(*) * 2 tot, (SELECT 1) AS id FROM t
+=== SqlOutputClauseTest.kt:1193
+text: count(*) * 2
+=== SqlOutputClauseTest.kt:1194
+text: (SELECT 1)
+=== SqlOutputClauseTest.kt:1200
+text: an ALL quantifier fused with a digit-leading qualifier is still arithmetic, not a star
+=== SqlOutputClauseTest.kt:1201
+text: SELECT ALL 2.*a lbl, b FROM t
+=== SqlOutputClauseTest.kt:1203
+text: 2.*a
+=== SqlOutputClauseTest.kt:1204
+text: b
+=== SqlOutputClauseTest.kt:1204#2
+text: b
+=== SqlOutputClauseTest.kt:1211
+text: a DISTINCT quantifier with no ON clause is not part of the first item
+=== SqlOutputClauseTest.kt:1212
+text: SELECT DISTINCT a, b FROM t
+=== SqlOutputClauseTest.kt:1214
+text: a
+=== SqlOutputClauseTest.kt:1214#2
+text: a
+=== SqlOutputClauseTest.kt:1215
+text: b
+=== SqlOutputClauseTest.kt:1215#2
+text: b
+=== SqlOutputClauseTest.kt:1227
+text: a digit-leading qualifier before a star with an NFD implicit alias remains arithmetic, not a star
+=== SqlOutputClauseTest.kt:1228
+text: SELECT 2.*x́ lbl, a FROM t
+=== SqlOutputClauseTest.kt:1230
+text: 2.*x́
+=== SqlOutputClauseTest.kt:1231
+text: a
+=== SqlOutputClauseTest.kt:1231#2
+text: a
+=== SqlOutputClauseTest.kt:1235
+text: a multiplication expression with a trailing line comment is not mistaken for the star guard
+=== SqlOutputClauseTest.kt:1236
+text: SELECT a * b -- c\n, id FROM t
+=== SqlOutputClauseTest.kt:1238
+text: a * b
+=== SqlOutputClauseTest.kt:1239
+text: id
+=== SqlOutputClauseTest.kt:1239#2
+text: id
+=== SqlOutputClauseTest.kt:1244
+text: a multiplication expression with an implicit alias and internal block comment is not mistaken as a star
+=== SqlOutputClauseTest.kt:1245
+text: SELECT 2 * x /*c*/ total, id FROM t
+=== SqlOutputClauseTest.kt:1247
+text: 2 * x
+=== SqlOutputClauseTest.kt:1248
+text: id
+=== SqlOutputClauseTest.kt:1248#2
+text: id
+=== SqlOutputClauseTest.kt:1253
+text: a function-call multiplication expression with a trailing line comment is not mistaken for the star guard
+=== SqlOutputClauseTest.kt:1254
+text: SELECT sum(x) * 2 -- c\n, id FROM t
+=== SqlOutputClauseTest.kt:1256
+text: sum(x) * 2
+=== SqlOutputClauseTest.kt:1257
+text: id
+=== SqlOutputClauseTest.kt:1257#2
+text: id
+=== SqlOutputClauseTest.kt:1261
+text: a cast on a star with a trailing line comment is not mistaken for the star guard
+=== SqlOutputClauseTest.kt:1262
+text: SELECT t.*::text -- c\n, id FROM t
+=== SqlOutputClauseTest.kt:1264
+text: t.*::text
+=== SqlOutputClauseTest.kt:1265
+text: id
+=== SqlOutputClauseTest.kt:1265#2
+text: id
+=== SqlOutputClauseTest.kt:1270
+text: count star with an implicit alias and a trailing line comment is not mistaken for the star guard
+=== SqlOutputClauseTest.kt:1271
+text: SELECT count(*) total -- c\n, id FROM t
+=== SqlOutputClauseTest.kt:1273
+text: count(*)
+=== SqlOutputClauseTest.kt:1274
+text: id
+=== SqlOutputClauseTest.kt:1274#2
+text: id
+=== SqlOutputClauseTest.kt:1279
+text: a multiplication expression split across a line comment and a newline is not mistaken for the star guard
+=== SqlOutputClauseTest.kt:1280
+text: SELECT a * -- c\n b, id FROM t
+=== SqlOutputClauseTest.kt:1282
+text: a * -- c\n b
+=== SqlOutputClauseTest.kt:1283
+text: id
+=== SqlOutputClauseTest.kt:1283#2
+text: id
+=== SqlOutputClauseTest.kt:1287
+text: a parenthesized cast with an implicit alias is not mistaken for the star guard
+=== SqlOutputClauseTest.kt:1288
+text: SELECT (a*b)::int lbl, id FROM t
+=== SqlOutputClauseTest.kt:1290
+text: (a*b)::int
+=== SqlOutputClauseTest.kt:1291
+text: id
+=== SqlOutputClauseTest.kt:1291#2
+text: id
+=== SqlOutputClauseTest.kt:1295
+text: a string literal containing a star with an implicit alias is not mistaken for the star guard
+=== SqlOutputClauseTest.kt:1296
+text: SELECT 'lit *' foo, id FROM t
+=== SqlOutputClauseTest.kt:1298
+text: 'lit *'
+=== SqlOutputClauseTest.kt:1299
+text: id
+=== SqlOutputClauseTest.kt:1299#2
+text: id
+=== SqlOutputClauseTest.kt:1304
+text: an array-indexed multiplication expression with an implicit alias is not mistaken for the star guard
+=== SqlOutputClauseTest.kt:1305
+text: SELECT arr[1] * 2 tot, id FROM t
+=== SqlOutputClauseTest.kt:1307
+text: arr[1] * 2
+=== SqlOutputClauseTest.kt:1308
+text: id
+=== SqlOutputClauseTest.kt:1308#2
+text: id
+=== SqlOutputClauseTest.kt:1312
+text: a lone star with no implicit alias is unaffected by the implicit-alias check
+=== SqlOutputClauseTest.kt:1313
+text: SELECT * FROM t
+=== SqlOutputClauseTest.kt:1315
+text: *
+=== SqlOutputClauseTest.kt:1319
+text: a lone qualified star with no implicit alias is unaffected by the implicit-alias check
+=== SqlOutputClauseTest.kt:1320
+text: SELECT t.* FROM t
+=== SqlOutputClauseTest.kt:1322
+text: t.*
+=== SqlOutputClauseTest.kt:1329
+text: an implicit alias on a non-star column is not mistaken for the star guard and keeps its column name
+=== SqlOutputClauseTest.kt:1330
+text: SELECT preferences prefs, id FROM t
+=== SqlOutputClauseTest.kt:1332
+text: preferences
+=== SqlOutputClauseTest.kt:1332#2
+text: preferences
+=== SqlOutputClauseTest.kt:1333
+text: id
+=== SqlOutputClauseTest.kt:1333#2
+text: id
+=== SqlOutputClauseTest.kt:1338
+text: WITH clause main query with no FROM clause
+=== SqlOutputClauseTest.kt:1339
+text: WITH c AS (SELECT 1) SELECT 5, 'x'
+=== SqlOutputClauseTest.kt:1341
+text: 5
+=== SqlOutputClauseTest.kt:1342
+text: 'x'
+=== SqlOutputClauseTest.kt:1347
+text: UNION picks the first branch's columns
+=== SqlOutputClauseTest.kt:1348
+text: SELECT a FROM x UNION SELECT b FROM y
+=== SqlOutputClauseTest.kt:1350
+text: a
+=== SqlOutputClauseTest.kt:1350#2
+text: a
+=== SqlOutputClauseTest.kt:1362
+text: SELECT "ux" FROM c
+=== SqlOutputClauseTest.kt:1363
+text: ux
+=== SqlOutputClauseTest.kt:1370
+text: SELECT "My Col" FROM c
+=== SqlOutputClauseTest.kt:1371
+text: My Col
+=== SqlOutputClauseTest.kt:1381
+text: SELECT "He""llo" FROM c
+=== SqlOutputClauseTest.kt:1382
+text: He"llo
+=== SqlOutputClauseTest.kt:1388
+text: SELECT t."ux" FROM c
+=== SqlOutputClauseTest.kt:1389
+text: t
+=== SqlOutputClauseTest.kt:1391
+text: ux
+=== SqlOutputClauseTest.kt:1397
+text: SELECT "t".ux FROM c
+=== SqlOutputClauseTest.kt:1398
+text: t
+=== SqlOutputClauseTest.kt:1400
+text: ux
+=== SqlOutputClauseTest.kt:1406
+text: SELECT "t"."ux" FROM c
+=== SqlOutputClauseTest.kt:1407
+text: t
+=== SqlOutputClauseTest.kt:1409
+text: ux
+=== SqlOutputClauseTest.kt:1417
+text: SELECT "my.table".ux FROM c
+=== SqlOutputClauseTest.kt:1418
+text: my.table
+=== SqlOutputClauseTest.kt:1420
+text: ux
+=== SqlOutputClauseTest.kt:1425
+text: SELECT ux FROM c
+=== SqlOutputClauseTest.kt:1426
+text: ux
+=== SqlOutputClauseTest.kt:1435
+text: SELECT "" FROM c
+=== SqlOutputClauseTest.kt:1446
+text: a
+=== SqlOutputClauseTest.kt:1447
+text: SELECT $overLongName FROM t
+=== SqlOutputClauseTest.kt:1448
+text: a
+=== SqlOutputClauseTest.kt:1453
+text: a
+=== SqlOutputClauseTest.kt:1454
+text: SELECT "$overLongName" FROM t
+=== SqlOutputClauseTest.kt:1455
+text: a
+=== SqlOutputClauseTest.kt:1460
+text: b
+=== SqlOutputClauseTest.kt:1461
+text: SELECT $overLongTable.col FROM t
+=== SqlOutputClauseTest.kt:1462
+text: b
+=== SqlOutputClauseTest.kt:1469
+text: a
+=== SqlOutputClauseTest.kt:1470
+text: SELECT x AS "$overLongName"
+=== SqlOutputClauseTest.kt:1471
+text: "$overLongName"
+=== SqlOutputClauseTest.kt:1472
+text: "
+=== SqlOutputClauseTest.kt:1482
+text: SELECT x AS "He""llo" FROM t
+=== SqlOutputClauseTest.kt:1483
+text: "He""llo"
+=== SqlOutputClauseTest.kt:1488
+text: SELECT x AS ux FROM t
+=== SqlOutputClauseTest.kt:1489
+text: ux
+=== SqlOutputClauseTest.kt:1494
+text: SELECT x AS 1x FROM t
+=== SqlOutputClauseTest.kt:1499
+text: SELECT x AS "abc FROM t
+=== SqlOutputClauseTest.kt:1504
+text: SELECT x AS ux zz FROM t
+=== SqlOutputClauseTest.kt:1512
+text: {0}
+=== SqlOutputClauseTest.kt:1513
+text: cases
+=== SqlOutputClauseTest.kt:1521
+text: {0}
+=== SqlOutputClauseTest.kt:1522
+text: gluedShapes
+=== SqlOutputClauseTest.kt:1527
+text: {0}
+=== SqlOutputClauseTest.kt:1528
+text: gluedShapes
+=== SqlOutputClauseTest.kt:1538
+text: SELECT
+=== SqlOutputClauseTest.kt:1538#2
+text: (a + b)
+=== SqlOutputClauseTest.kt:1538#3
+text:  AS total FROM t
+=== SqlOutputClauseTest.kt:1538#4
+text: total
+=== SqlOutputClauseTest.kt:1539
+text: SELECT DISTINCT
+=== SqlOutputClauseTest.kt:1539#2
+text: (a)
+=== SqlOutputClauseTest.kt:1539#3
+text:  FROM t
+=== SqlOutputClauseTest.kt:1540
+text: UPDATE t SET a = 1 RETURNING
+=== SqlOutputClauseTest.kt:1540#2
+text: (a + 1)
+=== SqlOutputClauseTest.kt:1540#3
+text: 
+=== SqlOutputClauseTest.kt:1541
+text: SELECT
+=== SqlOutputClauseTest.kt:1541#2
+text: "a"
+=== SqlOutputClauseTest.kt:1541#3
+text:  FROM t
+=== SqlOutputClauseTest.kt:1542
+text: SELECT
+=== SqlOutputClauseTest.kt:1542#2
+text: 'x'
+=== SqlOutputClauseTest.kt:1542#3
+text:  FROM t
+=== SqlOutputClauseTest.kt:1543
+text: SELECT
+=== SqlOutputClauseTest.kt:1543#2
+text: -a
+=== SqlOutputClauseTest.kt:1543#3
+text:  FROM t
+=== SqlOutputClauseTest.kt:1544
+text: SELECT
+=== SqlOutputClauseTest.kt:1544#2
+text: *
+=== SqlOutputClauseTest.kt:1544#3
+text: FROM t
+=== SqlOutputClauseTest.kt:1545
+text: SELECT
+=== SqlOutputClauseTest.kt:1545#2
+text: (a)
+=== SqlOutputClauseTest.kt:1545#3
+text: FROM t
+=== SqlOutputClauseTest.kt:1546
+text: SELECT
+=== SqlOutputClauseTest.kt:1546#2
+text: 'x'
+=== SqlOutputClauseTest.kt:1546#3
+text: FROM t
+=== SqlOutputClauseTest.kt:1547
+text: SELECT
+=== SqlOutputClauseTest.kt:1547#2
+text: "a"
+=== SqlOutputClauseTest.kt:1547#3
+text: FROM t
+=== SqlOutputClauseTest.kt:1548
+text: SELECT 
+=== SqlOutputClauseTest.kt:1548#2
+text: a.*
+=== SqlOutputClauseTest.kt:1548#3
+text: FROM t
+=== SqlOutputClauseTest.kt:1549
+text: UPDATE t SET a = 1 RETURNING
+=== SqlOutputClauseTest.kt:1549#2
+text: *
+=== SqlOutputClauseTest.kt:1549#3
+text: 
+=== SqlOutputClauseTest.kt:1550
+text: SELECT DISTINCT ON (a)
+=== SqlOutputClauseTest.kt:1550#2
+text: b
+=== SqlOutputClauseTest.kt:1550#3
+text:  FROM t
+=== SqlOutputClauseTest.kt:1551
+text: SELECT ALL
+=== SqlOutputClauseTest.kt:1551#2
+text: (a)
+=== SqlOutputClauseTest.kt:1551#3
+text:  FROM t
+=== SqlOutputClauseTest.kt:1552
+text: SELECT
+=== SqlOutputClauseTest.kt:1552#2
+text: (a)
+=== SqlOutputClauseTest.kt:1552#3
+text:  FROM t; SELECT 2
+=== SqlOutputClauseTest.kt:1553
+text: (SELECT
+=== SqlOutputClauseTest.kt:1553#2
+text: (a)
+=== SqlOutputClauseTest.kt:1553#3
+text:  FROM t)
+=== SqlOutputClauseTest.kt:1554
+text: SELECT
+=== SqlOutputClauseTest.kt:1554#2
+text: (a)
+=== SqlOutputClauseTest.kt:1554#3
+text:  UNION SELECT b
+=== SqlOutputClauseTest.kt:1558
+text: now()::timestamp without time zone
+=== SqlOutputClauseTest.kt:1560
+text: SELECT id, $withoutTimeZone FROM t
+=== SqlOutputClauseTest.kt:1560#2
+text: id
+=== SqlOutputClauseTest.kt:1561
+text: SELECT $withoutTimeZone, id FROM t
+=== SqlOutputClauseTest.kt:1561#2
+text: id
+=== SqlOutputClauseTest.kt:1563
+text: SELECT id, now()::time without time zone FROM t
+=== SqlOutputClauseTest.kt:1564
+text: id
+=== SqlOutputClauseTest.kt:1565
+text: now()::time without time zone
+=== SqlOutputClauseTest.kt:1568
+text: SELECT now()::time without time zone, id FROM t
+=== SqlOutputClauseTest.kt:1569
+text: now()::time without time zone
+=== SqlOutputClauseTest.kt:1570
+text: id
+=== SqlOutputClauseTest.kt:1573
+text: SELECT id, x::timestamp(3) without time zone FROM t
+=== SqlOutputClauseTest.kt:1574
+text: id
+=== SqlOutputClauseTest.kt:1575
+text: x::timestamp(3) without time zone
+=== SqlOutputClauseTest.kt:1578
+text: SELECT x::timestamp(3) without time zone, id FROM t
+=== SqlOutputClauseTest.kt:1579
+text: x::timestamp(3) without time zone
+=== SqlOutputClauseTest.kt:1580
+text: id
+=== SqlOutputClauseTest.kt:1582
+text: SELECT $withoutTimeZone AS x FROM t
+=== SqlOutputClauseTest.kt:1582#2
+text: x
+=== SqlOutputClauseTest.kt:1583
+text: SELECT $withoutTimeZone x FROM t
+=== SqlOutputClauseTest.kt:1583#2
+text: x
+=== SqlOutputClauseTest.kt:1584
+text: UPDATE t SET a = 1 RETURNING $withoutTimeZone
+=== SqlOutputClauseTest.kt:1585
+text: UPDATE t SET a = 1 RETURNING $withoutTimeZone AS x
+=== SqlOutputClauseTest.kt:1585#2
+text: x
+=== SqlOutputClauseTest.kt:1586
+text: UPDATE t SET a = 1 RETURNING $withoutTimeZone x
+=== SqlOutputClauseTest.kt:1586#2
+text: x
+=== SqlOutputClauseTest.kt:1588
+text: SELECT id, U&'abc' UESCAPE '!' FROM t
+=== SqlOutputClauseTest.kt:1589
+text: id
+=== SqlOutputClauseTest.kt:1590
+text: U&'abc' UESCAPE '!'
+=== SqlOutputClauseTest.kt:1593
+text: SELECT U&'abc' UESCAPE '!', id FROM t
+=== SqlOutputClauseTest.kt:1594
+text: U&'abc' UESCAPE '!'
+=== SqlOutputClauseTest.kt:1595
+text: id
+=== SqlOutputClauseTest.kt:1597
+text: SELECT U&'abc' UESCAPE '!' AS y FROM t
+=== SqlOutputClauseTest.kt:1597#2
+text: U&'abc' UESCAPE '!'
+=== SqlOutputClauseTest.kt:1597#3
+text: y
+=== SqlOutputClauseTest.kt:1598
+text: SELECT U&'abc' UESCAPE '!' y FROM t
+=== SqlOutputClauseTest.kt:1598#2
+text: U&'abc' UESCAPE '!'
+=== SqlOutputClauseTest.kt:1598#3
+text: y
+=== SqlOutputClauseTest.kt:1600
+text: SELECT id, x::double precision FROM t
+=== SqlOutputClauseTest.kt:1601
+text: id
+=== SqlOutputClauseTest.kt:1602
+text: x::double precision
+=== SqlOutputClauseTest.kt:1605
+text: SELECT id, x::character varying(10) FROM t
+=== SqlOutputClauseTest.kt:1606
+text: id
+=== SqlOutputClauseTest.kt:1607
+text: x::character varying(10)
+=== SqlOutputClauseTest.kt:1610
+text: SELECT id, x::interval day to second FROM t
+=== SqlOutputClauseTest.kt:1611
+text: id
+=== SqlOutputClauseTest.kt:1612
+text: x::interval day to second
+=== SqlOutputClauseTest.kt:1614
+text: SELECT id, x::int ARRAY[3] FROM t
+=== SqlOutputClauseTest.kt:1614#2
+text: id
+=== SqlOutputClauseTest.kt:1614#3
+text: x::int ARRAY[3]
+=== SqlOutputClauseTest.kt:1615
+text: SELECT id, x::text[] FROM t
+=== SqlOutputClauseTest.kt:1615#2
+text: id
+=== SqlOutputClauseTest.kt:1615#3
+text: x::text[]
+=== SqlOutputClauseTest.kt:1617
+text: SELECT id, x LIKE 'a' ESCAPE '!' FROM t
+=== SqlOutputClauseTest.kt:1618
+text: id
+=== SqlOutputClauseTest.kt:1619
+text: x LIKE 'a' ESCAPE '!'
+=== SqlOutputClauseTest.kt:1622
+text: SELECT id, ts AT TIME ZONE tz FROM t
+=== SqlOutputClauseTest.kt:1623
+text: id
+=== SqlOutputClauseTest.kt:1624
+text: ts AT TIME ZONE tz
+=== SqlOutputClauseTest.kt:1627
+text: SELECT id, ts AT TIME ZONE tz z FROM t
+=== SqlOutputClauseTest.kt:1628
+text: id
+=== SqlOutputClauseTest.kt:1629
+text: ts AT TIME ZONE tz
+=== SqlOutputClauseTest.kt:1629#2
+text: z
+=== SqlOutputClauseTest.kt:1631
+text: SELECT id, a + b c FROM t
+=== SqlOutputClauseTest.kt:1631#2
+text: id
+=== SqlOutputClauseTest.kt:1631#3
+text: a + b
+=== SqlOutputClauseTest.kt:1631#4
+text: c
+=== SqlOutputClauseTest.kt:1633
+text: SELECT id, x IS DISTINCT FROM y FROM t
+=== SqlOutputClauseTest.kt:1634
+text: id
+=== SqlOutputClauseTest.kt:1635
+text: x IS DISTINCT FROM y
+=== SqlOutputClauseTest.kt:1637
+text: SELECT id, x IS DISTINCT FROM y
+=== SqlOutputClauseTest.kt:1637#2
+text: id
+=== SqlOutputClauseTest.kt:1637#3
+text: x IS DISTINCT FROM y
+=== SqlOutputClauseTest.kt:1639
+text: SELECT id, count(*) FILTER (WHERE x) FROM t
+=== SqlOutputClauseTest.kt:1640
+text: id
+=== SqlOutputClauseTest.kt:1641
+text: count(*) FILTER (WHERE x)
+=== SqlOutputClauseTest.kt:1644
+text: SELECT id, sum(x) OVER (ORDER BY y) FROM t
+=== SqlOutputClauseTest.kt:1645
+text: id
+=== SqlOutputClauseTest.kt:1646
+text: sum(x) OVER (ORDER BY y)
+=== SqlOutputClauseTest.kt:1648
+text: SELECT id, a "b" FROM t
+=== SqlOutputClauseTest.kt:1648#2
+text: id
+=== SqlOutputClauseTest.kt:1648#3
+text: a
+=== SqlOutputClauseTest.kt:1648#4
+text: "b"
+=== SqlOutputClauseTest.kt:1649
+text: SELECT id, a;
+=== SqlOutputClauseTest.kt:1649#2
+text: id
+=== SqlOutputClauseTest.kt:1649#3
+text: a
+=== SqlOutputClauseTest.kt:1650
+text: (SELECT a) UNION (SELECT b)
+=== SqlOutputClauseTest.kt:1650#2
+text: a
+=== SqlOutputClauseTest.kt:1651
+text: SELECT id, a --c\nFROM t
+=== SqlOutputClauseTest.kt:1651#2
+text: id
+=== SqlOutputClauseTest.kt:1651#3
+text: a
+=== SqlOutputClauseTest.kt:1652
+text: SELECT id, a /*c*/ FROM t
+=== SqlOutputClauseTest.kt:1652#2
+text: id
+=== SqlOutputClauseTest.kt:1652#3
+text: a
+=== SqlOutputClauseTest.kt:1653
+text: SELECT a FROM t FOR UPDATE
+=== SqlOutputClauseTest.kt:1653#2
+text: a
+=== SqlOutputClauseTest.kt:1654
+text: SELECT a FROM t WINDOW w AS (ORDER BY a)
+=== SqlOutputClauseTest.kt:1654#2
+text: a
+=== SqlOutputClauseTest.kt:1655
+text: SELECT a INTO x FROM t
+=== SqlOutputClauseTest.kt:1655#2
+text: a
+=== SqlOutputClauseTest.kt:1656
+text: SELECT *
+=== SqlOutputClauseTest.kt:1656#2
+text: *
+=== SqlOutputClauseTest.kt:1657
+text: SELECT t.* x FROM t
+=== SqlOutputClauseTest.kt:1657#2
+text: t.*
+=== SqlOutputClauseTest.kt:1657#3
+text: x
+=== SqlOutputClauseTest.kt:1658
+text: SELECT interval\n'1 day' FROM t
+=== SqlOutputClauseTest.kt:1658#2
+text: interval\n'1 day'
+=== SqlOutputClauseTest.kt:1659
+text: SELECT timestamp '2020-01-01' FROM t
+=== SqlOutputClauseTest.kt:1659#2
+text: timestamp '2020-01-01'
+=== SqlOutputClauseTest.kt:1660
+text: SELECT a, ?
+=== SqlOutputClauseTest.kt:1660#2
+text: a
+=== SqlOutputClauseTest.kt:1660#3
+text: ?
+=== SqlOutputClauseTest.kt:1661
+text: SELECT a, b; SELECT c, d
+=== SqlOutputClauseTest.kt:1661#2
+text: a
+=== SqlOutputClauseTest.kt:1661#3
+text: b
+=== SqlStarItemTest.kt:17
+text: SELECT $selectList FROM t
+=== SqlStarItemTest.kt:21
+text: description dx
+=== SqlStarItemTest.kt:22
+text: description
+=== SqlStarItemTest.kt:23
+text: description
+=== SqlStarItemTest.kt:24
+text: dx
+=== SqlStarItemTest.kt:30
+text: UPPER(a) y
+=== SqlStarItemTest.kt:31
+text: UPPER(a)
+=== SqlStarItemTest.kt:32
+text: y
+=== SqlStarItemTest.kt:38
+text: description
+=== SqlStarItemTest.kt:45
+text: a$b dx
+=== SqlStarItemTest.kt:46
+text: a$b
+=== SqlStarItemTest.kt:47
+text: dx
+=== SqlStarItemTest.kt:52
+text: description "He""llo"
+=== SqlStarItemTest.kt:53
+text: description
+=== SqlStarItemTest.kt:54
+text: "He""llo"
+=== SqlStarItemTest.kt:59
+text: SELECT col a b FROM t
+=== SqlStarItemTest.kt:64
+text: SELECT description "a" "b" FROM t
+=== SqlStarItemTest.kt:69
+text: description U&"x"
+=== SqlStarItemTest.kt:70
+text: description
+=== SqlStarItemTest.kt:71
+text: U&"x"
+=== SqlPlaceholdersTest.kt:12
+text: SELECT '?', ?
+=== SqlPlaceholdersTest.kt:13
+text: SELECT E'a\\'?', ?
+=== SqlPlaceholdersTest.kt:14
+text: SELECT $$?$$, ?
+=== SqlPlaceholdersTest.kt:15
+text: SELECT $tag$?$tag$, ?
+=== SqlPlaceholdersTest.kt:16
+text: SELECT "a?b", ?
+=== SqlPlaceholdersTest.kt:17
+text: SELECT 1 -- ?\n, ?
+=== SqlPlaceholdersTest.kt:18
+text: SELECT /* ? */ ?
+=== SqlPlaceholdersTest.kt:19
+text: SELECT a =?
+=== SqlPlaceholdersTest.kt:20
+text: SELECT a >=?
+=== SqlPlaceholdersTest.kt:21
+text: SELECT a =-?
+=== SqlPlaceholdersTest.kt:25
+text: SELECT ?, '?
+=== SqlPlaceholdersTest.kt:26
+text: SELECT ?, E'\\'?
+=== SqlPlaceholdersTest.kt:27
+text: SELECT ?, $$?
+=== SqlPlaceholdersTest.kt:28
+text: SELECT ?, $tag$?$$
+=== SqlPlaceholdersTest.kt:29
+text: SELECT ?, "?
+=== SqlPlaceholdersTest.kt:30
+text: SELECT ?, /* ?
+=== SqlPlaceholdersTest.kt:34
+text: SELECT j ?? 'k', ?
+=== SqlPlaceholdersTest.kt:35
+text: SELECT j =?? 'k'
+=== SqlPlaceholdersTest.kt:36
+text: SELECT j ??= 'k'
+=== SqlPlaceholdersTest.kt:37
+text: SELECT j ??| 'k'
+=== SqlPlaceholdersTest.kt:47
+text: SELECT * FROM t WHERE id = ?
+=== SqlPlaceholdersTest.kt:47#2
+text: NULL
+=== SqlPlaceholdersTest.kt:48
+text: SELECT * FROM t WHERE id = NULL
+=== SqlPlaceholdersTest.kt:53
+text: SELECT * FROM t WHERE a = ? AND b = ?
+=== SqlPlaceholdersTest.kt:53#2
+text: NULL
+=== SqlPlaceholdersTest.kt:54
+text: SELECT * FROM t WHERE a = NULL AND b = NULL
+=== SqlPlaceholdersTest.kt:59
+text: SELECT * FROM t WHERE note = 'really?' AND id = ?
+=== SqlPlaceholdersTest.kt:59#2
+text: NULL
+=== SqlPlaceholdersTest.kt:60
+text: SELECT * FROM t WHERE note = 'really?' AND id = NULL
+=== SqlPlaceholdersTest.kt:66
+text: SELECT * FROM t WHERE note = 'it''s a ? mark' AND id = ?
+=== SqlPlaceholdersTest.kt:66#2
+text: NULL
+=== SqlPlaceholdersTest.kt:67
+text: SELECT * FROM t WHERE note = 'it''s a ? mark' AND id = NULL
+=== SqlPlaceholdersTest.kt:72
+text: SELECT * FROM t -- why?\nWHERE id = ?
+=== SqlPlaceholdersTest.kt:72#2
+text: NULL
+=== SqlPlaceholdersTest.kt:73
+text: SELECT * FROM t -- why?\nWHERE id = NULL
+=== SqlPlaceholdersTest.kt:78
+text: SELECT * FROM t /* what? */ WHERE id = ?
+=== SqlPlaceholdersTest.kt:78#2
+text: NULL
+=== SqlPlaceholdersTest.kt:79
+text: SELECT * FROM t /* what? */ WHERE id = NULL
+=== SqlPlaceholdersTest.kt:84
+text: SELECT j ?? 'k' FROM t WHERE a = ? AND id = ?
+=== SqlPlaceholdersTest.kt:84#2
+text: $${it + 1}
+=== SqlPlaceholdersTest.kt:85
+text: SELECT j ? 'k' FROM t WHERE a = $1 AND id = $2
+=== SqlPlaceholdersTest.kt:90
+text: SELECT j ??? 1
+=== SqlPlaceholdersTest.kt:90#2
+text: $${it + 1}
+=== SqlPlaceholdersTest.kt:91
+text: SELECT j ?$1 1
+=== SqlPlaceholdersTest.kt:96
+text: SELECT '??' /* ?? */ -- ??\n, ?
+=== SqlPlaceholdersTest.kt:97
+text: $${it + 1}
+=== SqlPlaceholdersTest.kt:97#2
+text: SELECT '??' /* ?? */ -- ??\n, $1
+=== SqlPlaceholdersTest.kt:102
+text: SELECT * FROM department
+=== SqlPlaceholdersTest.kt:103
+text: NULL
+=== SqlPlaceholdersTest.kt:110
+text: SELECT '?
+=== SqlPlaceholdersTest.kt:110#2
+text: NULL
+=== SqlPlaceholdersTest.kt:111
+text: SELECT '?
+=== SqlPlaceholdersTest.kt:116
+text: SELECT /* ?
+=== SqlPlaceholdersTest.kt:116#2
+text: NULL
+=== SqlPlaceholdersTest.kt:117
+text: SELECT /* ?
+=== SqlPlaceholdersTest.kt:122
+text: SELECT $$a ? b$$ WHERE id = ?
+=== SqlPlaceholdersTest.kt:122#2
+text: NULL
+=== SqlPlaceholdersTest.kt:123
+text: SELECT $$a ? b$$ WHERE id = NULL
+=== SqlPlaceholdersTest.kt:128
+text: SELECT $tag$a ? b$tag$ WHERE id = ?
+=== SqlPlaceholdersTest.kt:128#2
+text: NULL
+=== SqlPlaceholdersTest.kt:129
+text: SELECT $tag$a ? b$tag$ WHERE id = NULL
+=== SqlPlaceholdersTest.kt:134
+text: SELECT "quoted?identifier" WHERE id = ?
+=== SqlPlaceholdersTest.kt:134#2
+text: NULL
+=== SqlPlaceholdersTest.kt:135
+text: SELECT "quoted?identifier" WHERE id = NULL
+=== SqlPlaceholdersTest.kt:140
+text: SELECT E'a\\'?b' WHERE id = ?
+=== SqlPlaceholdersTest.kt:140#2
+text: NULL
+=== SqlPlaceholdersTest.kt:141
+text: SELECT E'a\\'?b' WHERE id = NULL
+=== SqlPlaceholdersTest.kt:146
+text: SELECT /* a /* b */ c ? */ 1
+=== SqlPlaceholdersTest.kt:146#2
+text: NULL
+=== SqlPlaceholdersTest.kt:147
+text: SELECT /* a /* b */ c ? */ 1
+=== SqlPlaceholdersTest.kt:153
+text: SELECT ?, ?, ?
+=== SqlPlaceholdersTest.kt:155
+text: $$index
+=== SqlPlaceholdersTest.kt:158
+text: SELECT $0, $1, $2
+=== SqlPlaceholdersTest.kt:163
+text: 0::int4
+=== SqlPlaceholdersTest.kt:164
+text: SELECT digest(?, ?)
+=== SqlPlaceholdersTest.kt:165
+text: NULL
+=== SqlPlaceholdersTest.kt:167
+text: SELECT digest(0::int4, NULL)
+=== SqlPlaceholdersTest.kt:176
+text: SELECT a FROM t WHERE a = ? AND b = ?
+=== SqlPlaceholdersTest.kt:183
+text: SELECT * FROM t WHERE note = 'ok?' AND id = ?
+=== SqlPlaceholdersTest.kt:190
+text: SELECT * FROM t -- why?\nWHERE id = ?
+=== SqlPlaceholdersTest.kt:197
+text: SELECT j ?? 'k' FROM t WHERE id = ?
+=== SqlPlaceholdersTest.kt:203
+text: SELECT j ??? 1
+=== SqlPlaceholdersTest.kt:209
+text: SELECT * FROM t
+=== SqlPlaceholdersTest.kt:217
+text: norm.generator.SqlPlaceholdersTestKt#trailingPlaceholderQueries
+=== SqlPlaceholdersTest.kt:220
+text: $${it + 1}
+=== SqlPlaceholdersTest.kt:220#2
+text: $1
+=== SqlPlaceholdersTest.kt:224
+text: norm.generator.SqlPlaceholdersTestKt#unterminatedQueries
+=== SqlPlaceholdersTest.kt:227
+text: $${it + 1}
+=== SqlPlaceholdersTest.kt:228
+text: SELECT $1
+=== SqlPlaceholdersTest.kt:228#2
+text: SELECT ?
+=== SqlPlaceholdersTest.kt:233
+text: SELECT ?, 1a, ?
+=== SqlPlaceholdersTest.kt:235
+text: $${it + 1}
+=== SqlPlaceholdersTest.kt:235#2
+text: SELECT $1, 1a, ?
+=== SqlPlaceholdersTest.kt:240
+text: SELECT j =?? 'k' AND j ??| 'k' AND j ??= 'k' AND id = ?
+=== SqlPlaceholdersTest.kt:242
+text: $${it + 1}
+=== SqlPlaceholdersTest.kt:243
+text: SELECT j =? 'k' AND j ?| 'k' AND j ?= 'k' AND id = $1
+=== SqlPlaceholdersTest.kt:248
+text: SELECT ?--c\n, ??--c
+=== SqlPlaceholdersTest.kt:250
+text: $${it + 1}
+=== SqlPlaceholdersTest.kt:250#2
+text: SELECT $1--c\n, ?--c
+=== SqlPlaceholdersTest.kt:258
+text: norm.generator.SqlPlaceholdersTestKt#allQueries
+=== SqlPlaceholdersTest.kt:266
+text: norm.generator.SqlPlaceholdersTestKt#parseableQueries
+=== SqlPlaceholdersTest.kt:273
+text: a =?? b
+=== SqlPlaceholdersTest.kt:273#2
+text: a =?  b
+=== SqlPlaceholdersTest.kt:274
+text: a ??= b
+=== SqlPlaceholdersTest.kt:274#2
+text: a ?=  b
+=== SqlPlaceholdersTest.kt:275
+text: a ??| b
+=== SqlPlaceholdersTest.kt:275#2
+text: a ?|  b
+=== SqlPlaceholdersTest.kt:276
+text: a ??? b
+=== SqlPlaceholdersTest.kt:276#2
+text: a ?0  b
+=== SqlPlaceholdersTest.kt:277
+text: a =-? b
+=== SqlPlaceholdersTest.kt:277#2
+text: a =-0 b
+=== SqlPlaceholdersTest.kt:282
+text: SELECT '??' /* ? */ -- ??\n, "a?", $$?$$, 1
+=== SqlPlaceholdersTest.kt:288
+text: SELECT ?, 1a, ?
+=== SqlPlaceholdersTest.kt:289
+text: SELECT 0, 1a, ?
+=== SqlPlaceholdersTest.kt:294
+text: SELECT j ?? 'k' AS flag, ? AS x, b FROM t
+=== SqlPlaceholdersTest.kt:297
+text: j ??
+=== SqlPlaceholdersTest.kt:297#2
+text: ? AS x
+=== SqlPlaceholdersTest.kt:297#3
+text: b FROM
+=== SqlPlaceholdersTest.kt:302
+text: ResTarget
+=== SqlPlaceholdersTest.kt:303
+text: location
+=== SqlPlaceholdersTest.kt:318
+text: int4
+=== SqlPlaceholdersTest.kt:318#2
+text: 0::int4
+=== SqlPlaceholdersTest.kt:319
+text: int8
+=== SqlPlaceholdersTest.kt:319#2
+text: 0::int8
+=== SqlPlaceholdersTest.kt:324
+text: text
+=== SqlPlaceholdersTest.kt:324#2
+text: ''::text
+=== SqlPlaceholdersTest.kt:325
+text: varchar
+=== SqlPlaceholdersTest.kt:325#2
+text: ''::varchar
+=== SqlPlaceholdersTest.kt:330
+text: bool
+=== SqlPlaceholdersTest.kt:330#2
+text: false::bool
+=== SqlPlaceholdersTest.kt:335
+text: bytea
+=== SqlPlaceholdersTest.kt:335#2
+text: '\\x00'::bytea
+=== SqlPlaceholdersTest.kt:340
+text: _int4
+=== SqlPlaceholdersTest.kt:340#2
+text: ARRAY[]::_int4
+=== SqlPlaceholdersTest.kt:341
+text: _text
+=== SqlPlaceholdersTest.kt:341#2
+text: ARRAY[]::_text
+=== SqlPlaceholdersTest.kt:346
+text: custom_type
+=== SqlPlaceholdersTest.kt:346#2
+text: NULL::custom_type
+=== SqlPlaceholdersTest.kt:351
+text: date
+=== SqlPlaceholdersTest.kt:351#2
+text: '2000-01-01'::date
+=== SqlPlaceholdersTest.kt:352
+text: timestamp
+=== SqlPlaceholdersTest.kt:352#2
+text: '2000-01-01'::timestamp
+=== SqlPlaceholdersTest.kt:353
+text: uuid
+=== SqlPlaceholdersTest.kt:353#2
+text: '00000000-0000-0000-0000-000000000000'::uuid
+=== SqlPlaceholdersTest.kt:364
+text: SELECT j ???
+=== SqlStatementScannerTest.kt:20
+text: UPDATE t SET a = ? WHERE id = ?; DELETE FROM u WHERE id = ?
+=== SqlStatementScannerTest.kt:21
+text: UPDATE t SET a = ? WHERE id = ?
+=== SqlStatementScannerTest.kt:21#2
+text:  DELETE FROM u WHERE id = ?
+=== SqlStatementScannerTest.kt:24
+text: {0}
+=== SqlStatementScannerTest.kt:27
+text: UPDATE t SET note = 'a;b', a = ?
+=== SqlStatementScannerTest.kt:28
+text: UPDATE t SET note = $$a;b$$, a = ?
+=== SqlStatementScannerTest.kt:29
+text: UPDATE t SET note = concat(';', 'x'), a = ?
+=== SqlStatementScannerTest.kt:30
+text: UPDATE t SET note = 'x' /* ; */, a = ? -- ;
+=== SqlStatementScannerTest.kt:31
+text: UPDATE t SET note = "a;b", a = ?
+=== SqlStatementScannerTest.kt:32
+text: UPDATE t SET note = 'x', a = ?;
+=== SqlStatementScannerTest.kt:43
+text: CREATE RULE r AS ON UPDATE TO t DO ALSO (UPDATE u SET a = ?; DELETE FROM u WHERE id = ?)
+=== SqlStatementScannerTest.kt:50
+text: SELECT 1; -- note\n ;/* x */ ;
+=== SqlStatementScannerTest.kt:50#2
+text: SELECT 1
+=== SqlStatementScannerTest.kt:51
+text:  -- note\n /* x */ 
+=== SqlStatementScannerTest.kt:52
+text: 
+=== SqlStatementScannerTest.kt:57
+text: CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT ?; SELECT 2; END
+=== SqlStatementScannerTest.kt:60
+text: $sql; SELECT 3
+=== SqlStatementScannerTest.kt:60#2
+text:  SELECT 3
+=== SqlStatementScannerTest.kt:65
+text: SELECT 1; FROM x y; SELECT 2
+=== SqlStatementScannerTest.kt:65#2
+text: SELECT 1
+=== SqlStatementScannerTest.kt:65#3
+text:  FROM x y
+=== SqlStatementScannerTest.kt:65#4
+text:  SELECT 2
+=== SqlStatementScannerTest.kt:70
+text: SELECT "unterminated; SELECT 2
+=== SqlStatementScannerTest.kt:70#2
+text: SELECT "unterminated; SELECT 2
+=== SqlStatementScannerTest.kt:75
+text: SELECT 1); SELECT ?
+=== SqlStatementScannerTest.kt:76
+text: (SELECT 1
+=== SqlStatementScannerTest.kt:81
+text: 1
+=== SqlStatementScannerTest.kt:82
+text: 1; 2
+=== SqlStatementScannerTest.kt:92
+text: UPDATE t SET a = ?
+=== SqlStatementScannerTest.kt:93
+text:   -- EXPLAIN\n SELECT 1
+=== SqlStatementScannerTest.kt:94
+text: 
+=== SqlStatementScannerTest.kt:97
+text: {0}
+=== SqlStatementScannerTest.kt:100
+text: EXPLAIN UPDATE t SET a = ?
+=== SqlStatementScannerTest.kt:101
+text: EXPLAIN ANALYZE UPDATE t SET a = ?
+=== SqlStatementScannerTest.kt:102
+text: explain analyse verbose UPDATE t SET a = ?
+=== SqlStatementScannerTest.kt:103
+text: EXPLAIN VERBOSE UPDATE t SET a = ?
+=== SqlStatementScannerTest.kt:104
+text: EXPLAIN (ANALYZE, FORMAT JSON) UPDATE t SET a = ?
+=== SqlStatementScannerTest.kt:105
+text: /* c */ EXPLAIN -- c\n (ANALYZE true, SETTINGS true, FORMAT 'json') UPDATE t SET a = ?
+=== SqlStatementScannerTest.kt:106
+text: EXPLAIN (ANALYZE) UPDATE t SET a = ?
+=== SqlStatementScannerTest.kt:107
+text: EXPLAIN /* x */ ANALYZE -- y\n VERBOSE UPDATE t SET a = ?
+=== SqlStatementScannerTest.kt:108
+text: EXPLAIN (ANALYZE /* ) */, -- )\n FORMAT JSON) UPDATE t SET a = ?
+=== SqlStatementScannerTest.kt:112
+text: UPDATE t SET a = ?
+=== SqlStatementScannerTest.kt:117
+text: EXPLAIN ANALYZE /* x */ -- y\n UPDATE t SET a = ?
+=== SqlStatementScannerTest.kt:118
+text: /* x */ -- y\n UPDATE t SET a = ?
+=== SqlStatementScannerTest.kt:121
+text: {0}
+=== SqlStatementScannerTest.kt:124
+text: EXPLAIN (SELECT 1)
+=== SqlStatementScannerTest.kt:125
+text: EXPLAIN ((SELECT 1))
+=== SqlStatementScannerTest.kt:126
+text: EXPLAIN (VALUES (1))
+=== SqlStatementScannerTest.kt:127
+text: EXPLAIN (TABLE t)
+=== SqlStatementScannerTest.kt:128
+text: EXPLAIN (WITH w AS (SELECT 1) SELECT * FROM w)
+=== SqlStatementScannerTest.kt:132
+text: EXPLAIN
+=== SqlStatementScannerTest.kt:137
+text: EXPLAIN (ANALYZE) (SELECT 1)
+=== SqlStatementScannerTest.kt:137#2
+text: (SELECT 1)
+=== SqlStatementScannerTest.kt:138
+text: EXPLAIN ANALYZE (SELECT 1)
+=== SqlStatementScannerTest.kt:138#2
+text: (SELECT 1)
+=== SqlStatementScannerTest.kt:139
+text: EXPLAIN (ANALYZE, FORMAT JSON) SELECT a FROM t WHERE a = ?
+=== SqlStatementScannerTest.kt:140
+text: SELECT a FROM t WHERE a = ?
+=== SqlStatementScannerTest.kt:145
+text: EXPLAIN
+=== SqlStatementScannerTest.kt:146
+text: EXPLAIN ANALYZE
+=== SqlStatementScannerTest.kt:147
+text: EXPLAIN (ANALYZE
+=== SqlStatementScannerTest.kt:153
+text: {0}
+=== SqlStatementScannerTest.kt:155
+text: SELECT
+=== SqlStatementScannerTest.kt:155#2
+text: VALUES
+=== SqlStatementScannerTest.kt:155#3
+text: TABLE
+=== SqlStatementScannerTest.kt:155#4
+text: WITH
+=== SqlStatementScannerTest.kt:155#5
+text: INSERT
+=== SqlStatementScannerTest.kt:155#6
+text: UPDATE
+=== SqlStatementScannerTest.kt:155#7
+text: DELETE
+=== SqlStatementScannerTest.kt:155#8
+text: MERGE
+=== SqlStatementScannerTest.kt:155#9
+text: select
+=== SqlStatementScannerTest.kt:155#10
+text: (SELECT
+=== SqlStatementScannerTest.kt:158
+text: /* note */ -- more\n $opening 1
+=== SqlStatementScannerTest.kt:161
+text: {0}
+=== SqlStatementScannerTest.kt:162
+text: EXPLAIN
+=== SqlStatementScannerTest.kt:162#2
+text: DECLARE
+=== SqlStatementScannerTest.kt:162#3
+text: CREATE
+=== SqlStatementScannerTest.kt:162#4
+text: COPY
+=== SqlStatementScannerTest.kt:162#5
+text: FETCH
+=== SqlStatementScannerTest.kt:162#6
+text: explain
+=== SqlStatementScannerTest.kt:162#7
+text: (EXPLAIN
+=== SqlStatementScannerTest.kt:162#8
+text: 'SELECT'
+=== SqlStatementScannerTest.kt:162#9
+text: 1
+=== SqlStatementScannerTest.kt:164
+text: /* note */ -- more\n $opening 1
+=== SqlStatementScannerTest.kt:169
+text: 
+=== SqlStatementScannerTest.kt:170
+text:  -- SELECT
+=== SqlStatementScannerTest.kt:176
+text: from
+=== SqlStatementScannerTest.kt:176#2
+text: where
+=== SqlStatementScannerTest.kt:176#3
+text: table
+=== SqlStatementScannerTest.kt:176#4
+text: union
+=== SqlStatementScannerTest.kt:176#5
+text: select
+=== SqlStatementScannerTest.kt:176#6
+text: into
+=== SqlStatementScannerTest.kt:183
+text: SELECT a INTO copied FROM t WHERE a = ?
+=== SqlStatementScannerTest.kt:183#2
+text: SELECT a  FROM t WHERE a = ?
+=== SqlStatementScannerTest.kt:184
+text: SELECT a INTO TEMPORARY TABLE copied FROM t
+=== SqlStatementScannerTest.kt:184#2
+text: SELECT a  FROM t
+=== SqlStatementScannerTest.kt:185
+text: SELECT a INTO temp FROM t
+=== SqlStatementScannerTest.kt:185#2
+text: SELECT a  FROM t
+=== SqlStatementScannerTest.kt:186
+text: SELECT a INTO public . "x y" FROM t
+=== SqlStatementScannerTest.kt:186#2
+text: SELECT a  FROM t
+=== SqlStatementScannerTest.kt:187
+text: SELECT a INTO public.from FROM t
+=== SqlStatementScannerTest.kt:187#2
+text: SELECT a  FROM t
+=== SqlStatementScannerTest.kt:188
+text: SELECT a INTO /* x */ copied -- y\n FROM t
+=== SqlStatementScannerTest.kt:188#2
+text: SELECT a  -- y\n FROM t
+=== SqlStatementScannerTest.kt:189
+text: SELECT a INTO copied
+=== SqlStatementScannerTest.kt:189#2
+text: SELECT a 
+=== SqlStatementScannerTest.kt:190
+text: SELECT a INTO copied UNION SELECT 1
+=== SqlStatementScannerTest.kt:190#2
+text: SELECT a  UNION SELECT 1
+=== SqlStatementScannerTest.kt:191
+text: SELECT a AS insert INTO copied FROM t
+=== SqlStatementScannerTest.kt:191#2
+text: SELECT a AS insert  FROM t
+=== SqlStatementScannerTest.kt:192
+text: SELECT a INTO U&"cop" FROM t
+=== SqlStatementScannerTest.kt:192#2
+text: SELECT a  FROM t
+=== SqlStatementScannerTest.kt:193
+text: SELECT a INTO public.u&"c!0061p" UESCAPE '!' FROM t
+=== SqlStatementScannerTest.kt:193#2
+text: SELECT a  FROM t
+=== SqlStatementScannerTest.kt:201
+text: WITH w AS (INSERT INTO t (a) VALUES (1) RETURNING a) SELECT a INTO c FROM w
+=== SqlStatementScannerTest.kt:204
+text: WITH w AS (INSERT  (a) VALUES (1) RETURNING a) SELECT a INTO c FROM w
+=== SqlStatementScannerTest.kt:205
+text: WITH w AS (INSERT INTO t (a) VALUES (1) RETURNING a) SELECT a  FROM w
+=== SqlStatementScannerTest.kt:209
+text: {0}
+=== SqlStatementScannerTest.kt:210
+text: SELECT a FROM t WHERE note = 'INTO x'
+=== SqlStatementScannerTest.kt:210#2
+text: SELECT "into" FROM t -- INTO x
+=== SqlCteClauseTest.kt:19
+text: WITH x AS (SELECT 1 AS a), y AS (SELECT 2 AS b) SELECT a FROM x
+=== SqlCteClauseTest.kt:22
+text: x
+=== SqlCteClauseTest.kt:22#2
+text: x
+=== SqlCteClauseTest.kt:22#3
+text: y
+=== SqlCteClauseTest.kt:22#4
+text: y
+=== SqlCteClauseTest.kt:29
+text: WITH o AS (WITH i AS (SELECT 1 AS a) SELECT a FROM i) SELECT a FROM o
+=== SqlCteClauseTest.kt:31
+text: o
+=== SqlCteClauseTest.kt:31#2
+text: o
+=== SqlCteClauseTest.kt:34
+text: WITH i AS (SELECT 1 AS a) SELECT a FROM i
+=== SqlCteClauseTest.kt:36
+text: i
+=== SqlCteClauseTest.kt:36#2
+text: i
+=== SqlCteClauseTest.kt:43
+text: WITH RECURSIVE recursive_cte AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM recursive_cte WHERE n < 3) 
+=== SqlCteClauseTest.kt:44
+text: SELECT n FROM recursive_cte
+=== SqlCteClauseTest.kt:46
+text: recursive_cte
+=== SqlCteClauseTest.kt:46#2
+text: recursive_cte
+=== SqlCteClauseTest.kt:52
+text: WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM t WHERE n < 3) 
+=== SqlCteClauseTest.kt:53
+text: SEARCH DEPTH FIRST BY n SET ordercol CYCLE n SET is_cycle USING path SELECT n FROM t
+=== SqlCteClauseTest.kt:55
+text: t
+=== SqlCteClauseTest.kt:55#2
+text: t
+=== SqlCteClauseTest.kt:56
+text: SEARCH
+=== SqlCteClauseTest.kt:61
+text: WITH d AS (DELETE FROM t WHERE id = 1 RETURNING id), 
+=== SqlCteClauseTest.kt:62
+text: i AS (INSERT INTO t (id) VALUES (2) RETURNING id), 
+=== SqlCteClauseTest.kt:63
+text: u AS (UPDATE t SET id = 3 RETURNING id) SELECT id FROM d
+=== SqlCteClauseTest.kt:65
+text: d
+=== SqlCteClauseTest.kt:65#2
+text: i
+=== SqlCteClauseTest.kt:65#3
+text: u
+=== SqlCteClauseTest.kt:69
+text: DELETE FROM t WHERE id = 1 RETURNING id
+=== SqlCteClauseTest.kt:70
+text: INSERT INTO t (id) VALUES (2) RETURNING id
+=== SqlCteClauseTest.kt:71
+text: UPDATE t SET id = 3 RETURNING id
+=== SqlCteClauseTest.kt:74
+text: SELECT id FROM d
+=== SqlCteClauseTest.kt:79
+text: WITH U&"d\\0061t" AS (SELECT 1) SELECT 1
+=== SqlCteClauseTest.kt:80
+text: U&"d\\0061t"
+=== SqlCteClauseTest.kt:81
+text: dat
+=== SqlCteClauseTest.kt:86
+text: WITH x(a, b) AS (SELECT 1, 2) SELECT a FROM x
+=== SqlCteClauseTest.kt:87
+text: x
+=== SqlCteClauseTest.kt:87#2
+text: x
+=== SqlCteClauseTest.kt:92
+text: WITH m AS MATERIALIZED (SELECT 1), n AS NOT MATERIALIZED (SELECT 2) SELECT 1
+=== SqlCteClauseTest.kt:94
+text: m
+=== SqlCteClauseTest.kt:94#2
+text: m
+=== SqlCteClauseTest.kt:94#3
+text: n
+=== SqlCteClauseTest.kt:94#4
+text: n
+=== SqlCteClauseTest.kt:100
+text: WITH /* ( */ x /* ) */ ( /* ( */ c ) /* ( */ AS /* ) */ NOT /* ( */ MATERIALIZED /* ) */ 
+=== SqlCteClauseTest.kt:101
+text: ( /* ( */ SELECT 1 -- )\n ) /* ( */ , -- (\n y /* ) */ AS /* ( */ ( SELECT 2 ) /* ) */ -- (\n SELECT 1
+=== SqlCteClauseTest.kt:103
+text: x
+=== SqlCteClauseTest.kt:103#2
+text: x
+=== SqlCteClauseTest.kt:103#3
+text: y
+=== SqlCteClauseTest.kt:103#4
+text: y
+=== SqlCteClauseTest.kt:105
+text:  /* ( */ SELECT 1 -- )\n 
+=== SqlCteClauseTest.kt:105#2
+text:  SELECT 2 
+=== SqlCteClauseTest.kt:106
+text: SELECT 1
+=== SqlCteClauseTest.kt:111
+text: WITH x AS (SELECT ? AS a, 'b?' AS b, '{}'::jsonb ?? 'k' AS c) SELECT a FROM x WHERE a = ?
+=== SqlCteClauseTest.kt:113
+text: x
+=== SqlCteClauseTest.kt:113#2
+text: x
+=== SqlCteClauseTest.kt:119
+text: WITH x AS (SELECT 1 AS a) SELECT a FROM x UNION SELECT 2
+=== SqlCteClauseTest.kt:121
+text: x
+=== SqlCteClauseTest.kt:121#2
+text: x
+=== SqlCteClauseTest.kt:128
+text: WITH x AS (SELECT 1 AS a) INSERT INTO t SELECT a FROM x
+=== SqlCteClauseTest.kt:129
+text: WITH x AS (SELECT 1 AS a) UPDATE t SET a = (SELECT a FROM x)
+=== SqlCteClauseTest.kt:130
+text: WITH x AS (SELECT 1 AS a) DELETE FROM t WHERE a IN (SELECT a FROM x)
+=== SqlCteClauseTest.kt:131
+text: WITH x AS (SELECT 1 AS a) MERGE INTO t USING x ON t.a = x.a WHEN MATCHED THEN DELETE
+=== SqlCteClauseTest.kt:134
+text: x
+=== SqlCteClauseTest.kt:134#2
+text: x
+=== SqlCteClauseTest.kt:140
+text: (WITH x AS (SELECT 1) SELECT 1 FROM x)
+=== SqlCteClauseTest.kt:141
+text: x
+=== SqlCteClauseTest.kt:141#2
+text: x
+=== SqlCteClauseTest.kt:146
+text: SELECT 1
+=== SqlCteClauseTest.kt:147
+text: SELECT * FROM (WITH x AS (SELECT 1) SELECT 1) AS s
+=== SqlCteClauseTest.kt:148
+text: INSERT INTO t WITH x AS (SELECT 1) SELECT * FROM x
+=== SqlCteClauseTest.kt:149
+text: 
+=== SqlCteClauseTest.kt:154
+text: WITH x AS (SELECT 1), y AS SELECT 2
+=== SqlCteClauseTest.kt:155
+text: WITH x AS (SELECT 1
+=== SqlCteClauseTest.kt:156
+text: WITH "x AS (SELECT 1) SELECT 1
+=== SqlCteClauseTest.kt:161
+text: WITH x AS (SELECT 1) SELECT 1\u0000
+=== SqlCteClauseTest.kt:166
+text: c
+=== SqlCteClauseTest.kt:167
+text: WITH $name AS (SELECT 1) SELECT 1 FROM $name
+=== SqlCteClauseTest.kt:168
+text: c
+=== SqlCteClauseTest.kt:174
+text: é
+=== SqlCteClauseTest.kt:175
+text: WITH $name AS (SELECT 1) SELECT 1 FROM $name
+=== SqlCteClauseTest.kt:176
+text: é
+=== SqlCteClauseTest.kt:182
+text: WITH c AS (SELECT 1) SELECT * FROM c
+=== SqlCteClauseTest.kt:183
+text: c
+=== SqlCteClauseTest.kt:184
+text: c
+=== SqlCteClauseTest.kt:189
+text: WITH "MyCte" AS (SELECT 1) SELECT * FROM "MyCte"
+=== SqlCteClauseTest.kt:190
+text: MyCte
+=== SqlCteClauseTest.kt:191
+text: "MyCte"
+=== SqlCteClauseTest.kt:196
+text: WITH MyCte AS (SELECT 1) SELECT * FROM MyCte
+=== SqlCteClauseTest.kt:197
+text: mycte
+=== SqlCteClauseTest.kt:198
+text: MyCte
+=== SqlCteClauseTest.kt:204
+text: WITH note AS (\n  SELECT 'closing )'::TEXT AS msg\n),\ncounted AS (\n  SELECT length(msg) AS len FROM note\n)\nSELECT len FROM counted
+=== SqlCteClauseTest.kt:215
+text: note
+=== SqlCteClauseTest.kt:216
+text: counted
+=== SqlCteClauseTest.kt:221
+text: SELECT 'closing )'::TEXT AS msg
+=== SqlCteClauseTest.kt:227
+text: WITH renamed AS (\n  SELECT a${'$'}b${'$'}c AS msg FROM note\n),\ncounted AS (\n  SELECT length(msg) AS len FROM renamed\n)\nSELECT len FROM counted
+=== SqlCteClauseTest.kt:238
+text: renamed
+=== SqlCteClauseTest.kt:239
+text: counted
+=== SqlCteClauseTest.kt:246
+text: WITH data€x AS (SELECT 1 AS inner_name) SELECT inner_name AS outer_name FROM data€x
+=== SqlCteClauseTest.kt:250
+text: data€x
+=== SqlCteClauseTest.kt:256
+text: WITH "He""llo" AS (SELECT 1) SELECT 1 FROM "He""llo"
+=== SqlCteClauseTest.kt:258
+text: "He""llo"
+=== SqlCteClauseTest.kt:259
+text: He"llo
+=== SqlCteClauseTest.kt:265
+text: WITH $x AS (SELECT 1) SELECT a FROM x
+=== SqlCteClauseTest.kt:272
+text: WITH 1x AS (SELECT 1) SELECT a FROM x
+=== SqlCteClauseTest.kt:278
+text: c
+=== SqlCteClauseTest.kt:279
+text: WITH $overLongName AS (SELECT 1) SELECT * FROM $overLongName
+=== SqlCteClauseTest.kt:281
+text: c
+=== SqlCteClauseTest.kt:287
+text: c
+=== SqlCteClauseTest.kt:288
+text: WITH "$overLongName" AS (SELECT 1) SELECT * FROM "$overLongName"
+=== SqlCteClauseTest.kt:290
+text: c
+=== SqlCteClauseTest.kt:291
+text: "$overLongName"
+=== QueryFileParserTest.kt:22
+text: -- name: getAll :many\nSELECT * FROM users;
+=== QueryFileParserTest.kt:30
+text: getAll
+=== QueryFileParserTest.kt:32
+text: SELECT * FROM users
+=== QueryFileParserTest.kt:38
+text: -- name: getAll :many\nSELECT * FROM users;\n\n-- name: getById :one\nSELECT * FROM users WHERE id = ?;
+=== QueryFileParserTest.kt:49
+text: getAll
+=== QueryFileParserTest.kt:51
+text: getById
+=== QueryFileParserTest.kt:53
+text: SELECT * FROM users WHERE id = ?
+=== QueryFileParserTest.kt:58
+text: -- Execrows without parameters.\n-- name: deleteAll :execrows\nDELETE FROM type;
+=== QueryFileParserTest.kt:67
+text: Execrows without parameters.
+=== QueryFileParserTest.kt:72
+text: -- Query using pgcrypto for password hashing\n-- name: createUser :exec\nINSERT INTO user_credentials (username, password_hash)\nVALUES (?, crypt(?, gen_salt('bf')));
+=== QueryFileParserTest.kt:82
+text: Query using pgcrypto for password hashing
+=== QueryFileParserTest.kt:84
+text: INSERT INTO user_credentials (username, password_hash)\nVALUES (?, crypt(?, gen_salt('bf')))
+=== QueryFileParserTest.kt:90
+text: -- name: q1 :one\nSELECT 1;\n\n-- name: q2 :many\nSELECT 1;\n\n-- name: q3 :exec\nDELETE FROM t;\n\n-- name: q4 :execrows\nDELETE FROM t;
+=== QueryFileParserTest.kt:115
+text: -- name: createUser :exec\nINSERT INTO users (email, age, zip_code)\nVALUES (?, ?, ?);
+=== QueryFileParserTest.kt:124
+text: INSERT INTO users (email, age, zip_code)\nVALUES (?, ?, ?)
+=== QueryFileParserTest.kt:129
+text: -- name: verifyPassword :one\nSELECT EXISTS(\n  SELECT 1 FROM user_credentials\n  WHERE username = ?\n  AND password_hash = crypt(?, password_hash)\n) AS valid;
+=== QueryFileParserTest.kt:141
+text: verifyPassword
+=== QueryFileParserTest.kt:143
+text: SELECT EXISTS(\n  SELECT 1 FROM user_credentials\n  WHERE username = ?\n  AND password_hash = crypt(?, password_hash)\n) AS valid
+=== QueryFileParserTest.kt:155
+text: 
+=== QueryFileParserTest.kt:161
+text: -- This is just a comment\n-- Another comment
+=== QueryFileParserTest.kt:172
+text: -- Comment for first query.\n-- name: first :one\nSELECT 1;\n\n-- Comment for second query.\n-- name: second :many\nSELECT 1;
+=== QueryFileParserTest.kt:185
+text: Comment for first query.
+=== QueryFileParserTest.kt:186
+text: Comment for second query.
+=== QueryFileParserTest.kt:191
+text: -- name: all :many\nSELECT * FROM type;\n\n-- name: single :one\nSELECT string_type FROM type;\n\n-- name: insertOne :execrows\nINSERT INTO type(string_type) VALUES (?);\n\n-- Execrows without parameters.\n-- name: deleteAll :execrows\nDELETE FROM type;\n\n-- Exec without parameters.\n-- name: resetTypes :exec\nCALL reset_type_table();\n\n-- Exec with parameters.\n-- name: updateStringType :exec\nCALL update_string_type(?, ?);
+=== QueryFileParserTest.kt:217
+text: all
+=== QueryFileParserTest.kt:218
+text: single
+=== QueryFileParserTest.kt:219
+text: insertOne
+=== QueryFileParserTest.kt:220
+text: deleteAll
+=== QueryFileParserTest.kt:221
+text: Execrows without parameters.
+=== QueryFileParserTest.kt:222
+text: resetTypes
+=== QueryFileParserTest.kt:223
+text: updateStringType
+=== QueryFileParserTest.kt:224
+text: CALL update_string_type(?, ?)
+=== QueryFileParserTest.kt:229
+text: -- name: q1 :one\nSELECT 1;
+=== QueryFileParserTest.kt:235
+text: SELECT 1
+=== QueryFileParserTest.kt:240
+text: -- name: resetTypes :exec\nCALL reset_type_table();
+=== QueryFileParserTest.kt:248
+text: CALL reset_type_table()
+=== QueryFileParserTest.kt:253
+text: -- name: updateUser :exec\nUPDATE users SET name = :name, age = :age WHERE id = :id;
+=== QueryFileParserTest.kt:261
+text: UPDATE users SET name = ?, age = ? WHERE id = ?
+=== QueryFileParserTest.kt:262
+text: name
+=== QueryFileParserTest.kt:262#2
+text: age
+=== QueryFileParserTest.kt:262#3
+text: id
+=== QueryFileParserTest.kt:267
+text: -- name: search :many\nSELECT * FROM users WHERE name = :name OR email LIKE :name;
+=== QueryFileParserTest.kt:274
+text: SELECT * FROM users WHERE name = ? OR email LIKE ?
+=== QueryFileParserTest.kt:275
+text: name
+=== QueryFileParserTest.kt:275#2
+text: name
+=== QueryFileParserTest.kt:280
+text: -- name: getCount :one\nSELECT COUNT(id)::int AS total FROM users WHERE name = :name;
+=== QueryFileParserTest.kt:287
+text: SELECT COUNT(id)::int AS total FROM users WHERE name = ?
+=== QueryFileParserTest.kt:288
+text: name
+=== QueryFileParserTest.kt:293
+text: -- name: listUsers :many\nSELECT * FROM users WHERE age > :limit;
+=== QueryFileParserTest.kt:300
+text: SELECT * FROM users WHERE age > ?
+=== QueryFileParserTest.kt:301
+text: limit
+=== QueryFileParserTest.kt:306
+text: -- name: mixed :one\nSELECT * FROM users WHERE name = :name AND age > ?;
+=== QueryFileParserTest.kt:312
+text: mix
+=== QueryFileParserTest.kt:317
+text: -- name: createUser :exec\nINSERT INTO users (email, age, zip_code)\nVALUES (:email, :age, :zipCode);
+=== QueryFileParserTest.kt:326
+text: INSERT INTO users (email, age, zip_code)\nVALUES (?, ?, ?)
+=== QueryFileParserTest.kt:328
+text: email
+=== QueryFileParserTest.kt:328#2
+text: age
+=== QueryFileParserTest.kt:328#3
+text: zipCode
+=== QueryFileParserTest.kt:333
+text: -- name: patchOrganization :exec\nUPDATE organization\nSET\n  name = coalesce(:name, organization.name),\n  slug = coalesce(:slug, organization.slug),\n  tier = coalesce(:tier, organization.tier)\nWHERE salesforce_account_id = :salesforceAccountId;
+=== QueryFileParserTest.kt:346
+text: UPDATE organization\nSET\n  name = coalesce(?, organization.name),\n  slug = coalesce(?, organization.slug),\n  tier = coalesce(?, organization.tier)\nWHERE salesforce_account_id = ?
+=== QueryFileParserTest.kt:356
+text: name
+=== QueryFileParserTest.kt:356#2
+text: slug
+=== QueryFileParserTest.kt:356#3
+text: tier
+=== QueryFileParserTest.kt:356#4
+text: salesforceAccountId
+=== QueryFileParserTest.kt:362
+text: -- name: insertTyped :exec\nINSERT INTO t (val) VALUES (:value::integer);
+=== QueryFileParserTest.kt:369
+text: INSERT INTO t (val) VALUES (?::integer)
+=== QueryFileParserTest.kt:370
+text: value
+=== QueryFileParserTest.kt:375
+text: -- name: getById :one\nSELECT * FROM users WHERE id = ?;
+=== QueryFileParserTest.kt:382
+text: SELECT * FROM users WHERE id = ?
+=== QueryFileParserTest.kt:388
+text: -- name: findByPattern :many\nSELECT * FROM users WHERE name LIKE ':notaparam' AND id = :id;
+=== QueryFileParserTest.kt:395
+text: SELECT * FROM users WHERE name LIKE ':notaparam' AND id = ?
+=== QueryFileParserTest.kt:396
+text: id
+=== QueryFileParserTest.kt:401
+text: -- name: findByPattern :many\nSELECT * FROM users /* :notaparam */ WHERE id = :id;
+=== QueryFileParserTest.kt:408
+text: SELECT * FROM users /* :notaparam */ WHERE id = ?
+=== QueryFileParserTest.kt:409
+text: id
+=== QueryFileParserTest.kt:414
+text: -- name: findByPattern :many\nSELECT "a:b" FROM users WHERE id = :id;
+=== QueryFileParserTest.kt:421
+text: SELECT "a:b" FROM users WHERE id = ?
+=== QueryFileParserTest.kt:422
+text: id
+=== QueryFileParserTest.kt:427
+text: -- name: findByPattern :many\nSELECT ${'$'}${'$'}:notaparam${'$'}${'$'} FROM users WHERE id = :id;
+=== QueryFileParserTest.kt:434
+text: SELECT $$:notaparam$$ FROM users WHERE id = ?
+=== QueryFileParserTest.kt:435
+text: id
+=== QueryFileParserTest.kt:440
+text: -- name: findByPattern :many\nSELECT * FROM users WHERE note = 'really?' AND id = :id;
+=== QueryFileParserTest.kt:447
+text: SELECT * FROM users WHERE note = 'really?' AND id = ?
+=== QueryFileParserTest.kt:448
+text: id
+=== QueryFileParserTest.kt:453
+text: -- name: findByKey :many\nSELECT * FROM document WHERE data ?? 'key' AND id = :id;
+=== QueryFileParserTest.kt:460
+text: SELECT * FROM document WHERE data ?? 'key' AND id = ?
+=== QueryFileParserTest.kt:461
+text: id
+=== QueryFileParserTest.kt:466
+text: -- name: findByKey :many\nSELECT * FROM document WHERE data ?? 'key' AND id = ? AND title = :title;
+=== QueryFileParserTest.kt:472
+text: mix
+=== QueryFileParserTest.kt:477
+text: -- name: findByPattern :many\nSELECT * FROM users WHERE note = ? AND id = :id;
+=== QueryFileParserTest.kt:483
+text: mix
+=== QueryFileParserTest.kt:488
+text: -- name: findByPattern :many\nSELECT * FROM users /* a /* b */ :notaparam */ WHERE id = :id;
+=== QueryFileParserTest.kt:495
+text: SELECT * FROM users /* a /* b */ :notaparam */ WHERE id = ?
+=== QueryFileParserTest.kt:496
+text: id
+=== QueryFileParserTest.kt:501
+text: -- name: findByPattern :many\nSELECT * FROM users WHERE note = E'it\\'s :x' AND id = :id;
+=== QueryFileParserTest.kt:508
+text: SELECT * FROM users WHERE note = E'it\\'s :x' AND id = ?
+=== QueryFileParserTest.kt:509
+text: id
+=== QueryFileParserTest.kt:514
+text: -- name: findByPattern :many\nSELECT * FROM users -- :notaparam\nWHERE id = :id;
+=== QueryFileParserTest.kt:522
+text: SELECT * FROM users -- :notaparam\nWHERE id = ?
+=== QueryFileParserTest.kt:523
+text: id
+=== QueryFileParserTest.kt:528
+text: -- name: findByPattern :many\nSELECT E':notaparam' FROM users WHERE id = :id;
+=== QueryFileParserTest.kt:535
+text: SELECT E':notaparam' FROM users WHERE id = ?
+=== QueryFileParserTest.kt:536
+text: id
+=== QueryFileParserTest.kt:541
+text: -- name: findById :one\nSELECT * FROM users WHERE id=:id;
+=== QueryFileParserTest.kt:548
+text: SELECT * FROM users WHERE id=?
+=== QueryFileParserTest.kt:549
+text: id
+=== QueryFileParserTest.kt:554
+text: -- name: assign :one\nSELECT a := :value;
+=== QueryFileParserTest.kt:561
+text: SELECT a := ?
+=== QueryFileParserTest.kt:562
+text: value
+=== QueryFileParserTest.kt:567
+text: -- name: listUsers :many\nSELECT * FROM users WHERE age > :from AND x < :select;
+=== QueryFileParserTest.kt:574
+text: SELECT * FROM users WHERE age > ? AND x < ?
+=== QueryFileParserTest.kt:575
+text: from
+=== QueryFileParserTest.kt:575#2
+text: select
+=== QueryFileParserTest.kt:580
+text: -- name: listUsers :many\nSELECT * FROM users WHERE a = :größe AND b = :ab${'$'}c;
+=== QueryFileParserTest.kt:587
+text: SELECT * FROM users WHERE a = ? AND b = ?
+=== QueryFileParserTest.kt:588
+text: größe
+=== QueryFileParserTest.kt:588#2
+text: ab${'$'}c
+=== QueryFileParserTest.kt:593
+text: -- name: listUsers :many\nSELECT * FROM users WHERE a = :"q";
+=== QueryFileParserTest.kt:600
+text: SELECT * FROM users WHERE a = :"q"
+=== QueryFileParserTest.kt:606
+text: -- name: listUsers :many\nSELECT * FROM users WHERE a = :e'x';
+=== QueryFileParserTest.kt:613
+text: SELECT * FROM users WHERE a = :e'x'
+=== QueryFileParserTest.kt:619
+text: -- name: getAll :many\nSELECT 1;\n\n-- name: broken :one\nSELECT 'a\u0000b' WHERE id = :id;
+=== QueryFileParserTest.kt:624
+text: broken
+=== QueryFileParserTest.kt:625
+text: line 4
+=== QueryFileParserTest.kt:626
+text: NUL
+=== QueryFileParserTest.kt:634
+text: -- name: getAll :many\nSELECT * FROM users;\n\n-- name: foo :bogus\nSELECT 1;
+=== QueryFileParserTest.kt:644
+text: foo
+=== QueryFileParserTest.kt:645
+text: :bogus
+=== QueryFileParserTest.kt:646
+text: line 4
+=== QueryFileParserTest.kt:651
+text: -- name: getAll :ONE\nSELECT 1;
+=== QueryFileParserTest.kt:658
+text: :ONE
+=== QueryFileParserTest.kt:665
+text: \n
+=== QueryFileParserTest.kt:666
+text: -- name: first :one\n$firstBody\n\n-- Doc for second.\n-- name: second :many\nSELECT 2;\n
+=== QueryFileParserTest.kt:667
+text: \n
+=== QueryFileParserTest.kt:668
+text: -- name: second
+=== QueryFileParserTest.kt:670
+text: second
+=== QueryFileParserTest.kt:671
+text: Doc for second.
+=== QueryFileParserTest.kt:673
+text: SELECT 2
+=== QueryFileParserTest.kt:679
+text: DO $$ BEGIN PERFORM 1;\nEND $$;
+=== QueryFileParserTest.kt:681
+text: DO $$ BEGIN PERFORM 1;\nEND $$
+=== QueryFileParserTest.kt:686
+text: SELECT 'a;\nb' AS v;
+=== QueryFileParserTest.kt:688
+text: SELECT 'a;\nb' AS v
+=== QueryFileParserTest.kt:693
+text: SELECT 1 /* note;\nmore */ AS v;
+=== QueryFileParserTest.kt:695
+text: SELECT 1 /* note;\nmore */ AS v
+=== QueryFileParserTest.kt:700
+text: SELECT E'\\';\n' AS v;
+=== QueryFileParserTest.kt:702
+text: SELECT E'\\';\n' AS v
+=== QueryFileParserTest.kt:707
+text: SELECT 1 AS "a;\nb";
+=== QueryFileParserTest.kt:709
+text: SELECT 1 AS "a;\nb"
+=== QueryFileParserTest.kt:714
+text: SELECT 1 /* outer /* inner; */ still;\n*/ AS v;
+=== QueryFileParserTest.kt:716
+text: SELECT 1 /* outer /* inner; */ still;\n*/ AS v
+=== QueryFileParserTest.kt:721
+text: SELECT 1\n-- trailing;\n;
+=== QueryFileParserTest.kt:723
+text: SELECT 1\n-- trailing;
+=== QueryFileParserTest.kt:728
+text: SELECT ${'$'}tag${'$'}a;\nb${'$'}tag${'$'} AS v;
+=== QueryFileParserTest.kt:730
+text: SELECT ${'$'}tag${'$'}a;\nb${'$'}tag${'$'} AS v
+=== QueryFileParserTest.kt:735
+text: SELECT 1; -- note
+=== QueryFileParserTest.kt:737
+text: SELECT 1
+=== QueryFileParserTest.kt:742
+text: SELECT 1; /* note */
+=== QueryFileParserTest.kt:744
+text: SELECT 1
+=== QueryFileParserTest.kt:749
+text: -- name: first :one\nSELECT 1; SELECT 2;
+=== QueryFileParserTest.kt:752
+text: SELECT 1; SELECT 2
+=== QueryFileParserTest.kt:757
+text: -- name: first :one\nSELECT 1;\nSELECT 2;\n-- name: b :one\nSELECT 3;
+=== QueryFileParserTest.kt:762
+text: first
+=== QueryFileParserTest.kt:763
+text: line 1
+=== QueryFileParserTest.kt:764
+text: line 3
+=== QueryFileParserTest.kt:769
+text: -- name: first :exec\nDO $$\n-- name: b :one\nSELECT 1;\n$$;
+=== QueryFileParserTest.kt:774
+text: DO $$\n-- name: b :one\nSELECT 1;\n$$
+=== QueryFileParserTest.kt:779
+text: -- name: first :one\nSELECT 1\n\n-- name: second :one\nSELECT 2;
+=== QueryFileParserTest.kt:783
+text: first
+=== QueryFileParserTest.kt:783#2
+text: second
+=== QueryFileParserTest.kt:784
+text: SELECT 1
+=== QueryFileParserTest.kt:785
+text: SELECT 2
+=== QueryFileParserTest.kt:791
+text: SELECT 'a;\nb' AS v;
+=== QueryFileParserTest.kt:791#2
+text: \r\n
+=== QueryFileParserTest.kt:793
+text: SELECT 'a;\nb' AS v
+=== QueryFileParserTest.kt:800
+text: CREATE FUNCTION f() RETURNS int LANGUAGE sql\nBEGIN ATOMIC\n  SELECT 1;\n  SELECT 2;\nEND;
+=== QueryFileParserTest.kt:804
+text: CREATE FUNCTION f() RETURNS int LANGUAGE sql\nBEGIN ATOMIC\n  SELECT 1;\n  SELECT 2;\nEND
+=== QueryFileParserTest.kt:809
+text: SELECT 1;;
+=== QueryFileParserTest.kt:811
+text: SELECT 1;
+=== QueryFileParserTest.kt:816
+text: CREATE RULE r AS ON INSERT TO t DO ALSO (INSERT INTO log VALUES (1); INSERT INTO log VALUES (2))
+=== QueryFileParserTest.kt:817
+text: CREATE RULE r AS ON INSERT TO t DO ALSO (\n  INSERT INTO log VALUES (1);\n
+=== QueryFileParserTest.kt:818
+text:   INSERT INTO log VALUES (2))
+=== QueryFileParserTest.kt:820
+text: $oneLine;
+=== QueryFileParserTest.kt:821
+text: $multiLine;
+=== QueryFileParserTest.kt:826
+text: -- name: a :one\n-- inner\nSELECT 1;
+=== QueryFileParserTest.kt:828
+text: -- inner\nSELECT 1
+=== QueryFileParserTest.kt:833
+text: -- name: a :one\nSELECT 1 -- name: b :one\n;
+=== QueryFileParserTest.kt:837
+text: a
+=== QueryFileParserTest.kt:838
+text: SELECT 1 -- name: b :one
+=== QueryFileParserTest.kt:843
+text: --name:x :one\nSELECT 1;
+=== QueryFileParserTest.kt:845
+text: x
+=== QueryFileParserTest.kt:850
+text: -- name: a :one\nSELECT 1;\n  -- name: b :one\nSELECT 2;
+=== QueryFileParserTest.kt:852
+text: a
+=== QueryFileParserTest.kt:852#2
+text: b
+=== QueryFileParserTest.kt:856
+text: U+{0}
+=== QueryFileParserTest.kt:857
+text: 00A0
+=== QueryFileParserTest.kt:857#2
+text: 2003
+=== QueryFileParserTest.kt:860
+text: -- name: a :one\n${space}SELECT 1;\n\n-- Doc.\n-- name: b :one\nSELECT 2;
+=== QueryFileParserTest.kt:864
+text: a
+=== QueryFileParserTest.kt:864#2
+text: b
+=== QueryFileParserTest.kt:865
+text: SELECT 1
+=== QueryFileParserTest.kt:866
+text: Doc.
+=== QueryFileParserTest.kt:872
+text: -- name: a :one\nSELECT 1;\n
+=== QueryFileParserTest.kt:874
+text: SELECT 1
+=== QueryFileParserTest.kt:879
+text: -- name: a :one\nSELECT 1 AS a $$;\n\n-- Doc.\n-- name: b :one\nSELECT 2;
+=== QueryFileParserTest.kt:883
+text: a
+=== QueryFileParserTest.kt:883#2
+text: b
+=== QueryFileParserTest.kt:884
+text: SELECT 1 AS a $$
+=== QueryFileParserTest.kt:885
+text: Doc.
+=== QueryFileParserTest.kt:892
+text: SELECT ${'$'}$space${'$'}a;\nb${'$'}$space${'$'} AS v
+=== QueryFileParserTest.kt:894
+text: -- name: a :one\n$body;
+=== QueryFileParserTest.kt:902
+text: -- name: first :exec\nCREATE FUNCTION f() RETURNS int LANGUAGE sql\nBEGIN ATOMIC\n  SELECT :one;\n
+=== QueryFileParserTest.kt:903
+text:   SELECT :two;\nEND;\n
+=== QueryFileParserTest.kt:909
+text: CREATE FUNCTION f() RETURNS int LANGUAGE sql\nBEGIN ATOMIC\n  SELECT ?;\n  SELECT ?;\nEND
+=== QueryFileParserTest.kt:910
+text: one
+=== QueryFileParserTest.kt:910#2
+text: two
+=== QueryFileParserTest.kt:916
+text: -- name: first :exec\nCREATE PROCEDURE p(a int) LANGUAGE sql\nBEGIN ATOMIC\n  SELECT 1 WHERE 1 = ?;\n
+=== QueryFileParserTest.kt:917
+text:   SELECT 2;\nEND;\n
+=== QueryFileParserTest.kt:922
+text: SELECT 2;\nEND
+=== QueryFileParserTest.kt:930
+text: -- name: first :exec\n$firstBody\n\n-- Doc for second.\n-- name: second :one\nSELECT 2;\n
+=== QueryFileParserTest.kt:932
+text: first
+=== QueryFileParserTest.kt:932#2
+text: second
+=== QueryFileParserTest.kt:933
+text: Doc for second.
+=== QueryFileParserTest.kt:934
+text: SELECT 2
+=== QueryFileParserTest.kt:935
+text: -- name: second
+=== QueryFileParserTest.kt:939
+text: {0}
+=== QueryFileParserTest.kt:942
+text: CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; END
+=== QueryFileParserTest.kt:943
+text: create function f() returns int language sql\nbegin atomic\n  select 1;\n  select 2;\nend
+=== QueryFileParserTest.kt:944
+text: CREATE OR REPLACE PROCEDURE p() LANGUAGE sql\nBEGIN ATOMIC\n  DELETE FROM t;\n  DELETE FROM u;\nEND
+=== QueryFileParserTest.kt:945
+text: CREATE FUNCTION f() RETURNS int LANGUAGE sql\nBEGIN ATOMIC\n  SELECT CASE WHEN true THEN 1 ELSE 2 END;\n
+=== QueryFileParserTest.kt:946
+text:   SELECT 3;\nEND
+=== QueryFileParserTest.kt:947
+text: CREATE FUNCTION g(begin int) RETURNS int AS 'select 1' LANGUAGE sql
+=== QueryFileParserTest.kt:948
+text: CREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql
+=== QueryFileParserTest.kt:949
+text: CREATE FUNCTION begin() RETURNS int LANGUAGE sql AS 'SELECT 1'
+=== QueryFileParserTest.kt:950
+text: CREATE FUNCTION f() RETURNS SETOF begin LANGUAGE sql AS $$ SELECT * FROM begin $$
+=== QueryFileParserTest.kt:951
+text: CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT begin FROM t; END
+=== QueryFileParserTest.kt:952
+text: CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN /* note */ -- more\n ATOMIC SELECT 1; SELECT 2; END
+=== QueryFileParserTest.kt:956
+text: $body;
+=== QueryFileParserTest.kt:961
+text: {0}
+=== QueryFileParserTest.kt:964
+text: SELECT CASE WHEN true THEN 1 END
+=== QueryFileParserTest.kt:965
+text: SELECT begin, "end" FROM t
+=== QueryFileParserTest.kt:966
+text: CREATE TABLE t (begin int, "end" int)
+=== QueryFileParserTest.kt:970
+text: $body;
+=== QueryFileParserTest.kt:977
+text: -- name: first :exec\nCREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1;\n\n
+=== QueryFileParserTest.kt:978
+text: -- name: second :one\nSELECT 2;
+=== QueryFileParserTest.kt:982
+text: first
+=== QueryFileParserTest.kt:982#2
+text: second
+=== QueryFileParserTest.kt:983
+text: SELECT 2
+=== QueryFileParserTest.kt:994
+text: first
+=== QueryFileParserTest.kt:994#2
+text: c
+=== QueryFileParserTest.kt:995
+text: SELECT 1
+=== QueryFileParserTest.kt:995#2
+text: SELECT 3
+=== QueryFileParserTest.kt:1002
+text: -- name: a :one\nSELECT 1;\n/*\n-- doc\n*/\n-- name: b :one\nSELECT 2;
+=== QueryFileParserTest.kt:1012
+text: -- name: a :one\nSELECT 1;\n/*\nfoo\n*/\n-- Doc.\n-- name: b :one\nSELECT 2;
+=== QueryFileParserTest.kt:1016
+text: SELECT 1
+=== QueryFileParserTest.kt:1016#2
+text: SELECT 2
+=== QueryFileParserTest.kt:1017
+text: Doc.
+=== QueryFileParserTest.kt:1024
+text: -- name: a :one\nSELECT 1;\n\n/*\nSELECT x /* old note */\nFROM y;\n*/\n-- name: b :one\nSELECT 2;\n
+=== QueryFileParserTest.kt:1028
+text: a
+=== QueryFileParserTest.kt:1028#2
+text: b
+=== QueryFileParserTest.kt:1029
+text: SELECT 1
+=== QueryFileParserTest.kt:1029#2
+text: SELECT 2
+=== QueryFileParserTest.kt:1035
+text: -- name: a :one\nSELECT 1;\n/* /* */ */
+=== QueryFileParserTest.kt:1037
+text: a
+=== QueryFileParserTest.kt:1042
+text: -- name: a :one\nSELECT 1;\n-- doc\n/* x */\n-- name: b :one\nSELECT 2;
+=== QueryFileParserTest.kt:1049
+text: -- name: a :one\nSELECT 1;\n\n-- First.\n\n-- Second.\n-- name: b :one\nSELECT 2;
+=== QueryFileParserTest.kt:1051
+text: First.
+=== QueryFileParserTest.kt:1051#2
+text: Second.
+=== QueryFileParserTest.kt:1056
+text: -- name: a :one\nSELECT 1\n-- doc\n-- name: b :one\nSELECT 2;
+=== QueryFileParserTest.kt:1060
+text: a
+=== QueryFileParserTest.kt:1060#2
+text: b
+=== QueryFileParserTest.kt:1061
+text: SELECT 1\n-- doc
+=== QueryFileParserTest.kt:1068
+text: -- name: a :one\nSELECT 1;\n;\n-- name: b :one\nSELECT 2;
+=== QueryFileParserTest.kt:1072
+text: SELECT 1
+=== QueryFileParserTest.kt:1072#2
+text: SELECT 2
+=== QueryFileParserTest.kt:1078
+text: -- name: a :one\nSELECT 1;\n; -- nothing\n\n-- Doc b.\n-- name: b :one\nSELECT 2;
+=== QueryFileParserTest.kt:1082
+text: SELECT 1
+=== QueryFileParserTest.kt:1082#2
+text: SELECT 2
+=== QueryFileParserTest.kt:1083
+text: Doc b.
+=== QueryFileParserTest.kt:1089
+text: -- name: a :one\nSELECT 1;\n;;\n ; ;\n-- name: b :one\nSELECT 2;
+=== QueryFileParserTest.kt:1093
+text: SELECT 1
+=== QueryFileParserTest.kt:1093#2
+text: SELECT 2
+=== QueryFileParserTest.kt:1099
+text: -- name: a :one\nSELECT 1;\n-- doc\n;\n-- name: b :one\nSELECT 2;
+=== QueryFileParserTest.kt:1103
+text: a
+=== QueryFileParserTest.kt:1103#2
+text: b
+=== QueryFileParserTest.kt:1109
+text: -- name: a :one\nSELECT 1; /* x\n */ SELECT 2;
+=== QueryFileParserTest.kt:1114
+text: 'a'
+=== QueryFileParserTest.kt:1115
+text: line 1
+=== QueryFileParserTest.kt:1120
+text: -- name: a :one\nSELECT 1;\n\nstray words\n-- name: b :one\nSELECT 2;
+=== QueryFileParserTest.kt:1125
+text: 'a'
+=== QueryFileParserTest.kt:1126
+text: line 1
+=== QueryFileParserTest.kt:1127
+text: line 4
+=== QueryFileParserTest.kt:1132
+text: -- stale\n/* Generated */\n-- Doc.\n-- name: a :one\nSELECT 1;
+=== QueryFileParserTest.kt:1136
+text: a
+=== QueryFileParserTest.kt:1137
+text: Doc.
+=== QueryFileParserTest.kt:1143
+text: -- stale\nGenerated by hand\n-- name: a :one\nSELECT 1;
+=== QueryFileParserTest.kt:1146
+text: SELECT 1
+=== QueryFileParserTest.kt:1151
+text: -- name: a :one\nSELECT 1; \n-- Doc b.\n-- name: b :one\nSELECT 2;
+=== QueryFileParserTest.kt:1155
+text: a
+=== QueryFileParserTest.kt:1155#2
+text: b
+=== QueryFileParserTest.kt:1156
+text: SELECT 1
+=== QueryFileParserTest.kt:1157
+text: Doc b.
+=== QueryFileParserTest.kt:1163
+text: -- name: a :one\nSELECT 1;\n -- Doc.\n -- name: b :one\nSELECT 2;
+=== QueryFileParserTest.kt:1167
+text: a
+=== QueryFileParserTest.kt:1167#2
+text: b
+=== QueryFileParserTest.kt:1168
+text: Doc.
+=== QueryFileParserTest.kt:1174
+text:  -- Doc.\n -- name: a :one\nSELECT 1;
+=== QueryFileParserTest.kt:1178
+text: a
+=== QueryFileParserTest.kt:1179
+text: Doc.
+=== QueryFileParserTest.kt:1185
+text: -- Doc.\n \n-- name: a :one\nSELECT 1;
+=== QueryFileParserTest.kt:1187
+text: Doc.
+=== QueryFileParserTest.kt:1192
+text: ;\n-- name: a :one\nSELECT 1;
+=== QueryFileParserTest.kt:1194
+text: a
+=== QueryFileParserTest.kt:1203
+text: -- name: a :one\nSELECT 1;\n\n-- name: broken :one\nSELECT "oops;\n
+=== QueryFileParserTest.kt:1208
+text: broken
+=== QueryFileParserTest.kt:1209
+text: line 4
+=== QueryFileParserTest.kt:1210
+text: line 5
+=== QueryFileParserTest.kt:1216
+text: -- name: a :one\nSELECT 1;\n'oops\n-- name: b :one\nSELECT 2;
+=== QueryFileParserTest.kt:1219
+text: 'a'
+=== QueryFileParserTest.kt:1220
+text: line 3
+=== QueryFileParserTest.kt:1226
+text: -- name: a :one\nSELECT 1;\n/* oops\n-- name: b :one\nSELECT 2;
+=== QueryFileParserTest.kt:1229
+text: 'a'
+=== QueryFileParserTest.kt:1230
+text: line 3
+=== QueryFileParserTest.kt:1235
+text: -- note\n'oops\n-- name: a :one\nSELECT 1;
+=== QueryFileParserTest.kt:1238
+text: before the first annotation
+=== QueryFileParserTest.kt:1239
+text: line 2
+=== QueryFileParserTest.kt:1244
+text: ${'$'}${'$'} oops
+=== QueryFileParserTest.kt:1247
+text: before the first annotation
+=== QueryFileParserTest.kt:1252
+text: -- note\n\u0000\n-- name: a :one\nSELECT 1;
+=== QueryFileParserTest.kt:1255
+text: before the first annotation
+=== QueryFileParserTest.kt:1256
+text: NUL
+=== QueryFileParserTest.kt:1257
+text: line 2

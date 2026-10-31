@@ -13,7 +13,7 @@ import norm.generator.replaceParameterPlaceholders
 import norm.generator.splitStatements
 
 /**
- * Renders what each hand-written scanner function returns, or throws, for every [CorpusEntry].
+ * Renders what each recorded function returns, or throws, for every [CorpusEntry].
  *
  * A thrown exception is recorded as `ClassName: message`. Each recorded value is one line, with control characters
  * escaped, so a change of any function's output for any entry shows up as a changed line.
@@ -92,6 +92,31 @@ internal object ScannerBaseline {
         else -> append(character)
       }
       index++
+    }
+  }
+
+  /** Inverts [escape]. */
+  fun unescape(value: String): String = buildString {
+    var index = 0
+    while (index < value.length) {
+      val character = value[index]
+      if (character != '\\') {
+        append(character)
+        index++
+        continue
+      }
+      when (val next = value[index + 1]) {
+        '\\' -> append('\\')
+        'n' -> append('\n')
+        'r' -> append('\r')
+        't' -> append('\t')
+        'u' -> {
+          append(value.substring(index + 2, index + 2 + UNICODE_ESCAPE_DIGITS).toInt(HEX_RADIX).toChar())
+          index += UNICODE_ESCAPE_DIGITS
+        }
+        else -> error("Unknown escape \\$next")
+      }
+      index += 2
     }
   }
 }
