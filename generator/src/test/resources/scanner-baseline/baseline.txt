@@ -4612,143 +4612,448 @@ parseCteClause: null
 isStar(item[0]): false
 alias(item[0]): null
 isAliasExplicit(item[0]): false
+=== SqlCteClauseTest.kt:100
+text: WITH /* ( */ x /* ) */ ( /* ( */ c ) /* ( */ AS /* ) */ NOT /* ( */ MATERIALIZED /* ) */ 
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH /* ( */ x /* ) */ ( /* ( */ c ) /* ( */ AS /* ) */ NOT /* ( */ MATERIALIZED /* ) */ 
+QueryFileParser.parse: []
+splitStatements: [WITH /* ( */ x /* ) */ ( /* ( */ c ) /* ( */ AS /* ) */ NOT /* ( */ MATERIALIZED /* ) */ ]
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:101
+text: ( /* ( */ SELECT 1 -- )\n ) /* ( */ , -- (\n y /* ) */ AS /* ( */ ( SELECT 2 ) /* ) */ -- (\n SELECT 1
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: ( /* ( */ SELECT 1 -- )\n ) /* ( */ , -- (\n y /* ) */ AS /* ( */ ( SELECT 2 ) /* ) */ -- (\n SELECT 1
+QueryFileParser.parse: []
+splitStatements: [( /* ( */ SELECT 1 -- )\n ) /* ( */ , -- (\n y /* ) */ AS /* ( */ ( SELECT 2 ) /* ) */ -- (\n SELECT 1]
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:103
+text: x
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: x
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:103#2
+text: x
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: x
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:103#3
+text: y
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: y
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:103#4
+text: y
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: y
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
 === SqlCteClauseTest.kt:105
-text: WITH "He""llo" AS (SELECT 1) SELECT 1 FROM "He""llo"
+text:  /* ( */ SELECT 1 -- )\n 
 parseSelectItems: [SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=null, isAliasExplicit=false)]
 alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
 alignSelectItems(columnCount = parseSelectItems.size + 1): []
 hasTopLevelSetOperation: false
 placeholderPositions: []
-replaceParameterPlaceholders: WITH "He""llo" AS (SELECT 1) SELECT 1 FROM "He""llo"
+replaceParameterPlaceholders:  /* ( */ SELECT 1 -- )\n 
 QueryFileParser.parse: []
-splitStatements: [WITH "He""llo" AS (SELECT 1) SELECT 1 FROM "He""llo"]
+splitStatements: [ /* ( */ SELECT 1 -- )\n ]
 explainedStatementStart: 0
-parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=He"llo, rawName="He""llo", bodyOpenParenthesis=18, bodyCloseParenthesis=27)], mainQueryStart=29)
+parseCteClause: null
 isStar(item[0]): false
 alias(item[0]): null
 isAliasExplicit(item[0]): false
-=== SqlCteClauseTest.kt:107
-text: "He""llo"
+=== SqlCteClauseTest.kt:105#2
+text:  SELECT 2 
+parseSelectItems: [SelectItem(expression=2, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=2, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=null, isAliasExplicit=false)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=2, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders:  SELECT 2 
+QueryFileParser.parse: []
+splitStatements: [ SELECT 2 ]
+explainedStatementStart: 0
+parseCteClause: null
+isStar(item[0]): false
+alias(item[0]): null
+isAliasExplicit(item[0]): false
+=== SqlCteClauseTest.kt:106
+text: SELECT 1
+parseSelectItems: [SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=null, isAliasExplicit=false)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SELECT 1
+QueryFileParser.parse: []
+splitStatements: [SELECT 1]
+explainedStatementStart: 0
+parseCteClause: null
+isStar(item[0]): false
+alias(item[0]): null
+isAliasExplicit(item[0]): false
+=== SqlCteClauseTest.kt:111
+text: WITH x AS (SELECT ? AS a, 'b?' AS b, '{}'::jsonb ?? 'k' AS c) SELECT a FROM x WHERE a = ?
+parseSelectItems: [SelectItem(expression=a, columnName=a, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=a, columnName=a, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=null, isAliasExplicit=false)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=a, columnName=a, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: [18, 88]
+replaceParameterPlaceholders: WITH x AS (SELECT $1 AS a, 'b?' AS b, '{}'::jsonb ? 'k' AS c) SELECT a FROM x WHERE a = $2
+QueryFileParser.parse: []
+splitStatements: [WITH x AS (SELECT ? AS a, 'b?' AS b, '{}'::jsonb ?? 'k' AS c) SELECT a FROM x WHERE a = ?]
+explainedStatementStart: 0
+parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=x, rawName=x, bodyOpenParenthesis=10, bodyCloseParenthesis=60)], mainQueryStart=62)
+isStar(item[0]): false
+alias(item[0]): null
+isAliasExplicit(item[0]): false
+=== SqlCteClauseTest.kt:113
+text: x
 parseSelectItems: []
 parseOutputItemsWithAlias: []
 alignSelectItems(columnCount = parseSelectItems.size): []
 alignSelectItems(columnCount = parseSelectItems.size + 1): []
 hasTopLevelSetOperation: false
 placeholderPositions: []
-replaceParameterPlaceholders: "He""llo"
+replaceParameterPlaceholders: x
 QueryFileParser.parse: []
 splitStatements: []
 explainedStatementStart: 0
 parseCteClause: null
-=== SqlCteClauseTest.kt:108
-text: He"llo
+=== SqlCteClauseTest.kt:113#2
+text: x
 parseSelectItems: []
 parseOutputItemsWithAlias: []
 alignSelectItems(columnCount = parseSelectItems.size): []
 alignSelectItems(columnCount = parseSelectItems.size + 1): []
 hasTopLevelSetOperation: false
 placeholderPositions: []
-replaceParameterPlaceholders: He"llo
-QueryFileParser.parse: java.lang.IllegalArgumentException: The text before the first annotation holds text that PostgreSQL's lexer rejects on line 1: unterminated quoted identifier at or near ""llo".
-splitStatements: [He"llo]
-explainedStatementStart: 0
-parseCteClause: null
-=== SqlCteClauseTest.kt:118
-text: WITH $x AS (SELECT 1) SELECT a FROM x
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: WITH $x AS (SELECT 1) SELECT a FROM x
-QueryFileParser.parse: []
-splitStatements: [WITH $x AS (SELECT 1) SELECT a FROM x]
-explainedStatementStart: 0
-parseCteClause: null
-=== SqlCteClauseTest.kt:127
-text: WITH 1x AS (SELECT 1) SELECT a FROM x
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: WITH 1x AS (SELECT 1) SELECT a FROM x
-QueryFileParser.parse: java.lang.IllegalArgumentException: The text before the first annotation holds text that PostgreSQL's lexer rejects on line 1: trailing junk after numeric literal at or near "1x".
-splitStatements: [WITH 1x AS (SELECT 1) SELECT a FROM x]
-explainedStatementStart: 0
-parseCteClause: null
-=== SqlCteClauseTest.kt:133
-text: c
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: c
+replaceParameterPlaceholders: x
 QueryFileParser.parse: []
 splitStatements: []
 explainedStatementStart: 0
 parseCteClause: null
+=== SqlCteClauseTest.kt:119
+text: WITH x AS (SELECT 1 AS a) SELECT a FROM x UNION SELECT 2
+parseSelectItems: [SelectItem(expression=a, columnName=a, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=a, columnName=a, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=null, isAliasExplicit=false)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=a, columnName=a, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: true
+placeholderPositions: []
+replaceParameterPlaceholders: WITH x AS (SELECT 1 AS a) SELECT a FROM x UNION SELECT 2
+QueryFileParser.parse: []
+splitStatements: [WITH x AS (SELECT 1 AS a) SELECT a FROM x UNION SELECT 2]
+explainedStatementStart: 0
+parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=x, rawName=x, bodyOpenParenthesis=10, bodyCloseParenthesis=24)], mainQueryStart=26)
+isStar(item[0]): false
+alias(item[0]): null
+isAliasExplicit(item[0]): false
+=== SqlCteClauseTest.kt:121
+text: x
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: x
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:121#2
+text: x
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: x
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:128
+text: WITH x AS (SELECT 1 AS a) INSERT INTO t SELECT a FROM x
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH x AS (SELECT 1 AS a) INSERT INTO t SELECT a FROM x
+QueryFileParser.parse: []
+splitStatements: [WITH x AS (SELECT 1 AS a) INSERT INTO t SELECT a FROM x]
+explainedStatementStart: 0
+parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=x, rawName=x, bodyOpenParenthesis=10, bodyCloseParenthesis=24)], mainQueryStart=26)
+=== SqlCteClauseTest.kt:129
+text: WITH x AS (SELECT 1 AS a) UPDATE t SET a = (SELECT a FROM x)
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH x AS (SELECT 1 AS a) UPDATE t SET a = (SELECT a FROM x)
+QueryFileParser.parse: []
+splitStatements: [WITH x AS (SELECT 1 AS a) UPDATE t SET a = (SELECT a FROM x)]
+explainedStatementStart: 0
+parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=x, rawName=x, bodyOpenParenthesis=10, bodyCloseParenthesis=24)], mainQueryStart=26)
+=== SqlCteClauseTest.kt:130
+text: WITH x AS (SELECT 1 AS a) DELETE FROM t WHERE a IN (SELECT a FROM x)
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH x AS (SELECT 1 AS a) DELETE FROM t WHERE a IN (SELECT a FROM x)
+QueryFileParser.parse: []
+splitStatements: [WITH x AS (SELECT 1 AS a) DELETE FROM t WHERE a IN (SELECT a FROM x)]
+explainedStatementStart: 0
+parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=x, rawName=x, bodyOpenParenthesis=10, bodyCloseParenthesis=24)], mainQueryStart=26)
+=== SqlCteClauseTest.kt:131
+text: WITH x AS (SELECT 1 AS a) MERGE INTO t USING x ON t.a = x.a WHEN MATCHED THEN DELETE
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH x AS (SELECT 1 AS a) MERGE INTO t USING x ON t.a = x.a WHEN MATCHED THEN DELETE
+QueryFileParser.parse: []
+splitStatements: [WITH x AS (SELECT 1 AS a) MERGE INTO t USING x ON t.a = x.a WHEN MATCHED THEN DELETE]
+explainedStatementStart: 0
+parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=x, rawName=x, bodyOpenParenthesis=10, bodyCloseParenthesis=24)], mainQueryStart=26)
 === SqlCteClauseTest.kt:134
-text: WITH $overLongName AS (SELECT 1) SELECT * FROM $overLongName
+text: x
 parseSelectItems: []
 parseOutputItemsWithAlias: []
 alignSelectItems(columnCount = parseSelectItems.size): []
 alignSelectItems(columnCount = parseSelectItems.size + 1): []
 hasTopLevelSetOperation: false
 placeholderPositions: []
-replaceParameterPlaceholders: WITH $overLongName AS (SELECT 1) SELECT * FROM $overLongName
-QueryFileParser.parse: []
-splitStatements: [WITH $overLongName AS (SELECT 1) SELECT * FROM $overLongName]
-explainedStatementStart: 0
-parseCteClause: null
-=== SqlCteClauseTest.kt:136
-text: c
-parseSelectItems: []
-parseOutputItemsWithAlias: []
-alignSelectItems(columnCount = parseSelectItems.size): []
-alignSelectItems(columnCount = parseSelectItems.size + 1): []
-hasTopLevelSetOperation: false
-placeholderPositions: []
-replaceParameterPlaceholders: c
+replaceParameterPlaceholders: x
 QueryFileParser.parse: []
 splitStatements: []
 explainedStatementStart: 0
 parseCteClause: null
-=== SqlCteClauseTest.kt:142
-text: c
+=== SqlCteClauseTest.kt:134#2
+text: x
 parseSelectItems: []
 parseOutputItemsWithAlias: []
 alignSelectItems(columnCount = parseSelectItems.size): []
 alignSelectItems(columnCount = parseSelectItems.size + 1): []
 hasTopLevelSetOperation: false
 placeholderPositions: []
-replaceParameterPlaceholders: c
+replaceParameterPlaceholders: x
 QueryFileParser.parse: []
 splitStatements: []
 explainedStatementStart: 0
 parseCteClause: null
-=== SqlCteClauseTest.kt:143
-text: WITH "$overLongName" AS (SELECT 1) SELECT * FROM "$overLongName"
+=== SqlCteClauseTest.kt:140
+text: (WITH x AS (SELECT 1) SELECT 1 FROM x)
+parseSelectItems: [SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=null, isAliasExplicit=false)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: (WITH x AS (SELECT 1) SELECT 1 FROM x)
+QueryFileParser.parse: []
+splitStatements: [(WITH x AS (SELECT 1) SELECT 1 FROM x)]
+explainedStatementStart: 0
+parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=x, rawName=x, bodyOpenParenthesis=11, bodyCloseParenthesis=20)], mainQueryStart=22)
+isStar(item[0]): false
+alias(item[0]): null
+isAliasExplicit(item[0]): false
+=== SqlCteClauseTest.kt:141
+text: x
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: x
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:141#2
+text: x
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: x
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:146
+text: SELECT 1
+parseSelectItems: [SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=null, isAliasExplicit=false)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SELECT 1
+QueryFileParser.parse: []
+splitStatements: [SELECT 1]
+explainedStatementStart: 0
+parseCteClause: null
+isStar(item[0]): false
+alias(item[0]): null
+isAliasExplicit(item[0]): false
+=== SqlCteClauseTest.kt:147
+text: SELECT * FROM (WITH x AS (SELECT 1) SELECT 1) AS s
 parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=true)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=true), alias=null, isAliasExplicit=false)]
 alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=true)]
 alignSelectItems(columnCount = parseSelectItems.size + 1): []
 hasTopLevelSetOperation: false
 placeholderPositions: []
-replaceParameterPlaceholders: WITH "$overLongName" AS (SELECT 1) SELECT * FROM "$overLongName"
+replaceParameterPlaceholders: SELECT * FROM (WITH x AS (SELECT 1) SELECT 1) AS s
 QueryFileParser.parse: []
-splitStatements: [WITH "$overLongName" AS (SELECT 1) SELECT * FROM "$overLongName"]
+splitStatements: [SELECT * FROM (WITH x AS (SELECT 1) SELECT 1) AS s]
 explainedStatementStart: 0
-parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=$overLongName, rawName="$overLongName", bodyOpenParenthesis=24, bodyCloseParenthesis=33)], mainQueryStart=35)
+parseCteClause: null
 isStar(item[0]): true
 alias(item[0]): null
 isAliasExplicit(item[0]): false
-=== SqlCteClauseTest.kt:145
+=== SqlCteClauseTest.kt:148
+text: INSERT INTO t WITH x AS (SELECT 1) SELECT * FROM x
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: INSERT INTO t WITH x AS (SELECT 1) SELECT * FROM x
+QueryFileParser.parse: []
+splitStatements: [INSERT INTO t WITH x AS (SELECT 1) SELECT * FROM x]
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:149
+text: 
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: 
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:154
+text: WITH x AS (SELECT 1), y AS SELECT 2
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH x AS (SELECT 1), y AS SELECT 2
+QueryFileParser.parse: []
+splitStatements: [WITH x AS (SELECT 1), y AS SELECT 2]
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:155
+text: WITH x AS (SELECT 1
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH x AS (SELECT 1
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:156
+text: WITH "x AS (SELECT 1) SELECT 1
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH "x AS (SELECT 1) SELECT 1
+QueryFileParser.parse: java.lang.IllegalArgumentException: The text before the first annotation holds text that PostgreSQL's lexer rejects on line 1: unterminated quoted identifier at or near ""x AS (SELECT 1) SELECT 1".
+splitStatements: [WITH "x AS (SELECT 1) SELECT 1]
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:161
+text: WITH x AS (SELECT 1) SELECT 1\u0000
+parseSelectItems: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
+parseOutputItemsWithAlias: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
+alignSelectItems(columnCount = parseSelectItems.size): java.lang.IllegalArgumentException: SQL text must not contain NUL characters
+alignSelectItems(columnCount = parseSelectItems.size + 1): java.lang.IllegalArgumentException: SQL text must not contain NUL characters
+hasTopLevelSetOperation: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
+placeholderPositions: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
+replaceParameterPlaceholders: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
+QueryFileParser.parse: java.lang.IllegalArgumentException: The text before the first annotation contains a NUL character on line 1.
+splitStatements: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
+explainedStatementStart: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
+parseCteClause: null
+items: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
+=== SqlCteClauseTest.kt:166
 text: c
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -4761,20 +5066,72 @@ QueryFileParser.parse: []
 splitStatements: []
 explainedStatementStart: 0
 parseCteClause: null
-=== SqlCteClauseTest.kt:146
-text: "$overLongName"
+=== SqlCteClauseTest.kt:167
+text: WITH $name AS (SELECT 1) SELECT 1 FROM $name
 parseSelectItems: []
 parseOutputItemsWithAlias: []
 alignSelectItems(columnCount = parseSelectItems.size): []
 alignSelectItems(columnCount = parseSelectItems.size + 1): []
 hasTopLevelSetOperation: false
 placeholderPositions: []
-replaceParameterPlaceholders: "$overLongName"
+replaceParameterPlaceholders: WITH $name AS (SELECT 1) SELECT 1 FROM $name
+QueryFileParser.parse: []
+splitStatements: [WITH $name AS (SELECT 1) SELECT 1 FROM $name]
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:168
+text: c
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: c
 QueryFileParser.parse: []
 splitStatements: []
 explainedStatementStart: 0
 parseCteClause: null
-=== SqlCteClauseTest.kt:19
+=== SqlCteClauseTest.kt:174
+text: é
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: é
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:175
+text: WITH $name AS (SELECT 1) SELECT 1 FROM $name
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH $name AS (SELECT 1) SELECT 1 FROM $name
+QueryFileParser.parse: []
+splitStatements: [WITH $name AS (SELECT 1) SELECT 1 FROM $name]
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:176
+text: é
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: é
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:182
 text: WITH c AS (SELECT 1) SELECT * FROM c
 parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=true)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=true), alias=null, isAliasExplicit=false)]
@@ -4790,7 +5147,7 @@ parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=c, rawName=c, bo
 isStar(item[0]): true
 alias(item[0]): null
 isAliasExplicit(item[0]): false
-=== SqlCteClauseTest.kt:20
+=== SqlCteClauseTest.kt:183
 text: c
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -4803,7 +5160,7 @@ QueryFileParser.parse: []
 splitStatements: []
 explainedStatementStart: 0
 parseCteClause: null
-=== SqlCteClauseTest.kt:21
+=== SqlCteClauseTest.kt:184
 text: c
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -4816,7 +5173,7 @@ QueryFileParser.parse: []
 splitStatements: []
 explainedStatementStart: 0
 parseCteClause: null
-=== SqlCteClauseTest.kt:26
+=== SqlCteClauseTest.kt:189
 text: WITH "MyCte" AS (SELECT 1) SELECT * FROM "MyCte"
 parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=true)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=true), alias=null, isAliasExplicit=false)]
@@ -4832,7 +5189,23 @@ parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=MyCte, rawName="
 isStar(item[0]): true
 alias(item[0]): null
 isAliasExplicit(item[0]): false
-=== SqlCteClauseTest.kt:27
+=== SqlCteClauseTest.kt:19
+text: WITH x AS (SELECT 1 AS a), y AS (SELECT 2 AS b) SELECT a FROM x
+parseSelectItems: [SelectItem(expression=a, columnName=a, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=a, columnName=a, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=null, isAliasExplicit=false)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=a, columnName=a, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH x AS (SELECT 1 AS a), y AS (SELECT 2 AS b) SELECT a FROM x
+QueryFileParser.parse: []
+splitStatements: [WITH x AS (SELECT 1 AS a), y AS (SELECT 2 AS b) SELECT a FROM x]
+explainedStatementStart: 0
+parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=x, rawName=x, bodyOpenParenthesis=10, bodyCloseParenthesis=24), CteDefinition(name=y, rawName=y, bodyOpenParenthesis=32, bodyCloseParenthesis=46)], mainQueryStart=48)
+isStar(item[0]): false
+alias(item[0]): null
+isAliasExplicit(item[0]): false
+=== SqlCteClauseTest.kt:190
 text: MyCte
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -4845,7 +5218,7 @@ QueryFileParser.parse: []
 splitStatements: []
 explainedStatementStart: 0
 parseCteClause: null
-=== SqlCteClauseTest.kt:28
+=== SqlCteClauseTest.kt:191
 text: "MyCte"
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -4858,7 +5231,7 @@ QueryFileParser.parse: []
 splitStatements: []
 explainedStatementStart: 0
 parseCteClause: null
-=== SqlCteClauseTest.kt:36
+=== SqlCteClauseTest.kt:196
 text: WITH MyCte AS (SELECT 1) SELECT * FROM MyCte
 parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=true)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=true), alias=null, isAliasExplicit=false)]
@@ -4874,7 +5247,7 @@ parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=mycte, rawName=M
 isStar(item[0]): true
 alias(item[0]): null
 isAliasExplicit(item[0]): false
-=== SqlCteClauseTest.kt:37
+=== SqlCteClauseTest.kt:197
 text: mycte
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -4887,7 +5260,7 @@ QueryFileParser.parse: []
 splitStatements: []
 explainedStatementStart: 0
 parseCteClause: null
-=== SqlCteClauseTest.kt:38
+=== SqlCteClauseTest.kt:198
 text: MyCte
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -4900,7 +5273,7 @@ QueryFileParser.parse: []
 splitStatements: []
 explainedStatementStart: 0
 parseCteClause: null
-=== SqlCteClauseTest.kt:46
+=== SqlCteClauseTest.kt:204
 text: WITH note AS (\n  SELECT 'closing )'::TEXT AS msg\n),\ncounted AS (\n  SELECT length(msg) AS len FROM note\n)\nSELECT len FROM counted
 parseSelectItems: [SelectItem(expression=len, columnName=len, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=len, columnName=len, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=null, isAliasExplicit=false)]
@@ -4916,7 +5289,7 @@ parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=note, rawName=no
 isStar(item[0]): false
 alias(item[0]): null
 isAliasExplicit(item[0]): false
-=== SqlCteClauseTest.kt:57
+=== SqlCteClauseTest.kt:215
 text: note
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -4929,7 +5302,7 @@ QueryFileParser.parse: []
 splitStatements: []
 explainedStatementStart: 0
 parseCteClause: null
-=== SqlCteClauseTest.kt:58
+=== SqlCteClauseTest.kt:216
 text: counted
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -4942,7 +5315,59 @@ QueryFileParser.parse: []
 splitStatements: []
 explainedStatementStart: 0
 parseCteClause: null
-=== SqlCteClauseTest.kt:63
+=== SqlCteClauseTest.kt:22
+text: x
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: x
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:22#2
+text: x
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: x
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:22#3
+text: y
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: y
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:22#4
+text: y
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: y
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:221
 text: SELECT 'closing )'::TEXT AS msg
 parseSelectItems: [SelectItem(expression='closing )'::TEXT, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression='closing )'::TEXT, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=msg, isAliasExplicit=true)]
@@ -4958,7 +5383,7 @@ parseCteClause: null
 isStar(item[0]): false
 alias(item[0]): msg
 isAliasExplicit(item[0]): true
-=== SqlCteClauseTest.kt:70
+=== SqlCteClauseTest.kt:227
 text: WITH renamed AS (\n  SELECT a${'$'}b${'$'}c AS msg FROM note\n),\ncounted AS (\n  SELECT length(msg) AS len FROM renamed\n)\nSELECT len FROM counted
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -4970,8 +5395,8 @@ replaceParameterPlaceholders: WITH renamed AS (\n  SELECT a${'$'}b${'$'}c AS msg
 QueryFileParser.parse: []
 splitStatements: [WITH renamed AS (\n  SELECT a${'$'}b${'$'}c AS msg FROM note\n),\ncounted AS (\n  SELECT length(msg) AS len FROM renamed\n)\nSELECT len FROM counted]
 explainedStatementStart: 0
-parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=renamed, rawName=renamed, bodyOpenParenthesis=16, bodyCloseParenthesis=60), CteDefinition(name=counted, rawName=counted, bodyOpenParenthesis=74, bodyCloseParenthesis=117)], mainQueryStart=119)
-=== SqlCteClauseTest.kt:81
+parseCteClause: null
+=== SqlCteClauseTest.kt:238
 text: renamed
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -4984,7 +5409,7 @@ QueryFileParser.parse: []
 splitStatements: []
 explainedStatementStart: 0
 parseCteClause: null
-=== SqlCteClauseTest.kt:82
+=== SqlCteClauseTest.kt:239
 text: counted
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -4997,7 +5422,7 @@ QueryFileParser.parse: []
 splitStatements: []
 explainedStatementStart: 0
 parseCteClause: null
-=== SqlCteClauseTest.kt:92
+=== SqlCteClauseTest.kt:246
 text: WITH data€x AS (SELECT 1 AS inner_name) SELECT inner_name AS outer_name FROM data€x
 parseSelectItems: [SelectItem(expression=inner_name, columnName=inner_name, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
 parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=inner_name, columnName=inner_name, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=outer_name, isAliasExplicit=true)]
@@ -5013,7 +5438,7 @@ parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=data€x, rawNam
 isStar(item[0]): false
 alias(item[0]): outer_name
 isAliasExplicit(item[0]): true
-=== SqlCteClauseTest.kt:96
+=== SqlCteClauseTest.kt:250
 text: data€x
 parseSelectItems: []
 parseOutputItemsWithAlias: []
@@ -5022,6 +5447,666 @@ alignSelectItems(columnCount = parseSelectItems.size + 1): []
 hasTopLevelSetOperation: false
 placeholderPositions: []
 replaceParameterPlaceholders: data€x
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:256
+text: WITH "He""llo" AS (SELECT 1) SELECT 1 FROM "He""llo"
+parseSelectItems: [SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=null, isAliasExplicit=false)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH "He""llo" AS (SELECT 1) SELECT 1 FROM "He""llo"
+QueryFileParser.parse: []
+splitStatements: [WITH "He""llo" AS (SELECT 1) SELECT 1 FROM "He""llo"]
+explainedStatementStart: 0
+parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=He"llo, rawName="He""llo", bodyOpenParenthesis=18, bodyCloseParenthesis=27)], mainQueryStart=29)
+isStar(item[0]): false
+alias(item[0]): null
+isAliasExplicit(item[0]): false
+=== SqlCteClauseTest.kt:258
+text: "He""llo"
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: "He""llo"
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:259
+text: He"llo
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: He"llo
+QueryFileParser.parse: java.lang.IllegalArgumentException: The text before the first annotation holds text that PostgreSQL's lexer rejects on line 1: unterminated quoted identifier at or near ""llo".
+splitStatements: [He"llo]
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:265
+text: WITH $x AS (SELECT 1) SELECT a FROM x
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH $x AS (SELECT 1) SELECT a FROM x
+QueryFileParser.parse: []
+splitStatements: [WITH $x AS (SELECT 1) SELECT a FROM x]
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:272
+text: WITH 1x AS (SELECT 1) SELECT a FROM x
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH 1x AS (SELECT 1) SELECT a FROM x
+QueryFileParser.parse: java.lang.IllegalArgumentException: The text before the first annotation holds text that PostgreSQL's lexer rejects on line 1: trailing junk after numeric literal at or near "1x".
+splitStatements: [WITH 1x AS (SELECT 1) SELECT a FROM x]
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:278
+text: c
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: c
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:279
+text: WITH $overLongName AS (SELECT 1) SELECT * FROM $overLongName
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH $overLongName AS (SELECT 1) SELECT * FROM $overLongName
+QueryFileParser.parse: []
+splitStatements: [WITH $overLongName AS (SELECT 1) SELECT * FROM $overLongName]
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:281
+text: c
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: c
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:287
+text: c
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: c
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:288
+text: WITH "$overLongName" AS (SELECT 1) SELECT * FROM "$overLongName"
+parseSelectItems: [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=true)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=true), alias=null, isAliasExplicit=false)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=*, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=true)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH "$overLongName" AS (SELECT 1) SELECT * FROM "$overLongName"
+QueryFileParser.parse: []
+splitStatements: [WITH "$overLongName" AS (SELECT 1) SELECT * FROM "$overLongName"]
+explainedStatementStart: 0
+parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=$overLongName, rawName="$overLongName", bodyOpenParenthesis=24, bodyCloseParenthesis=33)], mainQueryStart=35)
+isStar(item[0]): true
+alias(item[0]): null
+isAliasExplicit(item[0]): false
+=== SqlCteClauseTest.kt:29
+text: WITH o AS (WITH i AS (SELECT 1 AS a) SELECT a FROM i) SELECT a FROM o
+parseSelectItems: [SelectItem(expression=a, columnName=a, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=a, columnName=a, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=null, isAliasExplicit=false)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=a, columnName=a, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH o AS (WITH i AS (SELECT 1 AS a) SELECT a FROM i) SELECT a FROM o
+QueryFileParser.parse: []
+splitStatements: [WITH o AS (WITH i AS (SELECT 1 AS a) SELECT a FROM i) SELECT a FROM o]
+explainedStatementStart: 0
+parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=o, rawName=o, bodyOpenParenthesis=10, bodyCloseParenthesis=52)], mainQueryStart=54)
+isStar(item[0]): false
+alias(item[0]): null
+isAliasExplicit(item[0]): false
+=== SqlCteClauseTest.kt:290
+text: c
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: c
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:291
+text: "$overLongName"
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: "$overLongName"
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:31
+text: o
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: o
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:31#2
+text: o
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: o
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:34
+text: WITH i AS (SELECT 1 AS a) SELECT a FROM i
+parseSelectItems: [SelectItem(expression=a, columnName=a, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=a, columnName=a, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=null, isAliasExplicit=false)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=a, columnName=a, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH i AS (SELECT 1 AS a) SELECT a FROM i
+QueryFileParser.parse: []
+splitStatements: [WITH i AS (SELECT 1 AS a) SELECT a FROM i]
+explainedStatementStart: 0
+parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=i, rawName=i, bodyOpenParenthesis=10, bodyCloseParenthesis=24)], mainQueryStart=26)
+isStar(item[0]): false
+alias(item[0]): null
+isAliasExplicit(item[0]): false
+=== SqlCteClauseTest.kt:36
+text: i
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: i
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:36#2
+text: i
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: i
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:43
+text: WITH RECURSIVE recursive_cte AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM recursive_cte WHERE n < 3) 
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH RECURSIVE recursive_cte AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM recursive_cte WHERE n < 3) 
+QueryFileParser.parse: []
+splitStatements: [WITH RECURSIVE recursive_cte AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM recursive_cte WHERE n < 3) ]
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:44
+text: SELECT n FROM recursive_cte
+parseSelectItems: [SelectItem(expression=n, columnName=n, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=n, columnName=n, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=null, isAliasExplicit=false)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=n, columnName=n, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SELECT n FROM recursive_cte
+QueryFileParser.parse: []
+splitStatements: [SELECT n FROM recursive_cte]
+explainedStatementStart: 0
+parseCteClause: null
+isStar(item[0]): false
+alias(item[0]): null
+isAliasExplicit(item[0]): false
+=== SqlCteClauseTest.kt:46
+text: recursive_cte
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: recursive_cte
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:46#2
+text: recursive_cte
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: recursive_cte
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:52
+text: WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM t WHERE n < 3) 
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM t WHERE n < 3) 
+QueryFileParser.parse: []
+splitStatements: [WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM t WHERE n < 3) ]
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:53
+text: SEARCH DEPTH FIRST BY n SET ordercol CYCLE n SET is_cycle USING path SELECT n FROM t
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SEARCH DEPTH FIRST BY n SET ordercol CYCLE n SET is_cycle USING path SELECT n FROM t
+QueryFileParser.parse: []
+splitStatements: [SEARCH DEPTH FIRST BY n SET ordercol CYCLE n SET is_cycle USING path SELECT n FROM t]
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:55
+text: t
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: t
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:55#2
+text: t
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: t
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:56
+text: SEARCH
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SEARCH
+QueryFileParser.parse: []
+splitStatements: [SEARCH]
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:61
+text: WITH d AS (DELETE FROM t WHERE id = 1 RETURNING id), 
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH d AS (DELETE FROM t WHERE id = 1 RETURNING id), 
+QueryFileParser.parse: []
+splitStatements: [WITH d AS (DELETE FROM t WHERE id = 1 RETURNING id), ]
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:62
+text: i AS (INSERT INTO t (id) VALUES (2) RETURNING id), 
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: i AS (INSERT INTO t (id) VALUES (2) RETURNING id), 
+QueryFileParser.parse: []
+splitStatements: [i AS (INSERT INTO t (id) VALUES (2) RETURNING id), ]
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:63
+text: u AS (UPDATE t SET id = 3 RETURNING id) SELECT id FROM d
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: u AS (UPDATE t SET id = 3 RETURNING id) SELECT id FROM d
+QueryFileParser.parse: []
+splitStatements: [u AS (UPDATE t SET id = 3 RETURNING id) SELECT id FROM d]
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:65
+text: d
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: d
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:65#2
+text: i
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: i
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:65#3
+text: u
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: u
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:69
+text: DELETE FROM t WHERE id = 1 RETURNING id
+parseSelectItems: [SelectItem(expression=id, columnName=id, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=id, columnName=id, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=null, isAliasExplicit=false)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=id, columnName=id, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: DELETE FROM t WHERE id = 1 RETURNING id
+QueryFileParser.parse: []
+splitStatements: [DELETE FROM t WHERE id = 1 RETURNING id]
+explainedStatementStart: 0
+parseCteClause: null
+isStar(item[0]): false
+alias(item[0]): null
+isAliasExplicit(item[0]): false
+=== SqlCteClauseTest.kt:70
+text: INSERT INTO t (id) VALUES (2) RETURNING id
+parseSelectItems: [SelectItem(expression=id, columnName=id, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=id, columnName=id, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=null, isAliasExplicit=false)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=id, columnName=id, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: INSERT INTO t (id) VALUES (2) RETURNING id
+QueryFileParser.parse: []
+splitStatements: [INSERT INTO t (id) VALUES (2) RETURNING id]
+explainedStatementStart: 0
+parseCteClause: null
+isStar(item[0]): false
+alias(item[0]): null
+isAliasExplicit(item[0]): false
+=== SqlCteClauseTest.kt:71
+text: UPDATE t SET id = 3 RETURNING id
+parseSelectItems: [SelectItem(expression=id, columnName=id, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=id, columnName=id, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=null, isAliasExplicit=false)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=id, columnName=id, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: UPDATE t SET id = 3 RETURNING id
+QueryFileParser.parse: []
+splitStatements: [UPDATE t SET id = 3 RETURNING id]
+explainedStatementStart: 0
+parseCteClause: null
+isStar(item[0]): false
+alias(item[0]): null
+isAliasExplicit(item[0]): false
+=== SqlCteClauseTest.kt:74
+text: SELECT id FROM d
+parseSelectItems: [SelectItem(expression=id, columnName=id, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=id, columnName=id, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=null, isAliasExplicit=false)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=id, columnName=id, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: SELECT id FROM d
+QueryFileParser.parse: []
+splitStatements: [SELECT id FROM d]
+explainedStatementStart: 0
+parseCteClause: null
+isStar(item[0]): false
+alias(item[0]): null
+isAliasExplicit(item[0]): false
+=== SqlCteClauseTest.kt:79
+text: WITH U&"d\\0061t" AS (SELECT 1) SELECT 1
+parseSelectItems: [SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=null, isAliasExplicit=false)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH U&"d\\0061t" AS (SELECT 1) SELECT 1
+QueryFileParser.parse: []
+splitStatements: [WITH U&"d\\0061t" AS (SELECT 1) SELECT 1]
+explainedStatementStart: 0
+parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=dat, rawName=U&"d\\0061t", bodyOpenParenthesis=20, bodyCloseParenthesis=29)], mainQueryStart=31)
+isStar(item[0]): false
+alias(item[0]): null
+isAliasExplicit(item[0]): false
+=== SqlCteClauseTest.kt:80
+text: U&"d\\0061t"
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: U&"d\\0061t"
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:81
+text: dat
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: dat
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:86
+text: WITH x(a, b) AS (SELECT 1, 2) SELECT a FROM x
+parseSelectItems: [SelectItem(expression=a, columnName=a, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=a, columnName=a, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=null, isAliasExplicit=false)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=a, columnName=a, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH x(a, b) AS (SELECT 1, 2) SELECT a FROM x
+QueryFileParser.parse: []
+splitStatements: [WITH x(a, b) AS (SELECT 1, 2) SELECT a FROM x]
+explainedStatementStart: 0
+parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=x, rawName=x, bodyOpenParenthesis=16, bodyCloseParenthesis=28)], mainQueryStart=30)
+isStar(item[0]): false
+alias(item[0]): null
+isAliasExplicit(item[0]): false
+=== SqlCteClauseTest.kt:87
+text: x
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: x
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:87#2
+text: x
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: x
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:92
+text: WITH m AS MATERIALIZED (SELECT 1), n AS NOT MATERIALIZED (SELECT 2) SELECT 1
+parseSelectItems: [SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+parseOutputItemsWithAlias: [OutputItemWithAlias(selectItem=SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false), alias=null, isAliasExplicit=false)]
+alignSelectItems(columnCount = parseSelectItems.size): [SelectItem(expression=1, columnName=null, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: WITH m AS MATERIALIZED (SELECT 1), n AS NOT MATERIALIZED (SELECT 2) SELECT 1
+QueryFileParser.parse: []
+splitStatements: [WITH m AS MATERIALIZED (SELECT 1), n AS NOT MATERIALIZED (SELECT 2) SELECT 1]
+explainedStatementStart: 0
+parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=m, rawName=m, bodyOpenParenthesis=23, bodyCloseParenthesis=32), CteDefinition(name=n, rawName=n, bodyOpenParenthesis=57, bodyCloseParenthesis=66)], mainQueryStart=68)
+isStar(item[0]): false
+alias(item[0]): null
+isAliasExplicit(item[0]): false
+=== SqlCteClauseTest.kt:94
+text: m
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: m
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:94#2
+text: m
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: m
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:94#3
+text: n
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: n
+QueryFileParser.parse: []
+splitStatements: []
+explainedStatementStart: 0
+parseCteClause: null
+=== SqlCteClauseTest.kt:94#4
+text: n
+parseSelectItems: []
+parseOutputItemsWithAlias: []
+alignSelectItems(columnCount = parseSelectItems.size): []
+alignSelectItems(columnCount = parseSelectItems.size + 1): []
+hasTopLevelSetOperation: false
+placeholderPositions: []
+replaceParameterPlaceholders: n
 QueryFileParser.parse: []
 splitStatements: []
 explainedStatementStart: 0
@@ -18181,7 +19266,7 @@ replaceParameterPlaceholders: WITH w AS (INSERT  (a) VALUES (1) RETURNING a) SEL
 QueryFileParser.parse: []
 splitStatements: [WITH w AS (INSERT  (a) VALUES (1) RETURNING a) SELECT a INTO c FROM w]
 explainedStatementStart: 0
-parseCteClause: ParsedCteClause(definitions=[CteDefinition(name=w, rawName=w, bodyOpenParenthesis=10, bodyCloseParenthesis=45)], mainQueryStart=47)
+parseCteClause: null
 === SqlStatementScannerTest.kt:205
 text: WITH w AS (INSERT INTO t (a) VALUES (1) RETURNING a) SELECT a  FROM w
 parseSelectItems: [SelectItem(expression=a, columnName=a, tableName=null, isColumnNameQuoted=false, isTableNameQuoted=false, isStar=false)]
