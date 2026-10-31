@@ -34,6 +34,21 @@ internal object ParseTreeNames {
   /** `ExplainStmt`. */
   const val EXPLAIN_STATEMENT = "ExplainStmt"
 
+  /** `WithClause` field of a statement that can start with `WITH`. */
+  const val WITH_CLAUSE = "withClause"
+
+  /** `WithClause.ctes`: the `CommonTableExpr` nodes of a `WITH` clause, in source order. */
+  const val COMMON_TABLE_EXPRESSIONS = "ctes"
+
+  /** `CommonTableExpr.ctename`: the CTE name in the form [STRING_VALUE] holds, cut to the server's identifier limit. */
+  const val COMMON_TABLE_EXPRESSION_NAME = "ctename"
+
+  /** `CommonTableExpr.aliascolnames`: the column list written after the CTE name, absent when there is none. */
+  const val COMMON_TABLE_EXPRESSION_COLUMN_NAMES = "aliascolnames"
+
+  /** `CommonTableExpr`: one CTE of a `WITH` clause. Its [LOCATION] is where the CTE name starts. */
+  const val COMMON_TABLE_EXPRESSION = "CommonTableExpr"
+
   /** `SelectStmt.targetList`: the select list. */
   const val TARGET_LIST = "targetList"
 
