@@ -16,7 +16,7 @@ import kotlin.io.path.readText
  */
 internal data class CorpusEntry(val key: String, val text: String)
 
-/** Test source files whose string literals feed the corpus. */
+/** Test source files the literal corpus entries were taken from. Their names prefix the entry keys. */
 internal val LITERAL_SOURCE_FILES = listOf(
   "SqlOutputClauseTest",
   "SqlStarItemTest",
@@ -31,7 +31,6 @@ private val SCENARIO_ROOTS = listOf("test-scenarios", "test-scenarios-frameworks
 /** Paths are relative to the working directory of the `generator` module, which Gradle sets for its tests. */
 internal object ScannerCorpus {
   private val repositoryRoot: Path = Path("..").toAbsolutePath().normalize()
-  private val testSourceRoot: Path = Path("src/test/kotlin/norm/generator").toAbsolutePath()
 
   /** Every entry, ordered by key. */
   fun load(): List<CorpusEntry> {
@@ -57,13 +56,15 @@ internal object ScannerCorpus {
       QueryFileParser.parse(content, "").map { CorpusEntry("$fileKey#${it.name}", it.sql) }
   }
 
-  private fun literalEntries(): List<CorpusEntry> = LITERAL_SOURCE_FILES.flatMap { name ->
-    val fileName = "$name.kt"
-    val occurrencesByLine = mutableMapOf<Int, Int>()
-    lexKotlinStringLiterals(testSourceRoot.resolve(fileName).readText()).map { literal ->
-      val occurrence = occurrencesByLine.merge(literal.line, 1, Int::plus)!!
-      val suffix = if (occurrence == 1) "" else "#$occurrence"
-      CorpusEntry("$fileName:${literal.line}$suffix", literal.value)
+  private fun literalEntries(): List<CorpusEntry> {
+    val resource =
+      checkNotNull(ScannerCorpus::class.java.getResourceAsStream(ScannerBaselineFiles.LITERAL_CORPUS_RESOURCE)) {
+        "The literal corpus is missing from the test resources."
+      }
+    val lines = resource.use { String(it.readBytes(), Charsets.UTF_8) }.lines().filter { it.isNotEmpty() }
+    return lines.chunked(2).map { (keyLine, textLine) ->
+      check(keyLine.startsWith("=== ") && textLine.startsWith("text: ")) { "Malformed literal corpus near $keyLine" }
+      CorpusEntry(keyLine.removePrefix("=== "), ScannerBaseline.unescape(textLine.removePrefix("text: ")))
     }
   }
 
