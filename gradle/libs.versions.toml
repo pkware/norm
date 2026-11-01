@@ -12,7 +12,7 @@ testcontainers = "2.0.5"
 assertk = "com.willowtreeapps.assertk:assertk:0.28.1"
 chicory-runtime = { module = "com.dylibso.chicory:runtime", version.ref = "chicory" }
 chicory-wasi = { module = "com.dylibso.chicory:wasi", version.ref = "chicory" }
-commonmark = "org.commonmark:commonmark:0.31.0"
+commonmark = "org.commonmark:commonmark:0.32.0"
 detekt-imports = "com.pkware.detekt:import-extension:2.1.0"
 junit-params = { module = "org.junit.jupiter:junit-jupiter-params", version.ref = "junit" }
 kotlinPoet = "com.squareup:kotlinpoet:2.4.0"
