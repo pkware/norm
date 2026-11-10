@@ -19,7 +19,6 @@ import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
-import org.postgresql.util.PSQLException
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.containers.wait.strategy.Wait
 import org.testcontainers.containers.wait.strategy.WaitAllStrategy
@@ -174,22 +173,10 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
     }
 
     // Declaring a file and its directory lists the file twice. The first occurrence wins.
+    val applier = SchemaFileApplier(connection, logger)
     val seenCanonicalPaths = mutableSetOf<String>()
     order.toApply.filter { seenCanonicalPaths.add(it.canonicalPath) }.forEach { file ->
-      val content = file.readText()
-      try {
-        connection.createStatement().use { it.execute(content) }
-      } catch (e: SQLException) {
-        val locationInfo = (e as? PSQLException)?.serverErrorMessage?.position
-          ?.takeIf { it > 0 }
-          ?.let { position -> sqlPositionToLineColumn(content, position) }
-          ?.let { (line, column) -> " at line $line, column $column" }
-          ?: ""
-        throw IllegalStateException(
-          "Norm: Failed to apply schema '${file.absolutePath}'$locationInfo: ${e.message}",
-          e,
-        )
-      }
+      applier.apply(file)
     }
     logger.lifecycle("Norm: Schemas applied successfully")
   }
@@ -228,24 +215,6 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
     if (sourceFile.isEmpty()) return ""
     val lineSegment = if (sourceLine > 0) ":$sourceLine" else ""
     return " ($sourceFile$lineSegment)"
-  }
-
-  /**
-   * Converts a 1-based character position in a SQL string to a (line, column) pair.
-   *
-   * PostgreSQL reports errors using a character position ([org.postgresql.util.ServerErrorMessage.position]).
-   * This function converts that position to a human-readable line and column
-   * so that errors can be traced back to the correct location in the source file.
-   *
-   * @param sql The full SQL string that was submitted to PostgreSQL.
-   * @param position The 1-based character offset reported by PostgreSQL.
-   * @return A pair of (1-based line number, 1-based column number).
-   */
-  private fun sqlPositionToLineColumn(sql: String, position: Int): Pair<Int, Int> {
-    val textBefore = sql.take((position - 1).coerceAtLeast(0))
-    val line = textBefore.count { it == '\n' } + 1
-    val column = position - textBefore.lastIndexOf('\n') - 1
-    return line to column
   }
 
   private fun createAndStartContainer(): PostgreSQLContainer<*> {

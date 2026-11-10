@@ -2,6 +2,7 @@ package norm.gradle
 
 import assertk.assertThat
 import assertk.assertions.contains
+import assertk.assertions.doesNotContain
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isNotEmpty
@@ -9,6 +10,7 @@ import assertk.assertions.isNotEqualTo
 import assertk.assertions.isTrue
 import org.gradle.testkit.runner.TaskOutcome.SUCCESS
 import org.gradle.testkit.runner.TaskOutcome.UP_TO_DATE
+import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.junit.jupiter.api.parallel.Execution
@@ -1095,6 +1097,186 @@ class NormPluginTest {
 
     val result = project.gradle("normGenerateTest").build()
     assertThat(result.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+  }
+
+  @Nested
+  inner class MissingRoles {
+
+    private fun gradleProject(schemaSql: String, vararg laterSchemaSql: String): TestProject {
+      val project = TestProject(projectDir, BASIC_EMBEDS_SCENARIO)
+      project.setupSettingsOnly()
+      val schemaFiles = (listOf(schemaSql) + laterSchemaSql).mapIndexed { index, sql ->
+        projectDir.resolve(if (index == 0) "schema.sql" else "schema${index + 1}.sql").also { it.writeText(sql) }
+      }
+      val queries = projectDir.resolve("queries.sql")
+      queries.writeText("")
+      project.buildFile.writeText(
+        """
+        plugins {
+          kotlin("jvm")
+          id("com.pkware.norm")
+        }
+
+        norm {
+          databases {
+            create("Test") {
+              packageName = "example"
+              schemas.addAll(${schemaFiles.joinToString { "\"$it\"" }})
+              queries.addAll("$queries")
+            }
+          }
+        }
+        """.trimIndent(),
+      )
+      return project
+    }
+
+    private fun stubWarning(role: String) = "Created NOLOGIN stub role '$role'"
+
+    private fun String.countLinesContaining(fragment: String) = lines().count { it.contains(fragment) }
+
+    @Test
+    fun `statements that reference missing roles are applied after stubbing the roles`() {
+      val project = gradleProject(
+        """
+        CREATE TABLE account (id serial PRIMARY KEY, name text NOT NULL);
+        GRANT SELECT ON account TO readonly_role;
+        CREATE TABLE ledger (id serial PRIMARY KEY);
+        ALTER TABLE ledger OWNER TO owner_role;
+        CREATE SCHEMA reporting AUTHORIZATION schema_owner_role;
+        ALTER TABLE account ENABLE ROW LEVEL SECURITY;
+        CREATE POLICY account_policy ON account TO policy_role USING (true);
+        DO ${'$'}${'$'}
+        BEGIN
+          GRANT SELECT ON ledger TO do_block_role;
+        END
+        ${'$'}${'$'};
+        """.trimIndent(),
+      )
+
+      val result = project.gradle("normGenerateTest").build()
+
+      assertThat(result.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+      val generatedFiles = collectKotlinFiles(project.generatedCodeDirectory, project.generatedCodeDirectory)
+      assertThat(generatedFiles.values.any { it.contains("Account") }, "Expected the account table").isTrue()
+      assertThat(generatedFiles.values.any { it.contains("Ledger") }, "Expected the ledger table").isTrue()
+      for (role in listOf("readonly_role", "owner_role", "schema_owner_role", "policy_role", "do_block_role")) {
+        assertThat(result.output.countLinesContaining(stubWarning(role)), "Warnings for $role").isEqualTo(1)
+      }
+      assertThat(result.output).contains("schema.sql")
+    }
+
+    @Test
+    fun `role names needing quoting are stubbed with the exact name`() {
+      val project = gradleProject(
+        """
+        CREATE TABLE account (id serial PRIMARY KEY);
+        GRANT SELECT ON account TO "Report Reader";
+        GRANT SELECT ON account TO "odd""role";
+        """.trimIndent(),
+      )
+
+      val result = project.gradle("normGenerateTest").build()
+
+      assertThat(result.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+      assertThat(result.output.countLinesContaining(stubWarning("Report Reader"))).isEqualTo(1)
+      assertThat(result.output.countLinesContaining(stubWarning("odd\"role"))).isEqualTo(1)
+    }
+
+    @Test
+    fun `a role created by the schema is not stubbed`() {
+      val project = gradleProject(
+        """
+        CREATE TABLE account (id serial PRIMARY KEY);
+        CREATE ROLE app_role;
+        GRANT SELECT ON account TO app_role;
+        """.trimIndent(),
+      )
+
+      val result = project.gradle("normGenerateTest").build()
+
+      assertThat(result.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+      assertThat(result.output).doesNotContain("stub role")
+    }
+
+    @Test
+    fun `a missing object that is not a role still fails with the filename`() {
+      val project = gradleProject(
+        """
+        CREATE TABLE account (id serial PRIMARY KEY);
+        CREATE TABLE broken (id undefined_type);
+        """.trimIndent(),
+      )
+
+      val result = project.gradle("normGenerateTest").buildAndFail()
+
+      assertThat(result.output).contains("Failed to apply schema")
+      assertThat(result.output).contains("schema.sql")
+      assertThat(result.output).contains("at line")
+      assertThat(result.output).doesNotContain("stub role")
+    }
+
+    @Test
+    fun `a file with its own transaction is retried after stubbing a role`() {
+      val project = gradleProject(
+        """
+        BEGIN;
+        CREATE TABLE account (id serial PRIMARY KEY);
+        GRANT SELECT ON account TO missing_role;
+        COMMIT;
+        """.trimIndent(),
+      )
+
+      val result = project.gradle("normGenerateTest").build()
+
+      assertThat(result.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+      assertThat(result.output.countLinesContaining(stubWarning("missing_role"))).isEqualTo(1)
+    }
+
+    @Test
+    fun `a file that commits work before referencing a missing role fails without replaying`() {
+      val project = gradleProject(
+        """
+        BEGIN;
+        CREATE TABLE account (id serial PRIMARY KEY);
+        COMMIT;
+        GRANT SELECT ON account TO missing_role;
+        """.trimIndent(),
+      )
+
+      val result = project.gradle("normGenerateTest").buildAndFail()
+
+      assertThat(result.output).contains("Failed to apply schema")
+      assertThat(result.output).contains("schema.sql")
+      assertThat(result.output).contains("missing_role")
+      assertThat(result.output).contains("committed part of its work")
+      assertThat(result.output).doesNotContain("already exists")
+      assertThat(result.output).doesNotContain("stub role")
+    }
+
+    @Test
+    fun `a standalone CREATE INDEX CONCURRENTLY file is applied`() {
+      val project = gradleProject(
+        "CREATE TABLE account (id serial PRIMARY KEY, name text NOT NULL);",
+        "CREATE INDEX CONCURRENTLY account_name_index ON account (name);",
+      )
+
+      val result = project.gradle("normGenerateTest").build()
+
+      assertThat(result.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+    }
+
+    @Test
+    fun `a standalone VACUUM file is applied`() {
+      val project = gradleProject(
+        "CREATE TABLE account (id serial PRIMARY KEY, name text NOT NULL);",
+        "VACUUM account;",
+      )
+
+      val result = project.gradle("normGenerateTest").build()
+
+      assertThat(result.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+    }
   }
 
   companion object {
