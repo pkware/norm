@@ -25,6 +25,7 @@ repositories {
 }
 
 dependencies {
+  compileOnly(libs.chicory.buildTimeCompiler)
   implementation(kotlin("gradle-plugin", libs.versions.kotlin.get()))
   implementation("com.diffplug.spotless:spotless-plugin-gradle:8.11.0")
   implementation("dev.detekt:dev.detekt.gradle.plugin:2.0.0-alpha.6")

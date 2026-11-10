@@ -9,10 +9,16 @@ import com.dylibso.chicory.wasm.WasmModule
 import java.io.OutputStream
 
 private val module: WasmModule by lazy {
-  openResource("/libpg_query.wasm").use { Parser.parse(it) }
+  openResource("/norm/generator/libpgquery/LibPgQuery.meta").use { Parser.parse(it) }
 }
 
-/** Instantiates `libpg_query.wasm` and runs its initializers. WASI output goes nowhere. */
+/**
+ * Instantiates the module compiled by the `compileLibPgQuery` build task and runs its initializers. WASI output goes
+ * nowhere.
+ *
+ * The `.meta` module holds `unreachable` in place of every function [LibPgQueryMachine] compiled, so an instance
+ * without that machine traps on its first call.
+ */
 internal fun newInstance(): Instance {
   val wasi = WasiPreview1.builder()
     .withOptions(
@@ -23,7 +29,11 @@ internal fun newInstance(): Instance {
     )
     .build()
   val imports = ImportValues.builder().addFunction(*wasi.toHostFunctions()).build()
-  val created = Instance.builder(module).withImportValues(imports).withStart(false).build()
+  val created = Instance.builder(module)
+    .withImportValues(imports)
+    .withMachineFactory(::LibPgQueryMachine)
+    .withStart(false)
+    .build()
   created.call("_initialize")
   created.call("pg_query_init")
   return created
