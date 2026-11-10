@@ -112,7 +112,7 @@ class LibPgQuerySmokeTest {
       ).containsExactly("memory")
     }
 
-    private fun module() = openResource("/libpg_query.wasm").use { Parser.parse(it) }
+    private fun module() = openResource("/norm/generator/libpgquery/LibPgQuery.meta").use { Parser.parse(it) }
 
     private fun exports() = module().exportSection().let { section ->
       (0 until section.exportCount()).map { section.getExport(it) }

@@ -10,6 +10,7 @@ testcontainers = "2.0.5"
 
 [libraries]
 assertk = "com.willowtreeapps.assertk:assertk:0.28.1"
+chicory-buildTimeCompiler = { module = "com.dylibso.chicory:build-time-compiler", version.ref = "chicory" }
 chicory-runtime = { module = "com.dylibso.chicory:runtime", version.ref = "chicory" }
 chicory-wasi = { module = "com.dylibso.chicory:wasi", version.ref = "chicory" }
 commonmark = "org.commonmark:commonmark:0.32.0"

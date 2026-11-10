@@ -1,10 +1,19 @@
+import com.pkware.gradle.CompileWasmModule
+
 plugins {
   `kotlin-conventions`
   `java-library`
   `publish-conventions`
 }
 
+val wasmCompiler by configurations.registering {
+  isCanBeConsumed = false
+  isCanBeResolved = true
+}
+
 dependencies {
+  wasmCompiler(libs.chicory.buildTimeCompiler)
+
   implementation(libs.chicory.runtime)
   implementation(libs.chicory.wasi)
   implementation(libs.kotlinPoet)
@@ -17,6 +26,25 @@ dependencies {
 
 kotlin {
   explicitApi()
+}
+
+val compileLibPgQuery by tasks.registering(CompileWasmModule::class) {
+  wasmFile = layout.projectDirectory.file("src/main/resources/libpg_query.wasm")
+  className = "norm.generator.libpgquery.LibPgQuery"
+  compilerClasspath.from(wasmCompiler)
+  outputDirectory = layout.buildDirectory.dir("generated/wasm/libpgquery")
+}
+
+sourceSets.main {
+  output.dir(compileLibPgQuery.flatMap { it.outputDirectory })
+}
+
+dependencies {
+  compileOnly(files(compileLibPgQuery.flatMap { it.outputDirectory }).builtBy(compileLibPgQuery))
+}
+
+tasks.processResources {
+  exclude("libpg_query.wasm")
 }
 
 tasks.test {
