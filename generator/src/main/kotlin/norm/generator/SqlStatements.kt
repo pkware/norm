@@ -17,9 +17,14 @@ import norm.generator.libpgquery.TokenNumber
  *
  * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
-internal fun splitStatements(sql: String): List<String> {
+internal fun splitStatements(sql: String): List<String> =
+  splitStatements(sql, ::replaceParameterPlaceholdersKeepingOffsets)
+
+internal fun splitStatements(parsed: ParsedSql): List<String> = splitStatements(parsed.sql) { parsed.parserForm }
+
+private fun splitStatements(sql: String, rewriteForParser: (String) -> String): List<String> {
   val spans = try {
-    splitStatementSpans(sql)
+    splitStatementSpans(sql, rewriteForParser)
   } catch (_: LibPgQueryException) {
     return listOf(sql)
   }
@@ -66,20 +71,16 @@ internal fun splitStatementSpans(
  *
  * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
-internal fun explainedStatementStart(sql: String): Int {
-  val tree = try {
-    LibPgQuery.parse(replaceParameterPlaceholdersKeepingOffsets(sql))
-  } catch (_: LibPgQueryException) {
-    return 0
-  }
+internal fun explainedStatementStart(sql: String): Int = explainedStatementStart(ParsedSql(sql))
+
+internal fun explainedStatementStart(parsed: ParsedSql): Int {
+  val tree = parsed.tree ?: return 0
   val explain = tree.objectArrayField(ParseTreeNames.STATEMENTS)
     .firstOrNull()
     ?.objectField(ParseTreeNames.STATEMENT)
     ?.objectField(ParseTreeNames.EXPLAIN_STATEMENT) ?: return 0
   val optionCount = explain.objectArrayField(ParseTreeNames.EXPLAIN_OPTIONS).size
-  val tokens = scanLeadingTokens(sql).filter {
-    it.token != TokenNumber.LINE_COMMENT && it.token != TokenNumber.BLOCK_COMMENT
-  }
+  val tokens = parsed.significantTokens
   val explainIndex = tokens.indexOfFirst { it.token != TokenNumber.SEMICOLON }
   if (explainIndex < 0) return 0
   val next = tokens.getOrNull(explainIndex + 1)
@@ -101,9 +102,11 @@ internal fun explainedStatementStart(sql: String): Int {
  *
  * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
-internal fun startsPreparableStatement(sql: String): Boolean {
-  val first = significantTokens(sql).firstOrNull { it.token != TokenNumber.OPEN_PARENTHESIS } ?: return false
-  return PREPARABLE_KEYWORDS.any { isKeyword(sql, first, it) }
+internal fun startsPreparableStatement(sql: String): Boolean = startsPreparableStatement(ParsedSql(sql))
+
+internal fun startsPreparableStatement(parsed: ParsedSql): Boolean {
+  val first = parsed.significantTokens.firstOrNull { it.token != TokenNumber.OPEN_PARENTHESIS } ?: return false
+  return PREPARABLE_KEYWORDS.any { isKeyword(parsed.sql, first, it) }
 }
 
 /**
@@ -118,12 +121,11 @@ internal fun startsPreparableStatement(sql: String): Boolean {
  * @throws IllegalArgumentException if [sql] contains a NUL character.
  * @throws IllegalStateException if the tokens do not match the parse tree.
  */
-internal fun withoutIntoClause(sql: String): String? {
-  val tree = try {
-    LibPgQuery.parse(replaceParameterPlaceholdersKeepingOffsets(sql))
-  } catch (_: LibPgQueryException) {
-    return null
-  }
+internal fun withoutIntoClause(sql: String): String? = withoutIntoClause(ParsedSql(sql))
+
+internal fun withoutIntoClause(parsed: ParsedSql): String? {
+  val sql = parsed.sql
+  val tree = parsed.tree ?: return null
   val relation = tree.objectArrayField(ParseTreeNames.STATEMENTS)
     .firstOrNull()
     ?.objectField(ParseTreeNames.STATEMENT)
@@ -131,7 +133,7 @@ internal fun withoutIntoClause(sql: String): String? {
     ?.let(::leftmostLeaf)
     ?.objectField(ParseTreeNames.INTO_CLAUSE)
     ?.objectField(ParseTreeNames.INTO_RELATION) ?: return null
-  val tokens = significantTokens(sql)
+  val tokens = parsed.significantTokens
   val nameStart = tokens.indexOfFirst { it.start == relation.intField(ParseTreeNames.LOCATION) }
   check(nameStart >= 0) { "No token starts the INTO table name" }
   val partCount = INTO_NAME_PARTS.count { relation.stringField(it) != null }
@@ -157,10 +159,6 @@ private fun nameEndToken(sql: String, tokens: List<ScanToken>, index: Int): Int 
     tokens.getOrNull(index + 1)?.let { isKeyword(sql, it, UNICODE_ESCAPE_KEYWORD) } == true &&
     tokens.getOrNull(index + 2)?.token == TokenNumber.STRING
   return if (hasEscapeClause) index + 2 else index
-}
-
-private fun significantTokens(sql: String): List<ScanToken> = scanLeadingTokens(sql).filter {
-  it.token != TokenNumber.LINE_COMMENT && it.token != TokenNumber.BLOCK_COMMENT
 }
 
 private const val INTO_KEYWORD = "INTO"

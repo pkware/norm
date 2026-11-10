@@ -1,6 +1,5 @@
 package norm.generator
 
-import norm.generator.libpgquery.LibPgQuery
 import norm.generator.libpgquery.ParseTreeNames
 import norm.generator.libpgquery.ScanToken
 import norm.generator.libpgquery.TokenNumber
@@ -43,14 +42,22 @@ internal data class ParsedCteClause(val definitions: List<CteDefinition>, val ma
  * @throws IllegalStateException if a parsed CTE has no name token at its location or no body parentheses.
  */
 @Throws(IllegalStateException::class)
-internal fun parseCteClause(sql: String): ParsedCteClause? {
-  if ('\u0000' in sql) return null
-  val rewritten = replaceParameterPlaceholdersKeepingOffsets(sql)
-  val tree = parseOrNull(rewritten) ?: return null
+internal fun parseCteClause(sql: String): ParsedCteClause? = if ('\u0000' in
+  sql
+) {
+  null
+} else {
+  parseCteClause(ParsedSql(sql))
+}
+
+@Throws(IllegalStateException::class)
+internal fun parseCteClause(parsed: ParsedSql): ParsedCteClause? {
+  val sql = parsed.sql
+  val tree = parsed.tree ?: return null
   val commonTableExpressions = commonTableExpressions(tree)
   if (commonTableExpressions.isEmpty()) return null
 
-  val tokens = LibPgQuery.scan(rewritten)
+  val tokens = parsed.tokens
   var lastBodyClose = -1
   val definitions = commonTableExpressions.map { expression ->
     val nameIndex = tokens.indexOfFirst { it.start == expression.intField(ParseTreeNames.LOCATION) }

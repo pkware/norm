@@ -279,7 +279,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
   }
 
   /**
-   * Determines which result columns of [sql] can be `NULL`.
+   * Determines which result columns of [parsedSql] can be `NULL`.
    *
    * Routes every statement — a plain `SELECT` exactly the same as a data-modifying statement or
    * CTE — through [ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody]. `prosqlbody`
@@ -297,7 +297,7 @@ internal class PgCatalogLoader(private val connection: Connection) {
    *
    * @return one [ColumnAnalysis] per result column. If
    *   [ColumnNullabilityAnalyzer.queryColumnNullabilityViaProsqlbody] cannot produce an answer at
-   *   all — a probe failure, or [sql] is a `MERGE` whose `USING` clause has more than one source
+   *   all — a probe failure, or [parsedSql] is a `MERGE` whose `USING` clause has more than one source
    *   relation of its own (see [mergeAbsentVarnos]'s own KDoc) — every real
    *   result column (via `PreparedStatement.getMetaData()`, the only source of a column count this
    *   deep into a fallback) is reported nullable with no provenance: the safe direction, and
@@ -306,9 +306,9 @@ internal class PgCatalogLoader(private val connection: Connection) {
    *   since its real column count is `0` — there is nothing for a caller to treat as nullable or
    *   not.
    */
-  fun queryColumnNullability(@Language("PostgreSQL") sql: String): List<ColumnAnalysis> =
-    nullabilityAnalyzer.queryColumnNullabilityViaProsqlbody(sql)
-      ?: List(realColumnCount(sql)) { ColumnAnalysis(nullable = true, provenanceExpression = null) }
+  fun queryColumnNullability(parsedSql: ParsedSql): List<ColumnAnalysis> =
+    nullabilityAnalyzer.queryColumnNullabilityViaProsqlbody(parsedSql)
+      ?: List(realColumnCount(parsedSql.sql)) { ColumnAnalysis(nullable = true, provenanceExpression = null) }
 
   /**
    * The real number of result columns [sql] produces, via `PreparedStatement.getMetaData()` — used

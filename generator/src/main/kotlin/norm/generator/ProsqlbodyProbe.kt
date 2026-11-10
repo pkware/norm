@@ -5,13 +5,14 @@ import java.sql.SQLException
 import java.util.UUID
 
 /**
- * Replaces `?` parameter placeholders in [sql] with typed non-null sentinel values (e.g.,
+ * Replaces `?` parameter placeholders in [parsedSql] with typed non-null sentinel values (e.g.,
  * `0::int4`, `''::text`).
  *
  * @return The SQL with `?` replaced by typed sentinels, or `null` if parameter metadata
  *   cannot be obtained (caller should fall back to NULL replacement).
  */
-internal fun buildViewSqlWithSentinels(connection: Connection, sql: String): String? {
+internal fun buildViewSqlWithSentinels(connection: Connection, parsedSql: ParsedSql): String? {
+  val sql = parsedSql.sql
   if ('?' !in sql) return sql
   return try {
     val sentinels = connection.prepareStatement(sql).use { preparedStatement ->
@@ -20,7 +21,7 @@ internal fun buildViewSqlWithSentinels(connection: Connection, sql: String): Str
         nonNullSentinel(parameterMetaData.getParameterTypeName(index))
       }
     }
-    replaceParameterPlaceholders(sql) { sentinels.getOrElse(it) { "NULL" } }
+    replaceParameterPlaceholders(parsedSql) { sentinels.getOrElse(it) { "NULL" } }
   } catch (_: SQLException) {
     null
   }

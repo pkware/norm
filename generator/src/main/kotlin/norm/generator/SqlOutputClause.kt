@@ -97,7 +97,9 @@ internal data class SelectItem(
  *   reported.
  * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
-internal fun parseSelectItems(sql: String): List<SelectItem> = parseOutputItemsWithAlias(sql).map { it.selectItem }
+internal fun parseSelectItems(sql: String): List<SelectItem> = parseSelectItems(ParsedSql(sql))
+
+internal fun parseSelectItems(parsed: ParsedSql): List<SelectItem> = parsed.outputItems.map { it.selectItem }
 
 /**
  * Parses [sql]'s output clause with [parseSelectItems] and keeps the result only when it lines up
@@ -108,8 +110,11 @@ internal fun parseSelectItems(sql: String): List<SelectItem> = parseOutputItemsW
  *
  * @return The parsed items, or empty when parsing found none or their count differs from [columnCount].
  */
-internal fun alignSelectItems(sql: String, columnCount: Int): List<SelectItem> {
-  val items = parseSelectItems(sql)
+internal fun alignSelectItems(sql: String, columnCount: Int): List<SelectItem> =
+  alignSelectItems(ParsedSql(sql), columnCount)
+
+internal fun alignSelectItems(parsed: ParsedSql, columnCount: Int): List<SelectItem> {
+  val items = parseSelectItems(parsed)
   return if (items.size == columnCount) items else emptyList()
 }
 
@@ -121,8 +126,10 @@ internal fun alignSelectItems(sql: String, columnCount: Int): List<SelectItem> {
  *
  * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
-internal fun hasTopLevelSetOperation(sql: String): Boolean =
-  parseOrNull(replaceParameterPlaceholdersKeepingOffsets(sql))?.let(::findOutputStatement)?.isSetOperation ?: false
+internal fun hasTopLevelSetOperation(sql: String): Boolean = hasTopLevelSetOperation(ParsedSql(sql))
+
+internal fun hasTopLevelSetOperation(parsed: ParsedSql): Boolean =
+  parsed.tree?.let(::findOutputStatement)?.isSetOperation ?: false
 
 /**
  * A single item from [parseOutputItemsWithAlias], pairing the [selectItem] with the alias that follows its
@@ -156,13 +163,19 @@ internal data class OutputItemWithAlias(val selectItem: SelectItem, val alias: S
  *
  * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
-internal fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> {
-  val rewritten = replaceParameterPlaceholdersKeepingOffsets(sql)
-  val tree = parseOrNull(rewritten) ?: return emptyList()
+internal fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> =
+  parseOutputItemsWithAlias(ParsedSql(sql))
+
+/**
+ * Computes the items from the tokens and parse tree of [parsed] on every call. [ParsedSql.outputItems] holds the
+ * result for consumers.
+ */
+internal fun parseOutputItemsWithAlias(parsed: ParsedSql): List<OutputItemWithAlias> {
+  val tree = parsed.tree ?: return emptyList()
   val statement = findOutputStatement(tree) ?: return emptyList()
   if (statement.targets.isEmpty()) return emptyList()
-  val tokens = scanLeadingTokens(sql).filterNot(::isComment)
-  val items = outputItems(sql, rewritten, tokens, tree, statement) ?: return emptyList()
+  val items =
+    outputItems(parsed.sql, parsed.parserForm, parsed.significantTokens, tree, statement) ?: return emptyList()
 
   val firstStarIndex = items.indexOfFirst { it.selectItem.isStar }
   return if (firstStarIndex < 0 || items.size == 1) items else items.take(firstStarIndex)
