@@ -54,14 +54,25 @@ internal class ParameterNullabilityProbe(private val connection: Connection) {
    * @throws SQLException if the connection fails while reading the probe's results or cleaning up.
    */
   @Throws(SQLException::class)
-  fun classify(sql: String, queryName: String = "query"): Map<Int, InferredParameter> {
+  fun classify(sql: String, queryName: String = "query"): Map<Int, InferredParameter> =
+    classify(ParsedSql(sql), queryName)
+
+  /**
+   * Classifies the placeholders of [parsed]. A statement that is all of [ParsedSql.sql] reads the tokens and parse
+   * tree that [parsed] holds.
+   */
+  @Throws(SQLException::class)
+  fun classify(parsed: ParsedSql, queryName: String = "query"): Map<Int, InferredParameter> {
     val parameters = mutableMapOf<Int, InferredParameter>()
     val functionArgumentNamer = FunctionArgumentNamer(catalog::function)
     var placeholdersBefore = 0
-    for (text in splitStatements(sql)) {
-      val classified = probeStatement(text.substring(explainedStatementStart(text)), queryName, functionArgumentNamer)
+    for (text in splitStatements(parsed)) {
+      val statement = if (text == parsed.sql) parsed else ParsedSql(text)
+      val explainedStart = explainedStatementStart(statement)
+      val probed = if (explainedStart == 0) statement else ParsedSql(text.substring(explainedStart))
+      val classified = probeStatement(probed, queryName, functionArgumentNamer)
       for ((number, parameter) in classified) parameters[placeholdersBefore + number] = parameter
-      placeholdersBefore += placeholderPositions(text).size
+      placeholdersBefore += placeholderPositions(statement).size
     }
     return parameters
   }
@@ -69,28 +80,28 @@ internal class ParameterNullabilityProbe(private val connection: Connection) {
   /**
    * Probes one statement, whose placeholders are numbered from `$1`.
    *
-   * @return the classified parameters, empty when [sql] has no placeholder, PostgreSQL rejects a function, or the
+   * @return the classified parameters, empty when [parsed] has no placeholder, PostgreSQL rejects a function, or the
    *   statement is not one `PREPARE` accepts.
    */
   private fun probeStatement(
-    sql: String,
+    parsed: ParsedSql,
     queryName: String,
     functionArgumentNamer: FunctionArgumentNamer,
   ): Map<Int, InferredParameter> {
-    if (placeholderPositions(sql).isEmpty()) return emptyMap()
+    if (placeholderPositions(parsed).isEmpty()) return emptyMap()
     val suffix = UUID.randomUUID().toString().replace("-", "")
     val statementName = "norm_parameter_probe_$suffix"
     try {
-      execute("PREPARE $statementName AS ${replaceParameterPlaceholders(sql) { "\$${it + 1}" }}")
+      execute("PREPARE $statementName AS ${replaceParameterPlaceholders(parsed) { "\$${it + 1}" }}")
     } catch (cause: SQLException) {
-      if (!startsPreparableStatement(sql)) return emptyMap()
+      if (!startsPreparableStatement(parsed)) return emptyMap()
       throw IllegalStateException("Could not translate query '$queryName' for parameter analysis.", cause)
     }
     try {
       val types = readParameterTypes(statementName)
       // The `INTO` clause names the new table and holds no parameter.
-      return classifyChunks(sql, types, functionArgumentNamer)
-        ?: withoutIntoClause(sql)?.let { classifyChunks(it, types, functionArgumentNamer) }
+      return classifyChunks(parsed, types, functionArgumentNamer)
+        ?: withoutIntoClause(parsed)?.let { classifyChunks(ParsedSql(it), types, functionArgumentNamer) }
         ?: emptyMap()
     } finally {
       execute("DEALLOCATE $statementName")
@@ -98,20 +109,20 @@ internal class ParameterNullabilityProbe(private val connection: Connection) {
   }
 
   /**
-   * Classifies the parameters of [sql] one chunk at a time. A parameter of a pseudo-type such as `record` cannot be a
+   * Classifies the parameters of [parsed] one chunk at a time. A parameter of a pseudo-type such as `record` cannot be a
    * function argument, so it is a typed `NULL` in every chunk and is not classified.
    *
    * @return the classified parameters, or `null` when PostgreSQL rejects a function.
    */
   private fun classifyChunks(
-    sql: String,
+    parsed: ParsedSql,
     types: List<ParameterType>,
     functionArgumentNamer: FunctionArgumentNamer,
   ): Map<Int, InferredParameter>? {
     val parameters = mutableMapOf<Int, InferredParameter>()
     val nodeTrees = mutableListOf<FunctionArgumentNamer.ChunkTree>()
     for (chunk in types.indices.filterNot { types[it].isPseudo }.chunked(MAX_FUNCTION_ARGUMENTS)) {
-      val nodeTree = readNodeTree(sql, types, chunk) ?: return null
+      val nodeTree = readNodeTree(parsed, types, chunk) ?: return null
       for ((chunkNumber, parameter) in classifier.classify(nodeTree)) {
         parameters[chunk[chunkNumber - 1] + 1] = parameter
       }
@@ -124,15 +135,15 @@ internal class ParameterNullabilityProbe(private val connection: Connection) {
   }
 
   /**
-   * Compiles [sql] into a function of the parameters at [chunk] (0-based indexes into [types]), numbered
+   * Compiles [parsed] into a function of the parameters at [chunk] (0-based indexes into [types]), numbered
    * `$1` upward in the order of [chunk], and reads its body. The other placeholders become typed `NULL`s.
    *
    * @return the node tree, or `null` when PostgreSQL rejects the function.
    * @throws IllegalArgumentException if the function's `prosqlbody` is not a well-formed node tree.
    */
-  private fun readNodeTree(sql: String, types: List<ParameterType>, chunk: List<Int>): PgNodeValue? {
+  private fun readNodeTree(parsed: ParsedSql, types: List<ParameterType>, chunk: List<Int>): PgNodeValue? {
     val numbers = chunk.withIndex().associate { (number, index) -> index to number + 1 }
-    val body = replaceParameterPlaceholders(sql) { index ->
+    val body = replaceParameterPlaceholders(parsed) { index ->
       numbers[index]?.let { "\$$it" } ?: "CAST(NULL AS ${types[index].name})"
     }
     val signature = chunk.joinToString(", ") { types[it].name }

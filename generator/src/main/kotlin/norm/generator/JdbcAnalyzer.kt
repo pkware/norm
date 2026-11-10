@@ -1,7 +1,5 @@
 package norm.generator
 
-import norm.generator.libpgquery.LibPgQuery
-import norm.generator.libpgquery.LibPgQueryException
 import norm.generator.libpgquery.ParseTreeNames
 import java.sql.Connection
 import java.sql.DatabaseMetaData
@@ -66,7 +64,8 @@ public class JdbcAnalyzer(private val connection: Connection) {
    */
   public fun analyzeQuery(parsedQuery: ParsedQuery, catalog: Catalog): Query {
     val jdbcSql = parsedQuery.sql
-    val callStatement = findCallStatement(parsedQuery.sql)
+    val parsedSql = ParsedSql(jdbcSql)
+    val callStatement = findCallStatement(parsedSql)
 
     val resultColumns: List<Column>
     val parameters: List<Parameter>
@@ -80,8 +79,8 @@ public class JdbcAnalyzer(private val connection: Connection) {
         // Describing the statement makes PostgreSQL parse it, so one it rejects fails here before the probe runs.
         val resultMetaData = ps.metaData
         val parameterMetaData = ps.parameterMetaData
-        val inferredParameters = parameterNullabilityProbe.classify(parsedQuery.sql, parsedQuery.name)
-        resultColumns = buildResultColumns(resultMetaData, catalog, parsedQuery.sql)
+        val inferredParameters = parameterNullabilityProbe.classify(parsedSql, parsedQuery.name)
+        resultColumns = buildResultColumns(resultMetaData, catalog, parsedSql)
         parameters = buildParameters(parameterMetaData, inferredParameters, parsedQuery.namedParameters, catalog)
       }
     }
@@ -194,11 +193,11 @@ public class JdbcAnalyzer(private val connection: Connection) {
     }
   }
 
-  private fun buildResultColumns(rsmd: ResultSetMetaData?, catalog: Catalog, sql: String): List<Column> {
+  private fun buildResultColumns(rsmd: ResultSetMetaData?, catalog: Catalog, parsedSql: ParsedSql): List<Column> {
     if (rsmd == null) return emptyList()
 
-    val columnNullability = catalogLoader.queryColumnNullability(sql)
-    val selectItems = alignSelectItems(sql, rsmd.columnCount)
+    val columnNullability = catalogLoader.queryColumnNullability(parsedSql)
+    val selectItems = alignSelectItems(parsedSql, rsmd.columnCount)
 
     val columns = mutableListOf<Column>()
     for (i in 1..rsmd.columnCount) {
@@ -239,7 +238,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
         ),
       )
     }
-    return resolveComputedExpressions(sql, columns)
+    return resolveComputedExpressions(parsedSql, columns)
   }
 
   /**
@@ -383,15 +382,11 @@ public class JdbcAnalyzer(private val connection: Connection) {
 }
 
 /**
- * Returns the `CallStmt` node when the first statement of [sql] is a `CALL`, or `null` when it is another statement
- * or PostgreSQL rejects [sql].
+ * Returns the `CallStmt` node when the first statement of [parsedSql] is a `CALL`, or `null` when it is another
+ * statement or PostgreSQL rejects it.
  */
-private fun findCallStatement(sql: String): JsonValue.JsonObject? {
-  val tree = try {
-    LibPgQuery.parse(replaceParameterPlaceholdersKeepingOffsets(sql))
-  } catch (_: LibPgQueryException) {
-    return null
-  }
+private fun findCallStatement(parsedSql: ParsedSql): JsonValue.JsonObject? {
+  val tree = parsedSql.tree ?: return null
   return tree.objectArrayField(ParseTreeNames.STATEMENTS)
     .firstOrNull()
     ?.objectField(ParseTreeNames.STATEMENT)

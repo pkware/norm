@@ -8328,11 +8328,13 @@ class QueryAnalysisTest {
         try {
           val analyzer = ColumnNullabilityAnalyzer(connection, NullabilityCatalog(connection))
           val result = analyzer.queryColumnNullabilityViaProsqlbody(
-            """
-            MERGE INTO t USING (VALUES (1, 'new-name')) AS s(id, name) ON t.id = s.id
-            WHEN NOT MATCHED THEN INSERT (id, name) VALUES (s.id, s.name)
-            RETURNING WITH (OLD AS o, NEW AS n) o.name, n.name
-            """.trimIndent(),
+            ParsedSql(
+              """
+              MERGE INTO t USING (VALUES (1, 'new-name')) AS s(id, name) ON t.id = s.id
+              WHEN NOT MATCHED THEN INSERT (id, name) VALUES (s.id, s.name)
+              RETURNING WITH (OLD AS o, NEW AS n) o.name, n.name
+              """.trimIndent(),
+            ),
           )
           assertThat(result?.map { it.nullable }).isEqualTo(listOf(true, false))
         } finally {
@@ -8358,10 +8360,12 @@ class QueryAnalysisTest {
         try {
           val analyzer = ColumnNullabilityAnalyzer(connection, NullabilityCatalog(connection))
           val result = analyzer.queryColumnNullabilityViaProsqlbody(
-            """
-            SELECT id, name FROM t
-            -- only active rows
-            """.trimIndent(),
+            ParsedSql(
+              """
+              SELECT id, name FROM t
+              -- only active rows
+              """.trimIndent(),
+            ),
           )
           assertThat(result?.map { it.nullable }).isEqualTo(listOf(false, false))
         } finally {
@@ -8385,7 +8389,7 @@ class QueryAnalysisTest {
         try {
           val analyzer = ColumnNullabilityAnalyzer(connection, NullabilityCatalog(connection))
           val result = analyzer.queryColumnNullabilityViaProsqlbody(
-            "SELECT id, name FROM t /* only active rows */",
+            ParsedSql("SELECT id, name FROM t /* only active rows */"),
           )
           assertThat(result?.map { it.nullable }).isEqualTo(listOf(false, false))
         } finally {
@@ -8411,10 +8415,12 @@ class QueryAnalysisTest {
         try {
           val analyzer = ColumnNullabilityAnalyzer(connection, NullabilityCatalog(connection))
           val result = analyzer.queryColumnNullabilityViaProsqlbody(
-            """
-            SELECT id, name FROM t
-            /* unterminated
-            """.trimIndent(),
+            ParsedSql(
+              """
+              SELECT id, name FROM t
+              /* unterminated
+              """.trimIndent(),
+            ),
           )
           assertThat(result).isNull()
         } finally {
@@ -8437,7 +8443,7 @@ class QueryAnalysisTest {
         try {
           val analyzer = ColumnNullabilityAnalyzer(connection, NullabilityCatalog(connection))
           val result = analyzer.queryColumnNullabilityViaProsqlbody(
-            "SELECT id, name FROM t WHERE name = \$\$unterminated",
+            ParsedSql("SELECT id, name FROM t WHERE name = \$\$unterminated"),
           )
           assertThat(result).isNull()
         } finally {

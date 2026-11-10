@@ -163,7 +163,7 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
    * RETURNING` and for data-modifying CTEs, because only `CREATE VIEW` itself rejects a
    * data-modifying statement, not a SQL-standard function body.
    *
-   * [sql]'s own `?` placeholders are replaced with typed non-null sentinel literals, via
+   * [parsedSql]'s own `?` placeholders are replaced with typed non-null sentinel literals, via
    * [buildViewSqlWithSentinels], before [withProsqlbodyNodeTree] builds the probe function from them.
    * The probe function takes zero arguments. A real `$n` parameter would appear as a `PARAM` node
    * and widen every column it touches to nullable.
@@ -173,18 +173,20 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
    * nothing to probe, and the resulting [SQLException] is caught here.
    *
    * Provenance piggybacks the same round trip: each column's expression text is extracted and
-   * cross-validated from [sql] — the original, un-substituted query text, never [substitutedSql] —
+   * cross-validated from [ParsedSql.sql] — the original, un-substituted query text, never [substitutedSql] —
    * so a sentinel literal built only to satisfy a `?`'s type can never leak into generated KDoc.
    *
-   * @param sql the SQL query or DML statement to analyze; any `?` parameter placeholder is
+   * @param parsedSql the SQL query or DML statement to analyze; any `?` parameter placeholder is
    *   replaced with a typed non-null sentinel literal internally only for building the probe
-   *   function. Provenance expression text is extracted from [sql] itself, `?` intact.
+   *   function. Provenance expression text is extracted from [ParsedSql.sql] itself, `?` intact.
    * @return one [ColumnAnalysis] per result column in `SELECT`/`RETURNING` order, or `null` if
-   *   [sql] has no result columns to probe or the probe itself failed for any reason — the caller
+   *   the statement has no result columns to probe or the probe itself failed for any reason — the caller
    *   must treat `null` as "this path has no answer", never as "zero columns."
    */
-  internal fun queryColumnNullabilityViaProsqlbody(@Language("PostgreSQL") sql: String): List<ColumnAnalysis>? {
-    val substitutedSql = buildViewSqlWithSentinels(connection, sql) ?: replaceParameterPlaceholders(sql) { "NULL" }
+  internal fun queryColumnNullabilityViaProsqlbody(parsedSql: ParsedSql): List<ColumnAnalysis>? {
+    val sql = parsedSql.sql
+    val substitutedSql =
+      buildViewSqlWithSentinels(connection, parsedSql) ?: replaceParameterPlaceholders(parsedSql) { "NULL" }
     return try {
       withProsqlbodyNodeTree(connection, substitutedSql) { nodeTree ->
         val rangeTable = nodeTreeParser.parseRangeTableEntries(nodeTree).baseRelations()
@@ -210,7 +212,7 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
           mergeAbsentVarnos = mergeAbsent,
         )
         val provenance = NodeTreeProvenanceResolver().resolveColumnProvenance(nodeTree).map { columnProvenance ->
-          columnProvenance?.let { resolveNodeTreeProvenanceExpression(sql, nodeTree, it) }
+          columnProvenance?.let { resolveNodeTreeProvenanceExpression(parsedSql, nodeTree, it) }
         }
         val originalColumnNames = resolveOriginalColumnNames(nodeTree)
         nullability.mapIndexed { index, nullable ->

@@ -25,11 +25,15 @@ import norm.generator.libpgquery.TokenNumber
  * @return The SQL with each `?` replaced by [replacement]'s result for it.
  * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
-internal fun replaceParameterPlaceholders(sql: String, replacement: (parameterIndex: Int) -> String): String {
+internal fun replaceParameterPlaceholders(sql: String, replacement: (parameterIndex: Int) -> String): String =
+  replaceParameterPlaceholders(ParsedSql(sql), replacement)
+
+internal fun replaceParameterPlaceholders(parsed: ParsedSql, replacement: (parameterIndex: Int) -> String): String {
+  val sql = parsed.sql
   val result = StringBuilder(sql.length + 16)
   var copiedUpTo = 0
   var parameterIndex = 0
-  forEachQuestionMark(sql) { index, isEscape ->
+  forEachQuestionMark(sql, parsed.tokens) { index, isEscape ->
     result.append(sql, copiedUpTo, index)
     result.append(if (isEscape) "?" else replacement(parameterIndex++))
     copiedUpTo = index + if (isEscape) 2 else 1
@@ -47,9 +51,11 @@ internal fun replaceParameterPlaceholders(sql: String, replacement: (parameterIn
  * @return The placeholder positions, in ascending order.
  * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
-internal fun placeholderPositions(sql: String): IntArray {
+internal fun placeholderPositions(sql: String): IntArray = placeholderPositions(ParsedSql(sql))
+
+internal fun placeholderPositions(parsed: ParsedSql): IntArray {
   val positions = mutableListOf<Int>()
-  forEachQuestionMark(sql) { index, isEscape -> if (!isEscape) positions.add(index) }
+  forEachQuestionMark(parsed.sql, parsed.tokens) { index, isEscape -> if (!isEscape) positions.add(index) }
   return positions.toIntArray()
 }
 
@@ -63,9 +69,12 @@ internal fun placeholderPositions(sql: String): IntArray {
  * @return A string of the same length as [sql].
  * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
-internal fun replaceParameterPlaceholdersKeepingOffsets(sql: String): String {
+internal fun replaceParameterPlaceholdersKeepingOffsets(sql: String): String = ParsedSql(sql).parserForm
+
+/** Rewrites [sql] as [replaceParameterPlaceholdersKeepingOffsets] does, given the lexer [tokens] of [sql]. */
+internal fun parserFormOf(sql: String, tokens: List<ScanToken>): String {
   val characters = sql.toCharArray()
-  for (token in operatorTokens(sql)) {
+  for (token in operatorTokens(tokens)) {
     var written = token.start
     var read = token.start
     forEachQuestionMark(sql, token) { index, isEscape ->
@@ -94,9 +103,8 @@ internal fun scanLeadingTokens(sql: String): List<ScanToken> = try {
   if (cursorIndex == null || cursorIndex !in sql.indices) emptyList() else scanLeadingTokens(sql.take(cursorIndex))
 }
 
-private fun operatorTokens(sql: String): List<ScanToken> = scanLeadingTokens(sql).filter {
-  it.token ==
-    TokenNumber.OPERATOR
+private fun operatorTokens(tokens: List<ScanToken>): List<ScanToken> = tokens.filter {
+  it.token == TokenNumber.OPERATOR
 }
 
 private inline fun forEachQuestionMark(
@@ -116,8 +124,12 @@ private inline fun forEachQuestionMark(
   }
 }
 
-private inline fun forEachQuestionMark(sql: String, action: (index: Int, isEscape: Boolean) -> Unit) {
-  for (token in operatorTokens(sql)) forEachQuestionMark(sql, token, action)
+private inline fun forEachQuestionMark(
+  sql: String,
+  tokens: List<ScanToken>,
+  action: (index: Int, isEscape: Boolean) -> Unit,
+) {
+  for (token in operatorTokens(tokens)) forEachQuestionMark(sql, token, action)
 }
 
 /**
