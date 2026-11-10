@@ -11,5 +11,19 @@
       "matchUpdateTypes": ["minor", "patch"],
       "enabled": false
     }
+  ],
+  "customManagers": [
+    {
+      // A bump needs a rebuilt module, see buildtools/libpg_query-wasm/README.md.
+      // The versioning skips the pre-18 tag scheme (17-6.2.5).
+      "customType": "regex",
+      "managerFilePatterns": ["/^buildtools/libpg_query-wasm/Dockerfile$/"],
+      "matchStrings": [
+        "ARG LIBPG_QUERY_VERSION=(?<currentValue>\\S+)\\nARG LIBPG_QUERY_COMMIT=(?<currentDigest>[0-9a-f]{40})"
+      ],
+      "datasourceTemplate": "github-tags",
+      "depNameTemplate": "pganalyze/libpg_query",
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
+    }
   ]
 }

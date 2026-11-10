@@ -1,6 +1,7 @@
 # wasi-sdk-34, linux/amd64 manifest.
 FROM ghcr.io/webassembly/wasi-sdk@sha256:9515a0625f6ac6002aa2c285fd718cba0575b507bfaa3687ba41fea822a2bfa5 AS build
 
+ARG LIBPG_QUERY_VERSION=18.1.0
 ARG LIBPG_QUERY_COMMIT=c1546e7e97edc93fe8474d7a59881e91fbf48cfc
 ARG BINARYEN_VERSION=version_125
 ARG BINARYEN_X86_64_SHA256=7c3bc16599c8274a04d34a504fe4be2047884f900e0e2da2f6fb9cd667183be4
@@ -16,7 +17,7 @@ ENV PATH="/opt/binaryen/bin:${PATH}"
 
 WORKDIR /checkout
 RUN git init -q . \
-  && git fetch -q --depth 1 https://github.com/pganalyze/libpg_query.git "${LIBPG_QUERY_COMMIT}" \
+  && git fetch -q --depth 1 https://github.com/pganalyze/libpg_query.git "refs/tags/${LIBPG_QUERY_VERSION}" \
   && git checkout -q FETCH_HEAD \
   && test "$(git rev-parse HEAD)" = "${LIBPG_QUERY_COMMIT}"
 
