@@ -1102,7 +1102,7 @@ replaceParameterPlaceholders: java.lang.IllegalArgumentException: SQL text must 
 QueryFileParser.parse: java.lang.IllegalArgumentException: The text before the first annotation contains a NUL character on line 2.
 splitStatements: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
 explainedStatementStart: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
-parseCteClause: null
+parseCteClause: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
 items: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
 === QueryFileParserTest.kt:1255
 text: before the first annotation
@@ -2721,7 +2721,7 @@ replaceParameterPlaceholders: java.lang.IllegalArgumentException: SQL text must 
 QueryFileParser.parse: java.lang.IllegalArgumentException: Query 'broken' at line 4 contains a NUL character on line 5.
 splitStatements: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
 explainedStatementStart: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
-parseCteClause: null
+parseCteClause: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
 items: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
 === QueryFileParserTest.kt:624
 text: broken
@@ -5051,7 +5051,7 @@ replaceParameterPlaceholders: java.lang.IllegalArgumentException: SQL text must 
 QueryFileParser.parse: java.lang.IllegalArgumentException: The text before the first annotation contains a NUL character on line 1.
 splitStatements: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
 explainedStatementStart: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
-parseCteClause: null
+parseCteClause: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
 items: java.lang.IllegalArgumentException: SQL text must not contain NUL characters
 === SqlCteClauseTest.kt:166
 text: c

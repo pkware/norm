@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test
 class NormalizedExpressionTest {
 
   private fun normalized(selectList: String): String =
-    parseSelectItems("SELECT $selectList FROM t").single().normalizedExpression
+    parseSelectItems(ParsedSql("SELECT $selectList FROM t")).single().normalizedExpression
 
   @Nested
   inner class QuotedIdentifiers {
@@ -127,7 +127,7 @@ class NormalizedExpressionTest {
 
     @Test
     fun `a block comment between segments is rejected by PostgreSQL, so there are no items`() {
-      assertThat(parseSelectItems("SELECT 'a' /* c */\n'b' AS x FROM t")).isEmpty()
+      assertThat(parseSelectItems(ParsedSql("SELECT 'a' /* c */\n'b' AS x FROM t"))).isEmpty()
     }
   }
 

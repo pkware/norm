@@ -34,6 +34,15 @@ internal fun parseOrNull(sql: String): JsonValue.JsonObject? = try {
 }
 
 /**
+ * Returns the first statement of [tree]: the object at `stmts[0].stmt`, which holds one field named for the statement
+ * kind, such as `SelectStmt`.
+ *
+ * @return the object, or `null` when [tree] has no statement.
+ */
+internal fun firstStatement(tree: JsonValue.JsonObject): JsonValue.JsonObject? =
+  tree.objectArrayField(ParseTreeNames.STATEMENTS).firstOrNull()?.objectField(ParseTreeNames.STATEMENT)
+
+/**
  * Finds the first statement of [tree] that produces the query's result set.
  *
  * A `SELECT`, `VALUES`, `TABLE` or set operation produces it, as does a data-modifying statement with a `RETURNING`

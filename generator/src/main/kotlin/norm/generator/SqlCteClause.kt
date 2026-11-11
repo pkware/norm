@@ -3,6 +3,7 @@ package norm.generator
 import norm.generator.libpgquery.ParseTreeNames
 import norm.generator.libpgquery.ScanToken
 import norm.generator.libpgquery.TokenNumber
+import norm.generator.libpgquery.isComment
 
 /**
  * A CTE definition from a `WITH` clause.
@@ -31,25 +32,16 @@ internal data class CteDefinition(
 internal data class ParsedCteClause(val definitions: List<CteDefinition>, val mainQueryStart: Int)
 
 /**
- * Reads the `WITH` clause of the first statement in [sql].
+ * Reads the `WITH` clause of the first statement in [parsed].
  *
  * PostgreSQL's parser supplies the CTE names and their order from the statement's own `withClause`, so a `WITH`
  * inside a CTE body or a subquery is not included. Scan tokens supply each body's parentheses, which the parse tree
  * does not locate. A `?` placeholder is accepted.
  *
- * @return The clause, or `null` when PostgreSQL's parser rejects [sql], [sql] contains a NUL character, or the first
- *   statement has no `WITH` clause.
+ * @return The clause, or `null` when PostgreSQL's parser rejects [parsed] or the first statement has no `WITH`
+ *   clause.
  * @throws IllegalStateException if a parsed CTE has no name token at its location or no body parentheses.
  */
-@Throws(IllegalStateException::class)
-internal fun parseCteClause(sql: String): ParsedCteClause? = if ('\u0000' in
-  sql
-) {
-  null
-} else {
-  parseCteClause(ParsedSql(sql))
-}
-
 @Throws(IllegalStateException::class)
 internal fun parseCteClause(parsed: ParsedSql): ParsedCteClause? {
   val sql = parsed.sql
@@ -79,16 +71,12 @@ internal fun parseCteClause(parsed: ParsedSql): ParsedCteClause? {
 }
 
 private fun commonTableExpressions(tree: JsonValue.JsonObject): List<JsonValue.JsonObject> {
-  val statement = tree.objectArrayField(ParseTreeNames.STATEMENTS).firstOrNull()
-    ?.objectField(ParseTreeNames.STATEMENT)
-    ?.fields?.values?.singleOrNull() as? JsonValue.JsonObject
+  val statement = firstStatement(tree)?.fields?.values?.singleOrNull() as? JsonValue.JsonObject
   return statement?.objectField(ParseTreeNames.WITH_CLAUSE)
     ?.objectArrayField(ParseTreeNames.COMMON_TABLE_EXPRESSIONS)
     .orEmpty()
     .mapNotNull { it.objectField(ParseTreeNames.COMMON_TABLE_EXPRESSION) }
 }
-
-private fun ScanToken.isComment(): Boolean = token == TokenNumber.LINE_COMMENT || token == TokenNumber.BLOCK_COMMENT
 
 private fun nextOpenParenthesis(tokens: List<ScanToken>, from: Int): Int {
   val index = (from until tokens.size).firstOrNull { tokens[it].token == TokenNumber.OPEN_PARENTHESIS }

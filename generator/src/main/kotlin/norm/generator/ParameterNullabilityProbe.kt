@@ -40,13 +40,13 @@ internal class ParameterNullabilityProbe(private val connection: Connection) {
   private val classifier = ParameterNullabilityClassifier(catalog)
 
   /**
-   * Classifies the placeholders of [sql], one statement at a time. The JDBC driver splits [sql] at each top-level `;`
-   * and numbers the placeholders of each part from one. The probe does the same, then merges the results back to the
-   * numbering of the whole text. An `EXPLAIN` is probed through the statement it wraps, because `EXPLAIN ANALYZE`
+   * Classifies the placeholders of [parsed], one statement at a time. The JDBC driver splits [parsed] at each top-level
+   * `;` and numbers the placeholders of each part from one. The probe does the same, then merges the results back to
+   * the numbering of the whole text. An `EXPLAIN` is probed through the statement it wraps, because `EXPLAIN ANALYZE`
    * runs that statement.
    *
-   * @param queryName names the query in the error when [sql] cannot be translated.
-   * @return the classified parameters keyed by 1-based parameter number; empty when [sql] has no placeholder,
+   * @param queryName names the query in the error when [parsed] cannot be translated.
+   * @return the classified parameters keyed by 1-based parameter number; empty when [parsed] has no placeholder,
    *   PostgreSQL rejects the function, or the statement is not one `PREPARE` accepts.
    * @throws IllegalStateException if PostgreSQL rejects the translated `PREPARE` of a preparable statement; the
    *   cause is the `SQLException`.
@@ -54,22 +54,13 @@ internal class ParameterNullabilityProbe(private val connection: Connection) {
    * @throws SQLException if the connection fails while reading the probe's results or cleaning up.
    */
   @Throws(SQLException::class)
-  fun classify(sql: String, queryName: String = "query"): Map<Int, InferredParameter> =
-    classify(ParsedSql(sql), queryName)
-
-  /**
-   * Classifies the placeholders of [parsed]. A statement that is all of [ParsedSql.sql] reads the tokens and parse
-   * tree that [parsed] holds.
-   */
-  @Throws(SQLException::class)
   fun classify(parsed: ParsedSql, queryName: String = "query"): Map<Int, InferredParameter> {
     val parameters = mutableMapOf<Int, InferredParameter>()
     val functionArgumentNamer = FunctionArgumentNamer(catalog::function)
     var placeholdersBefore = 0
-    for (text in splitStatements(parsed)) {
-      val statement = if (text == parsed.sql) parsed else ParsedSql(text)
+    for (statement in splitStatements(parsed)) {
       val explainedStart = explainedStatementStart(statement)
-      val probed = if (explainedStart == 0) statement else ParsedSql(text.substring(explainedStart))
+      val probed = if (explainedStart == 0) statement else statement.part(explainedStart, statement.sql.length)
       val classified = probeStatement(probed, queryName, functionArgumentNamer)
       for ((number, parameter) in classified) parameters[placeholdersBefore + number] = parameter
       placeholdersBefore += placeholderPositions(statement).size
@@ -101,7 +92,7 @@ internal class ParameterNullabilityProbe(private val connection: Connection) {
       val types = readParameterTypes(statementName)
       // The `INTO` clause names the new table and holds no parameter.
       return classifyChunks(parsed, types, functionArgumentNamer)
-        ?: withoutIntoClause(parsed)?.let { classifyChunks(ParsedSql(it), types, functionArgumentNamer) }
+        ?: withoutIntoClause(parsed)?.let { classifyChunks(it, types, functionArgumentNamer) }
         ?: emptyMap()
     } finally {
       execute("DEALLOCATE $statementName")

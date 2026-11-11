@@ -72,7 +72,7 @@ internal class KeywordOperandProvenanceCorpusTest {
       val nodeTree = probeNodeTree(connection, cteSql)
       val provenance = NodeTreeProvenanceResolver().resolveColumnProvenance(nodeTree).single()
         ?: error("expected a resolvable provenance for: $cteSql")
-      val resolved = resolveNodeTreeProvenanceExpression(cteSql, nodeTree, provenance)
+      val resolved = resolveNodeTreeProvenanceExpression(ParsedSql(cteSql), nodeTree, provenance)
 
       assertThat(resolved).isNull()
     }
@@ -87,7 +87,7 @@ internal class KeywordOperandProvenanceCorpusTest {
     withSchemaAndData { connection ->
       val nodeTree = probeNodeTree(connection, cteSql)
       val provenance = NodeTreeProvenanceResolver().resolveColumnProvenance(nodeTree).single()
-      val resolved = provenance?.let { resolveNodeTreeProvenanceExpression(cteSql, nodeTree, it) }
+      val resolved = provenance?.let { resolveNodeTreeProvenanceExpression(ParsedSql(cteSql), nodeTree, it) }
 
       assertThat(resolved).isNull()
     }

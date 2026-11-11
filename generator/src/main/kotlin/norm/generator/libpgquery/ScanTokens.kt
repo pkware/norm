@@ -90,6 +90,15 @@ internal enum class KeywordKind {
  */
 internal data class ScanToken(val start: Int, val end: Int, val token: Int, val keywordKind: KeywordKind)
 
+/** Tells whether this token is a `--` or `/* */` comment. */
+internal fun ScanToken.isComment(): Boolean = token == TokenNumber.LINE_COMMENT || token == TokenNumber.BLOCK_COMMENT
+
+/** Tells whether [token] is the keyword [keyword] in [sql], in any letter case. */
+internal fun isKeyword(sql: String, token: ScanToken, keyword: String): Boolean =
+  token.keywordKind != KeywordKind.NONE &&
+    token.end - token.start == keyword.length &&
+    sql.regionMatches(token.start, keyword, 0, keyword.length, ignoreCase = true)
+
 /**
  * Decodes libpg_query's protobuf `ScanResult` message.
  *

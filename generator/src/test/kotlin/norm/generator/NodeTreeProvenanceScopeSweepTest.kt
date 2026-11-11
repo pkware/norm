@@ -64,7 +64,7 @@ class NodeTreeProvenanceScopeSweepTest {
       val actualValue = groundTruthValue(sql)
       val nodeTree = nodeTreeFor(sql)
       val provenance = NodeTreeProvenanceResolver().resolveColumnProvenance(nodeTree).getOrNull(1)
-      val emitted = provenance?.let { resolveNodeTreeProvenanceExpression(sql, nodeTree, it) } ?: continue
+      val emitted = provenance?.let { resolveNodeTreeProvenanceExpression(ParsedSql(sql), nodeTree, it) } ?: continue
       evaluatedNonNullCount++
       val evaluatedValue = evaluateExpression(emitted)
       if (evaluatedValue != actualValue) {

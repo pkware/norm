@@ -337,9 +337,11 @@ class ParameterNullabilityTemplateTest {
     failures: MutableList<String>,
   ) {
     val sql = instance.sql
-    check(placeholderPositions(sql).size == instance.roles.size) { "Template marks the wrong placeholder count: $sql" }
+    check(placeholderPositions(ParsedSql(sql)).size == instance.roles.size) {
+      "Template marks the wrong placeholder count: $sql"
+    }
     val classified = try {
-      probe.classify(sql)
+      probe.classify(ParsedSql(sql))
     } catch (exception: SQLException) {
       failures += "probe threw (${exception.message?.lineSequence()?.first()}) — $sql"
       return
@@ -380,7 +382,11 @@ class ParameterNullabilityTemplateTest {
   private fun createsProbeFunction(connection: Connection, sql: String): String? {
     val statementName = "norm_template_check"
     connection.createStatement().use {
-      it.execute("PREPARE $statementName AS ${replaceParameterPlaceholders(sql) { index -> "\$${index + 1}" }}")
+      it.execute(
+        "PREPARE $statementName AS ${replaceParameterPlaceholders(ParsedSql(sql)) { index ->
+          "\$${index + 1}"
+        }}",
+      )
     }
     try {
       val types = connection.createStatement().use { statement ->
@@ -393,7 +399,7 @@ class ParameterNullabilityTemplateTest {
         }
       }
       for (chunk in types.indices.chunked(ParameterNullabilityProbe.MAX_FUNCTION_ARGUMENTS)) {
-        val body = replaceParameterPlaceholders(sql) { index ->
+        val body = replaceParameterPlaceholders(ParsedSql(sql)) { index ->
           if (index in chunk) "\$${index - chunk.first() + 1}" else "CAST(NULL AS ${types[index]})"
         }
         val signature = chunk.joinToString(", ") { types[it] }

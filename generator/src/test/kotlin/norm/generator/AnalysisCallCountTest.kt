@@ -4,6 +4,7 @@ import assertk.assertThat
 import assertk.assertions.isEqualTo
 import norm.generator.libpgquery.LibPgQuery
 import norm.generator.libpgquery.RecordedCalls
+import norm.generator.libpgquery.RecordingMachine
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
@@ -17,7 +18,7 @@ import java.sql.DriverManager
 
 /**
  * Runs [JdbcAnalyzer.analyzeQuery] against a live PostgreSQL and records every text that reaches
- * [LibPgQuery.parse] and [LibPgQuery.scan].
+ * [LibPgQuery.parse] and [LibPgQuery.scan] through a [RecordingMachine].
  */
 @Testcontainers
 @Execution(ExecutionMode.SAME_THREAD)
@@ -36,7 +37,7 @@ class AnalysisCallCountTest {
   @Test
   fun `a query with a placeholder and a CTE is scanned once and its parser form parsed once`() {
     val sql = "WITH a AS (SELECT id, name FROM author WHERE id = ?) SELECT id, name || 'x' AS n FROM a"
-    val parserForm = replaceParameterPlaceholdersKeepingOffsets(sql)
+    val parserForm = ParsedSql(sql).parserForm
 
     val calls = recordAnalysis(sql)
 
@@ -47,7 +48,7 @@ class AnalysisCallCountTest {
     assertThat(calls.scanTexts.distinct()).isEqualTo(calls.scanTexts)
   }
 
-  private fun recordAnalysis(sql: String): RecordedCalls = LibPgQuery.recordCalls {
+  private fun recordAnalysis(sql: String): RecordedCalls = RecordingMachine.record {
     analyzer.analyzeQuery(ParsedQuery("probe", Command.MANY, sql, emptyList()), catalog)
   }
 
