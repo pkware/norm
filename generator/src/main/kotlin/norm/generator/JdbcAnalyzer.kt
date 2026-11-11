@@ -387,10 +387,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
  */
 private fun findCallStatement(parsedSql: ParsedSql): JsonValue.JsonObject? {
   val tree = parsedSql.tree ?: return null
-  return tree.objectArrayField(ParseTreeNames.STATEMENTS)
-    .firstOrNull()
-    ?.objectField(ParseTreeNames.STATEMENT)
-    ?.objectField(ParseTreeNames.CALL_STATEMENT)
+  return firstStatement(tree)?.objectField(ParseTreeNames.CALL_STATEMENT)
 }
 
 /** Returns the procedure name of [callStatement] as `pg_proc` stores it, or `null` when the name has a schema part. */

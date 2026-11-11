@@ -75,7 +75,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `UPDATE RETURNING with simple columns`() {
-      val result = parseSelectItems("UPDATE t SET x = 1 RETURNING id, name")
+      val result = parseSelectItems(ParsedSql("UPDATE t SET x = 1 RETURNING id, name"))
       assertThat(result).containsExactly(
         SelectItem("id", "id", null),
         SelectItem("name", "name", null),
@@ -84,7 +84,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `UPDATE RETURNING with qualified alias`() {
-      val result = parseSelectItems("UPDATE t SET x = 1 RETURNING tier, old.tier AS old_tier")
+      val result = parseSelectItems(ParsedSql("UPDATE t SET x = 1 RETURNING tier, old.tier AS old_tier"))
       assertThat(result).containsExactly(
         SelectItem("tier", "tier", null),
         SelectItem("old.tier", "tier", "old"),
@@ -93,7 +93,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `INSERT RETURNING`() {
-      val result = parseSelectItems("INSERT INTO t(x) VALUES(1) RETURNING id, name")
+      val result = parseSelectItems(ParsedSql("INSERT INTO t(x) VALUES(1) RETURNING id, name"))
       assertThat(result).containsExactly(
         SelectItem("id", "id", null),
         SelectItem("name", "name", null),
@@ -102,7 +102,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `DELETE RETURNING`() {
-      val result = parseSelectItems("DELETE FROM t WHERE id = 1 RETURNING id, name")
+      val result = parseSelectItems(ParsedSql("DELETE FROM t WHERE id = 1 RETURNING id, name"))
       assertThat(result).containsExactly(
         SelectItem("id", "id", null),
         SelectItem("name", "name", null),
@@ -111,7 +111,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `RETURNING with computed expression`() {
-      val result = parseSelectItems("UPDATE t SET x = 1 RETURNING id, count(*) AS total")
+      val result = parseSelectItems(ParsedSql("UPDATE t SET x = 1 RETURNING id, count(*) AS total"))
       assertThat(result).containsExactly(
         SelectItem("id", "id", null),
         SelectItem("count(*)", null, null),
@@ -120,7 +120,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `RETURNING with trailing semicolon`() {
-      val result = parseSelectItems("UPDATE t SET x = 1 RETURNING id, name;")
+      val result = parseSelectItems(ParsedSql("UPDATE t SET x = 1 RETURNING id, name;"))
       assertThat(result).containsExactly(
         SelectItem("id", "id", null),
         SelectItem("name", "name", null),
@@ -129,7 +129,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `RETURNING with CAST does not confuse inner AS with alias AS`() {
-      val result = parseSelectItems("UPDATE t SET x = 1 RETURNING CAST(tier AS text) AS tier_text")
+      val result = parseSelectItems(ParsedSql("UPDATE t SET x = 1 RETURNING CAST(tier AS text) AS tier_text"))
       assertThat(result).containsExactly(
         SelectItem("CAST(tier AS text)", null, null),
       )
@@ -137,7 +137,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `RETURNING star`() {
-      val result = parseSelectItems("DELETE FROM t RETURNING *")
+      val result = parseSelectItems(ParsedSql("DELETE FROM t RETURNING *"))
       assertThat(result).containsExactly(
         SelectItem("*", null, null, isStar = true),
       )
@@ -145,13 +145,13 @@ class SqlOutputClauseTest {
 
     @Test
     fun `an unmatched closing parenthesis in a RETURNING item is rejected by PostgreSQL, so there are no items`() {
-      val result = parseSelectItems("UPDATE t SET x = 1 RETURNING id, ) (bogus AS alias")
+      val result = parseSelectItems(ParsedSql("UPDATE t SET x = 1 RETURNING id, ) (bogus AS alias"))
       assertThat(result).isEmpty()
     }
 
     @Test
     fun `an unmatched square bracket in a RETURNING item is rejected by PostgreSQL, so there are no items`() {
-      val result = parseSelectItems("UPDATE t SET x = 1 RETURNING id, a[b AS c")
+      val result = parseSelectItems(ParsedSql("UPDATE t SET x = 1 RETURNING id, a[b AS c"))
       assertThat(result).isEmpty()
     }
 
@@ -159,7 +159,7 @@ class SqlOutputClauseTest {
     fun `RETURNING WITH OLD-NEW alias prologue is not part of the first item`() {
       // PostgreSQL 18's `RETURNING WITH (OLD AS o, NEW AS n) o.x, n.x` returns 2 columns. The prologue is not
       // part of the first item, which is the column reference `o.x`.
-      val result = parseSelectItems("UPDATE t SET x = 1 RETURNING WITH (OLD AS o, NEW AS n) o.x, n.x")
+      val result = parseSelectItems(ParsedSql("UPDATE t SET x = 1 RETURNING WITH (OLD AS o, NEW AS n) o.x, n.x"))
       assertThat(result).containsExactly(
         SelectItem("o.x", "x", "o"),
         SelectItem("n.x", "x", "n"),
@@ -168,7 +168,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `SELECT with simple columns`() {
-      val result = parseSelectItems("SELECT id, name FROM users")
+      val result = parseSelectItems(ParsedSql("SELECT id, name FROM users"))
       assertThat(result).containsExactly(
         SelectItem("id", "id", null),
         SelectItem("name", "name", null),
@@ -177,7 +177,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `SELECT with qualified alias`() {
-      val result = parseSelectItems("SELECT author.name AS author_name FROM author")
+      val result = parseSelectItems(ParsedSql("SELECT author.name AS author_name FROM author"))
       assertThat(result).containsExactly(
         SelectItem("author.name", "name", "author"),
       )
@@ -185,7 +185,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `SELECT with computed expression`() {
-      val result = parseSelectItems("SELECT COUNT(*) AS total FROM users")
+      val result = parseSelectItems(ParsedSql("SELECT COUNT(*) AS total FROM users"))
       assertThat(result).containsExactly(
         SelectItem("COUNT(*)", null, null),
       )
@@ -194,7 +194,7 @@ class SqlOutputClauseTest {
     @Test
     fun `SELECT star`() {
       // A lone star has nothing after it to shift, so the star-truncation guard leaves it alone.
-      val result = parseSelectItems("SELECT * FROM users")
+      val result = parseSelectItems(ParsedSql("SELECT * FROM users"))
       assertThat(result).containsExactly(
         SelectItem("*", null, null, isStar = true),
       )
@@ -202,13 +202,13 @@ class SqlOutputClauseTest {
 
     @Test
     fun `no SELECT or RETURNING returns empty list`() {
-      val result = parseSelectItems("CALL my_proc()")
+      val result = parseSelectItems(ParsedSql("CALL my_proc()"))
       assertThat(result).isEmpty()
     }
 
     @Test
     fun `a qualified column named from does not truncate the select list at its own name`() {
-      val result = parseSelectItems("SELECT s.from FROM s")
+      val result = parseSelectItems(ParsedSql("SELECT s.from FROM s"))
       assertThat(result).containsExactly(
         SelectItem("s.from", "from", "s"),
       )
@@ -216,7 +216,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `a qualified column named returning is not taken for the RETURNING clause itself`() {
-      val result = parseSelectItems("INSERT INTO t(a) SELECT s.returning FROM s RETURNING a")
+      val result = parseSelectItems(ParsedSql("INSERT INTO t(a) SELECT s.returning FROM s RETURNING a"))
       assertThat(result).containsExactly(
         SelectItem("a", "a", null),
       )
@@ -227,7 +227,8 @@ class SqlOutputClauseTest {
       // The items come from the main query's SELECT ("SELECT id, name FROM new_parent"), not the
       // CTE body's own SELECT ("SELECT label FROM parent_name").
       val result = parseSelectItems(
-        """
+        ParsedSql(
+          """
         WITH RECURSIVE new_parent AS (
           INSERT INTO parent (name) SELECT label FROM parent_name RETURNING id, name
         ),
@@ -235,7 +236,8 @@ class SqlOutputClauseTest {
           SELECT 'seeded'::TEXT AS label
         )
         SELECT id, name FROM new_parent
-        """.trimIndent(),
+          """.trimIndent(),
+        ),
       )
       assertThat(result).containsExactly(
         SelectItem("id", "id", null),
@@ -246,7 +248,7 @@ class SqlOutputClauseTest {
     @Test
     fun `plain WITH CTE body select list of a different length is not picked over the main query`() {
       val result = parseSelectItems(
-        "WITH c AS (SELECT 1, 2, 3) SELECT id, name FROM main_table",
+        ParsedSql("WITH c AS (SELECT 1, 2, 3) SELECT id, name FROM main_table"),
       )
       assertThat(result).containsExactly(
         SelectItem("id", "id", null),
@@ -256,7 +258,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `INSERT SELECT RETURNING picks the RETURNING clause, not the SELECT source`() {
-      val result = parseSelectItems("INSERT INTO t(a,b) SELECT x, y FROM s RETURNING id, a")
+      val result = parseSelectItems(ParsedSql("INSERT INTO t(a,b) SELECT x, y FROM s RETURNING id, a"))
       assertThat(result).containsExactly(
         SelectItem("id", "id", null),
         SelectItem("a", "a", null),
@@ -265,7 +267,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `UPDATE RETURNING with a scalar subquery in SET does not pick the subquery's SELECT`() {
-      val result = parseSelectItems("UPDATE t SET x = (SELECT max(y) FROM s) RETURNING id")
+      val result = parseSelectItems(ParsedSql("UPDATE t SET x = (SELECT max(y) FROM s) RETURNING id"))
       assertThat(result).containsExactly(
         SelectItem("id", "id", null),
       )
@@ -273,7 +275,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `SELECT keyword inside a string literal ahead of the real clause is not mistaken for it`() {
-      val result = parseSelectItems("UPDATE t SET note = 'please SELECT this' RETURNING id")
+      val result = parseSelectItems(ParsedSql("UPDATE t SET note = 'please SELECT this' RETURNING id"))
       assertThat(result).containsExactly(
         SelectItem("id", "id", null),
       )
@@ -281,7 +283,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `SELECT keyword inside a block comment ahead of the real clause is not mistaken for it`() {
-      val result = parseSelectItems("UPDATE t /* SELECT me not */ SET x = 1 RETURNING id")
+      val result = parseSelectItems(ParsedSql("UPDATE t /* SELECT me not */ SET x = 1 RETURNING id"))
       assertThat(result).containsExactly(
         SelectItem("id", "id", null),
       )
@@ -295,7 +297,7 @@ class SqlOutputClauseTest {
       // specifically is the hole). The main query's own leading keyword is SELECT, so this alias
       // is not read as the RETURNING clause keyword and the real "FROM users" is not misread as a
       // single bogus item.
-      val result = parseSelectItems("SELECT preferences AS returning FROM users")
+      val result = parseSelectItems(ParsedSql("SELECT preferences AS returning FROM users"))
       assertThat(result).containsExactly(
         SelectItem("preferences", "preferences", null),
       )
@@ -303,7 +305,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `RETURNING as a column alias alongside another item is not mistaken for the RETURNING keyword`() {
-      val result = parseSelectItems("SELECT id, preferences AS returning FROM users")
+      val result = parseSelectItems(ParsedSql("SELECT id, preferences AS returning FROM users"))
       assertThat(result).containsExactly(
         SelectItem("id", "id", null),
         SelectItem("preferences", "preferences", null),
@@ -312,7 +314,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `RETURNING as a column alias after a WITH clause is not mistaken for the RETURNING keyword`() {
-      val result = parseSelectItems("WITH c AS (SELECT 1) SELECT x AS returning FROM c")
+      val result = parseSelectItems(ParsedSql("WITH c AS (SELECT 1) SELECT x AS returning FROM c"))
       assertThat(result).containsExactly(
         SelectItem("x", "x", null),
       )
@@ -325,8 +327,10 @@ class SqlOutputClauseTest {
       // preferences" returns exactly 3 columns (id, email, preferences). The `returning` alias belongs to
       // the first item of the source SELECT.
       val result = parseSelectItems(
-        "INSERT INTO users (email, preferences) SELECT email AS returning, preferences " +
-          "FROM users RETURNING id, email, preferences",
+        ParsedSql(
+          "INSERT INTO users (email, preferences) SELECT email AS returning, preferences " +
+            "FROM users RETURNING id, email, preferences",
+        ),
       )
       assertThat(result).containsExactly(
         SelectItem("id", "id", null),
@@ -338,7 +342,7 @@ class SqlOutputClauseTest {
     @Test
     fun `an AS returning alias in the RETURNING list itself is not mistaken for an earlier real keyword`() {
       // The alias follows the real RETURNING keyword here, so the list still comes from that clause.
-      val result = parseSelectItems("UPDATE t SET x = 1 RETURNING id AS returning")
+      val result = parseSelectItems(ParsedSql("UPDATE t SET x = 1 RETURNING id AS returning"))
       assertThat(result).containsExactly(
         SelectItem("id", "id", null),
       )
@@ -346,7 +350,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `an AS returning alias immediately preceding the real keyword in a FROM-less source select`() {
-      val result = parseSelectItems("INSERT INTO t (a) SELECT 1 AS returning RETURNING a, b")
+      val result = parseSelectItems(ParsedSql("INSERT INTO t (a) SELECT 1 AS returning RETURNING a, b"))
       assertThat(result).containsExactly(
         SelectItem("a", "a", null),
         SelectItem("b", "b", null),
@@ -357,7 +361,7 @@ class SqlOutputClauseTest {
     fun `a block comment between AS and its returning alias does not disturb keyword recognition`() {
       // Confirmed against a real PostgreSQL 18.4 container: "SELECT 1 AS/*c*/returning" is valid
       // syntax — a comment is a legal separator between "AS" and its alias.
-      val result = parseSelectItems("INSERT INTO t (a) SELECT 1 AS/*c*/returning RETURNING a, b")
+      val result = parseSelectItems(ParsedSql("INSERT INTO t (a) SELECT 1 AS/*c*/returning RETURNING a, b"))
       assertThat(result).containsExactly(
         SelectItem("a", "a", null),
         SelectItem("b", "b", null),
@@ -368,7 +372,7 @@ class SqlOutputClauseTest {
     fun `a line comment between AS and its returning alias does not disturb keyword recognition`() {
       // Confirmed against a real PostgreSQL 18.4 container: "SELECT 1 AS--x" followed by a newline
       // then "returning" is valid syntax, same as the block-comment case above.
-      val result = parseSelectItems("INSERT INTO t (a) SELECT 1 AS--x\nreturning RETURNING a, b")
+      val result = parseSelectItems(ParsedSql("INSERT INTO t (a) SELECT 1 AS--x\nreturning RETURNING a, b"))
       assertThat(result).containsExactly(
         SelectItem("a", "a", null),
         SelectItem("b", "b", null),
@@ -385,8 +389,10 @@ class SqlOutputClauseTest {
       // The word scan keeps "returning€" as one word, so only the real RETURNING clause supplies
       // the 2 items.
       val result = parseSelectItems(
-        "INSERT INTO users (email, age, preferences) " +
-          "SELECT returning€, age, preferences FROM src RETURNING id, email",
+        ParsedSql(
+          "INSERT INTO users (email, age, preferences) " +
+            "SELECT returning€, age, preferences FROM src RETURNING id, email",
+        ),
       )
       assertThat(result).containsExactly(
         SelectItem("id", "id", null),
@@ -402,7 +408,7 @@ class SqlOutputClauseTest {
       // admits any byte >= 0x80 in a dollar-quote tag, same as in an ordinary identifier). The tag
       // run includes "€", so the dollar-quoted string is skipped as one lexical unit and its
       // contents ("x", ",", the second "$€$") do not split into extra items.
-      val result = parseSelectItems("SELECT \$€\$x,\$€\$ AS lbl, age, email FROM users")
+      val result = parseSelectItems(ParsedSql("SELECT \$€\$x,\$€\$ AS lbl, age, email FROM users"))
       assertThat(result).containsExactly(
         SelectItem("\$€\$x,\$€\$", null, null),
         SelectItem("age", "age", null),
@@ -418,7 +424,7 @@ class SqlOutputClauseTest {
       // returns columns named exactly "preferences€" and "email" -- "preferences€" is a legal
       // unquoted PostgreSQL column name (the lexer admits any byte >= 0x80 inside an unquoted
       // identifier).
-      val result = parseSelectItems("UPDATE t SET x = 1 RETURNING preferences€, email")
+      val result = parseSelectItems(ParsedSql("UPDATE t SET x = 1 RETURNING preferences€, email"))
       assertThat(result).containsExactly(
         SelectItem("preferences€", "preferences€", null),
         SelectItem("email", "email", null),
@@ -432,7 +438,7 @@ class SqlOutputClauseTest {
       // as any other >= 0x80 byte (confirmed against PostgreSQL 18.4: "CREATE TABLE astral(id int,
       // x𝐀y text)" -- U+1D400 MATHEMATICAL BOLD CAPITAL A -- succeeds, and "SELECT
       // x𝐀y FROM astral" resolves it unquoted).
-      val result = parseSelectItems("SELECT x𝐀y, id FROM astral")
+      val result = parseSelectItems(ParsedSql("SELECT x𝐀y, id FROM astral"))
       assertThat(result).containsExactly(
         SelectItem("x𝐀y", "x𝐀y", null),
         SelectItem("id", "id", null),
@@ -444,7 +450,7 @@ class SqlOutputClauseTest {
       // Confirmed on PostgreSQL 18.4, "SELECT 2€" is rejected outright ("trailing junk after
       // numeric literal"), so "2€" is not an identifier PostgreSQL would ever lex and the whole
       // statement yields no items.
-      val result = parseSelectItems("SELECT 2€, email FROM users")
+      val result = parseSelectItems(ParsedSql("SELECT 2€, email FROM users"))
       assertThat(result).isEmpty()
     }
 
@@ -453,7 +459,7 @@ class SqlOutputClauseTest {
       // Confirmed on PostgreSQL 18.4: "SELECT (1)AS b" returns column "b" -- "AS" here abuts
       // the closing ")" with no whitespace at all, yet is still the real keyword, because ")" is
       // not an identifier character. The parenthesized "age" is still the column reference "age".
-      val result = parseSelectItems("SELECT (age)AS b FROM users")
+      val result = parseSelectItems(ParsedSql("SELECT (age)AS b FROM users"))
       assertThat(result).containsExactly(
         SelectItem("(age)", "age", null),
       )
@@ -465,7 +471,7 @@ class SqlOutputClauseTest {
       // the plain-alias case above, but with a double-quoted alias directly following "AS" (no
       // whitespace on that side either). A double quote is not an identifier character, so the
       // keyword is recognized and the alias is split off.
-      val result = parseSelectItems("SELECT (age)AS\"b\" FROM users")
+      val result = parseSelectItems(ParsedSql("SELECT (age)AS\"b\" FROM users"))
       assertThat(result).containsExactly(
         SelectItem("(age)", "age", null),
       )
@@ -476,7 +482,7 @@ class SqlOutputClauseTest {
       // Confirmed on PostgreSQL 18.4: "CREATE TABLE d1(dataAS text)" then "SELECT 1 dataAS"
       // returns column "dataas" -- "dataAS" lexes as one identifier, never as "data" followed by
       // the keyword "AS". The item is the column "dataas" with the implicit alias "b".
-      val result = parseOutputItemsWithAlias("SELECT dataAS b FROM users")
+      val result = parseOutputItemsWithAlias(ParsedSql("SELECT dataAS b FROM users"))
       assertThat(result).containsExactly(
         OutputItemWithAlias(SelectItem("dataAS", "dataas", null), "b", isAliasExplicit = false),
       )
@@ -487,7 +493,7 @@ class SqlOutputClauseTest {
       // Confirmed on PostgreSQL 18.4: "SELECT 1 AS€b" returns column "as€b" -- "AS€b" lexes as
       // one implicit-alias identifier (€ is a legal identifier-continuation character), never as
       // the keyword "AS" followed by "€b".
-      val result = parseOutputItemsWithAlias("SELECT age AS€b FROM users")
+      val result = parseOutputItemsWithAlias(ParsedSql("SELECT age AS€b FROM users"))
       assertThat(result).containsExactly(
         OutputItemWithAlias(SelectItem("age", "age", null), "AS€b", isAliasExplicit = false),
       )
@@ -498,7 +504,7 @@ class SqlOutputClauseTest {
       // Confirmed on PostgreSQL 18.4: "SELECT age x€AS b FROM users" is a syntax error --
       // "x€AS" lexes as one implicit-alias identifier (the same reasoning as the "AS€b" case
       // above, from the other side), leaving a stray extra token "b" with nothing to attach to.
-      val result = parseOutputItemsWithAlias("SELECT age x€AS FROM users")
+      val result = parseOutputItemsWithAlias(ParsedSql("SELECT age x€AS FROM users"))
       assertThat(result).containsExactly(
         OutputItemWithAlias(SelectItem("age", "age", null), "x€AS", isAliasExplicit = false),
       )
@@ -510,7 +516,7 @@ class SqlOutputClauseTest {
       // PostgreSQL's own AS keyword match is ASCII-only: "SELECT x AS aſ" (confirmed on PostgreSQL
       // 18.4) has a real "AS" keyword and a column literally named "aſ", which the result reports
       // as the alias.
-      val result = parseOutputItemsWithAlias("SELECT x AS aſ FROM t").single()
+      val result = parseOutputItemsWithAlias(ParsedSql("SELECT x AS aſ FROM t")).single()
       assertThat(result.alias).isEqualTo("aſ")
     }
 
@@ -521,7 +527,7 @@ class SqlOutputClauseTest {
       // JdbcAnalyzer.buildResultColumns prefers this parsed columnName over the JDBC-reported one,
       // so storing the matched text verbatim ("ID") would make catalog.findColumn miss and silently
       // drop the column's Postgres comment.
-      val result = parseSelectItems("SELECT ID FROM t")
+      val result = parseSelectItems(ParsedSql("SELECT ID FROM t"))
       assertThat(result).containsExactly(
         SelectItem("ID", "id", null),
       )
@@ -529,7 +535,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `an unquoted uppercase qualified column reference folds both the table and column name`() {
-      val result = parseSelectItems("SELECT T.ID FROM t")
+      val result = parseSelectItems(ParsedSql("SELECT T.ID FROM t"))
       assertThat(result).containsExactly(
         SelectItem("T.ID", "id", "t"),
       )
@@ -544,7 +550,7 @@ class SqlOutputClauseTest {
       // Folding via Kotlin's String.lowercase() here would silently disagree with PostgreSQL about
       // which of two differently-cased columns an unquoted reference targets -- the exact
       // regression foldAsciiCase exists to prevent.
-      val result = parseSelectItems("SELECT Ü FROM t")
+      val result = parseSelectItems(ParsedSql("SELECT Ü FROM t"))
       assertThat(result).containsExactly(
         SelectItem("Ü", "Ü", null),
       )
@@ -552,7 +558,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `quoted CTE name`() {
-      val result = parseSelectItems("""WITH "myCte" AS (SELECT 1 AS a) SELECT a FROM "myCte"""")
+      val result = parseSelectItems(ParsedSql("""WITH "myCte" AS (SELECT 1 AS a) SELECT a FROM "myCte""""))
       assertThat(result).containsExactly(
         SelectItem("a", "a", null),
       )
@@ -562,35 +568,35 @@ class SqlOutputClauseTest {
     fun `a parenthesized main query following a CTE clause still resolves`() {
       // The one pair wrapping the whole main query does not change its select list, so this resolves
       // like the unparenthesized form.
-      val result = parseSelectItems("WITH c AS (SELECT 1 AS a) (SELECT a FROM c)")
+      val result = parseSelectItems(ParsedSql("WITH c AS (SELECT 1 AS a) (SELECT a FROM c)"))
       assertThat(result).containsExactly(SelectItem("a", "a", null))
     }
 
     @Test
     fun `a parenthesized main query with no WITH clause still resolves`() {
       // Same as above, with no leading WITH clause at all.
-      val result = parseSelectItems("(SELECT a FROM x)")
+      val result = parseSelectItems(ParsedSql("(SELECT a FROM x)"))
       assertThat(result).containsExactly(SelectItem("a", "a", null))
     }
 
     @Test
     fun `parenthesized UNION branches with no WITH clause yield the first branch's items`() {
       // PostgreSQL names the result column after the first branch.
-      val result = parseSelectItems("(SELECT a FROM x) UNION (SELECT b FROM y)")
+      val result = parseSelectItems(ParsedSql("(SELECT a FROM x) UNION (SELECT b FROM y)"))
       assertThat(result).containsExactly(SelectItem("a", "a", null))
     }
 
     @Test
     fun `VALUES clause yields no items`() {
       // A bare VALUES list has no top-level SELECT/RETURNING to find.
-      val result = parseSelectItems("VALUES (1, 2)")
+      val result = parseSelectItems(ParsedSql("VALUES (1, 2)"))
       assertThat(result).isEmpty()
     }
 
     @Test
     fun `TABLE clause yields no items`() {
       // Same reason as the VALUES case above.
-      val result = parseSelectItems("TABLE t")
+      val result = parseSelectItems(ParsedSql("TABLE t"))
       assertThat(result).isEmpty()
     }
 
@@ -598,7 +604,7 @@ class SqlOutputClauseTest {
     fun `a body wrapped in one redundant pair of parentheses still finds the top-level SELECT`() {
       // A CTE body like `(SELECT ...)` slices to this text. The wrapping pair does not change
       // its select list.
-      val result = parseSelectItems("(SELECT id, UPPER(name) AS name_upper FROM parent)")
+      val result = parseSelectItems(ParsedSql("(SELECT id, UPPER(name) AS name_upper FROM parent)"))
       assertThat(result).containsExactly(
         SelectItem("id", "id", null),
         SelectItem("UPPER(name)", null, null),
@@ -607,14 +613,14 @@ class SqlOutputClauseTest {
 
     @Test
     fun `a body wrapped in two redundant pairs of parentheses still finds the top-level SELECT`() {
-      val result = parseSelectItems("((SELECT id FROM parent))")
+      val result = parseSelectItems(ParsedSql("((SELECT id FROM parent))"))
       assertThat(result).containsExactly(SelectItem("id", "id", null))
     }
 
     @Test
     fun `two separately parenthesized set-operation branches yield the first branch's items`() {
       // The first branch alone names the result column.
-      val result = parseSelectItems("(SELECT id FROM parent) UNION (SELECT id FROM child)")
+      val result = parseSelectItems(ParsedSql("(SELECT id FROM parent) UNION (SELECT id FROM child)"))
       assertThat(result).containsExactly(SelectItem("id", "id", null))
     }
 
@@ -625,7 +631,7 @@ class SqlOutputClauseTest {
       @ParameterizedTest(name = "{0}")
       @MethodSource("starGuardCases")
       fun `still triggers the star guard`(testCase: StarGuardCase) {
-        assertThat(parseSelectItems(testCase.sql)).isEmpty()
+        assertThat(parseSelectItems(ParsedSql(testCase.sql))).isEmpty()
       }
 
       fun starGuardCases(): List<StarGuardCase> = listOf(
@@ -1054,7 +1060,7 @@ class SqlOutputClauseTest {
       @ParameterizedTest(name = "{0}")
       @MethodSource("notMistakenForStarGuardCases")
       fun `is not mistaken for the star guard`(testCase: NotStarGuardCase) {
-        assertThat(parseSelectItems(testCase.sql)).containsExactly(*testCase.expected.toTypedArray())
+        assertThat(parseSelectItems(ParsedSql(testCase.sql))).containsExactly(*testCase.expected.toTypedArray())
       }
 
       fun notMistakenForStarGuardCases(): List<NotStarGuardCase> = listOf(
@@ -1359,7 +1365,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `an unqualified quoted column reference resolves to its logical name`() {
-      val result = parseSelectItems("SELECT \"ux\" FROM c").single()
+      val result = parseSelectItems(ParsedSql("SELECT \"ux\" FROM c")).single()
       assertThat(result.columnName).isEqualTo("ux")
       assertThat(result.isColumnNameQuoted).isTrue()
       assertThat(result.tableName).isNull()
@@ -1367,7 +1373,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `a quoted column reference containing a space resolves to its logical name`() {
-      val result = parseSelectItems("SELECT \"My Col\" FROM c").single()
+      val result = parseSelectItems(ParsedSql("SELECT \"My Col\" FROM c")).single()
       assertThat(result.columnName).isEqualTo("My Col")
       assertThat(result.isColumnNameQuoted).isTrue()
     }
@@ -1378,14 +1384,14 @@ class SqlOutputClauseTest {
       // `SELECT "He""llo" FROM (SELECT 1 AS "He""llo") s` reports `He"llo` (no surrounding quotes,
       // the doubled "" already collapsed to a single literal ") -- this must agree exactly, since
       // JdbcAnalyzer.buildResultColumns' originalName prefers this value over rsmd.getColumnName.
-      val result = parseSelectItems("SELECT \"He\"\"llo\" FROM c").single()
+      val result = parseSelectItems(ParsedSql("SELECT \"He\"\"llo\" FROM c")).single()
       assertThat(result.columnName).isEqualTo("He\"llo")
       assertThat(result.isColumnNameQuoted).isTrue()
     }
 
     @Test
     fun `an unquoted table qualifier with a quoted column resolves both parts independently`() {
-      val result = parseSelectItems("SELECT t.\"ux\" FROM c").single()
+      val result = parseSelectItems(ParsedSql("SELECT t.\"ux\" FROM c")).single()
       assertThat(result.tableName).isEqualTo("t")
       assertThat(result.isTableNameQuoted).isFalse()
       assertThat(result.columnName).isEqualTo("ux")
@@ -1394,7 +1400,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `a quoted table qualifier with an unquoted column resolves both parts independently`() {
-      val result = parseSelectItems("SELECT \"t\".ux FROM c").single()
+      val result = parseSelectItems(ParsedSql("SELECT \"t\".ux FROM c")).single()
       assertThat(result.tableName).isEqualTo("t")
       assertThat(result.isTableNameQuoted).isTrue()
       assertThat(result.columnName).isEqualTo("ux")
@@ -1403,7 +1409,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `a fully quoted qualified reference resolves both parts as quoted`() {
-      val result = parseSelectItems("SELECT \"t\".\"ux\" FROM c").single()
+      val result = parseSelectItems(ParsedSql("SELECT \"t\".\"ux\" FROM c")).single()
       assertThat(result.tableName).isEqualTo("t")
       assertThat(result.isTableNameQuoted).isTrue()
       assertThat(result.columnName).isEqualTo("ux")
@@ -1414,7 +1420,7 @@ class SqlOutputClauseTest {
     fun `a quoted qualifier containing a literal dot is not mistaken for a table-column separator`() {
       // "my.table" is one quoted identifier, not "my" qualifying "table" -- the internal dot must
       // stay inside the quoted span.
-      val result = parseSelectItems("SELECT \"my.table\".ux FROM c").single()
+      val result = parseSelectItems(ParsedSql("SELECT \"my.table\".ux FROM c")).single()
       assertThat(result.tableName).isEqualTo("my.table")
       assertThat(result.isTableNameQuoted).isTrue()
       assertThat(result.columnName).isEqualTo("ux")
@@ -1422,7 +1428,7 @@ class SqlOutputClauseTest {
 
     @Test
     fun `an unquoted reference is not flagged as quoted`() {
-      val result = parseSelectItems("SELECT ux FROM c").single()
+      val result = parseSelectItems(ParsedSql("SELECT ux FROM c")).single()
       assertThat(result.columnName).isEqualTo("ux")
       assertThat(result.isColumnNameQuoted).isFalse()
       assertThat(result.tableName).isNull()
@@ -1432,7 +1438,7 @@ class SqlOutputClauseTest {
     fun `an empty quoted identifier is rejected by PostgreSQL, so there are no items`() {
       // PostgreSQL rejects a zero-length delimited identifier outright ("SELECT """" FROM t" is a
       // syntax error).
-      val result = parseSelectItems("SELECT \"\" FROM c")
+      val result = parseSelectItems(ParsedSql("SELECT \"\" FROM c"))
       assertThat(result).isEmpty()
     }
   }
@@ -1444,21 +1450,21 @@ class SqlOutputClauseTest {
     fun `an over-length unquoted column name is truncated to 63 bytes at parse time`() {
       // catalog.findColumn matches columnName by exact == against a server-truncated name.
       val overLongName = "a".repeat(70)
-      val result = parseSelectItems("SELECT $overLongName FROM t").single()
+      val result = parseSelectItems(ParsedSql("SELECT $overLongName FROM t")).single()
       assertThat(result.columnName).isEqualTo("a".repeat(63))
     }
 
     @Test
     fun `an over-length quoted column name is truncated to 63 bytes at parse time`() {
       val overLongName = "a".repeat(70)
-      val result = parseSelectItems("SELECT \"$overLongName\" FROM t").single()
+      val result = parseSelectItems(ParsedSql("SELECT \"$overLongName\" FROM t")).single()
       assertThat(result.columnName).isEqualTo("a".repeat(63))
     }
 
     @Test
     fun `an over-length table qualifier is truncated to 63 bytes at parse time`() {
       val overLongTable = "b".repeat(70)
-      val result = parseSelectItems("SELECT $overLongTable.col FROM t").single()
+      val result = parseSelectItems(ParsedSql("SELECT $overLongTable.col FROM t")).single()
       assertThat(result.tableName).isEqualTo("b".repeat(63))
     }
 
@@ -1467,7 +1473,7 @@ class SqlOutputClauseTest {
       // Truncating text that still carries its quotes would count those bytes and could drop the
       // closing one. The alias stays raw here and is truncated after folding instead.
       val overLongName = "a".repeat(70)
-      val result = parseOutputItemsWithAlias("SELECT x AS \"$overLongName\"").single()
+      val result = parseOutputItemsWithAlias(ParsedSql("SELECT x AS \"$overLongName\"")).single()
       assertThat(result.alias).isEqualTo("\"$overLongName\"")
       assertThat(result.alias!!.endsWith("\"")).isTrue()
     }
@@ -1479,29 +1485,29 @@ class SqlOutputClauseTest {
 
     @Test
     fun `a doubled-quote escape inside a quoted alias is not mistaken for its closing quote`() {
-      val result = parseOutputItemsWithAlias("SELECT x AS \"He\"\"llo\" FROM t").single()
+      val result = parseOutputItemsWithAlias(ParsedSql("SELECT x AS \"He\"\"llo\" FROM t")).single()
       assertThat(result.alias).isEqualTo("\"He\"\"llo\"")
     }
 
     @Test
     fun `a bare unquoted alias is captured whole`() {
-      val result = parseOutputItemsWithAlias("SELECT x AS ux FROM t").single()
+      val result = parseOutputItemsWithAlias(ParsedSql("SELECT x AS ux FROM t")).single()
       assertThat(result.alias).isEqualTo("ux")
     }
 
     @Test
     fun `an alias token starting with a digit is rejected by PostgreSQL, so there are no items`() {
-      assertThat(parseOutputItemsWithAlias("SELECT x AS 1x FROM t")).isEmpty()
+      assertThat(parseOutputItemsWithAlias(ParsedSql("SELECT x AS 1x FROM t"))).isEmpty()
     }
 
     @Test
     fun `an unterminated quoted alias is rejected by PostgreSQL, so there are no items`() {
-      assertThat(parseOutputItemsWithAlias("SELECT x AS \"abc FROM t")).isEmpty()
+      assertThat(parseOutputItemsWithAlias(ParsedSql("SELECT x AS \"abc FROM t"))).isEmpty()
     }
 
     @Test
     fun `trailing text after the alias token is rejected by PostgreSQL, so there are no items`() {
-      assertThat(parseOutputItemsWithAlias("SELECT x AS ux zz FROM t")).isEmpty()
+      assertThat(parseOutputItemsWithAlias(ParsedSql("SELECT x AS ux zz FROM t"))).isEmpty()
     }
   }
 
@@ -1512,7 +1518,7 @@ class SqlOutputClauseTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("cases")
     fun `each item keeps its whole expression and its alias`(testCase: ItemExtentCase) {
-      val items = parseOutputItemsWithAlias(testCase.sql).map {
+      val items = parseOutputItemsWithAlias(ParsedSql(testCase.sql)).map {
         ExpectedItem(it.selectItem.expression, it.alias, it.isAliasExplicit)
       }
       assertThat(items).isEqualTo(testCase.expected)
@@ -1530,7 +1536,7 @@ class SqlOutputClauseTest {
       assertThat(extents(shape.commaSql)).isEqualTo(shape.commaExpected)
     }
 
-    private fun extents(sql: String): List<ExpectedItem> = parseOutputItemsWithAlias(sql).map {
+    private fun extents(sql: String): List<ExpectedItem> = parseOutputItemsWithAlias(ParsedSql(sql)).map {
       ExpectedItem(it.selectItem.expression, it.alias, it.isAliasExplicit)
     }
 
@@ -1667,7 +1673,7 @@ class SqlOutputClauseTest {
   inner class ImplicitAlias {
 
     private fun item(selectList: String): OutputItemWithAlias =
-      parseOutputItemsWithAlias("SELECT $selectList FROM t").single()
+      parseOutputItemsWithAlias(ParsedSql("SELECT $selectList FROM t")).single()
 
     @Test
     fun `a bare column with an implicit alias splits into the column and its own alias`() {
@@ -1709,12 +1715,12 @@ class SqlOutputClauseTest {
 
     @Test
     fun `two bare words after a column are rejected by PostgreSQL, so there are no items`() {
-      assertThat(parseOutputItemsWithAlias("SELECT col a b FROM t")).isEmpty()
+      assertThat(parseOutputItemsWithAlias(ParsedSql("SELECT col a b FROM t"))).isEmpty()
     }
 
     @Test
     fun `two quoted identifiers after a column are rejected by PostgreSQL, so there are no items`() {
-      assertThat(parseOutputItemsWithAlias("SELECT description \"a\" \"b\" FROM t")).isEmpty()
+      assertThat(parseOutputItemsWithAlias(ParsedSql("SELECT description \"a\" \"b\" FROM t"))).isEmpty()
     }
 
     @Test

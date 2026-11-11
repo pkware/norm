@@ -2,6 +2,7 @@ package norm.generator.libpgquery
 
 import com.dylibso.chicory.runtime.ImportValues
 import com.dylibso.chicory.runtime.Instance
+import com.dylibso.chicory.runtime.Machine
 import com.dylibso.chicory.wasi.WasiOptions
 import com.dylibso.chicory.wasi.WasiPreview1
 import com.dylibso.chicory.wasm.Parser
@@ -18,8 +19,11 @@ private val module: WasmModule by lazy {
  *
  * The `.meta` module holds `unreachable` in place of every function [LibPgQueryMachine] compiled, so an instance
  * without that machine traps on its first call.
+ *
+ * @param machineFactory creates the machine that runs the module's functions. A replacement must delegate to a
+ *   [LibPgQueryMachine].
  */
-internal fun newInstance(): Instance {
+internal fun newInstance(machineFactory: (Instance) -> Machine = ::LibPgQueryMachine): Instance {
   val wasi = WasiPreview1.builder()
     .withOptions(
       WasiOptions.builder()
@@ -31,7 +35,7 @@ internal fun newInstance(): Instance {
   val imports = ImportValues.builder().addFunction(*wasi.toHostFunctions()).build()
   val created = Instance.builder(module)
     .withImportValues(imports)
-    .withMachineFactory(::LibPgQueryMachine)
+    .withMachineFactory(machineFactory)
     .withStart(false)
     .build()
   created.call("_initialize")

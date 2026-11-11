@@ -46,7 +46,7 @@ class TypeRepositoryTest {
       val repository = TypeRepository("test", Catalog())
       repository.buildTypeProjectionForQuery(
         "computeThings",
-        resolveComputedExpressions(queryText, queryResults),
+        resolveComputedExpressions(ParsedSql(queryText), queryResults),
         queryText,
       )
 
@@ -78,7 +78,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT 5"
       repository.buildTypeProjectionForQuery(
         "getFive",
-        resolveComputedExpressions(queryText, listOf(literalColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(literalColumn)),
         queryText,
       )
 
@@ -98,7 +98,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT id FROM t"
       repository.buildTypeProjectionForQuery(
         "getId",
-        resolveComputedExpressions(queryText, listOf(simpleColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(simpleColumn)),
         queryText,
       )
 
@@ -117,7 +117,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT count(*) c, max(name) m FROM t"
       repository.buildTypeProjectionForQuery(
         "countAndMax",
-        resolveComputedExpressions(queryText, listOf(countColumn, maxColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(countColumn, maxColumn)),
         queryText,
       )
 
@@ -135,7 +135,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT a IS NOT NULL, INTERVAL '1' DAY FROM t"
       repository.buildTypeProjectionForQuery(
         "operands",
-        resolveComputedExpressions(queryText, listOf(nullColumn, intervalColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(nullColumn, intervalColumn)),
         queryText,
       )
 
@@ -162,7 +162,7 @@ class TypeRepositoryTest {
       val repository = TypeRepository("test", Catalog())
       repository.buildTypeProjectionForQuery(
         "upperOrLower",
-        resolveComputedExpressions(queryText, listOf(unionColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(unionColumn)),
         queryText,
       )
 
@@ -185,7 +185,7 @@ class TypeRepositoryTest {
       val repository = TypeRepository("test", Catalog())
       repository.buildTypeProjectionForQuery(
         "upperOrLowerParenthesized",
-        resolveComputedExpressions(queryText, listOf(unionColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(unionColumn)),
         queryText,
       )
 
@@ -206,7 +206,7 @@ class TypeRepositoryTest {
       val repository = TypeRepository("test", Catalog())
       repository.buildTypeProjectionForQuery(
         "aOrB",
-        resolveComputedExpressions(queryText, listOf(plainColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(plainColumn)),
         queryText,
       )
 
@@ -243,7 +243,7 @@ class TypeRepositoryTest {
       val repository = TypeRepository("test", Catalog())
       repository.buildTypeProjectionForQuery(
         "deleteParentReturningDescriptionUpperViaCte",
-        resolveComputedExpressions(queryText, listOf(expressionColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(expressionColumn)),
         queryText,
       )
 
@@ -267,7 +267,7 @@ class TypeRepositoryTest {
       val repository = TypeRepository("test", Catalog())
       repository.buildTypeProjectionForQuery(
         "listDeletedParentNamesViaCte",
-        resolveComputedExpressions(queryText, listOf(passThroughColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(passThroughColumn)),
         queryText,
       )
 
@@ -293,7 +293,7 @@ class TypeRepositoryTest {
       val repository = TypeRepository("test", Catalog())
       repository.buildTypeProjectionForQuery(
         "sumWithComment",
-        resolveComputedExpressions(queryText, listOf(sumColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(sumColumn)),
         queryText,
       )
 
@@ -324,7 +324,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT u FROM c"
       repository.buildTypeProjectionForQuery(
         "newlineExpression",
-        resolveComputedExpressions(queryText, listOf(expressionColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(expressionColumn)),
         queryText,
       )
 
@@ -350,7 +350,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT u FROM c"
       repository.buildTypeProjectionForQuery(
         "backtickExpression",
-        resolveComputedExpressions(queryText, listOf(expressionColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(expressionColumn)),
         queryText,
       )
 
@@ -379,7 +379,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT \"My Col\" FROM t"
       repository.buildTypeProjectionForQuery(
         "getMyCol",
-        resolveComputedExpressions(queryText, listOf(spacedColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(spacedColumn)),
         queryText,
       )
 
@@ -403,7 +403,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT x FROM t"
       repository.buildTypeProjectionForQuery(
         "getBacktickNamed",
-        resolveComputedExpressions(queryText, listOf(backtickNamedColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(backtickNamedColumn)),
         queryText,
       )
 
@@ -429,7 +429,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT café FROM t"
       repository.buildTypeProjectionForQuery(
         "getCafe",
-        resolveComputedExpressions(queryText, listOf(unicodeColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(unicodeColumn)),
         queryText,
       )
 
@@ -453,7 +453,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT \"object\" FROM t"
       repository.buildTypeProjectionForQuery(
         "getObject",
-        resolveComputedExpressions(queryText, listOf(keywordColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(keywordColumn)),
         queryText,
       )
 
@@ -475,7 +475,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT \"_\" FROM t"
       repository.buildTypeProjectionForQuery(
         "getUnderscore",
-        resolveComputedExpressions(queryText, listOf(underscoreColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(underscoreColumn)),
         queryText,
       )
 
@@ -499,7 +499,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT \"a\$b\" FROM t"
       repository.buildTypeProjectionForQuery(
         "getDollar",
-        resolveComputedExpressions(queryText, listOf(dollarColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(dollarColumn)),
         queryText,
       )
 
@@ -521,7 +521,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT \"My Col\" FROM t"
       repository.buildTypeProjectionForQuery(
         "getMyColAgreement",
-        resolveComputedExpressions(queryText, listOf(spacedColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(spacedColumn)),
         queryText,
       )
 
@@ -547,7 +547,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT \"col·lecció d'art\" FROM t"
       repository.buildTypeProjectionForQuery(
         "getInterpunct",
-        resolveComputedExpressions(queryText, listOf(interpunctColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(interpunctColumn)),
         queryText,
       )
 
@@ -570,7 +570,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT id FROM t"
       repository.buildTypeProjectionForQuery(
         "getIdAgreement",
-        resolveComputedExpressions(queryText, listOf(plainColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(plainColumn)),
         queryText,
       )
 
@@ -601,7 +601,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT \"Foo\" AS bar FROM tq"
       repository.buildTypeProjectionForQuery(
         "getBar",
-        resolveComputedExpressions(queryText, listOf(quotedColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(quotedColumn)),
         queryText,
       )
 
@@ -624,7 +624,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT \"My Col\" FROM tq"
       repository.buildTypeProjectionForQuery(
         "getMyCol",
-        resolveComputedExpressions(queryText, listOf(spacedColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(spacedColumn)),
         queryText,
       )
 
@@ -648,7 +648,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT id FROM tq"
       repository.buildTypeProjectionForQuery(
         "getId",
-        resolveComputedExpressions(queryText, listOf(plainColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(plainColumn)),
         queryText,
       )
 
@@ -679,7 +679,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT id FROM \"order\""
       repository.buildTypeProjectionForQuery(
         "getId",
-        resolveComputedExpressions(queryText, listOf(orderColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(orderColumn)),
         queryText,
       )
 
@@ -702,7 +702,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT \"user\" FROM author"
       repository.buildTypeProjectionForQuery(
         "getName",
-        resolveComputedExpressions(queryText, listOf(userColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(userColumn)),
         queryText,
       )
 
@@ -727,7 +727,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT id FROM author"
       repository.buildTypeProjectionForQuery(
         "getId",
-        resolveComputedExpressions(queryText, listOf(plainColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(plainColumn)),
         queryText,
       )
 
@@ -757,7 +757,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT x FROM t"
       repository.buildTypeProjectionForQuery(
         "getCStarSlashD",
-        resolveComputedExpressions(queryText, listOf(starSlashColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(starSlashColumn)),
         queryText,
       )
 
@@ -796,7 +796,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT x, y FROM t"
       repository.buildTypeProjectionForQuery(
         "getXAndY",
-        resolveComputedExpressions(queryText, listOf(xColumn, yColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(xColumn, yColumn)),
         queryText,
       )
 
@@ -829,7 +829,7 @@ class TypeRepositoryTest {
       val repository = TypeRepository("test", Catalog())
       repository.buildTypeProjectionForQuery(
         "starOverCte",
-        resolveComputedExpressions(queryText, listOf(starColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(starColumn)),
         queryText,
       )
 
@@ -849,7 +849,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT * FROM generate_series(1,3)"
       repository.buildTypeProjectionForQuery(
         "generateSeriesStar",
-        resolveComputedExpressions(queryText, listOf(starColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(starColumn)),
         queryText,
       )
 
@@ -867,7 +867,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT c.* FROM (SELECT UPPER(s) AS u FROM t) c"
       repository.buildTypeProjectionForQuery(
         "qualifiedStar",
-        resolveComputedExpressions(queryText, listOf(starColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(starColumn)),
         queryText,
       )
 
@@ -898,7 +898,7 @@ class TypeRepositoryTest {
       val queryText = "SELECT u FROM c"
       repository.buildTypeProjectionForQuery(
         "starSlashExpression",
-        resolveComputedExpressions(queryText, listOf(starSlashColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(starSlashColumn)),
         queryText,
       )
 
@@ -915,7 +915,7 @@ class TypeRepositoryTest {
       val repository = TypeRepository("test", Catalog())
       repository.buildTypeProjectionForQuery(
         "getIdWithComment",
-        resolveComputedExpressions(queryText, listOf(plainColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(plainColumn)),
         queryText,
       )
 

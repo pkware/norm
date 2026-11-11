@@ -1,13 +1,13 @@
 package norm.generator
 
-import norm.generator.libpgquery.KeywordKind
 import norm.generator.libpgquery.ParseTreeNames
 import norm.generator.libpgquery.ScanToken
 import norm.generator.libpgquery.TokenNumber
+import norm.generator.libpgquery.isComment
+import norm.generator.libpgquery.isKeyword
 import norm.generator.libpgquery.locationFieldNames
 
 private const val AS_KEYWORD = "AS"
-internal const val UNICODE_ESCAPE_KEYWORD = "UESCAPE"
 private const val NO_LOCATION = -1
 
 /** The literal that stands in for an item's expression while the end of the expression is searched. */
@@ -56,7 +56,7 @@ internal data class SelectItem(
    */
   val normalizedExpression: String
     get() {
-      val tokens = scanLeadingTokens(expression).filterNot(::isComment)
+      val tokens = scanLeadingTokens(expression).filterNot(ScanToken::isComment)
       return buildString {
         for ((index, token) in tokens.withIndex()) {
           val previous = tokens.getOrNull(index - 1)
@@ -73,7 +73,7 @@ internal data class SelectItem(
 /**
  * Parses the output list of a SQL statement into individual items.
  *
- * Paired positionally against `java.sql.ResultSetMetaData` columns. The list comes from the statement of [sql] that
+ * Paired positionally against `java.sql.ResultSetMetaData` columns. The list comes from the statement of [parsed] that
  * produces the result set: the first `SELECT`, `VALUES`, `TABLE`, set operation or data-modifying statement with
  * `RETURNING`, as found in PostgreSQL's parse tree. Its `WITH` clause, nested `SELECT` and keyword-like text in
  * literals and comments are therefore not mistaken for the list. A set operation yields the list of its leftmost
@@ -91,18 +91,15 @@ internal data class SelectItem(
  * after it is dropped. A lone star is left alone, and items at or after a star fall back to metadata unresolved.
  *
  * @return Items strictly before the first star, if any; the full list if there is no star or it's a single star item.
- *   Empty when [sql] has no output list in its text, as with `VALUES`, `TABLE` and `EXPLAIN`, when PostgreSQL's
- *   grammar rejects [sql], or when the end of the last item's expression cannot be confirmed. Both consumers degrade
+ *   Empty when [parsed] has no output list in its text, as with `VALUES`, `TABLE` and `EXPLAIN`, when PostgreSQL's
+ *   grammar rejects it, or when the end of the last item's expression cannot be confirmed. Both consumers degrade
  *   safely for a missing item, falling back to `ResultSetMetaData.getColumnName`, so no wrong original name is
  *   reported.
- * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
-internal fun parseSelectItems(sql: String): List<SelectItem> = parseSelectItems(ParsedSql(sql))
-
 internal fun parseSelectItems(parsed: ParsedSql): List<SelectItem> = parsed.outputItems.map { it.selectItem }
 
 /**
- * Parses [sql]'s output clause with [parseSelectItems] and keeps the result only when it lines up
+ * Parses the output clause of [parsed] with [parseSelectItems] and keeps the result only when it lines up
  * one-to-one with the result set's [columnCount] columns.
  *
  * [parseSelectItems] cannot confirm its own item count. A star spelling it does not recognize expands
@@ -110,24 +107,17 @@ internal fun parseSelectItems(parsed: ParsedSql): List<SelectItem> = parsed.outp
  *
  * @return The parsed items, or empty when parsing found none or their count differs from [columnCount].
  */
-internal fun alignSelectItems(sql: String, columnCount: Int): List<SelectItem> =
-  alignSelectItems(ParsedSql(sql), columnCount)
-
 internal fun alignSelectItems(parsed: ParsedSql, columnCount: Int): List<SelectItem> {
   val items = parseSelectItems(parsed)
   return if (items.size == columnCount) items else emptyList()
 }
 
 /**
- * Whether the statement of [sql] that produces the result set is a `UNION`, `INTERSECT` or `EXCEPT`.
+ * Whether the statement of [parsed] that produces the result set is a `UNION`, `INTERSECT` or `EXCEPT`.
  *
  * [parseSelectItems] then returns only the items of the leftmost branch. The other branches may compute the same
  * result column differently, although the column takes its name from the first branch.
- *
- * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
-internal fun hasTopLevelSetOperation(sql: String): Boolean = hasTopLevelSetOperation(ParsedSql(sql))
-
 internal fun hasTopLevelSetOperation(parsed: ParsedSql): Boolean =
   parsed.tree?.let(::findOutputStatement)?.isSetOperation ?: false
 
@@ -161,12 +151,6 @@ internal data class OutputItemWithAlias(val selectItem: SelectItem, val alias: S
  * leaves the rest of the parse tree unchanged. The alias that the tree records for it is the next token, or the one
  * after `AS`.
  *
- * @throws IllegalArgumentException if [sql] contains a NUL character.
- */
-internal fun parseOutputItemsWithAlias(sql: String): List<OutputItemWithAlias> =
-  parseOutputItemsWithAlias(ParsedSql(sql))
-
-/**
  * Computes the items from the tokens and parse tree of [parsed] on every call. [ParsedSql.outputItems] holds the
  * result for consumers.
  */
@@ -215,16 +199,13 @@ private class ItemExtent(
   val isAliasExplicit: Boolean,
 )
 
-private fun isComment(token: ScanToken): Boolean =
-  token.token == TokenNumber.LINE_COMMENT || token.token == TokenNumber.BLOCK_COMMENT
-
 private fun firstTokenIndex(tokens: List<ScanToken>, target: JsonValue.JsonObject): Int? {
   val location = target.intField(ParseTreeNames.LOCATION) ?: return null
   if (location < 0) return null
   return tokens.binarySearchBy(location) { it.start }.takeIf { it >= 0 }
 }
 
-/** An item that is not the last ends at the token before the comma, so its alias is the token or tokens at its end. */
+/** An item that is not the last ends at the token before the comma, so its alias is the token at its end. */
 private fun extentBeforeNextItem(
   sql: String,
   tokens: List<ScanToken>,
@@ -237,7 +218,7 @@ private fun extentBeforeNextItem(
   val lastToken = commaIndex - 1
   if (target.stringField(ParseTreeNames.ALIAS) == null) return ItemExtent(firstToken, lastToken, null, false)
 
-  val aliasFirstToken = aliasStartToken(sql, tokens, lastToken)
+  val aliasFirstToken = lastToken
   val isAliasExplicit = aliasFirstToken - 1 > firstToken && isKeyword(sql, tokens[aliasFirstToken - 1], AS_KEYWORD)
   val expressionLastToken = if (isAliasExplicit) aliasFirstToken - 2 else aliasFirstToken - 1
   if (expressionLastToken < firstToken) return null
@@ -283,7 +264,7 @@ private fun extentOfFinalItem(
   return null
 }
 
-/** The alias follows the expression, after `AS` when that is written, and spans three tokens when it has `UESCAPE`. */
+/** The alias follows the expression, after `AS` when that is written. */
 private fun finalItemExtent(
   sql: String,
   tokens: List<ScanToken>,
@@ -359,36 +340,9 @@ private fun buildItem(
   val expression = sql.substring(tokens[extent.firstToken].start, tokens[extent.expressionLastToken].end)
   val expressionTokens = tokens.subList(extent.firstToken, extent.expressionLastToken + 1)
   val selectItem = selectItem(sql, expressionTokens, expression, target)
-  val alias = extent.aliasFirstToken?.let { aliasFirst ->
-    val aliasLast = aliasLastToken(sql, tokens, aliasFirst)
-    sql.substring(tokens[aliasFirst].start, tokens[aliasLast].end)
-  }
+  val alias = extent.aliasFirstToken?.let { sql.substring(tokens[it].start, tokens[it].end) }
   return OutputItemWithAlias(selectItem, alias, extent.isAliasExplicit)
 }
-
-/** A Unicode-escaped alias spans `U&"..."`, `UESCAPE` and the escape string, which the lexer reports as three tokens. */
-private fun aliasLastToken(sql: String, tokens: List<ScanToken>, aliasFirstToken: Int): Int {
-  val hasEscapeClause = tokens[aliasFirstToken].token == TokenNumber.UNICODE_IDENTIFIER &&
-    aliasFirstToken + 2 < tokens.size &&
-    isKeyword(sql, tokens[aliasFirstToken + 1], UNICODE_ESCAPE_KEYWORD) &&
-    tokens[aliasFirstToken + 2].token == TokenNumber.STRING
-  return if (hasEscapeClause) aliasFirstToken + 2 else aliasFirstToken
-}
-
-/** The first token of the alias that ends at [lastToken], which is three tokens back for a `UESCAPE` alias. */
-private fun aliasStartToken(sql: String, tokens: List<ScanToken>, lastToken: Int): Int {
-  val isEscapeClause = lastToken >= 2 &&
-    tokens[lastToken].token == TokenNumber.STRING &&
-    isKeyword(sql, tokens[lastToken - 1], UNICODE_ESCAPE_KEYWORD) &&
-    tokens[lastToken - 2].token == TokenNumber.UNICODE_IDENTIFIER
-  return if (isEscapeClause) lastToken - 2 else lastToken
-}
-
-/** Tells whether [token] is the keyword [keyword], in any letter case. */
-internal fun isKeyword(sql: String, token: ScanToken, keyword: String): Boolean =
-  token.keywordKind != KeywordKind.NONE &&
-    token.end - token.start == keyword.length &&
-    sql.regionMatches(token.start, keyword, 0, keyword.length, ignoreCase = true)
 
 private fun selectItem(
   sql: String,
@@ -401,7 +355,7 @@ private fun selectItem(
   val names = value?.let(::columnReferenceNames)
   if (names == null) return SelectItem(expression, columnName = null, tableName = null, isStar = isStar)
 
-  val nameTokens = identifierTokens(sql, expressionTokens)
+  val nameTokens = identifierTokens(expressionTokens)
   val hasNameTokens = nameTokens.size == names.size
   return SelectItem(
     expression = expression,
@@ -428,26 +382,9 @@ private fun columnReferenceNames(value: JsonValue.JsonObject): List<String>? {
   return fields.map { it.objectField(ParseTreeNames.STRING)?.stringField(ParseTreeNames.STRING_VALUE) ?: return null }
 }
 
-/** The tokens that spell identifiers, with a Unicode-escaped identifier and its `UESCAPE` clause as one token. */
-private fun identifierTokens(sql: String, tokens: List<ScanToken>): List<ScanToken> {
-  val identifiers = mutableListOf<ScanToken>()
-  var index = 0
-  while (index < tokens.size) {
-    val token = tokens[index]
-    index++
-    when (token.token) {
-      TokenNumber.OPEN_PARENTHESIS, TokenNumber.CLOSE_PARENTHESIS, TokenNumber.PERIOD -> Unit
-      TokenNumber.UNICODE_IDENTIFIER -> {
-        identifiers += token
-        val hasEscapeClause = index + 1 < tokens.size &&
-          isKeyword(sql, tokens[index], UNICODE_ESCAPE_KEYWORD) &&
-          tokens[index + 1].token == TokenNumber.STRING
-        if (hasEscapeClause) index += 2
-      }
-      else -> identifiers += token
-    }
-  }
-  return identifiers
+/** The tokens that spell identifiers. */
+private fun identifierTokens(tokens: List<ScanToken>): List<ScanToken> = tokens.filter {
+  it.token !in setOf(TokenNumber.OPEN_PARENTHESIS, TokenNumber.CLOSE_PARENTHESIS, TokenNumber.PERIOD)
 }
 
 private fun isQuotedToken(sql: String, token: ScanToken): Boolean =

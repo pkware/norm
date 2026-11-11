@@ -2,7 +2,7 @@ package norm.generator
 
 import norm.generator.libpgquery.LibPgQuery
 import norm.generator.libpgquery.LibPgQueryException
-import norm.generator.libpgquery.TokenNumber
+import norm.generator.libpgquery.isComment
 
 /**
  * Replaces each separator between the quoted segments of a string literal with one space. PostgreSQL's lexer reads
@@ -44,9 +44,7 @@ private fun isSingleToken(text: String): Boolean {
   return tokens.size == 1 && tokens.single().start == 0 && tokens.single().end == text.length
 }
 
-private fun isOnlyComments(text: String): Boolean = scanOrNull(text)?.all {
-  it.token == TokenNumber.LINE_COMMENT || it.token == TokenNumber.BLOCK_COMMENT
-} ?: false
+private fun isOnlyComments(text: String): Boolean = scanOrNull(text)?.all { it.isComment() } ?: false
 
 private fun scanOrNull(text: String) = try {
   LibPgQuery.scan(text)

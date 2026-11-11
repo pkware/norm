@@ -5,6 +5,7 @@ import norm.generator.libpgquery.LibPgQuery
 import norm.generator.libpgquery.LibPgQueryException
 import norm.generator.libpgquery.ScanToken
 import norm.generator.libpgquery.TokenNumber
+import norm.generator.libpgquery.isComment
 
 /**
  * A query parsed from a SQL file.
@@ -243,8 +244,9 @@ public object QueryFileParser {
 
   /** Returns [sql] with each placeholder and named parameter replaced by `0` and spaces, keeping every offset. */
   private fun rewriteForParser(sql: String): String {
-    val characters = replaceParameterPlaceholdersKeepingOffsets(sql).toCharArray()
-    val tokens = scanLeadingTokens(sql)
+    val parsed = ParsedSql(sql)
+    val characters = parsed.parserForm.toCharArray()
+    val tokens = parsed.tokens
     for ((index, token) in tokens.withIndex()) {
       if (token.token != TokenNumber.COLON) continue
       val name = tokens.getOrNull(index + 1)?.takeIf { it.start == token.end && isParameterName(sql, it) } ?: continue
@@ -279,15 +281,13 @@ public object QueryFileParser {
   private fun ScanToken.isBlank(text: String): Boolean =
     token == TokenNumber.IDENTIFIER && (start until end).all { text[it].isWhitespace() }
 
-  private fun ScanToken.isComment(): Boolean = token == TokenNumber.LINE_COMMENT || token == TokenNumber.BLOCK_COMMENT
-
   private fun buildQuery(
     annotation: QueryAnnotation,
     rawSql: String,
     comments: List<String>,
     sourceFile: String,
   ): ParsedQuery {
-    val (sql, namedParameters) = convertNamedParameters(rawSql, scanLeadingTokens(rawSql))
+    val (sql, namedParameters) = convertNamedParameters(ParsedSql(rawSql))
 
     return ParsedQuery(
       name = annotation.name,
@@ -323,9 +323,9 @@ public object QueryFileParser {
    *
    * Finds parameters in the tokens of PostgreSQL's lexer, so a `:name`-shaped run inside a string literal,
    * quoted identifier, dollar-quoted string, or comment is copied through verbatim, as is text from the point
-   * where the lexer rejects [sql] onward. A named parameter is a `:` token immediately followed by an identifier
-   * or keyword token that does not start with `"`; the name is that token's text. The `::` and `:=` operators
-   * are separate tokens and never start a parameter.
+   * where the lexer rejects [parsed] onward. A named parameter is a `:` token immediately followed by an
+   * identifier or keyword token that does not start with `"`; the name is that token's text. The `::` and `:=`
+   * operators are separate tokens and never start a parameter.
    *
    * Each occurrence of a named parameter produces its own `?` placeholder with its own 1-based
    * position number. The same name appearing multiple times creates multiple bind slots.
@@ -334,12 +334,14 @@ public object QueryFileParser {
    * mixed-style guard can tell a genuine positional `?` apart from one inside a string literal like
    * `'really?'` or one half of pgjdbc's `??` escape.
    *
-   * @param tokens The lexer tokens of [sql], from [scanLeadingTokens].
+   * @param parsed The SQL text and its lexer tokens.
    * @return A pair of (converted SQL, position-to-name map). If the SQL has no named parameters,
    *   returns the original SQL with an empty map.
    * @throws IllegalArgumentException if the query mixes `:name` and `?` parameter styles.
    */
-  private fun convertNamedParameters(sql: String, tokens: List<ScanToken>): Pair<String, Map<Int, String>> {
+  private fun convertNamedParameters(parsed: ParsedSql): Pair<String, Map<Int, String>> {
+    val sql = parsed.sql
+    val tokens = parsed.tokens
     val numberToName = mutableMapOf<Int, String>()
     val result = StringBuilder()
     var copiedUpTo = 0
@@ -356,7 +358,7 @@ public object QueryFileParser {
       return sql to emptyMap()
     }
 
-    require(placeholderPositions(sql).isEmpty()) {
+    require(placeholderPositions(parsed).isEmpty()) {
       "Cannot mix named (:param) and positional (?) parameters in the same query"
     }
 

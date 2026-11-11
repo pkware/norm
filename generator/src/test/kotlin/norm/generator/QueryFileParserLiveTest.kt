@@ -71,7 +71,7 @@ class QueryFileParserLiveTest {
       statement.execute("DROP FUNCTION split_probe()")
     }
 
-    val statements = splitStatements(body)
+    val statements = splitStatements(ParsedSql(body))
     assertThat(statements.size).isEqualTo(1)
   }
 
@@ -98,7 +98,7 @@ class QueryFileParserLiveTest {
   @Test
   fun `PostgreSQL rejects every corpus text that holds tokens but no statement`() {
     val withoutStatement = corpusTexts().filter { text ->
-      scanLeadingTokens(text).any { it.token !in IGNORED_TOKENS } && splitStatements(text).isEmpty()
+      scanLeadingTokens(text).any { it.token !in IGNORED_TOKENS } && splitStatements(ParsedSql(text)).isEmpty()
     }
 
     assertRejected(withoutStatement)
@@ -110,7 +110,7 @@ class QueryFileParserLiveTest {
       val first = scanLeadingTokens(text).firstOrNull { it.token !in IGNORED_TOKENS }
       first != null &&
         text.substring(first.start, first.end).equals("EXPLAIN", ignoreCase = true) &&
-        explainedStatementStart(text) == 0
+        explainedStatementStart(ParsedSql(text)) == 0
     }
 
     assertRejected(withoutWrapped)

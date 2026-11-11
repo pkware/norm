@@ -6,6 +6,7 @@ import assertk.assertions.isEqualTo
 import assertk.assertions.isTrue
 import norm.generator.libpgquery.LibPgQuery
 import norm.generator.libpgquery.TokenNumber
+import norm.generator.libpgquery.isKeyword
 import org.commonmark.node.AbstractVisitor
 import org.commonmark.node.Code
 import org.commonmark.node.FencedCodeBlock
@@ -168,7 +169,7 @@ class SourceReferenceLiveVerificationTest {
   private fun collectCteFromClauses(sql: String): List<Pair<String, String>> {
     val results = mutableListOf<Pair<String, String>>()
     fun recurse(scopeText: String) {
-      val cte = parseCteClause(scopeText) ?: return
+      val cte = parseCteClause(ParsedSql(scopeText)) ?: return
       val withPrefix = scopeText.substring(0, cte.mainQueryStart)
       for (definition in cte.definitions) {
         val body = scopeText.substring(definition.bodyOpenParenthesis + 1, definition.bodyCloseParenthesis)

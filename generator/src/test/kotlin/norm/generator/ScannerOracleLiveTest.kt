@@ -94,7 +94,7 @@ class ScannerOracleLiveTest {
     resetPublicSchema()
     connection.createStatement().use { it.execute(LITERAL_SCHEMA) }
     val withoutItems = GLUED_ISSUE_INPUTS.filter { sql ->
-      describe(sql) == "rejected" || parseOutputItemsWithAlias(sql).isEmpty()
+      describe(sql) == "rejected" || parseOutputItemsWithAlias(ParsedSql(sql)).isEmpty()
     }
     assertThat(withoutItems).isEqualTo(emptyList())
   }
@@ -118,7 +118,7 @@ class ScannerOracleLiveTest {
     }
 
     connection.prepareStatement(sql).use { statement ->
-      compare("parameterCount", statement.parameterMetaData.parameterCount, placeholderPositions(sql).size)
+      compare("parameterCount", statement.parameterMetaData.parameterCount, placeholderPositions(ParsedSql(sql)).size)
       comparePreparedParameters(sql, ::compare)
       compare("rewrittenSqlParses", "true", parsesAfterRewrite(sql))
       statement.metaData?.let { compareColumns(sql, it, ::compare) }
@@ -157,9 +157,9 @@ class ScannerOracleLiveTest {
    * no items, or a star item.
    */
   private fun parenthesizeItems(sql: String): String? {
-    val items = parseOutputItemsWithAlias(sql)
+    val items = parseOutputItemsWithAlias(ParsedSql(sql))
     if (items.isEmpty() || items.any { it.selectItem.isStar }) return null
-    val statement = parseOrNull(replaceParameterPlaceholdersKeepingOffsets(sql))?.let(::findOutputStatement)
+    val statement = parseOrNull(ParsedSql(sql).parserForm)?.let(::findOutputStatement)
     val starts = statement?.targets?.map { it.intField("location") } ?: return null
     if (starts.size != items.size || starts.any { it == null }) return null
     val result = StringBuilder()
@@ -173,7 +173,7 @@ class ScannerOracleLiveTest {
   }
 
   private fun parsesAfterRewrite(sql: String): String = try {
-    LibPgQuery.parse(replaceParameterPlaceholdersKeepingOffsets(sql))
+    LibPgQuery.parse(ParsedSql(sql).parserForm)
     "true"
   } catch (exception: LibPgQueryException) {
     "parse failed: ${exception.message}"
@@ -181,8 +181,8 @@ class ScannerOracleLiveTest {
 
   private fun comparePreparedParameters(sql: String, compare: (String, Any?, Any?) -> Unit) {
     var sumOfPartCounts = 0
-    for ((index, part) in splitStatements(sql).withIndex()) {
-      val text = part.substring(explainedStatementStart(part))
+    for ((index, part) in splitStatements(ParsedSql(sql)).withIndex()) {
+      val text = part.part(explainedStatementStart(part), part.sql.length)
       val mainCount = placeholderPositions(text).size
       sumOfPartCounts += mainCount
       if (!startsPreparableStatement(text)) continue
@@ -214,11 +214,11 @@ class ScannerOracleLiveTest {
   }
 
   private fun compareColumns(sql: String, metaData: java.sql.ResultSetMetaData, compare: (String, Any?, Any?) -> Unit) {
-    val items = parseOutputItemsWithAlias(sql)
+    val items = parseOutputItemsWithAlias(ParsedSql(sql))
     if (items.isNotEmpty() && items.none { it.selectItem.isStar }) {
       compare("columnCount", metaData.columnCount, items.size)
     }
-    if (alignSelectItems(sql, metaData.columnCount).isEmpty()) return
+    if (alignSelectItems(ParsedSql(sql), metaData.columnCount).isEmpty()) return
     for ((index, item) in items.withIndex()) {
       val expected = expectedLabel(item) ?: continue
       compare("columnLabel[$index]", metaData.getColumnLabel(index + 1), expected)

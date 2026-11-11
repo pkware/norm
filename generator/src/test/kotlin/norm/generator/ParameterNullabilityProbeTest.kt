@@ -43,7 +43,7 @@ import java.sql.Statement
 @Execution(ExecutionMode.SAME_THREAD)
 class ParameterNullabilityProbeTest {
 
-  private fun infer(sql: String): Map<Int, InferredParameter> = probe.classify(sql)
+  private fun infer(sql: String): Map<Int, InferredParameter> = probe.classify(ParsedSql(sql))
 
   private fun analyze(sql: String, namedParameters: Map<Int, String> = emptyMap()): Query =
     analyzer.analyzeQuery(ParsedQuery("q", Command.EXEC, sql, emptyList(), namedParameters), catalog)
@@ -576,7 +576,7 @@ class ParameterNullabilityProbeTest {
       val sql = "SELECT * FROM t WHERE a = ANY(ARRAY[?::int, ?::int])"
 
       assertThat(infer(sql).values.all { it.nullability == ParameterNullability.NonNull }).isTrue()
-      assertThat(probe.classify(sql).values.map { it.nullability }.toSet())
+      assertThat(probe.classify(ParsedSql(sql)).values.map { it.nullability }.toSet())
         .isEqualTo(setOf(ParameterNullability.NonNull))
     }
 
@@ -584,7 +584,7 @@ class ParameterNullabilityProbeTest {
     fun `an assigned subscript index rejects null on a nullable column`() {
       val sql = "UPDATE t SET arr[?] = 5 WHERE id = ?"
 
-      assertThat(probe.classify(sql).getValue(1).nullability).isEqualTo(ParameterNullability.NonNull)
+      assertThat(probe.classify(ParsedSql(sql)).getValue(1).nullability).isEqualTo(ParameterNullability.NonNull)
       assertThat(notNull(sql).getOrDefault(1, true)).isTrue()
     }
 
@@ -1194,7 +1194,7 @@ class ParameterNullabilityProbeTest {
     fun `a statement the probe cannot compile gets positional names and non-null parameters`() {
       val sql = "UPDATE t SET b = ? WHERE a = ?"
 
-      assertThat(limitedProbe.classify(sql)).isEmpty()
+      assertThat(limitedProbe.classify(ParsedSql(sql))).isEmpty()
       assertThat(analyzed(sql).params.map { it.column!!.name to it.column!!.notNull })
         .isEqualTo(listOf("p1" to true, "p2" to true))
     }
@@ -1203,7 +1203,7 @@ class ParameterNullabilityProbeTest {
     fun `a statement the probe cannot compile gets no function argument name`() {
       val sql = "UPDATE t SET note = upper(?) WHERE a = ?"
 
-      assertThat(limitedProbe.classify(sql)).isEmpty()
+      assertThat(limitedProbe.classify(ParsedSql(sql))).isEmpty()
       assertThat(analyzed(sql).params.map { it.column!!.name to it.column!!.notNull })
         .isEqualTo(listOf("p1" to true, "p2" to true))
     }
@@ -1474,7 +1474,7 @@ class ParameterNullabilityProbeTest {
     @Test
     fun `a second statement keeps its own parameters and the first keeps its classification`() {
       val sql = "UPDATE t SET a = ? WHERE id = ?; DELETE FROM u WHERE id = ?"
-      val classified = probe.classify(sql)
+      val classified = probe.classify(ParsedSql(sql))
 
       assertThat(classified.getValue(1).nullability).isNotNull().isInstanceOf<ParameterNullability.Inherit>()
       assertThat(classified.getValue(2).nullability).isEqualTo(ParameterNullability.NonNull)
@@ -1486,7 +1486,9 @@ class ParameterNullabilityProbeTest {
     fun `a utility statement after an UPDATE does not hide the assignment`() {
       val sql = "UPDATE t SET a = ? WHERE id = ?; NOTIFY x"
 
-      assertThat(probe.classify(sql).getValue(1).nullability).isNotNull().isInstanceOf<ParameterNullability.Inherit>()
+      assertThat(
+        probe.classify(ParsedSql(sql)).getValue(1).nullability,
+      ).isNotNull().isInstanceOf<ParameterNullability.Inherit>()
       assertThat(analyzed(sql).params.map { it.column!!.notNull }).isEqualTo(listOf(false, true))
     }
 
@@ -1494,13 +1496,15 @@ class ParameterNullabilityProbeTest {
     fun `an EXPLAIN ANALYZE UPDATE keeps its classification beside another EXPLAIN`() {
       val sql = "EXPLAIN ANALYZE UPDATE t SET a = ? WHERE id = ?; EXPLAIN SELECT 1"
 
-      assertThat(probe.classify(sql).getValue(1).nullability).isNotNull().isInstanceOf<ParameterNullability.Inherit>()
+      assertThat(
+        probe.classify(ParsedSql(sql)).getValue(1).nullability,
+      ).isNotNull().isInstanceOf<ParameterNullability.Inherit>()
     }
 
     @Test
     fun `an assignment in a later statement is numbered after the placeholders before it`() {
       val sql = "SELECT 1 WHERE ?::int = 1; UPDATE t SET a = ? WHERE id = ?"
-      val classified = probe.classify(sql)
+      val classified = probe.classify(ParsedSql(sql))
 
       assertThat(classified.getValue(1).nullability).isEqualTo(ParameterNullability.NonNull)
       assertThat(classified.getValue(2).nullability).isNotNull().isInstanceOf<ParameterNullability.Inherit>()
@@ -1527,7 +1531,7 @@ class ParameterNullabilityProbeTest {
       ],
     )
     fun `a semicolon in a literal, a dollar quote, a comment, or at the end does not split`(sql: String) {
-      val classified = probe.classify(sql)
+      val classified = probe.classify(ParsedSql(sql))
 
       assertThat(classified.values.count { it.nullability is ParameterNullability.Inherit }).isEqualTo(1)
       assertThat(classified.keys.toList().sorted().last()).isEqualTo(classified.size)
@@ -1537,12 +1541,12 @@ class ParameterNullabilityProbeTest {
     fun `a semicolon inside parentheses does not split`() {
       val sql = "CREATE RULE r AS ON UPDATE TO t DO ALSO (UPDATE u SET a = ?; DELETE FROM u WHERE id = ?)"
 
-      assertThat(failingProbe.classify(sql)).isEmpty()
+      assertThat(failingProbe.classify(ParsedSql(sql))).isEmpty()
     }
 
     @Test
     fun `a failed PREPARE of a later preparable statement throws`() {
-      assertFailure { failingProbe.classify("NOTIFY x; UPDATE t SET a = ? WHERE id = ?") }
+      assertFailure { failingProbe.classify(ParsedSql("NOTIFY x; UPDATE t SET a = ? WHERE id = ?")) }
         .isInstanceOf<IllegalStateException>()
     }
   }
@@ -1559,7 +1563,9 @@ class ParameterNullabilityProbeTest {
       ],
     )
     fun `an EXPLAIN of a parenthesized query keeps the assignment classification`(sql: String) {
-      assertThat(probe.classify(sql).getValue(1).nullability).isNotNull().isInstanceOf<ParameterNullability.Inherit>()
+      assertThat(
+        probe.classify(ParsedSql(sql)).getValue(1).nullability,
+      ).isNotNull().isInstanceOf<ParameterNullability.Inherit>()
       assertThat(notNull(sql).getValue(1)).isFalse()
     }
 
@@ -1567,7 +1573,9 @@ class ParameterNullabilityProbeTest {
     fun `an option list that starts with a keyword is still an option list`() {
       val sql = "EXPLAIN (ANALYZE, VERBOSE) UPDATE t SET a = ? WHERE id = ?"
 
-      assertThat(probe.classify(sql).getValue(1).nullability).isNotNull().isInstanceOf<ParameterNullability.Inherit>()
+      assertThat(
+        probe.classify(ParsedSql(sql)).getValue(1).nullability,
+      ).isNotNull().isInstanceOf<ParameterNullability.Inherit>()
     }
   }
 
@@ -1575,15 +1583,17 @@ class ParameterNullabilityProbeTest {
   inner class ProbeLifecycle {
     @Test
     fun `a statement without a placeholder is not probed`() {
-      assertThat(failingProbe.classify("UPDATE t SET a = 1 WHERE id = 2")).isEmpty()
-      assertFailure { failingProbe.classify("UPDATE t SET a = ? WHERE id = 2") }.isInstanceOf<IllegalStateException>()
-      assertThat(probe.classify("UPDATE t SET a = ? WHERE id = 2")).isNotEmpty()
+      assertThat(failingProbe.classify(ParsedSql("UPDATE t SET a = 1 WHERE id = 2"))).isEmpty()
+      assertFailure {
+        failingProbe.classify(ParsedSql("UPDATE t SET a = ? WHERE id = 2"))
+      }.isInstanceOf<IllegalStateException>()
+      assertThat(probe.classify(ParsedSql("UPDATE t SET a = ? WHERE id = 2"))).isNotEmpty()
       assertThat(infer("TRUNCATE t")).isEmpty()
     }
 
     @Test
     fun `a failed PREPARE of a preparable statement throws with the cause and leaves the connection usable`() {
-      val failure = assertFailure { failingProbe.classify("UPDATE t SET a = ? WHERE id = ?", "brokenQuery") }
+      val failure = assertFailure { failingProbe.classify(ParsedSql("UPDATE t SET a = ? WHERE id = ?"), "brokenQuery") }
 
       failure.isInstanceOf<IllegalStateException>()
         .hasMessage("Could not translate query 'brokenQuery' for parameter analysis.")
@@ -1598,14 +1608,14 @@ class ParameterNullabilityProbeTest {
     fun `a failed PREPARE throws when the first significant token starts a preparable statement`(opening: String) {
       val closing = if (opening.startsWith("(")) ")" else ""
 
-      assertFailure { failingProbe.classify("/* note */ -- more\n $opening 1 WHERE ? = 1$closing") }
+      assertFailure { failingProbe.classify(ParsedSql("/* note */ -- more\n $opening 1 WHERE ? = 1$closing")) }
         .isInstanceOf<IllegalStateException>()
     }
 
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = ["EXPLAIN", "DECLARE", "CREATE", "COPY", "FETCH", "explain", "(EXPLAIN"])
     fun `a failed PREPARE yields no classified parameters for any other first token`(opening: String) {
-      assertThat(failingProbe.classify("/* note */ -- more\n $opening 1 WHERE ? = 1")).isEmpty()
+      assertThat(failingProbe.classify(ParsedSql("/* note */ -- more\n $opening 1 WHERE ? = 1"))).isEmpty()
     }
 
     @Test
@@ -1613,7 +1623,7 @@ class ParameterNullabilityProbeTest {
       val sql = "EXPLAIN SELECT * FROM t WHERE id = ?"
       val query = JdbcAnalyzer(connection).analyzeQuery(ParsedQuery("q", Command.MANY, sql, emptyList()), catalog)
 
-      assertThat(probe.classify(sql).getValue(1).nullability).isEqualTo(ParameterNullability.NonNull)
+      assertThat(probe.classify(ParsedSql(sql)).getValue(1).nullability).isEqualTo(ParameterNullability.NonNull)
       assertThat(query.params.map { it.column!!.name to it.column!!.notNull }).isEqualTo(listOf("id" to true))
     }
 
@@ -1655,7 +1665,7 @@ class ParameterNullabilityProbeTest {
 
     @Test
     fun `a failed PREPARE of the statement an EXPLAIN wraps throws when that statement is preparable`() {
-      assertFailure { failingProbe.classify("EXPLAIN (ANALYZE) UPDATE t SET a = ? WHERE id = ?") }
+      assertFailure { failingProbe.classify(ParsedSql("EXPLAIN (ANALYZE) UPDATE t SET a = ? WHERE id = ?")) }
         .isInstanceOf<IllegalStateException>()
     }
 
@@ -1670,16 +1680,16 @@ class ParameterNullabilityProbeTest {
 
     @Test
     fun `a statement PostgreSQL prepares but cannot compile into a function yields no assignments`() {
-      assertThat(limitedProbe.classify("UPDATE t SET b = ? WHERE id = ?")).isEmpty()
+      assertThat(limitedProbe.classify(ParsedSql("UPDATE t SET b = ? WHERE id = ?"))).isEmpty()
       assertThat(parameter("UPDATE t SET b = ? WHERE id = ?", 1)).isEqualTo(assignment("b"))
     }
 
     @Test
     fun `a probe leaves no prepared statement and no temporary function behind`() {
-      probe.classify("UPDATE t SET b = ? WHERE id = ?")
-      probe.classify("UPDATE t SET a = ? WHERE id IN (${placeholders(TOO_MANY_FUNCTION_ARGUMENTS)})")
-      runCatching { failingProbe.classify("UPDATE t SET a = ? WHERE id = ?") }
-      limitedProbe.classify("UPDATE t SET b = ? WHERE id = ?")
+      probe.classify(ParsedSql("UPDATE t SET b = ? WHERE id = ?"))
+      probe.classify(ParsedSql("UPDATE t SET a = ? WHERE id IN (${placeholders(TOO_MANY_FUNCTION_ARGUMENTS)})"))
+      runCatching { failingProbe.classify(ParsedSql("UPDATE t SET a = ? WHERE id = ?")) }
+      limitedProbe.classify(ParsedSql("UPDATE t SET b = ? WHERE id = ?"))
 
       for (session in listOf(connection, limitedConnection)) {
         assertThat(scalarCount(session, "SELECT count(*) FROM pg_prepared_statements WHERE name LIKE 'norm%'"))
@@ -1693,12 +1703,12 @@ class ParameterNullabilityProbeTest {
     fun `a classified parameter keeps its number when other placeholders are literals`() {
       val sql = "UPDATE t SET note = '?', col = ? WHERE id = ? AND note <> 'a?'"
 
-      assertThat(probe.classify(sql).keys.toList()).containsExactly(1, 2)
+      assertThat(probe.classify(ParsedSql(sql)).keys.toList()).containsExactly(1, 2)
     }
 
     @Test
     fun `the probe reports each classified parameter with its nullability`() {
-      val classified = probe.classify("UPDATE t SET a = coalesce(?, a), b = ? WHERE id = ?")
+      val classified = probe.classify(ParsedSql("UPDATE t SET a = coalesce(?, a), b = ? WHERE id = ?"))
 
       assertThat(classified.getValue(1).nullability).isEqualTo(ParameterNullability.Nullable)
       assertThat(classified.getValue(2).nullability).isNotNull().isInstanceOf<ParameterNullability.Inherit>()

@@ -12,14 +12,6 @@ internal fun openResource(name: String): InputStream =
   checkNotNull(LibPgQuery::class.java.getResourceAsStream(name)) { "${name.removePrefix("/")} is missing" }
 
 /**
- * The texts passed to [LibPgQuery.parse] and [LibPgQuery.scan] while [LibPgQuery.recordCalls] ran, in call order.
- */
-internal class RecordedCalls {
-  val parseTexts = mutableListOf<String>()
-  val scanTexts = mutableListOf<String>()
-}
-
-/**
  * PostgreSQL's parser and lexer, compiled from libpg_query to WebAssembly and run on Chicory.
  *
  * All offsets are `String` indexes. A single wasm instance serves every call under a lock, and is replaced after a
@@ -28,25 +20,7 @@ internal class RecordedCalls {
 internal object LibPgQuery {
   private val parseTreeOffsets: ParseTreeOffsets by lazy { ParseTreeOffsets(locationFieldNames) }
 
-  private val instance = RecoverableInstance(::newInstance)
-
-  private val recording = ThreadLocal<RecordedCalls?>()
-
-  /**
-   * Runs [block] and returns the text of every [parse] and [scan] call that the calling thread made during it,
-   * including calls that throw. Calls on other threads are not recorded.
-   */
-  internal fun recordCalls(block: () -> Unit): RecordedCalls {
-    val previous = recording.get()
-    val calls = RecordedCalls()
-    recording.set(calls)
-    try {
-      block()
-    } finally {
-      recording.set(previous)
-    }
-    return calls
-  }
+  internal val instance = RecoverableInstance(::newInstance)
 
   /**
    * Parses [sql] with PostgreSQL's grammar and returns libpg_query's JSON parse tree.
@@ -57,7 +31,6 @@ internal object LibPgQuery {
    * @throws IllegalArgumentException if [sql] contains a NUL character.
    */
   fun parse(sql: String): JsonValue.JsonObject {
-    recording.get()?.parseTexts?.add(sql)
     val input = Utf8Input(sql)
     val text = invoke(LibPgQueryEntry.PARSE, input)
     val tree = JsonValue.parse(text)
@@ -72,7 +45,6 @@ internal object LibPgQuery {
    * @throws IllegalArgumentException if [sql] contains a NUL character.
    */
   fun scan(sql: String): List<ScanToken> {
-    recording.get()?.scanTexts?.add(sql)
     val input = Utf8Input(sql)
     val encoded = invoke(LibPgQueryEntry.SCAN, input)
     return decodeScanResult(encoded, input)

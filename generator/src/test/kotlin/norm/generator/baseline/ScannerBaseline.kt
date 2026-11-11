@@ -1,6 +1,7 @@
 package norm.generator.baseline
 
 import norm.generator.OutputItemWithAlias
+import norm.generator.ParsedSql
 import norm.generator.QueryFileParser
 import norm.generator.alignSelectItems
 import norm.generator.explainedStatementStart
@@ -31,23 +32,23 @@ internal object ScannerBaseline {
   }
 
   private fun StringBuilder.renderEntry(text: String) {
-    record("parseSelectItems") { parseSelectItems(text) }
-    record("parseOutputItemsWithAlias") { parseOutputItemsWithAlias(text) }
-    val columnCount = runCatching { parseSelectItems(text).size }
+    record("parseSelectItems") { parseSelectItems(ParsedSql(text)) }
+    record("parseOutputItemsWithAlias") { parseOutputItemsWithAlias(ParsedSql(text)) }
+    val columnCount = runCatching { parseSelectItems(ParsedSql(text)).size }
     record("alignSelectItems(columnCount = parseSelectItems.size)") {
-      alignSelectItems(text, columnCount.getOrThrow())
+      alignSelectItems(ParsedSql(text), columnCount.getOrThrow())
     }
     record("alignSelectItems(columnCount = parseSelectItems.size + 1)") {
-      alignSelectItems(text, columnCount.getOrThrow() + 1)
+      alignSelectItems(ParsedSql(text), columnCount.getOrThrow() + 1)
     }
-    record("hasTopLevelSetOperation") { hasTopLevelSetOperation(text) }
-    record("placeholderPositions") { placeholderPositions(text).contentToString() }
-    record("replaceParameterPlaceholders") { replaceParameterPlaceholders(text) { "\$${it + 1}" } }
+    record("hasTopLevelSetOperation") { hasTopLevelSetOperation(ParsedSql(text)) }
+    record("placeholderPositions") { placeholderPositions(ParsedSql(text)).contentToString() }
+    record("replaceParameterPlaceholders") { replaceParameterPlaceholders(ParsedSql(text)) { "\$${it + 1}" } }
     record("QueryFileParser.parse") { QueryFileParser.parse(text, "") }
-    record("splitStatements") { splitStatements(text) }
-    record("explainedStatementStart") { explainedStatementStart(text) }
-    record("parseCteClause") { parseCteClause(text) }
-    val items = runCatching { parseOutputItemsWithAlias(text) }
+    record("splitStatements") { splitStatements(ParsedSql(text)).map { it.sql } }
+    record("explainedStatementStart") { explainedStatementStart(ParsedSql(text)) }
+    record("parseCteClause") { parseCteClause(ParsedSql(text)) }
+    val items = runCatching { parseOutputItemsWithAlias(ParsedSql(text)) }
     items.fold(
       onSuccess = { renderItems(it) },
       onFailure = { appendLine("items: ${escape(describe(it))}") },

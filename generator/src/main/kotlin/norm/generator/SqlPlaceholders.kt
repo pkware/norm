@@ -6,7 +6,7 @@ import norm.generator.libpgquery.ScanToken
 import norm.generator.libpgquery.TokenNumber
 
 /**
- * Replaces each `?` parameter placeholder in [sql] with [replacement] applied to its 0-based
+ * Replaces each `?` parameter placeholder in [parsed] with [replacement] applied to its 0-based
  * parameter index.
  *
  * PostgreSQL views cannot contain parameter placeholders. This function replaces each `?` that
@@ -18,16 +18,12 @@ import norm.generator.libpgquery.TokenNumber
  * Placeholders are located in the operator tokens of PostgreSQL's lexer, so a `?` inside a string literal,
  * `E''` escape string, quoted identifier, dollar-quoted string, or comment is left alone. Inside an operator token,
  * pgjdbc reads `??` as one literal `?`, the escape for the `jsonb` operators. It is emitted as a single `?` and is
- * not a placeholder. Text from the point where the lexer rejects [sql] onward is left alone.
+ * not a placeholder. Text from the point where the lexer rejects [ParsedSql.sql] onward is left alone.
  *
- * @param sql The SQL text with `?` parameter placeholders.
+ * @param parsed The SQL text with `?` parameter placeholders.
  * @param replacement Given a placeholder's 0-based parameter index, returns the SQL text to substitute for it.
  * @return The SQL with each `?` replaced by [replacement]'s result for it.
- * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
-internal fun replaceParameterPlaceholders(sql: String, replacement: (parameterIndex: Int) -> String): String =
-  replaceParameterPlaceholders(ParsedSql(sql), replacement)
-
 internal fun replaceParameterPlaceholders(parsed: ParsedSql, replacement: (parameterIndex: Int) -> String): String {
   val sql = parsed.sql
   val result = StringBuilder(sql.length + 16)
@@ -42,17 +38,14 @@ internal fun replaceParameterPlaceholders(parsed: ParsedSql, replacement: (param
 }
 
 /**
- * Returns the 0-based char index of every `?` in [sql] that is a genuine positional parameter
+ * Returns the 0-based char index of every `?` in [parsed] that is a genuine positional parameter
  * placeholder. [replaceParameterPlaceholders] uses the same rules, so the two functions agree on
  * what counts as a placeholder: a `?` inside a string literal, `E''` escape string, quoted
  * identifier, dollar-quoted string, line comment, or block comment is not a placeholder and is
  * excluded, as are both `?` of pgjdbc's `??` escape.
  *
  * @return The placeholder positions, in ascending order.
- * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
-internal fun placeholderPositions(sql: String): IntArray = placeholderPositions(ParsedSql(sql))
-
 internal fun placeholderPositions(parsed: ParsedSql): IntArray {
   val positions = mutableListOf<Int>()
   forEachQuestionMark(parsed.sql, parsed.tokens) { index, isEscape -> if (!isEscape) positions.add(index) }
@@ -66,12 +59,9 @@ internal fun placeholderPositions(parsed: ParsedSql): IntArray {
  * kept, and spaces at the end of the token restore its length. Text outside operator tokens is unchanged, as is text
  * from the point where the lexer rejects [sql] onward.
  *
+ * @param tokens The lexer tokens of [sql].
  * @return A string of the same length as [sql].
- * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
-internal fun replaceParameterPlaceholdersKeepingOffsets(sql: String): String = ParsedSql(sql).parserForm
-
-/** Rewrites [sql] as [replaceParameterPlaceholdersKeepingOffsets] does, given the lexer [tokens] of [sql]. */
 internal fun parserFormOf(sql: String, tokens: List<ScanToken>): String {
   val characters = sql.toCharArray()
   for (token in operatorTokens(tokens)) {

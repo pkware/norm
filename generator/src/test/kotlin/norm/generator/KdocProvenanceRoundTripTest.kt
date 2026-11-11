@@ -52,7 +52,7 @@ class KdocProvenanceRoundTripTest {
       val repository = TypeRepository("test", Catalog())
       repository.buildTypeProjectionForQuery(
         "sumWithComment",
-        resolveComputedExpressions(queryText, listOf(sumColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(sumColumn)),
         queryText,
       )
       val renderedExpression = extractSourceReferenceExpression("sum2", renderedFileTextFor(repository))
@@ -98,7 +98,7 @@ class KdocProvenanceRoundTripTest {
       val queryText = "SELECT u FROM c"
       repository.buildTypeProjectionForQuery(
         "backtickExpression",
-        resolveComputedExpressions(queryText, listOf(expressionColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(expressionColumn)),
         queryText,
       )
       val renderedExpression = extractSourceReferenceExpression("u", renderedFileTextFor(repository))
@@ -137,7 +137,7 @@ class KdocProvenanceRoundTripTest {
       val queryText = "SELECT u FROM c"
       repository.buildTypeProjectionForQuery(
         "parenthesizedExpression",
-        resolveComputedExpressions(queryText, listOf(expressionColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(expressionColumn)),
         queryText,
       )
       val renderedExpression = extractSourceReferenceExpression("u", renderedFileTextFor(repository))
@@ -180,7 +180,7 @@ class KdocProvenanceRoundTripTest {
       val queryText = "SELECT u FROM c"
       repository.buildTypeProjectionForQuery(
         "newlineExpression",
-        resolveComputedExpressions(queryText, listOf(expressionColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(expressionColumn)),
         queryText,
       )
       val generatedFile = renderedFileTextFor(repository)
@@ -212,7 +212,7 @@ class KdocProvenanceRoundTripTest {
       val queryText = "SELECT u FROM c"
       repository.buildTypeProjectionForQuery(
         "starSlashExpression",
-        resolveComputedExpressions(queryText, listOf(expressionColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(expressionColumn)),
         queryText,
       )
       val generatedFile = renderedFileTextFor(repository)
@@ -230,7 +230,7 @@ class KdocProvenanceRoundTripTest {
       val repository = TypeRepository("test", Catalog())
       repository.buildTypeProjectionForQuery(
         "getIdWithComment",
-        resolveComputedExpressions(queryText, listOf(plainColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(plainColumn)),
         queryText,
       )
       val generatedFile = renderedFileTextFor(repository)
@@ -256,7 +256,7 @@ class KdocProvenanceRoundTripTest {
       val queryText = "SELECT x FROM t"
       repository.buildTypeProjectionForQuery(
         "getCStarSlashD",
-        resolveComputedExpressions(queryText, listOf(starSlashColumn)),
+        resolveComputedExpressions(ParsedSql(queryText), listOf(starSlashColumn)),
         queryText,
       )
       val generatedFile = renderedFileTextFor(repository)

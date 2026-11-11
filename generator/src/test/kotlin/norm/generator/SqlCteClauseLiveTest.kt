@@ -24,21 +24,21 @@ class SqlCteClauseLiveTest {
   fun `the server truncates an over-length ASCII CTE name to the name parseCteClause reports`() {
     val sql = "WITH ${"c".repeat(70)} AS (SELECT 1 AS v) SELECT v FROM ${"c".repeat(63)}"
     assertThat(firstColumn(sql)).isEqualTo("1")
-    assertThat(parseCteClause(sql)!!.definitions[0].name).isEqualTo("c".repeat(63))
+    assertThat(parseCteClause(ParsedSql(sql))!!.definitions[0].name).isEqualTo("c".repeat(63))
   }
 
   @Test
   fun `the server truncates an over-length multi-byte CTE name to the name parseCteClause reports`() {
     val sql = "WITH ${"é".repeat(32)} AS (SELECT 1 AS v) SELECT v FROM ${"é".repeat(31)}"
     assertThat(firstColumn(sql)).isEqualTo("1")
-    assertThat(parseCteClause(sql)!!.definitions[0].name).isEqualTo("é".repeat(31))
+    assertThat(parseCteClause(ParsedSql(sql))!!.definitions[0].name).isEqualTo("é".repeat(31))
   }
 
   @Test
   fun `the server resolves a CTE declared inside a parenthesized statement`() {
     val sql = "(WITH x AS (SELECT 1 AS v) SELECT v FROM x)"
     assertThat(firstColumn(sql)).isEqualTo("1")
-    assertThat(parseCteClause(sql)).isNotNull()
+    assertThat(parseCteClause(ParsedSql(sql))).isNotNull()
   }
 
   @Test
@@ -46,14 +46,14 @@ class SqlCteClauseLiveTest {
     val sql = "WITH renamed AS (\n  SELECT a\${'$'}b\${'$'}c AS msg FROM note\n),\n" +
       "counted AS (\n  SELECT length(msg) AS len FROM renamed\n)\nSELECT len FROM counted"
     assertThat(syntaxErrorState(sql)).isEqualTo(SYNTAX_ERROR_STATE)
-    assertThat(parseCteClause(sql)).isNull()
+    assertThat(parseCteClause(ParsedSql(sql))).isNull()
   }
 
   @Test
   fun `the server rejects an INSERT body without INTO and parseCteClause returns null`() {
     val sql = "WITH w AS (INSERT  (a) VALUES (1) RETURNING a) SELECT a INTO c FROM w"
     assertThat(syntaxErrorState(sql)).isEqualTo(SYNTAX_ERROR_STATE)
-    assertThat(parseCteClause(sql)).isNull()
+    assertThat(parseCteClause(ParsedSql(sql))).isNull()
   }
 
   private fun firstColumn(@Language("PostgreSQL") sql: String): String = connection.createStatement().use { statement ->

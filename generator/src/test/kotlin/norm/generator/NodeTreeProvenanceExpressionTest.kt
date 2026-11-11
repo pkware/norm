@@ -829,7 +829,7 @@ class NodeTreeProvenanceExpressionTest {
       """.trimIndent()
       val provenance = NodeTreeColumnProvenance("c", bodyPosition = 1)
 
-      assertThat(resolveNodeTreeProvenanceExpression(sql, nodeTree, provenance)).isNull()
+      assertThat(resolveNodeTreeProvenanceExpression(ParsedSql(sql), nodeTree, provenance)).isNull()
     }
   }
 
@@ -1070,7 +1070,7 @@ class NodeTreeProvenanceExpressionTest {
       val provenance = NodeTreeProvenanceResolver().resolveColumnProvenance(nodeTree).single()
         ?: error("expected a resolvable provenance for this shape")
 
-      val expression = resolveNodeTreeProvenanceExpression(original, nodeTree, provenance)
+      val expression = resolveNodeTreeProvenanceExpression(ParsedSql(original), nodeTree, provenance)
 
       assertThat(expression).isEqualTo("UPPER(description) || ?")
     }
@@ -1084,7 +1084,7 @@ class NodeTreeProvenanceExpressionTest {
     val nodeTree = nodeTreeFor(ddl, sql)
     val provenance = NodeTreeProvenanceResolver().resolveColumnProvenance(nodeTree).getOrNull(columnIndex)
       ?: return null
-    return resolveNodeTreeProvenanceExpression(sql, nodeTree, provenance)
+    return resolveNodeTreeProvenanceExpression(ParsedSql(sql), nodeTree, provenance)
   }
 
   /**

@@ -4,9 +4,10 @@ package norm.generator
  * Extracts, from the developer's own original SQL text, the expression a [NodeTreeColumnProvenance]
  * points at.
  *
- * [sql] must be the query's original text — never [nodeTreeText]'s sentinel-substituted or deparsed
+ * [parsedSql] must hold the query's original text — never [nodeTreeText]'s sentinel-substituted or deparsed
  * form. [nodeTreeText] is trusted only for where the expression lives ([provenance]'s CTE name and
- * body position); [sql] is trusted only for what it says.
+ * body position); [parsedSql] is trusted only for what it says. The CTE bodies come from [ParsedSql.part], so a body
+ * is scanned and parsed once however many columns point at it.
  *
  * Returns `null` if any of these checks fails:
  * - the CTE [provenance] points at is resolved by replaying [NodeTreeColumnProvenance.hops] step by
@@ -21,7 +22,7 @@ package norm.generator
  * - the matched item was not verified only via an implicit alias, which this function declines.
  * - the matched item is not a bare column pass-through (see [isBareColumnPassThrough]).
  *
- * @param sql The query's original SQL text (containing the developer's own `?` placeholders, if
+ * @param parsedSql The query's original SQL text (containing the developer's own `?` placeholders, if
  *   any) — never [nodeTreeText]'s sentinel-substituted or deparsed form.
  * @param nodeTreeText The same node tree [NodeTreeProvenanceResolver] resolved [provenance] from
  *   (`pg_rewrite.ev_action` or `pg_proc.prosqlbody` text, or a bare `{QUERY ...}` block).
@@ -30,17 +31,6 @@ package norm.generator
  * @param parser The node-tree parser to use; defaults to a fresh, stateless instance.
  * @return The CTE body's expression text as [SelectItem.normalizedExpression] builds it, without comments and with
  *   cosmetic whitespace collapsed, otherwise as the developer wrote it — or `null` if any check above fails.
- */
-internal fun resolveNodeTreeProvenanceExpression(
-  sql: String,
-  nodeTreeText: String,
-  provenance: NodeTreeColumnProvenance,
-  parser: PgNodeTreeParser = PgNodeTreeParser(),
-): String? = resolveNodeTreeProvenanceExpression(ParsedSql(sql), nodeTreeText, provenance, parser)
-
-/**
- * Resolves against the query text of [parsedSql]. The CTE bodies come from [ParsedSql.part], so a body is scanned and
- * parsed once however many columns point at it.
  */
 internal fun resolveNodeTreeProvenanceExpression(
   parsedSql: ParsedSql,
