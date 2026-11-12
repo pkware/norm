@@ -39,7 +39,7 @@ class InterfaceBuilderKdocTest {
 
     // Without escaping, CommonMark parses "`hello\n@param bParam cruel world`" as one inline code
     // span spanning both `@param` lines -- hiding bParam's own tag and comment text inside it.
-    // Escaping the source backticks means no code span forms here at all.
+    // Escaping the source backticks means no code span forms from the parameter comments.
     val codeSpans = mutableListOf<String>()
     Parser.builder().build().parse(kdoc).accept(
       object : AbstractVisitor() {
@@ -48,7 +48,7 @@ class InterfaceBuilderKdocTest {
         }
       },
     )
-    assertThat(codeSpans).isEmpty()
+    assertThat(codeSpans.filter { "hello" in it || "cruel world" in it }).isEmpty()
   }
 
   @Test
@@ -78,7 +78,7 @@ class InterfaceBuilderKdocTest {
         }
       },
     )
-    assertThat(codeSpans).isEmpty()
+    assertThat(codeSpans.filter { "weird" in it || "cruel world" in it }).isEmpty()
   }
 
   @Test

@@ -447,7 +447,8 @@ public interface Queries : Transactable {
    *            command was processed successfully and is an update count giving the
    *            number of rows in the database that were affected by the command's execution
    *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
-   *            but that the number of rows affected is unknown
+   *            but that the number of rows affected is unknown. pgjdbc reports this for `INSERT` statements when the
+   *            connection sets `reWriteBatchedInserts=true`, because it merges the batch into multi-row statements
    *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
@@ -476,7 +477,8 @@ public interface Queries : Transactable {
    *            command was processed successfully and is an update count giving the
    *            number of rows in the database that were affected by the command's execution
    *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
-   *            but that the number of rows affected is unknown
+   *            but that the number of rows affected is unknown. pgjdbc reports this for `INSERT` statements when the
+   *            connection sets `reWriteBatchedInserts=true`, because it merges the batch into multi-row statements
    *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
@@ -521,7 +523,8 @@ public interface Queries : Transactable {
    *            command was processed successfully and is an update count giving the
    *            number of rows in the database that were affected by the command's execution
    *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
-   *            but that the number of rows affected is unknown
+   *            but that the number of rows affected is unknown. pgjdbc reports this for `INSERT` statements when the
+   *            connection sets `reWriteBatchedInserts=true`, because it merges the batch into multi-row statements
    *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
@@ -553,7 +556,8 @@ public interface Queries : Transactable {
    *            command was processed successfully and is an update count giving the
    *            number of rows in the database that were affected by the command's execution
    *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
-   *            but that the number of rows affected is unknown
+   *            but that the number of rows affected is unknown. pgjdbc reports this for `INSERT` statements when the
+   *            connection sets `reWriteBatchedInserts=true`, because it merges the batch into multi-row statements
    *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
@@ -599,7 +603,8 @@ public interface Queries : Transactable {
    *            command was processed successfully and is an update count giving the
    *            number of rows in the database that were affected by the command's execution
    *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
-   *            but that the number of rows affected is unknown
+   *            but that the number of rows affected is unknown. pgjdbc reports this for `INSERT` statements when the
+   *            connection sets `reWriteBatchedInserts=true`, because it merges the batch into multi-row statements
    *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
@@ -629,7 +634,8 @@ public interface Queries : Transactable {
    *            command was processed successfully and is an update count giving the
    *            number of rows in the database that were affected by the command's execution
    *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
-   *            but that the number of rows affected is unknown
+   *            but that the number of rows affected is unknown. pgjdbc reports this for `INSERT` statements when the
+   *            connection sets `reWriteBatchedInserts=true`, because it merges the batch into multi-row statements
    *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
@@ -672,7 +678,8 @@ public interface Queries : Transactable {
    *            command was processed successfully and is an update count giving the
    *            number of rows in the database that were affected by the command's execution
    *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
-   *            but that the number of rows affected is unknown
+   *            but that the number of rows affected is unknown. pgjdbc reports this for `INSERT` statements when the
+   *            connection sets `reWriteBatchedInserts=true`, because it merges the batch into multi-row statements
    *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
@@ -702,7 +709,8 @@ public interface Queries : Transactable {
    *            command was processed successfully and is an update count giving the
    *            number of rows in the database that were affected by the command's execution
    *         2. A value of [SUCCESS_NO_INFO] -- indicates that the command was processed successfully
-   *            but that the number of rows affected is unknown
+   *            but that the number of rows affected is unknown. pgjdbc reports this for `INSERT` statements when the
+   *            connection sets `reWriteBatchedInserts=true`, because it merges the batch into multi-row statements
    *         3. A value of [EXECUTE_FAILED] -- indicates that the command failed to execute
    *            successfully and occurs only if a driver continues to process commands after a command fails
    */
