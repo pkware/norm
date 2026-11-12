@@ -161,13 +161,13 @@ internal class SelectItemsLiveTest {
     fun `a WHERE clause without FROM is not part of the last item`() {
       val sql = "SELECT 1 AS a, 'x' WHERE true"
       assertThat(labels(sql)).containsExactly("a", "?column?")
-      assertThat(parseSelectItems(ParsedSql(sql)).map { it.expression }).containsExactly("1", "'x'")
+      assertThat(ParsedSql(sql).outputItems.map { it.selectItem }.map { it.expression }).containsExactly("1", "'x'")
     }
 
     @Test
     fun `an INTO clause is not part of the last item`() {
       val sql = "SELECT a INTO TEMPORARY TABLE copied FROM t"
-      assertThat(parseSelectItems(ParsedSql(sql)).map { it.expression }).containsExactly("a")
+      assertThat(ParsedSql(sql).outputItems.map { it.selectItem }.map { it.expression }).containsExactly("a")
     }
 
     @Test

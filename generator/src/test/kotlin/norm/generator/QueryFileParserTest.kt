@@ -1211,6 +1211,17 @@ class QueryFileParserTest {
     }
 
     @Test
+    fun `an unterminated dollar quote after a terminated statement names the query and the line`() {
+      val exception =
+        assertFailure { QueryFileParser.parse("-- name: a :one\nSELECT 1;\nSELECT 2 AS a ${'$'}${'$'}x\n") }
+
+      exception.isInstanceOf(IllegalArgumentException::class)
+      exception.messageContains("Query 'a'")
+      exception.messageContains("line 3")
+      exception.messageContains("lexer rejects")
+    }
+
+    @Test
     fun `an unterminated string after the terminator names the query and the line`() {
       val exception =
         assertFailure { QueryFileParser.parse("-- name: a :one\nSELECT 1;\n'oops\n-- name: b :one\nSELECT 2;") }

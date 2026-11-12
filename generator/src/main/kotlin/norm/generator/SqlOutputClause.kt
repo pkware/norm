@@ -71,58 +71,30 @@ internal data class SelectItem(
 }
 
 /**
- * Parses the output list of a SQL statement into individual items.
- *
- * Paired positionally against `java.sql.ResultSetMetaData` columns. The list comes from the statement of [parsed] that
- * produces the result set: the first `SELECT`, `VALUES`, `TABLE`, set operation or data-modifying statement with
- * `RETURNING`, as found in PostgreSQL's parse tree. Its `WITH` clause, nested `SELECT` and keyword-like text in
- * literals and comments are therefore not mistaken for the list. A set operation yields the list of its leftmost
- * branch.
- *
- * Handles:
- * - Simple columns: `title` → expression=`title`, columnName=`title`
- * - Qualified columns: `book.title` → expression=`book.title`, columnName=`title`, tableName=`book`
- * - Aliased columns: `author.name AS author_name` → expression=`author.name`, columnName=`name`, tableName=`author`
- * - Computed expressions: `COUNT(*) AS book_count` → expression=`COUNT(*)`, columnName=`null`
- * - Star projections: `*` → expression=`*`, columnName=`null`, isStar=`true`
- *
- * A star item expands to however many columns the starred relation has, shifting every later item onto the wrong
- * metadata column. An item before a star is unaffected by that unknown width, so only the first star and everything
- * after it is dropped. A lone star is left alone, and items at or after a star fall back to metadata unresolved.
- *
- * @return Items strictly before the first star, if any; the full list if there is no star or it's a single star item.
- *   Empty when [parsed] has no output list in its text, as with `VALUES`, `TABLE` and `EXPLAIN`, when PostgreSQL's
- *   grammar rejects it, or when the end of the last item's expression cannot be confirmed. Both consumers degrade
- *   safely for a missing item, falling back to `ResultSetMetaData.getColumnName`, so no wrong original name is
- *   reported.
- */
-internal fun parseSelectItems(parsed: ParsedSql): List<SelectItem> = parsed.outputItems.map { it.selectItem }
-
-/**
- * Parses the output clause of [parsed] with [parseSelectItems] and keeps the result only when it lines up
+ * Takes the [SelectItem] of each [ParsedSql.outputItems] entry of [parsed] and keeps them only when they line up
  * one-to-one with the result set's [columnCount] columns.
  *
- * [parseSelectItems] cannot confirm its own item count. A star spelling it does not recognize expands
- * to several columns and would shift every later item onto the wrong column.
+ * The items cannot confirm their own count. A star spelling they do not recognize expands to several columns and
+ * would shift every later item onto the wrong column.
  *
- * @return The parsed items, or empty when parsing found none or their count differs from [columnCount].
+ * @return The items, or empty when parsing found none or their count differs from [columnCount].
  */
 internal fun alignSelectItems(parsed: ParsedSql, columnCount: Int): List<SelectItem> {
-  val items = parseSelectItems(parsed)
+  val items = parsed.outputItems.map { it.selectItem }
   return if (items.size == columnCount) items else emptyList()
 }
 
 /**
  * Whether the statement of [parsed] that produces the result set is a `UNION`, `INTERSECT` or `EXCEPT`.
  *
- * [parseSelectItems] then returns only the items of the leftmost branch. The other branches may compute the same
+ * [ParsedSql.outputItems] then holds only the items of the leftmost branch. The other branches may compute the same
  * result column differently, although the column takes its name from the first branch.
  */
 internal fun hasTopLevelSetOperation(parsed: ParsedSql): Boolean =
   parsed.tree?.let(::findOutputStatement)?.isSetOperation ?: false
 
 /**
- * A single item from [parseOutputItemsWithAlias], pairing the [selectItem] with the alias that follows its
+ * A single item of [ParsedSql.outputItems], pairing the [selectItem] with the alias that follows its
  * expression, if any.
  *
  * Kept separate from [SelectItem] because [SelectItem.columnName] already carries a meaning for
@@ -141,10 +113,24 @@ internal fun hasTopLevelSetOperation(parsed: ParsedSql): Boolean =
 internal data class OutputItemWithAlias(val selectItem: SelectItem, val alias: String?, val isAliasExplicit: Boolean)
 
 /**
- * The shared parsing core behind both [parseSelectItems] and [resolveNodeTreeProvenanceExpression]
- * (which needs [OutputItemWithAlias.alias] to cross-validate a CTE body item's own name against
- * the node tree's authoritative `:resname`). Finds the list [parseSelectItems] describes and
- * applies the same star truncation.
+ * Parses the output list of a SQL statement into individual items, each with its alias.
+ *
+ * Paired positionally against `java.sql.ResultSetMetaData` columns. The list comes from the statement of [parsed] that
+ * produces the result set: the first `SELECT`, `VALUES`, `TABLE`, set operation or data-modifying statement with
+ * `RETURNING`, as found in PostgreSQL's parse tree. Its `WITH` clause, nested `SELECT` and keyword-like text in
+ * literals and comments are therefore not mistaken for the list. A set operation yields the list of its leftmost
+ * branch.
+ *
+ * Handles:
+ * - Simple columns: `title` → expression=`title`, columnName=`title`
+ * - Qualified columns: `book.title` → expression=`book.title`, columnName=`title`, tableName=`book`
+ * - Aliased columns: `author.name AS author_name` → expression=`author.name`, columnName=`name`, tableName=`author`
+ * - Computed expressions: `COUNT(*) AS book_count` → expression=`COUNT(*)`, columnName=`null`
+ * - Star projections: `*` → expression=`*`, columnName=`null`, isStar=`true`
+ *
+ * A star item expands to however many columns the starred relation has, shifting every later item onto the wrong
+ * metadata column. An item before a star is unaffected by that unknown width, so only the first star and everything
+ * after it is dropped. A lone star is left alone, and items at or after a star fall back to metadata unresolved.
  *
  * Each item starts at its parse tree node's location. An item ends at the token before the comma that precedes the
  * next item. The last item's expression ends at the first token end where replacing the expression with a constant
@@ -153,10 +139,29 @@ internal data class OutputItemWithAlias(val selectItem: SelectItem, val alias: S
  *
  * Computes the items from the tokens and parse tree of [parsed] on every call. [ParsedSql.outputItems] holds the
  * result for consumers.
+ *
+ * @return Items strictly before the first star, if any; the full list if there is no star or it's a single star item.
+ *   Empty when [parsed] has no output list in its text, as with `VALUES`, `TABLE` and `EXPLAIN`, when PostgreSQL's
+ *   grammar rejects it, or when the end of the last item's expression cannot be confirmed. Both consumers degrade
+ *   safely for a missing item, falling back to `ResultSetMetaData.getColumnName`, so no wrong original name is
+ *   reported.
  */
 internal fun parseOutputItemsWithAlias(parsed: ParsedSql): List<OutputItemWithAlias> {
+  val statementNode = parsed.tree?.let(::findOutputStatementNode) ?: return emptyList()
+  return parseOutputItems(parsed, statementNode)
+}
+
+/**
+ * The items of [statementNode], a statement node of [ParsedSql.tree] in the shape [outputStatementOf] reads, such as a
+ * [CteDefinition.ctequery]. Items are cut at the first star as [parseOutputItemsWithAlias] describes.
+ * [ParsedSql.outputItemsOf] holds the result for consumers.
+ *
+ * Locations in the tree index the whole of [ParsedSql.sql], so a CTE body is read from the text of the statement that
+ * declares it.
+ */
+internal fun parseOutputItems(parsed: ParsedSql, statementNode: JsonValue.JsonObject): List<OutputItemWithAlias> {
   val tree = parsed.tree ?: return emptyList()
-  val statement = findOutputStatement(tree) ?: return emptyList()
+  val statement = outputStatementOf(statementNode) ?: return emptyList()
   if (statement.targets.isEmpty()) return emptyList()
   val items =
     outputItems(parsed.sql, parsed.parserForm, parsed.significantTokens, tree, statement) ?: return emptyList()
@@ -230,8 +235,8 @@ private fun extentBeforeNextItem(
  *
  * Each token end at the item's own nesting depth, from the token of its largest location on, is a candidate. The text
  * from the item's start to the candidate is replaced by [PROBE_CONSTANT] between spaces. The candidate is the end when
- * that text parses, the value of the last item is the constant, and the tree otherwise equals the original apart from
- * locations.
+ * that text parses, the item that starts at the constant has it as its value, and the tree otherwise equals the original
+ * apart from locations.
  *
  * A candidate inside the expression, such as before `without time zone`, gives text that does not parse or gives the
  * item another value. A candidate after the expression replaces tokens that the tree records, such as the alias or
@@ -256,7 +261,7 @@ private fun extentOfFinalItem(
     val end = tokens[index].end
     val probe = rewritten.substring(0, start) + " $PROBE_CONSTANT " + rewritten.substring(end)
     val probeTree = parseOrNull(probe) ?: continue
-    val isConstant = findOutputStatement(probeTree)?.targets?.lastOrNull()?.let { isConstantAt(it, start + 1) } == true
+    val isConstant = findItemAt(probeTree, start + 1)?.let { hasConstantValue(it, start + 1) } == true
     if (isConstant && withoutItemValueAndLocations(probeTree, start + 1) == expectedTree) {
       return finalItemExtent(sql, tokens, statement.targets.last(), firstToken, index)
     }
@@ -282,10 +287,21 @@ private fun finalItemExtent(
   return ItemExtent(firstToken, expressionLastToken, aliasFirstToken, isAliasExplicit)
 }
 
-private fun isConstantAt(target: JsonValue.JsonObject, location: Int): Boolean {
-  val value = target.objectField(ParseTreeNames.VALUE) ?: return false
+private fun hasConstantValue(item: JsonValue.JsonObject, location: Int): Boolean {
+  val value = item.objectField(ParseTreeNames.VALUE) ?: return false
   val constant = value.objectField(ParseTreeNames.CONSTANT)
   return value.fields.size == 1 && constant?.intField(ParseTreeNames.LOCATION) == location
+}
+
+private fun isItemAt(value: JsonValue.JsonObject, location: Int): Boolean =
+  value.intField(ParseTreeNames.LOCATION) == location && value.fields.containsKey(ParseTreeNames.VALUE)
+
+/** The first node of [value] that [isItemAt] accepts, in document order, or `null` when there is none. */
+private fun findItemAt(value: JsonValue, location: Int): JsonValue.JsonObject? = when (value) {
+  is JsonValue.JsonObject ->
+    value.takeIf { isItemAt(it, location) } ?: value.fields.values.firstNotNullOfOrNull { findItemAt(it, location) }
+  is JsonValue.JsonArray -> value.items.firstNotNullOfOrNull { findItemAt(it, location) }
+  else -> null
 }
 
 /**
@@ -294,7 +310,7 @@ private fun isConstantAt(target: JsonValue.JsonObject, location: Int): Boolean {
  */
 private fun withoutItemValueAndLocations(value: JsonValue, location: Int): JsonValue = when (value) {
   is JsonValue.JsonObject -> {
-    val isItem = value.intField(ParseTreeNames.LOCATION) == location && value.fields.containsKey(ParseTreeNames.VALUE)
+    val isItem = isItemAt(value, location)
     JsonValue.JsonObject(
       value.fields.filterKeys { it !in locationFieldNames }.mapValues { (key, child) ->
         if (isItem && key == ParseTreeNames.VALUE) {

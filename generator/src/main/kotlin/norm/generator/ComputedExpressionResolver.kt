@@ -5,7 +5,7 @@ package norm.generator
  *
  * A column gets an expression when it has no source table and its select item is neither a column
  * reference nor a `*` item. A top-level set operation leaves every column's expression `null`, since
- * [parseSelectItems] sees only the first branch. So does a select list that [alignSelectItems]
+ * [ParsedSql.outputItems] holds only the first branch. So does a select list that [alignSelectItems]
  * cannot align with [columns].
  *
  * @param parsed the query text the [columns] were analyzed from.

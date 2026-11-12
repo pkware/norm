@@ -48,6 +48,16 @@ class AnalysisCallCountTest {
     assertThat(calls.scanTexts.distinct()).isEqualTo(calls.scanTexts)
   }
 
+  @Test
+  fun `a CTE body is read from the parse of the whole statement without a second parse of any text`() {
+    val sql = "WITH a AS (SELECT id, name FROM author) SELECT id, name FROM a"
+
+    val calls = recordAnalysis(sql)
+
+    assertThat(calls.parseTexts.distinct()).isEqualTo(calls.parseTexts)
+    assertThat(calls.scanTexts).isEqualTo(listOf(sql))
+  }
+
   private fun recordAnalysis(sql: String): RecordedCalls = RecordingMachine.record {
     analyzer.analyzeQuery(ParsedQuery("probe", Command.MANY, sql, emptyList()), catalog)
   }

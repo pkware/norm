@@ -20,7 +20,7 @@ internal fun openResource(name: String): InputStream =
 internal object LibPgQuery {
   private val parseTreeOffsets: ParseTreeOffsets by lazy { ParseTreeOffsets(locationFieldNames) }
 
-  internal val instance = RecoverableInstance(::newInstance)
+  private val instance = RecoverableInstance(::newInstance)
 
   /**
    * Parses [sql] with PostgreSQL's grammar and returns libpg_query's JSON parse tree.

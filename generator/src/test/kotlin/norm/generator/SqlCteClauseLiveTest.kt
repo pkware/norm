@@ -1,9 +1,9 @@
 package norm.generator
 
 import assertk.assertThat
+import assertk.assertions.hasSize
+import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
-import assertk.assertions.isNotNull
-import assertk.assertions.isNull
 import org.intellij.lang.annotations.Language
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
@@ -16,45 +16,48 @@ import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.SQLException
 
-/** Compares [parseCteClause] results with a live PostgreSQL server. */
+/** Compares [cteDefinitions] results with a live PostgreSQL server. */
 @Testcontainers
 class SqlCteClauseLiveTest {
 
   @Test
-  fun `the server truncates an over-length ASCII CTE name to the name parseCteClause reports`() {
+  fun `the server truncates an over-length ASCII CTE name to the name cteDefinitions reports`() {
     val sql = "WITH ${"c".repeat(70)} AS (SELECT 1 AS v) SELECT v FROM ${"c".repeat(63)}"
     assertThat(firstColumn(sql)).isEqualTo("1")
-    assertThat(parseCteClause(ParsedSql(sql))!!.definitions[0].name).isEqualTo("c".repeat(63))
+    assertThat(definitions(sql)[0].name).isEqualTo("c".repeat(63))
   }
 
   @Test
-  fun `the server truncates an over-length multi-byte CTE name to the name parseCteClause reports`() {
+  fun `the server truncates an over-length multi-byte CTE name to the name cteDefinitions reports`() {
     val sql = "WITH ${"é".repeat(32)} AS (SELECT 1 AS v) SELECT v FROM ${"é".repeat(31)}"
     assertThat(firstColumn(sql)).isEqualTo("1")
-    assertThat(parseCteClause(ParsedSql(sql))!!.definitions[0].name).isEqualTo("é".repeat(31))
+    assertThat(definitions(sql)[0].name).isEqualTo("é".repeat(31))
   }
 
   @Test
   fun `the server resolves a CTE declared inside a parenthesized statement`() {
     val sql = "(WITH x AS (SELECT 1 AS v) SELECT v FROM x)"
     assertThat(firstColumn(sql)).isEqualTo("1")
-    assertThat(parseCteClause(ParsedSql(sql))).isNotNull()
+    assertThat(definitions(sql)).hasSize(1)
   }
 
   @Test
-  fun `the server rejects a body holding a literal dollar template and parseCteClause returns null`() {
+  fun `the server rejects a body holding a literal dollar template and cteDefinitions returns nothing`() {
     val sql = "WITH renamed AS (\n  SELECT a\${'$'}b\${'$'}c AS msg FROM note\n),\n" +
       "counted AS (\n  SELECT length(msg) AS len FROM renamed\n)\nSELECT len FROM counted"
     assertThat(syntaxErrorState(sql)).isEqualTo(SYNTAX_ERROR_STATE)
-    assertThat(parseCteClause(ParsedSql(sql))).isNull()
+    assertThat(definitions(sql)).isEmpty()
   }
 
   @Test
-  fun `the server rejects an INSERT body without INTO and parseCteClause returns null`() {
+  fun `the server rejects an INSERT body without INTO and cteDefinitions returns nothing`() {
     val sql = "WITH w AS (INSERT  (a) VALUES (1) RETURNING a) SELECT a INTO c FROM w"
     assertThat(syntaxErrorState(sql)).isEqualTo(SYNTAX_ERROR_STATE)
-    assertThat(parseCteClause(ParsedSql(sql))).isNull()
+    assertThat(definitions(sql)).isEmpty()
   }
+
+  private fun definitions(sql: String): List<CteDefinition> =
+    ParsedSql(sql).tree?.let(::firstStatement)?.let(::cteDefinitions).orEmpty()
 
   private fun firstColumn(@Language("PostgreSQL") sql: String): String = connection.createStatement().use { statement ->
     statement.executeQuery(sql).use { resultSet ->

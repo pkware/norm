@@ -5,7 +5,10 @@ import assertk.assertions.containsExactly
 import assertk.assertions.isEqualTo
 import assertk.assertions.isTrue
 import norm.generator.libpgquery.LibPgQuery
+import norm.generator.libpgquery.ParseTreeNames
+import norm.generator.libpgquery.ScanToken
 import norm.generator.libpgquery.TokenNumber
+import norm.generator.libpgquery.isComment
 import norm.generator.libpgquery.isKeyword
 import org.commonmark.node.AbstractVisitor
 import org.commonmark.node.Code
@@ -169,10 +172,10 @@ class SourceReferenceLiveVerificationTest {
   private fun collectCteFromClauses(sql: String): List<Pair<String, String>> {
     val results = mutableListOf<Pair<String, String>>()
     fun recurse(scopeText: String) {
-      val cte = parseCteClause(ParsedSql(scopeText)) ?: return
+      val cte = cteClauseSpans(ParsedSql(scopeText)) ?: return
       val withPrefix = scopeText.substring(0, cte.mainQueryStart)
-      for (definition in cte.definitions) {
-        val body = scopeText.substring(definition.bodyOpenParenthesis + 1, definition.bodyCloseParenthesis)
+      for (definition in cte.bodies) {
+        val body = scopeText.substring(definition.openParenthesis + 1, definition.closeParenthesis)
         val fromIndex = indexOfTopLevelFrom(body)
         if (fromIndex >= 0) {
           results.add(withPrefix to body.substring(fromIndex))
@@ -367,4 +370,61 @@ class SourceReferenceLiveVerificationTest {
       return scenarioCases + frameworkCases
     }
   }
+}
+
+/**
+ * The positions of the CTE bodies of a statement's own `WITH` clause.
+ *
+ * @property bodies the parentheses of each body, in declaration order.
+ * @property mainQueryStart the index of the first token after the last body that is not a comment, or the length of the
+ *   text when none follows.
+ */
+private class CteClauseSpans(val bodies: List<CteBodySpan>, val mainQueryStart: Int)
+
+/** The indexes of the `(` that opens a CTE body and of the `)` that closes it. */
+private class CteBodySpan(val openParenthesis: Int, val closeParenthesis: Int)
+
+private const val COLUMN_LIST_FIELD = "aliascolnames"
+
+/**
+ * Locates the CTE bodies of [parsed] by matching parentheses in its tokens, starting from the CTE names that the parse
+ * tree locates.
+ *
+ * @return the spans, or `null` when [parsed] has no parse tree or no `WITH` clause.
+ */
+private fun cteClauseSpans(parsed: ParsedSql): CteClauseSpans? {
+  val statement = parsed.tree?.let(::firstStatement)?.fields?.values?.singleOrNull() as? JsonValue.JsonObject
+  val expressions = statement?.objectField(ParseTreeNames.WITH_CLAUSE)
+    ?.objectArrayField(ParseTreeNames.COMMON_TABLE_EXPRESSIONS)
+    .orEmpty()
+    .mapNotNull { it.objectField(ParseTreeNames.COMMON_TABLE_EXPRESSION) }
+  if (expressions.isEmpty()) return null
+
+  val tokens = parsed.tokens
+  var lastBodyClose = -1
+  val bodies = expressions.map { expression ->
+    val nameIndex = tokens.indexOfFirst { it.start == expression.intField(ParseTreeNames.LOCATION) }
+    var bodyOpen = nextOpenParenthesis(tokens, nameIndex + 1)
+    if (expression.fields.containsKey(COLUMN_LIST_FIELD)) {
+      bodyOpen = nextOpenParenthesis(tokens, matchingCloseParenthesis(tokens, bodyOpen) + 1)
+    }
+    lastBodyClose = matchingCloseParenthesis(tokens, bodyOpen)
+    CteBodySpan(tokens[bodyOpen].start, tokens[lastBodyClose].start)
+  }
+  val mainQueryStart = tokens.drop(lastBodyClose + 1).firstOrNull { !it.isComment() }?.start ?: parsed.sql.length
+  return CteClauseSpans(bodies, mainQueryStart)
+}
+
+private fun nextOpenParenthesis(tokens: List<ScanToken>, from: Int): Int =
+  (from until tokens.size).first { tokens[it].token == TokenNumber.OPEN_PARENTHESIS }
+
+private fun matchingCloseParenthesis(tokens: List<ScanToken>, openIndex: Int): Int {
+  var depth = 0
+  for (index in openIndex until tokens.size) {
+    when (tokens[index].token) {
+      TokenNumber.OPEN_PARENTHESIS -> depth++
+      TokenNumber.CLOSE_PARENTHESIS -> if (--depth == 0) return index
+    }
+  }
+  error("No closing parenthesis matches the one at ${tokens[openIndex].start}")
 }

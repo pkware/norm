@@ -5,6 +5,7 @@ import norm.generator.libpgquery.ScanToken
 import norm.generator.libpgquery.TokenNumber
 import norm.generator.libpgquery.isComment
 import norm.generator.libpgquery.isKeyword
+import java.util.IdentityHashMap
 
 private const val UNICODE_ESCAPE_KEYWORD = "UESCAPE"
 
@@ -36,6 +37,15 @@ internal class ParsedSql(val sql: String) {
   val outputItems: List<OutputItemWithAlias> by lazy { parseOutputItemsWithAlias(this) }
 
   private val parts = mutableMapOf<IntRange, ParsedSql>()
+
+  private val outputItemsByStatement = IdentityHashMap<JsonValue.JsonObject, List<OutputItemWithAlias>>()
+
+  /**
+   * The result of [parseOutputItems] for [statementNode], a statement node of [tree] such as a
+   * [CteDefinition.ctequery]. Asking for the same node again returns the same list.
+   */
+  fun outputItemsOf(statementNode: JsonValue.JsonObject): List<OutputItemWithAlias> =
+    outputItemsByStatement.getOrPut(statementNode) { parseOutputItems(this, statementNode) }
 
   /**
    * The [ParsedSql] of `sql.substring(start, end)`, which is this one when the range covers all of [sql]. Asking for

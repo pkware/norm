@@ -4,11 +4,11 @@ import norm.generator.OutputItemWithAlias
 import norm.generator.ParsedSql
 import norm.generator.QueryFileParser
 import norm.generator.alignSelectItems
+import norm.generator.cteDefinitions
 import norm.generator.explainedStatementStart
+import norm.generator.firstStatement
 import norm.generator.hasTopLevelSetOperation
-import norm.generator.parseCteClause
 import norm.generator.parseOutputItemsWithAlias
-import norm.generator.parseSelectItems
 import norm.generator.placeholderPositions
 import norm.generator.replaceParameterPlaceholders
 import norm.generator.splitStatements
@@ -32,9 +32,9 @@ internal object ScannerBaseline {
   }
 
   private fun StringBuilder.renderEntry(text: String) {
-    record("parseSelectItems") { parseSelectItems(ParsedSql(text)) }
+    record("parseSelectItems") { ParsedSql(text).outputItems.map { it.selectItem } }
     record("parseOutputItemsWithAlias") { parseOutputItemsWithAlias(ParsedSql(text)) }
-    val columnCount = runCatching { parseSelectItems(ParsedSql(text)).size }
+    val columnCount = runCatching { ParsedSql(text).outputItems.size }
     record("alignSelectItems(columnCount = parseSelectItems.size)") {
       alignSelectItems(ParsedSql(text), columnCount.getOrThrow())
     }
@@ -47,12 +47,18 @@ internal object ScannerBaseline {
     record("QueryFileParser.parse") { QueryFileParser.parse(text, "") }
     record("splitStatements") { splitStatements(ParsedSql(text)).map { it.sql } }
     record("explainedStatementStart") { explainedStatementStart(ParsedSql(text)) }
-    record("parseCteClause") { parseCteClause(ParsedSql(text)) }
+    record("cteDefinitions") { renderCteDefinitions(ParsedSql(text)) }
     val items = runCatching { parseOutputItemsWithAlias(ParsedSql(text)) }
     items.fold(
       onSuccess = { renderItems(it) },
       onFailure = { appendLine("items: ${escape(describe(it))}") },
     )
+  }
+
+  /** The name and the output items of each CTE of the first statement, in declaration order. */
+  private fun renderCteDefinitions(parsed: ParsedSql): List<String> {
+    val definitions = parsed.tree?.let(::firstStatement)?.let(::cteDefinitions).orEmpty()
+    return definitions.map { "${it.name}=${parsed.outputItemsOf(it.ctequery)}" }
   }
 
   private fun StringBuilder.renderItems(items: List<OutputItemWithAlias>) {

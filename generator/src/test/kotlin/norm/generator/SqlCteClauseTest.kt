@@ -1,125 +1,125 @@
 package norm.generator
 
 import assertk.assertThat
-import assertk.assertions.contains
 import assertk.assertions.hasSize
+import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
-import assertk.assertions.isNotNull
-import assertk.assertions.isNull
+import assertk.assertions.isSameInstanceAs
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
 class SqlCteClauseTest {
 
+  private fun definitionsOf(parsed: ParsedSql): List<CteDefinition> =
+    parsed.tree?.let(::firstStatement)?.let(::cteDefinitions).orEmpty()
+
+  private fun definitions(sql: String): List<CteDefinition> = definitionsOf(ParsedSql(sql))
+
+  private fun names(sql: String): List<String> = definitions(sql).map { it.name }
+
+  /** The expression and alias of each output item of each CTE body, in declaration order. */
+  private fun bodyItems(sql: String): List<List<Pair<String, String?>>> {
+    val parsed = ParsedSql(sql)
+    return definitionsOf(parsed).map { definition ->
+      parsed.outputItemsOf(definition.ctequery).map { it.selectItem.expression to it.alias }
+    }
+  }
+
   @Nested
-  inner class ParseCteClauseTest {
+  inner class CteDefinitionsTest {
 
     @Test
-    fun `two definitions report the offsets of their body parentheses`() {
+    fun `two definitions report their names and the output items of their bodies`() {
       val sql = "WITH x AS (SELECT 1 AS a), y AS (SELECT 2 AS b) SELECT a FROM x"
-      val result = parseCteClause(ParsedSql(sql))!!
-      assertThat(result.definitions).isEqualTo(
-        listOf(CteDefinition("x", "x", 10, 24), CteDefinition("y", "y", 32, 46)),
-      )
-      assertThat(result.mainQueryStart).isEqualTo(48)
+      assertThat(names(sql)).isEqualTo(listOf("x", "y"))
+      assertThat(bodyItems(sql)).isEqualTo(listOf(listOf("1" to "a"), listOf("2" to "b")))
     }
 
     @Test
-    fun `a nested WITH in a body is absent from the outer parse and found by parsing the body`() {
+    fun `a nested WITH in a body is absent from the outer clause and found on the body node`() {
       val sql = "WITH o AS (WITH i AS (SELECT 1 AS a) SELECT a FROM i) SELECT a FROM o"
-      val outer = parseCteClause(ParsedSql(sql))!!
-      assertThat(outer.definitions).isEqualTo(listOf(CteDefinition("o", "o", 10, 52)))
+      val parsed = ParsedSql(sql)
+      val outer = definitionsOf(parsed)
+      assertThat(outer.map { it.name }).isEqualTo(listOf("o"))
 
-      val body = sql.substring(outer.definitions[0].bodyOpenParenthesis + 1, outer.definitions[0].bodyCloseParenthesis)
-      assertThat(body).isEqualTo("WITH i AS (SELECT 1 AS a) SELECT a FROM i")
-      val inner = parseCteClause(ParsedSql(body))!!
-      assertThat(inner.definitions).isEqualTo(listOf(CteDefinition("i", "i", 10, 24)))
-      assertThat(inner.mainQueryStart).isEqualTo(26)
+      val inner = cteDefinitions(outer[0].ctequery)
+      assertThat(inner.map { it.name }).isEqualTo(listOf("i"))
+      assertThat(parsed.outputItemsOf(inner[0].ctequery).map { it.selectItem.expression to it.alias })
+        .isEqualTo(listOf("1" to "a"))
+      assertThat(parsed.outputItemsOf(outer[0].ctequery).map { it.selectItem.expression }).isEqualTo(listOf("a"))
     }
 
     @Test
-    fun `WITH RECURSIVE reports the definition and the main query start`() {
+    fun `output items of a body node are computed once per node`() {
+      val parsed = ParsedSql("WITH x AS (SELECT 1 AS a) SELECT a FROM x")
+      val body = definitionsOf(parsed).single().ctequery
+      assertThat(parsed.outputItemsOf(body)).isSameInstanceAs(parsed.outputItemsOf(body))
+    }
+
+    @Test
+    fun `WITH RECURSIVE reports the definition and the items of the leftmost branch`() {
       val sql =
         "WITH RECURSIVE recursive_cte AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM recursive_cte WHERE n < 3) " +
           "SELECT n FROM recursive_cte"
-      val result = parseCteClause(ParsedSql(sql))!!
-      assertThat(result.definitions).isEqualTo(listOf(CteDefinition("recursive_cte", "recursive_cte", 32, 100)))
-      assertThat(result.mainQueryStart).isEqualTo(102)
+      assertThat(names(sql)).isEqualTo(listOf("recursive_cte"))
+      assertThat(bodyItems(sql)).isEqualTo(listOf(listOf("1" to "n")))
     }
 
     @Test
-    fun `main query start follows SEARCH and CYCLE clauses of a recursive CTE`() {
+    fun `SEARCH and CYCLE clauses of a recursive CTE do not hide its definition`() {
       val sql = "WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM t WHERE n < 3) " +
         "SEARCH DEPTH FIRST BY n SET ordercol CYCLE n SET is_cycle USING path SELECT n FROM t"
-      val result = parseCteClause(ParsedSql(sql))!!
-      assertThat(result.definitions).isEqualTo(listOf(CteDefinition("t", "t", 23, 74)))
-      assertThat(result.mainQueryStart).isEqualTo(sql.indexOf("SEARCH"))
+      assertThat(names(sql)).isEqualTo(listOf("t"))
     }
 
     @Test
-    fun `data-modifying bodies report their parentheses`() {
+    fun `data-modifying bodies report their RETURNING items`() {
       val sql = "WITH d AS (DELETE FROM t WHERE id = 1 RETURNING id), " +
         "i AS (INSERT INTO t (id) VALUES (2) RETURNING id), " +
         "u AS (UPDATE t SET id = 3 RETURNING id) SELECT id FROM d"
-      val result = parseCteClause(ParsedSql(sql))!!
-      assertThat(result.definitions.map { it.name }).isEqualTo(listOf("d", "i", "u"))
-      val bodies = result.definitions.map { sql.substring(it.bodyOpenParenthesis + 1, it.bodyCloseParenthesis) }
-      assertThat(bodies).isEqualTo(
-        listOf(
-          "DELETE FROM t WHERE id = 1 RETURNING id",
-          "INSERT INTO t (id) VALUES (2) RETURNING id",
-          "UPDATE t SET id = 3 RETURNING id",
-        ),
-      )
-      assertThat(result.mainQueryStart).isEqualTo(sql.indexOf("SELECT id FROM d"))
+      assertThat(names(sql)).isEqualTo(listOf("d", "i", "u"))
+      assertThat(bodyItems(sql)).isEqualTo(List(3) { listOf("id" to null) })
     }
 
     @Test
-    fun `a Unicode-escaped name keeps its token text in rawName and the decoded value in name`() {
-      val result = parseCteClause(ParsedSql("WITH U&\"d\\0061t\" AS (SELECT 1) SELECT 1"))!!
-      assertThat(result.definitions[0].rawName).isEqualTo("U&\"d\\0061t\"")
-      assertThat(result.definitions[0].name).isEqualTo("dat")
+    fun `a Unicode-escaped name is reported as its decoded value`() {
+      assertThat(names("WITH U&\"d\\0061t\" AS (SELECT 1) SELECT 1")).isEqualTo(listOf("dat"))
     }
 
     @Test
-    fun `a column list is skipped to find the body parentheses`() {
+    fun `a column list does not hide the body`() {
       val sql = "WITH x(a, b) AS (SELECT 1, 2) SELECT a FROM x"
-      assertThat(parseCteClause(ParsedSql(sql))!!.definitions).isEqualTo(listOf(CteDefinition("x", "x", 16, 28)))
+      assertThat(names(sql)).isEqualTo(listOf("x"))
+      assertThat(bodyItems(sql)).isEqualTo(listOf(listOf("1" to null, "2" to null)))
     }
 
     @Test
-    fun `MATERIALIZED and NOT MATERIALIZED hints are skipped to find the body parentheses`() {
+    fun `MATERIALIZED and NOT MATERIALIZED hints do not hide the bodies`() {
       val sql = "WITH m AS MATERIALIZED (SELECT 1), n AS NOT MATERIALIZED (SELECT 2) SELECT 1"
-      assertThat(parseCteClause(ParsedSql(sql))!!.definitions).isEqualTo(
-        listOf(CteDefinition("m", "m", 23, 32), CteDefinition("n", "n", 57, 66)),
-      )
+      assertThat(names(sql)).isEqualTo(listOf("m", "n"))
+      assertThat(bodyItems(sql)).isEqualTo(listOf(listOf("1" to null), listOf("2" to null)))
     }
 
     @Test
-    fun `comments between every token do not move the reported offsets`() {
+    fun `comments between every token do not change the definitions`() {
       val sql = "WITH /* ( */ x /* ) */ ( /* ( */ c ) /* ( */ AS /* ) */ NOT /* ( */ MATERIALIZED /* ) */ " +
         "( /* ( */ SELECT 1 -- )\n ) /* ( */ , -- (\n y /* ) */ AS /* ( */ ( SELECT 2 ) /* ) */ -- (\n SELECT 1"
-      val result = parseCteClause(ParsedSql(sql))!!
-      assertThat(result.definitions.map { it.name to it.rawName }).isEqualTo(listOf("x" to "x", "y" to "y"))
-      val bodies = result.definitions.map { sql.substring(it.bodyOpenParenthesis + 1, it.bodyCloseParenthesis) }
-      assertThat(bodies).isEqualTo(listOf(" /* ( */ SELECT 1 -- )\n ", " SELECT 2 "))
-      assertThat(result.mainQueryStart).isEqualTo(sql.lastIndexOf("SELECT 1"))
+      assertThat(names(sql)).isEqualTo(listOf("x", "y"))
+      assertThat(bodyItems(sql)).isEqualTo(listOf(listOf("1" to null), listOf("2" to null)))
     }
 
     @Test
-    fun `question mark placeholders in a body keep every offset`() {
+    fun `question mark placeholders in a body are read`() {
       val sql = "WITH x AS (SELECT ? AS a, 'b?' AS b, '{}'::jsonb ?? 'k' AS c) SELECT a FROM x WHERE a = ?"
-      val result = parseCteClause(ParsedSql(sql))
-      assertThat(result!!.definitions).isEqualTo(listOf(CteDefinition("x", "x", 10, 60)))
-      assertThat(result.mainQueryStart).isEqualTo(62)
+      assertThat(names(sql)).isEqualTo(listOf("x"))
+      assertThat(bodyItems(sql)).isEqualTo(
+        listOf(listOf("?" to "a", "'b?'" to "b", "'{}'::jsonb ?? 'k'" to "c")),
+      )
     }
 
     @Test
     fun `a set operation main query still has its definitions`() {
-      val sql = "WITH x AS (SELECT 1 AS a) SELECT a FROM x UNION SELECT 2"
-      val result = parseCteClause(ParsedSql(sql))!!
-      assertThat(result.definitions).isEqualTo(listOf(CteDefinition("x", "x", 10, 24)))
-      assertThat(result.mainQueryStart).isEqualTo(26)
+      assertThat(names("WITH x AS (SELECT 1 AS a) SELECT a FROM x UNION SELECT 2")).isEqualTo(listOf("x"))
     }
 
     @Test
@@ -131,71 +131,59 @@ class SqlCteClauseTest {
         "WITH x AS (SELECT 1 AS a) MERGE INTO t USING x ON t.a = x.a WHEN MATCHED THEN DELETE",
       )
       for (sql in statements) {
-        assertThat(parseCteClause(ParsedSql(sql))!!.definitions).isEqualTo(listOf(CteDefinition("x", "x", 10, 24)))
+        assertThat(names(sql)).isEqualTo(listOf("x"))
       }
     }
 
     @Test
     fun `a parenthesized statement yields its definitions`() {
-      val sql = "(WITH x AS (SELECT 1) SELECT 1 FROM x)"
-      assertThat(parseCteClause(ParsedSql(sql))!!.definitions).isEqualTo(listOf(CteDefinition("x", "x", 11, 20)))
+      assertThat(names("(WITH x AS (SELECT 1) SELECT 1 FROM x)")).isEqualTo(listOf("x"))
     }
 
     @Test
-    fun `text that is not a WITH statement yields null`() {
-      assertThat(parseCteClause(ParsedSql("SELECT 1"))).isNull()
-      assertThat(parseCteClause(ParsedSql("SELECT * FROM (WITH x AS (SELECT 1) SELECT 1) AS s"))).isNull()
-      assertThat(parseCteClause(ParsedSql("INSERT INTO t WITH x AS (SELECT 1) SELECT * FROM x"))).isNull()
-      assertThat(parseCteClause(ParsedSql(""))).isNull()
+    fun `text that is not a WITH statement yields no definitions`() {
+      assertThat(definitions("SELECT 1")).isEmpty()
+      assertThat(definitions("SELECT * FROM (WITH x AS (SELECT 1) SELECT 1) AS s")).isEmpty()
+      assertThat(definitions("INSERT INTO t WITH x AS (SELECT 1) SELECT * FROM x")).isEmpty()
+      assertThat(definitions("")).isEmpty()
     }
 
     @Test
-    fun `text that PostgreSQL rejects yields null`() {
-      assertThat(parseCteClause(ParsedSql("WITH x AS (SELECT 1), y AS SELECT 2"))).isNull()
-      assertThat(parseCteClause(ParsedSql("WITH x AS (SELECT 1"))).isNull()
-      assertThat(parseCteClause(ParsedSql("WITH \"x AS (SELECT 1) SELECT 1"))).isNull()
+    fun `text that PostgreSQL rejects yields no definitions`() {
+      assertThat(definitions("WITH x AS (SELECT 1), y AS SELECT 2")).isEmpty()
+      assertThat(definitions("WITH x AS (SELECT 1")).isEmpty()
+      assertThat(definitions("WITH \"x AS (SELECT 1) SELECT 1")).isEmpty()
     }
 
     @Test
-    fun `a 70 byte ASCII name is truncated to 63 bytes in name and kept whole in rawName`() {
+    fun `a 70 byte ASCII name is truncated to 63 bytes`() {
       val name = "c".repeat(70)
-      val result = parseCteClause(ParsedSql("WITH $name AS (SELECT 1) SELECT 1 FROM $name"))!!
-      assertThat(result.definitions[0].name).isEqualTo("c".repeat(63))
-      assertThat(result.definitions[0].rawName).isEqualTo(name)
+      assertThat(names("WITH $name AS (SELECT 1) SELECT 1 FROM $name")).isEqualTo(listOf("c".repeat(63)))
     }
 
     @Test
     fun `a 32 character multi-byte name is truncated to whole characters within 63 bytes`() {
       val name = "é".repeat(32)
-      val result = parseCteClause(ParsedSql("WITH $name AS (SELECT 1) SELECT 1 FROM $name"))!!
-      assertThat(result.definitions[0].name).isEqualTo("é".repeat(31))
-      assertThat(result.definitions[0].rawName).isEqualTo(name)
+      assertThat(names("WITH $name AS (SELECT 1) SELECT 1 FROM $name")).isEqualTo(listOf("é".repeat(31)))
     }
 
     @Test
-    fun `plain unquoted name has an identical name and rawName`() {
-      val result = parseCteClause(ParsedSql("WITH c AS (SELECT 1) SELECT * FROM c"))
-      assertThat(result!!.definitions[0].name).isEqualTo("c")
-      assertThat(result.definitions[0].rawName).isEqualTo("c")
+    fun `a plain unquoted name is reported as written`() {
+      assertThat(names("WITH c AS (SELECT 1) SELECT * FROM c")).isEqualTo(listOf("c"))
     }
 
     @Test
-    fun `quoted name strips quotes for name but keeps them verbatim in rawName`() {
-      val result = parseCteClause(ParsedSql("""WITH "MyCte" AS (SELECT 1) SELECT * FROM "MyCte""""))
-      assertThat(result!!.definitions[0].name).isEqualTo("MyCte")
-      assertThat(result.definitions[0].rawName).isEqualTo("\"MyCte\"")
+    fun `a quoted name is reported without quotes`() {
+      assertThat(names("""WITH "MyCte" AS (SELECT 1) SELECT * FROM "MyCte"""")).isEqualTo(listOf("MyCte"))
     }
 
     @Test
-    fun `mixed-case unquoted name is folded in name but preserved as-is in rawName`() {
-      val result = parseCteClause(ParsedSql("WITH MyCte AS (SELECT 1) SELECT * FROM MyCte"))
-      assertThat(result!!.definitions[0].name).isEqualTo("mycte")
-      assertThat(result.definitions[0].rawName).isEqualTo("MyCte")
+    fun `a mixed-case unquoted name is folded to lower case`() {
+      assertThat(names("WITH MyCte AS (SELECT 1) SELECT * FROM MyCte")).isEqualTo(listOf("mycte"))
     }
 
     @Test
-    fun `CTE body containing a closing parenthesis inside a string literal parses correctly`() {
-      // The ')' inside 'closing )' belongs to a string token, so the body closes at the ')' before the comma.
+    fun `a closing parenthesis inside a string literal in a body does not end the body`() {
       val sql = """
         WITH note AS (
           SELECT 'closing )'::TEXT AS msg
@@ -205,20 +193,15 @@ class SqlCteClauseTest {
         )
         SELECT len FROM counted
       """.trimIndent()
-      val result = parseCteClause(ParsedSql(sql))
-      assertThat(result!!.definitions).hasSize(2)
-      assertThat(result.definitions[0].name).isEqualTo("note")
-      assertThat(result.definitions[1].name).isEqualTo("counted")
-      val noteBody = sql.substring(
-        result.definitions[0].bodyOpenParenthesis + 1,
-        result.definitions[0].bodyCloseParenthesis,
-      ).trim()
-      assertThat(noteBody).isEqualTo("SELECT 'closing )'::TEXT AS msg")
+      assertThat(definitions(sql)).hasSize(2)
+      assertThat(names(sql)).isEqualTo(listOf("note", "counted"))
+      assertThat(bodyItems(sql)).isEqualTo(
+        listOf(listOf("'closing )'::TEXT" to "msg"), listOf("length(msg)" to "len")),
+      )
     }
 
     @Test
-    fun `CTE body containing a column named with two dollar signs parses correctly`() {
-      // "a$b$c" is an ordinary identifier, not the opening of a "$b$"-tagged dollar-quote.
+    fun `a column named with two dollar signs does not start a dollar quote`() {
       val sql = """
         WITH renamed AS (
           SELECT a${'$'}b${'$'}c AS msg FROM note
@@ -228,62 +211,35 @@ class SqlCteClauseTest {
         )
         SELECT len FROM counted
       """.trimIndent()
-      val result = parseCteClause(ParsedSql(sql))
-      assertThat(result!!.definitions).hasSize(2)
-      assertThat(result.definitions[0].name).isEqualTo("renamed")
-      assertThat(result.definitions[1].name).isEqualTo("counted")
+      assertThat(names(sql)).isEqualTo(listOf("renamed", "counted"))
     }
 
     @Test
-    fun `CTE name containing a non-ASCII character parses correctly`() {
-      // PostgreSQL's lexer admits any byte >= 0x80 inside an unquoted identifier.
-      val result = parseCteClause(
-        ParsedSql("WITH data€x AS (SELECT 1 AS inner_name) SELECT inner_name AS outer_name FROM data€x"),
-      )
-      assertThat(result).isNotNull()
-      assertThat(result!!.definitions).hasSize(1)
-      assertThat(result.definitions[0].name).isEqualTo("data€x")
+    fun `a CTE name containing a non-ASCII character is read`() {
+      val sql = "WITH data€x AS (SELECT 1 AS inner_name) SELECT inner_name AS outer_name FROM data€x"
+      assertThat(names(sql)).isEqualTo(listOf("data€x"))
     }
 
     @Test
-    fun `a quoted name with an escaped embedded double quote keeps the whole token in rawName`() {
-      // The name is `He"llo`, with one embedded quote.
-      val result = parseCteClause(ParsedSql("""WITH "He""llo" AS (SELECT 1) SELECT 1 FROM "He""llo""""))
-      assertThat(result!!.definitions).hasSize(1)
-      assertThat(result.definitions[0].rawName).isEqualTo("\"He\"\"llo\"")
-      assertThat(result.definitions[0].name).isEqualTo("He\"llo")
+    fun `a quoted name with an escaped embedded double quote is read`() {
+      assertThat(names("""WITH "He""llo" AS (SELECT 1) SELECT 1 FROM "He""llo"""")).isEqualTo(listOf("He\"llo"))
     }
 
     @Test
-    fun `a dollar-led CTE name is not recognized, since PostgreSQL itself rejects one`() {
-      // PostgreSQL's grammar rejects `$` at the start of an identifier.
-      val result = parseCteClause(ParsedSql("WITH \$x AS (SELECT 1) SELECT a FROM x"))
-      assertThat(result).isNull()
+    fun `a dollar-led CTE name yields no definitions since PostgreSQL itself rejects one`() {
+      assertThat(definitions("WITH \$x AS (SELECT 1) SELECT a FROM x")).isEmpty()
     }
 
     @Test
-    fun `a digit-led CTE name is not recognized, since PostgreSQL itself rejects one`() {
-      // PostgreSQL's lexer rejects a digit followed by a letter as trailing junk after a numeric literal.
-      val result = parseCteClause(ParsedSql("WITH 1x AS (SELECT 1) SELECT a FROM x"))
-      assertThat(result).isNull()
+    fun `a digit-led CTE name yields no definitions since PostgreSQL itself rejects one`() {
+      assertThat(definitions("WITH 1x AS (SELECT 1) SELECT a FROM x")).isEmpty()
     }
 
     @Test
-    fun `an over-length unquoted CTE name is truncated to 63 bytes, while rawName keeps the full untruncated text`() {
-      val overLongName = "c".repeat(70)
-      val sql = "WITH $overLongName AS (SELECT 1) SELECT * FROM $overLongName"
-      val result = parseCteClause(ParsedSql(sql))
-      assertThat(result!!.definitions[0].name).isEqualTo("c".repeat(63))
-      assertThat(result.definitions[0].rawName).isEqualTo(overLongName)
-    }
-
-    @Test
-    fun `an over-length quoted CTE name is truncated to 63 bytes, while rawName keeps the quotes and full text`() {
+    fun `an over-length quoted CTE name is truncated to 63 bytes`() {
       val overLongName = "c".repeat(70)
       val sql = "WITH \"$overLongName\" AS (SELECT 1) SELECT * FROM \"$overLongName\""
-      val result = parseCteClause(ParsedSql(sql))
-      assertThat(result!!.definitions[0].name).isEqualTo("c".repeat(63))
-      assertThat(result.definitions[0].rawName).isEqualTo("\"$overLongName\"")
+      assertThat(names(sql)).isEqualTo(listOf("c".repeat(63)))
     }
   }
 }
