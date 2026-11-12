@@ -212,6 +212,21 @@ class ParameterNullabilityProbeTest {
       assertThat(parameter(sql, 2)).isEqualTo(assignment("c", "t"))
       assertThat(notNull(sql)).isEqualTo(mapOf(1 to false, 2 to true))
     }
+
+    @Test
+    fun `SET parameters of an UPDATE in a CTE under an INSERT SELECT inherit nullability`() {
+      val sql =
+        "WITH w AS (UPDATE t SET b = ?, c = ? WHERE id = ? RETURNING id, b) INSERT INTO u (id, x) SELECT id, b FROM w"
+
+      assertThat(notNull(sql)).isEqualTo(mapOf(1 to false, 2 to true, 3 to true))
+    }
+
+    @Test
+    fun `a SET parameter that only the outer UPDATE uses inherits nullability`() {
+      val sql = "WITH w AS (INSERT INTO u (id, x) VALUES (?, ?)) UPDATE t SET b = ?, c = ? WHERE id = ?"
+
+      assertThat(notNull(sql)).isEqualTo(mapOf(1 to true, 2 to false, 3 to false, 4 to true, 5 to true))
+    }
   }
 
   @Nested
