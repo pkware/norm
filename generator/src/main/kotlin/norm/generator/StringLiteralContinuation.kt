@@ -1,7 +1,6 @@
 package norm.generator
 
 import norm.generator.libpgquery.LibPgQuery
-import norm.generator.libpgquery.LibPgQueryException
 import norm.generator.libpgquery.isComment
 
 /**
@@ -46,8 +45,4 @@ private fun isSingleToken(text: String): Boolean {
 
 private fun isOnlyComments(text: String): Boolean = scanOrNull(text)?.all { it.isComment() } ?: false
 
-private fun scanOrNull(text: String) = try {
-  LibPgQuery.scan(text)
-} catch (_: LibPgQueryException) {
-  null
-}
+private fun scanOrNull(text: String) = LibPgQuery.scan(text).valueOrNull()

@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test
 
 class ParseTreeTest {
 
-  private fun parse(sql: String) = ParseResult(LibPgQuery.parse(sql))
+  private fun parse(sql: String) = ParseResult(LibPgQuery.parse(sql).accepted())
 
   private fun statement(sql: String): StatementNode = checkNotNull(parse(sql).firstStatement)
 

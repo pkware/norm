@@ -2,7 +2,7 @@ package norm.generator
 
 import norm.generator.libpgquery.KeywordKind
 import norm.generator.libpgquery.LibPgQuery
-import norm.generator.libpgquery.LibPgQueryException
+import norm.generator.libpgquery.LibPgQueryResult
 import norm.generator.libpgquery.OutputStatement
 import norm.generator.libpgquery.ParseResult
 import norm.generator.libpgquery.ScanToken
@@ -116,11 +116,7 @@ private fun parserFormOf(sql: String, tokens: List<ScanToken>, namedParameters: 
  * @return the parse tree, or `null` when the grammar rejects [sql].
  * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
-internal fun parseOrNull(sql: String): ParseResult? = try {
-  ParseResult(LibPgQuery.parse(sql))
-} catch (_: LibPgQueryException) {
-  null
-}
+internal fun parseOrNull(sql: String): ParseResult? = LibPgQuery.parse(sql).valueOrNull()?.let(::ParseResult)
 
 private fun mergeUnicodeEscapes(sql: String, tokens: List<ScanToken>): List<ScanToken> {
   val merged = mutableListOf<ScanToken>()
@@ -152,9 +148,10 @@ private fun mergeUnicodeEscapes(sql: String, tokens: List<ScanToken>): List<Scan
  *
  * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
-internal fun scanLeadingTokens(sql: String): List<ScanToken> = try {
-  LibPgQuery.scan(sql)
-} catch (exception: LibPgQueryException) {
-  val cursorIndex = exception.cursorIndex
-  if (cursorIndex == null || cursorIndex !in sql.indices) emptyList() else scanLeadingTokens(sql.take(cursorIndex))
+internal fun scanLeadingTokens(sql: String): List<ScanToken> = when (val result = LibPgQuery.scan(sql)) {
+  is LibPgQueryResult.Accepted -> result.value
+  is LibPgQueryResult.Rejected -> {
+    val cursorIndex = result.cursorIndex
+    if (cursorIndex == null || cursorIndex !in sql.indices) emptyList() else scanLeadingTokens(sql.take(cursorIndex))
+  }
 }

@@ -5,7 +5,7 @@ import assertk.assertions.isEqualTo
 import norm.generator.baseline.GLUED_ISSUE_INPUTS
 import norm.generator.baseline.ScannerCorpus
 import norm.generator.libpgquery.LibPgQuery
-import norm.generator.libpgquery.LibPgQueryException
+import norm.generator.libpgquery.LibPgQueryResult
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
@@ -172,12 +172,11 @@ class ScannerOracleLiveTest {
     return result.append(sql, copiedUpTo, sql.length).toString()
   }
 
-  private fun parsesAfterRewrite(sql: String): String = try {
-    LibPgQuery.parse(ParsedSql(sql).parserForm)
-    "true"
-  } catch (exception: LibPgQueryException) {
-    "parse failed: ${exception.message}"
-  }
+  private fun parsesAfterRewrite(sql: String): String =
+    when (val result = LibPgQuery.parse(ParsedSql(sql).parserForm)) {
+      is LibPgQueryResult.Accepted -> "true"
+      is LibPgQueryResult.Rejected -> "parse failed: ${result.message}"
+    }
 
   private fun comparePreparedParameters(sql: String, compare: (String, Any?, Any?) -> Unit) {
     var sumOfPartCounts = 0

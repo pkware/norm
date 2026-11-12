@@ -24,23 +24,24 @@ internal class SplitFile(val text: String, val items: List<SplitItem>) {
      * the last `;`-ending line before the error through the first `;`-ending line at or after it, and splits the
      * remainder again.
      *
-     * @throws LibPgQueryException if the lexer error has no position.
+     * @throws IllegalStateException if the lexer error has no position.
      */
     fun of(text: String): SplitFile {
       var remaining = text
       val rejected = mutableListOf<Pair<Int, String>>()
       while (true) {
-        try {
-          return SplitFile(remaining, interleave(LibPgQuery.split(remaining), rejected))
-        } catch (exception: LibPgQueryException) {
-          val position = exception.cursorIndex ?: throw exception
-          val lines = remaining.split('\n')
-          val errorLine = remaining.substring(0, position).count { it == '\n' }
-          val first = (errorLine - 1 downTo 0).firstOrNull { lines[it].endsWithSemicolon() }?.plus(1) ?: 0
-          val last = (errorLine until lines.size).firstOrNull { lines[it].endsWithSemicolon() } ?: lines.lastIndex
-          val offset = lines.take(first).sumOf { it.length + 1 }
-          rejected += offset to lines.subList(first, last + 1).joinToString("\n")
-          remaining = (lines.take(first) + lines.drop(last + 1)).joinToString("\n")
+        when (val result = LibPgQuery.split(remaining)) {
+          is LibPgQueryResult.Accepted -> return SplitFile(remaining, interleave(result.value, rejected))
+          is LibPgQueryResult.Rejected -> {
+            val position = checkNotNull(result.cursorIndex) { "The lexer error has no position: ${result.message}" }
+            val lines = remaining.split('\n')
+            val errorLine = remaining.substring(0, position).count { it == '\n' }
+            val first = (errorLine - 1 downTo 0).firstOrNull { lines[it].endsWithSemicolon() }?.plus(1) ?: 0
+            val last = (errorLine until lines.size).firstOrNull { lines[it].endsWithSemicolon() } ?: lines.lastIndex
+            val offset = lines.take(first).sumOf { it.length + 1 }
+            rejected += offset to lines.subList(first, last + 1).joinToString("\n")
+            remaining = (lines.take(first) + lines.drop(last + 1)).joinToString("\n")
+          }
         }
       }
     }

@@ -2,7 +2,7 @@ package norm.generator
 
 import norm.generator.libpgquery.KeywordKind
 import norm.generator.libpgquery.LibPgQuery
-import norm.generator.libpgquery.LibPgQueryException
+import norm.generator.libpgquery.LibPgQueryResult
 import norm.generator.libpgquery.ScanToken
 import norm.generator.libpgquery.TokenNumber
 import norm.generator.libpgquery.isKeyword
@@ -84,12 +84,9 @@ internal fun namedParameters(parsed: ParsedSql): List<NamedParameter> {
   val certain = candidates.filterNot { it.isUndecided }.map { it.parameter }
   var undecided = candidates.filter { it.isUndecided }.map { it.parameter }
   while (undecided.isNotEmpty()) {
-    val rejectionIndex = try {
-      LibPgQuery.parse(parsed.parserFormReplacing(certain + undecided))
-      break
-    } catch (exception: LibPgQueryException) {
-      exception.cursorIndex
-    }
+    val result = LibPgQuery.parse(parsed.parserFormReplacing(certain + undecided))
+    if (result !is LibPgQueryResult.Rejected) break
+    val rejectionIndex = result.cursorIndex
     val rejected = undecided.firstOrNull { it.name.end - 1 == rejectionIndex } ?: break
     undecided = undecided - rejected
   }

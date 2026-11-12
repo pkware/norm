@@ -127,25 +127,19 @@ internal data class PsqlLines(
      * [text] holds no statement or the lexer rejects it, or `null` while the last statement is still open.
      */
     private fun terminationOf(text: String): String? {
-      val statements = try {
-        LibPgQuery.split(text)
-      } catch (_: LibPgQueryException) {
-        return ""
-      }
+      val statements = LibPgQuery.split(text).valueOrNull() ?: return ""
       val last = statements.lastOrNull() ?: return ""
       val isTerminated = last.end < text.length && text[last.end] == ';' && isOnlyComments(text.substring(last.end + 1))
       return if (isTerminated) text.substring(last.start, last.end) else null
     }
 
-    private fun isOnlyComments(text: String): Boolean = try {
-      LibPgQuery.scan(text).all { it.token == TokenNumber.LINE_COMMENT || it.token == TokenNumber.BLOCK_COMMENT }
-    } catch (_: LibPgQueryException) {
-      false
-    }
+    private fun isOnlyComments(text: String): Boolean = LibPgQuery.scan(text).valueOrNull()?.all {
+      it.token == TokenNumber.LINE_COMMENT || it.token == TokenNumber.BLOCK_COMMENT
+    } ?: false
 
     /** [text] cut at each `\` directly followed by a `;`, without those two tokens. */
     private fun chainedParts(text: String): List<String> {
-      val tokens = LibPgQuery.scan(text)
+      val tokens = LibPgQuery.scan(text).accepted()
       val parts = mutableListOf<String>()
       var partStart = 0
       for (position in 0 until tokens.size - 1) {
@@ -166,11 +160,7 @@ internal data class PsqlLines(
     private fun copyFromStandardInputCount(text: String): Int {
       // A `COPY` statement contains the word, so the parse is only needed when it appears.
       if (!text.contains("copy", ignoreCase = true)) return 0
-      val tree = try {
-        LibPgQuery.parse(text)
-      } catch (_: LibPgQueryException) {
-        return 0
-      }
+      val tree = LibPgQuery.parse(text).valueOrNull() ?: return 0
       return tree.objectArrayField("stmts").count { statement ->
         val copy = statement.objectField("stmt")?.objectField("CopyStmt")
         copy != null && copy.fields["is_from"] != null && copy.fields["filename"] == null

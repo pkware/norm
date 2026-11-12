@@ -6,7 +6,7 @@ import assertk.assertions.isNotNull
 import assertk.assertions.isNull
 import norm.generator.baseline.ScannerCorpus
 import norm.generator.libpgquery.LibPgQuery
-import norm.generator.libpgquery.LibPgQueryException
+import norm.generator.libpgquery.LibPgQueryResult
 import norm.generator.libpgquery.TokenNumber
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
@@ -83,14 +83,7 @@ class QueryFileParserLiveTest {
 
   @Test
   fun `PostgreSQL rejects every corpus text that the lexer rejects`() {
-    val lexerRejected = corpusTexts().filter { text ->
-      try {
-        LibPgQuery.scan(text)
-        false
-      } catch (_: LibPgQueryException) {
-        true
-      }
-    }
+    val lexerRejected = corpusTexts().filter { LibPgQuery.scan(it) is LibPgQueryResult.Rejected }
 
     assertRejected(lexerRejected)
   }
