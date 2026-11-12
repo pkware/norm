@@ -59,8 +59,7 @@ internal class ParameterNullabilityProbe(private val connection: Connection) {
     val functionArgumentNamer = FunctionArgumentNamer(catalog::function)
     var placeholdersBefore = 0
     for (statement in splitStatements(parsed)) {
-      val explainedStart = explainedStatementStart(statement)
-      val probed = if (explainedStart == 0) statement else statement.part(explainedStart, statement.sql.length)
+      val probed = statement.part(explainedStatementStart(statement), statement.sql.length)
       val classified = probeStatement(probed, queryName, functionArgumentNamer)
       for ((number, parameter) in classified) parameters[placeholdersBefore + number] = parameter
       placeholdersBefore += placeholderPositions(statement).size

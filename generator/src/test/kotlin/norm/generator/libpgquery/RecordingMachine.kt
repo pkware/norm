@@ -28,8 +28,8 @@ internal class RecordingMachine(private val instance: Instance, private val dele
     val recorded = recording.get()
     if (recorded != null) {
       when (functionNames[funcId]) {
-        LibPgQueryEntry.PARSE.function -> recorded.parseTexts += readInput(args)
-        LibPgQueryEntry.SCAN.function -> recorded.scanTexts += readInput(args)
+        LibPgQueryEntry.Parse.function -> recorded.parseTexts += readInput(args)
+        LibPgQueryEntry.Scan.function -> recorded.scanTexts += readInput(args)
       }
     }
     return delegate.call(funcId, args)

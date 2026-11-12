@@ -130,21 +130,6 @@ private val JSON_OBJECT_KEYWORDS = listOf("JSON_OBJECT", "JSON_OBJECTAGG")
 private fun isParameterName(sql: String, token: ScanToken): Boolean =
   (token.token == TokenNumber.IDENTIFIER || token.keywordKind != KeywordKind.NONE) && sql[token.start] != '"'
 
-/**
- * Splits [sql] into PostgreSQL lexer tokens, stopping where the lexer rejects the text.
- *
- * When the lexer reports an error at a position, the tokens before that position are returned and the text from
- * there on has no tokens. An error without a position leaves the whole text without tokens.
- *
- * @throws IllegalArgumentException if [sql] contains a NUL character.
- */
-internal fun scanLeadingTokens(sql: String): List<ScanToken> = try {
-  LibPgQuery.scan(sql)
-} catch (exception: LibPgQueryException) {
-  val cursorIndex = exception.cursorIndex
-  if (cursorIndex == null || cursorIndex !in sql.indices) emptyList() else scanLeadingTokens(sql.take(cursorIndex))
-}
-
 internal fun operatorTokens(tokens: List<ScanToken>): List<ScanToken> = tokens.filter {
   it.token == TokenNumber.OPERATOR
 }
@@ -172,43 +157,4 @@ private inline fun forEachQuestionMark(
   action: (index: Int, isEscape: Boolean) -> Unit,
 ) {
   for (token in operatorTokens(tokens)) forEachQuestionMark(sql, token, action)
-}
-
-/**
- * Returns a non-null SQL literal expression for the given PostgreSQL type name.
- *
- * Used to replace `?` parameter placeholders with typed non-null constants when creating
- * temporary views for nullability analysis. Strict functions like `digest(?, ?)` need non-null
- * inputs to correctly evaluate as non-null in the query's node tree.
- *
- * Falls back to `NULL::<typeName>` for unrecognized types, which is safe (produces a nullable
- * result — the conservative direction).
- *
- * @param typeName The PostgreSQL type name from `ParameterMetaData.getParameterTypeName()`.
- * @return A SQL expression that is a valid non-null literal of the given type.
- */
-internal fun nonNullSentinel(typeName: String): String = when (typeName) {
-  "int2", "int4", "int8", "float4", "float8", "numeric", "oid" -> "0::$typeName"
-  "text", "varchar", "bpchar", "char", "name" -> "''::$typeName"
-  "bool" -> "false::bool"
-  "bytea" -> "'\\x00'::bytea"
-  "date" -> "'2000-01-01'::date"
-  "timestamp" -> "'2000-01-01'::timestamp"
-  "timestamptz" -> "'2000-01-01'::timestamptz"
-  "time" -> "'00:00:00'::time"
-  "timetz" -> "'00:00:00'::timetz"
-  "interval" -> "'0'::interval"
-  "uuid" -> "'00000000-0000-0000-0000-000000000000'::uuid"
-  "json" -> "'{}'::json"
-  "jsonb" -> "'{}'::jsonb"
-  "xml" -> "'<x/>'::xml"
-  "inet", "cidr" -> "'0.0.0.0/0'::$typeName"
-  "macaddr", "macaddr8" -> "'00:00:00:00:00:00'::$typeName"
-  else -> if (typeName.startsWith("_")) {
-    // Array types: _int4, _text, etc.
-    "ARRAY[]::$typeName"
-  } else {
-    // Unknown type — fall back to NULL (safe: column becomes nullable).
-    "NULL::$typeName"
-  }
 }

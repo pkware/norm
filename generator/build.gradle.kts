@@ -11,25 +11,12 @@ val wasmCompiler by configurations.registering {
   isCanBeResolved = true
 }
 
-dependencies {
-  wasmCompiler(libs.chicory.buildTimeCompiler)
-
-  implementation(libs.chicory.runtime)
-  implementation(libs.chicory.wasi)
-  implementation(libs.kotlinPoet)
-
-  testImplementation(libs.bundles.mockito)
-  testImplementation(libs.bundles.testcontainers)
-  testImplementation(libs.postgresql)
-  testImplementation(libs.commonmark)
-}
-
 kotlin {
   explicitApi()
 }
 
 val compileLibPgQuery by tasks.registering(CompileWasmModule::class) {
-  wasmFile = layout.projectDirectory.file("src/main/resources/libpg_query.wasm")
+  wasmFile = layout.projectDirectory.file("src/main/wasm/libpg_query.wasm")
   className = "norm.generator.libpgquery.LibPgQuery"
   compilerClasspath.from(wasmCompiler)
   outputDirectory = layout.buildDirectory.dir("generated/wasm/libpgquery")
@@ -40,11 +27,17 @@ sourceSets.main {
 }
 
 dependencies {
+  wasmCompiler(libs.chicory.buildTimeCompiler)
   compileOnly(files(compileLibPgQuery.flatMap { it.outputDirectory }).builtBy(compileLibPgQuery))
-}
 
-tasks.processResources {
-  exclude("libpg_query.wasm")
+  implementation(libs.chicory.runtime)
+  implementation(libs.chicory.wasi)
+  implementation(libs.kotlinPoet)
+
+  testImplementation(libs.bundles.mockito)
+  testImplementation(libs.bundles.testcontainers)
+  testImplementation(libs.postgresql)
+  testImplementation(libs.commonmark)
 }
 
 tasks.test {

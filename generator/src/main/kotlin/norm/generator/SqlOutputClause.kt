@@ -36,8 +36,8 @@ internal data class SelectItem(
   val expression: String,
   val columnName: String?,
   val tableName: String?,
-  val isStar: Boolean = false,
-  val normalizedExpression: String = expression,
+  val isStar: Boolean,
+  val normalizedExpression: String,
 )
 
 /**
@@ -67,12 +67,8 @@ internal fun hasTopLevelSetOperation(parsed: ParsedSql): Boolean =
  * A single item of [ParsedSql.outputItems], pairing the [selectItem] with the alias that follows its
  * expression, if any.
  *
- * Kept separate from [SelectItem] because [SelectItem.columnName] already carries a meaning for
- * simple column references — reusing it for an alias would conflate "this item is a bare column
- * reference" with "this item has an alias", which are different facts a computed expression can
- * have independently (`UPPER(description) AS description_upper` has an alias but is not a bare
- * column reference; `description AS description_upper` is a bare column reference and has an
- * alias).
+ * [alias] and [SelectItem.columnName] are independent. `description AS description_upper` has both,
+ * `UPPER(description) AS description_upper` has only an alias, and `description` has only a column name.
  *
  * @property selectItem The parsed expression/columnName/tableName, alias already removed.
  * @property alias The alias as PostgreSQL's parser stores it in `ResTarget.name`, or `null` if the item has no alias.

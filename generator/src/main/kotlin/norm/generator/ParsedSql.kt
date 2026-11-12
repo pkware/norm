@@ -128,3 +128,18 @@ private fun mergeUnicodeEscapes(sql: String, tokens: List<ScanToken>): List<Scan
   }
   return merged
 }
+
+/**
+ * Splits [sql] into PostgreSQL lexer tokens, stopping where the lexer rejects the text.
+ *
+ * When the lexer reports an error at a position, the tokens before that position are returned and the text from
+ * there on has no tokens. An error without a position leaves the whole text without tokens.
+ *
+ * @throws IllegalArgumentException if [sql] contains a NUL character.
+ */
+internal fun scanLeadingTokens(sql: String): List<ScanToken> = try {
+  LibPgQuery.scan(sql)
+} catch (exception: LibPgQueryException) {
+  val cursorIndex = exception.cursorIndex
+  if (cursorIndex == null || cursorIndex !in sql.indices) emptyList() else scanLeadingTokens(sql.take(cursorIndex))
+}

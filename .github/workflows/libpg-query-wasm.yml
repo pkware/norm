@@ -4,14 +4,14 @@ on:
   pull_request:
     paths:
       - 'buildtools/libpg_query-wasm/**'
-      - 'generator/src/main/resources/libpg_query.wasm'
+      - 'generator/src/main/wasm/libpg_query.wasm'
       - 'generator/src/main/resources/libpg_query_location_fields.txt'
       - '.github/workflows/libpg-query-wasm.yml'
   push:
     branches: [ main, release/* ]
     paths:
       - 'buildtools/libpg_query-wasm/**'
-      - 'generator/src/main/resources/libpg_query.wasm'
+      - 'generator/src/main/wasm/libpg_query.wasm'
       - 'generator/src/main/resources/libpg_query_location_fields.txt'
       - '.github/workflows/libpg-query-wasm.yml'
   schedule:
@@ -41,6 +41,6 @@ jobs:
 
       - name: Compare with the committed files
         run: |
-          sha256sum build/libpg_query-wasm/libpg_query.wasm generator/src/main/resources/libpg_query.wasm
-          cmp build/libpg_query-wasm/libpg_query.wasm generator/src/main/resources/libpg_query.wasm
+          sha256sum build/libpg_query-wasm/libpg_query.wasm generator/src/main/wasm/libpg_query.wasm
+          cmp build/libpg_query-wasm/libpg_query.wasm generator/src/main/wasm/libpg_query.wasm
           cmp build/libpg_query-wasm/libpg_query_location_fields.txt generator/src/main/resources/libpg_query_location_fields.txt

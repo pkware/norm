@@ -38,7 +38,11 @@ private fun item(
   tableName: String? = null,
   alias: String? = null,
   isAliasExplicit: Boolean = alias != null,
-): OutputItemWithAlias = OutputItemWithAlias(SelectItem(expression, columnName, tableName), alias, isAliasExplicit)
+): OutputItemWithAlias = OutputItemWithAlias(
+  SelectItem(expression, columnName, tableName, isStar = false, normalizedExpression = expression),
+  alias,
+  isAliasExplicit,
+)
 
 /**
  * Checks the item count and the labels of [ParsedSql.outputItems] against the column count and labels a live server

@@ -76,8 +76,8 @@ class SqlOutputClauseTest {
     fun `UPDATE RETURNING with simple columns`() {
       val result = ParsedSql("UPDATE t SET x = 1 RETURNING id, name").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("id", "id", null),
-        SelectItem("name", "name", null),
+        SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
+        SelectItem("name", "name", null, isStar = false, normalizedExpression = "name"),
       )
     }
 
@@ -87,8 +87,8 @@ class SqlOutputClauseTest {
         it.selectItem
       }
       assertThat(result).containsExactly(
-        SelectItem("tier", "tier", null),
-        SelectItem("old.tier", "tier", "old"),
+        SelectItem("tier", "tier", null, isStar = false, normalizedExpression = "tier"),
+        SelectItem("old.tier", "tier", "old", isStar = false, normalizedExpression = "old.tier"),
       )
     }
 
@@ -96,8 +96,8 @@ class SqlOutputClauseTest {
     fun `INSERT RETURNING`() {
       val result = ParsedSql("INSERT INTO t(x) VALUES(1) RETURNING id, name").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("id", "id", null),
-        SelectItem("name", "name", null),
+        SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
+        SelectItem("name", "name", null, isStar = false, normalizedExpression = "name"),
       )
     }
 
@@ -105,8 +105,8 @@ class SqlOutputClauseTest {
     fun `DELETE RETURNING`() {
       val result = ParsedSql("DELETE FROM t WHERE id = 1 RETURNING id, name").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("id", "id", null),
-        SelectItem("name", "name", null),
+        SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
+        SelectItem("name", "name", null, isStar = false, normalizedExpression = "name"),
       )
     }
 
@@ -114,8 +114,8 @@ class SqlOutputClauseTest {
     fun `RETURNING with computed expression`() {
       val result = ParsedSql("UPDATE t SET x = 1 RETURNING id, count(*) AS total").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("id", "id", null),
-        SelectItem("count(*)", null, null),
+        SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
+        SelectItem("count(*)", null, null, isStar = false, normalizedExpression = "count(*)"),
       )
     }
 
@@ -123,8 +123,8 @@ class SqlOutputClauseTest {
     fun `RETURNING with trailing semicolon`() {
       val result = ParsedSql("UPDATE t SET x = 1 RETURNING id, name;").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("id", "id", null),
-        SelectItem("name", "name", null),
+        SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
+        SelectItem("name", "name", null, isStar = false, normalizedExpression = "name"),
       )
     }
 
@@ -134,7 +134,7 @@ class SqlOutputClauseTest {
         it.selectItem
       }
       assertThat(result).containsExactly(
-        SelectItem("CAST(tier AS text)", null, null),
+        SelectItem("CAST(tier AS text)", null, null, isStar = false, normalizedExpression = "CAST(tier AS text)"),
       )
     }
 
@@ -142,7 +142,7 @@ class SqlOutputClauseTest {
     fun `RETURNING star`() {
       val result = ParsedSql("DELETE FROM t RETURNING *").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("*", null, null, isStar = true),
+        SelectItem("*", null, null, isStar = true, normalizedExpression = "*"),
       )
     }
 
@@ -166,8 +166,8 @@ class SqlOutputClauseTest {
         it.selectItem
       }
       assertThat(result).containsExactly(
-        SelectItem("o.x", "x", "o"),
-        SelectItem("n.x", "x", "n"),
+        SelectItem("o.x", "x", "o", isStar = false, normalizedExpression = "o.x"),
+        SelectItem("n.x", "x", "n", isStar = false, normalizedExpression = "n.x"),
       )
     }
 
@@ -175,8 +175,8 @@ class SqlOutputClauseTest {
     fun `SELECT with simple columns`() {
       val result = ParsedSql("SELECT id, name FROM users").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("id", "id", null),
-        SelectItem("name", "name", null),
+        SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
+        SelectItem("name", "name", null, isStar = false, normalizedExpression = "name"),
       )
     }
 
@@ -184,7 +184,7 @@ class SqlOutputClauseTest {
     fun `SELECT with qualified alias`() {
       val result = ParsedSql("SELECT author.name AS author_name FROM author").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("author.name", "name", "author"),
+        SelectItem("author.name", "name", "author", isStar = false, normalizedExpression = "author.name"),
       )
     }
 
@@ -192,7 +192,7 @@ class SqlOutputClauseTest {
     fun `SELECT with computed expression`() {
       val result = ParsedSql("SELECT COUNT(*) AS total FROM users").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("COUNT(*)", null, null),
+        SelectItem("COUNT(*)", null, null, isStar = false, normalizedExpression = "COUNT(*)"),
       )
     }
 
@@ -201,7 +201,7 @@ class SqlOutputClauseTest {
       // A lone star has nothing after it to shift, so the star-truncation guard leaves it alone.
       val result = ParsedSql("SELECT * FROM users").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("*", null, null, isStar = true),
+        SelectItem("*", null, null, isStar = true, normalizedExpression = "*"),
       )
     }
 
@@ -215,7 +215,7 @@ class SqlOutputClauseTest {
     fun `a qualified column named from does not truncate the select list at its own name`() {
       val result = ParsedSql("SELECT s.from FROM s").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("s.from", "from", "s"),
+        SelectItem("s.from", "from", "s", isStar = false, normalizedExpression = "s.from"),
       )
     }
 
@@ -223,7 +223,7 @@ class SqlOutputClauseTest {
     fun `a qualified column named returning is not taken for the RETURNING clause itself`() {
       val result = ParsedSql("INSERT INTO t(a) SELECT s.returning FROM s RETURNING a").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("a", "a", null),
+        SelectItem("a", "a", null, isStar = false, normalizedExpression = "a"),
       )
     }
 
@@ -243,8 +243,8 @@ class SqlOutputClauseTest {
         """.trimIndent(),
       ).outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("id", "id", null),
-        SelectItem("name", "name", null),
+        SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
+        SelectItem("name", "name", null, isStar = false, normalizedExpression = "name"),
       )
     }
 
@@ -254,8 +254,8 @@ class SqlOutputClauseTest {
         it.selectItem
       }
       assertThat(result).containsExactly(
-        SelectItem("id", "id", null),
-        SelectItem("name", "name", null),
+        SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
+        SelectItem("name", "name", null, isStar = false, normalizedExpression = "name"),
       )
     }
 
@@ -263,8 +263,8 @@ class SqlOutputClauseTest {
     fun `INSERT SELECT RETURNING picks the RETURNING clause, not the SELECT source`() {
       val result = ParsedSql("INSERT INTO t(a,b) SELECT x, y FROM s RETURNING id, a").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("id", "id", null),
-        SelectItem("a", "a", null),
+        SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
+        SelectItem("a", "a", null, isStar = false, normalizedExpression = "a"),
       )
     }
 
@@ -272,7 +272,7 @@ class SqlOutputClauseTest {
     fun `UPDATE RETURNING with a scalar subquery in SET does not pick the subquery's SELECT`() {
       val result = ParsedSql("UPDATE t SET x = (SELECT max(y) FROM s) RETURNING id").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("id", "id", null),
+        SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
       )
     }
 
@@ -280,7 +280,7 @@ class SqlOutputClauseTest {
     fun `SELECT keyword inside a string literal ahead of the real clause is not mistaken for it`() {
       val result = ParsedSql("UPDATE t SET note = 'please SELECT this' RETURNING id").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("id", "id", null),
+        SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
       )
     }
 
@@ -288,7 +288,7 @@ class SqlOutputClauseTest {
     fun `SELECT keyword inside a block comment ahead of the real clause is not mistaken for it`() {
       val result = ParsedSql("UPDATE t /* SELECT me not */ SET x = 1 RETURNING id").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("id", "id", null),
+        SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
       )
     }
 
@@ -302,7 +302,7 @@ class SqlOutputClauseTest {
       // single bogus item.
       val result = ParsedSql("SELECT preferences AS returning FROM users").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("preferences", "preferences", null),
+        SelectItem("preferences", "preferences", null, isStar = false, normalizedExpression = "preferences"),
       )
     }
 
@@ -310,8 +310,8 @@ class SqlOutputClauseTest {
     fun `RETURNING as a column alias alongside another item is not mistaken for the RETURNING keyword`() {
       val result = ParsedSql("SELECT id, preferences AS returning FROM users").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("id", "id", null),
-        SelectItem("preferences", "preferences", null),
+        SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
+        SelectItem("preferences", "preferences", null, isStar = false, normalizedExpression = "preferences"),
       )
     }
 
@@ -319,7 +319,7 @@ class SqlOutputClauseTest {
     fun `RETURNING as a column alias after a WITH clause is not mistaken for the RETURNING keyword`() {
       val result = ParsedSql("WITH c AS (SELECT 1) SELECT x AS returning FROM c").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("x", "x", null),
+        SelectItem("x", "x", null, isStar = false, normalizedExpression = "x"),
       )
     }
 
@@ -334,9 +334,9 @@ class SqlOutputClauseTest {
           "FROM users RETURNING id, email, preferences",
       ).outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("id", "id", null),
-        SelectItem("email", "email", null),
-        SelectItem("preferences", "preferences", null),
+        SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
+        SelectItem("email", "email", null, isStar = false, normalizedExpression = "email"),
+        SelectItem("preferences", "preferences", null, isStar = false, normalizedExpression = "preferences"),
       )
     }
 
@@ -345,7 +345,7 @@ class SqlOutputClauseTest {
       // The alias follows the real RETURNING keyword here, so the list still comes from that clause.
       val result = ParsedSql("UPDATE t SET x = 1 RETURNING id AS returning").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("id", "id", null),
+        SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
       )
     }
 
@@ -353,8 +353,8 @@ class SqlOutputClauseTest {
     fun `an AS returning alias immediately preceding the real keyword in a FROM-less source select`() {
       val result = ParsedSql("INSERT INTO t (a) SELECT 1 AS returning RETURNING a, b").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("a", "a", null),
-        SelectItem("b", "b", null),
+        SelectItem("a", "a", null, isStar = false, normalizedExpression = "a"),
+        SelectItem("b", "b", null, isStar = false, normalizedExpression = "b"),
       )
     }
 
@@ -366,8 +366,8 @@ class SqlOutputClauseTest {
         it.selectItem
       }
       assertThat(result).containsExactly(
-        SelectItem("a", "a", null),
-        SelectItem("b", "b", null),
+        SelectItem("a", "a", null, isStar = false, normalizedExpression = "a"),
+        SelectItem("b", "b", null, isStar = false, normalizedExpression = "b"),
       )
     }
 
@@ -379,8 +379,8 @@ class SqlOutputClauseTest {
         it.selectItem
       }
       assertThat(result).containsExactly(
-        SelectItem("a", "a", null),
-        SelectItem("b", "b", null),
+        SelectItem("a", "a", null, isStar = false, normalizedExpression = "a"),
+        SelectItem("b", "b", null, isStar = false, normalizedExpression = "b"),
       )
     }
 
@@ -398,8 +398,8 @@ class SqlOutputClauseTest {
           "SELECT returning€, age, preferences FROM src RETURNING id, email",
       ).outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("id", "id", null),
-        SelectItem("email", "email", null),
+        SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
+        SelectItem("email", "email", null, isStar = false, normalizedExpression = "email"),
       )
     }
 
@@ -413,9 +413,9 @@ class SqlOutputClauseTest {
       // contents ("x", ",", the second "$€$") do not split into extra items.
       val result = ParsedSql("SELECT \$€\$x,\$€\$ AS lbl, age, email FROM users").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("\$€\$x,\$€\$", null, null),
-        SelectItem("age", "age", null),
-        SelectItem("email", "email", null),
+        SelectItem("\$€\$x,\$€\$", null, null, isStar = false, normalizedExpression = "\$€\$x,\$€\$"),
+        SelectItem("age", "age", null, isStar = false, normalizedExpression = "age"),
+        SelectItem("email", "email", null, isStar = false, normalizedExpression = "email"),
       )
     }
 
@@ -429,8 +429,8 @@ class SqlOutputClauseTest {
       // identifier).
       val result = ParsedSql("UPDATE t SET x = 1 RETURNING preferences€, email").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("preferences€", "preferences€", null),
-        SelectItem("email", "email", null),
+        SelectItem("preferences€", "preferences€", null, isStar = false, normalizedExpression = "preferences€"),
+        SelectItem("email", "email", null, isStar = false, normalizedExpression = "email"),
       )
     }
 
@@ -443,8 +443,8 @@ class SqlOutputClauseTest {
       // x𝐀y FROM astral" resolves it unquoted).
       val result = ParsedSql("SELECT x𝐀y, id FROM astral").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("x𝐀y", "x𝐀y", null),
-        SelectItem("id", "id", null),
+        SelectItem("x𝐀y", "x𝐀y", null, isStar = false, normalizedExpression = "x𝐀y"),
+        SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
       )
     }
 
@@ -464,7 +464,7 @@ class SqlOutputClauseTest {
       // not an identifier character. The parenthesized "age" is still the column reference "age".
       val result = ParsedSql("SELECT (age)AS b FROM users").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("(age)", "age", null),
+        SelectItem("(age)", "age", null, isStar = false, normalizedExpression = "(age)"),
       )
     }
 
@@ -476,7 +476,7 @@ class SqlOutputClauseTest {
       // keyword is recognized and the alias is split off.
       val result = ParsedSql("SELECT (age)AS\"b\" FROM users").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("(age)", "age", null),
+        SelectItem("(age)", "age", null, isStar = false, normalizedExpression = "(age)"),
       )
     }
 
@@ -487,7 +487,11 @@ class SqlOutputClauseTest {
       // the keyword "AS". The item is the column "dataas" with the implicit alias "b".
       val result = ParsedSql("SELECT dataAS b FROM users").outputItems
       assertThat(result).containsExactly(
-        OutputItemWithAlias(SelectItem("dataAS", "dataas", null), "b", isAliasExplicit = false),
+        OutputItemWithAlias(
+          SelectItem("dataAS", "dataas", null, isStar = false, normalizedExpression = "dataAS"),
+          "b",
+          isAliasExplicit = false,
+        ),
       )
     }
 
@@ -498,7 +502,11 @@ class SqlOutputClauseTest {
       // the keyword "AS" followed by "€b".
       val result = ParsedSql("SELECT age AS€b FROM users").outputItems
       assertThat(result).containsExactly(
-        OutputItemWithAlias(SelectItem("age", "age", null), "as€b", isAliasExplicit = false),
+        OutputItemWithAlias(
+          SelectItem("age", "age", null, isStar = false, normalizedExpression = "age"),
+          "as€b",
+          isAliasExplicit = false,
+        ),
       )
     }
 
@@ -509,7 +517,11 @@ class SqlOutputClauseTest {
       // above, from the other side), leaving a stray extra token "b" with nothing to attach to.
       val result = ParsedSql("SELECT age x€AS FROM users").outputItems
       assertThat(result).containsExactly(
-        OutputItemWithAlias(SelectItem("age", "age", null), "x€as", isAliasExplicit = false),
+        OutputItemWithAlias(
+          SelectItem("age", "age", null, isStar = false, normalizedExpression = "age"),
+          "x€as",
+          isAliasExplicit = false,
+        ),
       )
     }
 
@@ -532,7 +544,7 @@ class SqlOutputClauseTest {
       // drop the column's Postgres comment.
       val result = ParsedSql("SELECT ID FROM t").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("ID", "id", null),
+        SelectItem("ID", "id", null, isStar = false, normalizedExpression = "ID"),
       )
     }
 
@@ -540,7 +552,7 @@ class SqlOutputClauseTest {
     fun `an unquoted uppercase qualified column reference folds both the table and column name`() {
       val result = ParsedSql("SELECT T.ID FROM t").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("T.ID", "id", "t"),
+        SelectItem("T.ID", "id", "t", isStar = false, normalizedExpression = "T.ID"),
       )
     }
 
@@ -552,7 +564,7 @@ class SqlOutputClauseTest {
       // "Ü" (quoted, uppercase). The parser's own name keeps the "Ü".
       val result = ParsedSql("SELECT Ü FROM t").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("Ü", "Ü", null),
+        SelectItem("Ü", "Ü", null, isStar = false, normalizedExpression = "Ü"),
       )
     }
 
@@ -562,7 +574,7 @@ class SqlOutputClauseTest {
         it.selectItem
       }
       assertThat(result).containsExactly(
-        SelectItem("a", "a", null),
+        SelectItem("a", "a", null, isStar = false, normalizedExpression = "a"),
       )
     }
 
@@ -571,21 +583,21 @@ class SqlOutputClauseTest {
       // The one pair wrapping the whole main query does not change its select list, so this resolves
       // like the unparenthesized form.
       val result = ParsedSql("WITH c AS (SELECT 1 AS a) (SELECT a FROM c)").outputItems.map { it.selectItem }
-      assertThat(result).containsExactly(SelectItem("a", "a", null))
+      assertThat(result).containsExactly(SelectItem("a", "a", null, isStar = false, normalizedExpression = "a"))
     }
 
     @Test
     fun `a parenthesized main query with no WITH clause still resolves`() {
       // Same as above, with no leading WITH clause at all.
       val result = ParsedSql("(SELECT a FROM x)").outputItems.map { it.selectItem }
-      assertThat(result).containsExactly(SelectItem("a", "a", null))
+      assertThat(result).containsExactly(SelectItem("a", "a", null, isStar = false, normalizedExpression = "a"))
     }
 
     @Test
     fun `parenthesized UNION branches with no WITH clause yield the first branch's items`() {
       // PostgreSQL names the result column after the first branch.
       val result = ParsedSql("(SELECT a FROM x) UNION (SELECT b FROM y)").outputItems.map { it.selectItem }
-      assertThat(result).containsExactly(SelectItem("a", "a", null))
+      assertThat(result).containsExactly(SelectItem("a", "a", null, isStar = false, normalizedExpression = "a"))
     }
 
     @Test
@@ -608,22 +620,22 @@ class SqlOutputClauseTest {
       // its select list.
       val result = ParsedSql("(SELECT id, UPPER(name) AS name_upper FROM parent)").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
-        SelectItem("id", "id", null),
-        SelectItem("UPPER(name)", null, null),
+        SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
+        SelectItem("UPPER(name)", null, null, isStar = false, normalizedExpression = "UPPER(name)"),
       )
     }
 
     @Test
     fun `a body wrapped in two redundant pairs of parentheses still finds the top-level SELECT`() {
       val result = ParsedSql("((SELECT id FROM parent))").outputItems.map { it.selectItem }
-      assertThat(result).containsExactly(SelectItem("id", "id", null))
+      assertThat(result).containsExactly(SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"))
     }
 
     @Test
     fun `two separately parenthesized set-operation branches yield the first branch's items`() {
       // The first branch alone names the result column.
       val result = ParsedSql("(SELECT id FROM parent) UNION (SELECT id FROM child)").outputItems.map { it.selectItem }
-      assertThat(result).containsExactly(SelectItem("id", "id", null))
+      assertThat(result).containsExactly(SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"))
     }
 
     @Nested
@@ -1076,54 +1088,54 @@ class SqlOutputClauseTest {
           description = "items strictly before a later star are kept, not discarded",
           sql = "SELECT id AS ident, t.* FROM t",
           expected = listOf(
-            SelectItem("id", "id", null),
+            SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
           ),
         ),
         NotStarGuardCase(
           description = "RETURNING items strictly before a later star are kept, not discarded",
           sql = "UPDATE t SET x = 1 RETURNING id AS ident, t.*",
           expected = listOf(
-            SelectItem("id", "id", null),
+            SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
           ),
         ),
         NotStarGuardCase(
           description = "count star is not mistaken for the star guard even with internal whitespace",
           sql = "SELECT count( * ) AS total, id FROM t",
           expected = listOf(
-            SelectItem("count( * )", null, null, normalizedExpression = "count(*)"),
-            SelectItem("id", "id", null),
+            SelectItem("count( * )", null, null, isStar = false, normalizedExpression = "count(*)"),
+            SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
           ),
         ),
         NotStarGuardCase(
           description = "a cast on a star-shaped expression is not mistaken for the star guard",
           sql = "SELECT t.*::text AS whatever, id FROM t",
           expected = listOf(
-            SelectItem("t.*::text", null, null),
-            SelectItem("id", "id", null),
+            SelectItem("t.*::text", null, null, isStar = false, normalizedExpression = "t.*::text"),
+            SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
           ),
         ),
         NotStarGuardCase(
           description = "count star with an implicit alias is not mistaken for the star guard",
           sql = "SELECT count(*) total, id FROM t",
           expected = listOf(
-            SelectItem("count(*)", null, null),
-            SelectItem("id", "id", null),
+            SelectItem("count(*)", null, null, isStar = false, normalizedExpression = "count(*)"),
+            SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
           ),
         ),
         NotStarGuardCase(
           description = "a cast on a star with no whitespace is unaffected by the implicit-alias check",
           sql = "SELECT t.*::text, id FROM t",
           expected = listOf(
-            SelectItem("t.*::text", null, null),
-            SelectItem("id", "id", null),
+            SelectItem("t.*::text", null, null, isStar = false, normalizedExpression = "t.*::text"),
+            SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
           ),
         ),
         NotStarGuardCase(
           description = "a cast on a star with a comment immediately before it is not mistaken for the star guard",
           sql = "SELECT t.*/*c*/::text, a FROM t",
           expected = listOf(
-            SelectItem("t.*/*c*/::text", null, null, normalizedExpression = "t.* ::text"),
-            SelectItem("a", "a", null),
+            SelectItem("t.*/*c*/::text", null, null, isStar = false, normalizedExpression = "t.* ::text"),
+            SelectItem("a", "a", null, isStar = false, normalizedExpression = "a"),
           ),
         ),
         // On PostgreSQL 18, "SELECT t.* ::text, a FROM t" is valid and returns 2 columns (t, a),
@@ -1132,8 +1144,8 @@ class SqlOutputClauseTest {
           description = "a whitespace-separated cast on a star is not mistaken for an implicit alias",
           sql = "SELECT t.* ::text, a FROM t",
           expected = listOf(
-            SelectItem("t.* ::text", null, null),
-            SelectItem("a", "a", null),
+            SelectItem("t.* ::text", null, null, isStar = false, normalizedExpression = "t.* ::text"),
+            SelectItem("a", "a", null, isStar = false, normalizedExpression = "a"),
           ),
         ),
         // A different spaced-cast shape from the string-text case above, to confirm the "::" check
@@ -1142,8 +1154,8 @@ class SqlOutputClauseTest {
           description = "a whitespace-separated array cast on a star is not mistaken for an implicit alias",
           sql = "SELECT t.* ::integer[], a FROM t",
           expected = listOf(
-            SelectItem("t.* ::integer[]", null, null),
-            SelectItem("a", "a", null),
+            SelectItem("t.* ::integer[]", null, null, isStar = false, normalizedExpression = "t.* ::integer[]"),
+            SelectItem("a", "a", null, isStar = false, normalizedExpression = "a"),
           ),
         ),
         // On PostgreSQL 18, "SELECT t.*-- c\n::text, a FROM t" is valid and returns 2 columns (t, a),
@@ -1152,8 +1164,8 @@ class SqlOutputClauseTest {
           description = "a line comment between a star and its cast is not mistaken for an implicit alias",
           sql = "SELECT t.*-- c\n::text, a FROM t",
           expected = listOf(
-            SelectItem("t.*-- c\n::text", null, null, normalizedExpression = "t.* ::text"),
-            SelectItem("a", "a", null),
+            SelectItem("t.*-- c\n::text", null, null, isStar = false, normalizedExpression = "t.* ::text"),
+            SelectItem("a", "a", null, isStar = false, normalizedExpression = "a"),
           ),
         ),
         // A single item short-circuits the star guard entirely (there is nothing after it to
@@ -1163,7 +1175,7 @@ class SqlOutputClauseTest {
           description = "an implicit alias followed by a comment with no following item is unaffected by truncation",
           sql = "SELECT u.* whatever -- c\nFROM users u",
           expected = listOf(
-            SelectItem("u.*", null, null, isStar = true),
+            SelectItem("u.*", null, null, isStar = true, normalizedExpression = "u.*"),
           ),
         ),
         // Regression guard: PostgreSQL identifiers cannot start with a digit, so "2." is not a valid
@@ -1174,16 +1186,16 @@ class SqlOutputClauseTest {
           description = "a digit-leading qualifier before a star is arithmetic, not a star",
           sql = "SELECT 2.*3 lbl, a FROM t",
           expected = listOf(
-            SelectItem("2.*3", null, null),
-            SelectItem("a", "a", null),
+            SelectItem("2.*3", null, null, isStar = false, normalizedExpression = "2.*3"),
+            SelectItem("a", "a", null, isStar = false, normalizedExpression = "a"),
           ),
         ),
         NotStarGuardCase(
           description = "a digit-leading qualifier before a star with explicit whitespace is arithmetic, not a star",
           sql = "SELECT 2. * 3 AS x, a FROM t",
           expected = listOf(
-            SelectItem("2. * 3", null, null),
-            SelectItem("a", "a", null),
+            SelectItem("2. * 3", null, null, isStar = false, normalizedExpression = "2. * 3"),
+            SelectItem("a", "a", null, isStar = false, normalizedExpression = "a"),
           ),
         ),
         // On PostgreSQL 18.4, "SELECT 2.*a lbl, a FROM t" is valid arithmetic ("2 * a AS lbl"),
@@ -1192,8 +1204,8 @@ class SqlOutputClauseTest {
           description = "a digit-leading qualifier before a star with an implicit alias remains arithmetic, not a star",
           sql = "SELECT 2.*a lbl, a FROM t",
           expected = listOf(
-            SelectItem("2.*a", null, null),
-            SelectItem("a", "a", null),
+            SelectItem("2.*a", null, null, isStar = false, normalizedExpression = "2.*a"),
+            SelectItem("a", "a", null, isStar = false, normalizedExpression = "a"),
           ),
         ),
         // On PostgreSQL 18.4, "SELECT count(*) * 2 tot, (SELECT 1) AS id FROM t" returns 2 columns
@@ -1202,8 +1214,8 @@ class SqlOutputClauseTest {
           description = "an aggregate star multiplied by a constant is not mistaken for the star guard",
           sql = "SELECT count(*) * 2 tot, (SELECT 1) AS id FROM t",
           expected = listOf(
-            SelectItem("count(*) * 2", null, null),
-            SelectItem("(SELECT 1)", null, null),
+            SelectItem("count(*) * 2", null, null, isStar = false, normalizedExpression = "count(*) * 2"),
+            SelectItem("(SELECT 1)", null, null, isStar = false, normalizedExpression = "(SELECT 1)"),
           ),
         ),
         // On PostgreSQL 18.4, "SELECT ALL 2.*a lbl, b FROM t" is valid arithmetic ("ALL 2 * a AS lbl"),
@@ -1212,8 +1224,8 @@ class SqlOutputClauseTest {
           description = "an ALL quantifier fused with a digit-leading qualifier is still arithmetic, not a star",
           sql = "SELECT ALL 2.*a lbl, b FROM t",
           expected = listOf(
-            SelectItem("2.*a", null, null),
-            SelectItem("b", "b", null),
+            SelectItem("2.*a", null, null, isStar = false, normalizedExpression = "2.*a"),
+            SelectItem("b", "b", null, isStar = false, normalizedExpression = "b"),
           ),
         ),
         // On PostgreSQL 18.4, "SELECT DISTINCT a, b FROM t" returns 2 columns (a, b) -- a plain
@@ -1223,8 +1235,8 @@ class SqlOutputClauseTest {
           description = "a DISTINCT quantifier with no ON clause is not part of the first item",
           sql = "SELECT DISTINCT a, b FROM t",
           expected = listOf(
-            SelectItem("a", "a", null),
-            SelectItem("b", "b", null),
+            SelectItem("a", "a", null, isStar = false, normalizedExpression = "a"),
+            SelectItem("b", "b", null, isStar = false, normalizedExpression = "b"),
           ),
         ),
         // The digit-led qualifier "2" makes this multiplication regardless of what the trailing alias is
@@ -1239,16 +1251,16 @@ class SqlOutputClauseTest {
           "a digit-leading qualifier before a star with an NFD implicit alias remains arithmetic, not a star",
           sql = "SELECT 2.*x\u0301 lbl, a FROM t",
           expected = listOf(
-            SelectItem("2.*x\u0301", null, null),
-            SelectItem("a", "a", null),
+            SelectItem("2.*x\u0301", null, null, isStar = false, normalizedExpression = "2.*x\u0301"),
+            SelectItem("a", "a", null, isStar = false, normalizedExpression = "a"),
           ),
         ),
         NotStarGuardCase(
           description = "a multiplication expression with a trailing line comment is not mistaken for the star guard",
           sql = "SELECT a * b -- c\n, id FROM t",
           expected = listOf(
-            SelectItem("a * b", null, null),
-            SelectItem("id", "id", null),
+            SelectItem("a * b", null, null, isStar = false, normalizedExpression = "a * b"),
+            SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
           ),
         ),
         NotStarGuardCase(
@@ -1256,8 +1268,8 @@ class SqlOutputClauseTest {
           "a multiplication expression with an implicit alias and internal block comment is not mistaken as a star",
           sql = "SELECT 2 * x /*c*/ total, id FROM t",
           expected = listOf(
-            SelectItem("2 * x", null, null),
-            SelectItem("id", "id", null),
+            SelectItem("2 * x", null, null, isStar = false, normalizedExpression = "2 * x"),
+            SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
           ),
         ),
         NotStarGuardCase(
@@ -1265,16 +1277,16 @@ class SqlOutputClauseTest {
           "a function-call multiplication expression with a trailing line comment is not mistaken for the star guard",
           sql = "SELECT sum(x) * 2 -- c\n, id FROM t",
           expected = listOf(
-            SelectItem("sum(x) * 2", null, null),
-            SelectItem("id", "id", null),
+            SelectItem("sum(x) * 2", null, null, isStar = false, normalizedExpression = "sum(x) * 2"),
+            SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
           ),
         ),
         NotStarGuardCase(
           description = "a cast on a star with a trailing line comment is not mistaken for the star guard",
           sql = "SELECT t.*::text -- c\n, id FROM t",
           expected = listOf(
-            SelectItem("t.*::text", null, null),
-            SelectItem("id", "id", null),
+            SelectItem("t.*::text", null, null, isStar = false, normalizedExpression = "t.*::text"),
+            SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
           ),
         ),
         NotStarGuardCase(
@@ -1282,8 +1294,8 @@ class SqlOutputClauseTest {
           "count star with an implicit alias and a trailing line comment is not mistaken for the star guard",
           sql = "SELECT count(*) total -- c\n, id FROM t",
           expected = listOf(
-            SelectItem("count(*)", null, null),
-            SelectItem("id", "id", null),
+            SelectItem("count(*)", null, null, isStar = false, normalizedExpression = "count(*)"),
+            SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
           ),
         ),
         NotStarGuardCase(
@@ -1291,24 +1303,24 @@ class SqlOutputClauseTest {
           "a multiplication expression split across a line comment and a newline is not mistaken for the star guard",
           sql = "SELECT a * -- c\n b, id FROM t",
           expected = listOf(
-            SelectItem("a * -- c\n b", null, null, normalizedExpression = "a * b"),
-            SelectItem("id", "id", null),
+            SelectItem("a * -- c\n b", null, null, isStar = false, normalizedExpression = "a * b"),
+            SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
           ),
         ),
         NotStarGuardCase(
           description = "a parenthesized cast with an implicit alias is not mistaken for the star guard",
           sql = "SELECT (a*b)::int lbl, id FROM t",
           expected = listOf(
-            SelectItem("(a*b)::int", null, null),
-            SelectItem("id", "id", null),
+            SelectItem("(a*b)::int", null, null, isStar = false, normalizedExpression = "(a*b)::int"),
+            SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
           ),
         ),
         NotStarGuardCase(
           description = "a string literal containing a star with an implicit alias is not mistaken for the star guard",
           sql = "SELECT 'lit *' foo, id FROM t",
           expected = listOf(
-            SelectItem("'lit *'", null, null),
-            SelectItem("id", "id", null),
+            SelectItem("'lit *'", null, null, isStar = false, normalizedExpression = "'lit *'"),
+            SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
           ),
         ),
         NotStarGuardCase(
@@ -1316,22 +1328,22 @@ class SqlOutputClauseTest {
           "an array-indexed multiplication expression with an implicit alias is not mistaken for the star guard",
           sql = "SELECT arr[1] * 2 tot, id FROM t",
           expected = listOf(
-            SelectItem("arr[1] * 2", null, null),
-            SelectItem("id", "id", null),
+            SelectItem("arr[1] * 2", null, null, isStar = false, normalizedExpression = "arr[1] * 2"),
+            SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
           ),
         ),
         NotStarGuardCase(
           description = "a lone star with no implicit alias is unaffected by the implicit-alias check",
           sql = "SELECT * FROM t",
           expected = listOf(
-            SelectItem("*", null, null, isStar = true),
+            SelectItem("*", null, null, isStar = true, normalizedExpression = "*"),
           ),
         ),
         NotStarGuardCase(
           description = "a lone qualified star with no implicit alias is unaffected by the implicit-alias check",
           sql = "SELECT t.* FROM t",
           expected = listOf(
-            SelectItem("t.*", null, null, isStar = true),
+            SelectItem("t.*", null, null, isStar = true, normalizedExpression = "t.*"),
           ),
         ),
         // "preferences prefs" is a real implicit alias (no "AS") on the column reference
@@ -1341,8 +1353,8 @@ class SqlOutputClauseTest {
           "an implicit alias on a non-star column is not mistaken for the star guard and keeps its column name",
           sql = "SELECT preferences prefs, id FROM t",
           expected = listOf(
-            SelectItem("preferences", "preferences", null),
-            SelectItem("id", "id", null),
+            SelectItem("preferences", "preferences", null, isStar = false, normalizedExpression = "preferences"),
+            SelectItem("id", "id", null, isStar = false, normalizedExpression = "id"),
           ),
         ),
         // columnName is `null` for the bare literal "5": it is a numeric literal, not a column reference.
@@ -1350,8 +1362,8 @@ class SqlOutputClauseTest {
           description = "WITH clause main query with no FROM clause",
           sql = "WITH c AS (SELECT 1) SELECT 5, 'x'",
           expected = listOf(
-            SelectItem("5", null, null),
-            SelectItem("'x'", null, null),
+            SelectItem("5", null, null, isStar = false, normalizedExpression = "5"),
+            SelectItem("'x'", null, null, isStar = false, normalizedExpression = "'x'"),
           ),
         ),
         // With no WITH clause, the first branch's SELECT is the first SELECT in the statement.
@@ -1359,7 +1371,7 @@ class SqlOutputClauseTest {
           description = "UNION picks the first branch's columns",
           sql = "SELECT a FROM x UNION SELECT b FROM y",
           expected = listOf(
-            SelectItem("a", "a", null),
+            SelectItem("a", "a", null, isStar = false, normalizedExpression = "a"),
           ),
         ),
       )
