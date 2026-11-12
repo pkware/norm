@@ -9,7 +9,7 @@ import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isInstanceOf
 import assertk.assertions.messageContains
-import norm.generator.baseline.BLOCK_COMMENT_ISSUE_INPUT
+import norm.generator.corpus.BLOCK_COMMENT_ISSUE_INPUT
 import norm.generator.libpgquery.LibPgQuery
 import norm.generator.libpgquery.rejected
 import org.junit.jupiter.api.Nested

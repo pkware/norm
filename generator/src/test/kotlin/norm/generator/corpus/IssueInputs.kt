@@ -1,4 +1,4 @@
-package norm.generator.baseline
+package norm.generator.corpus
 
 private const val DOLLAR = '$'
 

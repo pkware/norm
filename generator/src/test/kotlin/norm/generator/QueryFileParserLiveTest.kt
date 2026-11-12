@@ -4,7 +4,7 @@ import assertk.assertThat
 import assertk.assertions.isEqualTo
 import assertk.assertions.isNotNull
 import assertk.assertions.isNull
-import norm.generator.baseline.ScannerCorpus
+import norm.generator.corpus.ScannerCorpus
 import norm.generator.libpgquery.LibPgQuery
 import norm.generator.libpgquery.LibPgQueryResult
 import norm.generator.libpgquery.TokenNumber

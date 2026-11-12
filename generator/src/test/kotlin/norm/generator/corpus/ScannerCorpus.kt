@@ -1,4 +1,4 @@
-package norm.generator.baseline
+package norm.generator.corpus
 
 import norm.generator.QueryFileParser
 import java.nio.file.Files
@@ -9,7 +9,7 @@ import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.readText
 
 /**
- * One input to the scanner functions the baseline records.
+ * One SQL text that tests run through the scanner functions.
  *
  * @property key where the text comes from, for example `test-scenarios/ctes/queries.sql#getCte`.
  * @property text the input, which may be a whole query file or a single query.
@@ -25,6 +25,11 @@ internal val LITERAL_SOURCE_FILES = listOf(
   "SqlCteClauseTest",
   "QueryFileParserTest",
 )
+
+private const val LITERAL_CORPUS_RESOURCE = "/scanner-corpus/literal-corpus.txt"
+
+private const val HEX_RADIX = 16
+private const val UNICODE_ESCAPE_DIGITS = 4
 
 private val SCENARIO_ROOTS = listOf("test-scenarios", "test-scenarios-frameworks")
 
@@ -58,13 +63,13 @@ internal object ScannerCorpus {
 
   private fun literalEntries(): List<CorpusEntry> {
     val resource =
-      checkNotNull(ScannerCorpus::class.java.getResourceAsStream(ScannerBaselineFiles.LITERAL_CORPUS_RESOURCE)) {
+      checkNotNull(ScannerCorpus::class.java.getResourceAsStream(LITERAL_CORPUS_RESOURCE)) {
         "The literal corpus is missing from the test resources."
       }
     val lines = resource.use { String(it.readBytes(), Charsets.UTF_8) }.lines().filter { it.isNotEmpty() }
     return lines.chunked(2).map { (keyLine, textLine) ->
       check(keyLine.startsWith("=== ") && textLine.startsWith("text: ")) { "Malformed literal corpus near $keyLine" }
-      CorpusEntry(keyLine.removePrefix("=== "), ScannerBaseline.unescape(textLine.removePrefix("text: ")))
+      CorpusEntry(keyLine.removePrefix("=== "), unescape(textLine.removePrefix("text: ")))
     }
   }
 
@@ -73,4 +78,34 @@ internal object ScannerCorpus {
       QUERY_BODY_ISSUE_INPUTS.mapIndexed { index, text -> CorpusEntry("issue-419#${index + 1}", text) } +
       GLUED_ISSUE_INPUTS.mapIndexed { index, text -> CorpusEntry("issue-glued#${index + 1}", text) } +
       CorpusEntry("issue-459", BLOCK_COMMENT_ISSUE_INPUT)
+}
+
+/**
+ * Reads a corpus line, in which `\\`, `\n`, `\r`, `\t` and `\uXXXX` stand for a backslash, a line feed, a carriage
+ * return, a tab and a UTF-16 code unit.
+ *
+ * @throws IllegalStateException if a backslash is followed by any other character.
+ */
+internal fun unescape(value: String): String = buildString {
+  var index = 0
+  while (index < value.length) {
+    val character = value[index]
+    if (character != '\\') {
+      append(character)
+      index++
+      continue
+    }
+    when (val next = value[index + 1]) {
+      '\\' -> append('\\')
+      'n' -> append('\n')
+      'r' -> append('\r')
+      't' -> append('\t')
+      'u' -> {
+        append(value.substring(index + 2, index + 2 + UNICODE_ESCAPE_DIGITS).toInt(HEX_RADIX).toChar())
+        index += UNICODE_ESCAPE_DIGITS
+      }
+      else -> error("Unknown escape \\$next")
+    }
+    index += 2
+  }
 }

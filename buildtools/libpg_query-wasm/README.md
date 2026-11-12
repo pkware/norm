@@ -39,6 +39,6 @@ job of `.github/workflows/libpg-query-wasm.yml` fails on it until the rebuilt fi
 4. Run the grammar sweep with `./gradlew :generator:test --tests 'norm.generator.libpgquery.RegressSweepTest'`. A
    statement that stops parsing is a grammar change to review. Add it to `reject-list.txt` only when PostgreSQL
    rejects it too, as `generator/src/test/resources/pg-regress/README.md` describes.
-5. Run `./gradlew :generator:generateScannerBaseline` and review the diff of `scanner-baseline/` and
-   `sweep-skips.txt` under `generator/src/test/resources/`.
+5. Run `./gradlew :generator:generateSweepSkips` and review the diff of `sweep-skips.txt` under
+   `generator/src/test/resources/pg-regress/`.
 6. Run `./gradlew check` and commit everything to the Renovate branch.
