@@ -23,7 +23,7 @@ internal data class CteHop(val name: String, val ctelevelsup: Int)
  * Lexical `WITH`-clause nesting for a CTE-provenance walk: index `0` is the current query block's own
  * scope, index `1` the block one level up that declared it, and so on. [Frame] is whatever a resolver
  * uses to look up a CTE's declaration within one scope — a `Map<String, NodeTreeCteDefinition>` for the
- * node-tree side, a `List<CteDefinition>` for the SQL-text side.
+ * node-tree side, a `List<CommonTableExpression>` for the SQL-text side.
  *
  * A CTE's scope belongs to its declaration site, not to the hop path taken to reach it: entering a
  * CTE's body rebuilds the stack as [frames]`.drop(levelsUp)` with the body's own scope pushed on

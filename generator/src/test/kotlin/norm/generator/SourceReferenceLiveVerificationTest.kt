@@ -393,7 +393,7 @@ private const val COLUMN_LIST_FIELD = "aliascolnames"
  * @return the spans, or `null` when [parsed] has no parse tree or no `WITH` clause.
  */
 private fun cteClauseSpans(parsed: ParsedSql): CteClauseSpans? {
-  val statement = parsed.tree?.let(::firstStatement)?.fields?.values?.singleOrNull() as? JsonValue.JsonObject
+  val statement = parsed.tree?.firstStatement?.node?.fields?.values?.singleOrNull() as? JsonValue.JsonObject
   val expressions = statement?.objectField(ParseTreeNames.WITH_CLAUSE)
     ?.objectArrayField(ParseTreeNames.COMMON_TABLE_EXPRESSIONS)
     .orEmpty()

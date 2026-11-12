@@ -1,5 +1,7 @@
 package norm.generator
 
+import norm.generator.libpgquery.CommonTableExpression
+
 /**
  * Typed representation of PostgreSQL expression nodes from `pg_node_tree` text.
  *
@@ -362,8 +364,8 @@ internal fun PgNodeExpression.mapChildren(transform: (PgNodeExpression) -> PgNod
  * A CTE (Common Table Expression) definition parsed from a `{COMMONTABLEEXPR ...}` block
  * in the `:cteList` of a query's node tree.
  *
- * Named with a `NodeTree` prefix to distinguish from [CteDefinition] in `SqlCteClause.kt`, which
- * represents SQL-text-level CTE positions for DML transformation.
+ * Named with a `NodeTree` prefix to distinguish from [CommonTableExpression], which
+ * represents a CTE of the SQL text.
  *
  * @property name The CTE name (from `:ctename`).
  * @property queryBlock The full `{QUERY ...}` block text of the CTE's body (from `:ctequery`).

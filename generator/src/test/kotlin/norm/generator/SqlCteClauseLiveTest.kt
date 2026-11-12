@@ -4,6 +4,8 @@ import assertk.assertThat
 import assertk.assertions.hasSize
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
+import norm.generator.libpgquery.CommonTableExpression
+import norm.generator.libpgquery.StatementNode
 import org.intellij.lang.annotations.Language
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
@@ -16,19 +18,19 @@ import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.SQLException
 
-/** Compares [cteDefinitions] results with a live PostgreSQL server. */
+/** Compares [StatementNode.commonTableExpressions] results with a live PostgreSQL server. */
 @Testcontainers
 class SqlCteClauseLiveTest {
 
   @Test
-  fun `the server truncates an over-length ASCII CTE name to the name cteDefinitions reports`() {
+  fun `the server truncates an over-length ASCII CTE name to the name commonTableExpressions reports`() {
     val sql = "WITH ${"c".repeat(70)} AS (SELECT 1 AS v) SELECT v FROM ${"c".repeat(63)}"
     assertThat(firstColumn(sql)).isEqualTo("1")
     assertThat(definitions(sql)[0].name).isEqualTo("c".repeat(63))
   }
 
   @Test
-  fun `the server truncates an over-length multi-byte CTE name to the name cteDefinitions reports`() {
+  fun `the server truncates an over-length multi-byte CTE name to the name commonTableExpressions reports`() {
     val sql = "WITH ${"é".repeat(32)} AS (SELECT 1 AS v) SELECT v FROM ${"é".repeat(31)}"
     assertThat(firstColumn(sql)).isEqualTo("1")
     assertThat(definitions(sql)[0].name).isEqualTo("é".repeat(31))
@@ -42,7 +44,7 @@ class SqlCteClauseLiveTest {
   }
 
   @Test
-  fun `the server rejects a body holding a literal dollar template and cteDefinitions returns nothing`() {
+  fun `the server rejects a body holding a literal dollar template and commonTableExpressions is empty`() {
     val sql = "WITH renamed AS (\n  SELECT a\${'$'}b\${'$'}c AS msg FROM note\n),\n" +
       "counted AS (\n  SELECT length(msg) AS len FROM renamed\n)\nSELECT len FROM counted"
     assertThat(syntaxErrorState(sql)).isEqualTo(SYNTAX_ERROR_STATE)
@@ -50,14 +52,14 @@ class SqlCteClauseLiveTest {
   }
 
   @Test
-  fun `the server rejects an INSERT body without INTO and cteDefinitions returns nothing`() {
+  fun `the server rejects an INSERT body without INTO and commonTableExpressions is empty`() {
     val sql = "WITH w AS (INSERT  (a) VALUES (1) RETURNING a) SELECT a INTO c FROM w"
     assertThat(syntaxErrorState(sql)).isEqualTo(SYNTAX_ERROR_STATE)
     assertThat(definitions(sql)).isEmpty()
   }
 
-  private fun definitions(sql: String): List<CteDefinition> =
-    ParsedSql(sql).tree?.let(::firstStatement)?.let(::cteDefinitions).orEmpty()
+  private fun definitions(sql: String): List<CommonTableExpression> =
+    ParsedSql(sql).tree?.firstStatement?.commonTableExpressions.orEmpty()
 
   private fun firstColumn(@Language("PostgreSQL") sql: String): String = connection.createStatement().use { statement ->
     statement.executeQuery(sql).use { resultSet ->

@@ -1,5 +1,8 @@
 package norm.generator
 
+import norm.generator.libpgquery.CommonTableExpression
+import norm.generator.libpgquery.StatementNode
+
 /**
  * Extracts, from the developer's own original SQL text, the expression a [NodeTreeColumnProvenance]
  * points at.
@@ -41,7 +44,7 @@ internal fun resolveNodeTreeProvenanceExpression(
   val cteBodyBlock = scopedNodeTreeCteQueryBlock(nodeTreeText, provenance.hops, parser) ?: return null
   val bodyResultNames = parser.resultProjection(cteBodyBlock).entries.map { it.resultName }
 
-  val items = scopedSqlCteBody(parsedSql, provenance.hops)?.let(parsedSql::outputItemsOf) ?: return null
+  val items = scopedSqlCteBody(parsedSql, provenance.hops)?.let { parsedSql.outputItemsOf(it) } ?: return null
 
   if (items.size != bodyResultNames.size) return null
   if (bodyResultNames.distinct().size != bodyResultNames.size) return null
@@ -128,23 +131,23 @@ private fun scopedNodeTreeCteQueryBlock(nodeTreeText: String, hops: List<CteHop>
 
 /**
  * The SQL-text counterpart of [scopedNodeTreeCteQueryBlock]: replays [hops] against the `WITH` clauses of [parsedSql]'s
- * own parse tree, maintaining an analogous scope stack of [CteDefinition] lists, and returns the node of the last hop's
+ * own parse tree, maintaining an analogous scope stack of [CommonTableExpression] lists, and returns the node of the last hop's
  * CTE body.
  *
  * @return `null` if any hop's [CteHop.ctelevelsup] addresses a scope-stack depth that does not exist,
- *   or its [CteHop.name] does not match ([CteDefinition.name], PostgreSQL's own logical identifier
+ *   or its [CteHop.name] does not match ([CommonTableExpression.name], PostgreSQL's own logical identifier
  *   value) exactly one definition in that scope
  */
-private fun scopedSqlCteBody(parsedSql: ParsedSql, hops: List<CteHop>): JsonValue.JsonObject? {
-  val statement = parsedSql.tree?.let(::firstStatement) ?: return null
-  var scopeStack = CteScopeStack(cteDefinitions(statement))
-  var resolvedBody: JsonValue.JsonObject? = null
+private fun scopedSqlCteBody(parsedSql: ParsedSql, hops: List<CteHop>): StatementNode? {
+  val statement = parsedSql.tree?.firstStatement ?: return null
+  var scopeStack = CteScopeStack(statement.commonTableExpressions)
+  var resolvedBody: StatementNode? = null
   for (hop in hops) {
     val scope = scopeStack.frameAt(hop.ctelevelsup) ?: return null
     // Both names are the parser's `ctename`, so a direct comparison is exact.
     val definition = scope.filter { it.name == hop.name }.singleOrNull() ?: return null
-    resolvedBody = definition.ctequery
-    scopeStack = scopeStack.entering(hop.ctelevelsup, cteDefinitions(definition.ctequery))
+    resolvedBody = definition.query
+    scopeStack = scopeStack.entering(hop.ctelevelsup, definition.query.commonTableExpressions)
   }
   return resolvedBody
 }

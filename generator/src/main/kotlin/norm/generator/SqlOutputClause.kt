@@ -1,14 +1,14 @@
 package norm.generator
 
-import norm.generator.libpgquery.ParseTreeNames
+import norm.generator.libpgquery.OutputStatement
+import norm.generator.libpgquery.ParseResult
+import norm.generator.libpgquery.ResultTarget
 import norm.generator.libpgquery.ScanToken
 import norm.generator.libpgquery.TokenNumber
 import norm.generator.libpgquery.isComment
 import norm.generator.libpgquery.isKeyword
-import norm.generator.libpgquery.locationFieldNames
 
 internal const val AS_KEYWORD = "AS"
-private const val NO_LOCATION = -1
 
 /**
  * A parsed item from a SQL SELECT or RETURNING list.
@@ -57,8 +57,7 @@ internal fun alignSelectItems(parsed: ParsedSql, columnCount: Int): List<SelectI
  * [ParsedSql.outputItems] then holds only the items of the leftmost branch. The other branches may compute the same
  * result column differently, although the column takes its name from the first branch.
  */
-internal fun hasTopLevelSetOperation(parsed: ParsedSql): Boolean =
-  parsed.tree?.let(::findOutputStatement)?.isSetOperation ?: false
+internal fun hasTopLevelSetOperation(parsed: ParsedSql): Boolean = parsed.outputStatement?.isSetOperation ?: false
 
 /**
  * A single item of [ParsedSql.outputItems], pairing the [selectItem] with the alias that follows its
@@ -107,34 +106,19 @@ internal data class OutputItemWithAlias(val selectItem: SelectItem, val alias: S
  * item, falling back to `ResultSetMetaData.getColumnName`, so no wrong original name is reported.
  */
 internal val ParsedSql.outputItems: List<OutputItemWithAlias>
-  get() = tree?.let(::findOutputStatementNode)?.let(::outputItemsOf).orEmpty()
+  get() = outputStatement?.let { outputItemsOf(it) }.orEmpty()
 
-/**
- * The output items of [statementNode], a statement node of [ParsedSql.tree] in the shape [outputStatementOf] reads,
- * such as a [CteDefinition.ctequery]. Items are cut at the first star as [outputItems] describes. Asking for the same
- * node again returns the same list.
- *
- * Locations in the tree index the whole of [ParsedSql.sql], so a CTE body is read from the text of the statement that
- * declares it.
- */
-internal fun ParsedSql.outputItemsOf(statementNode: JsonValue.JsonObject): List<OutputItemWithAlias> =
-  outputItemsByStatement.getOrPut(statementNode) { parseOutputItems(this, statementNode) }
-
-private fun parseOutputItems(parsed: ParsedSql, statementNode: JsonValue.JsonObject): List<OutputItemWithAlias> {
+/** Reads the items of [output], which [parsed] found in its own tree, and cuts them at the first star. */
+internal fun parseOutputItems(parsed: ParsedSql, output: OutputStatement): List<OutputItemWithAlias> {
   val tree = parsed.tree ?: return emptyList()
-  val statement = outputStatementOf(statementNode) ?: return emptyList()
-  if (statement.targets.isEmpty()) return emptyList()
-  val items = outputItems(parsed, tree, statement) ?: return emptyList()
+  if (output.targets.isEmpty()) return emptyList()
+  val items = outputItems(parsed, tree, output) ?: return emptyList()
 
   val firstStarIndex = items.indexOfFirst { it.selectItem.isStar }
   return if (firstStarIndex < 0 || items.size == 1) items else items.take(firstStarIndex)
 }
 
-private fun outputItems(
-  parsed: ParsedSql,
-  tree: JsonValue.JsonObject,
-  statement: OutputStatement,
-): List<OutputItemWithAlias>? {
+private fun outputItems(parsed: ParsedSql, tree: ParseResult, statement: OutputStatement): List<OutputItemWithAlias>? {
   val sql = parsed.sql
   val tokens = parsed.significantTokens
   val targets = statement.targets
@@ -158,8 +142,8 @@ private fun outputItems(
  */
 internal class ItemExtent(val firstToken: Int, val expressionLastToken: Int, val isAliasExplicit: Boolean)
 
-private fun firstTokenIndex(tokens: List<ScanToken>, target: JsonValue.JsonObject): Int? {
-  val location = target.intField(ParseTreeNames.LOCATION) ?: return null
+private fun firstTokenIndex(tokens: List<ScanToken>, target: ResultTarget): Int? {
+  val location = target.location ?: return null
   if (location < 0) return null
   return tokens.binarySearchBy(location) { it.start }.takeIf { it >= 0 }
 }
@@ -168,14 +152,14 @@ private fun firstTokenIndex(tokens: List<ScanToken>, target: JsonValue.JsonObjec
 private fun extentBeforeNextItem(
   sql: String,
   tokens: List<ScanToken>,
-  target: JsonValue.JsonObject,
+  target: ResultTarget,
   firstToken: Int,
   nextFirstToken: Int,
 ): ItemExtent? {
   val commaIndex = nextFirstToken - 1
   if (commaIndex - 1 < firstToken || tokens[commaIndex].token != TokenNumber.COMMA) return null
   val lastToken = commaIndex - 1
-  if (target.stringField(ParseTreeNames.ALIAS) == null) return ItemExtent(firstToken, lastToken, false)
+  if (target.alias == null) return ItemExtent(firstToken, lastToken, false)
 
   val aliasFirstToken = lastToken
   val isAliasExplicit = aliasFirstToken - 1 > firstToken && isKeyword(sql, tokens[aliasFirstToken - 1], AS_KEYWORD)
@@ -184,60 +168,13 @@ private fun extentBeforeNextItem(
   return ItemExtent(firstToken, expressionLastToken, isAliasExplicit)
 }
 
-internal fun hasConstantValue(item: JsonValue.JsonObject, location: Int): Boolean {
-  val value = item.objectField(ParseTreeNames.VALUE) ?: return false
-  val constant = value.objectField(ParseTreeNames.CONSTANT)
-  return value.fields.size == 1 && constant?.intField(ParseTreeNames.LOCATION) == location
-}
-
-internal fun isItemAt(value: JsonValue.JsonObject, location: Int): Boolean =
-  value.intField(ParseTreeNames.LOCATION) == location && value.fields.containsKey(ParseTreeNames.VALUE)
-
-/** The first node of [value] that [isItemAt] accepts, in document order, or `null` when there is none. */
-internal fun findItemAt(value: JsonValue, location: Int): JsonValue.JsonObject? = when (value) {
-  is JsonValue.JsonObject ->
-    value.takeIf { isItemAt(it, location) } ?: value.fields.values.firstNotNullOfOrNull { findItemAt(it, location) }
-  is JsonValue.JsonArray -> value.items.firstNotNullOfOrNull { findItemAt(it, location) }
-  else -> null
-}
-
-/**
- * [value] with the `val` of the item that starts at [location] replaced by `null` and every location field removed,
- * so that trees of texts of different length compare equal when only that value differs.
- */
-internal fun withoutItemValueAndLocations(value: JsonValue, location: Int): JsonValue = when (value) {
-  is JsonValue.JsonObject -> {
-    val isItem = isItemAt(value, location)
-    JsonValue.JsonObject(
-      value.fields.filterKeys { it !in locationFieldNames }.mapValues { (key, child) ->
-        if (isItem && key == ParseTreeNames.VALUE) {
-          JsonValue.JsonScalar("null")
-        } else {
-          withoutItemValueAndLocations(child, location)
-        }
-      },
-    )
-  }
-  is JsonValue.JsonArray -> JsonValue.JsonArray(value.items.map { withoutItemValueAndLocations(it, location) })
-  else -> value
-}
-
-internal fun largestLocation(value: JsonValue): Int = when (value) {
-  is JsonValue.JsonObject -> maxOf(
-    value.intField(ParseTreeNames.LOCATION) ?: NO_LOCATION,
-    value.fields.values.maxOfOrNull(::largestLocation) ?: NO_LOCATION,
-  )
-  is JsonValue.JsonArray -> value.items.maxOfOrNull(::largestLocation) ?: NO_LOCATION
-  else -> NO_LOCATION
-}
-
-private fun buildItem(parsed: ParsedSql, target: JsonValue.JsonObject, extent: ItemExtent): OutputItemWithAlias {
+private fun buildItem(parsed: ParsedSql, target: ResultTarget, extent: ItemExtent): OutputItemWithAlias {
   val tokens = parsed.significantTokens
   val start = tokens[extent.firstToken].start
   val end = tokens[extent.expressionLastToken].end
   val expression = parsed.sql.substring(start, end)
   val selectItem = selectItem(expression, target, normalizedExpression(parsed, start, end))
-  return OutputItemWithAlias(selectItem, target.stringField(ParseTreeNames.ALIAS), extent.isAliasExplicit)
+  return OutputItemWithAlias(selectItem, target.alias, extent.isAliasExplicit)
 }
 
 /** The text of [ParsedSql.sql] from [start] to [end] as [SelectItem.normalizedExpression] describes it. */
@@ -254,32 +191,13 @@ private fun normalizedExpression(parsed: ParsedSql, start: Int, end: Int): Strin
   }
 }
 
-private fun selectItem(expression: String, target: JsonValue.JsonObject, normalizedExpression: String): SelectItem {
-  val value = target.objectField(ParseTreeNames.VALUE)
-  val isStar = value != null && isStar(value)
-  val names = value?.let(::columnReferenceNames)
-  if (names == null) return SelectItem(expression, null, null, isStar, normalizedExpression)
-
+private fun selectItem(expression: String, target: ResultTarget, normalizedExpression: String): SelectItem {
+  val names = target.columnReferenceNames
   return SelectItem(
     expression = expression,
-    columnName = names.last(),
-    tableName = if (names.size == 2) names.first() else null,
-    isStar = isStar,
+    columnName = names?.last(),
+    tableName = if (names?.size == 2) names.first() else null,
+    isStar = target.isStar,
     normalizedExpression = normalizedExpression,
   )
-}
-
-private fun isStar(value: JsonValue.JsonObject): Boolean {
-  val columnFields = value.objectField(ParseTreeNames.COLUMN_REFERENCE)?.objectArrayField(ParseTreeNames.FIELDS)
-  if (columnFields != null) return columnFields.lastOrNull()?.objectField(ParseTreeNames.STAR) != null
-  val indirection = value.objectField(ParseTreeNames.INDIRECTION_NODE)?.objectArrayField(ParseTreeNames.INDIRECTION)
-  return indirection?.lastOrNull()?.objectField(ParseTreeNames.STAR) != null
-}
-
-/** The names of a one- or two-part column reference, or `null` for any other expression. */
-private fun columnReferenceNames(value: JsonValue.JsonObject): List<String>? {
-  val fields =
-    value.objectField(ParseTreeNames.COLUMN_REFERENCE)?.objectArrayField(ParseTreeNames.FIELDS) ?: return null
-  if (fields.size !in 1..2) return null
-  return fields.map { it.objectField(ParseTreeNames.STRING)?.stringField(ParseTreeNames.STRING_VALUE) ?: return null }
 }
