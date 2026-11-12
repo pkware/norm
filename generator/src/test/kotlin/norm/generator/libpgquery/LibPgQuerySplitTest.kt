@@ -5,7 +5,7 @@ import assertk.assertThat
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isInstanceOf
-import norm.generator.baseline.ScannerCorpus
+import norm.generator.corpus.ScannerCorpus
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 

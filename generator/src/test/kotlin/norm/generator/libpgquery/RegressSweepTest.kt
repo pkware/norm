@@ -78,7 +78,7 @@ class RegressSweepTest {
     @Test
     fun `the committed skip list matches the skips the sweep computes`() {
       val committed = checkNotNull(RegressSweepTest::class.java.getResourceAsStream("/pg-regress/sweep-skips.txt")) {
-        "pg-regress/sweep-skips.txt is missing. Run ./gradlew :generator:generateScannerBaseline."
+        "pg-regress/sweep-skips.txt is missing. Run ./gradlew :generator:generateSweepSkips."
       }.use { String(it.readBytes(), Charsets.UTF_8) }.replace("\r\n", "\n")
 
       assertThat(SweepSkipsReport.render()).isEqualTo(committed)

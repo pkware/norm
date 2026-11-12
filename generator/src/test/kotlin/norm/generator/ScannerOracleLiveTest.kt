@@ -2,8 +2,8 @@ package norm.generator
 
 import assertk.assertThat
 import assertk.assertions.isEqualTo
-import norm.generator.baseline.GLUED_ISSUE_INPUTS
-import norm.generator.baseline.ScannerCorpus
+import norm.generator.corpus.GLUED_ISSUE_INPUTS
+import norm.generator.corpus.ScannerCorpus
 import norm.generator.libpgquery.LibPgQuery
 import norm.generator.libpgquery.LibPgQueryResult
 import org.junit.jupiter.api.AfterAll
@@ -48,7 +48,7 @@ internal data class OracleDisagreement(
 internal data class KnownOracleDisagreement(val issue: Int, val disagreement: OracleDisagreement)
 
 /**
- * Compares the functions the baseline records with a live server on every query of every scenario except the embed
+ * Compares the scanner functions with a live server on every query of every scenario except the embed
  * scenarios: parameter counts from the JDBC driver and from `PREPARE`, and the result column count and labels from
  * the driver. Each statement is also rebuilt with every item's expression in parentheses, which the server must
  * describe exactly as the original, so an expression that ends early or late is caught.

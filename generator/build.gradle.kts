@@ -42,19 +42,19 @@ dependencies {
 
 tasks.test {
   useJUnitPlatform {
-    excludeTags("generateScannerBaseline")
+    excludeTags("generateSweepSkips")
   }
 }
 
-tasks.register<Test>("generateScannerBaseline") {
-  description = "Rewrites the committed scanner baseline and the grammar sweep skip list"
+tasks.register<Test>("generateSweepSkips") {
+  description = "Rewrites the committed grammar sweep skip list"
   group = "verification"
 
   testClassesDirs = sourceSets.test.get().output.classesDirs
   classpath = sourceSets.test.get().runtimeClasspath
 
   useJUnitPlatform {
-    includeTags("generateScannerBaseline")
+    includeTags("generateSweepSkips")
   }
 
   // The task writes into the source tree, so a cached or up-to-date result would leave the files stale.
