@@ -176,7 +176,7 @@ class TypeRepositoryTest {
 
     @Test
     fun `a computed expression under a parenthesized top-level UNION gets no source-reference KDoc line`() {
-      // parseOutputItemsWithAlias (via ParsedSql.outputItems) strips redundant outer parentheses from
+      // ParsedSql.outputItems strips redundant outer parentheses from
       // the main-query window. hasTopLevelSetOperation scans that same stripped window, so it sees
       // the UNION at depth zero and computedExpression stays `null`.
       val queryText = "(SELECT UPPER(x) AS u FROM t UNION SELECT LOWER(x) FROM t)"
@@ -812,7 +812,7 @@ class TypeRepositoryTest {
     fun `a lone star select item over a CTE reports the CTE body's own resolved expression`() {
       // "WITH c AS (SELECT UPPER(s) AS u FROM t) SELECT * FROM c" -- ParsedSql.outputItems returns the
       // single star item ("*") as-is and uses the empty-list fail-safe only for a star
-      // followed by more items (see parseOutputItemsWithAlias's own KDoc), so
+      // followed by more items (see the KDoc of ParsedSql.outputItems), so
       // selectItem.columnName is `null` for it, as for a genuine computed expression.
       // computedExpression must not hold the star's own literal text and document "*" as if it
       // were the expression that produced the column -- even though provenanceExpression (stood

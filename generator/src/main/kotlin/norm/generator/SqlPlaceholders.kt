@@ -5,6 +5,7 @@ import norm.generator.libpgquery.LibPgQuery
 import norm.generator.libpgquery.LibPgQueryException
 import norm.generator.libpgquery.ScanToken
 import norm.generator.libpgquery.TokenNumber
+import norm.generator.libpgquery.isKeyword
 
 /**
  * Replaces each `?` parameter placeholder in [parsed] with [replacement] applied to its 0-based
@@ -54,32 +55,6 @@ internal fun placeholderPositions(parsed: ParsedSql): IntArray {
 }
 
 /**
- * Rewrites [sql] so that PostgreSQL's parser accepts it and every other token keeps its offset.
- *
- * Each operator token is rewritten in place: `??` becomes `?`, a placeholder `?` becomes `0`, other characters are
- * kept, and spaces at the end of the token restore its length. Text outside operator tokens is unchanged, as is text
- * from the point where the lexer rejects [sql] onward.
- *
- * @param tokens The lexer tokens of [sql].
- * @return A string of the same length as [sql].
- */
-internal fun parserFormOf(sql: String, tokens: List<ScanToken>): String {
-  val characters = sql.toCharArray()
-  for (token in operatorTokens(tokens)) {
-    var written = token.start
-    var read = token.start
-    forEachQuestionMark(sql, token) { index, isEscape ->
-      while (read < index) characters[written++] = sql[read++]
-      characters[written++] = if (isEscape) '?' else '0'
-      read = index + if (isEscape) 2 else 1
-    }
-    while (read < token.end) characters[written++] = sql[read++]
-    characters.fill(' ', written, token.end)
-  }
-  return String(characters)
-}
-
-/**
  * A `:name` named parameter.
  *
  * @property colon the `:` token.
@@ -90,19 +65,67 @@ internal class NamedParameter(val colon: ScanToken, val name: ScanToken)
 /**
  * Finds the `:name` named parameters in [parsed], in source order.
  *
- * A named parameter is a `:` token immediately followed by an identifier or keyword token that does not start with
- * `"`. The `::` and `:=` operators are separate tokens and never start one. A `:name`-shaped run inside a string
- * literal, quoted identifier, dollar-quoted string or comment is part of a larger token, so it is not found. Text from
- * the point where the lexer rejects [ParsedSql.sql] onward has no tokens.
+ * A candidate is a `:` token immediately followed by an identifier or keyword token that does not start with `"`. The
+ * `::` and `:=` operators are separate tokens and never start one. A `:name`-shaped run inside a string literal, quoted
+ * identifier, dollar-quoted string or comment is part of a larger token, so it is not found. Text from the point where
+ * the lexer rejects [ParsedSql.sql] onward has no tokens.
+ *
+ * A bare `:` is also the grammar's slice separator in `arr[lo:hi]` and the key separator in `JSON_OBJECT(k:v)`. Those
+ * are the only two productions of PostgreSQL 18's `gram.y` that hold one, and the key separator occurs only after
+ * `JSON_OBJECT` or `JSON_OBJECTAGG`. A candidate with no open `[` and no earlier such keyword is a parameter.
+ *
+ * The parser decides the other candidates. All of them start as parameters, written as in [ParsedSql.parserForm]. When
+ * the grammar rejects the text at the `0` of one of them, that candidate is kept as written and the text is parsed
+ * again. A rejection anywhere else, or one without a position, ends the search. The candidates still written as
+ * parameters then are parameters. The search parses at most one more time than there are such candidates.
  */
 internal fun namedParameters(parsed: ParsedSql): List<NamedParameter> {
-  val tokens = parsed.tokens
-  return tokens.withIndex().mapNotNull { (index, colon) ->
-    if (colon.token != TokenNumber.COLON) return@mapNotNull null
-    val name = tokens.getOrNull(index + 1)?.takeIf { it.start == colon.end && isParameterName(parsed.sql, it) }
-    name?.let { NamedParameter(colon, it) }
+  val candidates = parameterCandidates(parsed)
+  val certain = candidates.filterNot { it.isUndecided }.map { it.parameter }
+  var undecided = candidates.filter { it.isUndecided }.map { it.parameter }
+  while (undecided.isNotEmpty()) {
+    val rejectionIndex = try {
+      LibPgQuery.parse(parsed.parserFormReplacing(certain + undecided))
+      break
+    } catch (exception: LibPgQueryException) {
+      exception.cursorIndex
+    }
+    val rejected = undecided.firstOrNull { it.name.end - 1 == rejectionIndex } ?: break
+    undecided = undecided - rejected
   }
+  return (certain + undecided).sortedBy { it.colon.start }
 }
+
+/**
+ * A `:name` run.
+ *
+ * @property isUndecided whether the text before it leaves a slice or JSON object separator possible.
+ */
+private class ParameterCandidate(val parameter: NamedParameter, val isUndecided: Boolean)
+
+private fun parameterCandidates(parsed: ParsedSql): List<ParameterCandidate> {
+  val tokens = parsed.tokens
+  val candidates = mutableListOf<ParameterCandidate>()
+  var bracketDepth = 0
+  var hasJsonObjectKeyword = false
+  for ((index, token) in tokens.withIndex()) {
+    when {
+      token.token == TokenNumber.OPEN_BRACKET -> bracketDepth++
+      token.token == TokenNumber.CLOSE_BRACKET -> bracketDepth = maxOf(0, bracketDepth - 1)
+      JSON_OBJECT_KEYWORDS.any { isKeyword(parsed.sql, token, it) } -> hasJsonObjectKeyword = true
+      token.token == TokenNumber.COLON -> {
+        val name = tokens.getOrNull(index + 1)?.takeIf { it.start == token.end && isParameterName(parsed.sql, it) }
+        if (name != null) {
+          candidates += ParameterCandidate(NamedParameter(token, name), bracketDepth > 0 || hasJsonObjectKeyword)
+        }
+      }
+    }
+  }
+  return candidates
+}
+
+/** The keywords after which `gram.y` accepts `a_expr ':' json_value_expr`, in its `json_name_and_value` rule. */
+private val JSON_OBJECT_KEYWORDS = listOf("JSON_OBJECT", "JSON_OBJECTAGG")
 
 private fun isParameterName(sql: String, token: ScanToken): Boolean =
   (token.token == TokenNumber.IDENTIFIER || token.keywordKind != KeywordKind.NONE) && sql[token.start] != '"'
@@ -122,11 +145,11 @@ internal fun scanLeadingTokens(sql: String): List<ScanToken> = try {
   if (cursorIndex == null || cursorIndex !in sql.indices) emptyList() else scanLeadingTokens(sql.take(cursorIndex))
 }
 
-private fun operatorTokens(tokens: List<ScanToken>): List<ScanToken> = tokens.filter {
+internal fun operatorTokens(tokens: List<ScanToken>): List<ScanToken> = tokens.filter {
   it.token == TokenNumber.OPERATOR
 }
 
-private inline fun forEachQuestionMark(
+internal inline fun forEachQuestionMark(
   sql: String,
   token: ScanToken,
   action: (index: Int, isEscape: Boolean) -> Unit,

@@ -248,9 +248,6 @@ class NodeTreeProvenanceExpressionTest {
   @Nested
   inner class OverLengthIdentifierTruncation {
 
-    // Aliases and CTE names reach these comparisons as raw text, still quoted, so they are
-    // truncated after folding.
-
     @Test
     fun `an over-length implicit alias on a sibling item no longer blocks resolution of the position being read`() {
       // The over-length name here is an implicit alias on a sibling item. Resolution is gated on
@@ -309,15 +306,71 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `an over-length explicit alias on a computed expression still resolves through its truncated resname`() {
-      // Site NodeTreeProvenanceExpression.kt:140 (AliasMatchKind.EXPLICIT_ALIAS). verifiedItem must
-      // truncate the raw, over-length alias before fold-comparing it against the node tree's own
-      // server-truncated :resname, or a computed expression named with an over-length "AS alias"
-      // never verifies and resolves to `null`.
+      // The parser truncates the alias as the server does, so verifiedItem compares the two names directly.
+      // A computed expression named with an over-length "AS alias" resolves to `null` otherwise.
       val overLongAlias = "v".repeat(70)
       val ddl = "CREATE TABLE parent (id INT, name TEXT)"
       val sql = """
         WITH a AS (SELECT UPPER(name) AS $overLongAlias FROM parent)
         SELECT $overLongAlias FROM a
+      """.trimIndent()
+
+      assertThat(resolvedExpression(ddl, sql)).isEqualTo("UPPER(name)")
+    }
+  }
+
+  @Nested
+  inner class ParserAliasesEqualServerResultNames {
+
+    private fun aliasesAndResultNames(selectList: String): Pair<List<String?>, List<String?>> {
+      val sql = "WITH c AS (SELECT $selectList FROM parent) SELECT 1 FROM c"
+      val nodeTree = nodeTreeFor("CREATE TABLE parent (id INT)", sql)
+      val parser = PgNodeTreeParser()
+      val resultNames = parser.resultProjection(parser.parseCteList(nodeTree).single().queryBlock)
+        .entries.map { it.resultName }
+      val parsed = ParsedSql(sql)
+      val body = cteDefinitions(firstStatement(checkNotNull(parsed.tree))!!).single().ctequery
+      return parsed.outputItemsOf(body).map { it.alias } to resultNames
+    }
+
+    @Test
+    fun `a 70-character unquoted alias is truncated to the same name as the server`() {
+      val (aliases, resultNames) = aliasesAndResultNames("1 AS ${"a".repeat(70)}")
+
+      assertThat(aliases).isEqualTo(listOf("a".repeat(63)))
+      assertThat(aliases).isEqualTo(resultNames)
+    }
+
+    @Test
+    fun `a 70-character quoted alias is truncated to the same name as the server`() {
+      val (aliases, resultNames) = aliasesAndResultNames("1 AS \"${"b".repeat(70)}\"")
+
+      assertThat(aliases).isEqualTo(listOf("b".repeat(63)))
+      assertThat(aliases).isEqualTo(resultNames)
+    }
+
+    @Test
+    fun `mixed-case unquoted and quoted aliases are the same names as the server's`() {
+      val (aliases, resultNames) = aliasesAndResultNames("1 AS MixedCase, 2 AS \"MixedCase\", 3 AS \"Mixed \"\"Q\"\"\"")
+
+      assertThat(aliases).isEqualTo(listOf("mixedcase", "MixedCase", "Mixed \"Q\""))
+      assertThat(aliases).isEqualTo(resultNames)
+    }
+
+    @Test
+    fun `a Unicode-escaped alias is the same name as the server's`() {
+      val (aliases, resultNames) = aliasesAndResultNames("1 AS U&\"d!0061t\" UESCAPE '!'")
+
+      assertThat(aliases).isEqualTo(listOf("dat"))
+      assertThat(aliases).isEqualTo(resultNames)
+    }
+
+    @Test
+    fun `a CTE body item aliased with a Unicode escape resolves`() {
+      val ddl = "CREATE TABLE parent (id INT, name TEXT)"
+      val sql = """
+        WITH c AS (SELECT UPPER(name) AS U&"d!0061t" UESCAPE '!' FROM parent)
+        SELECT dat FROM c
       """.trimIndent()
 
       assertThat(resolvedExpression(ddl, sql)).isEqualTo("UPPER(name)")
@@ -804,7 +857,7 @@ class NodeTreeProvenanceExpressionTest {
       // uniqueness check above.
       //
       // This needs a hand-crafted node tree, not a live round trip: under correct parsing, the text
-      // this file's own parseOutputItemsWithAlias computes for a position always agrees with
+      // ParsedSql.outputItemsOf computes for a position always agrees with
       // PostgreSQL's own real `:resname` for it (whatever alias you write becomes the resname
       // verbatim) -- there is no way to make a genuinely valid, live-executable query disagree with
       // itself, only a designed one exercising the code path a bug would trigger. Synthetic

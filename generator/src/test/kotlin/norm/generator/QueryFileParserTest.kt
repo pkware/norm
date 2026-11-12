@@ -10,8 +10,11 @@ import assertk.assertions.isEqualTo
 import assertk.assertions.isInstanceOf
 import assertk.assertions.messageContains
 import norm.generator.baseline.BLOCK_COMMENT_ISSUE_INPUT
+import norm.generator.libpgquery.LibPgQuery
+import norm.generator.libpgquery.LibPgQueryException
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 
@@ -624,6 +627,136 @@ class QueryFileParserTest {
     exception.messageContains("broken")
     exception.messageContains("line 4")
     exception.messageContains("NUL")
+  }
+
+  @Nested
+  inner class ArraySliceColon {
+
+    private fun parseSingle(select: String): ParsedQuery = QueryFileParser.parse("-- name: q :one\n$select;").single()
+
+    @ParameterizedTest
+    @ValueSource(
+      strings = [
+        "SELECT arr[1:n] FROM t",
+        "SELECT arr[lo:hi] FROM t",
+        "SELECT arr[x::int:n] FROM t",
+        "SELECT arr[1:NULL] FROM t",
+        "SELECT arr[lo:hi][1:2] FROM t",
+        "SELECT arr[i:] FROM t",
+        "SELECT JSON_OBJECT('k':v) FROM t",
+        "SELECT JSON_OBJECTAGG(k:v) FROM t",
+      ],
+    )
+    fun `a slice or JSON object colon is not a named parameter`(select: String) {
+      val query = parseSingle(select)
+
+      assertThat(query.sql).isEqualTo(select)
+      assertThat(query.namedParameters).isEmpty()
+    }
+
+    @Test
+    fun `a slice bound and a parameter outside the brackets are told apart`() {
+      val query = parseSingle("SELECT arr[1:n] FROM t WHERE id = :id")
+
+      assertThat(query.sql).isEqualTo("SELECT arr[1:n] FROM t WHERE id = ?")
+      assertThat(query.namedParameters).isEqualTo(mapOf(1 to "id"))
+    }
+
+    @Test
+    fun `a slice bound beside a positional placeholder is not a mix of parameter styles`() {
+      val query = parseSingle("SELECT arr[1:n] FROM t WHERE id = ?")
+
+      assertThat(query.sql).isEqualTo("SELECT arr[1:n] FROM t WHERE id = ?")
+      assertThat(query.namedParameters).isEmpty()
+    }
+
+    @Test
+    fun `a parameter as the lower slice bound converts`() {
+      val query = parseSingle("SELECT arr[:i] FROM t")
+
+      assertThat(query.sql).isEqualTo("SELECT arr[?] FROM t")
+      assertThat(query.namedParameters).isEqualTo(mapOf(1 to "i"))
+    }
+
+    @Test
+    fun `a parameter inside parentheses in a subscript converts`() {
+      val query = parseSingle("SELECT arr[(:p)] FROM t")
+
+      assertThat(query.sql).isEqualTo("SELECT arr[(?)] FROM t")
+      assertThat(query.namedParameters).isEqualTo(mapOf(1 to "p"))
+    }
+
+    @Test
+    fun `parameters on both sides of a spaced slice colon convert`() {
+      val query = parseSingle("SELECT arr[:lo : :hi] FROM t")
+
+      assertThat(query.sql).isEqualTo("SELECT arr[? : ?] FROM t")
+      assertThat(query.namedParameters).isEqualTo(mapOf(1 to "lo", 2 to "hi"))
+    }
+
+    @Test
+    fun `a parameter in a CASE inside a subscript converts`() {
+      val query = parseSingle("SELECT arr[CASE WHEN c THEN :a END] FROM t")
+
+      assertThat(query.sql).isEqualTo("SELECT arr[CASE WHEN c THEN ? END] FROM t")
+      assertThat(query.namedParameters).isEqualTo(mapOf(1 to "a"))
+    }
+
+    @Test
+    fun `of two adjacent colons the first is the parameter and the second is the slice colon`() {
+      val query = parseSingle("SELECT arr[:lo:hi] FROM t")
+
+      assertThat(query.sql).isEqualTo("SELECT arr[?:hi] FROM t")
+      assertThat(query.namedParameters).isEqualTo(mapOf(1 to "lo"))
+    }
+
+    @Test
+    fun `a parameter that follows a JSON object colon converts`() {
+      val query = parseSingle("SELECT JSON_OBJECT('k': :v) FROM t")
+
+      assertThat(query.sql).isEqualTo("SELECT JSON_OBJECT('k': ?) FROM t")
+      assertThat(query.namedParameters).isEqualTo(mapOf(1 to "v"))
+    }
+
+    @Test
+    fun `a slice that PostgreSQL rejects keeps its colon and yields no parameter`() {
+      val query = parseSingle("SELECT arr[1:n FROM t")
+
+      assertThat(query.sql).isEqualTo("SELECT arr[1:n FROM t")
+      assertThat(query.namedParameters).isEmpty()
+    }
+
+    @Test
+    @Timeout(5)
+    fun `twenty JSON object keys cost no more than a few parses and yield no parameter`() {
+      val select = "SELECT JSON_OBJECT(" + (1..20).joinToString(", ") { "'k$it':c$it" } + ") FROM t"
+
+      val query = parseSingle(select)
+
+      assertThat(query.sql).isEqualTo(select)
+      assertThat(query.namedParameters).isEmpty()
+    }
+
+    @Test
+    @Timeout(5)
+    fun `twenty slices cost no more than a few parses and yield no parameter`() {
+      val select = "SELECT " + (1..20).joinToString(", ") { "a$it[1:n$it]" } + " FROM t"
+
+      val query = parseSingle(select)
+
+      assertThat(query.sql).isEqualTo(select)
+      assertThat(query.namedParameters).isEmpty()
+    }
+
+    @Test
+    fun `PostgreSQL reports a rejected slice at the placeholder that replaced its colon run`() {
+      val sql = "SELECT arr[1 0]"
+
+      val exception = assertFailure { LibPgQuery.parse(sql) }
+
+      exception.isInstanceOf(LibPgQueryException::class)
+      exception.transform { (it as LibPgQueryException).cursorIndex }.isEqualTo(sql.indexOf('0'))
+    }
   }
 
   @Nested

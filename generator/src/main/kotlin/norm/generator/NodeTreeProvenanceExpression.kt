@@ -16,7 +16,7 @@ package norm.generator
  *   elsewhere.
  * - [ParsedSql.outputItemsOf] for that CTE's body yields exactly as many top-level items as
  *   [nodeTreeText] has non-junk body target entries for that CTE, and every position's own `:resname`
- *   fold-matches, in order, with `:resname`s pairwise unique.
+ *   equals, in order, the item's alias or column name, with `:resname`s pairwise unique.
  * - [provenance]'s own item has a verifiable name: an explicit `AS x`, an implicit trailing alias
  *   token, or being itself a bare column reference (see [verifiedItem]).
  * - the matched item was not verified only via an implicit alias, which this function declines.
@@ -87,24 +87,20 @@ private data class VerifiedItem(val selectItem: SelectItem, val matchKind: Alias
  * `:resname` for this position), or `null` if none did. Tried in PostgreSQL's own precedence order for
  * naming a select-list item:
  *
- * 1. An alias — converted via [logicalIdentifier], since [OutputItemWithAlias.alias] still carries its
- *    own quotes, if any. An implicit (no-`AS`) alias is verified the same way and reported as
- *    [AliasMatchKind.IMPLICIT_ALIAS].
+ * 1. An alias. [OutputItemWithAlias.alias] is the parser's own name, so it is compared to [resultName] directly. An
+ *    implicit (no-`AS`) alias is verified the same way and reported as [AliasMatchKind.IMPLICIT_ALIAS].
  * 2. A bare column reference with no alias at all — PostgreSQL exposes such an item under the
  *    column's own name.
  */
 private fun verifiedItem(item: OutputItemWithAlias, resultName: String): VerifiedItem? {
   val alias = item.alias
   if (alias != null) {
-    // resultName comes from the server and is already truncated. Folding before truncating: the
-    // raw alias still carries its quotes, and those bytes are not part of the name.
     val matchKind = if (item.isAliasExplicit) AliasMatchKind.EXPLICIT_ALIAS else AliasMatchKind.IMPLICIT_ALIAS
-    return VerifiedItem(item.selectItem, matchKind).takeIf { logicalIdentifier(alias) == resultName }
+    return VerifiedItem(item.selectItem, matchKind).takeIf { alias == resultName }
   }
 
   val columnName = item.selectItem.columnName ?: return null
-  val folded = foldIdentifier(columnName, item.selectItem.isColumnNameQuoted)
-  return VerifiedItem(item.selectItem, AliasMatchKind.BARE_COLUMN_REFERENCE).takeIf { folded == resultName }
+  return VerifiedItem(item.selectItem, AliasMatchKind.BARE_COLUMN_REFERENCE).takeIf { columnName == resultName }
 }
 
 /**

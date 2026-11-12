@@ -1,7 +1,5 @@
 package norm.generator
 
-import norm.generator.libpgquery.LibPgQuery
-import norm.generator.libpgquery.LibPgQueryException
 import norm.generator.libpgquery.ParseTreeNames
 
 /**
@@ -20,27 +18,6 @@ private val DATA_MODIFYING_STATEMENTS = listOf(
   ParseTreeNames.DELETE_STATEMENT,
   ParseTreeNames.MERGE_STATEMENT,
 )
-
-/**
- * Parses [sql] with PostgreSQL's grammar.
- *
- * @return the parse tree, or `null` when the grammar rejects [sql].
- * @throws IllegalArgumentException if [sql] contains a NUL character.
- */
-internal fun parseOrNull(sql: String): JsonValue.JsonObject? = try {
-  LibPgQuery.parse(sql)
-} catch (_: LibPgQueryException) {
-  null
-}
-
-/**
- * Returns the first statement of [tree]: the object at `stmts[0].stmt`, which holds one field named for the statement
- * kind, such as `SelectStmt`.
- *
- * @return the object, or `null` when [tree] has no statement.
- */
-internal fun firstStatement(tree: JsonValue.JsonObject): JsonValue.JsonObject? =
-  tree.objectArrayField(ParseTreeNames.STATEMENTS).firstOrNull()?.objectField(ParseTreeNames.STATEMENT)
 
 /**
  * Finds the first statement of [tree] that produces the query's result set.
