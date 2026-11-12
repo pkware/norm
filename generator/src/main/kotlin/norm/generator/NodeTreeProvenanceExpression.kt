@@ -6,15 +6,15 @@ package norm.generator
  *
  * [parsedSql] must hold the query's original text — never [nodeTreeText]'s sentinel-substituted or deparsed
  * form. [nodeTreeText] is trusted only for where the expression lives ([provenance]'s CTE name and
- * body position); [parsedSql] is trusted only for what it says. The CTE bodies come from [ParsedSql.part], so a body
- * is scanned and parsed once however many columns point at it.
+ * body position); [parsedSql] is trusted only for what it says. The CTE bodies are nodes of [ParsedSql.tree] and their
+ * items come from [ParsedSql.outputItemsOf], so a body is read once however many columns point at it.
  *
  * Returns `null` if any of these checks fails:
  * - the CTE [provenance] points at is resolved by replaying [NodeTreeColumnProvenance.hops] step by
- *   step ([scopedNodeTreeCteQueryBlock], [scopedSqlCteDefinition]), so a nested `WITH` that shadows an
+ *   step ([scopedNodeTreeCteQueryBlock], [scopedSqlCteBody]), so a nested `WITH` that shadows an
  *   outer CTE of the same name resolves against the exact declaration, not merely a same-named one
  *   elsewhere.
- * - [parseOutputItemsWithAlias] over that CTE's body yields exactly as many top-level items as
+ * - [ParsedSql.outputItemsOf] for that CTE's body yields exactly as many top-level items as
  *   [nodeTreeText] has non-junk body target entries for that CTE, and every position's own `:resname`
  *   fold-matches, in order, with `:resname`s pairwise unique.
  * - [provenance]'s own item has a verifiable name: an explicit `AS x`, an implicit trailing alias
@@ -41,7 +41,7 @@ internal fun resolveNodeTreeProvenanceExpression(
   val cteBodyBlock = scopedNodeTreeCteQueryBlock(nodeTreeText, provenance.hops, parser) ?: return null
   val bodyResultNames = parser.resultProjection(cteBodyBlock).entries.map { it.resultName }
 
-  val items = scopedSqlCteBody(parsedSql, provenance.hops)?.outputItems ?: return null
+  val items = scopedSqlCteBody(parsedSql, provenance.hops)?.let(parsedSql::outputItemsOf) ?: return null
 
   if (items.size != bodyResultNames.size) return null
   if (bodyResultNames.distinct().size != bodyResultNames.size) return null
@@ -131,43 +131,24 @@ private fun scopedNodeTreeCteQueryBlock(nodeTreeText: String, hops: List<CteHop>
 }
 
 /**
- * The SQL-text counterpart of [scopedNodeTreeCteQueryBlock]: replays [hops] against [parsedSql]'s own
- * lexically-nested `WITH` clauses, maintaining an analogous scope stack of [CteDefinition] lists, and
- * returns the body of the last hop's CTE.
- *
- * Every [CteDefinition] in the scope stack has its [CteDefinition.bodyOpenParenthesis]/
- * [CteDefinition.bodyCloseParenthesis] re-based to index into [ParsedSql.sql] itself, never the (possibly
- * nested) body substring a definition was found in, since the bodies are sliced from [ParsedSql.sql] directly.
+ * The SQL-text counterpart of [scopedNodeTreeCteQueryBlock]: replays [hops] against the `WITH` clauses of [parsedSql]'s
+ * own parse tree, maintaining an analogous scope stack of [CteDefinition] lists, and returns the node of the last hop's
+ * CTE body.
  *
  * @return `null` if any hop's [CteHop.ctelevelsup] addresses a scope-stack depth that does not exist,
  *   or its [CteHop.name] does not match ([CteDefinition.name], PostgreSQL's own logical identifier
- *   value) any definition in that scope
+ *   value) exactly one definition in that scope
  */
-private fun scopedSqlCteBody(parsedSql: ParsedSql, hops: List<CteHop>): ParsedSql? {
-  var scopeStack = CteScopeStack(rebasedCteDefinitions(parsedSql, 0))
-  var resolvedBody: ParsedSql? = null
+private fun scopedSqlCteBody(parsedSql: ParsedSql, hops: List<CteHop>): JsonValue.JsonObject? {
+  val statement = parsedSql.tree?.let(::firstStatement) ?: return null
+  var scopeStack = CteScopeStack(cteDefinitions(statement))
+  var resolvedBody: JsonValue.JsonObject? = null
   for (hop in hops) {
     val scope = scopeStack.frameAt(hop.ctelevelsup) ?: return null
     // Both names are the parser's `ctename`, so a direct comparison is exact.
     val definition = scope.filter { it.name == hop.name }.singleOrNull() ?: return null
-    val bodyOffset = definition.bodyOpenParenthesis + 1
-    val body = parsedSql.part(bodyOffset, definition.bodyCloseParenthesis)
-    resolvedBody = body
-    scopeStack = scopeStack.entering(hop.ctelevelsup, rebasedCteDefinitions(body, bodyOffset))
+    resolvedBody = definition.ctequery
+    scopeStack = scopeStack.entering(hop.ctelevelsup, cteDefinitions(definition.ctequery))
   }
   return resolvedBody
 }
-
-/**
- * [parseCteClause]'s own definitions for [text], with every [CteDefinition.bodyOpenParenthesis]/
- * [CteDefinition.bodyCloseParenthesis] shifted by [offset] so they index into the original SQL
- * string [text] was sliced from.
- */
-private fun rebasedCteDefinitions(text: ParsedSql, offset: Int): List<CteDefinition> =
-  parseCteClause(text)?.definitions?.map {
-    it.copy(
-      bodyOpenParenthesis = it.bodyOpenParenthesis + offset,
-      bodyCloseParenthesis =
-      it.bodyCloseParenthesis + offset,
-    )
-  } ?: emptyList()

@@ -8,7 +8,7 @@ package norm.generator.libpgquery
  *
  * @param create builds a fresh instance. Called while the lock is held.
  */
-internal class RecoverableInstance<T : Any>(private var create: () -> T) {
+internal class RecoverableInstance<T : Any>(private val create: () -> T) {
   private val lock = Any()
   private var instance: T? = null
 
@@ -25,29 +25,6 @@ internal class RecoverableInstance<T : Any>(private var create: () -> T) {
     } catch (cause: Throwable) {
       if (cause !is LibPgQueryException) instance = null
       throw cause
-    }
-  }
-
-  /**
-   * Runs [block] with instances that [replacement] creates, then goes back to the original factory and instance. Calls
-   * that other threads make while [block] runs use the replacement as well.
-   *
-   * @return the value [block] returns.
-   */
-  fun <R> withReplacementFactory(replacement: () -> T, block: () -> R): R {
-    val (originalCreate, originalInstance) = synchronized(lock) {
-      Pair(create, instance).also {
-        create = replacement
-        instance = null
-      }
-    }
-    try {
-      return block()
-    } finally {
-      synchronized(lock) {
-        create = originalCreate
-        instance = originalInstance
-      }
     }
   }
 }

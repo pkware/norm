@@ -12,7 +12,9 @@ import org.junit.jupiter.api.assertThrows
 
 class OutputItemsParseTreeTest {
 
-  private fun expressions(sql: String): List<String> = parseSelectItems(ParsedSql(sql)).map { it.expression }
+  private fun expressions(sql: String): List<String> = ParsedSql(sql).outputItems.map {
+    it.selectItem
+  }.map { it.expression }
 
   @Nested
   inner class LastItemEnd {
@@ -150,7 +152,7 @@ class OutputItemsParseTreeTest {
 
     @Test
     fun `a composite expansion of a function result is a star`() {
-      assertThat(parseSelectItems(ParsedSql("SELECT (f(x)).* FROM t")).single().isStar).isTrue()
+      assertThat(ParsedSql("SELECT (f(x)).* FROM t").outputItems.map { it.selectItem }.single().isStar).isTrue()
     }
 
     @Test
@@ -170,7 +172,7 @@ class OutputItemsParseTreeTest {
 
     @Test
     fun `count star is not a star`() {
-      assertThat(parseSelectItems(ParsedSql("SELECT count(*) FROM t")).single().isStar).isFalse()
+      assertThat(ParsedSql("SELECT count(*) FROM t").outputItems.map { it.selectItem }.single().isStar).isFalse()
     }
   }
 
@@ -179,22 +181,26 @@ class OutputItemsParseTreeTest {
 
     @Test
     fun `text PostgreSQL rejects has no items`() {
-      assertThat(parseSelectItems(ParsedSql("SELECT col a b FROM t"))).isEmpty()
-      assertThat(parseSelectItems(ParsedSql("SELECT 2€, email FROM users"))).isEmpty()
-      assertThat(parseSelectItems(ParsedSql("UPDATE t SET x = 1 RETURNING id, ) (bogus AS alias"))).isEmpty()
-      assertThat(parseSelectItems(ParsedSql("UPDATE t SET x = 1 RETURNING id, a[b AS c"))).isEmpty()
+      assertThat(ParsedSql("SELECT col a b FROM t").outputItems.map { it.selectItem }).isEmpty()
+      assertThat(ParsedSql("SELECT 2€, email FROM users").outputItems.map { it.selectItem }).isEmpty()
+      assertThat(
+        ParsedSql("UPDATE t SET x = 1 RETURNING id, ) (bogus AS alias").outputItems.map {
+          it.selectItem
+        },
+      ).isEmpty()
+      assertThat(ParsedSql("UPDATE t SET x = 1 RETURNING id, a[b AS c").outputItems.map { it.selectItem }).isEmpty()
     }
 
     @Test
     fun `EXPLAIN VALUES and TABLE have no items`() {
-      assertThat(parseSelectItems(ParsedSql("EXPLAIN SELECT a FROM t"))).isEmpty()
-      assertThat(parseSelectItems(ParsedSql("VALUES (1, 2)"))).isEmpty()
-      assertThat(parseSelectItems(ParsedSql("TABLE t"))).isEmpty()
+      assertThat(ParsedSql("EXPLAIN SELECT a FROM t").outputItems.map { it.selectItem }).isEmpty()
+      assertThat(ParsedSql("VALUES (1, 2)").outputItems.map { it.selectItem }).isEmpty()
+      assertThat(ParsedSql("TABLE t").outputItems.map { it.selectItem }).isEmpty()
     }
 
     @Test
     fun `a NUL character is not swallowed`() {
-      assertThrows<IllegalArgumentException> { parseSelectItems(ParsedSql("SELECT 1\u0000")) }
+      assertThrows<IllegalArgumentException> { ParsedSql("SELECT 1\u0000").outputItems.map { it.selectItem } }
     }
   }
 }

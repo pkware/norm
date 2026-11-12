@@ -95,39 +95,6 @@ class RecoverableInstanceTest {
   }
 
   @Nested
-  inner class WithReplacementFactory {
-
-    @Test
-    fun `the block runs on an instance from the replacement`() {
-      val replacement = Any()
-      val used = recoverable.withReplacementFactory({ replacement }) { recoverable.withInstance { it } }
-      assertThat(used).isSameInstanceAs(replacement)
-    }
-
-    @Test
-    fun `the original instance is back after the block`() {
-      val original = recoverable.withInstance { it }
-      recoverable.withReplacementFactory({ Any() }) { recoverable.withInstance { } }
-      assertThat(recoverable.withInstance { it }).isSameInstanceAs(original)
-    }
-
-    @Test
-    fun `the original factory is back after the block throws`() {
-      assertFailure { recoverable.withReplacementFactory({ Any() }) { error("failed") } }
-        .isInstanceOf(IllegalStateException::class)
-        .hasMessage("failed")
-      val instance = recoverable.withInstance { it }
-      assertThat(recoverable.withInstance { it }).isSameInstanceAs(instance)
-      assertThat(created.get()).isEqualTo(1)
-    }
-
-    @Test
-    fun `returns the value of the block`() {
-      assertThat(recoverable.withReplacementFactory({ Any() }) { 42 }).isEqualTo(42)
-    }
-  }
-
-  @Nested
   inner class Concurrency {
 
     @Test

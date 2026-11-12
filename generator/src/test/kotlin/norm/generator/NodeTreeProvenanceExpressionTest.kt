@@ -84,9 +84,7 @@ class NodeTreeProvenanceExpressionTest {
 
     @Test
     fun `a CTE body wrapped in redundant parentheses still resolves`() {
-      // `parseOutputItemsWithAlias` must find the top-level SELECT even when the sliced body text
-      // starts with an extra, unmatched "(", which puts the whole rest of the text at paren
-      // depth one.
+      // The parser drops the redundant parentheses, so the body node is a plain SelectStmt with its own items.
       val ddl = "CREATE TABLE parent (id INT, name TEXT)"
       val sql = """
         WITH a AS (

@@ -1,5 +1,6 @@
 package norm.generator
 
+import norm.generator.libpgquery.KeywordKind
 import norm.generator.libpgquery.LibPgQuery
 import norm.generator.libpgquery.LibPgQueryException
 import norm.generator.libpgquery.ScanToken
@@ -77,6 +78,34 @@ internal fun parserFormOf(sql: String, tokens: List<ScanToken>): String {
   }
   return String(characters)
 }
+
+/**
+ * A `:name` named parameter.
+ *
+ * @property colon the `:` token.
+ * @property name the identifier or keyword token that follows [colon] with no gap.
+ */
+internal class NamedParameter(val colon: ScanToken, val name: ScanToken)
+
+/**
+ * Finds the `:name` named parameters in [parsed], in source order.
+ *
+ * A named parameter is a `:` token immediately followed by an identifier or keyword token that does not start with
+ * `"`. The `::` and `:=` operators are separate tokens and never start one. A `:name`-shaped run inside a string
+ * literal, quoted identifier, dollar-quoted string or comment is part of a larger token, so it is not found. Text from
+ * the point where the lexer rejects [ParsedSql.sql] onward has no tokens.
+ */
+internal fun namedParameters(parsed: ParsedSql): List<NamedParameter> {
+  val tokens = parsed.tokens
+  return tokens.withIndex().mapNotNull { (index, colon) ->
+    if (colon.token != TokenNumber.COLON) return@mapNotNull null
+    val name = tokens.getOrNull(index + 1)?.takeIf { it.start == colon.end && isParameterName(parsed.sql, it) }
+    name?.let { NamedParameter(colon, it) }
+  }
+}
+
+private fun isParameterName(sql: String, token: ScanToken): Boolean =
+  (token.token == TokenNumber.IDENTIFIER || token.keywordKind != KeywordKind.NONE) && sql[token.start] != '"'
 
 /**
  * Splits [sql] into PostgreSQL lexer tokens, stopping where the lexer rejects the text.

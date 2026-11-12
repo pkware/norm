@@ -45,24 +45,42 @@ internal fun firstStatement(tree: JsonValue.JsonObject): JsonValue.JsonObject? =
 /**
  * Finds the first statement of [tree] that produces the query's result set.
  *
- * A `SELECT`, `VALUES`, `TABLE` or set operation produces it, as does a data-modifying statement with a `RETURNING`
- * list. An `EXPLAIN` ends the search with no targets. Its result set is the `QUERY PLAN` column. A data-modifying
- * statement without `RETURNING`, and every other kind of statement, is passed over.
- *
- * @return the statement, or `null` when [tree] has none.
+ * @return the statement, or `null` when [tree] has none. See [outputStatementOf] for which statements produce a result
+ *   set.
  */
-internal fun findOutputStatement(tree: JsonValue.JsonObject): OutputStatement? {
-  for (wrapper in tree.objectArrayField(ParseTreeNames.STATEMENTS)) {
-    val statement = wrapper.objectField(ParseTreeNames.STATEMENT) ?: continue
-    statement.objectField(ParseTreeNames.SELECT_STATEMENT)?.let { return selectOutput(it) }
-    if (statement.objectField(ParseTreeNames.EXPLAIN_STATEMENT) != null) return OutputStatement(emptyList(), false)
-    for (kind in DATA_MODIFYING_STATEMENTS) {
-      val returningItems = statement.objectField(kind)
-        ?.objectField(ParseTreeNames.RETURNING_CLAUSE)
-        ?.objectArrayField(ParseTreeNames.RETURNING_ITEMS)
-        .orEmpty()
-      if (returningItems.isNotEmpty()) return OutputStatement(resultTargets(returningItems), false)
-    }
+internal fun findOutputStatement(tree: JsonValue.JsonObject): OutputStatement? =
+  findOutputStatementNode(tree)?.let(::outputStatementOf)
+
+/**
+ * Finds the node of the first statement of [tree] that produces the query's result set.
+ *
+ * @return the statement node, in the shape [outputStatementOf] reads, or `null` when [tree] has none.
+ */
+internal fun findOutputStatementNode(tree: JsonValue.JsonObject): JsonValue.JsonObject? =
+  tree.objectArrayField(ParseTreeNames.STATEMENTS)
+    .mapNotNull { it.objectField(ParseTreeNames.STATEMENT) }
+    .firstOrNull { outputStatementOf(it) != null }
+
+/**
+ * Reads the result set of [statementNode].
+ *
+ * A `SELECT`, `VALUES`, `TABLE` or set operation produces one, as does a data-modifying statement with a `RETURNING`
+ * list. An `EXPLAIN` has no targets, since its result set is the `QUERY PLAN` column. A data-modifying statement
+ * without `RETURNING`, and every other kind of statement, produces none.
+ *
+ * @param statementNode an object with one field named for the statement kind, such as the `stmt` of a statement or a
+ *   [CteDefinition.ctequery].
+ * @return the statement, or `null` when it produces no result set.
+ */
+internal fun outputStatementOf(statementNode: JsonValue.JsonObject): OutputStatement? {
+  statementNode.objectField(ParseTreeNames.SELECT_STATEMENT)?.let { return selectOutput(it) }
+  if (statementNode.objectField(ParseTreeNames.EXPLAIN_STATEMENT) != null) return OutputStatement(emptyList(), false)
+  for (kind in DATA_MODIFYING_STATEMENTS) {
+    val returningItems = statementNode.objectField(kind)
+      ?.objectField(ParseTreeNames.RETURNING_CLAUSE)
+      ?.objectArrayField(ParseTreeNames.RETURNING_ITEMS)
+      .orEmpty()
+    if (returningItems.isNotEmpty()) return OutputStatement(resultTargets(returningItems), false)
   }
   return null
 }

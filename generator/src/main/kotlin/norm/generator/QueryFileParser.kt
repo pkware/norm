@@ -1,6 +1,5 @@
 package norm.generator
 
-import norm.generator.libpgquery.KeywordKind
 import norm.generator.libpgquery.LibPgQuery
 import norm.generator.libpgquery.LibPgQueryException
 import norm.generator.libpgquery.ScanToken
@@ -206,11 +205,7 @@ public object QueryFileParser {
     tokens: List<ScanToken>,
   ): Int? {
     val body = text.substring(bodyStart, bodyEnd)
-    val statements = try {
-      splitStatementSpans(withLexerWhitespace(body), ::rewriteForParser)
-    } catch (_: LibPgQueryException) {
-      splitStatementSpans(body, ::rewriteForParser)
-    }
+    val statements = splitStatementSpans(withLexerWhitespace(body), ::rewriteForParser)
     for (statement in statements) {
       val end = bodyStart + statement.end
       if (end >= bodyEnd || text[end] != ';') continue
@@ -229,12 +224,16 @@ public object QueryFileParser {
    * would hide the keyword that starts a statement.
    *
    * Returns [sql] itself when the replacement would change a token other than an identifier, as when a non-breaking
-   * space sits inside the tag of a dollar quote.
+   * space sits inside the tag of a dollar quote, or when the lexer rejects the replaced text.
    */
   private fun withLexerWhitespace(sql: String): String {
     val replaced = String(CharArray(sql.length) { if (isOutsideLexerWhitespace(sql[it])) ' ' else sql[it] })
     if (replaced == sql) return sql
-    val replacedTokens = scanLeadingTokens(replaced).toSet()
+    val replacedTokens = try {
+      LibPgQuery.scan(replaced).toSet()
+    } catch (_: LibPgQueryException) {
+      return sql
+    }
     val keepsTokens = scanLeadingTokens(sql).filter { it.token != TokenNumber.IDENTIFIER }.all { it in replacedTokens }
     return if (keepsTokens) replaced else sql
   }
@@ -246,12 +245,9 @@ public object QueryFileParser {
   private fun rewriteForParser(sql: String): String {
     val parsed = ParsedSql(sql)
     val characters = parsed.parserForm.toCharArray()
-    val tokens = parsed.tokens
-    for ((index, token) in tokens.withIndex()) {
-      if (token.token != TokenNumber.COLON) continue
-      val name = tokens.getOrNull(index + 1)?.takeIf { it.start == token.end && isParameterName(sql, it) } ?: continue
-      characters.fill(' ', token.start, name.end)
-      characters[token.start] = '0'
+    for (parameter in namedParameters(parsed)) {
+      characters.fill(' ', parameter.colon.start, parameter.name.end)
+      characters[parameter.colon.start] = '0'
     }
     return String(characters)
   }
@@ -279,7 +275,7 @@ public object QueryFileParser {
 
   /** Tells whether this is an identifier token made only of whitespace characters, such as a non-breaking space. */
   private fun ScanToken.isBlank(text: String): Boolean =
-    token == TokenNumber.IDENTIFIER && (start until end).all { text[it].isWhitespace() }
+    token == TokenNumber.IDENTIFIER && (start until end).all { isOutsideLexerWhitespace(text[it]) }
 
   private fun buildQuery(
     annotation: QueryAnnotation,
@@ -321,11 +317,9 @@ public object QueryFileParser {
   /**
    * Converts `:paramName` named parameters to `?` positional placeholders.
    *
-   * Finds parameters in the tokens of PostgreSQL's lexer, so a `:name`-shaped run inside a string literal,
-   * quoted identifier, dollar-quoted string, or comment is copied through verbatim, as is text from the point
-   * where the lexer rejects [parsed] onward. A named parameter is a `:` token immediately followed by an
-   * identifier or keyword token that does not start with `"`; the name is that token's text. The `::` and `:=`
-   * operators are separate tokens and never start a parameter.
+   * Finds parameters with [namedParameters], so a `:name`-shaped run inside a string literal, quoted identifier,
+   * dollar-quoted string, or comment is copied through verbatim, as is text from the point where the lexer rejects
+   * [parsed] onward. The name is the text of the token after the colon.
    *
    * Each occurrence of a named parameter produces its own `?` placeholder with its own 1-based
    * position number. The same name appearing multiple times creates multiple bind slots.
@@ -341,17 +335,14 @@ public object QueryFileParser {
    */
   private fun convertNamedParameters(parsed: ParsedSql): Pair<String, Map<Int, String>> {
     val sql = parsed.sql
-    val tokens = parsed.tokens
     val numberToName = mutableMapOf<Int, String>()
     val result = StringBuilder()
     var copiedUpTo = 0
 
-    for ((index, token) in tokens.withIndex()) {
-      if (token.token != TokenNumber.COLON) continue
-      val name = tokens.getOrNull(index + 1)?.takeIf { it.start == token.end && isParameterName(sql, it) } ?: continue
-      result.append(sql, copiedUpTo, token.start).append('?')
-      copiedUpTo = name.end
-      numberToName[numberToName.size + 1] = sql.substring(name.start, name.end)
+    for (parameter in namedParameters(parsed)) {
+      result.append(sql, copiedUpTo, parameter.colon.start).append('?')
+      copiedUpTo = parameter.name.end
+      numberToName[numberToName.size + 1] = sql.substring(parameter.name.start, parameter.name.end)
     }
 
     if (numberToName.isEmpty()) {
@@ -364,9 +355,6 @@ public object QueryFileParser {
 
     return result.append(sql, copiedUpTo, sql.length).toString() to numberToName
   }
-
-  private fun isParameterName(sql: String, token: ScanToken): Boolean =
-    (token.token == TokenNumber.IDENTIFIER || token.keywordKind != KeywordKind.NONE) && sql[token.start] != '"'
 
   private fun extractCommentText(commentLine: String): String = commentLine.removePrefix("--").trim()
 }

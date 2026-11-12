@@ -34,7 +34,7 @@ class TypeRepositoryTest {
       // 3 select items, all computed expressions with distinct, individually-recognizable text.
       val queryText = "SELECT LENGTH(a) AS a_len, UPPER(b) AS b_upper, LOWER(c) AS c_lower FROM t"
 
-      // Only 2 real result columns -- simulates the mismatch the guard handles: parseSelectItems'
+      // Only 2 real result columns -- simulates the mismatch the guard handles: ParsedSql.outputItems'
       // item count (3) disagrees with the real column count (2, what queryResults.size stands in
       // for here). Without the guard, the second queryResult ("c_lower", conceptually LOWER(c))
       // would incorrectly borrow selectItems[1] -- UPPER(b), a different expression entirely.
@@ -69,7 +69,7 @@ class TypeRepositoryTest {
 
     @Test
     fun `a bare numeric literal select item gets a source-reference KDoc line, not silence`() {
-      // "5" is a numeric literal, so parseSelectItems("SELECT 5") does not resolve it as a column
+      // "5" is a numeric literal, so ParsedSql("SELECT 5").outputItems does not resolve it as a column
       // named "5". columnName is `null`, computedExpression is "5", and sourceReference() renders
       // "`5`".
       val repository = TypeRepository("test", Catalog())
@@ -150,7 +150,7 @@ class TypeRepositoryTest {
 
     @Test
     fun `a computed expression under a top-level UNION gets no source-reference KDoc line`() {
-      // "SELECT UPPER(x) AS u FROM t UNION SELECT LOWER(x) FROM t" -- parseSelectItems only ever
+      // "SELECT UPPER(x) AS u FROM t UNION SELECT LOWER(x) FROM t" -- ParsedSql.outputItems only ever
       // sees the first branch (it has no concept of set operations at all), so
       // resolveComputedExpressions must not set computedExpression to "UPPER(x)" as if that were the
       // query's one true expression, when branch 2 actually computes LOWER(x) for the same column.
@@ -176,7 +176,7 @@ class TypeRepositoryTest {
 
     @Test
     fun `a computed expression under a parenthesized top-level UNION gets no source-reference KDoc line`() {
-      // parseOutputItemsWithAlias (via parseSelectItems) strips redundant outer parentheses from
+      // parseOutputItemsWithAlias (via ParsedSql.outputItems) strips redundant outer parentheses from
       // the main-query window. hasTopLevelSetOperation scans that same stripped window, so it sees
       // the UNION at depth zero and computedExpression stays `null`.
       val queryText = "(SELECT UPPER(x) AS u FROM t UNION SELECT LOWER(x) FROM t)"
@@ -810,7 +810,7 @@ class TypeRepositoryTest {
 
     @Test
     fun `a lone star select item over a CTE reports the CTE body's own resolved expression`() {
-      // "WITH c AS (SELECT UPPER(s) AS u FROM t) SELECT * FROM c" -- parseSelectItems returns the
+      // "WITH c AS (SELECT UPPER(s) AS u FROM t) SELECT * FROM c" -- ParsedSql.outputItems returns the
       // single star item ("*") as-is and uses the empty-list fail-safe only for a star
       // followed by more items (see parseOutputItemsWithAlias's own KDoc), so
       // selectItem.columnName is `null` for it, as for a genuine computed expression.

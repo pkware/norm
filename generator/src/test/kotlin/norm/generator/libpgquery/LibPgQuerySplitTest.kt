@@ -6,6 +6,7 @@ import assertk.assertions.hasMessage
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isInstanceOf
+import norm.generator.baseline.ScannerCorpus
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
@@ -119,6 +120,43 @@ class LibPgQuerySplitTest {
     @Test
     fun `rejects text containing a NUL character`() {
       assertFailure { LibPgQuery.splitWithParser("SELECT 1\u0000") }.isInstanceOf(IllegalArgumentException::class)
+    }
+  }
+
+  @Nested
+  inner class AgreementWithScan {
+
+    private val rejectedByScan = listOf(
+      "SELECT 'unterminated",
+      "SELECT \"unterminated",
+      "SELECT \$\$unterminated",
+      "SELECT 1 /* unterminated",
+      "SELECT 1x",
+      "SELECT 0x",
+      "SELECT 1; SELECT 2 AS a \$\$x\n",
+      "SELECT 'a'; SELECT 'b",
+    )
+
+    private fun outcome(block: () -> Unit): String = try {
+      block()
+      "accepted"
+    } catch (_: LibPgQueryException) {
+      "rejected"
+    } catch (_: IllegalArgumentException) {
+      "NUL"
+    }
+
+    @Test
+    fun `the scanner rejects each text of the list`() {
+      val accepted = rejectedByScan.filter { outcome { LibPgQuery.scan(it) } != "rejected" }
+      assertThat(accepted).isEmpty()
+    }
+
+    @Test
+    fun `split rejects exactly the texts that scan rejects`() {
+      val texts = ScannerCorpus.load().map { it.text } + rejectedByScan
+      val disagreements = texts.filter { outcome { LibPgQuery.scan(it) } != outcome { LibPgQuery.split(it) } }
+      assertThat(disagreements).isEmpty()
     }
   }
 

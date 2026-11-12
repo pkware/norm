@@ -43,20 +43,45 @@ internal class RecordingMachine(private val instance: Instance, private val dele
 
     private val recording = ThreadLocal<RecordedCalls?>()
 
+    private val recoverable: RecoverableInstance<*> = LibPgQuery::class.java.getDeclaredField("instance")
+      .apply { isAccessible = true }
+      .get(null) as RecoverableInstance<*>
+
+    private val instanceField = RecoverableInstance::class.java.getDeclaredField("instance")
+      .apply { isAccessible = true }
+
+    private val lock: Any = RecoverableInstance::class.java.getDeclaredField("lock")
+      .apply { isAccessible = true }
+      .get(recoverable)
+
     /**
      * Runs [block] on a [LibPgQuery] instance that uses a [RecordingMachine], and returns the texts that the calling
      * thread passed to the parser and the lexer, including calls that throw.
+     *
+     * The recording instance replaces the one that [LibPgQuery] holds and is swapped back when [block] ends. Reflection
+     * does the swap because [LibPgQuery] offers no way to install another instance.
+     *
+     * @throws IllegalStateException if [LibPgQuery] discarded the recording instance during [block], which happens
+     *   after a failure other than a [LibPgQueryException]. The recorded texts would then be incomplete.
      */
     fun record(block: () -> Unit): RecordedCalls {
       val calls = RecordedCalls()
-      LibPgQuery.instance.withReplacementFactory({ newInstance { RecordingMachine(it, LibPgQueryMachine(it)) } }) {
-        recording.set(calls)
-        try {
-          block()
-        } finally {
-          recording.remove()
+      val recordingInstance = newInstance { RecordingMachine(it, LibPgQueryMachine(it)) }
+      val original = synchronized(lock) {
+        instanceField.get(recoverable).also { instanceField.set(recoverable, recordingInstance) }
+      }
+      var isStillInstalled = false
+      recording.set(calls)
+      try {
+        block()
+      } finally {
+        recording.remove()
+        synchronized(lock) {
+          isStillInstalled = instanceField.get(recoverable) === recordingInstance
+          instanceField.set(recoverable, original)
         }
       }
+      check(isStillInstalled) { "LibPgQuery dropped the recording instance while the block ran" }
       return calls
     }
   }

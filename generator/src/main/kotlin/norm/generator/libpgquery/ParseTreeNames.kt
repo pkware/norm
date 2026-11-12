@@ -43,10 +43,10 @@ internal object ParseTreeNames {
   /** `CommonTableExpr.ctename`: the CTE name in the form [STRING_VALUE] holds, cut to the server's identifier limit. */
   const val COMMON_TABLE_EXPRESSION_NAME = "ctename"
 
-  /** `CommonTableExpr.aliascolnames`: the column list written after the CTE name, absent when there is none. */
-  const val COMMON_TABLE_EXPRESSION_COLUMN_NAMES = "aliascolnames"
+  /** `CommonTableExpr.ctequery`: the statement in the parentheses of a CTE, a node of the shape [STATEMENT] holds. */
+  const val COMMON_TABLE_EXPRESSION_QUERY = "ctequery"
 
-  /** `CommonTableExpr`: one CTE of a `WITH` clause. Its [LOCATION] is where the CTE name starts. */
+  /** `CommonTableExpr`: one CTE of a `WITH` clause. */
   const val COMMON_TABLE_EXPRESSION = "CommonTableExpr"
 
   /** `SelectStmt.targetList`: the select list. */
