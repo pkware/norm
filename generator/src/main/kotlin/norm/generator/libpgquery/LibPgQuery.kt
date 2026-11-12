@@ -32,7 +32,7 @@ internal object LibPgQuery {
    */
   fun parse(sql: String): JsonValue.JsonObject {
     val input = Utf8Input(sql)
-    val text = invoke(LibPgQueryEntry.PARSE, input)
+    val text = invoke(LibPgQueryEntry.Parse, input)
     val tree = JsonValue.parse(text)
     check(tree is JsonValue.JsonObject) { "libpg_query returned a parse tree that is not a JSON object" }
     return parseTreeOffsets.convert(tree, input)
@@ -46,7 +46,7 @@ internal object LibPgQuery {
    */
   fun scan(sql: String): List<ScanToken> {
     val input = Utf8Input(sql)
-    val encoded = invoke(LibPgQueryEntry.SCAN, input)
+    val encoded = invoke(LibPgQueryEntry.Scan, input)
     return decodeScanResult(encoded, input)
   }
 
@@ -57,7 +57,7 @@ internal object LibPgQuery {
    * @throws LibPgQueryException if the lexer rejects [sql], for example on an unterminated quoted identifier.
    * @throws IllegalArgumentException if [sql] contains a NUL character.
    */
-  fun split(sql: String): List<SplitStatement> = split(LibPgQueryEntry.SPLIT, sql)
+  fun split(sql: String): List<SplitStatement> = split(LibPgQueryEntry.Split, sql)
 
   /**
    * Splits [sql] into statements with PostgreSQL's grammar. Unlike [split], it keeps a `BEGIN ATOMIC` function body

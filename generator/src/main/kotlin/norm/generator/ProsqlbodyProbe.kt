@@ -82,3 +82,38 @@ internal inline fun <T> withProsqlbodyNodeTree(
     }
   }
 }
+
+/**
+ * Returns a SQL literal of the PostgreSQL type [typeName], to replace a `?` placeholder in a view body.
+ *
+ * A strict function such as `digest(?, ?)` is non-null in the node tree only when every argument is non-null.
+ *
+ * @param typeName The PostgreSQL type name from `ParameterMetaData.getParameterTypeName()`.
+ * @return a non-null literal of [typeName], or `NULL::<typeName>` when the type is not recognized, which makes the
+ *   result nullable.
+ */
+internal fun nonNullSentinel(typeName: String): String = when (typeName) {
+  "int2", "int4", "int8", "float4", "float8", "numeric", "oid" -> "0::$typeName"
+  "text", "varchar", "bpchar", "char", "name" -> "''::$typeName"
+  "bool" -> "false::bool"
+  "bytea" -> "'\\x00'::bytea"
+  "date" -> "'2000-01-01'::date"
+  "timestamp" -> "'2000-01-01'::timestamp"
+  "timestamptz" -> "'2000-01-01'::timestamptz"
+  "time" -> "'00:00:00'::time"
+  "timetz" -> "'00:00:00'::timetz"
+  "interval" -> "'0'::interval"
+  "uuid" -> "'00000000-0000-0000-0000-000000000000'::uuid"
+  "json" -> "'{}'::json"
+  "jsonb" -> "'{}'::jsonb"
+  "xml" -> "'<x/>'::xml"
+  "inet", "cidr" -> "'0.0.0.0/0'::$typeName"
+  "macaddr", "macaddr8" -> "'00:00:00:00:00:00'::$typeName"
+  else -> if (typeName.startsWith("_")) {
+    // Array type names start with an underscore, as in `_int4`.
+    "ARRAY[]::$typeName"
+  } else {
+    // Other types give a nullable column.
+    "NULL::$typeName"
+  }
+}

@@ -1,12 +1,12 @@
 # libpg_query WASI build
 
-Builds `generator/src/main/resources/libpg_query.wasm` and `libpg_query_location_fields.txt` from the libpg_query
+Builds `generator/src/main/wasm/libpg_query.wasm` and `libpg_query_location_fields.txt` from the libpg_query
 release named by `LIBPG_QUERY_VERSION` in the `Dockerfile`, with wasi-sdk 34 and binaryen 125. The build fails when the
 tag does not point at `LIBPG_QUERY_COMMIT`.
 
 ```sh
 docker build --platform=linux/amd64 --output type=local,dest=build/libpg_query-wasm buildtools/libpg_query-wasm
-cmp build/libpg_query-wasm/libpg_query.wasm generator/src/main/resources/libpg_query.wasm
+cmp build/libpg_query-wasm/libpg_query.wasm generator/src/main/wasm/libpg_query.wasm
 cmp build/libpg_query-wasm/libpg_query_location_fields.txt generator/src/main/resources/libpg_query_location_fields.txt
 ```
 
@@ -32,8 +32,8 @@ job of `.github/workflows/libpg-query-wasm.yml` fails on it until the rebuilt fi
 
 1. Rebuild with the `docker build` command above. When a file in `patches/` no longer applies, rewrite it against the
    flattened tree of the new release. A release can also change which files need patching.
-2. Copy `build/libpg_query-wasm/libpg_query.wasm` and `libpg_query_location_fields.txt` into
-   `generator/src/main/resources/`.
+2. Copy `build/libpg_query-wasm/libpg_query.wasm` into `generator/src/main/wasm/` and
+   `build/libpg_query-wasm/libpg_query_location_fields.txt` into `generator/src/main/resources/`.
 3. Rebuild once more and run the two `cmp` lines. The CI job prints the sha256 of the built and the committed module
    and fails when they differ.
 4. Run the grammar sweep with `./gradlew :generator:test --tests 'norm.generator.libpgquery.RegressSweepTest'`. A

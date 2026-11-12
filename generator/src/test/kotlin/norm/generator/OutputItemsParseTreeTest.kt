@@ -120,7 +120,12 @@ class OutputItemsParseTreeTest {
     @Test
     fun `a reserved word after AS is the alias`() {
       val item = ParsedSql("SELECT 1 AS as").outputItems.single()
-      assertThat(item).isEqualTo(OutputItemWithAlias(SelectItem("1", null, null), "as", isAliasExplicit = true))
+      val expected = OutputItemWithAlias(
+        SelectItem("1", null, null, isStar = false, normalizedExpression = "1"),
+        "as",
+        isAliasExplicit = true,
+      )
+      assertThat(item).isEqualTo(expected)
     }
 
     @Test

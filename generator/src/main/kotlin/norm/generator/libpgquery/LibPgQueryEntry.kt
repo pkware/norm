@@ -41,7 +41,7 @@ internal sealed class LibPgQueryEntry<T : Any>(
   }
 
   /** `PgQueryParseResult`: `parse_tree` at 0, `stderr_buffer` at 4 and `error` at 8. Reads the JSON parse tree. */
-  object PARSE : LibPgQueryEntry<String>("pg_query_parse", "pg_query_free_parse_result", 12, 8) {
+  object Parse : LibPgQueryEntry<String>("pg_query_parse", "pg_query_free_parse_result", 12, 8) {
     override fun read(instance: Instance, result: Int): String =
       instance.memory().readCString(instance.memory().readInt(result))
   }
@@ -50,7 +50,7 @@ internal sealed class LibPgQueryEntry<T : Any>(
    * `PgQueryScanResult`: `pbuf` (`len` at 0, `data` at 4) at 0, `stderr_buffer` at 8 and `error` at 12. Reads the
    * protobuf bytes of `pbuf`.
    */
-  object SCAN : LibPgQueryEntry<ByteArray>("pg_query_scan", "pg_query_free_scan_result", 16, 12) {
+  object Scan : LibPgQueryEntry<ByteArray>("pg_query_scan", "pg_query_free_scan_result", 16, 12) {
     override fun read(instance: Instance, result: Int): ByteArray {
       val memory = instance.memory()
       return memory.readBytes(memory.readInt(result + 4), memory.readInt(result))
@@ -80,7 +80,7 @@ internal sealed class LibPgQueryEntry<T : Any>(
   }
 
   /** Splits with the lexer alone. */
-  object SPLIT : SplitResult("pg_query_split_with_scanner")
+  object Split : SplitResult("pg_query_split_with_scanner")
 
   /** Splits with the grammar, which fails on text that does not parse. */
   object SplitWithParser : SplitResult("pg_query_split_with_parser")
