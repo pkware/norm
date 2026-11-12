@@ -1,14 +1,10 @@
 package norm.generator
 
 import norm.generator.libpgquery.OutputStatement
-import norm.generator.libpgquery.ParseResult
 import norm.generator.libpgquery.ResultTarget
 import norm.generator.libpgquery.ScanToken
 import norm.generator.libpgquery.TokenNumber
 import norm.generator.libpgquery.isComment
-import norm.generator.libpgquery.isKeyword
-
-internal const val AS_KEYWORD = "AS"
 
 /**
  * A parsed item from a SQL SELECT or RETURNING list.
@@ -110,15 +106,14 @@ internal val ParsedSql.outputItems: List<OutputItemWithAlias>
 
 /** Reads the items of [output], which [parsed] found in its own tree, and cuts them at the first star. */
 internal fun parseOutputItems(parsed: ParsedSql, output: OutputStatement): List<OutputItemWithAlias> {
-  val tree = parsed.tree ?: return emptyList()
   if (output.targets.isEmpty()) return emptyList()
-  val items = outputItems(parsed, tree, output) ?: return emptyList()
+  val items = outputItems(parsed, output) ?: return emptyList()
 
   val firstStarIndex = items.indexOfFirst { it.selectItem.isStar }
   return if (firstStarIndex < 0 || items.size == 1) items else items.take(firstStarIndex)
 }
 
-private fun outputItems(parsed: ParsedSql, tree: ParseResult, statement: OutputStatement): List<OutputItemWithAlias>? {
+private fun outputItems(parsed: ParsedSql, statement: OutputStatement): List<OutputItemWithAlias>? {
   val sql = parsed.sql
   val tokens = parsed.significantTokens
   val targets = statement.targets
@@ -127,45 +122,16 @@ private fun outputItems(parsed: ParsedSql, tree: ParseResult, statement: OutputS
     val extent = if (index < targets.lastIndex) {
       extentBeforeNextItem(sql, tokens, targets[index], firstTokens[index], firstTokens[index + 1])
     } else {
-      extentOfFinalItem(sql, parsed.parserForm, tokens, tree, statement, firstTokens[index])
+      extentOfFinalItem(parsed, statement, firstTokens[index])
     }
     buildItem(parsed, targets[index], extent ?: return null)
   }
 }
 
-/**
- * The tokens of one item.
- *
- * @property firstToken the first token of the expression.
- * @property expressionLastToken the last token of the expression.
- * @property isAliasExplicit whether the token before the alias is `AS`.
- */
-internal class ItemExtent(val firstToken: Int, val expressionLastToken: Int, val isAliasExplicit: Boolean)
-
 private fun firstTokenIndex(tokens: List<ScanToken>, target: ResultTarget): Int? {
   val location = target.location ?: return null
   if (location < 0) return null
   return tokens.binarySearchBy(location) { it.start }.takeIf { it >= 0 }
-}
-
-/** An item that is not the last ends at the token before the comma, so its alias is the token at its end. */
-private fun extentBeforeNextItem(
-  sql: String,
-  tokens: List<ScanToken>,
-  target: ResultTarget,
-  firstToken: Int,
-  nextFirstToken: Int,
-): ItemExtent? {
-  val commaIndex = nextFirstToken - 1
-  if (commaIndex - 1 < firstToken || tokens[commaIndex].token != TokenNumber.COMMA) return null
-  val lastToken = commaIndex - 1
-  if (target.alias == null) return ItemExtent(firstToken, lastToken, false)
-
-  val aliasFirstToken = lastToken
-  val isAliasExplicit = aliasFirstToken - 1 > firstToken && isKeyword(sql, tokens[aliasFirstToken - 1], AS_KEYWORD)
-  val expressionLastToken = if (isAliasExplicit) aliasFirstToken - 2 else aliasFirstToken - 1
-  if (expressionLastToken < firstToken) return null
-  return ItemExtent(firstToken, expressionLastToken, isAliasExplicit)
 }
 
 private fun buildItem(parsed: ParsedSql, target: ResultTarget, extent: ItemExtent): OutputItemWithAlias {
