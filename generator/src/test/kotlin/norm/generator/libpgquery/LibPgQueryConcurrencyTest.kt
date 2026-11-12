@@ -18,7 +18,10 @@ class LibPgQueryConcurrencyTest {
       val calls = (1..400).map { round ->
         val sql = statements[round % statements.size]
         sql to
-          pool.submit<Pair<JsonValue.JsonObject, List<ScanToken>>> { LibPgQuery.parse(sql) to LibPgQuery.scan(sql) }
+          pool.submit<Pair<JsonValue.JsonObject, List<ScanToken>>> {
+            LibPgQuery.parse(sql).accepted() to
+              LibPgQuery.scan(sql).accepted()
+          }
       }
       for ((sql, future) in calls) {
         val (tree, tokens) = future.get(2, TimeUnit.MINUTES)
@@ -38,12 +41,16 @@ class LibPgQueryConcurrencyTest {
       val calls = (1..200).map { round ->
         val valid = round % 2 == 0
         val sql = if (valid) "SELECT $round" else "SELEC $round"
-        valid to pool.submit<Result<JsonValue.JsonObject>> { runCatching { LibPgQuery.parse(sql) } }
+        valid to pool.submit<LibPgQueryResult<JsonValue.JsonObject>> { LibPgQuery.parse(sql) }
       }
       for ((valid, future) in calls) {
         val result = future.get(2, TimeUnit.MINUTES)
-        assertThat(result.isSuccess).isEqualTo(valid)
-        if (!valid) assertThat(result.exceptionOrNull()?.message).isEqualTo("syntax error at or near \"SELEC\"")
+        assertThat(result is LibPgQueryResult.Accepted).isEqualTo(valid)
+        if (result is LibPgQueryResult.Rejected) {
+          assertThat(
+            result.message,
+          ).isEqualTo("syntax error at or near \"SELEC\"")
+        }
       }
     } finally {
       pool.shutdownNow()

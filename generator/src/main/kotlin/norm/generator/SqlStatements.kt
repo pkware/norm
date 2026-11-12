@@ -2,7 +2,7 @@ package norm.generator
 
 import norm.generator.libpgquery.KeywordKind
 import norm.generator.libpgquery.LibPgQuery
-import norm.generator.libpgquery.LibPgQueryException
+import norm.generator.libpgquery.LibPgQueryResult
 import norm.generator.libpgquery.SplitStatement
 import norm.generator.libpgquery.TokenNumber
 import norm.generator.libpgquery.isKeyword
@@ -15,11 +15,7 @@ import norm.generator.libpgquery.isKeyword
  * Text that the lexer rejects, such as an unterminated string, is one part.
  */
 internal fun splitStatements(parsed: ParsedSql): List<ParsedSql> {
-  val spans = try {
-    splitStatementSpans(parsed)
-  } catch (_: LibPgQueryException) {
-    return listOf(parsed)
-  }
+  val spans = splitStatementSpans(parsed) ?: return listOf(parsed)
   return spans.map { parsed.part(it.start, it.end) }
 }
 
@@ -29,18 +25,16 @@ internal fun splitStatements(parsed: ParsedSql): List<ParsedSql> {
  * the parser rejects the text. Each statement starts where the lexer's statement containing its first token starts,
  * which keeps the whitespace and comments before it.
  *
- * @return the statements, with the offsets of [ParsedSql.sql].
- * @throws LibPgQueryException if the lexer rejects [ParsedSql.sql].
+ * @return the statements, with the offsets of [ParsedSql.sql], or `null` when the lexer rejects [ParsedSql.sql].
  */
-internal fun splitStatementSpans(parsed: ParsedSql): List<SplitStatement> {
-  val spans = LibPgQuery.split(parsed.sql)
+internal fun splitStatementSpans(parsed: ParsedSql): List<SplitStatement>? {
+  val spans = LibPgQuery.split(parsed.sql).valueOrNull() ?: return null
   if (spans.size < 2) return spans
-  return try {
-    LibPgQuery.splitWithParser(parsed.parserForm).map { statement ->
+  return when (val parserSpans = LibPgQuery.splitWithParser(parsed.parserForm)) {
+    is LibPgQueryResult.Accepted -> parserSpans.value.map { statement ->
       SplitStatement(spans.lastOrNull { it.start <= statement.start }?.start ?: statement.start, statement.end)
     }
-  } catch (_: LibPgQueryException) {
-    spans
+    is LibPgQueryResult.Rejected -> spans
   }
 }
 

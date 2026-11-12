@@ -11,7 +11,7 @@ import assertk.assertions.isInstanceOf
 import assertk.assertions.messageContains
 import norm.generator.baseline.BLOCK_COMMENT_ISSUE_INPUT
 import norm.generator.libpgquery.LibPgQuery
-import norm.generator.libpgquery.LibPgQueryException
+import norm.generator.libpgquery.rejected
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
@@ -752,10 +752,7 @@ class QueryFileParserTest {
     fun `PostgreSQL reports a rejected slice at the placeholder that replaced its colon run`() {
       val sql = "SELECT arr[1 0]"
 
-      val exception = assertFailure { LibPgQuery.parse(sql) }
-
-      exception.isInstanceOf(LibPgQueryException::class)
-      exception.transform { (it as LibPgQueryException).cursorIndex }.isEqualTo(sql.indexOf('0'))
+      assertThat(LibPgQuery.parse(sql).rejected().cursorIndex).isEqualTo(sql.indexOf('0'))
     }
   }
 

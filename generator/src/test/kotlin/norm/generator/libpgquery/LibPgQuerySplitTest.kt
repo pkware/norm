@@ -2,7 +2,6 @@ package norm.generator.libpgquery
 
 import assertk.assertFailure
 import assertk.assertThat
-import assertk.assertions.hasMessage
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isInstanceOf
@@ -13,7 +12,9 @@ import org.junit.jupiter.api.Test
 class LibPgQuerySplitTest {
   private val grinning = "😀"
 
-  private fun texts(sql: String): List<String> = LibPgQuery.split(sql).map { sql.substring(it.start, it.end) }
+  private fun texts(sql: String): List<String> = LibPgQuery.split(sql).accepted().map {
+    sql.substring(it.start, it.end)
+  }
 
   @Nested
   inner class Splitting {
@@ -36,12 +37,12 @@ class LibPgQuerySplitTest {
 
     @Test
     fun `returns no statements for empty text`() {
-      assertThat(LibPgQuery.split("")).isEmpty()
+      assertThat(LibPgQuery.split("").accepted()).isEmpty()
     }
 
     @Test
     fun `returns no statements for semicolons and whitespace`() {
-      assertThat(LibPgQuery.split(" ; ;\n")).isEmpty()
+      assertThat(LibPgQuery.split(" ; ;\n").accepted()).isEmpty()
     }
 
     @Test
@@ -73,9 +74,8 @@ class LibPgQuerySplitTest {
 
     @Test
     fun `reports a lexer error and keeps serving calls`() {
-      assertFailure { LibPgQuery.split("SELECT \"unterminated; SELECT 2") }
-        .isInstanceOf(LibPgQueryException::class)
-        .hasMessage("unterminated quoted identifier at or near \"\"unterminated; SELECT 2\"")
+      assertThat(LibPgQuery.split("SELECT \"unterminated; SELECT 2").rejected().message)
+        .isEqualTo("unterminated quoted identifier at or near \"\"unterminated; SELECT 2\"")
       assertThat(texts("SELECT 1; SELECT 2")).isEqualTo(listOf("SELECT 1", " SELECT 2"))
     }
 
@@ -89,7 +89,7 @@ class LibPgQuerySplitTest {
   inner class SplittingWithTheParser {
 
     private fun parserTexts(sql: String): List<String> =
-      LibPgQuery.splitWithParser(sql).map { sql.substring(it.start, it.end) }
+      LibPgQuery.splitWithParser(sql).accepted().map { sql.substring(it.start, it.end) }
 
     @Test
     fun `splits two statements at the semicolon`() {
@@ -111,9 +111,8 @@ class LibPgQuerySplitTest {
 
     @Test
     fun `reports a syntax error and keeps serving calls`() {
-      assertFailure { LibPgQuery.splitWithParser("SELECT FROM FROM; SELECT 2") }
-        .isInstanceOf(LibPgQueryException::class)
-        .hasMessage("syntax error at or near \"FROM\"")
+      assertThat(LibPgQuery.splitWithParser("SELECT FROM FROM; SELECT 2").rejected().message)
+        .isEqualTo("syntax error at or near \"FROM\"")
       assertThat(parserTexts("SELECT 1")).isEqualTo(listOf("SELECT 1"))
     }
 
@@ -137,11 +136,11 @@ class LibPgQuerySplitTest {
       "SELECT 'a'; SELECT 'b",
     )
 
-    private fun outcome(block: () -> Unit): String = try {
-      block()
-      "accepted"
-    } catch (_: LibPgQueryException) {
-      "rejected"
+    private fun outcome(block: () -> LibPgQueryResult<*>): String = try {
+      when (block()) {
+        is LibPgQueryResult.Accepted -> "accepted"
+        is LibPgQueryResult.Rejected -> "rejected"
+      }
     } catch (_: IllegalArgumentException) {
       "NUL"
     }
@@ -166,7 +165,7 @@ class LibPgQuerySplitTest {
     @Test
     fun `scan returns a backslash as a token`() {
       val sql = "SELECT 1 \\; SELECT 2"
-      val texts = LibPgQuery.scan(sql).map { sql.substring(it.start, it.end) }
+      val texts = LibPgQuery.scan(sql).accepted().map { sql.substring(it.start, it.end) }
       assertThat(texts).isEqualTo(listOf("SELECT", "1", "\\", ";", "SELECT", "2"))
     }
   }

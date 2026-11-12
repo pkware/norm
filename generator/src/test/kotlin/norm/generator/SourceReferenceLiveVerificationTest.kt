@@ -8,6 +8,7 @@ import norm.generator.libpgquery.LibPgQuery
 import norm.generator.libpgquery.ParseTreeNames
 import norm.generator.libpgquery.ScanToken
 import norm.generator.libpgquery.TokenNumber
+import norm.generator.libpgquery.accepted
 import norm.generator.libpgquery.isComment
 import norm.generator.libpgquery.isKeyword
 import org.commonmark.node.AbstractVisitor
@@ -190,7 +191,7 @@ class SourceReferenceLiveVerificationTest {
   /** Returns the index of the first `FROM` keyword of [body] outside parentheses, or `-1` when there is none. */
   private fun indexOfTopLevelFrom(body: String): Int {
     var depth = 0
-    for (token in LibPgQuery.scan(body)) {
+    for (token in LibPgQuery.scan(body).accepted()) {
       when {
         token.token == TokenNumber.OPEN_PARENTHESIS -> depth++
         token.token == TokenNumber.CLOSE_PARENTHESIS -> depth--

@@ -41,26 +41,7 @@ class RecoverableInstanceTest {
   }
 
   @Nested
-  inner class WhenTheBlockThrowsALibPgQueryException {
-
-    @Test
-    fun `rethrows the exception`() {
-      assertFailure { recoverable.withInstance { throw LibPgQueryException("syntax error", null) } }
-        .isInstanceOf(LibPgQueryException::class)
-        .hasMessage("syntax error")
-    }
-
-    @Test
-    fun `the next call reuses the instance`() {
-      val first = recoverable.withInstance { it }
-      assertFailure { recoverable.withInstance { throw LibPgQueryException("syntax error", null) } }
-        .isInstanceOf(LibPgQueryException::class)
-      assertThat(recoverable.withInstance { it }).isSameInstanceAs(first)
-    }
-  }
-
-  @Nested
-  inner class WhenTheBlockThrowsAnyOtherThrowable {
+  inner class WhenTheBlockThrows {
 
     @Test
     fun `rethrows the failure`() {

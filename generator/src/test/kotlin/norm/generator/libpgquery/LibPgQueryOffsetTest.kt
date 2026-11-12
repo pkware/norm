@@ -1,13 +1,7 @@
 package norm.generator.libpgquery
 
-import assertk.all
-import assertk.assertFailure
 import assertk.assertThat
-import assertk.assertions.hasMessage
 import assertk.assertions.isEqualTo
-import assertk.assertions.isInstanceOf
-import assertk.assertions.isNull
-import assertk.assertions.prop
 import norm.generator.JsonValue
 import norm.generator.descendants
 import org.junit.jupiter.api.Nested
@@ -27,25 +21,25 @@ class LibPgQueryOffsetTest {
     @Test
     fun `column location is a String index after a non-BMP literal`() {
       val sql = "SELECT '$grinning' AS emoji, target FROM t"
-      assertThat(locations(LibPgQuery.parse(sql), "ColumnRef")).isEqualTo(listOf(sql.indexOf("target")))
+      assertThat(locations(LibPgQuery.parse(sql).accepted(), "ColumnRef")).isEqualTo(listOf(sql.indexOf("target")))
     }
 
     @Test
     fun `column location is a String index after a BMP character outside ASCII`() {
       val sql = "SELECT 'café' AS drink, target FROM t"
-      assertThat(locations(LibPgQuery.parse(sql), "ColumnRef")).isEqualTo(listOf(sql.indexOf("target")))
+      assertThat(locations(LibPgQuery.parse(sql).accepted(), "ColumnRef")).isEqualTo(listOf(sql.indexOf("target")))
     }
 
     @Test
     fun `location is unchanged for ASCII text`() {
       val sql = "SELECT target FROM t"
-      assertThat(locations(LibPgQuery.parse(sql), "ColumnRef")).isEqualTo(listOf(sql.indexOf("target")))
+      assertThat(locations(LibPgQuery.parse(sql).accepted(), "ColumnRef")).isEqualTo(listOf(sql.indexOf("target")))
     }
 
     @Test
     fun `statement bounds are String indexes`() {
       val sql = "SELECT '$grinning'; SELECT '$grinning$grinning'; SELECT 3"
-      val statements = LibPgQuery.parse(sql).objectArrayField("stmts")
+      val statements = LibPgQuery.parse(sql).accepted().objectArrayField("stmts")
       val texts = statements.map {
         val start = it.intField("stmt_location") ?: 0
         val length = it.intField("stmt_len") ?: (sql.length - start)
@@ -56,7 +50,7 @@ class LibPgQueryOffsetTest {
 
     @Test
     fun `a string valued location field is unchanged`() {
-      val tree = LibPgQuery.parse("CREATE TABLESPACE \"$grinning\" LOCATION '/data'")
+      val tree = LibPgQuery.parse("CREATE TABLESPACE \"$grinning\" LOCATION '/data'").accepted()
       val statement = tree.objectArrayField("stmts").single().objectField("stmt")!!
       assertThat(statement.objectField("CreateTableSpaceStmt")?.stringField("location")).isEqualTo("/data")
     }
@@ -64,7 +58,7 @@ class LibPgQueryOffsetTest {
     @Test
     fun `negative locations are unchanged`() {
       val sql = "SELECT '$grinning' AS emoji FROM t ORDER BY emoji"
-      assertThat(locations(LibPgQuery.parse(sql), "SortBy")).isEqualTo(listOf(-1))
+      assertThat(locations(LibPgQuery.parse(sql).accepted(), "SortBy")).isEqualTo(listOf(-1))
     }
   }
 
@@ -92,8 +86,8 @@ class LibPgQueryOffsetTest {
     @Test
     fun `every numeric field matches the parse of text with an ASCII literal of equal length`() {
       for (template in statements) {
-        val nonBmp = LibPgQuery.parse(template.replace("#", "$grinning"))
-        val ascii = LibPgQuery.parse(template.replace("#", "ab"))
+        val nonBmp = LibPgQuery.parse(template.replace("#", "$grinning")).accepted()
+        val ascii = LibPgQuery.parse(template.replace("#", "ab")).accepted()
         assertThat(scalars(nonBmp), template).isEqualTo(scalars(ascii))
       }
     }
@@ -112,14 +106,14 @@ class LibPgQueryOffsetTest {
     @Test
     fun `token bounds are String indexes after a non-BMP literal`() {
       val sql = "SELECT '$grinning' AS emoji, next"
-      val texts = LibPgQuery.scan(sql).map { sql.substring(it.start, it.end) }
+      val texts = LibPgQuery.scan(sql).accepted().map { sql.substring(it.start, it.end) }
       assertThat(texts).isEqualTo(listOf("SELECT", "'$grinning'", "AS", "emoji", ",", "next"))
     }
 
     @Test
     fun `token bounds are String indexes after a BMP character outside ASCII`() {
       val sql = "SELECT 'café', next"
-      val texts = LibPgQuery.scan(sql).map { sql.substring(it.start, it.end) }
+      val texts = LibPgQuery.scan(sql).accepted().map { sql.substring(it.start, it.end) }
       assertThat(texts).isEqualTo(listOf("SELECT", "'café'", ",", "next"))
     }
   }
@@ -130,30 +124,19 @@ class LibPgQueryOffsetTest {
     @Test
     fun `parse error cursor is a String index after a non-BMP literal`() {
       val sql = "SELECT '$grinning$grinning' ) FROM t"
-      assertFailure { LibPgQuery.parse(sql) }
-        .isInstanceOf(LibPgQueryException::class)
-        .prop(LibPgQueryException::cursorIndex)
-        .isEqualTo(sql.indexOf(')'))
+      assertThat(LibPgQuery.parse(sql).rejected().cursorIndex).isEqualTo(sql.indexOf(')'))
     }
 
     @Test
     fun `scan error cursor is a String index after a non-BMP literal`() {
       val sql = "SELECT '$grinning$grinning', \"unterminated"
-      assertFailure { LibPgQuery.scan(sql) }
-        .isInstanceOf(LibPgQueryException::class)
-        .prop(LibPgQueryException::cursorIndex)
-        .isEqualTo(sql.indexOf('"'))
+      assertThat(LibPgQuery.scan(sql).rejected().cursorIndex).isEqualTo(sql.indexOf('"'))
     }
 
     @Test
     fun `cursor is null when PostgreSQL reports no position`() {
       val sql = "SELECT " + "ARRAY[".repeat(3000) + "1" + "]".repeat(3000)
-      assertFailure { LibPgQuery.parse(sql) }
-        .isInstanceOf(LibPgQueryException::class)
-        .all {
-          hasMessage("stack depth limit exceeded")
-          prop(LibPgQueryException::cursorIndex).isNull()
-        }
+      assertThat(LibPgQuery.parse(sql)).isEqualTo(LibPgQueryResult.Rejected("stack depth limit exceeded", null))
     }
   }
 }

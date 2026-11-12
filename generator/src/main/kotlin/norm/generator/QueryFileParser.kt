@@ -1,7 +1,7 @@
 package norm.generator
 
 import norm.generator.libpgquery.LibPgQuery
-import norm.generator.libpgquery.LibPgQueryException
+import norm.generator.libpgquery.LibPgQueryResult
 import norm.generator.libpgquery.ScanToken
 import norm.generator.libpgquery.TokenNumber
 import norm.generator.libpgquery.isComment
@@ -154,16 +154,16 @@ public object QueryFileParser {
     require(nulIndex < 0) {
       "${locate(text, lines, nulIndex)} contains a NUL character on line ${lines.lineOf(nulIndex)}."
     }
-    return try {
-      LibPgQuery.scan(text)
-    } catch (exception: LibPgQueryException) {
-      val cursorIndex = exception.cursorIndex?.takeIf { it in text.indices }
-      val where = if (cursorIndex == null) "The query file" else locate(text, lines, cursorIndex)
-      val line = cursorIndex?.let { lines.lineOf(it).toString() } ?: "unknown"
-      throw IllegalArgumentException(
-        "$where holds text that PostgreSQL's lexer rejects on line $line: ${exception.message}.",
-        exception,
-      )
+    return when (val result = LibPgQuery.scan(text)) {
+      is LibPgQueryResult.Accepted -> result.value
+      is LibPgQueryResult.Rejected -> {
+        val cursorIndex = result.cursorIndex?.takeIf { it in text.indices }
+        val where = if (cursorIndex == null) "The query file" else locate(text, lines, cursorIndex)
+        val line = cursorIndex?.let { lines.lineOf(it).toString() } ?: "unknown"
+        throw IllegalArgumentException(
+          "$where holds text that PostgreSQL's lexer rejects on line $line: ${result.message}.",
+        )
+      }
     }
   }
 
@@ -205,7 +205,9 @@ public object QueryFileParser {
     tokens: List<ScanToken>,
   ): Int? {
     val body = text.substring(bodyStart, bodyEnd)
-    val statements = splitStatementSpans(ParsedSql(withLexerWhitespace(body)))
+    val statements = checkNotNull(splitStatementSpans(ParsedSql(withLexerWhitespace(body)))) {
+      "PostgreSQL's lexer rejects a query body of a file whose scan it accepted."
+    }
     for (statement in statements) {
       val end = bodyStart + statement.end
       if (end >= bodyEnd || text[end] != ';') continue
@@ -229,11 +231,7 @@ public object QueryFileParser {
   private fun withLexerWhitespace(sql: String): String {
     val replaced = String(CharArray(sql.length) { if (isOutsideLexerWhitespace(sql[it])) ' ' else sql[it] })
     if (replaced == sql) return sql
-    val replacedTokens = try {
-      LibPgQuery.scan(replaced).toSet()
-    } catch (_: LibPgQueryException) {
-      return sql
-    }
+    val replacedTokens = LibPgQuery.scan(replaced).valueOrNull()?.toSet() ?: return sql
     val keepsTokens = scanLeadingTokens(sql).filter { it.token != TokenNumber.IDENTIFIER }.all { it in replacedTokens }
     return if (keepsTokens) replaced else sql
   }

@@ -81,7 +81,8 @@ class LibPgQueryPluginClasspathTest {
         doLast {
           val type = Class.forName("norm.generator.libpgquery.LibPgQuery")
           val instance = type.getField("INSTANCE").get(null)
-          val tree = type.getMethod("parse", String::class.java).invoke(instance, "SELECT 1")
+          val result = type.getMethod("parse", String::class.java).invoke(instance, "SELECT 1")
+          val tree = result.javaClass.getMethod("valueOrNull").invoke(result)
           val version = tree.javaClass.getMethod("intField", String::class.java).invoke(tree, "version")
           println("LibPgQuery parse result version=" + version)
           println("$LOCATION_PREFIX" + type.protectionDomain.codeSource.location)

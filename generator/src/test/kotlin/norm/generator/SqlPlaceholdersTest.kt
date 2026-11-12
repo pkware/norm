@@ -3,6 +3,7 @@ package norm.generator
 import assertk.assertThat
 import assertk.assertions.isEqualTo
 import norm.generator.libpgquery.LibPgQuery
+import norm.generator.libpgquery.accepted
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
@@ -271,7 +272,7 @@ class SqlPlaceholdersTest {
     @ParameterizedTest
     @MethodSource("norm.generator.SqlPlaceholdersTestKt#parseableQueries")
     fun `result parses`(sql: String) {
-      LibPgQuery.parse(ParsedSql(sql).parserForm)
+      LibPgQuery.parse(ParsedSql(sql).parserForm).accepted()
     }
 
     @Test
@@ -298,7 +299,7 @@ class SqlPlaceholdersTest {
     @Test
     fun `select item locations match the original text`() {
       val sql = "SELECT j ?? 'k' AS flag, ? AS x, b FROM t"
-      val tree = LibPgQuery.parse(ParsedSql(sql).parserForm)
+      val tree = LibPgQuery.parse(ParsedSql(sql).parserForm).accepted()
       assertThat(resultTargetLocations(tree))
         .isEqualTo(listOf(sql.indexOf("j ??"), sql.indexOf("? AS x"), sql.indexOf("b FROM")))
     }

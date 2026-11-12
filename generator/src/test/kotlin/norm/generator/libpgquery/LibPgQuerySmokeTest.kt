@@ -4,11 +4,9 @@ import assertk.assertFailure
 import assertk.assertThat
 import assertk.assertions.containsAtLeast
 import assertk.assertions.containsExactly
-import assertk.assertions.hasMessage
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isInstanceOf
-import assertk.assertions.prop
 import com.dylibso.chicory.wasm.Parser
 import com.dylibso.chicory.wasm.types.ExternalType
 import com.dylibso.chicory.wasm.types.MemoryImport
@@ -22,27 +20,30 @@ class LibPgQuerySmokeTest {
 
     @Test
     fun `parses SELECT 1 with PostgreSQL 18`() {
-      val tree = LibPgQuery.parse("SELECT 1")
+      val tree = LibPgQuery.parse("SELECT 1").accepted()
       assertThat(tree.intField("version")).isEqualTo(180_006)
       assertThat(tree.objectArrayField("stmts").size).isEqualTo(1)
     }
 
     @Test
     fun `reports a syntax error with PostgreSQL's message and keeps serving calls`() {
-      assertFailure { LibPgQuery.parse("SELEC 1") }
-        .isInstanceOf(LibPgQueryException::class)
-        .hasMessage("syntax error at or near \"SELEC\"")
-      val tree = LibPgQuery.parse("SELECT 2")
+      assertThat(LibPgQuery.parse("SELEC 1"))
+        .isEqualTo(LibPgQueryResult.Rejected("syntax error at or near \"SELEC\"", 0))
+      val tree = LibPgQuery.parse("SELECT 2").accepted()
       assertThat(tree.intField("version")).isEqualTo(180_006)
+    }
+
+    @Test
+    fun `a rejected text leaves the instance in use`() {
+      val calls = RecordingMachine.record { LibPgQuery.parse("SELEC 1").rejected() }
+
+      assertThat(calls.parseTexts).isEqualTo(listOf("SELEC 1"))
     }
 
     @Test
     fun `reports the cursor of a syntax error as a String index`() {
       val sql = "SELECT 1 FROM t WHERE )"
-      assertFailure { LibPgQuery.parse(sql) }
-        .isInstanceOf(LibPgQueryException::class)
-        .prop(LibPgQueryException::cursorIndex)
-        .isEqualTo(sql.indexOf(')'))
+      assertThat(LibPgQuery.parse(sql).rejected().cursorIndex).isEqualTo(sql.indexOf(')'))
     }
 
     @Test
@@ -57,14 +58,14 @@ class LibPgQuerySmokeTest {
     @Test
     fun `scans keywords and literals`() {
       val sql = "SELECT 1 FROM t"
-      val texts = LibPgQuery.scan(sql).map { sql.substring(it.start, it.end) }
+      val texts = LibPgQuery.scan(sql).accepted().map { sql.substring(it.start, it.end) }
       assertThat(texts).isEqualTo(listOf("SELECT", "1", "FROM", "t"))
     }
 
     @Test
     fun `classifies keywords by kind`() {
       val sql = "SELECT abort between left foo"
-      val kinds = LibPgQuery.scan(sql).associate { sql.substring(it.start, it.end) to it.keywordKind }
+      val kinds = LibPgQuery.scan(sql).accepted().associate { sql.substring(it.start, it.end) to it.keywordKind }
       assertThat(kinds).isEqualTo(
         mapOf(
           "SELECT" to KeywordKind.RESERVED,
@@ -78,10 +79,9 @@ class LibPgQuerySmokeTest {
 
     @Test
     fun `reports a lexer error and keeps serving calls`() {
-      assertFailure { LibPgQuery.scan("SELECT \"unterminated") }
-        .isInstanceOf(LibPgQueryException::class)
-        .hasMessage("unterminated quoted identifier at or near \"\"unterminated\"")
-      assertThat(LibPgQuery.scan("SELECT 1").size).isEqualTo(2)
+      assertThat(LibPgQuery.scan("SELECT \"unterminated").rejected().message)
+        .isEqualTo("unterminated quoted identifier at or near \"\"unterminated\"")
+      assertThat(LibPgQuery.scan("SELECT 1").accepted().size).isEqualTo(2)
     }
   }
 

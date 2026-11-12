@@ -62,7 +62,7 @@ internal class RecordingMachine(private val instance: Instance, private val dele
      * does the swap because [LibPgQuery] offers no way to install another instance.
      *
      * @throws IllegalStateException if [LibPgQuery] discarded the recording instance during [block], which happens
-     *   after a failure other than a [LibPgQueryException]. The recorded texts would then be incomplete.
+     *   after a call throws. The recorded texts would then be incomplete.
      */
     fun record(block: () -> Unit): RecordedCalls {
       val calls = RecordedCalls()

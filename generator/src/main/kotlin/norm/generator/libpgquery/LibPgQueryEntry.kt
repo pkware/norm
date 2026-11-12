@@ -30,14 +30,14 @@ internal sealed class LibPgQueryEntry<T : Any>(
    *
    * @return the error with its position mapped to a `String` index of [input], or `null` when no error is set.
    */
-  fun readError(instance: Instance, result: Int, input: Utf8Input): LibPgQueryException? {
+  fun readError(instance: Instance, result: Int, input: Utf8Input): LibPgQueryResult.Rejected? {
     val memory = instance.memory()
     val error = memory.readInt(result + errorOffset)
     if (error == 0) return null
     val message = memory.readCString(memory.readInt(error))
     val cursorPosition = memory.readInt(error + CURSOR_OFFSET)
     val cursorIndex = if (cursorPosition > 0) input.indexOfCodePointOffset(cursorPosition - 1) else null
-    return LibPgQueryException(message, cursorIndex)
+    return LibPgQueryResult.Rejected(message, cursorIndex)
   }
 
   /** `PgQueryParseResult`: `parse_tree` at 0, `stderr_buffer` at 4 and `error` at 8. Reads the JSON parse tree. */

@@ -32,12 +32,7 @@ class RegressSweepTest {
           val failure = if (statement.isTokenizerRejected) {
             "the lexer rejects it"
           } else {
-            try {
-              LibPgQuery.parse(statement.text)
-              null
-            } catch (exception: LibPgQueryException) {
-              exception.message
-            }
+            (LibPgQuery.parse(statement.text) as? LibPgQueryResult.Rejected)?.message
           }
           when {
             failure == null && entry != null -> rejectedThatParse += "$key parses but is on the reject list"

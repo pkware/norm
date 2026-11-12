@@ -29,7 +29,7 @@ class PsqlLinesTest {
     fun `replaces a command that sends the query buffer with a line holding only a semicolon`(command: String) {
       val result = psqlLines("SELECT 1", command, "SELECT 2;")
       assertThat(result.text).isEqualTo("SELECT 1\n;\nSELECT 2;\n")
-      assertThat(LibPgQuery.split(result.text).map { result.text.substring(it.start, it.end).trim() })
+      assertThat(LibPgQuery.split(result.text).accepted().map { result.text.substring(it.start, it.end).trim() })
         .isEqualTo(listOf("SELECT 1", "SELECT 2"))
     }
 

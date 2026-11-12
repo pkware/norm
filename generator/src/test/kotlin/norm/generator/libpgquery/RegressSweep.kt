@@ -136,17 +136,12 @@ internal object PgRegress {
     return RegressFile(major, path.name, statements, psql.copyBlocks, psql.inactiveBranches, regrownRegions)
   }
 
-  private fun parses(statement: String): Boolean = try {
-    LibPgQuery.parse(statement)
-    true
-  } catch (_: LibPgQueryException) {
-    false
-  }
+  private fun parses(statement: String): Boolean = LibPgQuery.parse(statement) is LibPgQueryResult.Accepted
 
   /** Whether [statement] holds the keyword `ATOMIC` and does not parse, as a function body cut at a `;` does. */
   private fun isFailingAtomic(statement: String): Boolean {
     if (!statement.contains("atomic", ignoreCase = true)) return false
-    val hasKeyword = LibPgQuery.scan(statement).any {
+    val hasKeyword = LibPgQuery.scan(statement).accepted().any {
       it.keywordKind != KeywordKind.NONE && statement.substring(it.start, it.end).equals("ATOMIC", ignoreCase = true)
     }
     return hasKeyword && !parses(statement)
@@ -163,11 +158,7 @@ internal object PgRegress {
     for (last in from + 1 until split.items.size) {
       val end = (split.items[last] as? SplitItem.Scanned)?.end ?: return null
       val region = split.text.substring(first.start, end)
-      val parts = try {
-        LibPgQuery.splitWithParser(region)
-      } catch (_: LibPgQueryException) {
-        continue
-      }
+      val parts = LibPgQuery.splitWithParser(region).valueOrNull() ?: continue
       val texts = parts.map { region.substring(it.start, it.end) }
       if (texts.all(::parses)) return Regrowth(texts, last + 1)
     }
@@ -179,7 +170,7 @@ internal object PgRegress {
   private fun skipReason(statement: String): SweepSkip? {
     // Neither token can occur without its character, so most statements skip the scan.
     if (':' !in statement && '\\' !in statement) return null
-    val tokens = LibPgQuery.scan(statement)
+    val tokens = LibPgQuery.scan(statement).accepted()
     if (isPsqlVariablePresent(tokens, statement)) return SweepSkip.PSQL_VARIABLE
     if (tokens.any { it.token == TokenNumber.BACKSLASH }) return SweepSkip.BACKSLASH
     return null
