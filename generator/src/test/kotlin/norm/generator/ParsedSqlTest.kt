@@ -50,4 +50,27 @@ class ParsedSqlTest {
       assertThat(significantTexts("SELECT a UESCAPE '!'")).isEqualTo(listOf("SELECT", "a", "UESCAPE", "'!'"))
     }
   }
+
+  @Nested
+  inner class ParserForm {
+
+    @Test
+    fun `a placeholder is written as zero and a slice colon is kept`() {
+      assertThat(ParsedSql("SELECT arr[1:n] FROM t WHERE id = ?").parserForm)
+        .isEqualTo("SELECT arr[1:n] FROM t WHERE id = 0")
+    }
+
+    @Test
+    fun `a named parameter becomes spaces and a zero at its last character`() {
+      assertThat(ParsedSql("SELECT arr[:i] FROM t WHERE id = :id").parserForm)
+        .isEqualTo("SELECT arr[ 0] FROM t WHERE id =   0")
+    }
+
+    @Test
+    fun `a named parameter and a placeholder keep the length of the text`() {
+      val sql = "SELECT :a, ?, arr[1:n] FROM t"
+
+      assertThat(ParsedSql(sql).parserForm.length).isEqualTo(sql.length)
+    }
+  }
 }

@@ -1,83 +1,5 @@
 package norm.generator
 
-/**
- * Folds a raw identifier the way PostgreSQL folds an identifier reference for comparison: an
- * unquoted identifier folds via [foldAsciiCase]; a quoted identifier (`"..."`) compares exactly,
- * with the surrounding quotes removed and any doubled `""` escape collapsed to the literal `"` it
- * represents, via [unescapeQuotedIdentifier].
- *
- * [rawIdentifier] must be exactly what was written in the source SQL, quotes and all where
- * present. A logical value with its quotes already removed must use the two-argument overload
- * below instead, passing whether it was quoted explicitly.
- */
-internal fun foldIdentifier(rawIdentifier: String): String {
-  val trimmed = rawIdentifier.trim()
-  return if (isQuotedIdentifier(trimmed)) unescapeQuotedIdentifier(trimmed) else foldAsciiCase(trimmed)
-}
-
-/**
- * Folds a logical identifier value (quotes already removed, any doubled `""` escape already
- * collapsed) the way PostgreSQL folds an identifier reference for comparison: a quoted reference
- * ([isQuoted] `true`) compares exactly and is returned unchanged; an unquoted one folds via
- * [foldAsciiCase].
- */
-internal fun foldIdentifier(logicalValue: String, isQuoted: Boolean): String =
-  if (isQuoted) logicalValue else foldAsciiCase(logicalValue)
-
-/**
- * Converts a raw identifier token, exactly as written in the source SQL, to PostgreSQL's logical
- * identifier value: [foldIdentifier] resolves its quoting (unquoted folds via [foldAsciiCase];
- * quoted unescapes via [unescapeQuotedIdentifier]), then [truncateIdentifier] applies the server's
- * byte-length limit.
- *
- * The result is safe to compare against a name the server already reports (a catalog column name,
- * a `ResultSetMetaData` label, a node tree's `:resname`) — never safe to splice back into SQL as an
- * identifier, since a quoted result may need requoting and an unquoted one has already lost the
- * quoting decision.
- */
-internal fun logicalIdentifier(rawToken: String): String = truncateIdentifier(foldIdentifier(rawToken))
-
-/**
- * Folds only the ASCII letters `A`-`Z` to lowercase, leaving every other character untouched —
- * never through Kotlin's `String.lowercase()`, which applies full Unicode case mapping instead.
- *
- * PostgreSQL's own case-folding for an unquoted identifier folds only plain ASCII `A`-`Z`, never a
- * non-ASCII letter, even one with an obvious upper/lower pairing: on PostgreSQL 18.4, with a column
- * named `"ü"` (quoted, lowercase), the bare, unquoted reference `SELECT Ü FROM t` fails outright
- * (`column "Ü" does not exist`).
- */
-internal fun foldAsciiCase(text: String): String {
-  val builder = StringBuilder(text.length)
-  for (character in text) {
-    builder.append(if (character in 'A'..'Z') character.lowercaseChar() else character)
-  }
-  return builder.toString()
-}
-
-/**
- * Whether [rawIdentifier] (as written in the source SQL) is a double-quoted identifier —
- * surrounded by a `"` on both ends, with at least the two quote characters themselves present.
- */
-internal fun isQuotedIdentifier(rawIdentifier: String): Boolean {
-  val trimmed = rawIdentifier.trim()
-  return trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')
-}
-
-/**
- * Converts a raw double-quoted identifier token — including its surrounding quotes — into
- * PostgreSQL's logical identifier value: the surrounding quotes removed, and each doubled `""`
- * escape collapsed to the single literal `"` it represents.
- * On PostgreSQL 18, `ResultSetMetaData.getColumnName` for `SELECT "He""llo" FROM (SELECT 1 AS
- * "He""llo") s` reports `He"llo` (no quotes, escape already collapsed) — exactly what this
- * function produces from the raw token `"He""llo"`.
- *
- * [rawQuotedToken] must be a double-quoted identifier exactly as written — starting and ending
- * with `"`, with at least those two characters present. Passing anything else is a caller bug,
- * not a value this function attempts to handle gracefully.
- */
-internal fun unescapeQuotedIdentifier(rawQuotedToken: String): String =
-  rawQuotedToken.substring(1, rawQuotedToken.length - 1).replace("\"\"", "\"")
-
 /** PostgreSQL's `NAMEDATALEN - 1`: the byte length an identifier is truncated to by the server. */
 internal const val MAX_IDENTIFIER_LENGTH_BYTES = 63
 
@@ -119,9 +41,6 @@ internal fun quoteSqlIdentifierIfNeeded(identifier: String, reservedWords: Set<S
  * [identifier] must be the logical value, with quotes and any `""` escape already resolved; this
  * only measures bytes and has no opinion on quoting. Truncating a still-quoted name would count
  * the quote characters and can drop the closing one.
- *
- * Not part of [foldIdentifier]: `parse_ident()` does not truncate. See [logicalIdentifier] for
- * a raw token's fold-then-truncate combination.
  */
 internal fun truncateIdentifier(identifier: String): String {
   var byteLength = 0

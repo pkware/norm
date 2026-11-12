@@ -17,7 +17,7 @@ import norm.generator.libpgquery.isKeyword
  */
 internal fun splitStatements(parsed: ParsedSql): List<ParsedSql> {
   val spans = try {
-    splitStatementSpans(parsed.sql) { parsed.parserForm }
+    splitStatementSpans(parsed)
   } catch (_: LibPgQueryException) {
     return listOf(parsed)
   }
@@ -25,21 +25,19 @@ internal fun splitStatements(parsed: ParsedSql): List<ParsedSql> {
 }
 
 /**
- * Splits [sql] at top-level `;` with PostgreSQL's lexer. When that finds several statements, the parser splits the
- * text again, which keeps a `BEGIN ATOMIC` body as one statement. The lexer's statements stand when the parser rejects
- * the text. Each statement starts where the lexer's statement containing its first token starts, which keeps the
- * whitespace and comments before it.
+ * Splits [parsed] at top-level `;` with PostgreSQL's lexer. When that finds several statements, the parser splits
+ * [ParsedSql.parserForm] again, which keeps a `BEGIN ATOMIC` body as one statement. The lexer's statements stand when
+ * the parser rejects the text. Each statement starts where the lexer's statement containing its first token starts,
+ * which keeps the whitespace and comments before it.
  *
- * @param rewriteForParser turns [sql] into text of the same length that the parser accepts.
- * @return the statements, with the offsets of [sql].
- * @throws LibPgQueryException if the lexer rejects [sql].
- * @throws IllegalArgumentException if [sql] contains a NUL character.
+ * @return the statements, with the offsets of [ParsedSql.sql].
+ * @throws LibPgQueryException if the lexer rejects [ParsedSql.sql].
  */
-internal fun splitStatementSpans(sql: String, rewriteForParser: (String) -> String): List<SplitStatement> {
-  val spans = LibPgQuery.split(sql)
+internal fun splitStatementSpans(parsed: ParsedSql): List<SplitStatement> {
+  val spans = LibPgQuery.split(parsed.sql)
   if (spans.size < 2) return spans
   return try {
-    LibPgQuery.splitWithParser(rewriteForParser(sql)).map { statement ->
+    LibPgQuery.splitWithParser(parsed.parserForm).map { statement ->
       SplitStatement(spans.lastOrNull { it.start <= statement.start }?.start ?: statement.start, statement.end)
     }
   } catch (_: LibPgQueryException) {

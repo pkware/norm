@@ -37,7 +37,7 @@ class OutputItemsParseTreeTest {
 
     @Test
     fun `a trailing bare word is the alias and not part of the expression`() {
-      val item = parseOutputItemsWithAlias(ParsedSql("SELECT a, b c FROM t")).last()
+      val item = ParsedSql("SELECT a, b c FROM t").outputItems.last()
       assertThat(item.selectItem.expression).isEqualTo("b")
       assertThat(item.alias).isEqualTo("c")
       assertThat(item.isAliasExplicit).isFalse()
@@ -119,30 +119,30 @@ class OutputItemsParseTreeTest {
 
     @Test
     fun `a reserved word after AS is the alias`() {
-      val item = parseOutputItemsWithAlias(ParsedSql("SELECT 1 AS as")).single()
+      val item = ParsedSql("SELECT 1 AS as").outputItems.single()
       assertThat(item).isEqualTo(OutputItemWithAlias(SelectItem("1", null, null), "as", isAliasExplicit = true))
     }
 
     @Test
-    fun `a quoted alias keeps its quotes and its doubled quote`() {
-      val item = parseOutputItemsWithAlias(ParsedSql("SELECT x AS \"He\"\"llo\"")).single()
-      assertThat(item.alias).isEqualTo("\"He\"\"llo\"")
+    fun `a quoted alias is the name without its quotes and with its doubled quote collapsed`() {
+      val item = ParsedSql("SELECT x AS \"He\"\"llo\"").outputItems.single()
+      assertThat(item.alias).isEqualTo("He\"llo")
       assertThat(item.isAliasExplicit).isTrue()
     }
 
     @Test
-    fun `a Unicode-escaped alias keeps its UESCAPE clause`() {
-      val item = parseOutputItemsWithAlias(ParsedSql("SELECT x AS U&\"y\" UESCAPE '!'")).single()
+    fun `a Unicode-escaped alias is the name with its escapes resolved`() {
+      val item = ParsedSql("SELECT x AS U&\"y\" UESCAPE '!'").outputItems.single()
       assertThat(item.selectItem.expression).isEqualTo("x")
-      assertThat(item.alias).isEqualTo("U&\"y\" UESCAPE '!'")
+      assertThat(item.alias).isEqualTo("y")
       assertThat(item.isAliasExplicit).isTrue()
     }
 
     @Test
     fun `a quoted AS is not the keyword`() {
-      val item = parseOutputItemsWithAlias(ParsedSql("SELECT x \"AS\"")).single()
+      val item = ParsedSql("SELECT x \"AS\"").outputItems.single()
       assertThat(item.selectItem.expression).isEqualTo("x")
-      assertThat(item.alias).isEqualTo("\"AS\"")
+      assertThat(item.alias).isEqualTo("AS")
       assertThat(item.isAliasExplicit).isFalse()
     }
   }
@@ -157,14 +157,14 @@ class OutputItemsParseTreeTest {
 
     @Test
     fun `a star followed directly by an implicit alias is a star`() {
-      val item = parseOutputItemsWithAlias(ParsedSql("SELECT u.*whatever FROM users u")).single()
+      val item = ParsedSql("SELECT u.*whatever FROM users u").outputItems.single()
       assertThat(item.selectItem.isStar).isTrue()
       assertThat(item.alias).isEqualTo("whatever")
     }
 
     @Test
     fun `a digit before the dot makes multiplication and not a star`() {
-      val item = parseOutputItemsWithAlias(ParsedSql("SELECT 2.*3 lbl FROM t")).single()
+      val item = ParsedSql("SELECT 2.*3 lbl FROM t").outputItems.single()
       assertThat(item.selectItem.isStar).isFalse()
       assertThat(item.selectItem.expression).isEqualTo("2.*3")
       assertThat(item.alias).isEqualTo("lbl")

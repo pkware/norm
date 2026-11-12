@@ -25,7 +25,7 @@ import java.sql.DriverManager
 import java.sql.SQLException
 
 /**
- * One input whose items [parseOutputItemsWithAlias] must return as [expected], with a live server's column count and
+ * One input whose items [ParsedSql.outputItems] must return as [expected], with a live server's column count and
  * labels agreeing.
  */
 internal data class LiveItemsCase(val sql: String, val expected: List<OutputItemWithAlias>) {
@@ -41,7 +41,7 @@ private fun item(
 ): OutputItemWithAlias = OutputItemWithAlias(SelectItem(expression, columnName, tableName), alias, isAliasExplicit)
 
 /**
- * Checks the item count and the labels of [parseOutputItemsWithAlias] against the column count and labels a live server
+ * Checks the item count and the labels of [ParsedSql.outputItems] against the column count and labels a live server
  * reports for the same statement.
  */
 @Testcontainers
@@ -86,7 +86,7 @@ internal class SelectItemsLiveTest {
     fun `the QUERY PLAN column is not paired with the explained select list`() {
       val sql = "EXPLAIN SELECT a FROM t"
       assertThat(labels(sql)).containsExactly("QUERY PLAN")
-      assertThat(parseOutputItemsWithAlias(ParsedSql(sql))).isEmpty()
+      assertThat(ParsedSql(sql).outputItems).isEmpty()
     }
   }
 
@@ -97,7 +97,7 @@ internal class SelectItemsLiveTest {
     fun `the result column is named after the first branch`() {
       val sql = "(SELECT a FROM t) UNION (SELECT b FROM t)"
       assertThat(labels(sql)).containsExactly("a")
-      assertThat(parseOutputItemsWithAlias(ParsedSql(sql))).containsExactly(item("a", columnName = "a"))
+      assertThat(ParsedSql(sql).outputItems).containsExactly(item("a", columnName = "a"))
       assertThat(hasTopLevelSetOperation(ParsedSql(sql))).isTrue()
     }
 
@@ -115,14 +115,14 @@ internal class SelectItemsLiveTest {
       val sql = "SELECT (a) AS b FROM t"
       val metaData = connection.prepareStatement(sql).use { it.metaData.unwrap(PGResultSetMetaData::class.java) }
       assertThat(metaData.getBaseColumnName(1)).isEqualTo("a")
-      assertThat(parseOutputItemsWithAlias(ParsedSql(sql))).containsExactly(item("(a)", columnName = "a", alias = "b"))
+      assertThat(ParsedSql(sql).outputItems).containsExactly(item("(a)", columnName = "a", alias = "b"))
     }
 
     @Test
     fun `an unaliased parenthesized column is labeled with the column name`() {
       val sql = "SELECT (age) FROM users"
       assertThat(labels(sql)).containsExactly("age")
-      assertThat(parseOutputItemsWithAlias(ParsedSql(sql))).containsExactly(item("(age)", columnName = "age"))
+      assertThat(ParsedSql(sql).outputItems).containsExactly(item("(age)", columnName = "age"))
     }
   }
 
@@ -133,7 +133,7 @@ internal class SelectItemsLiveTest {
     fun `separately parenthesized branches name the column after the first`() {
       val sql = "(SELECT id FROM parent) UNION (SELECT id FROM child)"
       assertThat(labels(sql)).containsExactly("id")
-      assertThat(parseOutputItemsWithAlias(ParsedSql(sql))).containsExactly(item("id", columnName = "id"))
+      assertThat(ParsedSql(sql).outputItems).containsExactly(item("id", columnName = "id"))
     }
   }
 
@@ -143,14 +143,14 @@ internal class SelectItemsLiveTest {
     @Test
     fun `an empty select list has no columns`() {
       assertThat(labels("SELECT")).isEmpty()
-      assertThat(parseOutputItemsWithAlias(ParsedSql("SELECT"))).isEmpty()
+      assertThat(ParsedSql("SELECT").outputItems).isEmpty()
     }
 
     @Test
     fun `INSERT SELECT without RETURNING has no result set`() {
       val sql = "INSERT INTO t(a) SELECT 1 AS returning"
       assertThat(connection.prepareStatement(sql).use { it.metaData }).isNull()
-      assertThat(parseOutputItemsWithAlias(ParsedSql(sql))).isEmpty()
+      assertThat(ParsedSql(sql).outputItems).isEmpty()
     }
   }
 
@@ -173,7 +173,7 @@ internal class SelectItemsLiveTest {
     @Test
     fun `a keyword-named explicit alias before INTO is the alias`() {
       assertThat(labels("SELECT a AS insert FROM t")).containsExactly("insert")
-      assertThat(parseOutputItemsWithAlias(ParsedSql("SELECT a AS insert INTO copied FROM t")))
+      assertThat(ParsedSql("SELECT a AS insert INTO copied FROM t").outputItems)
         .containsExactly(item("a", columnName = "a", alias = "insert"))
     }
   }
@@ -185,7 +185,7 @@ internal class SelectItemsLiveTest {
     fun `the first statement names the columns`() {
       val sql = "SELECT 1 AS a; SELECT 2 AS b, 3 AS c"
       assertThat(labels(sql)).containsExactly("a")
-      assertThat(parseOutputItemsWithAlias(ParsedSql(sql))).containsExactly(item("1", alias = "a"))
+      assertThat(ParsedSql(sql).outputItems).containsExactly(item("1", alias = "a"))
     }
   }
 
@@ -196,7 +196,7 @@ internal class SelectItemsLiveTest {
     fun `TABLE returns every column of the table, which the text does not list`() {
       val sql = "TABLE s"
       assertThat(labels(sql).size).isEqualTo(6)
-      assertThat(parseOutputItemsWithAlias(ParsedSql(sql))).isEmpty()
+      assertThat(ParsedSql(sql).outputItems).isEmpty()
     }
   }
 
@@ -213,7 +213,7 @@ internal class SelectItemsLiveTest {
         rejected = exception.sqlState == SYNTAX_ERROR_STATE
       }
       assertThat(rejected).isTrue()
-      assertThat(parseOutputItemsWithAlias(ParsedSql(sql))).isEmpty()
+      assertThat(ParsedSql(sql).outputItems).isEmpty()
     }
   }
 
@@ -223,11 +223,11 @@ internal class SelectItemsLiveTest {
   }
 
   private fun liveLabeledItems(sql: String): List<OutputItemWithAlias> {
-    val items = parseOutputItemsWithAlias(ParsedSql(sql))
+    val items = ParsedSql(sql).outputItems
     val labels = labels(sql)
     assertThat(items.size, "item count").isEqualTo(labels.size)
     for ((index, item) in items.withIndex()) {
-      val parsedLabel = item.alias?.let(::logicalIdentifier) ?: item.selectItem.columnName
+      val parsedLabel = item.alias ?: item.selectItem.columnName
       if (parsedLabel != null) assertThat(parsedLabel, "label of item $index").isEqualTo(labels[index])
     }
     return items
@@ -316,7 +316,7 @@ internal class SelectItemsLiveTest {
       LiveItemsCase(
         "SELECT description \"He\"\"llo\" FROM t",
         listOf(
-          item("description", columnName = "description", alias = "\"He\"\"llo\"", isAliasExplicit = false),
+          item("description", columnName = "description", alias = "He\"llo", isAliasExplicit = false),
         ),
       ),
       LiveItemsCase(
@@ -343,11 +343,11 @@ internal class SelectItemsLiveTest {
       ),
       LiveItemsCase(
         "SELECT age AS€b FROM users",
-        listOf(item("age", columnName = "age", alias = "AS€b", isAliasExplicit = false)),
+        listOf(item("age", columnName = "age", alias = "as€b", isAliasExplicit = false)),
       ),
       LiveItemsCase(
         "SELECT age x€AS FROM users",
-        listOf(item("age", columnName = "age", alias = "x€AS", isAliasExplicit = false)),
+        listOf(item("age", columnName = "age", alias = "x€as", isAliasExplicit = false)),
       ),
       LiveItemsCase(
         "SELECT 2.*3 lbl, a FROM t",

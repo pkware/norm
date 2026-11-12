@@ -8,7 +8,8 @@ import norm.generator.cteDefinitions
 import norm.generator.explainedStatementStart
 import norm.generator.firstStatement
 import norm.generator.hasTopLevelSetOperation
-import norm.generator.parseOutputItemsWithAlias
+import norm.generator.outputItems
+import norm.generator.outputItemsOf
 import norm.generator.placeholderPositions
 import norm.generator.replaceParameterPlaceholders
 import norm.generator.splitStatements
@@ -33,7 +34,7 @@ internal object ScannerBaseline {
 
   private fun StringBuilder.renderEntry(text: String) {
     record("parseSelectItems") { ParsedSql(text).outputItems.map { it.selectItem } }
-    record("parseOutputItemsWithAlias") { parseOutputItemsWithAlias(ParsedSql(text)) }
+    record("parseOutputItemsWithAlias") { ParsedSql(text).outputItems }
     val columnCount = runCatching { ParsedSql(text).outputItems.size }
     record("alignSelectItems(columnCount = parseSelectItems.size)") {
       alignSelectItems(ParsedSql(text), columnCount.getOrThrow())
@@ -48,7 +49,7 @@ internal object ScannerBaseline {
     record("splitStatements") { splitStatements(ParsedSql(text)).map { it.sql } }
     record("explainedStatementStart") { explainedStatementStart(ParsedSql(text)) }
     record("cteDefinitions") { renderCteDefinitions(ParsedSql(text)) }
-    val items = runCatching { parseOutputItemsWithAlias(ParsedSql(text)) }
+    val items = runCatching { ParsedSql(text).outputItems }
     items.fold(
       onSuccess = { renderItems(it) },
       onFailure = { appendLine("items: ${escape(describe(it))}") },

@@ -58,6 +58,17 @@ class AnalysisCallCountTest {
     assertThat(calls.scanTexts).isEqualTo(listOf(sql))
   }
 
+  @Test
+  fun `reading the normalized expression of a parsed item scans and parses nothing`() {
+    val items = ParsedSql("SELECT UPPER(name /* c */ ||  'x') AS n, id FROM author").outputItems
+
+    val calls = RecordingMachine.record { items.forEach { it.selectItem.normalizedExpression } }
+
+    assertThat(items.map { it.selectItem.normalizedExpression }).isEqualTo(listOf("UPPER(name || 'x')", "id"))
+    assertThat(calls.scanTexts).isEqualTo(emptyList())
+    assertThat(calls.parseTexts).isEqualTo(emptyList())
+  }
+
   private fun recordAnalysis(sql: String): RecordedCalls = RecordingMachine.record {
     analyzer.analyzeQuery(ParsedQuery("probe", Command.MANY, sql, emptyList()), catalog)
   }

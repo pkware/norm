@@ -94,7 +94,7 @@ class ScannerOracleLiveTest {
     resetPublicSchema()
     connection.createStatement().use { it.execute(LITERAL_SCHEMA) }
     val withoutItems = GLUED_ISSUE_INPUTS.filter { sql ->
-      describe(sql) == "rejected" || parseOutputItemsWithAlias(ParsedSql(sql)).isEmpty()
+      describe(sql) == "rejected" || ParsedSql(sql).outputItems.isEmpty()
     }
     assertThat(withoutItems).isEqualTo(emptyList())
   }
@@ -157,7 +157,7 @@ class ScannerOracleLiveTest {
    * no items, or a star item.
    */
   private fun parenthesizeItems(sql: String): String? {
-    val items = parseOutputItemsWithAlias(ParsedSql(sql))
+    val items = ParsedSql(sql).outputItems
     if (items.isEmpty() || items.any { it.selectItem.isStar }) return null
     val statement = parseOrNull(ParsedSql(sql).parserForm)?.let(::findOutputStatement)
     val starts = statement?.targets?.map { it.intField("location") } ?: return null
@@ -214,7 +214,7 @@ class ScannerOracleLiveTest {
   }
 
   private fun compareColumns(sql: String, metaData: java.sql.ResultSetMetaData, compare: (String, Any?, Any?) -> Unit) {
-    val items = parseOutputItemsWithAlias(ParsedSql(sql))
+    val items = ParsedSql(sql).outputItems
     if (items.isNotEmpty() && items.none { it.selectItem.isStar }) {
       compare("columnCount", metaData.columnCount, items.size)
     }
@@ -225,8 +225,7 @@ class ScannerOracleLiveTest {
     }
   }
 
-  private fun expectedLabel(item: OutputItemWithAlias): String? =
-    item.alias?.let(::logicalIdentifier) ?: item.selectItem.columnName
+  private fun expectedLabel(item: OutputItemWithAlias): String? = item.alias ?: item.selectItem.columnName
 
   private fun resetPublicSchema() {
     connection.createStatement().use {

@@ -7,7 +7,6 @@ import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isNull
-import assertk.assertions.isTrue
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
@@ -486,7 +485,7 @@ class SqlOutputClauseTest {
       // Confirmed on PostgreSQL 18.4: "CREATE TABLE d1(dataAS text)" then "SELECT 1 dataAS"
       // returns column "dataas" -- "dataAS" lexes as one identifier, never as "data" followed by
       // the keyword "AS". The item is the column "dataas" with the implicit alias "b".
-      val result = parseOutputItemsWithAlias(ParsedSql("SELECT dataAS b FROM users"))
+      val result = ParsedSql("SELECT dataAS b FROM users").outputItems
       assertThat(result).containsExactly(
         OutputItemWithAlias(SelectItem("dataAS", "dataas", null), "b", isAliasExplicit = false),
       )
@@ -497,9 +496,9 @@ class SqlOutputClauseTest {
       // Confirmed on PostgreSQL 18.4: "SELECT 1 AS€b" returns column "as€b" -- "AS€b" lexes as
       // one implicit-alias identifier (€ is a legal identifier-continuation character), never as
       // the keyword "AS" followed by "€b".
-      val result = parseOutputItemsWithAlias(ParsedSql("SELECT age AS€b FROM users"))
+      val result = ParsedSql("SELECT age AS€b FROM users").outputItems
       assertThat(result).containsExactly(
-        OutputItemWithAlias(SelectItem("age", "age", null), "AS€b", isAliasExplicit = false),
+        OutputItemWithAlias(SelectItem("age", "age", null), "as€b", isAliasExplicit = false),
       )
     }
 
@@ -508,9 +507,9 @@ class SqlOutputClauseTest {
       // Confirmed on PostgreSQL 18.4: "SELECT age x€AS b FROM users" is a syntax error --
       // "x€AS" lexes as one implicit-alias identifier (the same reasoning as the "AS€b" case
       // above, from the other side), leaving a stray extra token "b" with nothing to attach to.
-      val result = parseOutputItemsWithAlias(ParsedSql("SELECT age x€AS FROM users"))
+      val result = ParsedSql("SELECT age x€AS FROM users").outputItems
       assertThat(result).containsExactly(
-        OutputItemWithAlias(SelectItem("age", "age", null), "x€AS", isAliasExplicit = false),
+        OutputItemWithAlias(SelectItem("age", "age", null), "x€as", isAliasExplicit = false),
       )
     }
 
@@ -520,7 +519,7 @@ class SqlOutputClauseTest {
       // PostgreSQL's own AS keyword match is ASCII-only: "SELECT x AS aſ" (confirmed on PostgreSQL
       // 18.4) has a real "AS" keyword and a column literally named "aſ", which the result reports
       // as the alias.
-      val result = parseOutputItemsWithAlias(ParsedSql("SELECT x AS aſ FROM t")).single()
+      val result = ParsedSql("SELECT x AS aſ FROM t").outputItems.single()
       assertThat(result.alias).isEqualTo("aſ")
     }
 
@@ -547,13 +546,10 @@ class SqlOutputClauseTest {
 
     @Test
     fun `an unquoted non-ASCII uppercase column reference is NOT folded`() {
-      // foldAsciiCase's own KDoc documents this directly: PostgreSQL's downcase_identifier folds
-      // only plain ASCII A-Z, never a non-ASCII letter, even one with an obvious upper/lower
-      // pairing -- an unquoted "Ü" fails to resolve against a column actually named "ü" ("column
-      // "Ü" does not exist"), and instead resolves against a column named "Ü" (quoted, uppercase).
-      // Folding via Kotlin's String.lowercase() here would silently disagree with PostgreSQL about
-      // which of two differently-cased columns an unquoted reference targets -- the exact
-      // regression foldAsciiCase exists to prevent.
+      // PostgreSQL's downcase_identifier folds only plain ASCII A-Z, never a non-ASCII letter, even
+      // one with an obvious upper/lower pairing -- an unquoted "Ü" fails to resolve against a column
+      // actually named "ü" ("column "Ü" does not exist"), and instead resolves against a column named
+      // "Ü" (quoted, uppercase). The parser's own name keeps the "Ü".
       val result = ParsedSql("SELECT Ü FROM t").outputItems.map { it.selectItem }
       assertThat(result).containsExactly(
         SelectItem("Ü", "Ü", null),
@@ -1094,7 +1090,7 @@ class SqlOutputClauseTest {
           description = "count star is not mistaken for the star guard even with internal whitespace",
           sql = "SELECT count( * ) AS total, id FROM t",
           expected = listOf(
-            SelectItem("count( * )", null, null),
+            SelectItem("count( * )", null, null, normalizedExpression = "count(*)"),
             SelectItem("id", "id", null),
           ),
         ),
@@ -1126,7 +1122,7 @@ class SqlOutputClauseTest {
           description = "a cast on a star with a comment immediately before it is not mistaken for the star guard",
           sql = "SELECT t.*/*c*/::text, a FROM t",
           expected = listOf(
-            SelectItem("t.*/*c*/::text", null, null),
+            SelectItem("t.*/*c*/::text", null, null, normalizedExpression = "t.* ::text"),
             SelectItem("a", "a", null),
           ),
         ),
@@ -1156,7 +1152,7 @@ class SqlOutputClauseTest {
           description = "a line comment between a star and its cast is not mistaken for an implicit alias",
           sql = "SELECT t.*-- c\n::text, a FROM t",
           expected = listOf(
-            SelectItem("t.*-- c\n::text", null, null),
+            SelectItem("t.*-- c\n::text", null, null, normalizedExpression = "t.* ::text"),
             SelectItem("a", "a", null),
           ),
         ),
@@ -1295,7 +1291,7 @@ class SqlOutputClauseTest {
           "a multiplication expression split across a line comment and a newline is not mistaken for the star guard",
           sql = "SELECT a * -- c\n b, id FROM t",
           expected = listOf(
-            SelectItem("a * -- c\n b", null, null),
+            SelectItem("a * -- c\n b", null, null, normalizedExpression = "a * b"),
             SelectItem("id", "id", null),
           ),
         ),
@@ -1377,7 +1373,6 @@ class SqlOutputClauseTest {
     fun `an unqualified quoted column reference resolves to its logical name`() {
       val result = ParsedSql("SELECT \"ux\" FROM c").outputItems.map { it.selectItem }.single()
       assertThat(result.columnName).isEqualTo("ux")
-      assertThat(result.isColumnNameQuoted).isTrue()
       assertThat(result.tableName).isNull()
     }
 
@@ -1385,7 +1380,6 @@ class SqlOutputClauseTest {
     fun `a quoted column reference containing a space resolves to its logical name`() {
       val result = ParsedSql("SELECT \"My Col\" FROM c").outputItems.map { it.selectItem }.single()
       assertThat(result.columnName).isEqualTo("My Col")
-      assertThat(result.isColumnNameQuoted).isTrue()
     }
 
     @Test
@@ -1396,34 +1390,27 @@ class SqlOutputClauseTest {
       // JdbcAnalyzer.buildResultColumns' originalName prefers this value over rsmd.getColumnName.
       val result = ParsedSql("SELECT \"He\"\"llo\" FROM c").outputItems.map { it.selectItem }.single()
       assertThat(result.columnName).isEqualTo("He\"llo")
-      assertThat(result.isColumnNameQuoted).isTrue()
     }
 
     @Test
     fun `an unquoted table qualifier with a quoted column resolves both parts independently`() {
       val result = ParsedSql("SELECT t.\"ux\" FROM c").outputItems.map { it.selectItem }.single()
       assertThat(result.tableName).isEqualTo("t")
-      assertThat(result.isTableNameQuoted).isFalse()
       assertThat(result.columnName).isEqualTo("ux")
-      assertThat(result.isColumnNameQuoted).isTrue()
     }
 
     @Test
     fun `a quoted table qualifier with an unquoted column resolves both parts independently`() {
       val result = ParsedSql("SELECT \"t\".ux FROM c").outputItems.map { it.selectItem }.single()
       assertThat(result.tableName).isEqualTo("t")
-      assertThat(result.isTableNameQuoted).isTrue()
       assertThat(result.columnName).isEqualTo("ux")
-      assertThat(result.isColumnNameQuoted).isFalse()
     }
 
     @Test
     fun `a fully quoted qualified reference resolves both parts as quoted`() {
       val result = ParsedSql("SELECT \"t\".\"ux\" FROM c").outputItems.map { it.selectItem }.single()
       assertThat(result.tableName).isEqualTo("t")
-      assertThat(result.isTableNameQuoted).isTrue()
       assertThat(result.columnName).isEqualTo("ux")
-      assertThat(result.isColumnNameQuoted).isTrue()
     }
 
     @Test
@@ -1432,16 +1419,7 @@ class SqlOutputClauseTest {
       // stay inside the quoted span.
       val result = ParsedSql("SELECT \"my.table\".ux FROM c").outputItems.map { it.selectItem }.single()
       assertThat(result.tableName).isEqualTo("my.table")
-      assertThat(result.isTableNameQuoted).isTrue()
       assertThat(result.columnName).isEqualTo("ux")
-    }
-
-    @Test
-    fun `an unquoted reference is not flagged as quoted`() {
-      val result = ParsedSql("SELECT ux FROM c").outputItems.map { it.selectItem }.single()
-      assertThat(result.columnName).isEqualTo("ux")
-      assertThat(result.isColumnNameQuoted).isFalse()
-      assertThat(result.tableName).isNull()
     }
 
     @Test
@@ -1479,45 +1457,42 @@ class SqlOutputClauseTest {
     }
 
     @Test
-    fun `an over-length quoted alias is raw, not truncated, and still ends in its quote`() {
-      // Truncating text that still carries its quotes would count those bytes and could drop the
-      // closing one. The alias stays raw here and is truncated after folding instead.
+    fun `an over-length quoted alias is truncated to 63 bytes at parse time`() {
       val overLongName = "a".repeat(70)
-      val result = parseOutputItemsWithAlias(ParsedSql("SELECT x AS \"$overLongName\"")).single()
-      assertThat(result.alias).isEqualTo("\"$overLongName\"")
-      assertThat(result.alias!!.endsWith("\"")).isTrue()
+      val result = ParsedSql("SELECT x AS \"$overLongName\"").outputItems.single()
+      assertThat(result.alias).isEqualTo("a".repeat(63))
     }
   }
 
-  /** The token after an explicit `AS`, as [parseOutputItemsWithAlias] reports it in `alias`. */
+  /** The token after an explicit `AS`, as [ParsedSql.outputItems] reports it in `alias`. */
   @Nested
   inner class ExplicitAliasToken {
 
     @Test
     fun `a doubled-quote escape inside a quoted alias is not mistaken for its closing quote`() {
-      val result = parseOutputItemsWithAlias(ParsedSql("SELECT x AS \"He\"\"llo\" FROM t")).single()
-      assertThat(result.alias).isEqualTo("\"He\"\"llo\"")
+      val result = ParsedSql("SELECT x AS \"He\"\"llo\" FROM t").outputItems.single()
+      assertThat(result.alias).isEqualTo("He\"llo")
     }
 
     @Test
     fun `a bare unquoted alias is captured whole`() {
-      val result = parseOutputItemsWithAlias(ParsedSql("SELECT x AS ux FROM t")).single()
+      val result = ParsedSql("SELECT x AS ux FROM t").outputItems.single()
       assertThat(result.alias).isEqualTo("ux")
     }
 
     @Test
     fun `an alias token starting with a digit is rejected by PostgreSQL, so there are no items`() {
-      assertThat(parseOutputItemsWithAlias(ParsedSql("SELECT x AS 1x FROM t"))).isEmpty()
+      assertThat(ParsedSql("SELECT x AS 1x FROM t").outputItems).isEmpty()
     }
 
     @Test
     fun `an unterminated quoted alias is rejected by PostgreSQL, so there are no items`() {
-      assertThat(parseOutputItemsWithAlias(ParsedSql("SELECT x AS \"abc FROM t"))).isEmpty()
+      assertThat(ParsedSql("SELECT x AS \"abc FROM t").outputItems).isEmpty()
     }
 
     @Test
     fun `trailing text after the alias token is rejected by PostgreSQL, so there are no items`() {
-      assertThat(parseOutputItemsWithAlias(ParsedSql("SELECT x AS ux zz FROM t"))).isEmpty()
+      assertThat(ParsedSql("SELECT x AS ux zz FROM t").outputItems).isEmpty()
     }
   }
 
@@ -1528,7 +1503,7 @@ class SqlOutputClauseTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("cases")
     fun `each item keeps its whole expression and its alias`(testCase: ItemExtentCase) {
-      val items = parseOutputItemsWithAlias(ParsedSql(testCase.sql)).map {
+      val items = ParsedSql(testCase.sql).outputItems.map {
         ExpectedItem(it.selectItem.expression, it.alias, it.isAliasExplicit)
       }
       assertThat(items).isEqualTo(testCase.expected)
@@ -1546,7 +1521,7 @@ class SqlOutputClauseTest {
       assertThat(extents(shape.commaSql)).isEqualTo(shape.commaExpected)
     }
 
-    private fun extents(sql: String): List<ExpectedItem> = parseOutputItemsWithAlias(ParsedSql(sql)).map {
+    private fun extents(sql: String): List<ExpectedItem> = ParsedSql(sql).outputItems.map {
       ExpectedItem(it.selectItem.expression, it.alias, it.isAliasExplicit)
     }
 
@@ -1661,7 +1636,7 @@ class SqlOutputClauseTest {
           ExpectedItem("id"),
           ExpectedItem("sum(x) OVER (ORDER BY y)"),
         ),
-        ItemExtentCase("SELECT id, a \"b\" FROM t", ExpectedItem("id"), ExpectedItem("a", "\"b\"", false)),
+        ItemExtentCase("SELECT id, a \"b\" FROM t", ExpectedItem("id"), ExpectedItem("a", "b", false)),
         ItemExtentCase("SELECT id, a;", ExpectedItem("id"), ExpectedItem("a")),
         ItemExtentCase("(SELECT a) UNION (SELECT b)", ExpectedItem("a")),
         ItemExtentCase("SELECT id, a --c\nFROM t", ExpectedItem("id"), ExpectedItem("a")),
@@ -1683,7 +1658,7 @@ class SqlOutputClauseTest {
   inner class ImplicitAlias {
 
     private fun item(selectList: String): OutputItemWithAlias =
-      parseOutputItemsWithAlias(ParsedSql("SELECT $selectList FROM t")).single()
+      ParsedSql("SELECT $selectList FROM t").outputItems.single()
 
     @Test
     fun `a bare column with an implicit alias splits into the column and its own alias`() {
@@ -1720,24 +1695,24 @@ class SqlOutputClauseTest {
     fun `a doubled-quote escape inside an implicit quoted alias is not mistaken for its closing quote`() {
       val result = item("description \"He\"\"llo\"")
       assertThat(result.selectItem.expression).isEqualTo("description")
-      assertThat(result.alias).isEqualTo("\"He\"\"llo\"")
+      assertThat(result.alias).isEqualTo("He\"llo")
     }
 
     @Test
     fun `two bare words after a column are rejected by PostgreSQL, so there are no items`() {
-      assertThat(parseOutputItemsWithAlias(ParsedSql("SELECT col a b FROM t"))).isEmpty()
+      assertThat(ParsedSql("SELECT col a b FROM t").outputItems).isEmpty()
     }
 
     @Test
     fun `two quoted identifiers after a column are rejected by PostgreSQL, so there are no items`() {
-      assertThat(parseOutputItemsWithAlias(ParsedSql("SELECT description \"a\" \"b\" FROM t"))).isEmpty()
+      assertThat(ParsedSql("SELECT description \"a\" \"b\" FROM t").outputItems).isEmpty()
     }
 
     @Test
     fun `a Unicode-escape identifier as an implicit alias is the alias`() {
       val result = item("description U&\"x\"")
       assertThat(result.selectItem.expression).isEqualTo("description")
-      assertThat(result.alias).isEqualTo("U&\"x\"")
+      assertThat(result.alias).isEqualTo("x")
     }
   }
 }

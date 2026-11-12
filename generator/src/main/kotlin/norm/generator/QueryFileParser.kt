@@ -195,7 +195,7 @@ public object QueryFileParser {
    *
    * The terminator is the first `;` that ends a statement and has no token after it on its line except comments and
    * further `;`. When several `;` follow each other, the last one is the terminator. Statements come from
-   * [splitStatementSpans], with each named parameter shown to the parser as `0`.
+   * [splitStatementSpans], which shows each named parameter to the parser as `0`.
    */
   private fun findTerminator(
     text: String,
@@ -205,7 +205,7 @@ public object QueryFileParser {
     tokens: List<ScanToken>,
   ): Int? {
     val body = text.substring(bodyStart, bodyEnd)
-    val statements = splitStatementSpans(withLexerWhitespace(body), ::rewriteForParser)
+    val statements = splitStatementSpans(ParsedSql(withLexerWhitespace(body)))
     for (statement in statements) {
       val end = bodyStart + statement.end
       if (end >= bodyEnd || text[end] != ';') continue
@@ -240,17 +240,6 @@ public object QueryFileParser {
 
   private fun isOutsideLexerWhitespace(character: Char): Boolean =
     character.isWhitespace() && character !in LEXER_WHITESPACE
-
-  /** Returns [sql] with each placeholder and named parameter replaced by `0` and spaces, keeping every offset. */
-  private fun rewriteForParser(sql: String): String {
-    val parsed = ParsedSql(sql)
-    val characters = parsed.parserForm.toCharArray()
-    for (parameter in namedParameters(parsed)) {
-      characters.fill(' ', parameter.colon.start, parameter.name.end)
-      characters[parameter.colon.start] = '0'
-    }
-    return String(characters)
-  }
 
   /**
    * Walks the tokens after a query's `;` or before the first annotation. Each `--` comment that starts its line is
