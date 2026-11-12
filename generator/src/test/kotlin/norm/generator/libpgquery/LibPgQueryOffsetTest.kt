@@ -2,6 +2,7 @@ package norm.generator.libpgquery
 
 import assertk.assertThat
 import assertk.assertions.isEqualTo
+import assertk.assertions.isNotEqualTo
 import norm.generator.JsonValue
 import norm.generator.descendants
 import org.junit.jupiter.api.Nested
@@ -98,6 +99,27 @@ class LibPgQueryOffsetTest {
         node.fields.mapNotNull { (key, value) -> (value as? JsonValue.JsonScalar)?.let { key to it.rawText } }
       }
       .toList()
+  }
+
+  @Nested
+  inner class ByteOffsets {
+
+    @Test
+    fun `parseWithByteOffsets reports UTF-8 byte offsets after a two-byte character and a surrogate pair`() {
+      val sql = "SELECT 'é$grinning' AS emoji, target FROM t"
+      val byteOffset = sql.substring(0, sql.indexOf("target")).toByteArray(Charsets.UTF_8).size
+
+      val tree = LibPgQuery.parseWithByteOffsets(sql).accepted()
+
+      assertThat(locations(tree, "ColumnRef")).isEqualTo(listOf(byteOffset))
+      assertThat(byteOffset).isNotEqualTo(sql.indexOf("target"))
+    }
+
+    @Test
+    fun `parseWithByteOffsets reports a rejection like parse`() {
+      val sql = "SELECT '$grinning' ) FROM t"
+      assertThat(LibPgQuery.parseWithByteOffsets(sql)).isEqualTo(LibPgQuery.parse(sql))
+    }
   }
 
   @Nested
