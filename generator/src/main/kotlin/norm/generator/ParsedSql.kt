@@ -17,7 +17,8 @@ private const val UNICODE_ESCAPE_KEYWORD = "UESCAPE"
  * A SQL text with the lexer tokens, parser form, parse tree and output items that its analyses read. Each is computed
  * at most once and shared by every consumer of the text.
  *
- * Construction scans [sql] and throws [IllegalArgumentException] if it contains a NUL character.
+ * Construction scans [sql] and throws [IllegalArgumentException] if it contains a NUL character. Instances are not
+ * thread-safe.
  *
  * @property sql the text, with its `?` placeholders.
  * @property tokens the lexer tokens of [sql], as [scanLeadingTokens] returns them.
@@ -29,7 +30,9 @@ internal class ParsedSql(val sql: String) {
    * [tokens] without comments, with each `U&"..." UESCAPE '...'` run as one [TokenNumber.UNICODE_IDENTIFIER] token.
    * PostgreSQL's `base_yylex` in `parser.c` merges the three tokens the same way.
    */
-  val significantTokens: List<ScanToken> by lazy { mergeUnicodeEscapes(sql, tokens.filterNot { it.isComment() }) }
+  val significantTokens: List<ScanToken> by lazy(LazyThreadSafetyMode.NONE) {
+    mergeUnicodeEscapes(sql, tokens.filterNot { it.isComment() })
+  }
 
   /**
    * [sql] in the form PostgreSQL's parser accepts, with the length of [sql] and the offset of every other token kept.
@@ -39,13 +42,13 @@ internal class ParsedSql(val sql: String) {
    * outside operator tokens and named parameters is unchanged, as is text from the point where the lexer rejects [sql]
    * onward.
    */
-  val parserForm: String by lazy { parserFormReplacing(namedParameters(this)) }
+  val parserForm: String by lazy(LazyThreadSafetyMode.NONE) { parserFormReplacing(namedParameters(this)) }
 
   /** The parse tree of [parserForm], or `null` when PostgreSQL's grammar rejects it. */
-  val tree: ParseResult? by lazy { parseOrNull(parserForm) }
+  val tree: ParseResult? by lazy(LazyThreadSafetyMode.NONE) { parseOrNull(parserForm) }
 
   /** The statement of [tree] that returns the result set, or `null` when [tree] is `null` or has none. */
-  internal val outputStatement: OutputStatement? by lazy { tree?.outputStatement }
+  internal val outputStatement: OutputStatement? by lazy(LazyThreadSafetyMode.NONE) { tree?.outputStatement }
 
   private val parts = mutableMapOf<IntRange, ParsedSql>()
 

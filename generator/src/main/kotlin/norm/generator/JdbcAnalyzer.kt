@@ -65,7 +65,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
   public fun analyzeQuery(parsedQuery: ParsedQuery, catalog: Catalog): Query {
     val jdbcSql = parsedQuery.sql
     val parsedSql = ParsedSql(jdbcSql)
-    val callStatement = findCallStatement(parsedSql)
+    val callStatement = parsedSql.tree?.firstStatement?.call
 
     val resultColumns: List<Column>
     val parameters: List<Parameter>
@@ -376,12 +376,6 @@ public class JdbcAnalyzer(private val connection: Connection) {
     return { identifier -> quoteSqlIdentifierIfNeeded(identifier, reservedWords) }
   }
 }
-
-/**
- * Returns the `CallStmt` when the first statement of [parsedSql] is a `CALL`, or `null` when it is another
- * statement or PostgreSQL rejects it.
- */
-private fun findCallStatement(parsedSql: ParsedSql): CallStatement? = parsedSql.tree?.firstStatement?.call
 
 /** Reads the keywords that cannot name a table or column without quotes, lowercase, from `pg_get_keywords()`. */
 internal fun readReservedWords(connection: Connection): Set<String> = buildSet {
