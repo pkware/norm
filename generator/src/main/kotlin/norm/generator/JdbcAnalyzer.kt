@@ -1,6 +1,6 @@
 package norm.generator
 
-import norm.generator.libpgquery.ParseTreeNames
+import norm.generator.libpgquery.CallStatement
 import java.sql.Connection
 import java.sql.DatabaseMetaData
 import java.sql.ResultSetMetaData
@@ -310,12 +310,8 @@ public class JdbcAnalyzer(private val connection: Connection) {
    * Falls back to preparing the statement directly if the procedure isn't found in `pg_proc` or its name has
    * a schema part.
    */
-  private fun analyzeCallParameters(
-    callStatement: JsonValue.JsonObject,
-    jdbcSql: String,
-    catalog: Catalog,
-  ): List<Parameter> {
-    val procName = procedureName(callStatement)
+  private fun analyzeCallParameters(callStatement: CallStatement, jdbcSql: String, catalog: Catalog): List<Parameter> {
+    val procName = callStatement.procedureName
     if (procName != null) {
       val params = catalogLoader.lookupProcedureParameters(procName)
       if (params.isNotEmpty()) return params
@@ -382,21 +378,10 @@ public class JdbcAnalyzer(private val connection: Connection) {
 }
 
 /**
- * Returns the `CallStmt` node when the first statement of [parsedSql] is a `CALL`, or `null` when it is another
+ * Returns the `CallStmt` when the first statement of [parsedSql] is a `CALL`, or `null` when it is another
  * statement or PostgreSQL rejects it.
  */
-private fun findCallStatement(parsedSql: ParsedSql): JsonValue.JsonObject? {
-  val tree = parsedSql.tree ?: return null
-  return firstStatement(tree)?.objectField(ParseTreeNames.CALL_STATEMENT)
-}
-
-/** Returns the procedure name of [callStatement] as `pg_proc` stores it, or `null` when the name has a schema part. */
-private fun procedureName(callStatement: JsonValue.JsonObject): String? = callStatement
-  .objectField(ParseTreeNames.FUNCTION_CALL)
-  ?.objectArrayField(ParseTreeNames.FUNCTION_NAME)
-  ?.singleOrNull()
-  ?.objectField(ParseTreeNames.STRING)
-  ?.stringField(ParseTreeNames.STRING_VALUE)
+private fun findCallStatement(parsedSql: ParsedSql): CallStatement? = parsedSql.tree?.firstStatement?.call
 
 /** Reads the keywords that cannot name a table or column without quotes, lowercase, from `pg_get_keywords()`. */
 internal fun readReservedWords(connection: Connection): Set<String> = buildSet {

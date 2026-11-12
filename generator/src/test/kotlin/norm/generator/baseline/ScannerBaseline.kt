@@ -4,12 +4,9 @@ import norm.generator.OutputItemWithAlias
 import norm.generator.ParsedSql
 import norm.generator.QueryFileParser
 import norm.generator.alignSelectItems
-import norm.generator.cteDefinitions
 import norm.generator.explainedStatementStart
-import norm.generator.firstStatement
 import norm.generator.hasTopLevelSetOperation
 import norm.generator.outputItems
-import norm.generator.outputItemsOf
 import norm.generator.placeholderPositions
 import norm.generator.replaceParameterPlaceholders
 import norm.generator.splitStatements
@@ -58,8 +55,8 @@ internal object ScannerBaseline {
 
   /** The name and the output items of each CTE of the first statement, in declaration order. */
   private fun renderCteDefinitions(parsed: ParsedSql): List<String> {
-    val definitions = parsed.tree?.let(::firstStatement)?.let(::cteDefinitions).orEmpty()
-    return definitions.map { "${it.name}=${parsed.outputItemsOf(it.ctequery)}" }
+    val definitions = parsed.tree?.firstStatement?.commonTableExpressions.orEmpty()
+    return definitions.map { "${it.name}=${parsed.outputItemsOf(it.query)}" }
   }
 
   private fun StringBuilder.renderItems(items: List<OutputItemWithAlias>) {

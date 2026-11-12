@@ -3,7 +3,6 @@ package norm.generator
 import norm.generator.libpgquery.KeywordKind
 import norm.generator.libpgquery.LibPgQuery
 import norm.generator.libpgquery.LibPgQueryException
-import norm.generator.libpgquery.ParseTreeNames
 import norm.generator.libpgquery.SplitStatement
 import norm.generator.libpgquery.TokenNumber
 import norm.generator.libpgquery.isKeyword
@@ -57,9 +56,7 @@ internal fun splitStatementSpans(parsed: ParsedSql): List<SplitStatement> {
  * The options hold no placeholder, so the parameter numbers of the wrapped statement are those of [parsed].
  */
 internal fun explainedStatementStart(parsed: ParsedSql): Int {
-  val tree = parsed.tree ?: return 0
-  val explain = firstStatement(tree)?.objectField(ParseTreeNames.EXPLAIN_STATEMENT) ?: return 0
-  val optionCount = explain.objectArrayField(ParseTreeNames.EXPLAIN_OPTIONS).size
+  val optionCount = parsed.tree?.firstStatement?.explain?.optionCount ?: return 0
   val tokens = parsed.significantTokens
   val explainIndex = tokens.indexOfFirst { it.token != TokenNumber.SEMICOLON }
   if (explainIndex < 0) return 0
@@ -98,16 +95,11 @@ internal fun startsPreparableStatement(parsed: ParsedSql): Boolean {
  */
 internal fun withoutIntoClause(parsed: ParsedSql): ParsedSql? {
   val sql = parsed.sql
-  val tree = parsed.tree ?: return null
-  val relation = firstStatement(tree)
-    ?.objectField(ParseTreeNames.SELECT_STATEMENT)
-    ?.let(::leftmostLeaf)
-    ?.objectField(ParseTreeNames.INTO_CLAUSE)
-    ?.objectField(ParseTreeNames.INTO_RELATION) ?: return null
+  val relation = parsed.tree?.firstStatement?.select?.leftmostLeaf?.intoRelation ?: return null
   val tokens = parsed.significantTokens
-  val nameStart = tokens.indexOfFirst { it.start == relation.intField(ParseTreeNames.LOCATION) }
+  val nameStart = tokens.indexOfFirst { it.start == relation.location }
   check(nameStart >= 0) { "No token starts the INTO table name" }
-  val partCount = INTO_NAME_PARTS.count { relation.stringField(it) != null }
+  val partCount = relation.partCount
   var nameEnd = nameStart
   repeat(partCount - 1) {
     check(tokens.getOrNull(nameEnd + 1)?.token == TokenNumber.PERIOD) { "No period follows a part of the INTO name" }
@@ -123,9 +115,6 @@ internal fun withoutIntoClause(parsed: ParsedSql): ParsedSql? {
 }
 
 private const val INTO_KEYWORD = "INTO"
-
-private val INTO_NAME_PARTS =
-  listOf(ParseTreeNames.CATALOG_NAME, ParseTreeNames.SCHEMA_NAME, ParseTreeNames.RELATION_NAME)
 
 /** The keywords that open a statement SQL `PREPARE` accepts, including `WITH`, which opens a query. */
 private val PREPARABLE_KEYWORDS = listOf("SELECT", "VALUES", "TABLE", "WITH", "INSERT", "UPDATE", "DELETE", "MERGE")

@@ -5,15 +5,16 @@ import assertk.assertions.hasSize
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isSameInstanceAs
+import norm.generator.libpgquery.CommonTableExpression
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
 class SqlCteClauseTest {
 
-  private fun definitionsOf(parsed: ParsedSql): List<CteDefinition> =
-    parsed.tree?.let(::firstStatement)?.let(::cteDefinitions).orEmpty()
+  private fun definitionsOf(parsed: ParsedSql): List<CommonTableExpression> =
+    parsed.tree?.firstStatement?.commonTableExpressions.orEmpty()
 
-  private fun definitions(sql: String): List<CteDefinition> = definitionsOf(ParsedSql(sql))
+  private fun definitions(sql: String): List<CommonTableExpression> = definitionsOf(ParsedSql(sql))
 
   private fun names(sql: String): List<String> = definitions(sql).map { it.name }
 
@@ -21,7 +22,7 @@ class SqlCteClauseTest {
   private fun bodyItems(sql: String): List<List<Pair<String, String?>>> {
     val parsed = ParsedSql(sql)
     return definitionsOf(parsed).map { definition ->
-      parsed.outputItemsOf(definition.ctequery).map { it.selectItem.expression to it.alias }
+      parsed.outputItemsOf(definition.query).map { it.selectItem.expression to it.alias }
     }
   }
 
@@ -42,17 +43,17 @@ class SqlCteClauseTest {
       val outer = definitionsOf(parsed)
       assertThat(outer.map { it.name }).isEqualTo(listOf("o"))
 
-      val inner = cteDefinitions(outer[0].ctequery)
+      val inner = outer[0].query.commonTableExpressions
       assertThat(inner.map { it.name }).isEqualTo(listOf("i"))
-      assertThat(parsed.outputItemsOf(inner[0].ctequery).map { it.selectItem.expression to it.alias })
+      assertThat(parsed.outputItemsOf(inner[0].query).map { it.selectItem.expression to it.alias })
         .isEqualTo(listOf("1" to "a"))
-      assertThat(parsed.outputItemsOf(outer[0].ctequery).map { it.selectItem.expression }).isEqualTo(listOf("a"))
+      assertThat(parsed.outputItemsOf(outer[0].query).map { it.selectItem.expression }).isEqualTo(listOf("a"))
     }
 
     @Test
     fun `output items of a body node are computed once per node`() {
       val parsed = ParsedSql("WITH x AS (SELECT 1 AS a) SELECT a FROM x")
-      val body = definitionsOf(parsed).single().ctequery
+      val body = definitionsOf(parsed).single().query
       assertThat(parsed.outputItemsOf(body)).isSameInstanceAs(parsed.outputItemsOf(body))
     }
 

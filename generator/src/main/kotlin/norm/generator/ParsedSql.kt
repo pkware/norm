@@ -3,8 +3,10 @@ package norm.generator
 import norm.generator.libpgquery.KeywordKind
 import norm.generator.libpgquery.LibPgQuery
 import norm.generator.libpgquery.LibPgQueryException
-import norm.generator.libpgquery.ParseTreeNames
+import norm.generator.libpgquery.OutputStatement
+import norm.generator.libpgquery.ParseResult
 import norm.generator.libpgquery.ScanToken
+import norm.generator.libpgquery.StatementNode
 import norm.generator.libpgquery.TokenNumber
 import norm.generator.libpgquery.isComment
 import norm.generator.libpgquery.isKeyword
@@ -41,12 +43,34 @@ internal class ParsedSql(val sql: String) {
   val parserForm: String by lazy { parserFormReplacing(namedParameters(this)) }
 
   /** The parse tree of [parserForm], or `null` when PostgreSQL's grammar rejects it. */
-  val tree: JsonValue.JsonObject? by lazy { parseOrNull(parserForm) }
+  val tree: ParseResult? by lazy { parseOrNull(parserForm) }
+
+  /** The statement of [tree] that returns the result set, or `null` when [tree] is `null` or has none. */
+  internal val outputStatement: OutputStatement? by lazy { tree?.outputStatement }
 
   private val parts = mutableMapOf<IntRange, ParsedSql>()
 
-  /** The cache behind [outputItems] and [outputItemsOf], keyed by the identity of the statement node. */
-  internal val outputItemsByStatement = IdentityHashMap<JsonValue.JsonObject, List<OutputItemWithAlias>>()
+  /**
+   * The cache behind [outputItemsOf], keyed by the underlying [JsonValue.JsonObject] of the statement node. A
+   * [StatementNode] is a value class, which a generic container boxes into a new wrapper on each use.
+   */
+  private val outputItemsByStatement = IdentityHashMap<JsonValue.JsonObject, List<OutputItemWithAlias>>()
+
+  /**
+   * The output items of [statementNode], a statement node of [tree] such as the body of a CTE. Items are cut
+   * at the first star as [outputItems] describes. Asking for the same node again returns the same list.
+   *
+   * Locations in the tree index the whole of [sql], so a CTE body is read from the text of the statement that declares
+   * it.
+   */
+  fun outputItemsOf(statementNode: StatementNode): List<OutputItemWithAlias> =
+    outputItemsByStatement.getOrPut(statementNode.node) {
+      statementNode.outputStatement?.let { parseOutputItems(this, it) }.orEmpty()
+    }
+
+  /** The output items of [output], which was read from [tree]. Shares the cache of [outputItemsOf]. */
+  internal fun outputItemsOf(output: OutputStatement): List<OutputItemWithAlias> =
+    outputItemsByStatement.getOrPut(output.node.node) { parseOutputItems(this, output) }
 
   /**
    * [parserForm] with exactly [parameters] replaced as named parameters. [namedParameters] parses the result to decide
@@ -92,20 +116,11 @@ private fun parserFormOf(sql: String, tokens: List<ScanToken>, namedParameters: 
  * @return the parse tree, or `null` when the grammar rejects [sql].
  * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
-internal fun parseOrNull(sql: String): JsonValue.JsonObject? = try {
-  LibPgQuery.parse(sql)
+internal fun parseOrNull(sql: String): ParseResult? = try {
+  ParseResult(LibPgQuery.parse(sql))
 } catch (_: LibPgQueryException) {
   null
 }
-
-/**
- * Returns the first statement of [tree]: the object at `stmts[0].stmt`, which holds one field named for the statement
- * kind, such as `SelectStmt`.
- *
- * @return the object, or `null` when [tree] has no statement.
- */
-internal fun firstStatement(tree: JsonValue.JsonObject): JsonValue.JsonObject? =
-  tree.objectArrayField(ParseTreeNames.STATEMENTS).firstOrNull()?.objectField(ParseTreeNames.STATEMENT)
 
 private fun mergeUnicodeEscapes(sql: String, tokens: List<ScanToken>): List<ScanToken> {
   val merged = mutableListOf<ScanToken>()

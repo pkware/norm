@@ -1,6 +1,8 @@
 package norm.generator
 
-import norm.generator.libpgquery.ParseTreeNames
+import norm.generator.libpgquery.OutputStatement
+import norm.generator.libpgquery.ParseResult
+import norm.generator.libpgquery.ResultTarget
 import norm.generator.libpgquery.ScanToken
 import norm.generator.libpgquery.TokenNumber
 import norm.generator.libpgquery.isKeyword
@@ -24,13 +26,13 @@ internal fun extentOfFinalItem(
   sql: String,
   rewritten: String,
   tokens: List<ScanToken>,
-  tree: JsonValue.JsonObject,
+  tree: ParseResult,
   statement: OutputStatement,
   firstToken: Int,
 ): ItemExtent? {
   val start = tokens[firstToken].start
   val searchStart = searchStartIndex(tokens, statement.targets.last(), firstToken)
-  val expectedTree = withoutItemValueAndLocations(tree, start)
+  val expectedTree = tree.withoutItemValueAndLocations(start)
   var depth = 0
   for (index in firstToken until tokens.size) {
     depth += nestingChange(tokens[index])
@@ -39,8 +41,8 @@ internal fun extentOfFinalItem(
     val end = tokens[index].end
     val probe = rewritten.substring(0, start) + " $PROBE_CONSTANT " + rewritten.substring(end)
     val probeTree = parseOrNull(probe) ?: continue
-    val isConstant = findItemAt(probeTree, start + 1)?.let { hasConstantValue(it, start + 1) } == true
-    if (isConstant && withoutItemValueAndLocations(probeTree, start + 1) == expectedTree) {
+    val isConstant = probeTree.resultTargetAt(start + 1)?.hasConstantValueAt(start + 1) == true
+    if (isConstant && probeTree.withoutItemValueAndLocations(start + 1) == expectedTree) {
       return finalItemExtent(sql, tokens, statement.targets.last(), firstToken, index)
     }
   }
@@ -51,11 +53,11 @@ internal fun extentOfFinalItem(
 private fun finalItemExtent(
   sql: String,
   tokens: List<ScanToken>,
-  target: JsonValue.JsonObject,
+  target: ResultTarget,
   firstToken: Int,
   expressionLastToken: Int,
 ): ItemExtent? {
-  if (target.stringField(ParseTreeNames.ALIAS) == null) return ItemExtent(firstToken, expressionLastToken, false)
+  if (target.alias == null) return ItemExtent(firstToken, expressionLastToken, false)
 
   val afterExpression = expressionLastToken + 1
   if (afterExpression >= tokens.size) return null
@@ -72,8 +74,8 @@ private fun nestingChange(token: ScanToken): Int = when (token.token) {
 }
 
 /** The item cannot end before the token of the largest location inside it, so the search starts there. */
-private fun searchStartIndex(tokens: List<ScanToken>, target: JsonValue.JsonObject, firstToken: Int): Int {
-  val location = largestLocation(target)
+private fun searchStartIndex(tokens: List<ScanToken>, target: ResultTarget, firstToken: Int): Int {
+  val location = target.largestLocation
   val index = tokens.binarySearchBy(location, fromIndex = firstToken) { it.start }
   return if (index >= 0) index else firstToken
 }
