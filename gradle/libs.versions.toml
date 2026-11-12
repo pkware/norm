@@ -35,7 +35,7 @@ testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgr
 [plugins]
 ksp = "com.google.devtools.ksp:2.3.13"
 micronaut-library = "io.micronaut.library:5.0.2"
-norm = "com.pkware.norm:0.6.0"
+norm = "com.pkware.norm:0.7.0"
 shadow = "com.gradleup.shadow:9.6.1"
 spring-kotlin = { id = "org.jetbrains.kotlin.plugin.spring", version.ref = "kotlin" }
 
