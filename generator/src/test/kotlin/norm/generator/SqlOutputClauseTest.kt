@@ -449,6 +449,14 @@ class SqlOutputClauseTest {
     }
 
     @Test
+    fun `a final item that starts after a two-byte character and a surrogate pair keeps its extent`() {
+      val result = ParsedSql("SELECT 'é🚀' AS a, b + 1 AS c FROM t").outputItems
+
+      assertThat(result.map { it.selectItem.expression }).containsExactly("'é🚀'", "b + 1")
+      assertThat(result.map { it.alias }).containsExactly("a", "c")
+    }
+
+    @Test
     fun `a digit-leading fragment abutting a non-ASCII character is not mistaken for a column reference`() {
       // Confirmed on PostgreSQL 18.4, "SELECT 2€" is rejected outright ("trailing junk after
       // numeric literal"), so "2€" is not an identifier PostgreSQL would ever lex and the whole

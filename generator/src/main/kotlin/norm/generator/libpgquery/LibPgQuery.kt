@@ -32,12 +32,24 @@ internal object LibPgQuery {
    */
   fun parse(sql: String): LibPgQueryResult<JsonValue.JsonObject> {
     val input = Utf8Input(sql)
-    return invoke(LibPgQueryEntry.Parse, input).map { text ->
+    return parseTree(input).map { parseTreeOffsets.convert(it, input) }
+  }
+
+  /**
+   * Parses [sql] like [parse], but leaves the location fields as libpg_query reports them, which are UTF-8 byte
+   * offsets into [sql]. Skips the conversion to `String` indexes for callers that compare trees with locations
+   * removed.
+   *
+   * @throws IllegalArgumentException if [sql] contains a NUL character.
+   */
+  fun parseWithByteOffsets(sql: String): LibPgQueryResult<JsonValue.JsonObject> = parseTree(Utf8Input(sql))
+
+  private fun parseTree(input: Utf8Input): LibPgQueryResult<JsonValue.JsonObject> =
+    invoke(LibPgQueryEntry.Parse, input).map { text ->
       val tree = JsonValue.parse(text)
       check(tree is JsonValue.JsonObject) { "libpg_query returned a parse tree that is not a JSON object" }
-      parseTreeOffsets.convert(tree, input)
+      tree
     }
-  }
 
   /**
    * Splits [sql] into PostgreSQL lexer tokens. Whitespace is not a token and comments are.

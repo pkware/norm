@@ -32,7 +32,8 @@ internal class ParseResult(val node: JsonValue.JsonObject) {
     get() = statements.firstNotNullOfOrNull { it.outputStatement }
 
   /**
-   * Finds the select-list or `RETURNING` item that starts at [location], searching in document order.
+   * Finds the select-list or `RETURNING` item that starts at [location], searching in document order. [location] is in
+   * the unit of the tree's location fields.
    *
    * @return the first node there with a value, or `null` when there is none.
    */
@@ -40,7 +41,8 @@ internal class ParseResult(val node: JsonValue.JsonObject) {
 
   /**
    * Copies this tree with every location field removed and the value of the item that starts at [location] set to
-   * `null`. Copies from texts of different length are equal when only that value differs.
+   * `null`. Copies from texts of different length are equal when only that value differs. [location] is in the unit of
+   * the tree's location fields.
    */
   fun withoutItemValueAndLocations(location: Int): JsonValue = withoutItemValueAndLocations(node, location)
 }
@@ -235,7 +237,7 @@ internal value class ResultTarget(val node: JsonValue.JsonObject) {
   val largestLocation: Int
     get() = largestLocation(node)
 
-  /** Whether the value is a lone literal constant that starts at [location]. */
+  /** Whether the value is a lone literal constant that starts at [location], in the unit of the tree's locations. */
   fun hasConstantValueAt(location: Int): Boolean {
     val expression = value ?: return false
     val constant = expression.objectField("A_Const")

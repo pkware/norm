@@ -1,6 +1,8 @@
 package norm.generator
 
+import norm.generator.libpgquery.LibPgQuery
 import norm.generator.libpgquery.OutputStatement
+import norm.generator.libpgquery.ParseResult
 import norm.generator.libpgquery.ResultTarget
 import norm.generator.libpgquery.ScanToken
 import norm.generator.libpgquery.TokenNumber
@@ -58,6 +60,8 @@ internal fun extentOfFinalItem(parsed: ParsedSql, statement: OutputStatement, fi
   val rewritten = parsed.parserForm
   val tokens = parsed.significantTokens
   val start = tokens[firstToken].start
+  // Probe trees keep UTF-8 byte offsets, so the constant's location is counted in bytes.
+  val probeLocation = rewritten.substring(0, start).toByteArray(Charsets.UTF_8).size + 1
   val searchStart = searchStartIndex(tokens, statement.targets.last(), firstToken)
   val expectedTree = tree.withoutItemValueAndLocations(start)
   var depth = 0
@@ -67,9 +71,9 @@ internal fun extentOfFinalItem(parsed: ParsedSql, statement: OutputStatement, fi
     if (depth != 0 || index < searchStart) continue
     val end = tokens[index].end
     val probe = rewritten.substring(0, start) + " $PROBE_CONSTANT " + rewritten.substring(end)
-    val probeTree = parseOrNull(probe) ?: continue
-    val isConstant = probeTree.resultTargetAt(start + 1)?.hasConstantValueAt(start + 1) == true
-    if (isConstant && probeTree.withoutItemValueAndLocations(start + 1) == expectedTree) {
+    val probeTree = LibPgQuery.parseWithByteOffsets(probe).valueOrNull()?.let(::ParseResult) ?: continue
+    val isConstant = probeTree.resultTargetAt(probeLocation)?.hasConstantValueAt(probeLocation) == true
+    if (isConstant && probeTree.withoutItemValueAndLocations(probeLocation) == expectedTree) {
       return finalItemExtent(sql, tokens, statement.targets.last(), firstToken, index)
     }
   }
