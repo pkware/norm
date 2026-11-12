@@ -1,14 +1,44 @@
 package norm.generator
 
 import norm.generator.libpgquery.OutputStatement
-import norm.generator.libpgquery.ParseResult
 import norm.generator.libpgquery.ResultTarget
 import norm.generator.libpgquery.ScanToken
 import norm.generator.libpgquery.TokenNumber
 import norm.generator.libpgquery.isKeyword
 
+private const val AS_KEYWORD = "AS"
+
 /** The literal that stands in for an item's expression while the end of the expression is searched. */
 private const val PROBE_CONSTANT = "1"
+
+/**
+ * The tokens of one item.
+ *
+ * @property firstToken the first token of the expression.
+ * @property expressionLastToken the last token of the expression.
+ * @property isAliasExplicit whether the token before the alias is `AS`.
+ */
+internal class ItemExtent(val firstToken: Int, val expressionLastToken: Int, val isAliasExplicit: Boolean)
+
+/** An item that is not the last ends at the token before the comma, so its alias is the token at its end. */
+internal fun extentBeforeNextItem(
+  sql: String,
+  tokens: List<ScanToken>,
+  target: ResultTarget,
+  firstToken: Int,
+  nextFirstToken: Int,
+): ItemExtent? {
+  val commaIndex = nextFirstToken - 1
+  if (commaIndex - 1 < firstToken || tokens[commaIndex].token != TokenNumber.COMMA) return null
+  val lastToken = commaIndex - 1
+  if (target.alias == null) return ItemExtent(firstToken, lastToken, false)
+
+  val aliasFirstToken = lastToken
+  val isAliasExplicit = aliasFirstToken - 1 > firstToken && isKeyword(sql, tokens[aliasFirstToken - 1], AS_KEYWORD)
+  val expressionLastToken = if (isAliasExplicit) aliasFirstToken - 2 else aliasFirstToken - 1
+  if (expressionLastToken < firstToken) return null
+  return ItemExtent(firstToken, expressionLastToken, isAliasExplicit)
+}
 
 /**
  * Finds where the expression of the final item ends.
@@ -22,14 +52,11 @@ private const val PROBE_CONSTANT = "1"
  * item another value. A candidate after the expression replaces tokens that the tree records, such as the alias or
  * the `FROM` keyword, so the trees differ.
  */
-internal fun extentOfFinalItem(
-  sql: String,
-  rewritten: String,
-  tokens: List<ScanToken>,
-  tree: ParseResult,
-  statement: OutputStatement,
-  firstToken: Int,
-): ItemExtent? {
+internal fun extentOfFinalItem(parsed: ParsedSql, statement: OutputStatement, firstToken: Int): ItemExtent? {
+  val tree = parsed.tree ?: return null
+  val sql = parsed.sql
+  val rewritten = parsed.parserForm
+  val tokens = parsed.significantTokens
   val start = tokens[firstToken].start
   val searchStart = searchStartIndex(tokens, statement.targets.last(), firstToken)
   val expectedTree = tree.withoutItemValueAndLocations(start)
