@@ -10,7 +10,6 @@ import norm.generator.libpgquery.StatementNode
 import norm.generator.libpgquery.TokenNumber
 import norm.generator.libpgquery.isComment
 import norm.generator.libpgquery.isKeyword
-import java.util.IdentityHashMap
 
 private const val UNICODE_ESCAPE_KEYWORD = "UESCAPE"
 
@@ -50,27 +49,18 @@ internal class ParsedSql(val sql: String) {
 
   private val parts = mutableMapOf<IntRange, ParsedSql>()
 
-  /**
-   * The cache behind [outputItemsOf], keyed by the underlying [JsonValue.JsonObject] of the statement node. A
-   * [StatementNode] is a value class, which a generic container boxes into a new wrapper on each use.
-   */
-  private val outputItemsByStatement = IdentityHashMap<JsonValue.JsonObject, List<OutputItemWithAlias>>()
+  private val outputItemsByStatement = mutableMapOf<StatementNode, List<OutputItemWithAlias>>()
 
   /**
-   * The output items of [statementNode], a statement node of [tree] such as the body of a CTE. Items are cut
-   * at the first star as [outputItems] describes. Asking for the same node again returns the same list.
+   * The output items of [statement], a statement node of [tree] such as the body of a CTE. Items are cut at the first
+   * star as [outputItems] describes. Asking for the same node again returns the same list.
    *
    * Locations in the tree index the whole of [sql], so a CTE body is read from the text of the statement that declares
    * it.
    */
-  fun outputItemsOf(statementNode: StatementNode): List<OutputItemWithAlias> =
-    outputItemsByStatement.getOrPut(statementNode.node) {
-      statementNode.outputStatement?.let { parseOutputItems(this, it) }.orEmpty()
-    }
-
-  /** The output items of [output], which was read from [tree]. Shares the cache of [outputItemsOf]. */
-  internal fun outputItemsOf(output: OutputStatement): List<OutputItemWithAlias> =
-    outputItemsByStatement.getOrPut(output.node.node) { parseOutputItems(this, output) }
+  fun outputItemsOf(statement: StatementNode): List<OutputItemWithAlias> = outputItemsByStatement.getOrPut(statement) {
+    statement.outputStatement?.let { parseOutputItems(this, it) }.orEmpty()
+  }
 
   /**
    * [parserForm] with exactly [parameters] replaced as named parameters. [namedParameters] parses the result to decide

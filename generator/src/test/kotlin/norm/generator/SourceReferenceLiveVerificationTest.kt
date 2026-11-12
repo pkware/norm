@@ -5,7 +5,6 @@ import assertk.assertions.containsExactly
 import assertk.assertions.isEqualTo
 import assertk.assertions.isTrue
 import norm.generator.libpgquery.LibPgQuery
-import norm.generator.libpgquery.ParseTreeNames
 import norm.generator.libpgquery.ScanToken
 import norm.generator.libpgquery.TokenNumber
 import norm.generator.libpgquery.accepted
@@ -395,16 +394,16 @@ private const val COLUMN_LIST_FIELD = "aliascolnames"
  */
 private fun cteClauseSpans(parsed: ParsedSql): CteClauseSpans? {
   val statement = parsed.tree?.firstStatement?.node?.fields?.values?.singleOrNull() as? JsonValue.JsonObject
-  val expressions = statement?.objectField(ParseTreeNames.WITH_CLAUSE)
-    ?.objectArrayField(ParseTreeNames.COMMON_TABLE_EXPRESSIONS)
+  val expressions = statement?.objectField("withClause")
+    ?.objectArrayField("ctes")
     .orEmpty()
-    .mapNotNull { it.objectField(ParseTreeNames.COMMON_TABLE_EXPRESSION) }
+    .mapNotNull { it.objectField("CommonTableExpr") }
   if (expressions.isEmpty()) return null
 
   val tokens = parsed.tokens
   var lastBodyClose = -1
   val bodies = expressions.map { expression ->
-    val nameIndex = tokens.indexOfFirst { it.start == expression.intField(ParseTreeNames.LOCATION) }
+    val nameIndex = tokens.indexOfFirst { it.start == expression.intField("location") }
     var bodyOpen = nextOpenParenthesis(tokens, nameIndex + 1)
     if (expression.fields.containsKey(COLUMN_LIST_FIELD)) {
       bodyOpen = nextOpenParenthesis(tokens, matchingCloseParenthesis(tokens, bodyOpen) + 1)

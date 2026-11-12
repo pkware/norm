@@ -106,7 +106,7 @@ internal data class OutputItemWithAlias(val selectItem: SelectItem, val alias: S
  * item, falling back to `ResultSetMetaData.getColumnName`, so no wrong original name is reported.
  */
 internal val ParsedSql.outputItems: List<OutputItemWithAlias>
-  get() = outputStatement?.let { outputItemsOf(it) }.orEmpty()
+  get() = outputStatement?.let { outputItemsOf(it.node) }.orEmpty()
 
 /** Reads the items of [output], which [parsed] found in its own tree, and cuts them at the first star. */
 internal fun parseOutputItems(parsed: ParsedSql, output: OutputStatement): List<OutputItemWithAlias> {
