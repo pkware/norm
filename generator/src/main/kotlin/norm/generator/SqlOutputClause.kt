@@ -7,11 +7,8 @@ import norm.generator.libpgquery.isComment
 import norm.generator.libpgquery.isKeyword
 import norm.generator.libpgquery.locationFieldNames
 
-private const val AS_KEYWORD = "AS"
+internal const val AS_KEYWORD = "AS"
 private const val NO_LOCATION = -1
-
-/** The literal that stands in for an item's expression while the end of the expression is searched. */
-private const val PROBE_CONSTANT = "1"
 
 /**
  * A parsed item from a SQL SELECT or RETURNING list.
@@ -159,7 +156,7 @@ private fun outputItems(
  * @property expressionLastToken the last token of the expression.
  * @property isAliasExplicit whether the token before the alias is `AS`.
  */
-private class ItemExtent(val firstToken: Int, val expressionLastToken: Int, val isAliasExplicit: Boolean)
+internal class ItemExtent(val firstToken: Int, val expressionLastToken: Int, val isAliasExplicit: Boolean)
 
 private fun firstTokenIndex(tokens: List<ScanToken>, target: JsonValue.JsonObject): Int? {
   val location = target.intField(ParseTreeNames.LOCATION) ?: return null
@@ -187,74 +184,17 @@ private fun extentBeforeNextItem(
   return ItemExtent(firstToken, expressionLastToken, isAliasExplicit)
 }
 
-/**
- * Finds where the expression of the final item ends.
- *
- * Each token end at the item's own nesting depth, from the token of its largest location on, is a candidate. The text
- * from the item's start to the candidate is replaced by [PROBE_CONSTANT] between spaces. The candidate is the end when
- * that text parses, the item that starts at the constant has it as its value, and the tree otherwise equals the original
- * apart from locations.
- *
- * A candidate inside the expression, such as before `without time zone`, gives text that does not parse or gives the
- * item another value. A candidate after the expression replaces tokens that the tree records, such as the alias or
- * the `FROM` keyword, so the trees differ.
- */
-private fun extentOfFinalItem(
-  sql: String,
-  rewritten: String,
-  tokens: List<ScanToken>,
-  tree: JsonValue.JsonObject,
-  statement: OutputStatement,
-  firstToken: Int,
-): ItemExtent? {
-  val start = tokens[firstToken].start
-  val searchStart = searchStartIndex(tokens, statement.targets.last(), firstToken)
-  val expectedTree = withoutItemValueAndLocations(tree, start)
-  var depth = 0
-  for (index in firstToken until tokens.size) {
-    depth += nestingChange(tokens[index])
-    if (depth < 0) return null
-    if (depth != 0 || index < searchStart) continue
-    val end = tokens[index].end
-    val probe = rewritten.substring(0, start) + " $PROBE_CONSTANT " + rewritten.substring(end)
-    val probeTree = parseOrNull(probe) ?: continue
-    val isConstant = findItemAt(probeTree, start + 1)?.let { hasConstantValue(it, start + 1) } == true
-    if (isConstant && withoutItemValueAndLocations(probeTree, start + 1) == expectedTree) {
-      return finalItemExtent(sql, tokens, statement.targets.last(), firstToken, index)
-    }
-  }
-  return null
-}
-
-/** The alias follows the expression, after `AS` when that is written. */
-private fun finalItemExtent(
-  sql: String,
-  tokens: List<ScanToken>,
-  target: JsonValue.JsonObject,
-  firstToken: Int,
-  expressionLastToken: Int,
-): ItemExtent? {
-  if (target.stringField(ParseTreeNames.ALIAS) == null) return ItemExtent(firstToken, expressionLastToken, false)
-
-  val afterExpression = expressionLastToken + 1
-  if (afterExpression >= tokens.size) return null
-  val isAliasExplicit = isKeyword(sql, tokens[afterExpression], AS_KEYWORD)
-  val aliasFirstToken = if (isAliasExplicit) afterExpression + 1 else afterExpression
-  if (aliasFirstToken >= tokens.size) return null
-  return ItemExtent(firstToken, expressionLastToken, isAliasExplicit)
-}
-
-private fun hasConstantValue(item: JsonValue.JsonObject, location: Int): Boolean {
+internal fun hasConstantValue(item: JsonValue.JsonObject, location: Int): Boolean {
   val value = item.objectField(ParseTreeNames.VALUE) ?: return false
   val constant = value.objectField(ParseTreeNames.CONSTANT)
   return value.fields.size == 1 && constant?.intField(ParseTreeNames.LOCATION) == location
 }
 
-private fun isItemAt(value: JsonValue.JsonObject, location: Int): Boolean =
+internal fun isItemAt(value: JsonValue.JsonObject, location: Int): Boolean =
   value.intField(ParseTreeNames.LOCATION) == location && value.fields.containsKey(ParseTreeNames.VALUE)
 
 /** The first node of [value] that [isItemAt] accepts, in document order, or `null` when there is none. */
-private fun findItemAt(value: JsonValue, location: Int): JsonValue.JsonObject? = when (value) {
+internal fun findItemAt(value: JsonValue, location: Int): JsonValue.JsonObject? = when (value) {
   is JsonValue.JsonObject ->
     value.takeIf { isItemAt(it, location) } ?: value.fields.values.firstNotNullOfOrNull { findItemAt(it, location) }
   is JsonValue.JsonArray -> value.items.firstNotNullOfOrNull { findItemAt(it, location) }
@@ -265,7 +205,7 @@ private fun findItemAt(value: JsonValue, location: Int): JsonValue.JsonObject? =
  * [value] with the `val` of the item that starts at [location] replaced by `null` and every location field removed,
  * so that trees of texts of different length compare equal when only that value differs.
  */
-private fun withoutItemValueAndLocations(value: JsonValue, location: Int): JsonValue = when (value) {
+internal fun withoutItemValueAndLocations(value: JsonValue, location: Int): JsonValue = when (value) {
   is JsonValue.JsonObject -> {
     val isItem = isItemAt(value, location)
     JsonValue.JsonObject(
@@ -282,20 +222,7 @@ private fun withoutItemValueAndLocations(value: JsonValue, location: Int): JsonV
   else -> value
 }
 
-private fun nestingChange(token: ScanToken): Int = when (token.token) {
-  TokenNumber.OPEN_PARENTHESIS, TokenNumber.OPEN_BRACKET -> 1
-  TokenNumber.CLOSE_PARENTHESIS, TokenNumber.CLOSE_BRACKET -> -1
-  else -> 0
-}
-
-/** The item cannot end before the token of the largest location inside it, so the search starts there. */
-private fun searchStartIndex(tokens: List<ScanToken>, target: JsonValue.JsonObject, firstToken: Int): Int {
-  val location = largestLocation(target)
-  val index = tokens.binarySearchBy(location, fromIndex = firstToken) { it.start }
-  return if (index >= 0) index else firstToken
-}
-
-private fun largestLocation(value: JsonValue): Int = when (value) {
+internal fun largestLocation(value: JsonValue): Int = when (value) {
   is JsonValue.JsonObject -> maxOf(
     value.intField(ParseTreeNames.LOCATION) ?: NO_LOCATION,
     value.fields.values.maxOfOrNull(::largestLocation) ?: NO_LOCATION,
