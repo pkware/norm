@@ -17,14 +17,17 @@ private const val UNICODE_ESCAPE_KEYWORD = "UESCAPE"
  * A SQL text with the lexer tokens, parser form, parse tree and output items that its analyses read. Each is computed
  * at most once and shared by every consumer of the text.
  *
- * Construction scans [sql] and throws [IllegalArgumentException] if it contains a NUL character. Instances are not
- * thread-safe.
+ * Construction from a `String` scans it and throws [IllegalArgumentException] if it contains a NUL character.
+ * Instances are not thread-safe.
  *
  * @property sql the text, with its `?` placeholders.
  * @property tokens the lexer tokens of [sql], as [scanLeadingTokens] returns them.
  */
-internal class ParsedSql(val sql: String) {
-  val tokens: List<ScanToken> = scanLeadingTokens(sql)
+internal class ParsedSql private constructor(val sql: String, scanned: ScannedText) {
+
+  val tokens: List<ScanToken> = scanned.tokens
+
+  private val isAcceptedByLexer: Boolean = scanned.isAccepted
 
   /**
    * [tokens] without comments, with each `U&"..." UESCAPE '...'` run as one [TokenNumber.UNICODE_IDENTIFIER] token.
@@ -54,6 +57,11 @@ internal class ParsedSql(val sql: String) {
 
   private val outputItemsByStatement = mutableMapOf<StatementNode, List<OutputItemWithAlias>>()
 
+  constructor(sql: String) : this(sql, scanText(sql))
+
+  /** Wraps [sql] with [tokens] that a scan of [sql] returned when the lexer accepted all of [sql]. */
+  constructor(sql: String, tokens: List<ScanToken>) : this(sql, ScannedText(tokens, isAccepted = true))
+
   /**
    * The output items of [statement], a statement node of [tree] such as the body of a CTE. Items are cut at the first
    * star as [outputItems] describes. Asking for the same node again returns the same list.
@@ -75,13 +83,45 @@ internal class ParsedSql(val sql: String) {
   /**
    * The [ParsedSql] of `sql.substring(start, end)`, which is this one when the range covers all of [sql]. Asking for
    * the same range again returns the same value.
+   *
+   * The part takes its tokens from this one, shifted by `-start`, when the lexer accepted all of [sql], neither [start]
+   * nor [end] lies inside a token, and [end] is the end of [sql] or the index of a `;` or a character of
+   * [QueryFileParser.LEXER_WHITESPACE]. Otherwise it scans the substring.
    */
   fun part(start: Int, end: Int): ParsedSql = if (start == 0 && end == sql.length) {
     this
   } else {
-    parts.getOrPut(start until end) { ParsedSql(sql.substring(start, end)) }
+    parts.getOrPut(start until end) {
+      val text = sql.substring(start, end)
+      if (canCutTokens(start, end)) ParsedSql(text, cutTokens(start, end)) else ParsedSql(text)
+    }
+  }
+
+  private fun canCutTokens(start: Int, end: Int): Boolean = isAcceptedByLexer &&
+    !isInsideToken(start) &&
+    !isInsideToken(end) &&
+    (end == sql.length || sql[end] == ';' || sql[end] in QueryFileParser.LEXER_WHITESPACE)
+
+  private fun isInsideToken(position: Int): Boolean {
+    val found = tokens.binarySearchBy(position) { it.start }
+    return found < 0 && tokens.getOrNull(-found - 2)?.let { position < it.end } == true
+  }
+
+  private fun cutTokens(start: Int, end: Int): List<ScanToken> {
+    val found = tokens.binarySearchBy(start) { it.start }
+    val first = if (found >= 0) found else -found - 1
+    return tokens.subList(first, tokens.size)
+      .takeWhile { it.end <= end }
+      .map { it.copy(start = it.start - start, end = it.end - start) }
   }
 }
+
+/**
+ * Lexer tokens of a text.
+ *
+ * @property isAccepted whether the lexer accepted the whole text. When `false`, [tokens] stop where it rejected the text.
+ */
+private class ScannedText(val tokens: List<ScanToken>, val isAccepted: Boolean)
 
 private fun parserFormOf(sql: String, tokens: List<ScanToken>, namedParameters: Collection<NamedParameter>): String {
   val characters = sql.toCharArray()
@@ -141,10 +181,17 @@ private fun mergeUnicodeEscapes(sql: String, tokens: List<ScanToken>): List<Scan
  *
  * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
-internal fun scanLeadingTokens(sql: String): List<ScanToken> = when (val result = LibPgQuery.scan(sql)) {
-  is LibPgQueryResult.Accepted -> result.value
+internal fun scanLeadingTokens(sql: String): List<ScanToken> = scanText(sql).tokens
+
+private fun scanText(sql: String): ScannedText = when (val result = LibPgQuery.scan(sql)) {
+  is LibPgQueryResult.Accepted -> ScannedText(result.value, isAccepted = true)
   is LibPgQueryResult.Rejected -> {
     val cursorIndex = result.cursorIndex
-    if (cursorIndex == null || cursorIndex !in sql.indices) emptyList() else scanLeadingTokens(sql.take(cursorIndex))
+    val leading = if (cursorIndex == null || cursorIndex !in sql.indices) {
+      emptyList()
+    } else {
+      scanLeadingTokens(sql.take(cursorIndex))
+    }
+    ScannedText(leading, isAccepted = false)
   }
 }
