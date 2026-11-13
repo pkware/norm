@@ -65,7 +65,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
   public fun analyzeQuery(parsedQuery: ParsedQuery, catalog: Catalog): Query {
     val jdbcSql = parsedQuery.sql
     val parsedSql = ParsedSql(jdbcSql)
-    val callStatement = parsedSql.tree?.firstStatement?.call
+    val callStatement = parsedSql.tree?.statements?.firstOrNull()?.call
 
     val resultColumns: List<Column>
     val parameters: List<Parameter>

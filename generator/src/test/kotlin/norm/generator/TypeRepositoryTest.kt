@@ -177,8 +177,8 @@ class TypeRepositoryTest {
     @Test
     fun `a computed expression under a parenthesized top-level UNION gets no source-reference KDoc line`() {
       // ParsedSql.outputItems strips redundant outer parentheses from
-      // the main-query window. hasTopLevelSetOperation scans that same stripped window, so it sees
-      // the UNION at depth zero and computedExpression stays `null`.
+      // the main-query window. OutputStatement.isSetOperation sees the UNION through them,
+      // so computedExpression stays `null`.
       val queryText = "(SELECT UPPER(x) AS u FROM t UNION SELECT LOWER(x) FROM t)"
       val unionColumn = Column(name = "u", notNull = true, type = Identifier(name = "text"))
 

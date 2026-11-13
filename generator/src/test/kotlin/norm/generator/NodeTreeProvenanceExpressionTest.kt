@@ -329,7 +329,7 @@ class NodeTreeProvenanceExpressionTest {
       val resultNames = parser.resultProjection(parser.parseCteList(nodeTree).single().queryBlock)
         .entries.map { it.resultName }
       val parsed = ParsedSql(sql)
-      val body = checkNotNull(checkNotNull(parsed.tree).firstStatement).commonTableExpressions.single().query
+      val body = checkNotNull(checkNotNull(parsed.tree).statements.firstOrNull()).commonTableExpressions.single().query
       return parsed.outputItemsOf(body).map { it.alias } to resultNames
     }
 
