@@ -124,7 +124,7 @@ private fun outputItems(parsed: ParsedSql, statement: OutputStatement): List<Out
     } else {
       extentOfFinalItem(parsed, statement, firstTokens[index])
     }
-    buildItem(parsed, targets[index], extent ?: return null)
+    buildItem(parsed, targets[index], firstTokens[index], extent ?: return null)
   }
 }
 
@@ -134,9 +134,14 @@ private fun firstTokenIndex(tokens: List<ScanToken>, target: ResultTarget): Int?
   return tokens.binarySearchBy(location) { it.start }.takeIf { it >= 0 }
 }
 
-private fun buildItem(parsed: ParsedSql, target: ResultTarget, extent: ItemExtent): OutputItemWithAlias {
+private fun buildItem(
+  parsed: ParsedSql,
+  target: ResultTarget,
+  firstToken: Int,
+  extent: ItemExtent,
+): OutputItemWithAlias {
   val tokens = parsed.significantTokens
-  val start = tokens[extent.firstToken].start
+  val start = tokens[firstToken].start
   val end = tokens[extent.expressionLastToken].end
   val expression = parsed.sql.substring(start, end)
   val selectItem = selectItem(expression, target, normalizedExpression(parsed, start, end))
