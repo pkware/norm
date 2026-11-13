@@ -55,7 +55,7 @@ internal class ParsedSql private constructor(val sql: String, scanned: ScannedTe
 
   private val parts = mutableMapOf<IntRange, ParsedSql>()
 
-  private val outputItemsByStatement = mutableMapOf<StatementNode, List<OutputItemWithAlias>>()
+  private val outputItemsByStatement = mutableMapOf<OutputStatement, List<OutputItemWithAlias>>()
 
   constructor(sql: String) : this(sql, scanText(sql))
 
@@ -69,9 +69,12 @@ internal class ParsedSql private constructor(val sql: String, scanned: ScannedTe
    * Locations in the tree index the whole of [sql], so a CTE body is read from the text of the statement that declares
    * it.
    */
-  fun outputItemsOf(statement: StatementNode): List<OutputItemWithAlias> = outputItemsByStatement.getOrPut(statement) {
-    statement.outputStatement?.let { parseOutputItems(this, it) }.orEmpty()
-  }
+  fun outputItemsOf(statement: StatementNode): List<OutputItemWithAlias> =
+    statement.outputStatement?.let { outputItemsOf(it) }.orEmpty()
+
+  /** The output items of [output], a result set of [tree], cut at the first star. Computed once per [output]. */
+  fun outputItemsOf(output: OutputStatement): List<OutputItemWithAlias> =
+    outputItemsByStatement.getOrPut(output) { parseOutputItems(this, output) }
 
   /**
    * [parserForm] with exactly [parameters] replaced as named parameters. [namedParameters] parses the result to decide

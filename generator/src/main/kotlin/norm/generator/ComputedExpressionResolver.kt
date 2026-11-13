@@ -14,7 +14,7 @@ package norm.generator
  */
 internal fun resolveComputedExpressions(parsed: ParsedSql, columns: List<Column>): List<Column> {
   val selectItems = alignSelectItems(parsed, columns.size)
-  val hasSetOperation = hasTopLevelSetOperation(parsed)
+  val hasSetOperation = parsed.outputStatement?.isSetOperation == true
   return columns.mapIndexed { index, column ->
     val selectItem = selectItems.getOrNull(index)
     val isComputed = column.table == null &&

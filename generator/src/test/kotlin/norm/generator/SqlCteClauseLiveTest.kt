@@ -59,7 +59,7 @@ class SqlCteClauseLiveTest {
   }
 
   private fun definitions(sql: String): List<CommonTableExpression> =
-    ParsedSql(sql).tree?.firstStatement?.commonTableExpressions.orEmpty()
+    ParsedSql(sql).tree?.statements?.firstOrNull()?.commonTableExpressions.orEmpty()
 
   private fun firstColumn(@Language("PostgreSQL") sql: String): String = connection.createStatement().use { statement ->
     statement.executeQuery(sql).use { resultSet ->

@@ -48,14 +48,6 @@ internal fun alignSelectItems(parsed: ParsedSql, columnCount: Int): List<SelectI
 }
 
 /**
- * Whether the statement of [parsed] that produces the result set is a `UNION`, `INTERSECT` or `EXCEPT`.
- *
- * [ParsedSql.outputItems] then holds only the items of the leftmost branch. The other branches may compute the same
- * result column differently, although the column takes its name from the first branch.
- */
-internal fun hasTopLevelSetOperation(parsed: ParsedSql): Boolean = parsed.outputStatement?.isSetOperation ?: false
-
-/**
  * A single item of [ParsedSql.outputItems], pairing the [selectItem] with the alias that follows its
  * expression, if any.
  *
@@ -102,30 +94,29 @@ internal data class OutputItemWithAlias(val selectItem: SelectItem, val alias: S
  * item, falling back to `ResultSetMetaData.getColumnName`, so no wrong original name is reported.
  */
 internal val ParsedSql.outputItems: List<OutputItemWithAlias>
-  get() = outputStatement?.let { outputItemsOf(it.node) }.orEmpty()
+  get() = outputStatement?.let { outputItemsOf(it) }.orEmpty()
 
-/** Reads the items of [output], which [parsed] found in its own tree, and cuts them at the first star. */
+/**
+ * Reads the items of [output], which [parsed] found in its own tree, and cuts them at the first star. Empty when the
+ * extent of an item cannot be confirmed.
+ */
 internal fun parseOutputItems(parsed: ParsedSql, output: OutputStatement): List<OutputItemWithAlias> {
-  if (output.targets.isEmpty()) return emptyList()
-  val items = outputItems(parsed, output) ?: return emptyList()
-
-  val firstStarIndex = items.indexOfFirst { it.selectItem.isStar }
-  return if (firstStarIndex < 0 || items.size == 1) items else items.take(firstStarIndex)
-}
-
-private fun outputItems(parsed: ParsedSql, statement: OutputStatement): List<OutputItemWithAlias>? {
+  val targets = output.targets
+  if (targets.isEmpty()) return emptyList()
   val sql = parsed.sql
   val tokens = parsed.significantTokens
-  val targets = statement.targets
-  val firstTokens = targets.map { target -> firstTokenIndex(tokens, target) ?: return null }
-  return targets.indices.map { index ->
+  val firstTokens = targets.map { target -> firstTokenIndex(tokens, target) ?: return emptyList() }
+  val items = targets.indices.map { index ->
     val extent = if (index < targets.lastIndex) {
       extentBeforeNextItem(sql, tokens, targets[index], firstTokens[index], firstTokens[index + 1])
     } else {
-      extentOfFinalItem(parsed, statement, firstTokens[index])
+      extentOfFinalItem(parsed, output, firstTokens[index])
     }
-    buildItem(parsed, targets[index], firstTokens[index], extent ?: return null)
+    buildItem(parsed, targets[index], firstTokens[index], extent ?: return emptyList())
   }
+
+  val firstStarIndex = items.indexOfFirst { it.selectItem.isStar }
+  return if (firstStarIndex < 0 || items.size == 1) items else items.take(firstStarIndex)
 }
 
 private fun firstTokenIndex(tokens: List<ScanToken>, target: ResultTarget): Int? {

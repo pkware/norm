@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test
 class SqlCteClauseTest {
 
   private fun definitionsOf(parsed: ParsedSql): List<CommonTableExpression> =
-    parsed.tree?.firstStatement?.commonTableExpressions.orEmpty()
+    parsed.tree?.statements?.firstOrNull()?.commonTableExpressions.orEmpty()
 
   private fun definitions(sql: String): List<CommonTableExpression> = definitionsOf(ParsedSql(sql))
 

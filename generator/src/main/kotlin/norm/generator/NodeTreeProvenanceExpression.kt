@@ -139,7 +139,7 @@ private fun scopedNodeTreeCteQueryBlock(nodeTreeText: String, hops: List<CteHop>
  *   value) exactly one definition in that scope
  */
 private fun scopedSqlCteBody(parsedSql: ParsedSql, hops: List<CteHop>): StatementNode? {
-  val statement = parsedSql.tree?.firstStatement ?: return null
+  val statement = parsedSql.tree?.statements?.firstOrNull() ?: return null
   var scopeStack = CteScopeStack(statement.commonTableExpressions)
   var resolvedBody: StatementNode? = null
   for (hop in hops) {

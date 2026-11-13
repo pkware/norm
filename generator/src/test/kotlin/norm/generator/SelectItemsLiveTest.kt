@@ -4,7 +4,6 @@ import assertk.assertThat
 import assertk.assertions.containsExactly
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
-import assertk.assertions.isFalse
 import assertk.assertions.isNull
 import assertk.assertions.isTrue
 import org.junit.jupiter.api.AfterAll
@@ -102,12 +101,12 @@ internal class SelectItemsLiveTest {
       val sql = "(SELECT a FROM t) UNION (SELECT b FROM t)"
       assertThat(labels(sql)).containsExactly("a")
       assertThat(ParsedSql(sql).outputItems).containsExactly(item("a", columnName = "a"))
-      assertThat(hasTopLevelSetOperation(ParsedSql(sql))).isTrue()
+      assertThat(ParsedSql(sql).outputStatement?.isSetOperation).isEqualTo(true)
     }
 
     @Test
     fun `a parenthesized query that is not a set operation is not one`() {
-      assertThat(hasTopLevelSetOperation(ParsedSql("(SELECT a FROM t)"))).isFalse()
+      assertThat(ParsedSql("(SELECT a FROM t)").outputStatement?.isSetOperation).isEqualTo(false)
     }
   }
 

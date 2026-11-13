@@ -21,7 +21,7 @@ class ParseTreeTest {
 
   private fun parse(sql: String): ParseResult = LibPgQuery.parse(sql).accepted()
 
-  private fun statement(sql: String): StatementNode = checkNotNull(parse(sql).firstStatement)
+  private fun statement(sql: String): StatementNode = checkNotNull(parse(sql).statements.firstOrNull())
 
   private fun targets(sql: String): List<ResultTarget> = checkNotNull(statement(sql).select).targets
 
@@ -42,19 +42,6 @@ class ParseTreeTest {
     @Test
     fun `statements is empty for text with no statement`() {
       assertThat(parse("").statements).isEmpty()
-    }
-
-    @Test
-    fun `firstStatement is the first statement`() {
-      val result = parse("SELECT 1; CALL p(1)")
-
-      assertThat(checkNotNull(result.firstStatement).select).isNotNull()
-      assertThat(checkNotNull(result.firstStatement).call).isNull()
-    }
-
-    @Test
-    fun `firstStatement is null for text with no statement`() {
-      assertThat(parse("").firstStatement).isNull()
     }
 
     @Test

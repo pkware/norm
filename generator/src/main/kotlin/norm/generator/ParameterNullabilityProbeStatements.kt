@@ -16,7 +16,7 @@ import norm.generator.libpgquery.isKeyword
  * The options hold no placeholder, so the parameter numbers of the wrapped statement are those of [parsed].
  */
 internal fun explainedStatementStart(parsed: ParsedSql): Int {
-  val optionCount = parsed.tree?.firstStatement?.explain?.optionCount ?: return 0
+  val optionCount = parsed.tree?.statements?.firstOrNull()?.explain?.optionCount ?: return 0
   val tokens = parsed.significantTokens
   val explainIndex = tokens.indexOfFirst { it.token != TokenNumber.SEMICOLON }
   if (explainIndex < 0) return 0
@@ -55,7 +55,7 @@ internal fun startsPreparableStatement(parsed: ParsedSql): Boolean {
  */
 internal fun withoutIntoClause(parsed: ParsedSql): ParsedSql? {
   val sql = parsed.sql
-  val relation = parsed.tree?.firstStatement?.select?.leftmostLeaf?.intoRelation ?: return null
+  val relation = parsed.tree?.statements?.firstOrNull()?.select?.leftmostLeaf?.intoRelation ?: return null
   val tokens = parsed.significantTokens
   val nameStart = tokens.indexOfFirst { it.start == relation.location }
   check(nameStart >= 0) { "No token starts the INTO table name" }

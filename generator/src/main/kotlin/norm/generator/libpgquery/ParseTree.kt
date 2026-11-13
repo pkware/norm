@@ -40,10 +40,6 @@ internal class ParseResult(val node: JsonValue.JsonObject, val input: Utf8Input)
       .map { StatementNode(it, input) }
   }
 
-  /** The first of [statements], which is `null` for text with no statement. */
-  val firstStatement: StatementNode?
-    get() = statements.firstOrNull()
-
   /** The first of [statements] that returns a result set, or `null` when none does. */
   val outputStatement: OutputStatement?
     get() = statements.firstNotNullOfOrNull { it.outputStatement }
