@@ -109,7 +109,7 @@ private fun parserFormOf(sql: String, tokens: List<ScanToken>, namedParameters: 
  * @return the parse tree, or `null` when the grammar rejects [sql].
  * @throws IllegalArgumentException if [sql] contains a NUL character.
  */
-internal fun parseOrNull(sql: String): ParseResult? = LibPgQuery.parse(sql).valueOrNull()?.let(::ParseResult)
+internal fun parseOrNull(sql: String): ParseResult? = LibPgQuery.parse(sql).valueOrNull()
 
 private fun mergeUnicodeEscapes(sql: String, tokens: List<ScanToken>): List<ScanToken> {
   val merged = mutableListOf<ScanToken>()

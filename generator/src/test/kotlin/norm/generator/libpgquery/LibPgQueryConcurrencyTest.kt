@@ -19,7 +19,7 @@ class LibPgQueryConcurrencyTest {
         val sql = statements[round % statements.size]
         sql to
           pool.submit<Pair<JsonValue.JsonObject, List<ScanToken>>> {
-            LibPgQuery.parse(sql).accepted() to
+            LibPgQuery.parse(sql).accepted().node to
               LibPgQuery.scan(sql).accepted()
           }
       }
@@ -41,7 +41,7 @@ class LibPgQueryConcurrencyTest {
       val calls = (1..200).map { round ->
         val valid = round % 2 == 0
         val sql = if (valid) "SELECT $round" else "SELEC $round"
-        valid to pool.submit<LibPgQueryResult<JsonValue.JsonObject>> { LibPgQuery.parse(sql) }
+        valid to pool.submit<LibPgQueryResult<ParseResult>> { LibPgQuery.parse(sql) }
       }
       for ((valid, future) in calls) {
         val result = future.get(2, TimeUnit.MINUTES)

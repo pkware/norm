@@ -16,7 +16,10 @@ import org.junit.jupiter.api.Test
 
 class ParseTreeTest {
 
-  private fun parse(sql: String) = ParseResult(LibPgQuery.parse(sql).accepted())
+  /** A two-byte character followed by a surrogate pair, so that UTF-8 byte offsets and `String` indexes differ. */
+  private val nonAscii = "\u00e9\uD83D\uDE00"
+
+  private fun parse(sql: String): ParseResult = LibPgQuery.parse(sql).accepted()
 
   private fun statement(sql: String): StatementNode = checkNotNull(parse(sql).firstStatement)
 
@@ -77,6 +80,38 @@ class ParseTreeTest {
     @Test
     fun `resultTargetAt is null when no target starts at the location`() {
       assertThat(parse("SELECT a FROM t").resultTargetAt(8)).isNull()
+    }
+
+    @Test
+    fun `resultTargetAt finds the target that follows a two-byte character and a surrogate pair`() {
+      val sql = "SELECT '$nonAscii' AS p, b AS c FROM t"
+
+      assertThat(parse(sql).resultTargetAt(sql.indexOf("b AS"))?.alias).isEqualTo("c")
+    }
+
+    @Test
+    fun `withoutItemValueAndLocations nulls the value of the item that follows non-ASCII characters`() {
+      val sql = "SELECT '$nonAscii' AS p, 1 AS q FROM t"
+      val location = sql.indexOf("1 AS")
+
+      val differentValue = parse(sql.replace("1 AS", "2 AS")).withoutItemValueAndLocations(location)
+      val differentItem = parse(
+        sql.replace("'$nonAscii'", "'$nonAscii$nonAscii'"),
+      ).withoutItemValueAndLocations(location)
+
+      assertThat(parse(sql).withoutItemValueAndLocations(location)).isEqualTo(differentValue)
+      assertThat(parse(sql).withoutItemValueAndLocations(location)).isNotEqualTo(differentItem)
+    }
+
+    @Test
+    fun `withoutItemValueAndLocations makes texts whose non-ASCII prefixes differ in byte length equal`() {
+      val twoBytes = "/* \u00e9 */ SELECT 1 AS a FROM t"
+      val eightBytes = "/* \uD83D\uDE00\uD83D\uDE00 */ SELECT 'longer' AS a FROM t"
+
+      val short = parse(twoBytes).withoutItemValueAndLocations(twoBytes.indexOf("1 AS"))
+      val long = parse(eightBytes).withoutItemValueAndLocations(eightBytes.indexOf("'longer'"))
+
+      assertThat(short).isEqualTo(long)
     }
 
     @Test
@@ -333,6 +368,13 @@ class ParseTreeTest {
     }
 
     @Test
+    fun `location counts a two-byte character and a surrogate pair as String indexes`() {
+      val sql = "SELECT '$nonAscii' AS p, b FROM t"
+
+      assertThat(targets(sql).map { it.location }).isEqualTo(listOf(7, sql.indexOf("b FROM")))
+    }
+
+    @Test
     fun `alias is folded when unquoted and unquoted when quoted`() {
       assertThat(target("SELECT 1 AS Foo").alias).isEqualTo("foo")
       assertThat(target("SELECT 1 AS \"Foo\"\"Bar\"").alias).isEqualTo("Foo\"Bar")
@@ -398,6 +440,16 @@ class ParseTreeTest {
     }
 
     @Test
+    fun `hasConstantValueAt matches a String index after non-ASCII characters and not the byte offset`() {
+      val sql = "SELECT '$nonAscii' AS p, 1 AS q"
+      val constant = targets(sql)[1]
+      val byteOffset = sql.substring(0, sql.indexOf("1 AS")).toByteArray(Charsets.UTF_8).size
+
+      assertThat(constant.hasConstantValueAt(sql.indexOf("1 AS"))).isTrue()
+      assertThat(constant.hasConstantValueAt(byteOffset)).isFalse()
+    }
+
+    @Test
     fun `hasConstantValueAt is false for another location, a column and an expression`() {
       assertThat(target("SELECT 1 AS a").hasConstantValueAt(8)).isFalse()
       assertThat(target("SELECT a").hasConstantValueAt(7)).isFalse()
@@ -407,6 +459,13 @@ class ParseTreeTest {
     @Test
     fun `largestLocation is the greatest location inside the item`() {
       assertThat(target("SELECT a + bb FROM t").largestLocation).isEqualTo(11)
+    }
+
+    @Test
+    fun `largestLocation is a String index after non-ASCII characters`() {
+      val sql = "SELECT '$nonAscii' AS p, a + bb FROM t"
+
+      assertThat(targets(sql)[1].largestLocation).isEqualTo(sql.indexOf("bb"))
     }
 
     @Test
@@ -465,6 +524,13 @@ class ParseTreeTest {
     @Test
     fun `location is where the table name starts`() {
       assertThat(relation("SELECT 1 INTO s.t").location).isEqualTo(14)
+    }
+
+    @Test
+    fun `location is a String index after a two-byte character and a surrogate pair`() {
+      val sql = "SELECT '$nonAscii' INTO s.t"
+
+      assertThat(relation(sql).location).isEqualTo(sql.indexOf("s.t"))
     }
 
     @Test
