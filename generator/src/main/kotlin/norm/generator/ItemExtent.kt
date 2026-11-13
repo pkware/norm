@@ -15,11 +15,10 @@ private const val PROBE_CONSTANT = "1"
 /**
  * The tokens of one item.
  *
- * @property firstToken the first token of the expression.
  * @property expressionLastToken the last token of the expression.
- * @property isAliasExplicit whether the token before the alias is `AS`.
+ * @property isAliasExplicit whether the token after the expression is `AS`.
  */
-internal class ItemExtent(val firstToken: Int, val expressionLastToken: Int, val isAliasExplicit: Boolean)
+internal class ItemExtent(val expressionLastToken: Int, val isAliasExplicit: Boolean)
 
 /** An item that is not the last ends at the token before the comma, so its alias is the token at its end. */
 internal fun extentBeforeNextItem(
@@ -32,13 +31,13 @@ internal fun extentBeforeNextItem(
   val commaIndex = nextFirstToken - 1
   if (commaIndex - 1 < firstToken || tokens[commaIndex].token != TokenNumber.COMMA) return null
   val lastToken = commaIndex - 1
-  if (target.alias == null) return ItemExtent(firstToken, lastToken, false)
+  if (target.alias == null) return itemExtent(sql, tokens, target, lastToken)
 
   val aliasFirstToken = lastToken
-  val isAliasExplicit = aliasFirstToken - 1 > firstToken && isKeyword(sql, tokens[aliasFirstToken - 1], AS_KEYWORD)
-  val expressionLastToken = if (isAliasExplicit) aliasFirstToken - 2 else aliasFirstToken - 1
+  val hasAsBeforeAlias = aliasFirstToken - 1 > firstToken && isKeyword(sql, tokens[aliasFirstToken - 1], AS_KEYWORD)
+  val expressionLastToken = if (hasAsBeforeAlias) aliasFirstToken - 2 else aliasFirstToken - 1
   if (expressionLastToken < firstToken) return null
-  return ItemExtent(firstToken, expressionLastToken, isAliasExplicit)
+  return itemExtent(sql, tokens, target, expressionLastToken)
 }
 
 /**
@@ -72,28 +71,31 @@ internal fun extentOfFinalItem(parsed: ParsedSql, statement: OutputStatement, fi
     val probeTree = LibPgQuery.parse(probe).valueOrNull() ?: continue
     val isConstant = probeTree.resultTargetAt(probeLocation)?.hasConstantValueAt(probeLocation) == true
     if (isConstant && probeTree.withoutItemValueAndLocations(probeLocation) == expectedTree) {
-      return finalItemExtent(sql, tokens, statement.targets.last(), firstToken, index)
+      return itemExtent(sql, tokens, statement.targets.last(), index)
     }
   }
   return null
 }
 
-/** The alias follows the expression, after `AS` when that is written. */
-private fun finalItemExtent(
+/**
+ * Builds the extent of an item whose expression ends at [expressionLastToken]. The alias follows the expression, after
+ * `AS` when that is written, so the token after the expression decides [ItemExtent.isAliasExplicit].
+ *
+ * @return `null` when the tokens end before the alias.
+ */
+private fun itemExtent(
   sql: String,
   tokens: List<ScanToken>,
   target: ResultTarget,
-  firstToken: Int,
   expressionLastToken: Int,
 ): ItemExtent? {
-  if (target.alias == null) return ItemExtent(firstToken, expressionLastToken, false)
+  if (target.alias == null) return ItemExtent(expressionLastToken, false)
 
-  val afterExpression = expressionLastToken + 1
-  if (afterExpression >= tokens.size) return null
-  val isAliasExplicit = isKeyword(sql, tokens[afterExpression], AS_KEYWORD)
-  val aliasFirstToken = if (isAliasExplicit) afterExpression + 1 else afterExpression
+  val afterExpression = tokens.getOrNull(expressionLastToken + 1) ?: return null
+  val isAliasExplicit = isKeyword(sql, afterExpression, AS_KEYWORD)
+  val aliasFirstToken = if (isAliasExplicit) expressionLastToken + 2 else expressionLastToken + 1
   if (aliasFirstToken >= tokens.size) return null
-  return ItemExtent(firstToken, expressionLastToken, isAliasExplicit)
+  return ItemExtent(expressionLastToken, isAliasExplicit)
 }
 
 private fun nestingChange(token: ScanToken): Int = when (token.token) {
