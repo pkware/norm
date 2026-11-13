@@ -14,42 +14,29 @@ internal fun openResource(name: String): InputStream =
 /**
  * PostgreSQL's parser and lexer, compiled from libpg_query to WebAssembly and run on Chicory.
  *
- * All offsets are `String` indexes. A single wasm instance serves every call under a lock, and is replaced after a
- * call throws. A text that PostgreSQL rejects is a [LibPgQueryResult.Rejected] and leaves the instance in use.
+ * Offsets in scan and split results are `String` indexes. A single wasm instance serves every call under a lock, and
+ * is replaced after a call throws. A text that PostgreSQL rejects is a [LibPgQueryResult.Rejected] and leaves the
+ * instance in use.
  */
 internal object LibPgQuery {
-  private val parseTreeOffsets: ParseTreeOffsets by lazy { ParseTreeOffsets(locationFieldNames) }
-
   private val instance = RecoverableInstance(::newInstance)
 
   /**
-   * Parses [sql] with PostgreSQL's grammar and returns libpg_query's JSON parse tree.
+   * Parses [sql] with PostgreSQL's grammar and returns libpg_query's JSON parse tree. The tree keeps UTF-8 byte
+   * offsets, and [ParseResult] maps them to `String` indexes of [sql].
    *
-   * Location fields of an accepted tree hold `String` indexes into [sql]. The result is [LibPgQueryResult.Rejected]
-   * when the grammar rejects [sql].
+   * The result is [LibPgQueryResult.Rejected] when the grammar rejects [sql].
    *
    * @throws IllegalArgumentException if [sql] contains a NUL character.
    */
-  fun parse(sql: String): LibPgQueryResult<JsonValue.JsonObject> {
+  fun parse(sql: String): LibPgQueryResult<ParseResult> {
     val input = Utf8Input(sql)
-    return parseTree(input).map { parseTreeOffsets.convert(it, input) }
-  }
-
-  /**
-   * Parses [sql] like [parse], but leaves the location fields as libpg_query reports them, which are UTF-8 byte
-   * offsets into [sql]. Skips the conversion to `String` indexes for callers that compare trees with locations
-   * removed.
-   *
-   * @throws IllegalArgumentException if [sql] contains a NUL character.
-   */
-  fun parseWithByteOffsets(sql: String): LibPgQueryResult<JsonValue.JsonObject> = parseTree(Utf8Input(sql))
-
-  private fun parseTree(input: Utf8Input): LibPgQueryResult<JsonValue.JsonObject> =
-    invoke(LibPgQueryEntry.Parse, input).map { text ->
+    return invoke(LibPgQueryEntry.Parse, input).map { text ->
       val tree = JsonValue.parse(text)
       check(tree is JsonValue.JsonObject) { "libpg_query returned a parse tree that is not a JSON object" }
-      tree
+      ParseResult(tree, input)
     }
+  }
 
   /**
    * Splits [sql] into PostgreSQL lexer tokens. Whitespace is not a token and comments are.

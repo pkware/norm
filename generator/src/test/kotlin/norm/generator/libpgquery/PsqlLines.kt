@@ -161,7 +161,7 @@ internal data class PsqlLines(
       // A `COPY` statement contains the word, so the parse is only needed when it appears.
       if (!text.contains("copy", ignoreCase = true)) return 0
       val tree = LibPgQuery.parse(text).valueOrNull() ?: return 0
-      return tree.objectArrayField("stmts").count { statement ->
+      return tree.node.objectArrayField("stmts").count { statement ->
         val copy = statement.objectField("stmt")?.objectField("CopyStmt")
         copy != null && copy.fields["is_from"] != null && copy.fields["filename"] == null
       }

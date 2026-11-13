@@ -300,20 +300,8 @@ class SqlPlaceholdersTest {
     fun `select item locations match the original text`() {
       val sql = "SELECT j ?? 'k' AS flag, ? AS x, b FROM t"
       val tree = LibPgQuery.parse(ParsedSql(sql).parserForm).accepted()
-      assertThat(resultTargetLocations(tree))
+      assertThat(checkNotNull(tree.outputStatement).targets.map { it.location })
         .isEqualTo(listOf(sql.indexOf("j ??"), sql.indexOf("? AS x"), sql.indexOf("b FROM")))
-    }
-
-    private fun resultTargetLocations(value: JsonValue): List<Int> = when (value) {
-      is JsonValue.JsonObject -> value.fields.flatMap { (key, child) ->
-        if (key == "ResTarget" && child is JsonValue.JsonObject) {
-          listOfNotNull(child.intField("location"))
-        } else {
-          resultTargetLocations(child)
-        }
-      }
-      is JsonValue.JsonArray -> value.items.flatMap(::resultTargetLocations)
-      else -> emptyList()
     }
   }
 }

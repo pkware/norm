@@ -20,7 +20,7 @@ class LibPgQuerySmokeTest {
 
     @Test
     fun `parses SELECT 1 with PostgreSQL 18`() {
-      val tree = LibPgQuery.parse("SELECT 1").accepted()
+      val tree = LibPgQuery.parse("SELECT 1").accepted().node
       assertThat(tree.intField("version")).isEqualTo(180_006)
       assertThat(tree.objectArrayField("stmts").size).isEqualTo(1)
     }
@@ -29,7 +29,7 @@ class LibPgQuerySmokeTest {
     fun `reports a syntax error with PostgreSQL's message and keeps serving calls`() {
       assertThat(LibPgQuery.parse("SELEC 1"))
         .isEqualTo(LibPgQueryResult.Rejected("syntax error at or near \"SELEC\"", 0))
-      val tree = LibPgQuery.parse("SELECT 2").accepted()
+      val tree = LibPgQuery.parse("SELECT 2").accepted().node
       assertThat(tree.intField("version")).isEqualTo(180_006)
     }
 
