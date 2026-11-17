@@ -22,6 +22,12 @@ internal object LibPgQuery {
   private val instance = RecoverableInstance(::newInstance)
 
   /**
+   * JVM stack size of the thread that runs a wasm call. The interpreter alone needs 960 kB for the deepest input that
+   * PostgreSQL's depth guard accepts, and this is four times the 1 MB step that passed.
+   */
+  private const val WASM_STACK_BYTES = 4L * 1024 * 1024
+
+  /**
    * Parses [sql] with PostgreSQL's grammar and returns libpg_query's JSON parse tree. The tree keeps UTF-8 byte
    * offsets, and [ParseResult] maps them to `String` indexes of [sql].
    *
@@ -93,9 +99,15 @@ internal object LibPgQuery {
   /**
    * Calls [entry] on [input] and returns what the entry reads from its result struct, or the error it reports.
    *
+   * The call runs on a thread with [WASM_STACK_BYTES] of stack. PostgreSQL's depth guard counts wasm stack, and the
+   * JVM stack each wasm frame uses varies with the JIT tier, so the caller's stack size cannot be relied on.
+   *
    * Wasm memory is released only when the instance stays in use, which is on every return.
    */
   private fun <T : Any> invoke(entry: LibPgQueryEntry<T>, input: Utf8Input): LibPgQueryResult<T> =
+    onWasmStack { invokeOnWasmStack(entry, input) }
+
+  private fun <T : Any> invokeOnWasmStack(entry: LibPgQueryEntry<T>, input: Utf8Input): LibPgQueryResult<T> =
     instance.withInstance { running ->
       val inputPointer = running.allocate(input.bytes.size + 1L)
       running.memory().write(inputPointer, input.bytes)
@@ -111,4 +123,41 @@ internal object LibPgQuery {
       running.call("free", inputPointer.toLong())
       error ?: LibPgQueryResult.Accepted(checkNotNull(value))
     }
+
+  /**
+   * Runs [block] on a new thread with [WASM_STACK_BYTES] of stack.
+   *
+   * @throws Throwable whatever [block] throws.
+   */
+  @Suppress("TooGenericExceptionCaught")
+  private fun <T> onWasmStack(block: () -> T): T {
+    var value: T? = null
+    var failure: Throwable? = null
+    val thread = Thread(
+      null,
+      {
+        try {
+          value = block()
+        } catch (throwable: Throwable) {
+          failure = throwable
+        }
+      },
+      "libpg-query-wasm",
+      WASM_STACK_BYTES,
+    )
+    thread.start()
+    var wasInterrupted = false
+    while (true) {
+      try {
+        thread.join()
+        break
+      } catch (_: InterruptedException) {
+        wasInterrupted = true
+      }
+    }
+    if (wasInterrupted) Thread.currentThread().interrupt()
+    failure?.let { throw it }
+    @Suppress("UNCHECKED_CAST")
+    return value as T
+  }
 }

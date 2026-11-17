@@ -41,7 +41,7 @@ internal class RecordingMachine(private val instance: Instance, private val dele
     /** Index of the input pointer in the arguments of an entry point, after the result pointer. */
     private const val INPUT_ARGUMENT = 1
 
-    private val recording = ThreadLocal<RecordedCalls?>()
+    private val recording = InheritableThreadLocal<RecordedCalls?>()
 
     private val recoverable: RecoverableInstance<*> = LibPgQuery::class.java.getDeclaredField("instance")
       .apply { isAccessible = true }
