@@ -48,7 +48,10 @@ internal class ParsedSql private constructor(val sql: String, scanned: ScannedTe
    * outside operator tokens and named parameters is unchanged, as is text from the point where the lexer rejects [sql]
    * onward.
    */
-  val parserForm: String by lazy(LazyThreadSafetyMode.NONE) { parserFormReplacing(namedParameters(this)) }
+  val parserForm: String by lazy(LazyThreadSafetyMode.NONE) { parserFormOf(sql, tokens, namedParameters) }
+
+  /** The `:name` named parameters of [sql], in source order, as [findNamedParameters] finds them. */
+  val namedParameters: List<NamedParameter> by lazy(LazyThreadSafetyMode.NONE) { findNamedParameters(sql, tokens) }
 
   /** The parse tree of [parserForm], or `null` when PostgreSQL's grammar rejects it. */
   val tree: ParseResult? by lazy(LazyThreadSafetyMode.NONE) { LibPgQuery.parse(parserForm).valueOrNull() }
@@ -74,13 +77,6 @@ internal class ParsedSql private constructor(val sql: String, scanned: ScannedTe
   /** The output items of [output], a result set of [tree], cut at the first star. Computed once per [output]. */
   fun outputItemsOf(output: OutputStatement): List<OutputItem> =
     outputItemsByStatement.getOrPut(output) { parseOutputItems(this, output) }
-
-  /**
-   * [parserForm] with exactly [parameters] replaced as named parameters. [namedParameters] parses the result to decide
-   * which candidates inside a slice or a JSON object are parameters.
-   */
-  internal fun parserFormReplacing(parameters: Collection<NamedParameter>): String =
-    parserFormOf(sql, tokens, parameters)
 
   /**
    * The [ParsedSql] of `sql.substring(start, end)`, which is this one when the range covers all of [sql]. Asking for
@@ -125,26 +121,6 @@ internal class ParsedSql private constructor(val sql: String, scanned: ScannedTe
  *   lexer rejected the text.
  */
 private class ScannedText(val tokens: List<ScanToken>, val rejection: LibPgQueryResult.Rejected?)
-
-private fun parserFormOf(sql: String, tokens: List<ScanToken>, namedParameters: Collection<NamedParameter>): String {
-  val characters = sql.toCharArray()
-  for (token in tokens.filter { it.token == TokenNumber.OPERATOR }) {
-    var written = token.start
-    var read = token.start
-    forEachQuestionMark(sql, token) { index, isEscape ->
-      while (read < index) characters[written++] = sql[read++]
-      characters[written++] = if (isEscape) '?' else '0'
-      read = index + if (isEscape) 2 else 1
-    }
-    while (read < token.end) characters[written++] = sql[read++]
-    characters.fill(' ', written, token.end)
-  }
-  for (parameter in namedParameters) {
-    characters.fill(' ', parameter.colon.start, parameter.name.end)
-    characters[parameter.name.end - 1] = '0'
-  }
-  return String(characters)
-}
 
 private fun mergeUnicodeEscapes(sql: String, tokens: List<ScanToken>): List<ScanToken> {
   val merged = mutableListOf<ScanToken>()

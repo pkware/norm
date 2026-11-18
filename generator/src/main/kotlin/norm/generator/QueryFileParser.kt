@@ -319,9 +319,9 @@ public object QueryFileParser {
   /**
    * Converts `:paramName` named parameters to `?` positional placeholders.
    *
-   * Finds parameters with [namedParameters], so a `:name`-shaped run inside a string literal, quoted identifier,
-   * dollar-quoted string, or comment is copied through verbatim, as is text from the point where the lexer rejects
-   * [parsed] onward. The name is the text of the token after the colon.
+   * Finds parameters with [ParsedSql.namedParameters], so a `:name`-shaped run inside a string literal, quoted
+   * identifier, dollar-quoted string, or comment is copied through verbatim, as is text from the point where the lexer
+   * rejects [parsed] onward. The name is the text of the token after the colon.
    *
    * Each occurrence of a named parameter produces its own `?` placeholder with its own 1-based
    * position number. The same name appearing multiple times creates multiple bind slots.
@@ -341,7 +341,7 @@ public object QueryFileParser {
     val result = StringBuilder()
     var copiedUpTo = 0
 
-    for (parameter in namedParameters(parsed)) {
+    for (parameter in parsed.namedParameters) {
       result.append(sql, copiedUpTo, parameter.colon.start).append('?')
       copiedUpTo = parameter.name.end
       numberToName[numberToName.size + 1] = sql.substring(parameter.name.start, parameter.name.end)
