@@ -110,7 +110,8 @@ public object QueryFileParser {
 
     return annotations.mapIndexed { index, annotation ->
       val bodyStart = text.indexOf('\n', annotation.end).let { if (it < 0) text.length else it + 1 }
-      val bodyEnd = annotations.getOrNull(index + 1)?.let { text.lastIndexOf('\n', it.start - 1) + 1 } ?: text.length
+      val bodyEnd = annotations.getOrNull(index + 1)?.let { maxOf(bodyStart, text.lastIndexOf('\n', it.start - 1)) }
+        ?: text.length
       val bodyTokens = tokens.filter { it.start in bodyStart until bodyEnd }
       val comments = pendingComments.toList()
       pendingComments.clear()
@@ -208,9 +209,6 @@ public object QueryFileParser {
    * The terminator is the first `;` that ends a statement and has no token after it on its line except comments and
    * further `;`. When several `;` follow each other, the last one is the terminator. Statements come from
    * [splitStatementSpans], which shows each named parameter to the parser as `0`.
-   *
-   * The body of a query that another annotation follows ends with a line break. The statements are read without it, so
-   * the [ParsedSql.part] of [file] ends before whitespace and takes its tokens from [file].
    */
   private fun findTerminator(
     file: ParsedSql,
@@ -220,8 +218,7 @@ public object QueryFileParser {
     tokens: List<ScanToken>,
   ): Int? {
     val text = file.sql
-    val searchEnd = if (bodyEnd < text.length && bodyEnd > bodyStart) bodyEnd - 1 else bodyEnd
-    val body = file.part(bodyStart, searchEnd)
+    val body = file.part(bodyStart, bodyEnd)
     val lexerBody = withLexerWhitespace(body.sql)
     val statements = checkNotNull(splitStatementSpans(if (lexerBody == body.sql) body else ParsedSql(lexerBody))) {
       "PostgreSQL's lexer rejects a query body of a file whose scan it accepted."
