@@ -66,7 +66,7 @@ internal class ParseResult(val node: JsonValue.JsonObject, val input: Utf8Input)
  * Instances are not thread-safe. Equality is identity, and [ParseResult] and [commonTableExpressions] hand out one
  * instance per tree node.
  */
-internal class StatementNode(val node: JsonValue.JsonObject, private val input: Utf8Input) {
+internal class StatementNode(private val node: JsonValue.JsonObject, private val input: Utf8Input) {
   private val typeName: String?
   private val body: JsonValue.JsonObject?
 
@@ -140,24 +140,23 @@ internal class StatementNode(val node: JsonValue.JsonObject, private val input: 
       selectStatement != null -> {
         val leaf = selectStatement.leftmostLeaf
         val targets = if (leaf != null && !leaf.hasValuesLists) leaf.targets else emptyList()
-        OutputStatement(this, targets, selectStatement.isSetOperation)
+        OutputStatement(targets, selectStatement.isSetOperation)
       }
-      explain != null -> OutputStatement(this, emptyList(), false)
-      else -> returningTargets?.let { OutputStatement(this, it, false) }
+      explain != null -> OutputStatement(emptyList(), false)
+      else -> returningTargets?.let { OutputStatement(it, false) }
     }
   }
 }
 
 /**
- * Pairs a statement with the items of the result set it returns.
+ * The result set that a statement returns.
  *
- * @property node the statement.
  * @property targets the items of its select list or `RETURNING` list, in source order. Empty for `VALUES` and
  *   `EXPLAIN`. `TABLE t` holds one star item that the parser adds, with location `-1`.
  * @property isSetOperation whether the statement is a `UNION`, `INTERSECT` or `EXCEPT`. [targets] then belong to the
  *   leftmost branch.
  */
-internal class OutputStatement(val node: StatementNode, val targets: List<ResultTarget>, val isSetOperation: Boolean)
+internal class OutputStatement(val targets: List<ResultTarget>, val isSetOperation: Boolean)
 
 /**
  * A CTE of a `WITH` clause.
@@ -168,7 +167,7 @@ internal class OutputStatement(val node: StatementNode, val targets: List<Result
 internal data class CommonTableExpression(val name: String, val query: StatementNode)
 
 /** A `SelectStmt`, which is a `SELECT`, `VALUES`, `TABLE` or a set operation over those. */
-internal class SelectStatement(val node: JsonValue.JsonObject, private val input: Utf8Input) {
+internal class SelectStatement(private val node: JsonValue.JsonObject, private val input: Utf8Input) {
 
   val isSetOperation: Boolean
     get() {
@@ -202,7 +201,7 @@ internal class SelectStatement(val node: JsonValue.JsonObject, private val input
 }
 
 /** A `ResTarget`: one item of a select list or `RETURNING` list. */
-internal class ResultTarget(val node: JsonValue.JsonObject, private val input: Utf8Input) {
+internal class ResultTarget(private val node: JsonValue.JsonObject, private val input: Utf8Input) {
 
   /** The `String` index where the item starts, `-1` for an item the parser adds as in `TABLE t`, `null` if absent. */
   val location: Int?
@@ -258,7 +257,7 @@ internal class ResultTarget(val node: JsonValue.JsonObject, private val input: U
 }
 
 /** The `RangeVar` that names the table of a `SELECT ... INTO`. */
-internal class IntoRelation(val node: JsonValue.JsonObject, private val input: Utf8Input) {
+internal class IntoRelation(private val node: JsonValue.JsonObject, private val input: Utf8Input) {
 
   /** The `String` index where the table name starts, or `null` when the tree records none. */
   val location: Int?
@@ -271,7 +270,7 @@ internal class IntoRelation(val node: JsonValue.JsonObject, private val input: U
 
 /** An `ExplainStmt`. */
 @JvmInline
-internal value class ExplainStatement(val node: JsonValue.JsonObject) {
+internal value class ExplainStatement(private val node: JsonValue.JsonObject) {
 
   /** Each option counts once, including the legacy words `ANALYZE` and `VERBOSE`. */
   val optionCount: Int
@@ -280,7 +279,7 @@ internal value class ExplainStatement(val node: JsonValue.JsonObject) {
 
 /** A `CallStmt`. */
 @JvmInline
-internal value class CallStatement(val node: JsonValue.JsonObject) {
+internal value class CallStatement(private val node: JsonValue.JsonObject) {
 
   /** The name as `pg_proc` stores it, or `null` when the call writes a schema part. */
   val procedureName: String?

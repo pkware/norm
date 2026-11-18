@@ -394,7 +394,9 @@ private const val COLUMN_LIST_FIELD = "aliascolnames"
  */
 private fun cteClauseSpans(parsed: ParsedSql): CteClauseSpans? {
   val tree = parsed.tree
-  val statement = tree?.statements?.firstOrNull()?.node?.fields?.values?.singleOrNull() as? JsonValue.JsonObject
+  val statement = tree?.node?.objectArrayField("stmts")?.firstOrNull()
+    ?.objectField("stmt")
+    ?.fields?.values?.singleOrNull() as? JsonValue.JsonObject
   val expressions = statement?.objectField("withClause")
     ?.objectArrayField("ctes")
     .orEmpty()
