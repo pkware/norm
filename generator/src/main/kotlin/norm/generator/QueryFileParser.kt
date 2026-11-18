@@ -115,7 +115,7 @@ public object QueryFileParser {
       val bodyTokens = tokens.filter { it.start in bodyStart until bodyEnd }
       val comments = pendingComments.toList()
       pendingComments.clear()
-      val terminator = findTerminator(file, lines, bodyStart, bodyEnd, bodyTokens)
+      val terminator = findTerminator(file, lines, bodyStart, bodyEnd)
       val sqlRange = if (terminator == null) {
         trimmedRange(text, bodyStart, bodyEnd).withoutTrailingSemicolon(text)
       } else {
@@ -210,27 +210,24 @@ public object QueryFileParser {
    * further `;`. When several `;` follow each other, the last one is the terminator. Statements come from
    * [splitStatementSpans], which shows each named parameter to the parser as `0`.
    */
-  private fun findTerminator(
-    file: ParsedSql,
-    lines: LineIndex,
-    bodyStart: Int,
-    bodyEnd: Int,
-    tokens: List<ScanToken>,
-  ): Int? {
-    val text = file.sql
+  private fun findTerminator(file: ParsedSql, lines: LineIndex, bodyStart: Int, bodyEnd: Int): Int? {
     val body = file.part(bodyStart, bodyEnd)
     val lexerBody = withLexerWhitespace(body.sql)
     val statements = checkNotNull(splitStatementSpans(if (lexerBody == body.sql) body else ParsedSql(lexerBody))) {
       "PostgreSQL's lexer rejects a query body of a file whose scan it accepted."
     }
     for (statement in statements) {
-      val end = bodyStart + statement.end
-      if (end >= bodyEnd || text[end] != ';') continue
-      val line = lines.lineOf(end)
-      val following = tokens.filter { it.start > end && !it.isComment() && !it.isBlank(text) }
-      val repeated = following.takeWhile { it.token == TokenNumber.SEMICOLON && lines.lineOf(it.start) == line }
+      val end = statement.end
+      if (end >= body.sql.length || body.sql[end] != ';') continue
+      val line = lines.lineOf(bodyStart + end)
+      val following = body.tokens.filter { it.start > end && !it.isComment() && !it.isBlank(body.sql) }
+      val repeated = following.takeWhile {
+        it.token == TokenNumber.SEMICOLON && lines.lineOf(bodyStart + it.start) == line
+      }
       val next = following.getOrNull(repeated.size)
-      if (next == null || lines.lineOf(next.start) > line) return repeated.lastOrNull()?.start ?: end
+      if (next == null || lines.lineOf(bodyStart + next.start) > line) {
+        return bodyStart + (repeated.lastOrNull()?.start ?: end)
+      }
     }
     return null
   }
