@@ -11,6 +11,7 @@ import assertk.assertions.isInstanceOf
 import assertk.assertions.messageContains
 import norm.generator.corpus.BLOCK_COMMENT_ISSUE_INPUT
 import norm.generator.libpgquery.LibPgQuery
+import norm.generator.libpgquery.RecordingMachine
 import norm.generator.libpgquery.rejected
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
@@ -981,6 +982,27 @@ class QueryFileParserTest {
 
       assertThat(result.map { it.name }).containsExactly("a", "b")
       assertThat(result[1].sourceLine).isEqualTo(3)
+    }
+
+    @Test
+    fun `an indented second annotation ends the first body and the file is scanned once`() {
+      val text = "-- name: a :one\nSELECT 1\n  -- name: b :one\nSELECT 2\n"
+      lateinit var result: List<ParsedQuery>
+
+      val calls = RecordingMachine.record { result = QueryFileParser.parse(text) }
+
+      assertThat(result.map { it.name to it.sql }).isEqualTo(listOf("a" to "SELECT 1", "b" to "SELECT 2"))
+      assertThat(result.map { it.sourceLine }).isEqualTo(listOf(1, 3))
+      assertThat(calls.scanTexts).isEqualTo(listOf(text))
+    }
+
+    @Test
+    fun `a second annotation directly after the first gives the first an empty body`() {
+      val result = QueryFileParser.parse("-- name: a :one\n-- name: b :one\nSELECT 2;\n")
+
+      assertThat(result.map { it.name to it.sql }).isEqualTo(listOf("a" to "", "b" to "SELECT 2"))
+      assertThat(result.map { it.sourceLine }).isEqualTo(listOf(1, 2))
+      assertThat(result.flatMap { it.comments }).isEmpty()
     }
 
     @ParameterizedTest(name = "U+{0}")
