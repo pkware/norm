@@ -159,7 +159,7 @@ class ScannerOracleLiveTest {
   private fun parenthesizeItems(sql: String): String? {
     val items = ParsedSql(sql).outputItems
     if (items.isEmpty() || items.any { it.selectItem.isStar }) return null
-    val statement = parseOrNull(ParsedSql(sql).parserForm)?.outputStatement
+    val statement = LibPgQuery.parse(ParsedSql(sql).parserForm).valueOrNull()?.outputStatement
     val starts = statement?.targets?.map { it.location } ?: return null
     if (starts.size != items.size || starts.any { it == null }) return null
     val result = StringBuilder()

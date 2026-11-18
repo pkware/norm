@@ -101,12 +101,12 @@ internal class SelectItemsLiveTest {
       val sql = "(SELECT a FROM t) UNION (SELECT b FROM t)"
       assertThat(labels(sql)).containsExactly("a")
       assertThat(ParsedSql(sql).outputItems).containsExactly(item("a", columnName = "a"))
-      assertThat(ParsedSql(sql).outputStatement?.isSetOperation).isEqualTo(true)
+      assertThat(ParsedSql(sql).tree?.outputStatement?.isSetOperation).isEqualTo(true)
     }
 
     @Test
     fun `a parenthesized query that is not a set operation is not one`() {
-      assertThat(ParsedSql("(SELECT a FROM t)").outputStatement?.isSetOperation).isEqualTo(false)
+      assertThat(ParsedSql("(SELECT a FROM t)").tree?.outputStatement?.isSetOperation).isEqualTo(false)
     }
   }
 

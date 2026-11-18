@@ -49,10 +49,7 @@ internal class ParsedSql private constructor(val sql: String, scanned: ScannedTe
   val parserForm: String by lazy(LazyThreadSafetyMode.NONE) { parserFormReplacing(namedParameters(this)) }
 
   /** The parse tree of [parserForm], or `null` when PostgreSQL's grammar rejects it. */
-  val tree: ParseResult? by lazy(LazyThreadSafetyMode.NONE) { parseOrNull(parserForm) }
-
-  /** The statement of [tree] that returns the result set, or `null` when [tree] is `null` or has none. */
-  internal val outputStatement: OutputStatement? by lazy(LazyThreadSafetyMode.NONE) { tree?.outputStatement }
+  val tree: ParseResult? by lazy(LazyThreadSafetyMode.NONE) { LibPgQuery.parse(parserForm).valueOrNull() }
 
   private val parts = mutableMapOf<IntRange, ParsedSql>()
 
@@ -129,7 +126,7 @@ private class ScannedText(val tokens: List<ScanToken>, val isAccepted: Boolean)
 
 private fun parserFormOf(sql: String, tokens: List<ScanToken>, namedParameters: Collection<NamedParameter>): String {
   val characters = sql.toCharArray()
-  for (token in operatorTokens(tokens)) {
+  for (token in tokens.filter { it.token == TokenNumber.OPERATOR }) {
     var written = token.start
     var read = token.start
     forEachQuestionMark(sql, token) { index, isEscape ->
@@ -146,14 +143,6 @@ private fun parserFormOf(sql: String, tokens: List<ScanToken>, namedParameters: 
   }
   return String(characters)
 }
-
-/**
- * Parses [sql] with PostgreSQL's grammar.
- *
- * @return the parse tree, or `null` when the grammar rejects [sql].
- * @throws IllegalArgumentException if [sql] contains a NUL character.
- */
-internal fun parseOrNull(sql: String): ParseResult? = LibPgQuery.parse(sql).valueOrNull()
 
 private fun mergeUnicodeEscapes(sql: String, tokens: List<ScanToken>): List<ScanToken> {
   val merged = mutableListOf<ScanToken>()

@@ -127,10 +127,6 @@ private val JSON_OBJECT_KEYWORDS = listOf("JSON_OBJECT", "JSON_OBJECTAGG")
 private fun isParameterName(sql: String, token: ScanToken): Boolean =
   (token.token == TokenNumber.IDENTIFIER || token.keywordKind != KeywordKind.NONE) && sql[token.start] != '"'
 
-internal fun operatorTokens(tokens: List<ScanToken>): List<ScanToken> = tokens.filter {
-  it.token == TokenNumber.OPERATOR
-}
-
 internal inline fun forEachQuestionMark(
   sql: String,
   token: ScanToken,
@@ -153,5 +149,5 @@ private inline fun forEachQuestionMark(
   tokens: List<ScanToken>,
   action: (index: Int, isEscape: Boolean) -> Unit,
 ) {
-  for (token in operatorTokens(tokens)) forEachQuestionMark(sql, token, action)
+  for (token in tokens.filter { it.token == TokenNumber.OPERATOR }) forEachQuestionMark(sql, token, action)
 }

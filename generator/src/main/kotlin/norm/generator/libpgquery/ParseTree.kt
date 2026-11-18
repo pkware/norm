@@ -41,8 +41,9 @@ internal class ParseResult(val node: JsonValue.JsonObject, val input: Utf8Input)
   }
 
   /** The first of [statements] that returns a result set, or `null` when none does. */
-  val outputStatement: OutputStatement?
-    get() = statements.firstNotNullOfOrNull { it.outputStatement }
+  val outputStatement: OutputStatement? by lazy(LazyThreadSafetyMode.NONE) {
+    statements.firstNotNullOfOrNull { it.outputStatement }
+  }
 
   /**
    * Finds the select-list or `RETURNING` item that starts at the `String` index [location], searching in document
