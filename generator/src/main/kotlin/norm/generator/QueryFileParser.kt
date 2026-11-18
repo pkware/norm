@@ -2,7 +2,6 @@ package norm.generator
 
 import norm.generator.libpgquery.LEXER_WHITESPACE
 import norm.generator.libpgquery.LibPgQuery
-import norm.generator.libpgquery.LibPgQueryResult
 import norm.generator.libpgquery.ScanToken
 import norm.generator.libpgquery.TokenNumber
 import norm.generator.libpgquery.isComment
@@ -102,8 +101,8 @@ public object QueryFileParser {
   public fun parse(content: String, sourceFile: String = ""): List<ParsedQuery> {
     val text = content.lines().joinToString("\n")
     val lines = LineIndex(text)
-    val tokens = scanFile(text, lines)
-    val file = ParsedSql(text, tokens)
+    val file = parseFile(text, lines)
+    val tokens = file.tokens
     val annotations = findAnnotations(text, tokens, lines)
     val pendingComments = mutableListOf<String>()
     val preambleEnd = annotations.firstOrNull()?.start ?: text.length
@@ -164,27 +163,25 @@ public object QueryFileParser {
    * @throws IllegalArgumentException if [text] contains a NUL character or the lexer rejects it. The message names the
    *   line and the query.
    */
-  private fun scanFile(text: String, lines: LineIndex): List<ScanToken> {
+  private fun parseFile(text: String, lines: LineIndex): ParsedSql {
     val nulIndex = text.indexOf('\u0000')
     require(nulIndex < 0) {
-      "${locate(text, lines, nulIndex)} contains a NUL character on line ${lines.lineOf(nulIndex)}."
+      "${locate(text, lines, scanLeadingTokens(text.substring(0, nulIndex)))} contains a NUL character on line " +
+        "${lines.lineOf(nulIndex)}."
     }
-    return when (val result = LibPgQuery.scan(text)) {
-      is LibPgQueryResult.Accepted -> result.value
-      is LibPgQueryResult.Rejected -> {
-        val cursorIndex = result.cursorIndex?.takeIf { it in text.indices }
-        val where = if (cursorIndex == null) "The query file" else locate(text, lines, cursorIndex)
-        val line = cursorIndex?.let { lines.lineOf(it).toString() } ?: "unknown"
-        throw IllegalArgumentException(
-          "$where holds text that PostgreSQL's lexer rejects on line $line: ${result.message}.",
-        )
-      }
-    }
+    val file = ParsedSql(text)
+    val rejection = file.rejection ?: return file
+    val cursorIndex = rejection.cursorIndex?.takeIf { it in text.indices }
+    val where = if (cursorIndex == null) "The query file" else locate(text, lines, file.tokens)
+    val line = cursorIndex?.let { lines.lineOf(it).toString() } ?: "unknown"
+    throw IllegalArgumentException(
+      "$where holds text that PostgreSQL's lexer rejects on line $line: ${rejection.message}.",
+    )
   }
 
-  /** Names the query whose annotation is the last one before [index], or the text before the first annotation. */
-  private fun locate(text: String, lines: LineIndex, index: Int): String {
-    val annotation = findAnnotations(text, scanLeadingTokens(text.substring(0, index)), lines).lastOrNull()
+  /** Names the query whose annotation is the last of [tokensBefore], or the text before the first annotation. */
+  private fun locate(text: String, lines: LineIndex, tokensBefore: List<ScanToken>): String {
+    val annotation = findAnnotations(text, tokensBefore, lines).lastOrNull()
     return if (annotation == null) {
       "The text before the first annotation"
     } else {
