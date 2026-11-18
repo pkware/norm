@@ -943,6 +943,17 @@ class QueryFileParserTest {
     }
 
     @Test
+    fun `a doubled semicolon ends a query that is not the first in the file`() {
+      val content = "-- name: a :one\nSELECT 1;\n\n-- name: b :one\nSELECT 2;;\n\n-- Doc c.\n-- name: c :one\nSELECT 3;"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result.map { it.sql }).containsExactly("SELECT 1", "SELECT 2;", "SELECT 3")
+      assertThat(result[2].comments).containsExactly("Doc c.")
+      assertThat(result[2].sourceLine).isEqualTo(8)
+    }
+
+    @Test
     fun `a CREATE RULE with a semicolon inside parentheses is one statement`() {
       val oneLine = "CREATE RULE r AS ON INSERT TO t DO ALSO (INSERT INTO log VALUES (1); INSERT INTO log VALUES (2))"
       val multiLine = "CREATE RULE r AS ON INSERT TO t DO ALSO (\n  INSERT INTO log VALUES (1);\n" +
