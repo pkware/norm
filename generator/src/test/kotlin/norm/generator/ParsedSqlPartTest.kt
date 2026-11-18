@@ -1,5 +1,6 @@
 package norm.generator
 
+import assertk.assertFailure
 import assertk.assertThat
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
@@ -162,6 +163,15 @@ class ParsedSqlPartTest {
 
       assertThat(queries.map { it.sql }).isEqualTo(listOf("SELECT ?", "SELECT 2 AS two"))
       assertThat(calls.scanTexts).isEqualTo(listOf(text))
+    }
+
+    @Test
+    fun `a file that the lexer rejects is scanned once whole and once up to the rejection`() {
+      val text = "-- name: a :one\nSELECT 'abc"
+
+      val calls = RecordingMachine.record { assertFailure { QueryFileParser.parse(text) } }
+
+      assertThat(calls.scanTexts).isEqualTo(listOf(text, text.substring(0, text.indexOf('\''))))
     }
   }
 }

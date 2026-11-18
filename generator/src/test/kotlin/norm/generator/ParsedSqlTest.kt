@@ -2,12 +2,32 @@ package norm.generator
 
 import assertk.assertThat
 import assertk.assertions.isEqualTo
+import assertk.assertions.isNull
 import norm.generator.libpgquery.KeywordKind
+import norm.generator.libpgquery.LibPgQuery
 import norm.generator.libpgquery.TokenNumber
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
 class ParsedSqlTest {
+
+  @Nested
+  inner class Rejection {
+
+    @Test
+    fun `a text that the lexer rejects holds the lexer's result`() {
+      val sql = "SELECT 'abc"
+      val rejection = checkNotNull(ParsedSql(sql).rejection)
+
+      assertThat(rejection).isEqualTo(LibPgQuery.scan(sql))
+      assertThat(rejection.cursorIndex).isEqualTo(sql.indexOf('\''))
+    }
+
+    @Test
+    fun `a text that the lexer accepts has no rejection`() {
+      assertThat(ParsedSql("SELECT 1").rejection).isNull()
+    }
+  }
 
   @Nested
   inner class SignificantTokens {
