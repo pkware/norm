@@ -27,7 +27,7 @@ import java.sql.SQLException
  * One input whose items [ParsedSql.outputItems] must return as [expected], with a live server's column count and
  * labels agreeing.
  */
-internal data class LiveItemsCase(val sql: String, val expected: List<OutputItemWithAlias>) {
+internal data class LiveItemsCase(val sql: String, val expected: List<OutputItem>) {
   override fun toString(): String = sql
 }
 
@@ -37,10 +37,14 @@ private fun item(
   tableName: String? = null,
   alias: String? = null,
   isAliasExplicit: Boolean = alias != null,
-): OutputItemWithAlias = OutputItemWithAlias(
-  SelectItem(expression, columnName, tableName, isStar = false, normalizedExpression = expression),
-  alias,
-  isAliasExplicit,
+): OutputItem = OutputItem(
+  expression = expression,
+  columnName = columnName,
+  tableName = tableName,
+  isStar = false,
+  normalizedExpression = expression,
+  alias = alias,
+  isAliasExplicit = isAliasExplicit,
 )
 
 /**
@@ -164,13 +168,13 @@ internal class SelectItemsLiveTest {
     fun `a WHERE clause without FROM is not part of the last item`() {
       val sql = "SELECT 1 AS a, 'x' WHERE true"
       assertThat(labels(sql)).containsExactly("a", "?column?")
-      assertThat(ParsedSql(sql).outputItems.map { it.selectItem }.map { it.expression }).containsExactly("1", "'x'")
+      assertThat(ParsedSql(sql).outputItems.map { it.expression }).containsExactly("1", "'x'")
     }
 
     @Test
     fun `an INTO clause is not part of the last item`() {
       val sql = "SELECT a INTO TEMPORARY TABLE copied FROM t"
-      assertThat(ParsedSql(sql).outputItems.map { it.selectItem }.map { it.expression }).containsExactly("a")
+      assertThat(ParsedSql(sql).outputItems.map { it.expression }).containsExactly("a")
     }
 
     @Test
@@ -225,12 +229,12 @@ internal class SelectItemsLiveTest {
     (1..metaData.columnCount).map { metaData.getColumnLabel(it) }
   }
 
-  private fun liveLabeledItems(sql: String): List<OutputItemWithAlias> {
+  private fun liveLabeledItems(sql: String): List<OutputItem> {
     val items = ParsedSql(sql).outputItems
     val labels = labels(sql)
     assertThat(items.size, "item count").isEqualTo(labels.size)
     for ((index, item) in items.withIndex()) {
-      val parsedLabel = item.alias ?: item.selectItem.columnName
+      val parsedLabel = item.alias ?: item.columnName
       if (parsedLabel != null) assertThat(parsedLabel, "label of item $index").isEqualTo(labels[index])
     }
     return items

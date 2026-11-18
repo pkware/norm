@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Test
 /**
  * Tests for the class-level KDoc [TypeRepository.buildTypeProjectionForQuery] generates, in particular
  * the `@property` source-reference line of a computed expression (a column with no source table and
- * no [SelectItem.columnName]).
+ * no [OutputItem.columnName]).
  *
  * Each test resolves [Column.computedExpression] with [resolveComputedExpressions] first, the same
  * step [JdbcAnalyzer] performs, because [TypeRepository] only renders the expression it is handed.
@@ -281,8 +281,8 @@ class TypeRepositoryTest {
 
     @Test
     fun `a comment inside a top-level computed expression is stripped, not embedded verbatim`() {
-      // resolveComputedExpressions must not emit selectItem.expression raw, but
-      // selectItem.normalizedExpression, as the CTE path (resolveNodeTreeProvenanceExpression)
+      // resolveComputedExpressions must not emit OutputItem.expression raw, but
+      // OutputItem.normalizedExpression, as the CTE path (resolveNodeTreeProvenanceExpression)
       // does. A developer who read the KDoc
       // and pasted the rendered text back into psql would get "a + -- note\n  b", where the line
       // comment swallows the rest of its own line -- including the "b" operand -- so PostgreSQL
@@ -813,7 +813,7 @@ class TypeRepositoryTest {
       // "WITH c AS (SELECT UPPER(s) AS u FROM t) SELECT * FROM c" -- ParsedSql.outputItems returns the
       // single star item ("*") as-is and uses the empty-list fail-safe only for a star
       // followed by more items (see the KDoc of ParsedSql.outputItems), so
-      // selectItem.columnName is `null` for it, as for a genuine computed expression.
+      // OutputItem.columnName is `null` for it, as for a genuine computed expression.
       // computedExpression must not hold the star's own literal text and document "*" as if it
       // were the expression that produced the column -- even though provenanceExpression (stood
       // in for here, as elsewhere in this file, for what the node-tree resolver would have

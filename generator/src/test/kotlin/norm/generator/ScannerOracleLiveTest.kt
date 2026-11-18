@@ -158,7 +158,7 @@ class ScannerOracleLiveTest {
    */
   private fun parenthesizeItems(sql: String): String? {
     val items = ParsedSql(sql).outputItems
-    if (items.isEmpty() || items.any { it.selectItem.isStar }) return null
+    if (items.isEmpty() || items.any { it.isStar }) return null
     val statement = LibPgQuery.parse(ParsedSql(sql).parserForm).valueOrNull()?.outputStatement
     val starts = statement?.targets?.map { it.location } ?: return null
     if (starts.size != items.size || starts.any { it == null }) return null
@@ -166,8 +166,8 @@ class ScannerOracleLiveTest {
     var copiedUpTo = 0
     for ((index, item) in items.withIndex()) {
       val start = starts[index]!!
-      result.append(sql, copiedUpTo, start).append('(').append(item.selectItem.expression).append(')')
-      copiedUpTo = start + item.selectItem.expression.length
+      result.append(sql, copiedUpTo, start).append('(').append(item.expression).append(')')
+      copiedUpTo = start + item.expression.length
     }
     return result.append(sql, copiedUpTo, sql.length).toString()
   }
@@ -214,7 +214,7 @@ class ScannerOracleLiveTest {
 
   private fun compareColumns(sql: String, metaData: java.sql.ResultSetMetaData, compare: (String, Any?, Any?) -> Unit) {
     val items = ParsedSql(sql).outputItems
-    if (items.isNotEmpty() && items.none { it.selectItem.isStar }) {
+    if (items.isNotEmpty() && items.none { it.isStar }) {
       compare("columnCount", metaData.columnCount, items.size)
     }
     if (alignSelectItems(ParsedSql(sql), metaData.columnCount).isEmpty()) return
@@ -224,7 +224,7 @@ class ScannerOracleLiveTest {
     }
   }
 
-  private fun expectedLabel(item: OutputItemWithAlias): String? = item.alias ?: item.selectItem.columnName
+  private fun expectedLabel(item: OutputItem): String? = item.alias ?: item.columnName
 
   private fun resetPublicSchema() {
     connection.createStatement().use {
