@@ -10,10 +10,11 @@ class ParsedSqlOutputItemsTest {
   @Test
   fun `outputItems and outputItemsOf the output statement share one computation`() {
     val parsed = ParsedSql("SELECT a, b AS c FROM t")
-    val output = checkNotNull(parsed.tree?.outputStatement)
+    val statement = parsed.statements().single()
+    val output = checkNotNull(statement.outputStatement)
 
     assertThat(parsed.outputItems).isSameInstanceAs(parsed.outputItemsOf(output))
-    assertThat(parsed.outputItems).isSameInstanceAs(parsed.outputItemsOf(output.node))
+    assertThat(parsed.outputItems).isSameInstanceAs(parsed.outputItemsOf(statement))
   }
 
   @Test

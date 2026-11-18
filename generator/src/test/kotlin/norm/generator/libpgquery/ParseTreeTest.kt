@@ -267,13 +267,6 @@ class ParseTreeTest {
       assertThat(statement("INSERT INTO t (a) VALUES (1)").outputStatement).isNull()
       assertThat(statement("CALL p(1)").outputStatement).isNull()
     }
-
-    @Test
-    fun `outputStatement holds the statement it was read from`() {
-      val statement = statement("SELECT 1")
-
-      assertThat(checkNotNull(statement.outputStatement).node.node).isSameInstanceAs(statement.node)
-    }
   }
 
   @Nested
@@ -299,7 +292,7 @@ class ParseTreeTest {
     fun `leftmostLeaf of a plain SELECT is itself`() {
       val select = select("SELECT 1")
 
-      assertThat(checkNotNull(select.leftmostLeaf).node).isSameInstanceAs(select.node)
+      assertThat(select.leftmostLeaf).isSameInstanceAs(select)
     }
 
     @Test
