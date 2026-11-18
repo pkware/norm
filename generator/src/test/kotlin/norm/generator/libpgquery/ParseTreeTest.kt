@@ -57,6 +57,13 @@ class ParseTreeTest {
     }
 
     @Test
+    fun `outputStatement returns the same value on every read`() {
+      val tree = parse("SELECT 1 AS a")
+
+      assertThat(checkNotNull(tree.outputStatement)).isSameInstanceAs(tree.outputStatement)
+    }
+
+    @Test
     fun `resultTargetAt finds the target that starts at the location`() {
       val result = parse("SELECT a, b AS c FROM t")
 
