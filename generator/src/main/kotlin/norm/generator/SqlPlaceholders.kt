@@ -63,12 +63,12 @@ internal fun placeholderPositions(parsed: ParsedSql): IntArray {
 internal class NamedParameter(val colon: ScanToken, val name: ScanToken)
 
 /**
- * Finds the `:name` named parameters in [parsed], in source order.
+ * Finds the `:name` named parameters in [sql], in source order.
  *
  * A candidate is a `:` token immediately followed by an identifier or keyword token that does not start with `"`. The
  * `::` and `:=` operators are separate tokens and never start one. A `:name`-shaped run inside a string literal, quoted
  * identifier, dollar-quoted string or comment is part of a larger token, so it is not found. Text from the point where
- * the lexer rejects [ParsedSql.sql] onward has no tokens.
+ * the lexer rejects [sql] onward has no tokens.
  *
  * A bare `:` is also the grammar's slice separator in `arr[lo:hi]` and the key separator in `JSON_OBJECT(k:v)`. Those
  * are the only two productions of PostgreSQL 18's `gram.y` that hold one, and the key separator occurs only after
@@ -79,12 +79,12 @@ internal class NamedParameter(val colon: ScanToken, val name: ScanToken)
  * again. A rejection anywhere else, or one without a position, ends the search. The candidates still written as
  * parameters then are parameters. The search parses at most one more time than there are such candidates.
  */
-internal fun namedParameters(parsed: ParsedSql): List<NamedParameter> {
-  val candidates = parameterCandidates(parsed)
+internal fun findNamedParameters(sql: String, tokens: List<ScanToken>): List<NamedParameter> {
+  val candidates = parameterCandidates(sql, tokens)
   val certain = candidates.filterNot { it.isUndecided }.map { it.parameter }
   var undecided = candidates.filter { it.isUndecided }.map { it.parameter }
   while (undecided.isNotEmpty()) {
-    val result = LibPgQuery.parse(parsed.parserFormReplacing(certain + undecided))
+    val result = LibPgQuery.parse(parserFormOf(sql, tokens, certain + undecided))
     if (result !is LibPgQueryResult.Rejected) break
     val rejectionIndex = result.cursorIndex
     val rejected = undecided.firstOrNull { it.name.end - 1 == rejectionIndex } ?: break
@@ -100,8 +100,7 @@ internal fun namedParameters(parsed: ParsedSql): List<NamedParameter> {
  */
 private class ParameterCandidate(val parameter: NamedParameter, val isUndecided: Boolean)
 
-private fun parameterCandidates(parsed: ParsedSql): List<ParameterCandidate> {
-  val tokens = parsed.tokens
+private fun parameterCandidates(sql: String, tokens: List<ScanToken>): List<ParameterCandidate> {
   val candidates = mutableListOf<ParameterCandidate>()
   var bracketDepth = 0
   var hasJsonObjectKeyword = false
@@ -109,9 +108,9 @@ private fun parameterCandidates(parsed: ParsedSql): List<ParameterCandidate> {
     when {
       token.token == TokenNumber.OPEN_BRACKET -> bracketDepth++
       token.token == TokenNumber.CLOSE_BRACKET -> bracketDepth = maxOf(0, bracketDepth - 1)
-      JSON_OBJECT_KEYWORDS.any { isKeyword(parsed.sql, token, it) } -> hasJsonObjectKeyword = true
+      JSON_OBJECT_KEYWORDS.any { isKeyword(sql, token, it) } -> hasJsonObjectKeyword = true
       token.token == TokenNumber.COLON -> {
-        val name = tokens.getOrNull(index + 1)?.takeIf { it.start == token.end && isParameterName(parsed.sql, it) }
+        val name = tokens.getOrNull(index + 1)?.takeIf { it.start == token.end && isParameterName(sql, it) }
         if (name != null) {
           candidates += ParameterCandidate(NamedParameter(token, name), bracketDepth > 0 || hasJsonObjectKeyword)
         }
@@ -126,6 +125,35 @@ private val JSON_OBJECT_KEYWORDS = listOf("JSON_OBJECT", "JSON_OBJECTAGG")
 
 private fun isParameterName(sql: String, token: ScanToken): Boolean =
   (token.token == TokenNumber.IDENTIFIER || token.keywordKind != KeywordKind.NONE) && sql[token.start] != '"'
+
+/**
+ * [sql] in the form PostgreSQL's parser accepts, with the length of [sql] and the offset of every other token kept.
+ *
+ * Each `?` placeholder is replaced by `0`, and each of [namedParameters] by spaces and a `0` at its last character. In
+ * an operator token, pgjdbc's `??` escape becomes `?` and spaces at the end of the token restore its length. Text
+ * outside operator tokens and the named parameters is unchanged.
+ *
+ * @param namedParameters the runs to replace as named parameters.
+ */
+internal fun parserFormOf(sql: String, tokens: List<ScanToken>, namedParameters: Collection<NamedParameter>): String {
+  val characters = sql.toCharArray()
+  for (token in tokens.filter { it.token == TokenNumber.OPERATOR }) {
+    var written = token.start
+    var read = token.start
+    forEachQuestionMark(sql, token) { index, isEscape ->
+      while (read < index) characters[written++] = sql[read++]
+      characters[written++] = if (isEscape) '?' else '0'
+      read = index + if (isEscape) 2 else 1
+    }
+    while (read < token.end) characters[written++] = sql[read++]
+    characters.fill(' ', written, token.end)
+  }
+  for (parameter in namedParameters) {
+    characters.fill(' ', parameter.colon.start, parameter.name.end)
+    characters[parameter.name.end - 1] = '0'
+  }
+  return String(characters)
+}
 
 internal inline fun forEachQuestionMark(
   sql: String,
