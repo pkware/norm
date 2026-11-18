@@ -15,6 +15,9 @@ private const val SCAN_TOKEN_TOKEN_FIELD = 4
 /** Field number of `ScanToken.keyword_kind` in libpg_query's `pg_query.proto`. */
 private const val SCAN_TOKEN_KEYWORD_KIND_FIELD = 5
 
+/** The characters that PostgreSQL's lexer reads as whitespace, per the `space` rule in `scan.l`. */
+internal const val LEXER_WHITESPACE = " \t\n\r\u000C\u000B"
+
 /**
  * Values of libpg_query's `Token` enum, as found in [ScanToken.token].
  *

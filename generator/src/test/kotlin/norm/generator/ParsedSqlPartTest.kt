@@ -4,6 +4,7 @@ import assertk.assertThat
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isGreaterThan
+import norm.generator.libpgquery.LEXER_WHITESPACE
 import norm.generator.libpgquery.LibPgQuery
 import norm.generator.libpgquery.PgRegress
 import norm.generator.libpgquery.RecordingMachine
@@ -162,9 +163,5 @@ class ParsedSqlPartTest {
       assertThat(queries.map { it.sql }).isEqualTo(listOf("SELECT ?", "SELECT 2 AS two"))
       assertThat(calls.scanTexts).isEqualTo(listOf(text))
     }
-  }
-
-  private companion object {
-    const val LEXER_WHITESPACE = " \t\n\r\u000C\u000B"
   }
 }

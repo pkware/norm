@@ -1,5 +1,6 @@
 package norm.generator
 
+import norm.generator.libpgquery.LEXER_WHITESPACE
 import norm.generator.libpgquery.LibPgQuery
 import norm.generator.libpgquery.LibPgQueryResult
 import norm.generator.libpgquery.ScanToken
@@ -82,9 +83,6 @@ public data class ParsedQuery(
  * comment is left untouched.
  */
 public object QueryFileParser {
-
-  /** The characters that PostgreSQL's lexer reads as whitespace. */
-  internal const val LEXER_WHITESPACE = " \t\n\r\u000C\u000B"
 
   private val NAME_ANNOTATION = Regex("""^--\s*name:\s*(\S+)\s+:(\S+)\s*$""")
 
