@@ -5,6 +5,7 @@ import norm.generator.libpgquery.ResultTarget
 import norm.generator.libpgquery.ScanToken
 import norm.generator.libpgquery.TokenNumber
 import norm.generator.libpgquery.isComment
+import norm.generator.libpgquery.isKeyword
 
 /**
  * A parsed item from a SQL SELECT or RETURNING list.
@@ -129,14 +130,15 @@ private fun buildItem(
   parsed: ParsedSql,
   target: ResultTarget,
   firstToken: Int,
-  extent: ItemExtent,
+  expressionLastToken: Int,
 ): OutputItemWithAlias {
   val tokens = parsed.significantTokens
   val start = tokens[firstToken].start
-  val end = tokens[extent.expressionLastToken].end
+  val end = tokens[expressionLastToken].end
   val expression = parsed.sql.substring(start, end)
   val selectItem = selectItem(expression, target, normalizedExpression(parsed, start, end))
-  return OutputItemWithAlias(selectItem, target.alias, extent.isAliasExplicit)
+  val isAliasExplicit = target.alias != null && isKeyword(parsed.sql, tokens[expressionLastToken + 1], AS_KEYWORD)
+  return OutputItemWithAlias(selectItem, target.alias, isAliasExplicit)
 }
 
 /** The text of [ParsedSql.sql] from [start] to [end] as [SelectItem.normalizedExpression] describes it. */
