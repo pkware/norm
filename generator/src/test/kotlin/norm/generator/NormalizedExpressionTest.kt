@@ -7,13 +7,13 @@ import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
 /**
- * [SelectItem.normalizedExpression] keeps the text of a single-quoted literal, a dollar-quoted string and a quoted
+ * [OutputItem.normalizedExpression] keeps the text of a single-quoted literal, a dollar-quoted string and a quoted
  * identifier as written, and drops comments. Whitespace between tokens is collapsed.
  */
 class NormalizedExpressionTest {
 
   private fun normalized(selectList: String): String =
-    ParsedSql("SELECT $selectList FROM t").outputItems.map { it.selectItem }.single().normalizedExpression
+    ParsedSql("SELECT $selectList FROM t").outputItems.map { it.withoutAlias() }.single().normalizedExpression
 
   @Nested
   inner class QuotedIdentifiers {
@@ -127,7 +127,7 @@ class NormalizedExpressionTest {
 
     @Test
     fun `a block comment between segments is rejected by PostgreSQL, so there are no items`() {
-      assertThat(ParsedSql("SELECT 'a' /* c */\n'b' AS x FROM t").outputItems.map { it.selectItem }).isEmpty()
+      assertThat(ParsedSql("SELECT 'a' /* c */\n'b' AS x FROM t").outputItems.map { it.withoutAlias() }).isEmpty()
     }
   }
 

@@ -12,9 +12,7 @@ import org.junit.jupiter.api.assertThrows
 
 class OutputItemsParseTreeTest {
 
-  private fun expressions(sql: String): List<String> = ParsedSql(sql).outputItems.map {
-    it.selectItem
-  }.map { it.expression }
+  private fun expressions(sql: String): List<String> = ParsedSql(sql).outputItems.map { it.expression }
 
   @Nested
   inner class LastItemEnd {
@@ -38,7 +36,7 @@ class OutputItemsParseTreeTest {
     @Test
     fun `a trailing bare word is the alias and not part of the expression`() {
       val item = ParsedSql("SELECT a, b c FROM t").outputItems.last()
-      assertThat(item.selectItem.expression).isEqualTo("b")
+      assertThat(item.expression).isEqualTo("b")
       assertThat(item.alias).isEqualTo("c")
       assertThat(item.isAliasExplicit).isFalse()
     }
@@ -120,11 +118,8 @@ class OutputItemsParseTreeTest {
     @Test
     fun `a reserved word after AS is the alias`() {
       val item = ParsedSql("SELECT 1 AS as").outputItems.single()
-      val expected = OutputItemWithAlias(
-        SelectItem("1", null, null, isStar = false, normalizedExpression = "1"),
-        "as",
-        isAliasExplicit = true,
-      )
+      val expected =
+        OutputItem("1", null, null, isStar = false, normalizedExpression = "1", alias = "as", isAliasExplicit = true)
       assertThat(item).isEqualTo(expected)
     }
 
@@ -138,7 +133,7 @@ class OutputItemsParseTreeTest {
     @Test
     fun `a Unicode-escaped alias is the name with its escapes resolved`() {
       val item = ParsedSql("SELECT x AS U&\"y\" UESCAPE '!'").outputItems.single()
-      assertThat(item.selectItem.expression).isEqualTo("x")
+      assertThat(item.expression).isEqualTo("x")
       assertThat(item.alias).isEqualTo("y")
       assertThat(item.isAliasExplicit).isTrue()
     }
@@ -146,7 +141,7 @@ class OutputItemsParseTreeTest {
     @Test
     fun `a quoted AS is not the keyword`() {
       val item = ParsedSql("SELECT x \"AS\"").outputItems.single()
-      assertThat(item.selectItem.expression).isEqualTo("x")
+      assertThat(item.expression).isEqualTo("x")
       assertThat(item.alias).isEqualTo("AS")
       assertThat(item.isAliasExplicit).isFalse()
     }
@@ -157,27 +152,27 @@ class OutputItemsParseTreeTest {
 
     @Test
     fun `a composite expansion of a function result is a star`() {
-      assertThat(ParsedSql("SELECT (f(x)).* FROM t").outputItems.map { it.selectItem }.single().isStar).isTrue()
+      assertThat(ParsedSql("SELECT (f(x)).* FROM t").outputItems.map { it.withoutAlias() }.single().isStar).isTrue()
     }
 
     @Test
     fun `a star followed directly by an implicit alias is a star`() {
       val item = ParsedSql("SELECT u.*whatever FROM users u").outputItems.single()
-      assertThat(item.selectItem.isStar).isTrue()
+      assertThat(item.isStar).isTrue()
       assertThat(item.alias).isEqualTo("whatever")
     }
 
     @Test
     fun `a digit before the dot makes multiplication and not a star`() {
       val item = ParsedSql("SELECT 2.*3 lbl FROM t").outputItems.single()
-      assertThat(item.selectItem.isStar).isFalse()
-      assertThat(item.selectItem.expression).isEqualTo("2.*3")
+      assertThat(item.isStar).isFalse()
+      assertThat(item.expression).isEqualTo("2.*3")
       assertThat(item.alias).isEqualTo("lbl")
     }
 
     @Test
     fun `count star is not a star`() {
-      assertThat(ParsedSql("SELECT count(*) FROM t").outputItems.map { it.selectItem }.single().isStar).isFalse()
+      assertThat(ParsedSql("SELECT count(*) FROM t").outputItems.map { it.withoutAlias() }.single().isStar).isFalse()
     }
   }
 
@@ -186,26 +181,26 @@ class OutputItemsParseTreeTest {
 
     @Test
     fun `text PostgreSQL rejects has no items`() {
-      assertThat(ParsedSql("SELECT col a b FROM t").outputItems.map { it.selectItem }).isEmpty()
-      assertThat(ParsedSql("SELECT 2€, email FROM users").outputItems.map { it.selectItem }).isEmpty()
+      assertThat(ParsedSql("SELECT col a b FROM t").outputItems.map { it.withoutAlias() }).isEmpty()
+      assertThat(ParsedSql("SELECT 2€, email FROM users").outputItems.map { it.withoutAlias() }).isEmpty()
       assertThat(
         ParsedSql("UPDATE t SET x = 1 RETURNING id, ) (bogus AS alias").outputItems.map {
-          it.selectItem
+          it.withoutAlias()
         },
       ).isEmpty()
-      assertThat(ParsedSql("UPDATE t SET x = 1 RETURNING id, a[b AS c").outputItems.map { it.selectItem }).isEmpty()
+      assertThat(ParsedSql("UPDATE t SET x = 1 RETURNING id, a[b AS c").outputItems.map { it.withoutAlias() }).isEmpty()
     }
 
     @Test
     fun `EXPLAIN VALUES and TABLE have no items`() {
-      assertThat(ParsedSql("EXPLAIN SELECT a FROM t").outputItems.map { it.selectItem }).isEmpty()
-      assertThat(ParsedSql("VALUES (1, 2)").outputItems.map { it.selectItem }).isEmpty()
-      assertThat(ParsedSql("TABLE t").outputItems.map { it.selectItem }).isEmpty()
+      assertThat(ParsedSql("EXPLAIN SELECT a FROM t").outputItems.map { it.withoutAlias() }).isEmpty()
+      assertThat(ParsedSql("VALUES (1, 2)").outputItems.map { it.withoutAlias() }).isEmpty()
+      assertThat(ParsedSql("TABLE t").outputItems.map { it.withoutAlias() }).isEmpty()
     }
 
     @Test
     fun `a NUL character is not swallowed`() {
-      assertThrows<IllegalArgumentException> { ParsedSql("SELECT 1\u0000").outputItems.map { it.selectItem } }
+      assertThrows<IllegalArgumentException> { ParsedSql("SELECT 1\u0000").outputItems.map { it.withoutAlias() } }
     }
   }
 }

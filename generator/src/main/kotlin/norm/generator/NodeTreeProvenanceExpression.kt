@@ -32,7 +32,7 @@ import norm.generator.libpgquery.StatementNode
  * @param provenance Where [NodeTreeProvenanceResolver] found the expression; this function is only
  *   called when it is non-`null`.
  * @param parser The node-tree parser to use; defaults to a fresh, stateless instance.
- * @return The CTE body's expression text as [SelectItem.normalizedExpression] builds it, without comments and with
+ * @return The CTE body's expression text as [OutputItem.normalizedExpression] builds it, without comments and with
  *   cosmetic whitespace collapsed, otherwise as the developer wrote it — or `null` if any check above fails.
  */
 internal fun resolveNodeTreeProvenanceExpression(
@@ -61,7 +61,7 @@ internal fun resolveNodeTreeProvenanceExpression(
   val matched = verifiedItems[provenance.bodyPosition - 1]
   if (matched.matchKind == AliasMatchKind.IMPLICIT_ALIAS) return null
 
-  return matched.selectItem.normalizedExpression
+  return matched.item.normalizedExpression
 }
 
 /**
@@ -69,10 +69,10 @@ internal fun resolveNodeTreeProvenanceExpression(
  * alias, explicit or implicit (`description dx`), on a plain column — in which case there is nothing of
  * [item]'s own to report as "the expression".
  */
-private fun isBareColumnPassThrough(item: OutputItemWithAlias): Boolean = item.selectItem.columnName != null
+private fun isBareColumnPassThrough(item: OutputItem): Boolean = item.columnName != null
 
 /**
- * Which of PostgreSQL's ways of naming a select-list item verified [VerifiedItem.selectItem] against its
+ * Which of PostgreSQL's ways of naming a select-list item verified [VerifiedItem.item] against its
  * `:resname`. [resolveNodeTreeProvenanceExpression] emits the expression for [EXPLICIT_ALIAS] and
  * [BARE_COLUMN_REFERENCE] (the latter unreachable there in practice, since [isBareColumnPassThrough]
  * already declines a bare column reference first), but declines [IMPLICIT_ALIAS] outright.
@@ -80,30 +80,30 @@ private fun isBareColumnPassThrough(item: OutputItemWithAlias): Boolean = item.s
 private enum class AliasMatchKind { EXPLICIT_ALIAS, BARE_COLUMN_REFERENCE, IMPLICIT_ALIAS }
 
 /**
- * @property selectItem The item whose name was verified.
- * @property matchKind Which naming rule verified [selectItem] against its `:resname`.
+ * @property item The item whose name was verified.
+ * @property matchKind Which naming rule verified [item] against its `:resname`.
  */
-private data class VerifiedItem(val selectItem: SelectItem, val matchKind: AliasMatchKind)
+private data class VerifiedItem(val item: OutputItem, val matchKind: AliasMatchKind)
 
 /**
  * [item] paired with which rule verified its name against [resultName] (the node tree's authoritative
  * `:resname` for this position), or `null` if none did. Tried in PostgreSQL's own precedence order for
  * naming a select-list item:
  *
- * 1. An alias. [OutputItemWithAlias.alias] is the parser's own name, so it is compared to [resultName] directly. An
+ * 1. An alias. [OutputItem.alias] is the parser's own name, so it is compared to [resultName] directly. An
  *    implicit (no-`AS`) alias is verified the same way and reported as [AliasMatchKind.IMPLICIT_ALIAS].
  * 2. A bare column reference with no alias at all — PostgreSQL exposes such an item under the
  *    column's own name.
  */
-private fun verifiedItem(item: OutputItemWithAlias, resultName: String): VerifiedItem? {
+private fun verifiedItem(item: OutputItem, resultName: String): VerifiedItem? {
   val alias = item.alias
   if (alias != null) {
     val matchKind = if (item.isAliasExplicit) AliasMatchKind.EXPLICIT_ALIAS else AliasMatchKind.IMPLICIT_ALIAS
-    return VerifiedItem(item.selectItem, matchKind).takeIf { alias == resultName }
+    return VerifiedItem(item, matchKind).takeIf { alias == resultName }
   }
 
-  val columnName = item.selectItem.columnName ?: return null
-  return VerifiedItem(item.selectItem, AliasMatchKind.BARE_COLUMN_REFERENCE).takeIf { columnName == resultName }
+  val columnName = item.columnName ?: return null
+  return VerifiedItem(item, AliasMatchKind.BARE_COLUMN_REFERENCE).takeIf { columnName == resultName }
 }
 
 /**

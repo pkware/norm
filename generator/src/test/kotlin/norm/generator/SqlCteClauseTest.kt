@@ -22,7 +22,7 @@ class SqlCteClauseTest {
   private fun bodyItems(sql: String): List<List<Pair<String, String?>>> {
     val parsed = ParsedSql(sql)
     return definitionsOf(parsed).map { definition ->
-      parsed.outputItemsOf(definition.query).map { it.selectItem.expression to it.alias }
+      parsed.outputItemsOf(definition.query).map { it.expression to it.alias }
     }
   }
 
@@ -45,9 +45,9 @@ class SqlCteClauseTest {
 
       val inner = outer[0].query.commonTableExpressions
       assertThat(inner.map { it.name }).isEqualTo(listOf("i"))
-      assertThat(parsed.outputItemsOf(inner[0].query).map { it.selectItem.expression to it.alias })
+      assertThat(parsed.outputItemsOf(inner[0].query).map { it.expression to it.alias })
         .isEqualTo(listOf("1" to "a"))
-      assertThat(parsed.outputItemsOf(outer[0].query).map { it.selectItem.expression }).isEqualTo(listOf("a"))
+      assertThat(parsed.outputItemsOf(outer[0].query).map { it.expression }).isEqualTo(listOf("a"))
     }
 
     @Test

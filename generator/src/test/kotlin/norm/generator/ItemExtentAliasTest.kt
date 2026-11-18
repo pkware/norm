@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test
 class ItemExtentAliasTest {
 
   private fun aliases(sql: String): List<Triple<String, String?, Boolean>> = ParsedSql(sql).outputItems.map {
-    Triple(it.selectItem.expression, it.alias, it.isAliasExplicit)
+    Triple(it.expression, it.alias, it.isAliasExplicit)
   }
 
   @Test

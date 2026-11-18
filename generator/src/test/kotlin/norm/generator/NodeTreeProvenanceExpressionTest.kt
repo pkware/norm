@@ -670,9 +670,9 @@ class NodeTreeProvenanceExpressionTest {
     @Test
     fun `a matched body item that is a bare column with an implicit alias also resolves to nothing`() {
       // The explicit-AS form of this exact pass-through (the test right above) resolves to
-      // nothing -- matchedItem.selectItem.columnName is non-null for "description AS
+      // nothing -- matchedItem.columnName is non-null for "description AS
       // description_upper". The implicit-alias spelling below is the same kind of unchanged
-      // pass-through, so selectItem.columnName is non-null for "description dx" as well. The two
+      // pass-through, so columnName is non-null for "description dx" as well. The two
       // spellings must agree.
       val ddl = "CREATE TABLE parent (id INT, name TEXT, description TEXT)"
       val sql = """
@@ -1070,7 +1070,7 @@ class NodeTreeProvenanceExpressionTest {
           }
         }
         assertThat(reservedWords).isNotEmpty()
-        val expectedReachableWords = reservedWords.filter { word -> isParseableAsBareSelectItem(connection, word) }
+        val expectedReachableWords = reservedWords.filter { word -> isParseableAsBareoutputItem(connection, word) }
 
         var attempted = 0
         for (word in reservedWords) {
@@ -1146,7 +1146,7 @@ class NodeTreeProvenanceExpressionTest {
    * word (`table`, `select`, ...) has no bare-expression production at all, in any context -- neither
    * quoting the alias it is bound to, nor parenthesizing the bare reference itself, changes that.
    */
-  private fun isParseableAsBareSelectItem(connection: Connection, word: String): Boolean = try {
+  private fun isParseableAsBareoutputItem(connection: Connection, word: String): Boolean = try {
     connection.createStatement().use { it.execute("SELECT $word") }
     true
   } catch (_: SQLException) {
