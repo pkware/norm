@@ -1,6 +1,7 @@
 package norm.generator
 
 import norm.generator.libpgquery.KeywordKind
+import norm.generator.libpgquery.LEXER_WHITESPACE
 import norm.generator.libpgquery.LibPgQuery
 import norm.generator.libpgquery.LibPgQueryResult
 import norm.generator.libpgquery.OutputStatement
@@ -89,7 +90,7 @@ internal class ParsedSql private constructor(val sql: String, scanned: ScannedTe
    *
    * The part takes its tokens from this one, shifted by `-start`, when the lexer accepted all of [sql], neither [start]
    * nor [end] lies inside a token, and [end] is the end of [sql] or the index of a `;` or a character of
-   * [QueryFileParser.LEXER_WHITESPACE]. Otherwise it scans the substring.
+   * [LEXER_WHITESPACE]. Otherwise it scans the substring.
    */
   fun part(start: Int, end: Int): ParsedSql = if (start == 0 && end == sql.length) {
     this
@@ -103,7 +104,7 @@ internal class ParsedSql private constructor(val sql: String, scanned: ScannedTe
   private fun canCutTokens(start: Int, end: Int): Boolean = isAcceptedByLexer &&
     !isInsideToken(start) &&
     !isInsideToken(end) &&
-    (end == sql.length || sql[end] == ';' || sql[end] in QueryFileParser.LEXER_WHITESPACE)
+    (end == sql.length || sql[end] == ';' || sql[end] in LEXER_WHITESPACE)
 
   private fun isInsideToken(position: Int): Boolean {
     val found = tokens.binarySearchBy(position) { it.start }
