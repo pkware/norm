@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.1](https://github.com/pkware/norm/compare/v0.7.0...v0.7.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* **deps:** update micronaut to v5.2.24 ([f6a8cc6](https://github.com/pkware/norm/commit/f6a8cc618109b65648e03e822ea42b6ea85272c9))
+* **deps:** update micronaut to v5.2.25 ([f911f13](https://github.com/pkware/norm/commit/f911f13d74cd2f8812162c70d34aba5254dbd2ae))
+* run libpg_query wasm calls on a thread with a fixed stack size ([f6f3461](https://github.com/pkware/norm/commit/f6f346139b677cba64315a88abf004d02cb44b71))
+
 ## [0.7.0](https://github.com/pkware/norm/compare/v0.6.0...v0.7.0) (2026-11-12)
 
 
