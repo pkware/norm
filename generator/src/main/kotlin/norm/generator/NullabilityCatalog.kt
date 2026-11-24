@@ -78,7 +78,7 @@ internal class NullabilityCatalog(private val connection: Connection) {
    * Restricted to `pronamespace = 'pg_catalog'` at query time — a user-defined function sharing the
    * name `concat` must not ride along onto this list; see the loader.
    */
-  val alwaysNonNullFunctionOids: Set<Int> by lazy(::loadAlwaysNonNullFunctions)
+  val alwaysNonNullFunctionOids: Set<Int> by lazy { loadNonStrictPgCatalogFunctionOids("concat") }
 
   /**
    * OIDs of functions that are non-null if and only if their first argument is non-null, regardless
@@ -98,7 +98,7 @@ internal class NullabilityCatalog(private val connection: Connection) {
    * Restricted to `pronamespace = 'pg_catalog'` at query time — a user-defined function sharing the
    * name `concat_ws` must not ride along onto this list; see the loader.
    */
-  val nonNullIffFirstArgumentNonNullFunctionOids: Set<Int> by lazy(::loadNonNullIffFirstArgumentNonNullFunctionOids)
+  val nonNullIffFirstArgumentNonNullFunctionOids: Set<Int> by lazy { loadNonStrictPgCatalogFunctionOids("concat_ws") }
 
   /**
    * OIDs of functions, cast functions, and operators (materialized to their implementing function
@@ -201,7 +201,7 @@ internal class NullabilityCatalog(private val connection: Connection) {
    * Returns `null` for absent keys — this occurs for columns not present in `pg_attribute`
    * (e.g., virtual columns, system columns with attnum <= 0).
    */
-  val columnNotNullByRelidAndAttnum: Map<Pair<Int, Int>, Boolean> by lazy(::loadColumnNotNull)
+  val columnNotNullByRelidAndAttnum: Map<Pair<Int, Int>, Boolean> get() = columnFacts.notNullByKey
 
   /**
    * Maps `(relid, attnum)` pairs to `pg_attribute.attname` — every user-visible column of every
@@ -218,7 +218,16 @@ internal class NullabilityCatalog(private val connection: Connection) {
    * represents (a computed expression, an aggregate, a set-operation branch, or a `USING`/`NATURAL`
    * merged join column has no single source column at all).
    */
-  val columnNameByRelidAndAttnum: Map<Pair<Int, Int>, String> by lazy(::loadColumnNameByRelidAndAttnum)
+  val columnNameByRelidAndAttnum: Map<Pair<Int, Int>, String> get() = columnFacts.nameByKey
+
+  /**
+   * Maps each relid to its number of user-visible columns (`attnum > 0` and `NOT attisdropped`).
+   *
+   * Returns `null` for absent keys — a relid with no user-visible column, or none in `pg_attribute`.
+   */
+  val columnCountByRelid: Map<Int, Int> get() = columnFacts.countByRelid
+
+  private val columnFacts: ColumnFacts by lazy(::loadColumnFacts)
 
   /**
    * Shared strictness lookup used by [ColumnNullabilityAnalyzer.buildAnalyzer]'s `isStrict`
@@ -226,228 +235,164 @@ internal class NullabilityCatalog(private val connection: Connection) {
    */
   internal val isStrictFunction: (Int) -> Boolean = { oid -> functionStrictnessByOid[oid] == true }
 
-  private fun loadColumnNotNull(): Map<Pair<Int, Int>, Boolean> = buildMap {
-    connection.createStatement().use { stmt ->
-      // No schema filter — relids come from the query's rtable and may reference tables
-      // from any schema. Filtering by schema here would miss tables in non-default schemas.
-      stmt.executeQuery(
-        """
-        SELECT attrelid::integer, attnum, attnotnull
-        FROM pg_catalog.pg_attribute
-        WHERE attnum > 0 AND NOT attisdropped
-        """.trimIndent(),
-      ).use { rs ->
-        while (rs.next()) {
-          put(rs.getInt("attrelid") to rs.getInt("attnum"), rs.getBoolean("attnotnull"))
-        }
-      }
+  private fun loadColumnFacts(): ColumnFacts {
+    val notNullByKey = mutableMapOf<Pair<Int, Int>, Boolean>()
+    val nameByKey = mutableMapOf<Pair<Int, Int>, String>()
+    val countByRelid = mutableMapOf<Int, Int>()
+    // Spans every schema, since relids come from the query's rtable and a resorigtbl OID can name a
+    // relation in any schema.
+    connection.query(
+      """
+      SELECT attrelid::integer, attnum, attname, attnotnull
+      FROM pg_catalog.pg_attribute
+      WHERE attnum > 0 AND NOT attisdropped
+      """.trimIndent(),
+    ) { resultSet ->
+      val relid = resultSet.getInt("attrelid")
+      val key = relid to resultSet.getInt("attnum")
+      notNullByKey[key] = resultSet.getBoolean("attnotnull")
+      nameByKey[key] = resultSet.getString("attname")
+      countByRelid.merge(relid, 1, Int::plus)
     }
-  }
-
-  private fun loadColumnNameByRelidAndAttnum(): Map<Pair<Int, Int>, String> = buildMap {
-    connection.createStatement().use { stmt ->
-      // No schema filter, same reasoning as loadColumnNotNull above — a resorigtbl OID can name a
-      // relation in any schema.
-      stmt.executeQuery(
-        """
-        SELECT attrelid::integer, attnum, attname
-        FROM pg_catalog.pg_attribute
-        WHERE attnum > 0 AND NOT attisdropped
-        """.trimIndent(),
-      ).use { rs ->
-        while (rs.next()) {
-          put(rs.getInt("attrelid") to rs.getInt("attnum"), rs.getString("attname"))
-        }
-      }
-    }
+    return ColumnFacts(notNullByKey, nameByKey, countByRelid)
   }
 
   private fun loadFunctionStrictness(): Map<Int, Boolean> = buildMap {
-    connection.createStatement().use { stmt ->
-      // Include regular functions ('f') and window functions ('w') — both appear in node tree expressions.
-      // Excludes procedures ('p') and aggregates ('a') — aggregates use agginitval, not strictness.
-      stmt.executeQuery(
-        "SELECT oid::integer, proisstrict FROM pg_catalog.pg_proc WHERE prokind IN ('f', 'w')",
-      ).use { rs ->
-        while (rs.next()) {
-          put(rs.getInt("oid"), rs.getBoolean("proisstrict"))
-        }
-      }
+    // Include regular functions ('f') and window functions ('w') — both appear in node tree expressions.
+    // Excludes procedures ('p') and aggregates ('a') — aggregates use agginitval, not strictness.
+    connection.query("SELECT oid::integer, proisstrict FROM pg_catalog.pg_proc WHERE prokind IN ('f', 'w')") {
+      put(it.getInt("oid"), it.getBoolean("proisstrict"))
     }
   }
 
   private fun loadImmutableFunctionOids(): Set<Int> = buildSet {
-    connection.createStatement().use { stmt ->
-      // Regular functions and window functions, matching loadFunctionStrictness's scope; excludes
-      // procedures ('p') and aggregates ('a'), which are never foldable subexpressions here.
-      //
-      // No separate pg_operator/oprcode query is needed: an operator's implementing function
-      // (oprcode) is itself a row in pg_proc, so this single query already covers operators too —
-      // PgNodeExpression.OpExpr/ScalarArrayOpExpr are keyed by that same function OID, not by any
-      // pg_operator-specific ID. No operator oprcode OID satisfying the volatility/proretset filter
-      // falls outside this query's result.
-      stmt.executeQuery(
-        "SELECT oid::integer FROM pg_catalog.pg_proc WHERE provolatile = 'i' AND NOT proretset AND prokind IN ('f', 'w')",
-      ).use { rs ->
-        while (rs.next()) add(rs.getInt("oid"))
-      }
-    }
+    // Regular functions and window functions, matching loadFunctionStrictness's scope; excludes
+    // procedures ('p') and aggregates ('a'), which are never foldable subexpressions here.
+    //
+    // No separate pg_operator/oprcode query is needed: an operator's implementing function
+    // (oprcode) is itself a row in pg_proc, so this single query already covers operators too —
+    // PgNodeExpression.OpExpr/ScalarArrayOpExpr are keyed by that same function OID, not by any
+    // pg_operator-specific ID. No operator oprcode OID satisfying the volatility/proretset filter
+    // falls outside this query's result.
+    connection.query(
+      "SELECT oid::integer FROM pg_catalog.pg_proc WHERE provolatile = 'i' AND NOT proretset AND prokind IN ('f', 'w')",
+    ) { add(it.getInt("oid")) }
   }
 
   private fun loadAggregateInitialValues(): Map<Int, Boolean> = buildMap {
-    connection.createStatement().use { stmt ->
-      // An aggregate is non-null for empty groups only when it has a non-null initial transition value
-      // and no final function. Aggregates with a finalfunc (AVG, STDDEV, etc.) can return `null` even
-      // with a non-null agginitval because the finalfunc may produce `null` (e.g., AVG divides by zero
-      // count).
-      stmt.executeQuery(
-        "SELECT aggfnoid::integer, (agginitval IS NOT NULL AND aggfinalfn = 0) AS has_initial_value FROM pg_catalog.pg_aggregate",
-      ).use { rs ->
-        while (rs.next()) {
-          put(rs.getInt("aggfnoid"), rs.getBoolean("has_initial_value"))
-        }
-      }
-    }
+    // An aggregate is non-null for empty groups only when it has a non-null initial transition value
+    // and no final function. Aggregates with a finalfunc (AVG, STDDEV, etc.) can return `null` even
+    // with a non-null agginitval because the finalfunc may produce `null` (e.g., AVG divides by zero
+    // count).
+    connection.query(
+      "SELECT aggfnoid::integer, (agginitval IS NOT NULL AND aggfinalfn = 0) AS has_initial_value FROM pg_catalog.pg_aggregate",
+    ) { put(it.getInt("aggfnoid"), it.getBoolean("has_initial_value")) }
   }
 
-  private fun loadAlwaysNonNullFunctions(): Set<Int> = buildSet {
-    connection.createStatement().use { stmt ->
-      // pronamespace restricted to pg_catalog: without this, a user-defined function named
-      // `concat` with different null behavior would ride onto this list by sharing the name.
-      stmt.executeQuery(
-        """
-        SELECT p.oid::integer AS oid
-        FROM pg_catalog.pg_proc p
-        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-        WHERE p.proname = 'concat' AND NOT p.proisstrict AND n.nspname = 'pg_catalog'
-        """.trimIndent(),
-      ).use { rs ->
-        while (rs.next()) add(rs.getInt("oid"))
-      }
-    }
-  }
-
-  private fun loadNonNullIffFirstArgumentNonNullFunctionOids(): Set<Int> = buildSet {
-    connection.createStatement().use { stmt ->
-      // pronamespace restricted to pg_catalog — see loadAlwaysNonNullFunctions's identical guard.
-      stmt.executeQuery(
-        """
-        SELECT p.oid::integer AS oid
-        FROM pg_catalog.pg_proc p
-        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-        WHERE p.proname = 'concat_ws' AND NOT p.proisstrict AND n.nspname = 'pg_catalog'
-        """.trimIndent(),
-      ).use { rs ->
-        while (rs.next()) add(rs.getInt("oid"))
-      }
-    }
+  private fun loadNonStrictPgCatalogFunctionOids(functionName: String): Set<Int> = buildSet {
+    // Limited to pg_catalog so a user-defined function sharing the name cannot join the list.
+    connection.query(
+      """
+      SELECT p.oid::integer AS oid
+      FROM pg_catalog.pg_proc p
+      JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+      WHERE p.proname = ? AND NOT p.proisstrict AND n.nspname = 'pg_catalog'
+      """.trimIndent(),
+      functionName,
+    ) { add(it.getInt("oid")) }
   }
 
   private fun loadNeverNullForNonNullInputOids(): Set<Int> = buildSet {
-    connection.createStatement().use { stmt ->
-      val safeSignatureValues = NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES.joinToString(", ") { signature ->
-        val nameLiteral = "'${signature.name}'"
-        val argumentTypesLiteral = if (signature.argumentTypeNames.isEmpty()) {
-          "ARRAY[]::text[]"
-        } else {
-          "ARRAY[${signature.argumentTypeNames.joinToString(", ") { typeName -> "'$typeName'" }}]"
-        }
-        "($nameLiteral, $argumentTypesLiteral)"
+    val safeSignatureValues = NeverNullSafeLists.NEVER_NULL_FUNCTION_SIGNATURES.joinToString(", ") { signature ->
+      val nameLiteral = "'${signature.name}'"
+      val argumentTypesLiteral = if (signature.argumentTypeNames.isEmpty()) {
+        "ARRAY[]::text[]"
+      } else {
+        "ARRAY[${signature.argumentTypeNames.joinToString(", ") { typeName -> "'$typeName'" }}]"
       }
-      stmt.executeQuery(
-        """
-        WITH safe_signature(proname, argument_types) AS (
-          VALUES $safeSignatureValues
+      "($nameLiteral, $argumentTypesLiteral)"
+    }
+    connection.query(
+      """
+      WITH safe_signature(proname, argument_types) AS (
+        VALUES $safeSignatureValues
+      )
+      SELECT p.oid::integer AS oid
+      FROM pg_catalog.pg_proc p
+      JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+      JOIN safe_signature s ON s.proname = p.proname
+      WHERE n.nspname = 'pg_catalog'
+        AND s.argument_types = COALESCE(
+          (
+            SELECT array_agg(t.typname::text ORDER BY u.ordinality)
+            FROM unnest(p.proargtypes) WITH ORDINALITY AS u(type_oid, ordinality)
+            JOIN pg_catalog.pg_type t ON t.oid = u.type_oid
+          ),
+          ARRAY[]::text[]
         )
-        SELECT p.oid::integer AS oid
-        FROM pg_catalog.pg_proc p
-        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-        JOIN safe_signature s ON s.proname = p.proname
-        WHERE n.nspname = 'pg_catalog'
-          AND s.argument_types = COALESCE(
-            (
-              SELECT array_agg(t.typname::text ORDER BY u.ordinality)
-              FROM unnest(p.proargtypes) WITH ORDINALITY AS u(type_oid, ordinality)
-              JOIN pg_catalog.pg_type t ON t.oid = u.type_oid
-            ),
-            ARRAY[]::text[]
-          )
-        """.trimIndent(),
-      ).use { rs ->
-        while (rs.next()) add(rs.getInt("oid"))
-      }
+      """.trimIndent(),
+    ) { add(it.getInt("oid")) }
+    val safeCastValues = NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES.joinToString(", ") { signature ->
+      "('${signature.sourceTypeName}', '${signature.targetTypeName}')"
     }
-    connection.createStatement().use { stmt ->
-      val safeCastValues = NeverNullSafeLists.NEVER_NULL_CAST_SIGNATURES.joinToString(", ") { signature ->
-        "('${signature.sourceTypeName}', '${signature.targetTypeName}')"
-      }
-      stmt.executeQuery(
-        """
-        WITH safe_cast(source_type, target_type) AS (
-          VALUES $safeCastValues
-        )
-        SELECT c.castfunc::integer AS oid
-        FROM pg_catalog.pg_cast c
-        JOIN pg_catalog.pg_type st ON st.oid = c.castsource
-        JOIN pg_catalog.pg_type tt ON tt.oid = c.casttarget
-        JOIN pg_catalog.pg_proc p ON p.oid = c.castfunc
-        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-        JOIN safe_cast s ON s.source_type = st.typname AND s.target_type = tt.typname
-        WHERE c.castfunc != 0 AND n.nspname = 'pg_catalog'
-        """.trimIndent(),
-      ).use { rs ->
-        while (rs.next()) add(rs.getInt("oid"))
-      }
+    connection.query(
+      """
+      WITH safe_cast(source_type, target_type) AS (
+        VALUES $safeCastValues
+      )
+      SELECT c.castfunc::integer AS oid
+      FROM pg_catalog.pg_cast c
+      JOIN pg_catalog.pg_type st ON st.oid = c.castsource
+      JOIN pg_catalog.pg_type tt ON tt.oid = c.casttarget
+      JOIN pg_catalog.pg_proc p ON p.oid = c.castfunc
+      JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+      JOIN safe_cast s ON s.source_type = st.typname AND s.target_type = tt.typname
+      WHERE c.castfunc != 0 AND n.nspname = 'pg_catalog'
+      """.trimIndent(),
+    ) { add(it.getInt("oid")) }
+    val safeOperatorValues = NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES.joinToString(", ") { signature ->
+      val leftLiteral = signature.leftTypeName?.let { "'$it'" } ?: "NULL::text"
+      val rightLiteral = signature.rightTypeName?.let { "'$it'" } ?: "NULL::text"
+      "('${signature.symbol}', $leftLiteral, $rightLiteral)"
     }
-    connection.createStatement().use { stmt ->
-      val safeOperatorValues = NeverNullSafeLists.NEVER_NULL_OPERATOR_SIGNATURES.joinToString(", ") { signature ->
-        val leftLiteral = signature.leftTypeName?.let { "'$it'" } ?: "NULL::text"
-        val rightLiteral = signature.rightTypeName?.let { "'$it'" } ?: "NULL::text"
-        "('${signature.symbol}', $leftLiteral, $rightLiteral)"
-      }
-      stmt.executeQuery(
-        """
-        WITH safe_operator(symbol, left_type, right_type) AS (
-          VALUES $safeOperatorValues
-        )
-        SELECT o.oprcode::integer AS oid
-        FROM pg_catalog.pg_operator o
-        JOIN pg_catalog.pg_namespace n ON n.oid = o.oprnamespace
-        LEFT JOIN pg_catalog.pg_type lt ON lt.oid = o.oprleft
-        LEFT JOIN pg_catalog.pg_type rt ON rt.oid = o.oprright
-        JOIN safe_operator s ON s.symbol = o.oprname
-          AND s.left_type IS NOT DISTINCT FROM lt.typname
-          AND s.right_type IS NOT DISTINCT FROM rt.typname
-        WHERE n.nspname = 'pg_catalog' AND o.oprcode != 0
-        """.trimIndent(),
-      ).use { rs ->
-        while (rs.next()) add(rs.getInt("oid"))
-      }
-    }
-    connection.createStatement().use { stmt ->
-      // pgcrypto extension carve-out, keyed through pg_depend so a user-defined `digest` or
-      // `hmac` outside the extension cannot ride along.
-      stmt.executeQuery(
-        """
-        SELECT p.oid::integer AS oid FROM pg_catalog.pg_proc p
-        JOIN pg_catalog.pg_depend d
-          ON d.objid = p.oid AND d.classid = 'pg_catalog.pg_proc'::regclass AND d.deptype = 'e'
-        JOIN pg_catalog.pg_extension e ON e.oid = d.refobjid
-        WHERE e.extname = 'pgcrypto' AND p.proname IN ('digest', 'hmac')
-        """.trimIndent(),
-      ).use { rs ->
-        while (rs.next()) add(rs.getInt("oid"))
-      }
-    }
+    connection.query(
+      """
+      WITH safe_operator(symbol, left_type, right_type) AS (
+        VALUES $safeOperatorValues
+      )
+      SELECT o.oprcode::integer AS oid
+      FROM pg_catalog.pg_operator o
+      JOIN pg_catalog.pg_namespace n ON n.oid = o.oprnamespace
+      LEFT JOIN pg_catalog.pg_type lt ON lt.oid = o.oprleft
+      LEFT JOIN pg_catalog.pg_type rt ON rt.oid = o.oprright
+      JOIN safe_operator s ON s.symbol = o.oprname
+        AND s.left_type IS NOT DISTINCT FROM lt.typname
+        AND s.right_type IS NOT DISTINCT FROM rt.typname
+      WHERE n.nspname = 'pg_catalog' AND o.oprcode != 0
+      """.trimIndent(),
+    ) { add(it.getInt("oid")) }
+    // pgcrypto extension carve-out, keyed through pg_depend so a user-defined `digest` or
+    // `hmac` outside the extension cannot ride along.
+    connection.query(
+      """
+      SELECT p.oid::integer AS oid FROM pg_catalog.pg_proc p
+      JOIN pg_catalog.pg_depend d
+        ON d.objid = p.oid AND d.classid = 'pg_catalog.pg_proc'::regclass AND d.deptype = 'e'
+      JOIN pg_catalog.pg_extension e ON e.oid = d.refobjid
+      WHERE e.extname = 'pgcrypto' AND p.proname IN ('digest', 'hmac')
+      """.trimIndent(),
+    ) { add(it.getInt("oid")) }
   }
 
   private fun loadLagLeadWithDefaultOids(): Set<Int> = buildSet {
-    connection.createStatement().use { stmt ->
-      stmt.executeQuery(
-        "SELECT oid::integer FROM pg_catalog.pg_proc WHERE proname IN ('lag', 'lead') AND pronargs = 3 AND prokind = 'w'",
-      ).use { rs ->
-        while (rs.next()) add(rs.getInt("oid"))
-      }
-    }
+    connection.query(
+      "SELECT oid::integer FROM pg_catalog.pg_proc WHERE proname IN ('lag', 'lead') AND pronargs = 3 AND prokind = 'w'",
+    ) { add(it.getInt("oid")) }
   }
+
+  private class ColumnFacts(
+    val notNullByKey: Map<Pair<Int, Int>, Boolean>,
+    val nameByKey: Map<Pair<Int, Int>, String>,
+    val countByRelid: Map<Int, Int>,
+  )
 }
