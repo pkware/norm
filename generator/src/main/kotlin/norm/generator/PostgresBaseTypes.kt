@@ -98,9 +98,8 @@ internal val POSTGRES_BASE_TYPES: Map<String, PostgresBaseType> = buildMap {
   )
 
   // json and jsonb require setObject(..., Types.OTHER): Postgres JDBC rejects setString() for both
-  // in prepared statements, just as it does for enum columns. TypeRepository's ENUM_CODEC reuses
-  // this exact codec, so the binding for a plain json/jsonb column and for an enum column can never
-  // drift apart.
+  // in prepared statements, just as it does for enum columns. ENUM_CODEC reuses this exact codec, so
+  // the binding for a plain json/jsonb column and for an enum column can never drift apart.
   register(
     TypesOtherCodec(String::class.asTypeName(), "getString", "OTHER"),
     "json",

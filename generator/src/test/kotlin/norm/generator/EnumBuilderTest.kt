@@ -201,13 +201,13 @@ class EnumBuilderTest {
   }
 
   private fun generateEnumCode(enumDefinition: Enum, packageName: String): String {
-    val typeSpec = buildEnumTypeSpec(enumDefinition, packageName)
+    val typeSpec = buildEnumTypeSpec(GeneratedAdapterType.Enum(enumDefinition, packageName))
     val fileSpec = FileSpec.builder(packageName, "Mood.kt").addType(typeSpec).build()
     return buildString { fileSpec.writeTo(this) }
   }
 
   private fun generateAdapterCode(enumDefinition: Enum, packageName: String, frameworks: Set<Framework>): String {
-    val typeSpec = buildAdapterTypeSpec(enumDefinition, packageName, frameworks)
+    val typeSpec = buildAdapterTypeSpec(GeneratedAdapterType.Enum(enumDefinition, packageName), frameworks)
     val fileSpec = FileSpec.builder(packageName, "MoodAdapter.kt").addType(typeSpec).build()
     return buildString { fileSpec.writeTo(this) }
   }

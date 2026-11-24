@@ -1,12 +1,10 @@
 package norm.generator
 
-import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeSpec
-import com.squareup.kotlinpoet.asTypeName
 
 /**
  * Builds a Kotlin enum class [TypeSpec] from a Postgres enum type definition.
@@ -22,11 +20,11 @@ import com.squareup.kotlinpoet.asTypeName
  * }
  * ```
  *
- * @param enumDefinition The Postgres enum definition from the catalog.
- * @param packageName The package for the generated enum class.
+ * @param enumType The enum to generate a class for.
  */
-internal fun buildEnumTypeSpec(enumDefinition: Enum, packageName: String): TypeSpec {
-  val enumClassName = enumClassName(enumDefinition, packageName)
+internal fun buildEnumTypeSpec(enumType: GeneratedAdapterType.Enum): TypeSpec {
+  val enumDefinition = enumType.definition
+  val enumClassName = enumType.className
 
   val enumBuilder = TypeSpec.enumBuilder(enumClassName)
     // Passed as a "%L" argument so KotlinPoet treats a "%" in the comment as text.
@@ -85,18 +83,18 @@ internal fun buildEnumTypeSpec(enumDefinition: Enum, packageName: String): TypeS
  * }
  * ```
  *
- * @param enumDefinition The Postgres enum definition from the catalog.
- * @param packageName The package for the generated adapter class.
+ * @param enumType The enum to generate an adapter for.
  * @param frameworks The DI frameworks to annotate the adapter with.
  */
-internal fun buildAdapterTypeSpec(enumDefinition: Enum, packageName: String, frameworks: Set<Framework>): TypeSpec {
-  val enumClassName = enumClassName(enumDefinition, packageName)
-  val adapterClassName = adapterClassName(enumDefinition, packageName)
-  val adapterSupertype = COLUMN_ADAPTER.parameterizedBy(enumClassName, String::class.asTypeName())
+internal fun buildAdapterTypeSpec(enumType: GeneratedAdapterType.Enum, frameworks: Set<Framework>): TypeSpec {
+  val enumDefinition = enumType.definition
+  val enumClassName = enumType.className
+  val adapterClassName = enumType.adapterClassName
+  val adapterSupertype = COLUMN_ADAPTER.parameterizedBy(enumClassName, enumType.wireType)
 
   val decodeFunction = FunSpec.builder("decode")
     .addModifiers(KModifier.OVERRIDE)
-    .addParameter("databaseValue", String::class)
+    .addParameter("databaseValue", enumType.wireType)
     .returns(enumClassName)
     .beginControlFlow("return when (databaseValue)")
   for (label in enumDefinition.vals) {
@@ -112,7 +110,7 @@ internal fun buildAdapterTypeSpec(enumDefinition: Enum, packageName: String, fra
   val encodeFunction = FunSpec.builder("encode")
     .addModifiers(KModifier.OVERRIDE)
     .addParameter("value", enumClassName)
-    .returns(String::class)
+    .returns(enumType.wireType)
     .addStatement("return value.databaseValue")
 
   val classBuilder = TypeSpec.classBuilder(adapterClassName)
@@ -124,30 +122,3 @@ internal fun buildAdapterTypeSpec(enumDefinition: Enum, packageName: String, fra
 
   return classBuilder.build()
 }
-
-/**
- * Returns the [ClassName] for the enum class generated for a Postgres enum type.
- *
- * @param enumDefinition The Postgres enum definition.
- * @param packageName The package in which the enum class is generated.
- */
-internal fun enumClassName(enumDefinition: Enum, packageName: String): ClassName =
-  ClassName(packageName, enumDefinition.name.snakeToCamelCase().titleCase())
-
-/**
- * Returns the [ClassName] for the adapter class generated for a Postgres enum type.
- *
- * @param enumDefinition The Postgres enum definition.
- * @param packageName The package in which the adapter is generated.
- */
-internal fun adapterClassName(enumDefinition: Enum, packageName: String): ClassName =
-  ClassName(packageName, "${enumDefinition.name.snakeToCamelCase().titleCase()}Adapter")
-
-/**
- * Returns the adapter property name used on `PostgresQueries` for the given enum type.
- *
- * Called from both [TypeRepository] (when creating [AdaptedTypeSqlMappable]) and [Main][generateCode]
- * (when adding constructor parameters to `PostgresQueries`). Centralizing the convention here
- * ensures the generated read/write code always references the same property name.
- */
-internal fun adapterPropertyName(enumDefinition: Enum): String = "${enumDefinition.name.snakeToCamelCase()}Adapter"
