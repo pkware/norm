@@ -35,43 +35,37 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * column's answer comes from fully evaluating the view's own defining query. This function does no
    * computation of its own.
    *
-   * @param schemaName The schema to check.
-   * @return A set of `"viewName.columnName"` strings for view/matview columns that are non-nullable.
-   */
-  fun loadViewColumnNullability(schemaName: String): Set<String> = loadViewColumnNamesByRelidAndAttnum(schemaName)
-    .filterKeys { key -> nullabilityAnalyzer.isColumnNotNull(key) }
-    .values.toSet()
-
-  /**
-   * Maps `(relid, attnum)` to `"viewName.columnName"` for every view/matview column in
-   * [schemaName] — the name-resolution half of [loadViewColumnNullability]'s adapter over
-   * [ColumnNullabilityAnalyzer.isColumnNotNull].
+   * Views resolve in ascending `pg_class.oid` order, and each view's columns in ascending attnum order.
+   * [ColumnNullabilityAnalyzer] memoizes across calls, and its answer for a view deep enough to hit
+   * [ColumnNullabilityAnalyzer.VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET] can depend on which views were
+   * memoized beforehand. A fixed order makes the generated Kotlin type for a very deep view chain
+   * reproducible for a given schema.
    *
-   * `ORDER BY c.oid, a.attnum` matters, not just style: [loadViewColumnNullability] resolves
-   * these rows one at a time through a single shared [ColumnNullabilityAnalyzer], whose answer for a
-   * view deep enough to hit [ColumnNullabilityAnalyzer.VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET] can
-   * depend on which views were memoized beforehand. Absent an `ORDER BY`, PostgreSQL may return these
-   * rows in any order, so the generated Kotlin type for a very deep view chain could differ between
-   * two runs of the same build. A fixed scan order makes it reproducible for a given schema.
+   * @param schemaName The schema to check.
+   * @return A set of `(viewName, columnName)` pairs for view/matview columns that are non-nullable.
    */
-  private fun loadViewColumnNamesByRelidAndAttnum(schemaName: String): Map<Pair<Int, Int>, String> = buildMap {
-    connection.createStatement().use { stmt ->
-      stmt.executeQuery(
-        """
-        SELECT c.oid::integer AS relid, a.attnum, c.relname AS view_name, a.attname AS column_name
-        FROM pg_catalog.pg_class c
-        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-        WHERE n.nspname = '$schemaName'
-          AND c.relkind IN ('v', 'm')
-        ORDER BY c.oid, a.attnum
-        """.trimIndent(),
-      ).use { rs ->
-        while (rs.next()) {
-          put(
-            rs.getInt("relid") to rs.getInt("attnum"),
-            "${rs.getString("view_name")}.${rs.getString("column_name")}",
-          )
+  fun loadViewColumnNullability(schemaName: String): Set<Pair<String, String>> {
+    val viewNameByRelid = linkedMapOf<Int, String>()
+    connection.query(
+      """
+      SELECT c.oid::integer AS relid, c.relname AS view_name
+      FROM pg_catalog.pg_class c
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = ?
+        AND c.relkind IN ('v', 'm')
+      ORDER BY c.oid
+      """.trimIndent(),
+      schemaName,
+    ) { resultSet -> viewNameByRelid[resultSet.getInt("relid")] = resultSet.getString("view_name") }
+
+    val columnsByRelid = nullabilityCatalog.columnNameByRelidAndAttnum.entries
+      .filter { (key, _) -> key.first in viewNameByRelid }
+      .groupBy({ (key, _) -> key.first }, { (key, columnName) -> key.second to columnName })
+
+    return buildSet {
+      for ((relid, viewName) in viewNameByRelid) {
+        for ((attnum, columnName) in columnsByRelid[relid].orEmpty().sortedBy { (attnum, _) -> attnum }) {
+          if (nullabilityAnalyzer.isColumnNotNull(relid to attnum)) add(viewName to columnName)
         }
       }
     }
@@ -88,21 +82,16 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * @return A set of table names that are partition children and should be excluded from the catalog.
    */
   fun loadPartitionChildren(schemaName: String): Set<String> = buildSet {
-    connection.createStatement().use { stmt ->
-      stmt.executeQuery(
-        """
-        SELECT c.relname
-        FROM pg_catalog.pg_class c
-        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = '$schemaName'
-          AND c.relispartition = true
-        """.trimIndent(),
-      ).use { rs ->
-        while (rs.next()) {
-          add(rs.getString("relname"))
-        }
-      }
-    }
+    connection.query(
+      """
+      SELECT c.relname
+      FROM pg_catalog.pg_class c
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = ?
+        AND c.relispartition = true
+      """.trimIndent(),
+      schemaName,
+    ) { resultSet -> add(resultSet.getString("relname")) }
   }
 
   /**
@@ -115,50 +104,42 @@ internal class PgCatalogLoader(private val connection: Connection) {
    * @return A map from relation name to the comment text. Relations without comments are absent.
    */
   fun loadTableComments(schemaName: String): Map<String, String> = buildMap {
-    connection.createStatement().use { stmt ->
-      stmt.executeQuery(
-        """
-        SELECT c.relname AS table_name, d.description
-        FROM pg_catalog.pg_description d
-        JOIN pg_catalog.pg_class c ON c.oid = d.objoid
-        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = '$schemaName'
-          AND d.objsubid = 0
-          AND c.relkind IN ('r', 'p', 'v', 'm')
-        """.trimIndent(),
-      ).use { rs ->
-        while (rs.next()) {
-          put(rs.getString("table_name"), rs.getString("description"))
-        }
-      }
-    }
+    connection.query(
+      """
+      SELECT c.relname AS table_name, d.description
+      FROM pg_catalog.pg_description d
+      JOIN pg_catalog.pg_class c ON c.oid = d.objoid
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = ?
+        AND d.objsubid = 0
+        AND c.relkind IN ('r', 'p', 'v', 'm')
+      """.trimIndent(),
+      schemaName,
+    ) { resultSet -> put(resultSet.getString("table_name"), resultSet.getString("description")) }
   }
 
   /**
-   * Returns column comments for all tables in [schemaName], keyed by `"tableName.columnName"`.
+   * Returns column comments for all tables in [schemaName], keyed by `(tableName, columnName)`.
    *
    * Comments are set with `COMMENT ON COLUMN table.col IS '...'` in DDL.
    *
    * @param schemaName The schema to load comments for.
-   * @return A map from `"table.column"` to the comment text. Columns without comments are absent.
+   * @return A map from `(table, column)` to the comment text. Columns without comments are absent.
    */
-  fun loadColumnComments(schemaName: String): Map<String, String> = buildMap {
-    connection.createStatement().use { stmt ->
-      stmt.executeQuery(
-        """
-        SELECT c.relname AS table_name, a.attname AS column_name, d.description
-        FROM pg_catalog.pg_description d
-        JOIN pg_catalog.pg_class c ON c.oid = d.objoid
-        JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum = d.objsubid
-        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = '$schemaName'
-          AND d.objsubid > 0
-        """.trimIndent(),
-      ).use { rs ->
-        while (rs.next()) {
-          put("${rs.getString("table_name")}.${rs.getString("column_name")}", rs.getString("description"))
-        }
-      }
+  fun loadColumnComments(schemaName: String): Map<Pair<String, String>, String> = buildMap {
+    connection.query(
+      """
+      SELECT c.relname AS table_name, a.attname AS column_name, d.description
+      FROM pg_catalog.pg_description d
+      JOIN pg_catalog.pg_class c ON c.oid = d.objoid
+      JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum = d.objsubid
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = ?
+        AND d.objsubid > 0
+      """.trimIndent(),
+      schemaName,
+    ) { resultSet ->
+      put(resultSet.getString("table_name") to resultSet.getString("column_name"), resultSet.getString("description"))
     }
   }
 
@@ -172,41 +153,33 @@ internal class PgCatalogLoader(private val connection: Connection) {
    */
   fun introspectEnums(schemaName: String): List<Enum> {
     val enumsByName = buildMap<String, MutableList<String>> {
-      connection.createStatement().use { stmt ->
-        stmt.executeQuery(
-          """
-            SELECT t.typname, e.enumlabel
-            FROM pg_catalog.pg_type t
-            JOIN pg_catalog.pg_enum e ON t.oid = e.enumtypid
-            JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
-            WHERE n.nspname = '$schemaName'
-            ORDER BY t.typname, e.enumsortorder
-          """.trimIndent(),
-        ).use { rs ->
-          while (rs.next()) {
-            computeIfAbsent(rs.getString("typname")) { mutableListOf() }.add(rs.getString("enumlabel"))
-          }
-        }
+      connection.query(
+        """
+        SELECT t.typname, e.enumlabel
+        FROM pg_catalog.pg_type t
+        JOIN pg_catalog.pg_enum e ON t.oid = e.enumtypid
+        JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+        WHERE n.nspname = ?
+        ORDER BY t.typname, e.enumsortorder
+        """.trimIndent(),
+        schemaName,
+      ) { resultSet ->
+        computeIfAbsent(resultSet.getString("typname")) { mutableListOf() }.add(resultSet.getString("enumlabel"))
       }
     }
 
     val enumComments = buildMap<String, String> {
-      connection.createStatement().use { stmt ->
-        stmt.executeQuery(
-          """
-            SELECT t.typname, d.description
-            FROM pg_catalog.pg_description d
-            JOIN pg_catalog.pg_type t ON t.oid = d.objoid
-            JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
-            WHERE n.nspname = '$schemaName'
-              AND t.typtype = 'e'
-          """.trimIndent(),
-        ).use { rs ->
-          while (rs.next()) {
-            put(rs.getString("typname"), rs.getString("description"))
-          }
-        }
-      }
+      connection.query(
+        """
+        SELECT t.typname, d.description
+        FROM pg_catalog.pg_description d
+        JOIN pg_catalog.pg_type t ON t.oid = d.objoid
+        JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+        WHERE n.nspname = ?
+          AND t.typtype = 'e'
+        """.trimIndent(),
+        schemaName,
+      ) { resultSet -> put(resultSet.getString("typname"), resultSet.getString("description")) }
     }
 
     return enumsByName.map { (name, values) ->
@@ -240,41 +213,38 @@ internal class PgCatalogLoader(private val connection: Connection) {
    *   domain, if present.
    */
   fun introspectDomains(schemaName: String): List<Domain> = buildList {
-    connection.createStatement().use { stmt ->
-      stmt.executeQuery(
-        """
-        WITH RECURSIVE domain_chain(anchor_oid, current_oid) AS (
-          SELECT t.oid, t.typbasetype
-          FROM pg_catalog.pg_type t
-          JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
-          WHERE n.nspname = '$schemaName'
-            AND t.typtype = 'd'
+    connection.query(
+      """
+      WITH RECURSIVE domain_chain(anchor_oid, current_oid) AS (
+        SELECT t.oid, t.typbasetype
+        FROM pg_catalog.pg_type t
+        JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+        WHERE n.nspname = ?
+          AND t.typtype = 'd'
 
-          UNION ALL
+        UNION ALL
 
-          SELECT dc.anchor_oid, ct.typbasetype
-          FROM domain_chain dc
-          JOIN pg_catalog.pg_type ct ON ct.oid = dc.current_oid
-          WHERE ct.typtype = 'd'
-        )
-        SELECT anchor.typname AS domain_name, terminal.typname AS baseType, d.description
+        SELECT dc.anchor_oid, ct.typbasetype
         FROM domain_chain dc
-        JOIN pg_catalog.pg_type anchor ON anchor.oid = dc.anchor_oid
-        JOIN pg_catalog.pg_type terminal ON terminal.oid = dc.current_oid
-        LEFT JOIN pg_catalog.pg_description d ON d.objoid = dc.anchor_oid AND d.objsubid = 0
-        WHERE terminal.typtype != 'd'
-        """.trimIndent(),
-      ).use { rs ->
-        while (rs.next()) {
-          add(
-            Domain(
-              name = rs.getString("domain_name"),
-              baseType = rs.getString("baseType"),
-              comment = rs.getString("description").orEmpty(),
-            ),
-          )
-        }
-      }
+        JOIN pg_catalog.pg_type ct ON ct.oid = dc.current_oid
+        WHERE ct.typtype = 'd'
+      )
+      SELECT anchor.typname AS domain_name, terminal.typname AS baseType, d.description
+      FROM domain_chain dc
+      JOIN pg_catalog.pg_type anchor ON anchor.oid = dc.anchor_oid
+      JOIN pg_catalog.pg_type terminal ON terminal.oid = dc.current_oid
+      LEFT JOIN pg_catalog.pg_description d ON d.objoid = dc.anchor_oid AND d.objsubid = 0
+      WHERE terminal.typtype != 'd'
+      """.trimIndent(),
+      schemaName,
+    ) { resultSet ->
+      add(
+        Domain(
+          name = resultSet.getString("domain_name"),
+          baseType = resultSet.getString("baseType"),
+          comment = resultSet.getString("description").orEmpty(),
+        ),
+      )
     }
   }
 
@@ -351,9 +321,9 @@ internal class PgCatalogLoader(private val connection: Connection) {
    *   is not found in `pg_proc`.
    */
   fun lookupProcedureParameters(procName: String): List<Parameter> = buildList {
-    connection.prepareStatement(
+    connection.query(
       """
-      SELECT p.proargnames, p.proargtypes, string_agg(t.typname, ',' ORDER BY ordinality) as type_names
+      SELECT p.proargnames, p.proargtypes, array_agg(t.typname::text ORDER BY ordinality) AS type_names
       FROM pg_catalog.pg_proc p
       JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
       CROSS JOIN LATERAL unnest(p.proargtypes) WITH ORDINALITY AS u(type_oid, ordinality)
@@ -362,31 +332,29 @@ internal class PgCatalogLoader(private val connection: Connection) {
         AND n.nspname = 'public'
       GROUP BY p.proargnames, p.proargtypes
       """.trimIndent(),
-    ).use { statement ->
-      statement.setString(1, procName)
-      statement.executeQuery().use { rs ->
-        if (rs.next()) {
-          val typeNames = rs.getString("type_names").split(",")
-          val argNamesArray = rs.getArray("proargnames")
-          val argNames = if (argNamesArray != null) {
-            @Suppress("UNCHECKED_CAST")
-            (argNamesArray.array as Array<String>).toList()
-          } else {
-            typeNames.indices.map { "p${it + 1}" }
-          }
-          for ((index, typeName) in typeNames.withIndex()) {
-            add(
-              Parameter(
-                number = index + 1,
-                column = Column(
-                  name = argNames.getOrElse(index) { "p${index + 1}" },
-                  notNull = true,
-                  type = Identifier(name = typeName),
-                ),
-              ),
-            )
-          }
-        }
+      procName,
+    ) { resultSet ->
+      if (isNotEmpty()) return@query
+      @Suppress("UNCHECKED_CAST")
+      val typeNames = (resultSet.getArray("type_names").array as Array<String>).toList()
+      val argNamesArray = resultSet.getArray("proargnames")
+      val argNames = if (argNamesArray != null) {
+        @Suppress("UNCHECKED_CAST")
+        (argNamesArray.array as Array<String>).toList()
+      } else {
+        typeNames.indices.map { "p${it + 1}" }
+      }
+      for ((index, typeName) in typeNames.withIndex()) {
+        add(
+          Parameter(
+            number = index + 1,
+            column = Column(
+              name = argNames.getOrElse(index) { "p${index + 1}" },
+              notNull = true,
+              type = Identifier(name = typeName),
+            ),
+          ),
+        )
       }
     }
   }
