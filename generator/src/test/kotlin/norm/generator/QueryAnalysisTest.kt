@@ -7694,8 +7694,8 @@ class QueryAnalysisTest {
         try {
           val catalogLoader = PgCatalogLoader(connection)
           val nonNull = runCatchingThrowable { catalogLoader.loadViewColumnNullability(schemaName) }
-          assertThat(nonNull.contains("a.v")).isFalse()
-          assertThat(nonNull.contains("b.v")).isFalse()
+          assertThat(nonNull.contains("a" to "v")).isFalse()
+          assertThat(nonNull.contains("b" to "v")).isFalse()
         } finally {
           connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
         }
@@ -7726,9 +7726,9 @@ class QueryAnalysisTest {
         try {
           val analyzer = ColumnNullabilityAnalyzer(connection, NullabilityCatalog(connection))
           // Resolved directly from the deepest view down, bypassing
-          // loadViewColumnNullability's unordered schema-wide sweep, so this test does not depend on a
+          // loadViewColumnNullability's schema-wide sweep, so this test does not depend on a
           // resolution order that might happen to walk the chain shallow-first (and
-          // never actually recurse deeply) — see loadViewColumnNamesByRelidAndAttnum's KDoc.
+          // never actually recurse deeply).
           val deepestRelid = regclassOid(connection, "view_${depth - 1}")
           val result = runCatchingThrowable { analyzer.resolveViewColumnNullability(deepestRelid) }
           assertThat(result).isEqualTo(listOf(true))
@@ -7784,10 +7784,9 @@ class QueryAnalysisTest {
 
     @Test
     fun `a full schema sweep of a deep view chain gives identical results across repeated runs`() {
-      // What loadViewColumnNamesByRelidAndAttnum's ORDER BY exists to provide: absent it, PostgreSQL
-      // may return rows in any order, so a chain deeper than the budget could generate a different
-      // Kotlin type between two runs of the same build. Swept twice through the real production
-      // entry point on two independent connections, so neither run can reuse the other's cache.
+      // A chain deeper than the budget must generate the same Kotlin type on every run of the same build.
+      // Swept twice through the real production entry point on two independent connections, so neither
+      // run can reuse the other's cache.
       val chainDepth = VIEW_NULLABILITY_RECURSION_DEPTH_BUDGET + 2
       val schemaName = "test_${schemaCounter.incrementAndGet()}"
       DriverManager.getConnection(container.jdbcUrl, container.username, container.password).use { connection ->
@@ -7842,7 +7841,7 @@ class QueryAnalysisTest {
         }
         try {
           val notNullColumns = PgCatalogLoader(connection).loadViewColumnNullability(schemaName)
-          val chainColumns = (0 until chainDepth).map { "sound_$it.v" }
+          val chainColumns = (0 until chainDepth).map { "sound_$it" to "v" }
           assertThat(notNullColumns.intersect(chainColumns.toSet())).isEqualTo(emptySet())
         } finally {
           connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
@@ -8188,8 +8187,8 @@ class QueryAnalysisTest {
         try {
           val catalogLoader = PgCatalogLoader(connection)
           val nonNull = catalogLoader.loadViewColumnNullability(schemaName)
-          assertThat(nonNull.contains("v.name")).isTrue()
-          assertThat(nonNull.contains("v.label")).isFalse()
+          assertThat(nonNull.contains("v" to "name")).isTrue()
+          assertThat(nonNull.contains("v" to "label")).isFalse()
         } finally {
           connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
         }
@@ -8214,8 +8213,8 @@ class QueryAnalysisTest {
         try {
           val catalogLoader = PgCatalogLoader(connection)
           val nonNull = catalogLoader.loadViewColumnNullability(schemaName)
-          assertThat(nonNull.contains("v.name")).isTrue()
-          assertThat(nonNull.contains("v.label")).isTrue()
+          assertThat(nonNull.contains("v" to "name")).isTrue()
+          assertThat(nonNull.contains("v" to "label")).isTrue()
         } finally {
           connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
         }
@@ -8243,7 +8242,7 @@ class QueryAnalysisTest {
         try {
           val catalogLoader = PgCatalogLoader(connection)
           val nonNull = catalogLoader.loadViewColumnNullability(schemaName)
-          assertThat(nonNull.contains("v.val")).isFalse()
+          assertThat(nonNull.contains("v" to "val")).isFalse()
         } finally {
           connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
         }
@@ -8268,7 +8267,7 @@ class QueryAnalysisTest {
         try {
           val catalogLoader = PgCatalogLoader(connection)
           val nonNull = catalogLoader.loadViewColumnNullability(schemaName)
-          assertThat(nonNull.contains("v.val")).isTrue()
+          assertThat(nonNull.contains("v" to "val")).isTrue()
         } finally {
           connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
         }
@@ -8295,8 +8294,8 @@ class QueryAnalysisTest {
         try {
           val catalogLoader = PgCatalogLoader(connection)
           val nonNull = catalogLoader.loadViewColumnNullability(schemaName)
-          assertThat(nonNull.contains("mv.name")).isTrue()
-          assertThat(nonNull.contains("mv.label")).isFalse()
+          assertThat(nonNull.contains("mv" to "name")).isTrue()
+          assertThat(nonNull.contains("mv" to "label")).isFalse()
         } finally {
           connection.createStatement().use { it.execute("DROP SCHEMA $schemaName CASCADE") }
         }
@@ -9784,7 +9783,7 @@ class QueryAnalysisTest {
    * Resolves the `pg_class.oid` of the relation named [relationName] on the current `search_path`
    * of [connection] — used by `ViewNullability`'s deep-chain pins to get a relid to call
    * [ColumnNullabilityAnalyzer.resolveViewColumnNullability] with directly, bypassing
-   * [PgCatalogLoader.loadViewColumnNullability]'s unordered schema-wide sweep (which would leave
+   * [PgCatalogLoader.loadViewColumnNullability]'s schema-wide sweep (which would leave
    * resolution order dependent on whatever order that sweep visits relations in).
    */
   private fun regclassOid(connection: Connection, relationName: String): Int =

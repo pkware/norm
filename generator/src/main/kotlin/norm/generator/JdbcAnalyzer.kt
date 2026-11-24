@@ -113,7 +113,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
     val partitionChildren = catalogLoader.loadPartitionChildren(schemaName)
     val tableEntries = mutableListOf<Pair<String, String>>() // (name, TABLE_TYPE)
     val tableTypes = arrayOf("TABLE", "PARTITIONED TABLE", "VIEW", "MATERIALIZED VIEW")
-    dbMeta.getTables(null, schemaName, null, tableTypes).use { rs ->
+    dbMeta.getTables(null, dbMeta.escapeSearchPattern(schemaName), null, tableTypes).use { rs ->
       while (rs.next()) {
         val name = rs.getString("TABLE_NAME")
         val type = rs.getString("TABLE_TYPE")
@@ -150,20 +150,34 @@ public class JdbcAnalyzer(private val connection: Connection) {
       }
     }
 
+  /**
+   * Escapes the `LIKE` wildcards `_` and `%` in [value] so a JDBC metadata call that takes a pattern matches
+   * the name literally.
+   */
+  private fun DatabaseMetaData.escapeSearchPattern(value: String): String {
+    val escape = searchStringEscape
+    return value.replace(escape, escape + escape).replace("_", escape + "_").replace("%", escape + "%")
+  }
+
   private fun loadColumns(
     dbMeta: DatabaseMetaData,
     schemaName: String,
     tableName: String,
-    columnComments: Map<String, String>,
-    viewNotNullColumns: Set<String>,
+    columnComments: Map<Pair<String, String>, String>,
+    viewNotNullColumns: Set<Pair<String, String>>,
     primaryKeyColumns: Set<String>,
   ): List<Column> = buildList {
-    dbMeta.getColumns(null, schemaName, tableName, null).use { rs ->
+    dbMeta.getColumns(
+      null,
+      dbMeta.escapeSearchPattern(schemaName),
+      dbMeta.escapeSearchPattern(tableName),
+      null,
+    ).use { rs ->
       while (rs.next()) {
         val columnName = rs.getString("COLUMN_NAME")
         val typeName = rs.getString("TYPE_NAME")
         val nullable = rs.getString("IS_NULLABLE")
-        val comment = columnComments["$tableName.$columnName"]
+        val comment = columnComments[tableName to columnName]
         val isAutoIncrement = rs.getString("IS_AUTOINCREMENT") == "YES"
         val hasDefault = !rs.getString("COLUMN_DEF").isNullOrEmpty()
         val isGenerated = rs.getString("IS_GENERATEDCOLUMN") == "YES"
@@ -171,7 +185,7 @@ public class JdbcAnalyzer(private val connection: Connection) {
         val (baseName, isArray) = resolveTypeName(typeName)
 
         // For view/matview columns, override JDBC's nullable with the resolved value from pg_depend.
-        val notNull = nullable == "NO" || "$tableName.$columnName" in viewNotNullColumns
+        val notNull = nullable == "NO" || (tableName to columnName) in viewNotNullColumns
 
         add(
           Column(

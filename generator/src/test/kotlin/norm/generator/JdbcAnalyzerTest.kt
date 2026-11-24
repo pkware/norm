@@ -3,6 +3,7 @@ package norm.generator
 import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.containsExactly
+import assertk.assertions.containsExactlyInAnyOrder
 import assertk.assertions.doesNotContain
 import assertk.assertions.hasSize
 import assertk.assertions.isEmpty
@@ -1487,6 +1488,126 @@ class JdbcAnalyzerTest {
         assertThat(parameter.column!!.notNull).isFalse()
       } finally {
         connection.createStatement().use { it.execute("DROP TABLE IF EXISTS fold_param_test") }
+      }
+    }
+  }
+
+  @Nested
+  inner class CatalogLoaderIdentifiers {
+
+    private fun execute(vararg statements: String) {
+      connection.createStatement().use { statement -> statements.forEach { statement.execute(it) } }
+    }
+
+    private fun Catalog.table(schemaName: String, tableName: String): Table =
+      schemas.single { it.name == schemaName }.tables.single { it.rel.name == tableName }
+
+    @Test
+    fun `a view named with a dot does not make a table column of the joined name non-null`() {
+      execute(
+        "CREATE SCHEMA dotted_keys_nullability",
+        "CREATE TABLE dotted_keys_nullability.a (\"b.c\" int)",
+        "CREATE VIEW dotted_keys_nullability.\"a.b\" AS SELECT 1 AS c",
+      )
+
+      try {
+        val catalog = JdbcAnalyzer(connection).buildCatalog(listOf("dotted_keys_nullability"))
+
+        val tableColumn = catalog.table("dotted_keys_nullability", "a").columns.single { it.name == "b.c" }
+        val viewColumn = catalog.table("dotted_keys_nullability", "a.b").columns.single { it.name == "c" }
+        assertThat(tableColumn.notNull).isFalse()
+        assertThat(viewColumn.notNull).isTrue()
+      } finally {
+        execute("DROP SCHEMA IF EXISTS dotted_keys_nullability CASCADE")
+      }
+    }
+
+    @Test
+    fun `columns whose table and column names join to the same dotted string keep their own comments`() {
+      execute(
+        "CREATE SCHEMA dotted_keys_comments",
+        "CREATE TABLE dotted_keys_comments.a (\"b.c\" int)",
+        "CREATE VIEW dotted_keys_comments.\"a.b\" AS SELECT 1 AS c",
+        "COMMENT ON COLUMN dotted_keys_comments.a.\"b.c\" IS 'table column'",
+        "COMMENT ON COLUMN dotted_keys_comments.\"a.b\".c IS 'view column'",
+      )
+
+      try {
+        val catalog = JdbcAnalyzer(connection).buildCatalog(listOf("dotted_keys_comments"))
+
+        val tableColumn = catalog.table("dotted_keys_comments", "a").columns.single { it.name == "b.c" }
+        val viewColumn = catalog.table("dotted_keys_comments", "a.b").columns.single { it.name == "c" }
+        assertThat(tableColumn.comment).isEqualTo("table column")
+        assertThat(viewColumn.comment).isEqualTo("view column")
+      } finally {
+        execute("DROP SCHEMA IF EXISTS dotted_keys_comments CASCADE")
+      }
+    }
+
+    @Test
+    fun `buildCatalog loads every catalog object of a schema whose name holds a single quote`() {
+      execute(
+        "CREATE SCHEMA \"o'brien\"",
+        "CREATE TABLE \"o'brien\".author (id int NOT NULL, name text)",
+        "COMMENT ON TABLE \"o'brien\".author IS 'table comment'",
+        "COMMENT ON COLUMN \"o'brien\".author.name IS 'column comment'",
+        "CREATE VIEW \"o'brien\".author_ids AS SELECT id FROM \"o'brien\".author",
+        "CREATE TABLE \"o'brien\".event (id int, happened date) PARTITION BY RANGE (happened)",
+        "CREATE TABLE \"o'brien\".event_2026 PARTITION OF \"o'brien\".event " +
+          "FOR VALUES FROM ('2026-01-01') TO ('2027-01-01')",
+        "CREATE TYPE \"o'brien\".mood AS ENUM ('sad', 'happy')",
+        "COMMENT ON TYPE \"o'brien\".mood IS 'enum comment'",
+        "CREATE DOMAIN \"o'brien\".email AS text",
+      )
+
+      try {
+        val schema = JdbcAnalyzer(connection).buildCatalog(listOf("o'brien")).schemas.single()
+
+        assertThat(schema.tables.map { it.rel.name }).containsExactlyInAnyOrder("author", "author_ids", "event")
+        val author = schema.tables.single { it.rel.name == "author" }
+        assertThat(author.comment).isEqualTo("table comment")
+        assertThat(author.columns.single { it.name == "name" }.comment).isEqualTo("column comment")
+        val view = schema.tables.single { it.rel.name == "author_ids" }
+        assertThat(view.columns.single().notNull).isTrue()
+        assertThat(schema.enums.single().comment).isEqualTo("enum comment")
+        assertThat(schema.domains.single().name).isEqualTo("email")
+      } finally {
+        execute("DROP SCHEMA IF EXISTS \"o'brien\" CASCADE")
+      }
+    }
+
+    @Test
+    fun `lookupProcedureParameters keeps a type name that contains a comma as one parameter`() {
+      execute(
+        "CREATE DOMAIN \"a,b\" AS int",
+        "CREATE PROCEDURE comma_domain_procedure(p \"a,b\") LANGUAGE sql AS 'SELECT 1'",
+      )
+
+      try {
+        val parameters = PgCatalogLoader(connection).lookupProcedureParameters("comma_domain_procedure")
+
+        assertThat(parameters.map { it.column!!.type.name }).containsExactly("a,b")
+      } finally {
+        execute("DROP PROCEDURE IF EXISTS comma_domain_procedure", "DROP DOMAIN IF EXISTS \"a,b\"")
+      }
+    }
+
+    @Test
+    fun `buildCatalog does not read an underscore in a table name as a wildcard`() {
+      execute(
+        "CREATE SCHEMA wildcard_names",
+        "CREATE TABLE wildcard_names.a_b (id int PRIMARY KEY, x int)",
+        "CREATE TABLE wildcard_names.axb (y int)",
+      )
+
+      try {
+        val catalog = JdbcAnalyzer(connection).buildCatalog(listOf("wildcard_names"))
+
+        val columns = catalog.table("wildcard_names", "a_b").columns
+        assertThat(columns.map { it.name }).containsExactly("id", "x")
+        assertThat(columns.single { it.name == "id" }.isPrimaryKey).isTrue()
+      } finally {
+        execute("DROP SCHEMA IF EXISTS wildcard_names CASCADE")
       }
     }
   }
