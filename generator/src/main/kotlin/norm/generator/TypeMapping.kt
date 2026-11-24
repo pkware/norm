@@ -56,3 +56,15 @@ internal fun TypeMapping.describe(): String {
   }
   return "$target -> $kotlinType via $adapterType"
 }
+
+/**
+ * Returns the adapter property name for a user-configured [TypeMapping].
+ *
+ * - [TypeMapping.ByType]: `${postgresType}Adapter` (e.g., `"jsonb"` → `"jsonbAdapter"`, `"mood"` → `"moodAdapter"`)
+ * - [TypeMapping.ByColumn]: `${table}${Column}Adapter` (e.g., `users.metadata` → `"usersMetadataAdapter"`)
+ */
+internal fun userAdapterPropertyName(mapping: TypeMapping): String = when (mapping) {
+  is TypeMapping.ByType -> "${mapping.postgresType.snakeToCamelCase()}Adapter"
+  is TypeMapping.ByColumn ->
+    "${mapping.table.snakeToCamelCase()}${mapping.column.snakeToCamelCase().titleCase()}Adapter"
+}

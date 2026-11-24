@@ -1,7 +1,6 @@
 package norm.generator
 
 import com.squareup.kotlinpoet.ARRAY
-import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.LIST
@@ -20,11 +19,11 @@ import com.squareup.kotlinpoet.TypeSpec
  * value class Email(val value: String)
  * ```
  *
- * @param domain The Postgres domain definition from the catalog.
- * @param packageName The package for the generated value class.
+ * @param domainType The domain to generate a value class for.
  */
-internal fun buildDomainValueClassTypeSpec(domain: Domain, packageName: String): TypeSpec {
-  val className = domainValueClassName(domain, packageName)
+internal fun buildDomainValueClassTypeSpec(domainType: GeneratedAdapterType.Domain): TypeSpec {
+  val domain = domainType.definition
+  val className = domainType.className
 
   val propertyType = domainKotlinPropertyType(domain.baseType)
 
@@ -65,14 +64,14 @@ internal fun buildDomainValueClassTypeSpec(domain: Domain, packageName: String):
  * }
  * ```
  *
- * @param domain The Postgres domain definition from the catalog.
- * @param packageName The package for the generated adapter class.
+ * @param domainType The domain to generate an adapter for.
  * @param frameworks The DI frameworks to annotate the adapter with.
  */
-internal fun buildDomainAdapterTypeSpec(domain: Domain, packageName: String, frameworks: Set<Framework>): TypeSpec {
-  val valueClassName = domainValueClassName(domain, packageName)
-  val adapterClass = domainAdapterClassName(domain, packageName)
-  val wireKotlinType = domainKotlinWireType(domain.baseType)
+internal fun buildDomainAdapterTypeSpec(domainType: GeneratedAdapterType.Domain, frameworks: Set<Framework>): TypeSpec {
+  val domain = domainType.definition
+  val valueClassName = domainType.className
+  val adapterClass = domainType.adapterClassName
+  val wireKotlinType = domainType.wireType
   val adapterSupertype = COLUMN_ADAPTER.parameterizedBy(valueClassName, wireKotlinType)
 
   // An array-based domain's value class wraps List<Int?> while the adapter's wire type is
@@ -105,33 +104,6 @@ internal fun buildDomainAdapterTypeSpec(domain: Domain, packageName: String, fra
 
   return classBuilder.build()
 }
-
-/**
- * Returns the [ClassName] for the value class generated for a Postgres domain type.
- *
- * @param domain The Postgres domain definition.
- * @param packageName The package in which the value class is generated.
- */
-internal fun domainValueClassName(domain: Domain, packageName: String): ClassName =
-  ClassName(packageName, domain.name.snakeToCamelCase().titleCase())
-
-/**
- * Returns the [ClassName] for the adapter class generated for a Postgres domain type.
- *
- * @param domain The Postgres domain definition.
- * @param packageName The package in which the adapter is generated.
- */
-internal fun domainAdapterClassName(domain: Domain, packageName: String): ClassName =
-  ClassName(packageName, "${domain.name.snakeToCamelCase().titleCase()}Adapter")
-
-/**
- * Returns the adapter property name used on `PostgresQueries` for the given domain type.
- *
- * Called from both [TypeRepository] (when creating [AdaptedTypeSqlMappable]) and [Main][generateCode]
- * (when adding constructor parameters to `PostgresQueries`). Centralizing the convention here
- * ensures the generated read/write code always references the same property name.
- */
-internal fun domainAdapterPropertyName(domain: Domain): String = "${domain.name.snakeToCamelCase()}Adapter"
 
 /**
  * Maps a Postgres base type name to the Kotlin type JDBC delivers it as — the type a domain's

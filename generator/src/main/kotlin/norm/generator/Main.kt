@@ -5,11 +5,9 @@ import com.squareup.kotlinpoet.FileSpec
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterSpec
-import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
-import com.squareup.kotlinpoet.asTypeName
 
 private val NORM_DRIVER = ClassName(RUNTIME_PACKAGE, "NormDriver")
 private val CONNECTION_PROVIDER = ClassName(RUNTIME_PACKAGE, "ConnectionProvider")
@@ -32,8 +30,8 @@ private val TRANSACTABLE = ClassName(RUNTIME_PACKAGE, "Transactable")
  *   auto-generation of the matching enum or domain. Duplicate entries are ignored.
  * @return The generated files. File names include the package hierarchy.
  * @throws IllegalStateException if two unequal [typeMappings] target the same Postgres type or column.
- *   Also thrown if an adapter property name is shared by two [typeMappings] or by a mapping and the
- *   auto-generated adapter of a referenced enum or domain.
+ *   Also thrown if two adapters share a property name, whether user-configured or generated for a
+ *   referenced enum or domain.
  */
 @Throws(IllegalStateException::class)
 public fun generateCode(
@@ -50,33 +48,11 @@ public fun generateCode(
   val queriesInterface = ClassName(packageName, "Queries")
   val interfaceCode = generateQueryInterface(resolvedQueries, "Queries", frameworks)
 
-  // Type-level overrides suppress auto-generation for the overridden type.
-  val typeOverridePostgresTypes = typeMappings.filterIsInstance<TypeMapping.ByType>().map { it.postgresType }.toSet()
+  val adapterTypeSpecs = typeRepository.referencedAdapterTypes
+    .sortedBy { it.postgresName }
+    .flatMap { it.typeSpecs(frameworks) }
 
-  // Build enum + adapter TypeSpecs for all enums discovered during query resolution.
-  val enumTypeSpecs = typeRepository.discoveredEnums
-    .filter { it.name !in typeOverridePostgresTypes }
-    .sortedBy { it.name }
-    .flatMap { enumDefinition ->
-      listOf(
-        buildEnumTypeSpec(enumDefinition, packageName),
-        buildAdapterTypeSpec(enumDefinition, packageName, frameworks),
-      )
-    }
-
-  // Build value class + adapter TypeSpecs for all domains discovered during query resolution.
-  val domainTypeSpecs = typeRepository.discoveredDomains
-    .filter { it.name !in typeOverridePostgresTypes }
-    .sortedBy { it.name }
-    .flatMap { domain ->
-      listOf(
-        buildDomainValueClassTypeSpec(domain, packageName),
-        buildDomainAdapterTypeSpec(domain, packageName, frameworks),
-      )
-    }
-
-  val adapterParameters =
-    adapterParameters(typeRepository, typeMappings, catalog, packageName, typeOverridePostgresTypes)
+  val adapterParameters = typeRepository.adapterParameters()
 
   val classCode = generateQueryImplementation(resolvedQueries, queriesInterface, frameworks, adapterParameters)
   val connectionProviders = generateConnectionProviders(packageName, frameworks)
@@ -85,7 +61,7 @@ public fun generateCode(
     sequenceOf(
       interfaceCode,
       classCode,
-    ) + typeRepository.requiredTypes + enumTypeSpecs + domainTypeSpecs
+    ) + typeRepository.requiredTypes + adapterTypeSpecs
     ).map {
     val fileSpec = FileSpec.builder(packageName, "${it.name}.kt")
       .addType(it)
@@ -95,90 +71,6 @@ public fun generateCode(
   }
     .toList()
   return typeSpecFiles + connectionProviders
-}
-
-/**
- * A single adapter constructor parameter for the generated `PostgresQueries` implementation.
- *
- * @property propertyName The constructor parameter (and private property) name.
- * @property adapterType The `ColumnAdapter<Application, Database>` type of the parameter.
- * @property defaultClass The adapter class to instantiate as the parameter's default value
- *   (`= DefaultClass()`), or `null` for user-configured adapters, which have no default and must be
- *   supplied explicitly.
- */
-private data class AdapterParameter(val propertyName: String, val adapterType: TypeName, val defaultClass: ClassName?)
-
-/**
- * Computes the adapter constructor parameters for the generated `PostgresQueries` implementation.
- *
- * Adapter parameters come in two groups:
- * 1. User-configured adapters (no default) — must come first in the constructor.
- * 2. Auto-generated adapters, for enums and domains discovered while resolving column types (with a
- *    default) — come after.
- *
- * @param typeOverridePostgresTypes Postgres type names with a user-configured type-level override,
- *   already computed by the caller so it's derived from [typeMappings] exactly once.
- * @throws IllegalStateException if a user-configured adapter has the same property name as the
- *   auto-generated adapter of a discovered enum or domain.
- */
-private fun adapterParameters(
-  typeRepository: TypeRepository,
-  typeMappings: List<TypeMapping>,
-  catalog: Catalog,
-  packageName: String,
-  typeOverridePostgresTypes: Set<String>,
-): List<AdapterParameter> {
-  // User-configured adapter params (no default value → must come first)
-  val userMappings = typeMappings.distinct()
-  val userAdapterParams = userMappings.map { mapping ->
-    val applicationTypeName = parseTypeName(mapping.kotlinType)
-    val databaseTypeName = resolveWireTypeName(mapping, typeRepository, catalog)
-    AdapterParameter(
-      userAdapterPropertyName(mapping),
-      COLUMN_ADAPTER.parameterizedBy(applicationTypeName, databaseTypeName),
-      null,
-    )
-  }.sortedBy { it.propertyName }
-  val userMappingsByPropertyName = userMappings.associateBy(::userAdapterPropertyName)
-
-  fun checkNoUserCollision(propertyName: String, kind: String, postgresTypeName: String) {
-    val userMapping = userMappingsByPropertyName[propertyName] ?: return
-    error(
-      "Mapping ${userMapping.describe()} generates the adapter parameter `$propertyName`, " +
-        "which the generated adapter for $kind \"$postgresTypeName\" also uses.",
-    )
-  }
-
-  // Auto-generated adapter params (with default → come after)
-  val autoAdapterParams = buildList {
-    for (enumDefinition in typeRepository.discoveredEnums) {
-      if (enumDefinition.name in typeOverridePostgresTypes) continue
-      checkNoUserCollision(adapterPropertyName(enumDefinition), "enum", enumDefinition.name)
-      val enumClassName = enumClassName(enumDefinition, packageName)
-      add(
-        AdapterParameter(
-          adapterPropertyName(enumDefinition),
-          COLUMN_ADAPTER.parameterizedBy(enumClassName, String::class.asTypeName()),
-          adapterClassName(enumDefinition, packageName),
-        ),
-      )
-    }
-    for (domain in typeRepository.discoveredDomains) {
-      if (domain.name in typeOverridePostgresTypes) continue
-      checkNoUserCollision(domainAdapterPropertyName(domain), "domain", domain.name)
-      val valueClassName = domainValueClassName(domain, packageName)
-      val wireKotlinType = domainKotlinWireType(domain.baseType)
-      add(
-        AdapterParameter(
-          domainAdapterPropertyName(domain),
-          COLUMN_ADAPTER.parameterizedBy(valueClassName, wireKotlinType),
-          domainAdapterClassName(domain, packageName),
-        ),
-      )
-    }
-  }.sortedBy { it.propertyName }
-
-  return userAdapterParams + autoAdapterParams
 }
 
 private fun generateQueryImplementation(
@@ -286,44 +178,4 @@ private fun loadTemplate(packageName: String, className: String): GeneratedFile 
   val contents = template.replace(PACKAGE_PLACEHOLDER, packageName)
   val path = packageName.replace('.', '/') + "/$className.kt"
   return GeneratedFile(path, contents)
-}
-
-/**
- * Returns the adapter property name for a user-configured [TypeMapping].
- *
- * - [TypeMapping.ByType]: `${postgresType}Adapter` (e.g., `"jsonb"` → `"jsonbAdapter"`, `"mood"` → `"moodAdapter"`)
- * - [TypeMapping.ByColumn]: `${table}${Column}Adapter` (e.g., `users.metadata` → `"usersMetadataAdapter"`)
- */
-internal fun userAdapterPropertyName(mapping: TypeMapping): String = when (mapping) {
-  is TypeMapping.ByType -> "${mapping.postgresType.snakeToCamelCase()}Adapter"
-  is TypeMapping.ByColumn ->
-    "${mapping.table.snakeToCamelCase()}${mapping.column.snakeToCamelCase().titleCase()}Adapter"
-}
-
-/**
- * Resolves the Kotlin [TypeName] for the database (wire) side of a user-configured adapter.
- *
- * A [TypeMapping.ByType] mapping names the Postgres type directly. A [TypeMapping.ByColumn] mapping takes the
- * column's type from the catalog.
- */
-private fun resolveWireTypeName(mapping: TypeMapping, typeRepository: TypeRepository, catalog: Catalog): TypeName {
-  val postgresType = when (mapping) {
-    is TypeMapping.ByType -> mapping.postgresType
-    is TypeMapping.ByColumn -> resolveColumnPostgresType(catalog, mapping.table, mapping.column)
-  }
-  return typeRepository.resolveAdapterWireCodec(postgresType).kotlinType
-}
-
-/**
- * Looks up a column's Postgres type name from the catalog.
- *
- * [table] and [column] come from a user-configured [TypeMapping], spelled the way the user wrote
- * them in DDL, while the catalog's names came back from the server already truncated. Both are
- * truncated here so an override on an over-length name resolves in this lookup.
- */
-private fun resolveColumnPostgresType(catalog: Catalog, table: String, column: String): String {
-  val truncatedTable = truncateIdentifier(table)
-  val truncatedColumn = truncateIdentifier(column)
-  return catalog.findColumn(truncatedTable, truncatedColumn)?.type?.name
-    ?: error("Column '$truncatedTable.$truncatedColumn' not found in catalog")
 }

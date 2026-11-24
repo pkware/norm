@@ -1319,7 +1319,7 @@ class SqlStatementTest {
         typeRepository = typeRepository,
       )
 
-      assertThat(typeRepository.discoveredEnums).containsOnly(moodEnum)
+      assertThat(typeRepository.referencedAdapterTypes).containsOnly(GeneratedAdapterType.Enum(moodEnum, "test"))
     }
 
     @Test
@@ -1332,7 +1332,7 @@ class SqlStatementTest {
         typeRepository = typeRepository,
       )
 
-      assertThat(typeRepository.discoveredDomains).containsOnly(emailDomain)
+      assertThat(typeRepository.referencedAdapterTypes).containsOnly(GeneratedAdapterType.Domain(emailDomain, "test"))
     }
 
     @Test
@@ -1346,7 +1346,7 @@ class SqlStatementTest {
         typeRepository = typeRepository,
       )
 
-      assertThat(typeRepository.discoveredEnums).containsOnly(moodEnum)
+      assertThat(typeRepository.referencedAdapterTypes).containsOnly(GeneratedAdapterType.Enum(moodEnum, "test"))
     }
   }
 

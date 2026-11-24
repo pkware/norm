@@ -507,6 +507,26 @@ class GenerateCodeTest {
     }
 
     @Test
+    fun `referenced enum and domain generating the same property name fail naming both`() {
+      resetSchema(
+        """
+        CREATE TYPE foo_bar AS ENUM ('a');
+        CREATE DOMAIN "fooBar" AS text;
+        CREATE TABLE t (id integer PRIMARY KEY, a foo_bar NOT NULL, b "fooBar" NOT NULL);
+        """.trimIndent(),
+      )
+
+      assertFailure {
+        generatePostgresQueries("-- name: listT :many\nSELECT id, a FROM t WHERE b = ?;", emptyList())
+      }.also {
+        it.hasClass(IllegalStateException::class)
+        it.messageContains("fooBarAdapter")
+        it.messageContains("""enum "foo_bar"""")
+        it.messageContains("""domain "fooBar"""")
+      }
+    }
+
+    @Test
     fun `equal duplicate mappings generate one constructor parameter`() {
       resetSchema("CREATE TABLE users (id integer PRIMARY KEY, metadata jsonb NOT NULL);")
 

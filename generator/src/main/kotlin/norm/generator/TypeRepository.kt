@@ -5,20 +5,10 @@ import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FunSpec
 import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.ParameterSpec
+import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
-
-/**
- * [WireCodec] for Postgres enum types.
- *
- * Enum types require `setObject(index, value, Types.OTHER)`.
- * The Postgres JDBC driver rejects `VARCHAR` bindings for enum columns in prepared statements;
- * `Types.OTHER` bypasses driver-side type enforcement and lets Postgres coerce the string. This is
- * the same codec instance the `json`/`jsonb` rows of [POSTGRES_BASE_TYPES] use, so the binding for
- * a plain `json`/`jsonb` column and an enum column can never drift apart.
- */
-private val ENUM_CODEC: WireCodec = POSTGRES_BASE_TYPES.getValue("json").codec
 
 /**
  * Repository for types generated as part of query generation.
@@ -45,7 +35,6 @@ private val ENUM_CODEC: WireCodec = POSTGRES_BASE_TYPES.getValue("json").codec
  *   [generateCode] — the real production entry point — always supplies
  *   [JdbcAnalyzer.fetchReservedWords]'s live result explicitly.
  * @throws IllegalStateException if two unequal [typeMappings] target the same Postgres type or column.
- *   Also thrown if two of them generate the same adapter property name.
  */
 internal class TypeRepository(
   private val packageName: String,
@@ -96,37 +85,17 @@ internal class TypeRepository(
     typeMappings.filterIsInstance<TypeMapping.ByColumn>()
       .associateBy { truncateIdentifier(it.table) to truncateIdentifier(it.column) }
 
-  /**
-   * Enum types that are actually referenced by columns in resolved queries.
-   *
-   * Populated during [resolveMappableType] calls. Only referenced enums get
-   * generated as Kotlin enum classes and adapters.
-   */
-  private val referencedEnums = mutableSetOf<Enum>()
+  private val referencedAdapterTypeSet = linkedSetOf<GeneratedAdapterType>()
 
   /**
-   * Domain types that are actually referenced by columns in resolved queries.
+   * Enums and domains referenced by columns or parameters of resolved queries, excluding those
+   * replaced by a user-configured mapping.
    *
-   * Populated during [resolveMappableType] calls. Only referenced domains get
-   * generated as value classes and adapters.
+   * Complete once every [SqlStatement] has been constructed. Only these types get a generated class
+   * and adapter.
    */
-  private val referencedDomains = mutableSetOf<Domain>()
-
-  /**
-   * The set of Postgres enum types discovered as referenced by query columns.
-   *
-   * Complete once every [SqlStatement] has been constructed.
-   */
-  val discoveredEnums: Set<Enum>
-    get() = referencedEnums
-
-  /**
-   * The set of Postgres domain types discovered as referenced by query columns.
-   *
-   * Complete once every [SqlStatement] has been constructed.
-   */
-  val discoveredDomains: Set<Domain>
-    get() = referencedDomains
+  val referencedAdapterTypes: Set<GeneratedAdapterType>
+    get() = referencedAdapterTypeSet
 
   /**
    * Types generated during query generation that are needed for complete compilation of query code.
@@ -137,6 +106,73 @@ internal class TypeRepository(
       yieldAll(tableModels.values.asSequence().map { it.second })
     }
 
+  /**
+   * Computes the adapter constructor parameters of the generated `PostgresQueries`.
+   *
+   * User-configured adapters come first because they have no default value, followed by the generated
+   * adapters of [referencedAdapterTypes]. Each group is sorted by property name. Call this once every
+   * [SqlStatement] has been constructed.
+   *
+   * @throws IllegalStateException if two parameters, user-configured or generated, share a property name.
+   *   Also thrown if a [TypeMapping.ByColumn] names a column absent from the catalog, or a mapped type
+   *   has no [WireCodec].
+   */
+  @Throws(IllegalStateException::class)
+  fun adapterParameters(): List<AdapterParameter> {
+    val userParameters = typeMappings.distinct().map { mapping ->
+      AdapterParameter(
+        propertyName = userAdapterPropertyName(mapping),
+        adapterType = COLUMN_ADAPTER.parameterizedBy(parseTypeName(mapping.kotlinType), resolveWireTypeName(mapping)),
+        defaultClass = null,
+        source = mapping.describe(),
+      )
+    }.sortedBy { it.propertyName }
+    val generatedParameters = referencedAdapterTypeSet.map { adapterType ->
+      AdapterParameter(
+        propertyName = adapterType.adapterPropertyName,
+        adapterType = COLUMN_ADAPTER.parameterizedBy(adapterType.className, adapterType.wireType),
+        defaultClass = adapterType.adapterClassName,
+        source = adapterType.description,
+      )
+    }.sortedBy { it.propertyName }
+
+    val parameters = userParameters + generatedParameters
+    for ((propertyName, group) in parameters.groupBy { it.propertyName }) {
+      check(group.size == 1) {
+        "The adapter parameter `$propertyName` is generated by ${group.joinToString(" and ") { it.source }}."
+      }
+    }
+    return parameters
+  }
+
+  /**
+   * Resolves the Kotlin [TypeName] for the database (wire) side of a user-configured adapter.
+   *
+   * A [TypeMapping.ByType] mapping names the Postgres type directly. A [TypeMapping.ByColumn] mapping takes the
+   * column's type from the catalog.
+   */
+  private fun resolveWireTypeName(mapping: TypeMapping): TypeName {
+    val postgresType = when (mapping) {
+      is TypeMapping.ByType -> mapping.postgresType
+      is TypeMapping.ByColumn -> resolveColumnPostgresType(mapping.table, mapping.column)
+    }
+    return resolveAdapterWireCodec(postgresType).kotlinType
+  }
+
+  /**
+   * Looks up a column's Postgres type name from the catalog.
+   *
+   * [table] and [column] come from a user-configured [TypeMapping], spelled the way the user wrote
+   * them in DDL, while the catalog's names came back from the server already truncated. Both are
+   * truncated here so an override on an over-length name resolves in this lookup.
+   */
+  private fun resolveColumnPostgresType(table: String, column: String): String {
+    val truncatedTable = truncateIdentifier(table)
+    val truncatedColumn = truncateIdentifier(column)
+    return catalog.findColumn(truncatedTable, truncatedColumn)?.type?.name
+      ?: error("Column '$truncatedTable.$truncatedColumn' not found in catalog")
+  }
+
   private fun checkMappingsDoNotConflict(mappings: List<TypeMapping>) {
     val sameTargetGroups = mappings.filterIsInstance<TypeMapping.ByType>().groupBy { it.postgresType }.values +
       mappings.filterIsInstance<TypeMapping.ByColumn>()
@@ -144,11 +180,6 @@ internal class TypeRepository(
     for (group in sameTargetGroups) {
       check(group.size == 1) {
         "Conflicting mappings for the same target: ${group.joinToString(" and ") { it.describe() }}."
-      }
-    }
-    for ((propertyName, group) in mappings.groupBy(::userAdapterPropertyName)) {
-      check(group.size == 1) {
-        "Mappings ${group.joinToString(" and ") { it.describe() }} both generate the adapter parameter `$propertyName`."
       }
     }
   }
@@ -410,7 +441,7 @@ internal class TypeRepository(
    * @throws IllegalStateException if [postgresType] has no [WireCodec].
    */
   @Throws(IllegalStateException::class)
-  internal fun resolveAdapterWireCodec(postgresType: String): WireCodec {
+  private fun resolveAdapterWireCodec(postgresType: String): WireCodec {
     if (postgresType in enumsByName) return ENUM_CODEC
     val domain = domainsByName[postgresType]
     if (domain != null) return resolveAdapterWireCodec(domain.baseType)
@@ -429,22 +460,20 @@ internal class TypeRepository(
    */
   private fun tryResolveEnumType(typeName: String, notNull: Boolean, isArray: Boolean): SqlMappable? {
     val enumDefinition = enumsByName[typeName] ?: return null
-    referencedEnums.add(enumDefinition)
-
-    val enumClassName = enumClassName(enumDefinition, packageName)
-    val propertyName = adapterPropertyName(enumDefinition)
+    val adapterType = GeneratedAdapterType.Enum(enumDefinition, packageName)
+    referencedAdapterTypeSet.add(adapterType)
 
     if (isArray) {
       return AdaptedArrayTypeSqlMappable(
-        applicationTypeName = enumClassName,
-        adapterPropertyName = propertyName,
+        applicationTypeName = adapterType.className,
+        adapterPropertyName = adapterType.adapterPropertyName,
         columnNotNull = notNull,
         postgresTypeName = typeName,
         elementCodec = ENUM_CODEC,
         domainBaseTypeName = null,
       )
     }
-    return AdaptedTypeSqlMappable(enumClassName, propertyName, notNull, ENUM_CODEC)
+    return AdaptedTypeSqlMappable(adapterType.className, adapterType.adapterPropertyName, notNull, ENUM_CODEC)
   }
 
   /** Returns the [SqlMappable] for a standard Postgres type, or `null` if not recognized. */
@@ -493,25 +522,24 @@ internal class TypeRepository(
    */
   private fun tryResolveDomainType(typeName: String, notNull: Boolean, isArray: Boolean): SqlMappable? {
     val domain = domainsByName[typeName] ?: return null
-    referencedDomains.add(domain)
+    val adapterType = GeneratedAdapterType.Domain(domain, packageName)
+    referencedAdapterTypeSet.add(adapterType)
 
     if (isArray) rejectArrayOfArrayBasedDomain(typeName, domain)
 
-    val domainClassName = domainValueClassName(domain, packageName)
-    val propertyName = domainAdapterPropertyName(domain)
     val codec = resolveWireCodec(domain.baseType) ?: error(unsupportedDomainBaseTypeMessage(domain))
 
     if (isArray) {
       return AdaptedArrayTypeSqlMappable(
-        applicationTypeName = domainClassName,
-        adapterPropertyName = propertyName,
+        applicationTypeName = adapterType.className,
+        adapterPropertyName = adapterType.adapterPropertyName,
         columnNotNull = notNull,
         postgresTypeName = typeName,
         elementCodec = codec,
         domainBaseTypeName = domain.baseType,
       )
     }
-    return AdaptedTypeSqlMappable(domainClassName, propertyName, notNull, codec)
+    return AdaptedTypeSqlMappable(adapterType.className, adapterType.adapterPropertyName, notNull, codec)
   }
 
   /**
@@ -577,3 +605,20 @@ internal class TypeRepository(
  */
 internal fun tableClassName(table: Table, packageName: String): ClassName =
   ClassName(packageName, table.rel.name.snakeToCamelCase().titleCase())
+
+/**
+ * A single adapter constructor parameter for the generated `PostgresQueries` implementation.
+ *
+ * @property propertyName The constructor parameter (and private property) name.
+ * @property adapterType The `ColumnAdapter<Application, Database>` type of the parameter.
+ * @property defaultClass The adapter class to instantiate as the parameter's default value
+ *   (`= DefaultClass()`), or `null` for user-configured adapters, which have no default and must be
+ *   supplied explicitly.
+ * @property source Describes what generates the parameter, for error messages.
+ */
+internal data class AdapterParameter(
+  val propertyName: String,
+  val adapterType: TypeName,
+  val defaultClass: ClassName?,
+  val source: String,
+)

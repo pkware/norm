@@ -1462,11 +1462,11 @@ class ColumnTypeMappingTest {
       // Resolve the column to trigger enum discovery
       repository.resolveMappableType(column("current_mood", type = "mood"))
 
-      val discoveredEnums = repository.discoveredEnums
-      assertThat(discoveredEnums).contains(moodWithComment)
+      val referencedEnums = repository.referencedAdapterTypes.filterIsInstance<GeneratedAdapterType.Enum>()
+      assertThat(referencedEnums).contains(GeneratedAdapterType.Enum(moodWithComment, "test"))
 
-      val discoveredMood = discoveredEnums.first { it.name == "mood" }
-      assertThat(discoveredMood.comment).isEqualTo("Represents emotional state of a person.")
+      val referencedMood = referencedEnums.first { it.postgresName == "mood" }
+      assertThat(referencedMood.definition.comment).isEqualTo("Represents emotional state of a person.")
     }
   }
 
@@ -1573,12 +1573,11 @@ class ColumnTypeMappingTest {
     }
 
     @Test
-    fun `resolving a domain column populates discoveredDomains`() {
+    fun `resolving a domain column records the domain as a referenced adapter type`() {
       val repository = TypeRepository("test", domainCatalog)
       repository.resolveMappableType(column("email", type = "email"))
 
-      val discoveredDomains = repository.discoveredDomains
-      assertThat(discoveredDomains).contains(emailDomain)
+      assertThat(repository.referencedAdapterTypes).contains(GeneratedAdapterType.Domain(emailDomain, "test"))
     }
 
     @Test
@@ -2608,13 +2607,10 @@ class ColumnTypeMappingTest {
       val repository = TypeRepository("test", catalog, mappings)
       repository.resolveMappableType(column("current_mood", type = "mood"))
 
-      // The enum is still in discoveredEnums (it was referenced), but the *type override*
-      // suppresses generation — that filtering happens in generateCode(), not TypeRepository.
-      // TypeRepository still tracks it for potential use in column-level overrides.
-      // What we verify here is that the resolved type is the user's type, not the auto-generated one.
       val col = column("current_mood", type = "mood")
       val resolved = repository.resolveMappableType(col)
       assertThat(resolved.typeName).isEqualTo(ClassName("com.example", "CustomMood"))
+      assertThat(repository.referencedAdapterTypes).isEmpty()
     }
 
     @Test
@@ -2627,6 +2623,7 @@ class ColumnTypeMappingTest {
       val col = column("email", type = "email")
       val resolved = repository.resolveMappableType(col)
       assertThat(resolved.typeName).isEqualTo(ClassName("com.example", "CustomEmail"))
+      assertThat(repository.referencedAdapterTypes).isEmpty()
     }
 
     @Test
@@ -2647,8 +2644,8 @@ class ColumnTypeMappingTest {
       assertThat(repository.resolveColumnType(otherCol))
         .isEqualTo(ClassName("test", "Mood"))
 
-      // The enum is discovered (for the non-overridden column)
-      assertThat(repository.discoveredEnums).contains(moodEnum)
+      // The enum is referenced by the non-overridden column.
+      assertThat(repository.referencedAdapterTypes).contains(GeneratedAdapterType.Enum(moodEnum, "test"))
     }
 
     @Test
@@ -2671,8 +2668,8 @@ class ColumnTypeMappingTest {
       assertThat(repository.resolveColumnType(otherCol))
         .isEqualTo(ClassName("test", "Email"))
 
-      // The domain is discovered (for the non-overridden column)
-      assertThat(repository.discoveredDomains).contains(emailDomain)
+      // The domain is referenced by the non-overridden column.
+      assertThat(repository.referencedAdapterTypes).contains(GeneratedAdapterType.Domain(emailDomain, "test"))
     }
 
     @Test

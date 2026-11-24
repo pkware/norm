@@ -347,13 +347,13 @@ class DomainBuilderTest {
   }
 
   private fun generateValueClassCode(domain: Domain, packageName: String): String {
-    val typeSpec = buildDomainValueClassTypeSpec(domain, packageName)
+    val typeSpec = buildDomainValueClassTypeSpec(GeneratedAdapterType.Domain(domain, packageName))
     val fileSpec = FileSpec.builder(packageName, "${typeSpec.name}.kt").addType(typeSpec).build()
     return buildString { fileSpec.writeTo(this) }
   }
 
   private fun generateAdapterCode(domain: Domain, packageName: String, frameworks: Set<Framework>): String {
-    val typeSpec = buildDomainAdapterTypeSpec(domain, packageName, frameworks)
+    val typeSpec = buildDomainAdapterTypeSpec(GeneratedAdapterType.Domain(domain, packageName), frameworks)
     val fileSpec = FileSpec.builder(packageName, "${typeSpec.name}.kt").addType(typeSpec).build()
     return buildString { fileSpec.writeTo(this) }
   }
