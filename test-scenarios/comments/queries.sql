@@ -1,3 +1,12 @@
+-- Norm queries for the author and book tables
+--
+-- Query format:
+-- -- name: QueryName :command
+-- SELECT ...;
+--
+-- Commands: :one (single row), :many (multiple rows), :exec (no return), :execrows (return count)
+-- Parameters: Use ? for positional parameters. Use :name for named parameters.
+
 -- name: getAuthorById :one
 SELECT * FROM author WHERE id = ?;
 

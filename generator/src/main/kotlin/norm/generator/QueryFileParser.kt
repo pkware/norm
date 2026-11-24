@@ -62,6 +62,9 @@ public data class ParsedQuery(
  * one is the terminator. The SQL ends at the terminator and excludes it. Without a terminator, the SQL runs to the next
  * annotation or the end of the file, minus one trailing `;`.
  *
+ * A `--` comment block separated from the first annotation by a blank line is a file header and belongs to no query. A
+ * line made only of whitespace characters is blank.
+ *
  * After the terminator, a `--` comment that starts its own line is a doc comment of the next query. A block comment or
  * a `;` discards the doc comments before it. Any other token is an error. A token made only of whitespace characters,
  * such as a non-breaking space, counts as whitespace.
@@ -106,7 +109,10 @@ public object QueryFileParser {
     val annotations = findAnnotations(text, tokens, lines)
     val pendingComments = mutableListOf<String>()
     val preambleEnd = annotations.firstOrNull()?.start ?: text.length
-    collectComments(text, tokens.filter { it.start < preambleEnd }, pendingComments) { pendingComments.clear() }
+    val headerEnd = if (annotations.isEmpty()) 0 else endOfLastBlankLine(text, preambleEnd)
+    collectComments(text, tokens.filter { it.start in headerEnd until preambleEnd }, pendingComments) {
+      pendingComments.clear()
+    }
 
     return annotations.mapIndexed { index, annotation ->
       val bodyStart = text.indexOf('\n', annotation.end).let { if (it < 0) text.length else it + 1 }
@@ -250,6 +256,20 @@ public object QueryFileParser {
 
   private fun isOutsideLexerWhitespace(character: Char): Boolean =
     character.isWhitespace() && character !in LEXER_WHITESPACE
+
+  /**
+   * Returns the index just past the last line that holds only whitespace characters before the line of
+   * [annotationStart], or `0` when there is none.
+   */
+  private fun endOfLastBlankLine(text: String, annotationStart: Int): Int {
+    var lineEnd = text.lastIndexOf('\n', annotationStart - 1)
+    while (lineEnd >= 0) {
+      val lineStart = text.lastIndexOf('\n', lineEnd - 1) + 1
+      if ((lineStart until lineEnd).all { text[it].isWhitespace() }) return lineEnd + 1
+      lineEnd = lineStart - 1
+    }
+    return 0
+  }
 
   /**
    * Walks the tokens after a query's `;` or before the first annotation. Each `--` comment that starts its line is

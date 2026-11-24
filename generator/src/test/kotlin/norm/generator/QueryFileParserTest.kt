@@ -1344,10 +1344,64 @@ class QueryFileParserTest {
     }
 
     @Test
-    fun `a non-breaking space before the first annotation does not clear the doc comments`() {
-      val result = QueryFileParser.parse("-- Doc.\n\u00A0\n-- name: a :one\nSELECT 1;")
+    fun `a comment block separated from the first annotation by a line of non-breaking spaces is a file header`() {
+      val result = QueryFileParser.parse("-- Header.\n\u00A0\n-- name: a :one\nSELECT 1;")
 
-      assertThat(result[0].comments).containsExactly("Doc.")
+      assertThat(result[0].comments).isEmpty()
+    }
+
+    @Test
+    fun `a comment block separated from the first annotation by a blank line is a file header`() {
+      val content = """
+        -- Norm queries for audit_log table
+        --
+        -- Query format:
+        -- -- name: QueryName :command
+        -- SELECT ...;
+        --
+        -- Commands: :one (single row), :many (multiple rows), :exec (no return), :execrows (return count)
+        -- Parameters: Use ? for positional parameters. Use :name for named parameters.
+
+        -- name: findAuditEventById :many
+        SELECT * FROM audit_log WHERE id = ?;
+      """.trimIndent()
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result.map { it.name }).containsExactly("findAuditEventById")
+      assertThat(result[0].comments).isEmpty()
+      assertThat(result[0].sourceLine).isEqualTo(10)
+    }
+
+    @Test
+    fun `only the comment block attached to the first annotation is kept after a file header`() {
+      val content = "-- Header.\n\n-- Doc.\n-- More doc.\n-- name: a :one\nSELECT 1;"
+
+      assertThat(QueryFileParser.parse(content)[0].comments).containsExactly("Doc.", "More doc.")
+    }
+
+    @Test
+    fun `every comment block above the last blank line before the first annotation is a file header`() {
+      val content = "-- Header.\n\n-- Second header.\n  \t\n-- Doc.\n-- name: a :one\nSELECT 1;"
+
+      assertThat(QueryFileParser.parse(content)[0].comments).containsExactly("Doc.")
+    }
+
+    @Test
+    fun `a blank line before a comment block attached to the first annotation keeps that block`() {
+      val content = "\n\n-- Doc.\n-- name: a :one\nSELECT 1;"
+
+      assertThat(QueryFileParser.parse(content)[0].comments).containsExactly("Doc.")
+    }
+
+    @Test
+    fun `a file header does not affect the comments of the second query`() {
+      val content = "-- Header.\n\n-- name: a :one\nSELECT 1;\n\n-- First.\n\n-- Second.\n-- name: b :one\nSELECT 2;"
+
+      val result = QueryFileParser.parse(content)
+
+      assertThat(result[0].comments).isEmpty()
+      assertThat(result[1].comments).containsExactly("First.", "Second.")
     }
 
     @Test
