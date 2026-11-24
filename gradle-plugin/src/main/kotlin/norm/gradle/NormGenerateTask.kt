@@ -2,8 +2,10 @@ package norm.gradle
 
 import norm.generator.Catalog
 import norm.generator.CrudQuerySynthesizer
+import norm.generator.GeneratedFile
 import norm.generator.JdbcAnalyzer
 import norm.generator.ParsedQuery
+import norm.generator.Query
 import norm.generator.QueryFileParser
 import norm.generator.generateCode
 import org.gradle.api.DefaultTask
@@ -85,7 +87,7 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
    * Expands each declared path into a [FileTree] of the `*.sql` files directly inside it when it names a
    * directory, or into the file itself otherwise.
    */
-  private fun expandDeclaredPaths(paths: ListProperty<String>) = paths.map { list ->
+  protected fun expandDeclaredPaths(paths: ListProperty<String>) = paths.map { list ->
     list.map { path ->
       val resolved = resolveDeclaredPath(project.projectDir, path)
       if (resolved.isDirectory) project.fileTree(resolved) { include("*.sql") } else resolved
@@ -108,7 +110,7 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
         val catalog = analyzer.buildCatalog()
 
         // Parse and optionally synthesize CRUD queries (user-defined queries take priority over synthetic ones)
-        val parsedQueries = parseQueryFiles()
+        val parsedQueries = parseQueryFiles(queries)
         val allParsedQueries = if (database.generateCrud.get()) {
           val quoteIdentifier = analyzer.buildIdentifierQuoter()
           CrudQuerySynthesizer.synthesizeAndMerge(catalog, parsedQueries, quoteIdentifier)
@@ -119,14 +121,7 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
         val analyzedQueries = analyzeQueries(analyzer, allParsedQueries, catalog)
 
         // Generate code
-        val files = generateCode(
-          catalog,
-          analyzedQueries,
-          database.packageName.get(),
-          database.frameworks.get(),
-          analyzer.fetchReservedWords(),
-          database.typeMappings.get(),
-        )
+        val files = render(analyzer, catalog, analyzedQueries)
 
         // Write generated files
         val directory = generatedSources.get().asFile
@@ -156,6 +151,22 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
     }
   }
 
+  /**
+   * Renders the files to write from the analyzed main queries, [analyzedQueries].
+   */
+  protected open fun render(
+    analyzer: JdbcAnalyzer,
+    catalog: Catalog,
+    analyzedQueries: List<Query>,
+  ): List<GeneratedFile> = generateCode(
+    catalog,
+    analyzedQueries,
+    database.packageName.get(),
+    database.frameworks.get(),
+    analyzer.fetchReservedWords(),
+    database.typeMappings.get(),
+  )
+
   private fun applySchemas(connection: Connection) {
     logger.lifecycle("Norm: Applying schemas...")
     val schemaSources = resolveSchemaSources(
@@ -181,7 +192,7 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
     logger.lifecycle("Norm: Schemas applied successfully")
   }
 
-  private fun parseQueryFiles(): List<ParsedQuery> = queries.files
+  protected fun parseQueryFiles(queryFiles: ConfigurableFileCollection): List<ParsedQuery> = queryFiles.files
     .sortedBy { it.absolutePath }
     .flatMap { file ->
       try {
@@ -194,7 +205,7 @@ internal abstract class NormGenerateTask @Inject constructor(@get:Nested val dat
       }
     }
 
-  private fun analyzeQueries(analyzer: JdbcAnalyzer, parsedQueries: List<ParsedQuery>, catalog: Catalog) =
+  protected fun analyzeQueries(analyzer: JdbcAnalyzer, parsedQueries: List<ParsedQuery>, catalog: Catalog) =
     parsedQueries.map { parsed ->
       try {
         analyzer.analyzeQuery(parsed, catalog)

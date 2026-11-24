@@ -31,6 +31,12 @@ class TestProject(private val projectDir: Path, private val scenarioDirectory: P
     get() = projectDir.resolve("build").resolve(NormPlugin.NORM_GENERATED_CODE)
 
   /**
+   * Output directory of the `test` source set's generation task for the database `Test` that [setup] declares.
+   */
+  val generatedTestCodeDirectory: Path
+    get() = projectDir.resolve("build").resolve("${NormPlugin.NORM_GENERATED_CODE}-test").resolve("Test")
+
+  /**
    * Sets up both settings.gradle.kts and build.gradle.kts for a standard scenario test.
    *
    * Reads optional `norm.properties` from the scenario directory for per-scenario configuration.
@@ -38,6 +44,8 @@ class TestProject(private val projectDir: Path, private val scenarioDirectory: P
    * - `generateCrud=true` — enables CRUD method generation.
    * - `typeMapping.type.<postgresType>=<kotlinType>:<adapterType>` — type-level override.
    * - `typeMapping.column.<table>.<column>=<kotlinType>:<adapterType>` — column-level override.
+   *
+   * When the scenario directory holds a `test-queries.sql`, its queries are declared for the `test` source set.
    *
    * When type mappings are present, user adapter source files from the scenario's `src/` directory
    * are copied into the test project's `src/main/kotlin/`.
@@ -66,6 +74,16 @@ class TestProject(private val projectDir: Path, private val scenarioDirectory: P
 
     val typeMappingsBlock = buildTypeMappingsBlock(scenarioProperties)
 
+    val testQueriesFile = scenarioDirectory.resolve("test-queries.sql")
+    val hasTestQueries = testQueriesFile.exists()
+    val testQueriesBlock = if (hasTestQueries) {
+      "test { queries.add(\"${testQueriesFile.normalize().toAbsolutePath()}\") }"
+    } else {
+      ""
+    }
+    // The generated test sources contain no test classes, and `build` fails on a test task that finds none.
+    val testTaskBlock = if (hasTestQueries) "tasks.test { failOnNoDiscoveredTests = false }" else ""
+
     val buildFileContent = """
       ${frameworkImport}plugins {
         kotlin("jvm")
@@ -81,6 +99,7 @@ class TestProject(private val projectDir: Path, private val scenarioDirectory: P
             $frameworksConfigBlock
             $generateCrudBlock
             $typeMappingsBlock
+            $testQueriesBlock
           }
         }
       }
@@ -90,6 +109,8 @@ class TestProject(private val projectDir: Path, private val scenarioDirectory: P
           allWarningsAsErrors = true
         }
       }
+
+      $testTaskBlock
     """.trimIndent()
     buildFile.writeText(buildFileContent)
 

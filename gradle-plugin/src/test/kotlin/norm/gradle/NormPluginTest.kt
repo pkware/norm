@@ -5,8 +5,10 @@ import assertk.assertions.contains
 import assertk.assertions.doesNotContain
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
+import assertk.assertions.isFalse
 import assertk.assertions.isNotEmpty
 import assertk.assertions.isNotEqualTo
+import assertk.assertions.isNull
 import assertk.assertions.isTrue
 import org.gradle.testkit.runner.TaskOutcome.SUCCESS
 import org.gradle.testkit.runner.TaskOutcome.UP_TO_DATE
@@ -58,10 +60,18 @@ class NormPluginTest {
     // Run full build to verify generated code compiles
     project.gradle("build").build()
 
-    // Collect and compare Kotlin files
-    val goldenDir = scenarioDirectory.resolve("example")
+    assertGeneratedFilesMatchGoldenFiles(scenarioDirectory.resolve("example"), project.generatedCodeDirectory)
+    if (scenarioDirectory.resolve("test-queries.sql").exists()) {
+      assertGeneratedFilesMatchGoldenFiles(
+        scenarioDirectory.resolve("example-test"),
+        project.generatedTestCodeDirectory,
+      )
+    }
+  }
+
+  private fun assertGeneratedFilesMatchGoldenFiles(goldenDir: Path, generatedDir: Path) {
     val expectedFiles = collectKotlinFiles(goldenDir, goldenDir)
-    val generatedFiles = collectKotlinFiles(project.generatedCodeDirectory, project.generatedCodeDirectory)
+    val generatedFiles = collectKotlinFiles(generatedDir, generatedDir)
 
     // Assert all expected files exist and match
     for ((relativePath, expectedContent) in expectedFiles) {
@@ -1279,6 +1289,182 @@ class NormPluginTest {
     }
   }
 
+  @Nested
+  inner class TestSourceSets {
+
+    private val scenarioDirectory = TEST_QUERIES_SCENARIO
+
+    private fun gradleProject(
+      databaseBody: String,
+      mainQueries: Path = scenarioDirectory.resolve("queries.sql"),
+    ): TestProject {
+      val project = TestProject(projectDir, scenarioDirectory)
+      project.setupSettingsOnly()
+      project.buildFile.writeText(
+        """
+        plugins {
+          kotlin("jvm")
+          id("com.pkware.norm")
+        }
+
+        norm {
+          databases {
+            create("Test") {
+              packageName = "example.testqueries"
+              schemas.addAll("${scenarioDirectory.resolve("schema.sql")}")
+              queries.addAll("$mainQueries")
+              generateCrud = false
+              $databaseBody
+            }
+          }
+        }
+        """.trimIndent(),
+      )
+      return project
+    }
+
+    private fun writeQueryFile(fileName: String, sql: String): Path = projectDir.resolve(fileName).also {
+      it.writeText(sql)
+    }
+
+    @Test
+    fun `test queries are generated into the test source set only`() {
+      val testQueries = scenarioDirectory.resolve("test-queries.sql")
+      val project = gradleProject("test { queries.add(\"$testQueries\") }")
+
+      val result = project.gradle("compileTestKotlin").build()
+
+      assertThat(result.task(":compileTestKotlin")?.outcome).isEqualTo(SUCCESS)
+      assertThat(project.generatedTestCodeDirectory.resolve("example/testqueries/AuditLog.kt").exists()).isTrue()
+      assertThat(project.generatedCodeDirectory.resolve("example/testqueries/AuditLog.kt").exists()).isFalse()
+      assertThat(projectDir.resolve("build/classes/kotlin/main/example/testqueries/AuditLog.class").exists()).isFalse()
+      assertThat(projectDir.resolve("build/classes/kotlin/test/example/testqueries/PostgresTestQueries.class").exists())
+        .isTrue()
+    }
+
+    @Test
+    fun `compileKotlin succeeds with a broken test query without running test generation`() {
+      val broken = writeQueryFile("broken.sql", "-- name: broken :many\nSELECT * FROM table_that_does_not_exist;")
+      val project = gradleProject("test { queries.add(\"$broken\") }")
+
+      val compileMain = project.gradle("compileKotlin").build()
+
+      assertThat(compileMain.task(":compileKotlin")?.outcome).isEqualTo(SUCCESS)
+      assertThat(compileMain.task(":normGenerateTest")?.outcome).isEqualTo(SUCCESS)
+      assertThat(compileMain.task(":normGenerateTestTest")).isNull()
+
+      val compileTest = project.gradle("compileTestKotlin").buildAndFail()
+
+      assertThat(compileTest.output).contains("Failed to analyze query 'broken'")
+    }
+
+    @Test
+    fun `second run is up to date and reuses the configuration cache`() {
+      val testQueries = scenarioDirectory.resolve("test-queries.sql")
+      val project = gradleProject("test { queries.add(\"$testQueries\") }")
+
+      val first = project.gradle("normGenerateTestTest", "--configuration-cache").build()
+      val second = project.gradle("normGenerateTestTest", "--configuration-cache").build()
+
+      assertThat(first.task(":normGenerateTestTest")?.outcome).isEqualTo(SUCCESS)
+      assertThat(first.output).contains("Configuration cache entry stored")
+      assertThat(second.task(":normGenerateTestTest")?.outcome).isEqualTo(UP_TO_DATE)
+      assertThat(second.output).contains("Configuration cache entry reused")
+    }
+
+    @Test
+    fun `editing only a test query file leaves the main task up to date`() {
+      val testQueries = writeQueryFile("test-queries.sql", "-- name: countAuthors :one\nSELECT count(*) FROM author;")
+      val project = gradleProject("test { queries.add(\"$testQueries\") }")
+      project.gradle("normGenerateTest", "normGenerateTestTest").build()
+
+      testQueries.writeText("-- name: listAuthorNames :many\nSELECT name FROM author;")
+      val result = project.gradle("normGenerateTest", "normGenerateTestTest").build()
+
+      assertThat(result.task(":normGenerateTest")?.outcome).isEqualTo(UP_TO_DATE)
+      assertThat(result.task(":normGenerateTestTest")?.outcome).isEqualTo(SUCCESS)
+      assertThat(project.generatedTestCodeDirectory.resolve("example/testqueries/TestQueries.kt").readText())
+        .contains("listAuthorNames")
+    }
+
+    @Test
+    fun `a test type that differs from the main type of the same name fails naming the type`() {
+      val mainQueries = writeQueryFile(
+        "main-queries.sql",
+        "-- name: getRow :one\nSELECT id, upper(name) AS name FROM author WHERE id = ?;",
+      )
+      val testQueries = writeQueryFile(
+        "test-queries.sql",
+        "-- name: getRow :one\nSELECT id, upper(name) AS label FROM author WHERE id = ?;",
+      )
+      val project = gradleProject("test { queries.add(\"$testQueries\") }", mainQueries)
+
+      val result = project.gradle("normGenerateTestTest").buildAndFail()
+
+      assertThat(result.output).contains("type 'GetRow'")
+    }
+
+    @Test
+    fun `no source set task is registered without a source set declaration`() {
+      val project = gradleProject("")
+
+      val result = project.gradle("tasks", "--all").build()
+
+      val normTasks = Regex("""normGenerate\w*""").findAll(result.output).map { it.value }.toSet()
+      assertThat(normTasks).isEqualTo(setOf("normGenerateTest"))
+    }
+
+    @Test
+    fun `declaring the main source set fails and points to queries`() {
+      val project = gradleProject("""sourceSets { register("main") { queries.add("queries.sql") } }""")
+
+      val result = project.gradle("help").buildAndFail()
+
+      assertThat(result.output).contains("Declare main queries in `queries`")
+    }
+
+    @Test
+    fun `configures under isolated projects`() {
+      val testQueries = scenarioDirectory.resolve("test-queries.sql")
+      val project = gradleProject("test { queries.add(\"$testQueries\") }")
+
+      val result = project.gradle("normGenerateTestTest", "--dry-run", "--isolated-projects").build()
+
+      assertThat(result.output).contains(":normGenerateTestTest")
+    }
+
+    @Test
+    fun `sourceSets register is equivalent to test`() {
+      val testQueries = scenarioDirectory.resolve("test-queries.sql")
+      val project = gradleProject("""sourceSets { register("test") { queries.add("$testQueries") } }""")
+
+      project.gradle("normGenerateTestTest").build()
+
+      assertThat(project.generatedTestCodeDirectory.resolve("example/testqueries/TestQueries.kt").exists()).isTrue()
+    }
+
+    @Test
+    fun `calling test twice generates both query files with one task`() {
+      val first = writeQueryFile("first.sql", "-- name: countAuthors :one\nSELECT count(*) FROM author;")
+      val second = writeQueryFile("second.sql", "-- name: listAuthorNames :many\nSELECT name FROM author;")
+      val project = gradleProject(
+        """
+        test { queries.add("$first") }
+        test { queries.add("$second") }
+        """.trimIndent(),
+      )
+
+      val result = project.gradle("normGenerateTestTest").build()
+
+      assertThat(result.task(":normGenerateTestTest")?.outcome).isEqualTo(SUCCESS)
+      val testQueriesInterface = project.generatedTestCodeDirectory.resolve(
+        "example/testqueries/TestQueries.kt",
+      ).readText()
+      assertThat(testQueriesInterface).contains("countAuthors")
+      assertThat(testQueriesInterface).contains("listAuthorNames")
+    }
+  }
+
   companion object {
 
     private const val BOOK_TABLE_SCHEMA_SQL = "CREATE TABLE book (id serial PRIMARY KEY, title text NOT NULL);"
@@ -1288,6 +1474,8 @@ class NormPluginTest {
      * need a known schema but aren't testing golden-file matching.
      */
     private val BASIC_EMBEDS_SCENARIO = Path("../test-scenarios/basic_embeds").toAbsolutePath().normalize()
+
+    private val TEST_QUERIES_SCENARIO = Path("../test-scenarios/test_queries").toAbsolutePath().normalize()
 
     private val EMBED_SCENARIOS =
       setOf("basic_embeds", "complex_embed_mixing", "consecutive_embeds", "nested_joins_embeds")

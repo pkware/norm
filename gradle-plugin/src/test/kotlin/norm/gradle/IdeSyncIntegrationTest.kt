@@ -200,6 +200,48 @@ class IdeSyncIntegrationTest {
   }
 
   @Nested
+  inner class TestSourceSetGeneration {
+
+    @Test
+    fun `dry run shows the test source set task as a dependency of prepareKotlinIdeaImportNorm`() {
+      writeAuthorSchemaAndQueries(projectDir)
+      projectDir.resolve("test-queries.sql").writeText(
+        """
+        -- name: countAuthors :one
+        SELECT count(*) FROM author;
+        """.trimIndent(),
+      )
+      val project = TestProject(projectDir, projectDir)
+      project.setupSettingsOnly()
+      project.buildFile.writeText(
+        """
+        plugins {
+          kotlin("jvm")
+          id("com.pkware.norm")
+        }
+
+        norm {
+          databases {
+            create("Test") {
+              packageName = "example"
+              schemas.addAll("${projectDir.resolve("schema.sql")}")
+              queries.addAll("${projectDir.resolve("queries.sql")}")
+              generateCrud = false
+              test { queries.add("${projectDir.resolve("test-queries.sql")}") }
+            }
+          }
+        }
+        """.trimIndent(),
+      )
+
+      val result = project.gradle(":prepareKotlinIdeaImportNorm", "--dry-run").build()
+
+      assertThat(result.output).contains(":normGenerateTest")
+      assertThat(result.output).contains(":normGenerateTestTest")
+    }
+  }
+
+  @Nested
   inner class TaskNamePrefixContract {
 
     /**

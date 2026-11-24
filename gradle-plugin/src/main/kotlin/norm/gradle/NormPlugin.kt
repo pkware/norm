@@ -35,8 +35,8 @@ public class NormPlugin : Plugin<Project> {
       this,
     )
 
-    val mainSourceSet: KotlinSourceSet = project.extensions.getByName<KotlinProjectExtension>("kotlin")
-      .sourceSets.getByName("main")
+    val kotlinSourceSets = project.extensions.getByName<KotlinProjectExtension>("kotlin").sourceSets
+    val mainSourceSet: KotlinSourceSet = kotlinSourceSets.getByName("main")
 
     norm.databases.all {
       postgresVersion.convention("18-alpine")
@@ -49,6 +49,22 @@ public class NormPlugin : Plugin<Project> {
       )
 
       IdeIntegration.registerGeneratedSources(mainSourceSet, generateTask)
+
+      val database = this
+      sourceSets.all {
+        val databaseSourceSet = this
+        require(databaseSourceSet.name != "main") {
+          "Norm: Database '${database.name}' declares source set 'main'. Declare main queries in `queries`."
+        }
+        val sourceSetTask = tasks.register<NormGenerateSourceSetTask>(
+          "normGenerate${databaseSourceSet.name.uppercaseFirstChar()}${database.name.uppercaseFirstChar()}",
+          database,
+          databaseSourceSet,
+        )
+        kotlinSourceSets.matching { it.name == databaseSourceSet.name }.all {
+          IdeIntegration.registerGeneratedSources(this, sourceSetTask)
+        }
+      }
     }
 
     IdeIntegration.configureGenerationOnIdeSync(project, norm.generateOnIdeSync)

@@ -2,11 +2,16 @@ package norm.gradle
 
 import norm.generator.Framework
 import norm.generator.TypeMapping
+import org.gradle.api.Action
 import org.gradle.api.Named
+import org.gradle.api.NamedDomainObjectContainer
+import org.gradle.api.model.ObjectFactory
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.SetProperty
 import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.Internal
+import javax.inject.Inject
 
 /**
  * Database for which to generate source code.
@@ -116,6 +121,22 @@ public abstract class Database(private val name: String) : Named {
   @get:Input
   public abstract val typeMappings: ListProperty<TypeMapping>
 
+  @get:Inject
+  protected abstract val objects: ObjectFactory
+
+  @Transient
+  private val sourceSetContainer: NamedDomainObjectContainer<DatabaseSourceSet> =
+    objects.domainObjectContainer(DatabaseSourceSet::class.java)
+
+  /**
+   * Source sets whose own queries generate code compiled only by the Kotlin source set of the same name.
+   *
+   * Excluded from the configuration cache, since the actions registered on it reference the Kotlin source sets.
+   */
+  @get:Internal
+  public val sourceSets: NamedDomainObjectContainer<DatabaseSourceSet>
+    get() = sourceSetContainer
+
   /**
    * Configures user-defined type mappings via DSL.
    *
@@ -125,6 +146,22 @@ public abstract class Database(private val name: String) : Named {
     val dsl = TypeMappingDsl()
     action(dsl)
     typeMappings.addAll(dsl.build())
+  }
+
+  /**
+   * Configures [sourceSets], so a build script can write `sourceSets { register("test") { ... } }`.
+   */
+  public fun sourceSets(action: Action<in NamedDomainObjectContainer<DatabaseSourceSet>>) {
+    action.execute(sourceSets)
+  }
+
+  /**
+   * Configures the queries of the `test` source set, registering it in [sourceSets] on the first call.
+   *
+   * Equivalent to `sourceSets { register("test") { ... } }`, and may be called more than once.
+   */
+  public fun test(action: Action<DatabaseSourceSet>) {
+    if ("test" in sourceSets.names) sourceSets.named("test", action) else sourceSets.register("test", action)
   }
 
   /**

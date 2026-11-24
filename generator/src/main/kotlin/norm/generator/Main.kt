@@ -43,12 +43,89 @@ public fun generateCode(
   frameworks: Set<Framework>,
   reservedWords: Set<String>,
   typeMappings: List<TypeMapping> = emptyList(),
+): List<GeneratedFile> = renderCode(
+  catalog,
+  queries,
+  packageName,
+  frameworks,
+  reservedWords,
+  typeMappings,
+  QueryClassNames("Queries", "PostgresQueries"),
+  emitConnectionProviders = true,
+)
+
+/**
+ * Generates the code for queries that only one source set compiles, such as tests.
+ *
+ * The result holds `<SourceSetName>Queries`, `Postgres<SourceSetName>Queries` and the types only
+ * [sourceSetQueries] need. A file [generateCode] produces for [mainQueries] at the same path is left out when
+ * its contents are identical, so the main and source set output compile together in one module. No CRUD methods
+ * and no connection providers are generated.
+ *
+ * @param catalog The Postgres schema catalog.
+ * @param mainQueries The queries [generateCode] receives for the main source set.
+ * @param sourceSetQueries The queries for which to generate code.
+ * @param sourceSetName Name of the Kotlin source set, such as `test`.
+ * @param packageName The package in which to generate code.
+ * @param frameworks The frameworks for which to generate DI annotations.
+ * @param reservedWords The connected PostgreSQL server's reserved keywords, see [generateCode].
+ * @param typeMappings User-configured type/column overrides, see [generateCode].
+ * @return The generated files that main generation does not produce. File names include the package hierarchy.
+ * @throws IllegalStateException if a file shares its path with a file of different contents generated for
+ *   [mainQueries]. Also thrown for the conditions [generateCode] documents.
+ */
+@Throws(IllegalStateException::class)
+public fun generateSourceSetCode(
+  catalog: Catalog,
+  mainQueries: List<Query>,
+  sourceSetQueries: List<Query>,
+  sourceSetName: String,
+  packageName: String,
+  frameworks: Set<Framework>,
+  reservedWords: Set<String>,
+  typeMappings: List<TypeMapping> = emptyList(),
+): List<GeneratedFile> {
+  val mainFiles = generateCode(catalog, mainQueries, packageName, frameworks, reservedWords, typeMappings)
+    .associateBy(GeneratedFile::name)
+  val interfaceName = "${sourceSetName.titleCase()}Queries"
+  val sourceSetFiles = renderCode(
+    catalog,
+    sourceSetQueries,
+    packageName,
+    frameworks,
+    reservedWords,
+    typeMappings,
+    QueryClassNames(interfaceName, "Postgres$interfaceName"),
+    emitConnectionProviders = false,
+  )
+  return sourceSetFiles.filter { file ->
+    val mainFile = mainFiles[file.name] ?: return@filter true
+    check(mainFile.contents == file.contents) {
+      val typeName = file.name.substringAfterLast('/').removeSuffix(".kt")
+      "The $sourceSetName queries generate type '$typeName' differently from the main queries. " +
+        "Rename the query or type in one of them so both can compile together."
+    }
+    false
+  }
+}
+
+private data class QueryClassNames(val interfaceName: String, val implementationName: String)
+
+private fun renderCode(
+  catalog: Catalog,
+  queries: List<Query>,
+  packageName: String,
+  frameworks: Set<Framework>,
+  reservedWords: Set<String>,
+  typeMappings: List<TypeMapping>,
+  names: QueryClassNames,
+  emitConnectionProviders: Boolean,
 ): List<GeneratedFile> {
   val typeRepository = TypeRepository(packageName, catalog, typeMappings, reservedWords)
 
   val resolvedQueries = queries.map { SqlStatement(catalog, it, typeRepository) }
-  val queriesInterface = ClassName(packageName, "Queries")
-  val interfaceCode = generateQueryInterface(resolvedQueries, "Queries", frameworks)
+  val queriesInterface = ClassName(packageName, names.interfaceName)
+  val interfaceCode = generateQueryInterface(resolvedQueries, names.interfaceName, frameworks)
 
   // Type-level overrides suppress auto-generation for the overridden type.
   val typeOverridePostgresTypes = typeMappings.filterIsInstance<TypeMapping.ByType>().map { it.postgresType }.toSet()
@@ -78,8 +155,15 @@ public fun generateCode(
   val adapterParameters =
     adapterParameters(typeRepository, typeMappings, catalog, packageName, typeOverridePostgresTypes)
 
-  val classCode = generateQueryImplementation(resolvedQueries, queriesInterface, frameworks, adapterParameters)
-  val connectionProviders = generateConnectionProviders(packageName, frameworks)
+  val classCode = generateQueryImplementation(
+    resolvedQueries,
+    names.implementationName,
+    queriesInterface,
+    frameworks,
+    adapterParameters,
+  )
+  val connectionProviders =
+    if (emitConnectionProviders) generateConnectionProviders(packageName, frameworks) else emptyList()
 
   val typeSpecFiles = (
     sequenceOf(
@@ -183,6 +267,7 @@ private fun adapterParameters(
 
 private fun generateQueryImplementation(
   queries: List<SqlStatement>,
+  implementationName: String,
   interfaceType: ClassName,
   frameworks: Set<Framework>,
   adapterParameters: List<AdapterParameter>,
@@ -190,7 +275,7 @@ private fun generateQueryImplementation(
   val constructorBuilder = FunSpec.constructorBuilder()
     .addParameter("connectionProvider", CONNECTION_PROVIDER)
 
-  val classBuilder = TypeSpec.classBuilder("PostgresQueries")
+  val classBuilder = TypeSpec.classBuilder(implementationName)
     .addSuperinterface(interfaceType)
 
   if (usesNormManagedTransactions(frameworks)) {
