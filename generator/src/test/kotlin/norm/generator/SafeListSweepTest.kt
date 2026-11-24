@@ -794,10 +794,8 @@ class SafeListSweepTest {
     /**
      * Concrete arities/types to sweep for [NullabilityCatalog.alwaysNonNullFunctionOids]'s and
      * [NullabilityCatalog.nonNullIffFirstArgumentNonNullFunctionOids]'s NULL-argument properties,
-     * keyed by `pg_proc.proname`. Both properties are keyed by name alone in production (see
-     * [NullabilityCatalog.loadAlwaysNonNullFunctions]/
-     * [NullabilityCatalog.loadNonNullIffFirstArgumentNonNullFunctionOids]'s `proname = '...'`
-     * predicates), because `concat`/`concat_ws`'s single `pg_catalog` row for each is declared
+     * keyed by `pg_proc.proname`. Both properties are keyed by name alone in production,
+     * because `concat`/`concat_ws`'s single `pg_catalog` row for each is declared
      * `VARIADIC "any"`/`VARIADIC "any"` — the declared argument type is the pseudo-type `any`
      * itself, with no literal form of its own, unlike `anyarray`/`anyrange`/`anyelement`, which
      * [concreteInstantiationsFor] already knows how to instantiate. This map supplies the concrete

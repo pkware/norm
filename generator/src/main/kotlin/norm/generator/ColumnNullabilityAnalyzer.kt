@@ -398,7 +398,7 @@ internal class ColumnNullabilityAnalyzer(private val connection: Connection, pri
   }
 
   /** The number of user-visible columns (`attnum > 0 AND NOT attisdropped`) [relid] has. */
-  private fun columnCountFor(relid: Int): Int = catalog.columnNotNullByRelidAndAttnum.keys.count { it.first == relid }
+  private fun columnCountFor(relid: Int): Int = catalog.columnCountByRelid[relid] ?: 0
 
   /**
    * Aligns [nullability] — one flag per non-junk target-list entry, in resno order — onto exactly

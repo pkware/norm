@@ -9170,7 +9170,7 @@ class QueryAnalysisTest {
     fun `nonNullIffFirstArgumentNonNull OIDs equal exactly the concat_ws overloads`() {
       // `isNotEmpty()` alone stays green under a mutation that puts `concat` (or any other function) on this
       // list alongside or instead of `concat_ws`, since the set is still non-empty either way. The
-      // OIDs resolved here are independent of NullabilityCatalog.loadNonNullIffFirstArgumentNonNullFunctionOids's
+      // OIDs resolved here are independent of the production loader's
       // own SQL — matched by name alone, not by re-asserting its `NOT proisstrict` predicate — so a
       // mutation that widens or narrows the production predicate to a different name (or an
       // additional one) is caught by the resulting set inequality, not absorbed by both sides
