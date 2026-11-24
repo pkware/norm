@@ -74,26 +74,16 @@ class GenerateGoldenFiles {
     // Run generation - use runCatching to capture partial success
     // (e.g., if some files generate but compilation would fail)
     val result = runCatching {
-      project.gradle("normGenerateTest").build()
+      project.gradle("normGenerateTest", *testSourceSetTasks(scenarioDirectory)).build()
     }
 
     // Copy whatever was generated, even if the build failed partway through
-    if (project.generatedCodeDirectory.exists()) {
-      // Delete existing golden files to remove stale files
-      val goldenExampleDir = scenarioDirectory.resolve(goldenSubdir)
-      if (goldenExampleDir.exists()) {
-        goldenExampleDir.deleteRecursively()
-      }
-
-      // Copy generated code to scenario directory
-      project.generatedCodeDirectory.walk()
-        .filter { it.isRegularFile() }
-        .forEach { file ->
-          val relativePath = file.relativeTo(project.generatedCodeDirectory)
-          val target = scenarioDirectory.resolve(goldenSubdir).resolve(relativePath)
-          target.parent.createDirectories()
-          file.copyTo(target, StandardCopyOption.REPLACE_EXISTING)
-        }
+    copyGeneratedCodeToGoldenDirectory(project.generatedCodeDirectory, scenarioDirectory.resolve(goldenSubdir))
+    if (scenarioDirectory.resolve("test-queries.sql").exists()) {
+      copyGeneratedCodeToGoldenDirectory(
+        project.generatedTestCodeDirectory,
+        scenarioDirectory.resolve("$goldenSubdir-test"),
+      )
     }
 
     // Now rethrow if generation failed, so the test reports the failure
@@ -101,6 +91,27 @@ class GenerateGoldenFiles {
 
     // Clean up project directory on success
     projectDir.deleteRecursively()
+  }
+
+  private fun testSourceSetTasks(scenarioDirectory: Path): Array<String> =
+    if (scenarioDirectory.resolve("test-queries.sql").exists()) arrayOf("normGenerateTestTest") else emptyArray()
+
+  /**
+   * Replaces [goldenDirectory] with the files under [generatedDirectory], when it exists.
+   */
+  private fun copyGeneratedCodeToGoldenDirectory(generatedDirectory: Path, goldenDirectory: Path) {
+    if (!generatedDirectory.exists()) return
+    // Delete existing golden files to remove stale files
+    if (goldenDirectory.exists()) {
+      goldenDirectory.deleteRecursively()
+    }
+    generatedDirectory.walk()
+      .filter { it.isRegularFile() }
+      .forEach { file ->
+        val target = goldenDirectory.resolve(file.relativeTo(generatedDirectory))
+        target.parent.createDirectories()
+        file.copyTo(target, StandardCopyOption.REPLACE_EXISTING)
+      }
   }
 
   companion object {

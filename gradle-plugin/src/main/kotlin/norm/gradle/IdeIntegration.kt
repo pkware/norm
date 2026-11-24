@@ -39,7 +39,7 @@ internal object IdeIntegration {
    * [configureGenerationOnIdeSync]. IntelliJ deduplicates source roots by path, so the directory appears
    * once either way.
    */
-  fun registerGeneratedSources(sourceSet: KotlinSourceSet, generateTask: TaskProvider<NormGenerateTask>) {
+  fun registerGeneratedSources(sourceSet: KotlinSourceSet, generateTask: TaskProvider<out NormGenerateTask>) {
     // Always register for compilation, including KSP's kspKotlin task.
     sourceSet.kotlin.srcDir(generateTask)
 

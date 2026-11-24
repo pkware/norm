@@ -22,10 +22,13 @@ sourceSets {
       // Include generated code for E2E query tests. Each scenario uses a distinct package to
       // avoid name conflicts between the generated PostgresQueries / Queries classes.
       // all_types uses package `example`; type_mappings uses `example.typemappings`;
-      // crud_generation uses `example.crud`.
+      // crud_generation uses `example.crud`; test_queries uses `example.testqueries` for both its main
+      // output (`example`) and its test source set output (`example-test`).
       srcDir(layout.settingsDirectory.dir("test-scenarios/all_types/example"))
       srcDir(layout.settingsDirectory.dir("test-scenarios/type_mappings/example"))
       srcDir(layout.settingsDirectory.dir("test-scenarios/crud_generation/example"))
+      srcDir(layout.settingsDirectory.dir("test-scenarios/test_queries/example"))
+      srcDir(layout.settingsDirectory.dir("test-scenarios/test_queries/example-test"))
       // User-provided adapter source files (CustomMoodAdapter, JsonDataAdapter, etc.)
       // referenced by the generated type_mappings code.
       srcDir(layout.settingsDirectory.dir("test-scenarios/type_mappings/src"))

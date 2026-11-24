@@ -28,7 +28,8 @@ To regenerate them after changing the generator:
 ```
 
 The task runs the generator and copies output to test-scenarios directories, regardless of
-whether the generated code compiles. This allows iterative development.
+whether the generated code compiles. This allows iterative development. A scenario with a `test-queries.sql` also
+gets the output of its `test` source set in `example-test`.
 
 ## Configuration
 
@@ -256,6 +257,47 @@ norm {
   }
 }
 ```
+
+### Test-Only Queries
+
+Queries that only tests need, such as ones that inspect the database, are generated into the `test` source set,
+which keeps them out of production code:
+
+```kotlin
+norm {
+  databases {
+    register("example") {
+      packageName.set("example")
+      schemas.add("src/main/sql/schema.sql")
+      queries.add("src/main/sql/queries.sql")
+
+      test {
+        queries.add("src/test/sql/queries.sql")
+      }
+    }
+  }
+}
+```
+
+`test { }` may be called more than once. `sourceSets { register("test") { ... } }` is the general form of the same
+declaration. Each entry of `sourceSets` names the Kotlin source set that compiles its code. Only `test` is
+documented, and `main` is rejected because main queries belong in `queries`. A database without a `test` or
+`sourceSets` declaration registers nothing extra.
+
+- **Task:** `normGenerateTest<Name>` for a database named `<Name>`, in the pattern `normGenerate<SourceSet><Name>`.
+  `compileTestKotlin` and `prepareKotlinIdeaImportNorm` depend on it, `compileKotlin` does not. Editing only a test
+  query file leaves `normGenerate<Name>` up to date.
+- **Output:** `build/generated/norm-test/<Name>/`. Main output stays in `build/generated/norm/`.
+- **Generated names:** `TestQueries` and `PostgresTestQueries`. `PostgresTestQueries` takes a `ConnectionProvider`,
+  carries the DI annotations of the configured `frameworks` with `missingBeans = [TestQueries::class]`, and generates
+  no `ConnectionProvider` of its own. Test queries get no CRUD methods. `typeMappings` apply as for main queries.
+- **Shared types:** The test code compiles together with the main code. A type that the test queries need and main
+  generates identically, such as the model of a table both read, is generated once, in the main output. A type only
+  the test queries need, such as an enum used by no main query, is generated into the test output. When both
+  generate a type of the same name with different contents, the task fails naming the type. Renaming the query or
+  type in one source set resolves it.
+- **Container and analysis:** The test task starts its own PostgreSQL container, applies the schemas, and analyzes
+  the main queries again, so it does not depend on `normGenerate<Name>`.
 
 ### Multi-Database Projects
 
