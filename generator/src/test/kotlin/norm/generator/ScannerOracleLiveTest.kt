@@ -148,7 +148,8 @@ class ScannerOracleLiveTest {
   } catch (_: SQLException) {
     "rejected"
   } catch (_: ArrayIndexOutOfBoundsException) {
-    // pgjdbc fails this way when the text has a `$n` parameter the driver did not count.
+    // pgjdbc fails this way when the text has a `$n` parameter the driver did not count, and closes the connection.
+    connection = connect()
     "rejected"
   }
 
@@ -255,8 +256,11 @@ class ScannerOracleLiveTest {
     @JvmStatic
     @BeforeAll
     fun setup() {
-      connection = DriverManager.getConnection(container.jdbcUrl, container.username, container.password)
+      connection = connect()
     }
+
+    private fun connect(): Connection =
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password)
 
     @JvmStatic
     @AfterAll
