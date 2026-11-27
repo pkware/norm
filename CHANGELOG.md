@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.8.0](https://github.com/pkware/norm/compare/v0.7.0...v0.8.0) (2026-11-27)
+
+
+### Features
+
+* generate test-only queries into a test source set ([c31d0dd](https://github.com/pkware/norm/commit/c31d0dde9d6d9b8481efd167babae51c7703ae0e)), closes [#537](https://github.com/pkware/norm/issues/537)
+
+
+### Bug Fixes
+
+* **deps:** update dependency com.diffplug.spotless:spotless-plugin-gradle to v8.12.0 ([0138b12](https://github.com/pkware/norm/commit/0138b12e8a44e41d610ce8f7934b07b35308a6af))
+* **deps:** update dependency org.commonmark:commonmark to v0.33.0 ([d639010](https://github.com/pkware/norm/commit/d6390109b747b8353012f02430bc6fd6b8dc795a))
+* **deps:** update dependency org.mockito:mockito-junit-jupiter to v5.25.0 ([7d30e2f](https://github.com/pkware/norm/commit/7d30e2fec26ce781d864fd2dff5eb27d96167e2c))
+* **deps:** update dependency org.springframework.boot:spring-boot-dependencies to v4.2.0 ([053820d](https://github.com/pkware/norm/commit/053820db2695676e51d454860eda5f8d3a26af1e))
+* **deps:** update micronaut to v5.2.24 ([f6a8cc6](https://github.com/pkware/norm/commit/f6a8cc618109b65648e03e822ea42b6ea85272c9))
+* **deps:** update micronaut to v5.2.25 ([f911f13](https://github.com/pkware/norm/commit/f911f13d74cd2f8812162c70d34aba5254dbd2ae))
+* **deps:** update micronaut to v5.2.26 ([59fb200](https://github.com/pkware/norm/commit/59fb2007a82b34a3fd3ccec3e2988daa012409a9))
+* fail when a generated enum and domain adapter share a property name ([79aa205](https://github.com/pkware/norm/commit/79aa2054ce300fb09160f5f04ee533a50d009fd2)), closes [#421](https://github.com/pkware/norm/issues/421)
+* keep a query file's header comment out of the first query's KDoc ([832a768](https://github.com/pkware/norm/commit/832a768e552ce0eefcafb3cd26261f484f90eb47)), closes [#540](https://github.com/pkware/norm/issues/540)
+* run libpg_query wasm calls on a thread with a fixed stack size ([f6f3461](https://github.com/pkware/norm/commit/f6f346139b677cba64315a88abf004d02cb44b71))
+* stop catalog loaders colliding on dotted names and interpolating identifiers ([ac44829](https://github.com/pkware/norm/commit/ac4482905ba50b905b9db3cc0d8c300d8252ae3d))
+
 ## [0.7.0](https://github.com/pkware/norm/compare/v0.6.0...v0.7.0) (2026-11-12)
 
 
